@@ -1,0 +1,268 @@
+{
+  "Parameters": {
+    "ContainerImageUri": {
+      "Type": "String",
+      "Description": "The ECR image URI for the Lambda function"
+    },
+    "ImagesBucketName": {
+      "Type": "String",
+      "Description": "S3 bucket name for images (lowercase)"
+    }
+  },
+  "Resources": {
+    "LambdaExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": { "Service": "lambda.amazonaws.com" }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "DynamoDBAndS3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem",
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                    "dynamodb:BatchWriteItem"
+                  ],
+                  "Resource": [
+                    { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
+                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:GetObject"
+                  ],
+                  "Resource": { "Fn::Sub": "arn:aws:s3:::${BridgeImagesBucket}/*" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "APIHandler": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Architectures": ["arm64"],
+        "Code": { "ImageUri": { "Ref": "ContainerImageUri" } },
+        "Environment": {
+          "Variables": {
+            "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
+            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "BridgeImagesBucket" }
+          }
+        },
+        "MemorySize": 256,
+        "PackageType": "Image",
+        "ReservedConcurrentExecutions": 10,
+        "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
+        "Timeout": 30
+      },
+      "DependsOn": ["LambdaExecutionRole"]
+    },
+    "RestApi": {
+      "Type": "AWS::ApiGateway::RestApi",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-api" },
+        "Description": "AgentPeek API",
+        "EndpointConfiguration": { "Types": ["REGIONAL"] }
+      }
+    },
+    "ProxyResource": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ParentId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
+        "PathPart": "{proxy+}"
+      }
+    },
+    "RootMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
+        "HttpMethod": "ANY",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": true,
+        "Integration": {
+          "Type": "AWS_PROXY",
+          "IntegrationHttpMethod": "POST",
+          "Uri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${APIHandler.Arn}/invocations" },
+          "Credentials": { "Fn::GetAtt": ["ApiGatewayRole", "Arn"] }
+        }
+      }
+    },
+    "ProxyMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Ref": "ProxyResource" },
+        "HttpMethod": "ANY",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": true,
+        "Integration": {
+          "Type": "AWS_PROXY",
+          "IntegrationHttpMethod": "POST",
+          "Uri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${APIHandler.Arn}/invocations" },
+          "Credentials": { "Fn::GetAtt": ["ApiGatewayRole", "Arn"] }
+        }
+      }
+    },
+    "ApiDeployment": {
+      "Type": "AWS::ApiGateway::Deployment",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" }
+      },
+      "DependsOn": ["RootMethod", "ProxyMethod"]
+    },
+    "ApiStage": {
+      "Type": "AWS::ApiGateway::Stage",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "DeploymentId": { "Ref": "ApiDeployment" },
+        "StageName": "v1"
+      }
+    },
+    "ApiGatewayRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": "apigateway.amazonaws.com" },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "InvokeLambda",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "lambda:InvokeFunction",
+                  "Resource": { "Fn::GetAtt": ["APIHandler", "Arn"] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ApiKey": {
+      "Type": "AWS::ApiGateway::ApiKey",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-api-key" },
+        "Enabled": true,
+        "StageKeys": [
+          { "RestApiId": { "Ref": "RestApi" }, "StageName": "v1" }
+        ]
+      },
+      "DependsOn": ["ApiStage"]
+    },
+    "UsagePlan": {
+      "Type": "AWS::ApiGateway::UsagePlan",
+      "Properties": {
+        "UsagePlanName": { "Fn::Sub": "${AWS::StackName}-usage-plan" },
+        "ApiStages": [
+          { "ApiId": { "Ref": "RestApi" }, "Stage": "v1" }
+        ]
+      },
+      "DependsOn": ["ApiStage"]
+    },
+    "UsagePlanKey": {
+      "Type": "AWS::ApiGateway::UsagePlanKey",
+      "Properties": {
+        "KeyId": { "Ref": "ApiKey" },
+        "KeyType": "API_KEY",
+        "UsagePlanId": { "Ref": "UsagePlan" }
+      }
+    },
+    "BridgeSessionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-sessions" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "accountId", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "accountId", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "BridgeMessagesTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-messages" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "sessionId", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "sessionId", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "BridgeImagesBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Ref": "ImagesBucketName" },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireOldImages",
+              "Status": "Enabled",
+              "ExpirationInDays": 90
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "APIURL": {
+      "Description": "API URL",
+      "Value": { "Fn::Sub": "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+    },
+    "ApiKeyConsole": {
+      "Description": "Find your API Key here",
+      "Value": "https://console.aws.amazon.com/apigateway/main/api-keys"
+    }
+  }
+}

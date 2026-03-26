@@ -1,0 +1,43 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# React Native (mobile/)
+mobile/ios/Pods/
+mobile/ios/build/
+mobile/android/build/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/*.xcworkspace
+mobile/*.xcodeproj/xcuserdata/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Bridge
+~/.claude-bridge/
+
+# Claude Code
+CLAUDE.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build artifacts
+*.zip
+*.log
+
+# Env
+.env
+.env.local
+node_modules/
