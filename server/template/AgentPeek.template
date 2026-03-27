@@ -127,12 +127,72 @@
         }
       }
     },
+    "RootOptionsMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
+        "HttpMethod": "OPTIONS",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "IntegrationResponses": [{
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }]
+        },
+        "MethodResponses": [{
+          "StatusCode": "200",
+          "ResponseParameters": {
+            "method.response.header.Access-Control-Allow-Headers": true,
+            "method.response.header.Access-Control-Allow-Methods": true,
+            "method.response.header.Access-Control-Allow-Origin": true
+          }
+        }]
+      }
+    },
+    "ProxyOptionsMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Ref": "ProxyResource" },
+        "HttpMethod": "OPTIONS",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "IntegrationResponses": [{
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }]
+        },
+        "MethodResponses": [{
+          "StatusCode": "200",
+          "ResponseParameters": {
+            "method.response.header.Access-Control-Allow-Headers": true,
+            "method.response.header.Access-Control-Allow-Methods": true,
+            "method.response.header.Access-Control-Allow-Origin": true
+          }
+        }]
+      }
+    },
     "ApiDeployment": {
       "Type": "AWS::ApiGateway::Deployment",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" }
       },
-      "DependsOn": ["RootMethod", "ProxyMethod"]
+      "DependsOn": ["RootMethod", "ProxyMethod", "RootOptionsMethod", "ProxyOptionsMethod"]
     },
     "ApiStage": {
       "Type": "AWS::ApiGateway::Stage",

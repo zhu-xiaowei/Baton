@@ -245,26 +245,35 @@ Bridge 上传压缩后的图片到 S3。
 
 **逻辑**:
 - 无 `after`: 查询 BridgeMessages (PK=sessionId)，返回全部
-- 有 `after`: 查询 BridgeMessages (PK=sessionId, timestamp > after)，一次查询
+- 有 `after`: 查询 BridgeMessages (PK=sessionId, SK > after#\xff)，一次查询
+- DDB 为空时: 返回 `needSync: true`，同时通过 WS 通知 bridge 同步该 session
 
-**Response** `200`
+**Response** `200` — 有消息:
 ```json
 {
-  "messages": [
-    {
-      "uuid": "msg_abc123",
-      "type": "user",
-      "content": [{ "type": "text", "text": "hello" }],
-      "timestamp": "2026-03-27T10:30:00.000Z"
-    },
-    {
-      "uuid": "msg_def456",
-      "type": "assistant",
-      "content": [{ "type": "text", "text": "Hi! How can I help?" }],
-      "timestamp": "2026-03-27T10:30:01.000Z"
-    }
-  ]
+  "messages": [...],
+  "needSync": false
 }
+```
+
+**Response** `200` — DDB 无缓存（需要 bridge 同步）:
+```json
+{
+  "messages": [],
+  "needSync": true
+}
+```
+
+**needSync 触发的后续流程**:
+```
+1. Server 返回 needSync: true，同时通过 WS 通知 bridge:
+   → { action: "sync_session", sessionId: "abc" }
+2. Bridge 收到后读 .jsonl → POST /sync-messages 写 DDB
+3. Bridge 完成后 WS 通知 server:
+   → { action: "sync_complete", sessionId: "abc" }
+4. Server 转发给订阅该 session 的 app:
+   → { action: "sync_complete", sessionId: "abc" }
+5. App 收到后重新 GET /messages → 有数据了 → 渲染
 ```
 
 **说明**:
@@ -417,6 +426,35 @@ Bridge 推送新消息到 Server。
 
 ---
 
+#### sync_complete
+
+Bridge 完成按需同步后通知 server。
+
+```json
+{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
+```
+
+**Server 处理**: 转发给所有订阅该 session 的 app。
+
+---
+
+### Server → Bridge (推送)
+
+#### sync_session
+
+Server 通知 bridge 同步指定 session 的消息到 DDB（由 GET /messages 的 needSync 触发）。
+
+```json
+{ "action": "sync_session", "sessionId": "a1ca0870-xxxx" }
+```
+
+**Bridge 处理**:
+1. 根据 sessionId 找到对应的 .jsonl 文件
+2. 读取并提取消息 → POST /sync-messages 写 DDB
+3. 完成后 WS 发送 `sync_complete`
+
+---
+
 ### Server → App (推送)
 
 #### messages
@@ -427,15 +465,18 @@ Server 转发 bridge 的消息给 app。
 {
   "action": "messages",
   "sessionId": "a1ca0870-xxxx",
-  "messages": [
-    {
-      "uuid": "msg_new789",
-      "type": "assistant",
-      "content": [{ "type": "text", "text": "Here's the fix..." }],
-      "timestamp": "2026-03-27T10:31:00.000Z"
-    }
-  ]
+  "messages": [...]
 }
+```
+
+---
+
+#### sync_complete
+
+通知 app 某个 session 的历史消息已同步到 DDB，app 可以重新 GET /messages。
+
+```json
+{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
 ```
 
 ---

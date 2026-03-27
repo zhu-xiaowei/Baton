@@ -66,6 +66,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "accountId": key_hash,
                 "sk": f"{req.deviceName}#{s.project}#{s.id}",
                 "deviceName": req.deviceName,
+                "os": req.os,
                 "projectHash": s.project,
                 "projectName": s.projectName or s.project,
                 "sessionId": s.id,

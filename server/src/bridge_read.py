@@ -175,6 +175,108 @@ async def get_messages(request: Request, session: str = Query(...), after: str =
     return {"messages": messages}
 
 
+@read_router.get("/install")
+async def get_install(request: Request, name: str = Query(None)):
+    """Return a shell script that downloads and runs bridge."""
+    import boto3
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return {"error": "bucket not configured"}
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    url = s3.generate_presigned_url("get_object",
+        Params={"Bucket": bucket, "Key": "install/bridge.tar.gz"}, ExpiresIn=3600)
+    api_key = request.headers.get("x-api-key", "")
+    server = request.url.scheme + "://" + request.headers.get("host", "") + "/v1"
+    # Use x-forwarded headers from API GW if available
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", "")
+    if host:
+        server = f"{proto}://{host}/v1"
+    if name:
+        name_block = f'NAME="{name}"'
+    else:
+        name_block = ('DEFAULT_NAME="$(hostname)"\n'
+                      'printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
+                      'read -r NAME < /dev/tty\n'
+                      'NAME="${NAME:-$DEFAULT_NAME}"')
+    script = (
+        '#!/bin/bash\n'
+        'set -e\n'
+        'DIR="$HOME/.claude-bridge"\n'
+        f'{name_block}\n'
+        'NODE=$(which node)\n'
+        'mkdir -p "$DIR" && cd "$DIR"\n'
+        f'curl -sL "{url}" | tar xz 2>/dev/null\n'
+        'npm install --production --silent 2>/dev/null\n'
+        '\n'
+        '# Setup auto-start service\n'
+        'if [ "$(uname)" = "Darwin" ]; then\n'
+        '  # macOS: launchd\n'
+        '  PLIST="$HOME/Library/LaunchAgents/com.agentpeek.bridge.plist"\n'
+        '  mkdir -p "$HOME/Library/LaunchAgents"\n'
+        '  cat > "$PLIST" << PLIST_EOF\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict>\n'
+        '  <key>Label</key><string>com.agentpeek.bridge</string>\n'
+        '  <key>ProgramArguments</key><array>\n'
+        '    <string>$NODE</string>\n'
+        '    <string>$DIR/bridge.mjs</string>\n'
+        f'    <string>--server</string><string>{server}</string>\n'
+        f'    <string>--key</string><string>{api_key}</string>\n'
+        '    <string>--name</string><string>$NAME</string>\n'
+        '  </array>\n'
+        '  <key>RunAtLoad</key><true/>\n'
+        '  <key>KeepAlive</key><true/>\n'
+        '  <key>StandardOutPath</key><string>$DIR/bridge.log</string>\n'
+        '  <key>StandardErrorPath</key><string>$DIR/bridge.log</string>\n'
+        '</dict></plist>\n'
+        'PLIST_EOF\n'
+        '  launchctl unload "$PLIST" 2>/dev/null || true\n'
+        '  launchctl load "$PLIST"\n'
+        '  echo ""\n'
+        '  echo "================================================================"\n'
+        '  printf "  \\033[0;32mBridge installed and running successfully! (launchd)\\033[0m\\n"\n'
+        '  echo "  Device: $NAME"\n'
+        '  echo "  Logs:   $DIR/bridge.log"\n'
+        '  echo "================================================================"\n'
+        '  echo ""\n'
+        '  echo "  Stop:    launchctl unload $PLIST"\n'
+        '  echo "  Start:   launchctl load $PLIST"\n'
+        '  echo "  Logs:    tail -f $DIR/bridge.log"\n'
+        'else\n'
+        '  # Linux: systemd\n'
+        '  SERVICE_DIR="$HOME/.config/systemd/user"\n'
+        '  mkdir -p "$SERVICE_DIR"\n'
+        '  cat > "$SERVICE_DIR/claude-bridge.service" << SVC_EOF\n'
+        '[Unit]\n'
+        'Description=AgentPeek Bridge\n'
+        'After=network.target\n'
+        '[Service]\n'
+        'ExecStart=$NODE $DIR/bridge.mjs --server '
+        f'{server} --key {api_key} --name $NAME\n'
+        'Restart=always\n'
+        'RestartSec=5\n'
+        '[Install]\n'
+        'WantedBy=default.target\n'
+        'SVC_EOF\n'
+        '  systemctl --user daemon-reload\n'
+        '  systemctl --user enable claude-bridge\n'
+        '  systemctl --user restart claude-bridge\n'
+        '  echo ""\n'
+        '  echo "================================================================"\n'
+        '  printf "  \\033[0;32mBridge installed and running successfully! (systemd)\\033[0m\\n"\n'
+        '  echo "  Device: $NAME"\n'
+        '  echo "================================================================"\n'
+        '  echo ""\n'
+        '  echo "  Stop:    systemctl --user stop claude-bridge"\n'
+        '  echo "  Start:   systemctl --user start claude-bridge"\n'
+        '  echo "  Logs:    journalctl --user -u claude-bridge -f"\n'
+        'fi\n'
+    )
+    return Response(content=script, media_type="text/plain")
+
+
 @read_router.get("/image/{key}")
 async def get_image(key: str):
     import boto3

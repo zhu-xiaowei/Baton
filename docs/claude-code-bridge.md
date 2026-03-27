@@ -304,6 +304,8 @@ agentpeek/
 - Same WS + DDB channels
 
 ### Phase 4: Production polish
+- Windows support: bridge process detection, Task Scheduler auto-start, %APPDATA% paths
 - Setup page + QR code, one-line install with auto-start
 - Push notifications, Claude Code markdown, code diff display
 - Persist bridge sync state (~/.claude-bridge/sync-state.json) to avoid re-uploading messages on restart
+- DDB TTL: auto-clean messages for sessions inactive > 30 days
