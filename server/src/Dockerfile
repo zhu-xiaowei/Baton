@@ -6,6 +6,7 @@ COPY requirements.txt .
 COPY main.py .
 COPY bridge_sync.py .
 COPY bridge_read.py .
+COPY bridge_ws.py .
 RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["python", "main.py"]

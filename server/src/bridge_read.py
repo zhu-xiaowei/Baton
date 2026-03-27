@@ -172,7 +172,19 @@ async def get_messages(request: Request, session: str = Query(...), after: str =
             "timestamp": item.get("timestamp", ""),
         })
 
-    return {"messages": messages}
+    need_sync = len(messages) == 0 and not after
+    if need_sync:
+        # Trigger bridge to sync this session via WS
+        try:
+            account_id = _account_id(request)
+            ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
+            if ws_endpoint:
+                from bridge_ws import notify_bridge_sync
+                notify_bridge_sync(session, account_id, ws_endpoint)
+        except Exception as e:
+            print(f"needSync trigger error: {e}")
+
+    return {"messages": messages, "needSync": need_sync}
 
 
 @read_router.get("/install")
@@ -186,12 +198,12 @@ async def get_install(request: Request, name: str = Query(None)):
     url = s3.generate_presigned_url("get_object",
         Params={"Bucket": bucket, "Key": "install/bridge.tar.gz"}, ExpiresIn=3600)
     api_key = request.headers.get("x-api-key", "")
-    server = request.url.scheme + "://" + request.headers.get("host", "") + "/v1"
+    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
     # Use x-forwarded headers from API GW if available
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", "")
-    if host:
-        server = f"{proto}://{host}/v1"
+    server = f"{proto}://{host}/v1" if host else request.url.scheme + "://" + request.headers.get("host", "") + "/v1"
     if name:
         name_block = f'NAME="{name}"'
     else:
@@ -224,6 +236,7 @@ async def get_install(request: Request, name: str = Query(None)):
         '    <string>$DIR/bridge.mjs</string>\n'
         f'    <string>--server</string><string>{server}</string>\n'
         f'    <string>--key</string><string>{api_key}</string>\n'
+        f'    <string>--ws</string><string>{ws_url}</string>\n'
         '    <string>--name</string><string>$NAME</string>\n'
         '  </array>\n'
         '  <key>RunAtLoad</key><true/>\n'
@@ -254,7 +267,7 @@ async def get_install(request: Request, name: str = Query(None)):
         'After=network.target\n'
         '[Service]\n'
         'ExecStart=$NODE $DIR/bridge.mjs --server '
-        f'{server} --key {api_key} --name $NAME\n'
+        f'{server} --key {api_key} --ws {ws_url} --name $NAME\n'
         'Restart=always\n'
         'RestartSec=5\n'
         '[Install]\n'

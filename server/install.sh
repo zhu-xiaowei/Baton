@@ -184,12 +184,31 @@ else
 fi
 echo "  Stack ready: $STACK_NAME"
 
+# Update WS Lambda code (standalone Python, not Docker)
+WS_FUNC="${STACK_NAME}-ws-handler"
+WS_ZIP="/tmp/agentpeek-ws-lambda.zip"
+(cd src && zip -q "$WS_ZIP" bridge_ws.py)
+aws lambda update-function-code --function-name "$WS_FUNC" --zip-file "fileb://$WS_ZIP" --region "$REGION" >/dev/null 2>&1 \
+  && echo "  WS Lambda updated" \
+  || echo "  WS Lambda update skipped (may not exist yet)"
+
+# Force update REST Lambda to latest Docker image
+REST_FUNC=$(aws cloudformation describe-stack-resource --stack-name "$STACK_NAME" --logical-resource-id APIHandler --region "$REGION" \
+  --query 'StackResourceDetail.PhysicalResourceId' --output text 2>/dev/null)
+if [ -n "$REST_FUNC" ]; then
+  aws lambda update-function-code --function-name "$REST_FUNC" --image-uri "$IMAGE_URI" --region "$REGION" >/dev/null 2>&1 \
+    && echo "  REST Lambda updated" \
+    || echo "  REST Lambda update skipped"
+fi
+
 # ===== Step 5: Output =====
 echo "[5/5] Getting connection info..."
 echo ""
 
 API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`APIURL`].OutputValue' --output text)
+WS_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+  --query 'Stacks[0].Outputs[?OutputKey==`WsURL`].OutputValue' --output text)
 
 KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
   --query "items[?name=='${STACK_NAME}-api-key'].id" --output text)
@@ -201,12 +220,10 @@ echo "  Deploy complete!"
 echo "================================================"
 echo ""
 echo "  API URL:  $API_URL"
+echo "  WS URL:   $WS_URL"
 echo "  API Key:  $API_KEY"
 echo ""
-echo "  Bridge (run on your Mac/Linux):"
-echo "    node bridge/bridge.mjs --server $API_URL --key $API_KEY"
-echo ""
-echo "  QR code data (for SwiftChat app):"
-echo "    {\"type\":\"swiftchat-bridge\",\"server\":\"$API_URL\",\"apiKey\":\"$API_KEY\"}"
+echo "  Install bridge (any Mac/Linux):"
+echo "    curl -s -H \"x-api-key: $API_KEY\" \"$API_URL/api/bridge/install\" | bash"
 echo ""
 echo "================================================"

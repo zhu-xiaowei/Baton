@@ -37,13 +37,23 @@
                   "Action": [
                     "dynamodb:PutItem",
                     "dynamodb:GetItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:UpdateItem",
                     "dynamodb:Query",
+                    "dynamodb:Scan",
                     "dynamodb:BatchWriteItem"
                   ],
                   "Resource": [
                     { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
-                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
+                    { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
+                    { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
                   ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "execute-api:ManageConnections",
+                  "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
                 },
                 {
                   "Effect": "Allow",
@@ -68,7 +78,10 @@
           "Variables": {
             "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
-            "BRIDGE_IMAGES_BUCKET": { "Ref": "BridgeImagesBucket" }
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "BridgeImagesBucket" },
+            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
+            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" }
           }
         },
         "MemorySize": 256,
@@ -261,6 +274,150 @@
         "UsagePlanId": { "Ref": "UsagePlan" }
       }
     },
+    "WsApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ws" },
+        "ProtocolType": "WEBSOCKET",
+        "RouteSelectionExpression": "$request.body.action"
+      }
+    },
+    "WsConnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$connect",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsDisconnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$disconnect",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsDefaultRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$default",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsHandler.Arn}/invocations" }
+      }
+    },
+    "WsStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "StageName": "v1",
+        "AutoDeploy": true
+      }
+    },
+    "WsHandler": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${AWS::StackName}-ws-handler" },
+        "Architectures": ["arm64"],
+        "Runtime": "python3.12",
+        "Handler": "bridge_ws.handler",
+        "Code": {
+          "ZipFile": "# placeholder — replaced by deploy"
+        },
+        "Environment": {
+          "Variables": {
+            "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
+            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+          }
+        },
+        "MemorySize": 128,
+        "Role": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] },
+        "Timeout": 30
+      }
+    },
+    "WsLambdaPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": { "Ref": "WsHandler" },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+      }
+    },
+    "WsLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [
+          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }
+        ],
+        "Policies": [{
+          "PolicyName": "WsPolicy",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem"],
+                "Resource": [
+                  { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
+                  { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
+                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "execute-api:ManageConnections",
+                "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "ConnectionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-connections" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "connectionId", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "connectionId", "KeyType": "HASH" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "SubscriptionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-subscriptions" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "sessionId", "AttributeType": "S" },
+          { "AttributeName": "connectionId", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "sessionId", "KeyType": "HASH" },
+          { "AttributeName": "connectionId", "KeyType": "RANGE" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
     "BridgeSessionsTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -319,6 +476,10 @@
     "APIURL": {
       "Description": "API URL",
       "Value": { "Fn::Sub": "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+    },
+    "WsURL": {
+      "Description": "WebSocket URL",
+      "Value": { "Fn::Sub": "wss://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
     },
     "ApiKeyConsole": {
       "Description": "Find your API Key here",
