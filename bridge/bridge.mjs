@@ -270,6 +270,25 @@ function readableProjectName(projectHash) {
   return segments.join('/');
 }
 
+// ===== Check if a session is actively running =====
+// Latest session in a running project → always active
+// Other sessions in a running project → active if modified within 2 min
+function isSessionActive(project, mtime, runningProjects, latestMtimeByProject) {
+  if (!runningProjects.has(project)) return false;
+  if (mtime >= latestMtimeByProject.get(project)) return true;
+  return Date.now() - mtime < 120_000;
+}
+
+// Build a map of project → latest mtime for active detection
+function getLatestMtimeByProject(items, runningProjects) {
+  const latest = new Map();
+  for (const { project, mtime } of items) {
+    if (!runningProjects.has(project)) continue;
+    if (!latest.has(project) || mtime > latest.get(project)) latest.set(project, mtime);
+  }
+  return latest;
+}
+
 // ===== Detect running claude processes =====
 function getRunningProjects() {
   const running = new Set();
@@ -326,13 +345,23 @@ async function syncSessions() {
         size: stat.size,
         preview,
         model: getModel(filePath),
-        isRunning: running.has(project),
+        isRunning: false, // set below
+        _mtime: stat.mtimeMs,
       });
 
-      // Collect for top-2 selection
+      // Collect for init message sync
       if (!projectSessions.has(project)) projectSessions.set(project, []);
       projectSessions.get(project).push({ sessionId, mtime: stat.mtimeMs, filePath });
     }
+  }
+
+  // Determine isRunning per session
+  const latestMtime = getLatestMtimeByProject(
+    sessions.map(s => ({ project: s.project, mtime: s._mtime })), running
+  );
+  for (const s of sessions) {
+    s.isRunning = isSessionActive(s.project, s._mtime, running, latestMtime);
+    delete s._mtime;
   }
 
   // Upload session metadata
@@ -347,20 +376,19 @@ async function syncSessions() {
     console.log(`[sync] ${sessions.length} recent sessions (${running.size} active)`);
   }
 
-  // Initial message sync: active session per project (latest only) + recent 24h sessions
-  // Active: for each running project, only the most recent session (the one being used)
-  // Recent: mtime within 24h (user might review on phone)
-  // Older: skip, can be loaded on-demand via WS in Phase 2
+  // Initial message sync: active sessions + recent 24h sessions
+  // Uses same isSessionActive() logic as isRunning above
   const syncJobs = [];
   const syncedSessionIds = new Set();
+  const latestMtimeForSync = getLatestMtimeByProject(
+    [...projectSessions.entries()].flatMap(([project, items]) =>
+      items.map(s => ({ project, mtime: s.mtime }))
+    ), running
+  );
   for (const [project, items] of projectSessions) {
-    const sorted = items.sort((a, b) => b.mtime - a.mtime);
-    const isActiveProject = running.has(project);
-
-    for (let i = 0; i < sorted.length; i++) {
-      const s = sorted[i];
+    for (const s of items) {
       if (synced.has(s.sessionId) || syncedSessionIds.has(s.sessionId)) continue;
-      const isActive = isActiveProject && i === 0; // only the latest session in a running project
+      const isActive = isSessionActive(project, s.mtime, running, latestMtimeForSync);
       const isRecent = s.mtime > recentCutoff;
       if (!isActive && !isRecent) continue;
       syncedSessionIds.add(s.sessionId);

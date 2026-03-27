@@ -5,7 +5,9 @@ import os
 app = FastAPI()
 
 from bridge_sync import bridge_router
+from bridge_read import read_router
 app.include_router(bridge_router)
+app.include_router(read_router)
 
 
 @app.get("/api/health")
