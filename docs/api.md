@@ -107,7 +107,24 @@ Bridge 上传压缩后的图片到 S3。
 
 ---
 
-## REST API — App → Server (待实现)
+## REST API — 通用
+
+### GET /api/bridge/config
+
+返回服务端配置，供 bridge/app 自动发现 WS URL 等。
+
+**Query**: 无
+
+**Response** `200`
+```json
+{
+  "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1"
+}
+```
+
+---
+
+## REST API — App → Server
 
 ### GET /api/bridge/devices
 

@@ -14,7 +14,7 @@ async function processImage(base64Data) {
     .jpeg({ quality: 80 })
     .toBuffer();
 
-  const hashInput = Buffer.concat([compressed.slice(0, 8192), Buffer.from(String(compressed.length))]);
+  const hashInput = Buffer.concat([compressed.subarray(0, 8192), Buffer.from(String(compressed.length))]);
   const hash = crypto.createHash('md5').update(hashInput).digest('hex');
   const key = `${hash}.jpg`;
 
@@ -23,6 +23,16 @@ async function processImage(base64Data) {
 }
 
 export async function extractForApp(msg) {
+  // ai-title: special format
+  if (msg.type === 'ai-title') {
+    return {
+      uuid: msg.sessionId || '',
+      type: 'ai-title',
+      content: msg.aiTitle || '',
+      timestamp: msg.timestamp || '',
+    };
+  }
+
   let content = msg.message?.content ?? '';
   if (Array.isArray(content)) {
     const imageJobs = [];

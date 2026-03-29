@@ -45,14 +45,17 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
 5. Start `fs.watch` on all `.jsonl` files (no age filter)
 
 ### Runtime (always-on, auto-start on boot)
-- **File change** → 100ms debounce per session (dedup `fs.watch` duplicate events) → read new lines → extract → POST to DDB
-  - New session detected (`synced` has no entry) → immediately sync session metadata to DDB + add to `recentSessions`
-  - Resumed historical session (not in `recentSessions`) → immediately sync session metadata + add to `recentSessions`
-  - Phase 2: also WS push for real-time
+- **File change** → fs.watch triggers → immediately read new lines → extract → WS push to server
+  - Per-session busy flag prevents concurrent reads (pending events replayed after)
+  - Partial JSON lines (mid-write) → break, synced not advanced, next event re-reads
+  - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
+  - WS fallback: if WS not connected, HTTP POST to DDB
+  - New session detected → immediately sync session metadata to DDB + add to `recentSessions`
 - **Periodic sync (60s)** → only sync `recentSessions` (24h active) metadata to DDB, NOT full scan
   - Refreshes `isRunning`, `preview`, `lastActive` for recent sessions
   - Startup does full sync; periodic sync is incremental
 - **Active detection** → `pgrep -f claude` + cwd matching, re-checked every 60s
+- **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
 
 ### Data extraction
 
@@ -209,7 +212,14 @@ App taps session "abc":
 ```
 agentpeek/
 ├── bridge/
-│   └── bridge.mjs                         # File watcher + HTTP POST + WS
+│   ├── bridge.mjs                         # Entry point — startup, orchestration
+│   ├── config.mjs                         # CLI args, config loading, server config fetch
+│   ├── http.mjs                           # HTTP POST helper
+│   ├── extract.mjs                        # Message extraction, image compression, DDB upload
+│   ├── session.mjs                        # Preview, model, project name, isRunning detection
+│   ├── sync.mjs                           # Initial + periodic session sync
+│   ├── watcher.mjs                        # fs.watch → read → WS push
+│   └── ws.mjs                             # WebSocket client, auto-reconnect, sync_session handler
 ├── server/
 │   ├── src/
 │   │   ├── main.py                        # FastAPI entry
@@ -239,8 +249,8 @@ agentpeek/
 
 ### Phase 1: Bridge → DDB ✅ Complete
 - bridge.mjs watches .jsonl, syncs session metadata + messages to DDB
-- New/resumed sessions detected instantly via fs.watch (no 60s delay)
-- 100ms debounce per session to dedup fs.watch duplicate events
+- New/resumed sessions detected instantly via fs.watch
+- fs.watch → immediate read → WS push (no debounce, no polling)
 - Periodic sync (60s) only covers recent 24h sessions, not full scan
 - Deployed to us-west-2 (AgentPeekTest), verified
 

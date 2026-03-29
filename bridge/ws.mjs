@@ -67,7 +67,14 @@ function connect() {
   });
 
   _ws.on('error', (err) => {
-    console.error(`[ws] error: ${err.message}`);
+    console.error(`[ws] error: ${err.message} (code: ${err.code}, type: ${err.type})`);
+  });
+
+  _ws.on('unexpected-response', (req, res) => {
+    console.error(`[ws] unexpected-response: ${res.statusCode}`);
+    let body = '';
+    res.on('data', (chunk) => body += chunk);
+    res.on('end', () => console.error(`[ws] response body: ${body.slice(0, 200)}`));
   });
 }
 

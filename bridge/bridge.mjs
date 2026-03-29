@@ -6,8 +6,10 @@
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
+import fs from 'fs';
+import path from 'path';
 import { CLAUDE_PROJECTS, SYNC_INTERVAL } from './config.mjs';
-import { loadConfig } from './config.mjs';
+import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions } from './sync.mjs';
 import { startWatcher } from './watcher.mjs';
@@ -16,12 +18,32 @@ import { initWs } from './ws.mjs';
 const CONFIG = loadConfig();
 initHttp(CONFIG);
 
+// Auto-discover WS URL from server
+const serverConfig = await fetchServerConfig(CONFIG);
+if (serverConfig.wsUrl) CONFIG.wsUrl = serverConfig.wsUrl;
+
 console.log('claude-bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
+if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
-await syncSessions(CONFIG);
-startWatcher(CONFIG);
 initWs(CONFIG);
-setInterval(() => syncSessions(CONFIG), SYNC_INTERVAL);
+if (!CONFIG.skipInit) {
+  await syncSessions(CONFIG);
+  setInterval(() => syncSessions(CONFIG), SYNC_INTERVAL);
+} else {
+  // Skip to end of all files so we only see new messages
+  const { synced } = await import('./extract.mjs');
+  for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
+    const dir = path.join(CLAUDE_PROJECTS, project);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'))) {
+      const fp = path.join(dir, file);
+      const lines = fs.readFileSync(fp, 'utf-8').split('\n').length;
+      synced.set(file.replace('.jsonl', ''), lines);
+    }
+  }
+  console.log('[skip-init] skipping sync, watching new messages only');
+}
+startWatcher(CONFIG);

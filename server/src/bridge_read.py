@@ -42,6 +42,14 @@ def _query_all(table, **kwargs):
     return items
 
 
+@read_router.get("/config")
+async def get_config():
+    """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
+    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
+    return {"wsUrl": ws_url}
+
+
 @read_router.get("/devices")
 async def get_devices(request: Request):
     sessions_table, _ = _tables()
@@ -236,7 +244,6 @@ async def get_install(request: Request, name: str = Query(None)):
         '    <string>$DIR/bridge.mjs</string>\n'
         f'    <string>--server</string><string>{server}</string>\n'
         f'    <string>--key</string><string>{api_key}</string>\n'
-        f'    <string>--ws</string><string>{ws_url}</string>\n'
         '    <string>--name</string><string>$NAME</string>\n'
         '  </array>\n'
         '  <key>RunAtLoad</key><true/>\n'
@@ -267,7 +274,7 @@ async def get_install(request: Request, name: str = Query(None)):
         'After=network.target\n'
         '[Service]\n'
         'ExecStart=$NODE $DIR/bridge.mjs --server '
-        f'{server} --key {api_key} --ws {ws_url} --name $NAME\n'
+        f'{server} --key {api_key} --name $NAME\n'
         'Restart=always\n'
         'RestartSec=5\n'
         '[Install]\n'
