@@ -1,0 +1,184 @@
+/* === Base === */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0d1117; color: #e6edf3; font-size: 14px;
+  display: flex; flex-direction: column;
+}
+
+/* === Config bar === */
+.config { padding: 12px; background: #161b22; border-bottom: 1px solid #30363d; }
+.config input { width: 100%; padding: 8px 12px; margin-bottom: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; }
+.config .row { display: flex; gap: 8px; }
+.config button { flex: 1; padding: 8px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; }
+.config button:active { background: #2ea043; }
+.config .status { margin-top: 8px; font-size: 12px; color: #8b949e; }
+.config .status.ok { color: #3fb950; }
+.config .status.err { color: #f85149; }
+
+/* === Breadcrumb === */
+.breadcrumb { padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; display: none; flex-shrink: 0; }
+.breadcrumb span { cursor: pointer; color: #58a6ff; }
+.breadcrumb span:hover { text-decoration: underline; }
+
+/* === Content === */
+#content { flex: 1; overflow-y: auto; }
+
+/* === List items === */
+.list { padding: 4px 0; }
+.item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
+.item:active { background: #161b22; }
+.item .title { font-size: 15px; font-weight: 500; }
+.item .subtitle { font-size: 12px; color: #8b949e; margin-top: 2px; }
+.item .meta { font-size: 11px; color: #6e7681; margin-top: 4px; display: flex; gap: 12px; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.badge.running { background: #238636; color: #fff; }
+.badge.stopped { background: #30363d; color: #8b949e; }
+
+/* === Messages container === */
+.messages { padding: 8px 12px; }
+
+/* === User message === */
+.msg-user { background: #1f6feb; padding: 10px 14px; margin-bottom: 8px; border-radius: 12px; max-width: 88%; margin-left: auto; }
+.msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.msg-user .msg-time { font-size: 10px; color: rgba(255,255,255,0.5); margin-top: 4px; text-align: right; }
+
+/* === Assistant turn (timeline container) === */
+.assistant-turn { margin-bottom: 8px; }
+
+/* === Timeline item === */
+.tl-item { position: relative; padding-left: 30px; padding-top: 6px; padding-bottom: 6px; }
+/* Dot */
+.tl-item::before {
+  content: ''; position: absolute; left: 9px; top: 13px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #8b949e; z-index: 2;
+}
+/* Line: each item draws its own segment, they stack into a continuous line */
+.tl-item::after {
+  content: ''; position: absolute; left: 12px; top: -2px; bottom: -2px;
+  width: 1px; background: #484f58; z-index: 0;
+}
+/* First item in a run: line starts from dot center */
+.tl-item:first-child::after { top: 16px; }
+/* Last item in a run: line ends at dot center */
+.tl-item:last-child::after { bottom: calc(100% - 16px); }
+/* Only child: no line at all */
+.tl-item:only-child::after { display: none; }
+
+/* Assistant text (as timeline item) */
+.assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; }
+.assistant-text:empty { display: none; }
+
+/* === Markdown in assistant text === */
+.assistant-text p { margin: 0 0 8px 0; }
+.assistant-text p:last-child { margin-bottom: 0; }
+.assistant-text code { background: rgba(215, 186, 125, 0.15); color: #D7BA7D; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.assistant-text pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; }
+.assistant-text pre code { background: none; padding: 0; font-size: 12px; }
+.assistant-text ul, .assistant-text ol { padding-left: 20px; margin: 4px 0; }
+.assistant-text li { margin: 2px 0; }
+.assistant-text h1, .assistant-text h2, .assistant-text h3 { margin: 12px 0 6px; font-weight: 600; }
+.assistant-text h1 { font-size: 18px; }
+.assistant-text h2 { font-size: 16px; }
+.assistant-text h3 { font-size: 14px; }
+.assistant-text table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.assistant-text th, .assistant-text td { border: 1px solid #30363d; padding: 6px 10px; font-size: 12px; }
+.assistant-text th { background: #161b22; }
+.assistant-text blockquote { border-left: 3px solid #30363d; padding-left: 12px; color: #8b949e; margin: 8px 0; }
+.assistant-text a { color: #58a6ff; text-decoration: none; }
+.assistant-text a:hover { text-decoration: underline; }
+.assistant-text strong { color: #f0f6fc; }
+.assistant-text hr { margin: 12px 0; }
+
+/* === Thinking === */
+.thinking-block { padding: 0; margin: 0; line-height: 21px; }
+.thinking-toggle { cursor: pointer; color: #8b949e; font-size: 12px; user-select: none; }
+.thinking-toggle:hover { color: #e6edf3; }
+.thinking-body { display: none; margin-top: 6px; color: #8b949e; font-size: 12px; white-space: pre-wrap; line-height: 1.5; max-height: 300px; overflow-y: auto; }
+
+/* === Tool node (extends tl-item) === */
+.tool-node::before { background: #74c991; }
+.tool-node.error::before { background: #c74e39; }
+.tool-node.warning::before { background: #e1c08d; }
+
+.tool-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0; font-size: 13px; cursor: pointer; user-select: none;
+  line-height: 21px;
+}
+.tool-name { font-weight: 700; }
+.tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tool-status { font-size: 11px; color: #8b949e; }
+
+.tool-body {
+  border: 0.8px solid #3d444d; border-radius: 6px; margin: 4px 0 0;
+  overflow: hidden;
+}
+.tool-body-content { cursor: pointer; }
+.tool-body-content.no-clamp { cursor: default; }
+/* Clamp each value row to 3 lines by default */
+.tool-body-content .tool-value { max-height: 5.2em; overflow: hidden; }
+.tool-body-content.open .tool-value { max-height: none; }
+.tool-body-content.no-clamp .tool-value { max-height: none; }
+
+/* Tool grid (Bash IN/OUT, Read file, etc.) */
+.tool-grid { display: grid; grid-template-columns: max-content 1fr; }
+.tool-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; border-top: 0.8px solid #3d444d; }
+.tool-row:first-child { border-top: none; }
+.tool-label {
+  grid-column: 1; color: #8b949e; opacity: 0.6; font-family: 'SF Mono', monospace;
+  font-size: 11px; padding: 10px 10px 6px 6px; white-space: nowrap;
+}
+.tool-value {
+  grid-column: 2; white-space: pre-wrap; word-break: break-word;
+  font-size: 12px; padding: 8px 8px 6px; font-family: 'SF Mono', monospace;
+  line-height: 1.5;
+}
+.tool-value.clamp { max-height: 5.2em; overflow: hidden; cursor: pointer; }
+.tool-value.clamp.expanded { max-height: none; }
+
+/* Diff view (fallback) */
+.diff-view { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.6; }
+.diff-line { padding: 0 8px; white-space: pre-wrap; word-break: break-word; }
+.diff-prefix { display: inline-block; width: 16px; color: #6e7681; user-select: none; }
+.diff-add { background: rgba(63, 185, 80, 0.12); color: #e6edf3; }
+.diff-add .diff-prefix { color: #3fb950; }
+.diff-del { background: rgba(248, 81, 73, 0.12); color: #e6edf3; }
+.diff-del .diff-prefix { color: #f85149; }
+.diff-ctx { color: #8b949e; }
+
+
+/* diff2html dark overrides */
+.diff-container .d2h-file-header { display: none; }
+.diff-container .d2h-info { display: none !important; }
+.diff-container .d2h-file-wrapper { border: none; margin: 0; }
+.diff-container .d2h-code-linenumber,
+.diff-container td.d2h-code-linenumber { display: none !important; }
+.diff-container .d2h-code-line { padding: 0 0.5em !important; width: 100% !important; }
+
+/* === Interrupt (extends tl-item) === */
+.msg-interrupt { color: #8b949e; font-style: italic; font-size: 12px; padding-top: 2px; padding-bottom: 2px; line-height: 21px; }
+.msg-interrupt::before { background: #e1c08d; }
+
+/* === System / AI-title === */
+.msg-system { padding: 6px 12px; font-style: italic; color: #8b949e; font-size: 12px; margin-bottom: 4px; }
+.msg-ai-title { padding: 6px 12px; color: #8b949e; font-size: 12px; margin-bottom: 4px; border: 1px solid #30363d; border-radius: 6px; }
+
+/* === Image === */
+.img-placeholder { display: inline-block; vertical-align: top; margin: 2px 4px 2px 0; }
+.img-placeholder img { max-height: 60px; border-radius: 6px; cursor: pointer; }
+.img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; }
+.img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
+
+/* === Stats bar === */
+.stats { padding: 6px 12px; background: #0d1117; border-top: 1px solid #30363d; font-size: 11px; color: #6e7681; text-align: center; flex-shrink: 0; display: flex; justify-content: center; gap: 12px; }
+.ws-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+/* === Loading/Empty === */
+.loading { text-align: center; padding: 40px; color: #8b949e; }
+.empty { text-align: center; padding: 40px; color: #6e7681; }
+
+/* === Timestamp (shared) === */
+.msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; }

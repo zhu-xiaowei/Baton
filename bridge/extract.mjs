@@ -59,6 +59,7 @@ export async function extractForApp(msg) {
   }
   return {
     uuid: msg.uuid || msg.leafUuid || '',
+    parentUuid: msg.parentUuid || null,
     type: msg.type || '',
     content,
     timestamp: msg.timestamp || '',
