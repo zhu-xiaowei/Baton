@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AgentPeek Test</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0d1117; color: #e6edf3; font-size: 14px; display: flex; flex-direction: column; }
+
+  /* Config bar */
+  .config { padding: 12px; background: #161b22; border-bottom: 1px solid #30363d; }
+  .config input { width: 100%; padding: 8px 12px; margin-bottom: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; }
+  .config .row { display: flex; gap: 8px; }
+  .config button { flex: 1; padding: 8px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; }
+  .config button:active { background: #2ea043; }
+  .config .status { margin-top: 8px; font-size: 12px; color: #8b949e; }
+  .config .status.ok { color: #3fb950; }
+  .config .status.err { color: #f85149; }
+
+  /* Navigation breadcrumb */
+  .breadcrumb { padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; display: none; flex-shrink: 0; }
+  .breadcrumb span { cursor: pointer; color: #58a6ff; }
+  .breadcrumb span:hover { text-decoration: underline; }
+
+  /* Content area — scrollable */
+  #content { flex: 1; overflow-y: auto; }
+
+  /* List items */
+  .list { padding: 4px 0; }
+  .item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
+  .item:active { background: #161b22; }
+  .item .title { font-size: 15px; font-weight: 500; }
+  .item .subtitle { font-size: 12px; color: #8b949e; margin-top: 2px; }
+  .item .meta { font-size: 11px; color: #6e7681; margin-top: 4px; display: flex; gap: 12px; }
+  .item .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+  .badge.running { background: #238636; color: #fff; }
+  .badge.stopped { background: #30363d; color: #8b949e; }
+
+  /* Messages */
+  .messages { padding: 8px; }
+  .msg { padding: 10px 14px; margin-bottom: 6px; border-radius: 12px; max-width: 92%; word-wrap: break-word; }
+  .msg.user { background: #1f6feb; margin-left: auto; }
+  .msg.assistant { background: #21262d; }
+  .msg.tool { background: #1c1e23; border-left: 3px solid #30363d; border-radius: 6px; font-size: 12px; }
+  .msg.thinking { background: transparent; border: 1px solid #30363d; border-radius: 6px; }
+  .msg.system, .msg.summary { background: #1c1e23; font-style: italic; color: #8b949e; font-size: 12px; }
+  .msg.ai-title { background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; font-size: 12px; }
+  .msg .msg-type { font-size: 10px; color: #8b949e; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .msg .msg-content { white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+  .msg .msg-content.collapsed { max-height: 6em; overflow: hidden; cursor: pointer; }
+  .msg .msg-content img { max-width: 100%; border-radius: 8px; margin: 4px 0; }
+  .msg .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; text-align: right; }
+  .msg .expand-btn { font-size: 11px; color: #58a6ff; cursor: pointer; margin-top: 4px; }
+  .thinking-toggle { cursor: pointer; color: #8b949e; font-size: 12px; }
+  .thinking-toggle:hover { color: #e6edf3; }
+  .thinking-body { display: none; margin-top: 8px; color: #8b949e; font-size: 12px; white-space: pre-wrap; }
+  .img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
+
+  /* Loading */
+  .loading { text-align: center; padding: 40px; color: #8b949e; }
+  .empty { text-align: center; padding: 40px; color: #6e7681; }
+
+  /* Stats bar */
+  .stats { padding: 6px 12px; background: #0d1117; border-top: 1px solid #30363d; font-size: 11px; color: #6e7681; text-align: center; flex-shrink: 0; display: flex; justify-content: center; gap: 12px; }
+  .stats .ws-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<!-- Config -->
+<div class="config" id="configPanel">
+  <div id="configCollapsed" style="display:none; cursor:pointer;" onclick="toggleConfig()">
+    <span class="status ok" style="display:inline">Connected</span>
+    <span style="color:#6e7681; font-size:12px; margin-left:8px;" id="configHostHint"></span>
+    <span style="float:right; color:#58a6ff; font-size:12px;">Edit ▾</span>
+  </div>
+  <div id="configExpanded">
+    <input id="serverUrl" placeholder="Server URL (e.g. https://xxx.execute-api.xxx.amazonaws.com/v1)" />
+    <input id="apiKey" placeholder="API Key" />
+    <div class="row">
+      <button onclick="connect()">Connect</button>
+    </div>
+    <div id="configStatus" class="status"></div>
+  </div>
+</div>
+
+<!-- Breadcrumb -->
+<div id="breadcrumb" class="breadcrumb"></div>
+
+<!-- Content area -->
+<div id="content"></div>
+
+<!-- Stats -->
+<div id="stats" class="stats" style="display:none"></div>
+
+
+<script>
+let SERVER = '';
+let KEY = '';
+let state = { device: null, project: null, session: null };
+
+function osName(os) {
+  const map = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' };
+  return map[os] || os || 'unknown';
+}
+
+// Load saved config
+const saved = localStorage.getItem('agentpeek-config');
+if (saved) {
+  const c = JSON.parse(saved);
+  document.getElementById('serverUrl').value = c.server || '';
+  document.getElementById('apiKey').value = c.key || '';
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById('configStatus');
+  el.textContent = msg;
+  el.className = 'status ' + (type || '');
+}
+
+function collapseConfig() {
+  document.getElementById('configExpanded').style.display = 'none';
+  const host = SERVER.replace(/https?:\/\//, '').split('/')[0];
+  document.getElementById('configHostHint').textContent = host;
+  document.getElementById('configCollapsed').style.display = 'block';
+}
+
+function toggleConfig() {
+  const expanded = document.getElementById('configExpanded');
+  const collapsed = document.getElementById('configCollapsed');
+  if (expanded.style.display === 'none') {
+    expanded.style.display = 'block';
+    collapsed.style.display = 'none';
+  } else {
+    collapseConfig();
+  }
+}
+
+async function api(path, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  const url = `${SERVER}${path}${qs ? '?' + qs : ''}`;
+  const res = await fetch(url, { headers: { 'x-api-key': KEY } });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function timeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return Math.floor(diff / 86400000) + 'd ago';
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function updateBreadcrumb() {
+  const el = document.getElementById('breadcrumb');
+  const parts = [];
+  parts.push(`<span onclick="loadDevices()">Devices</span>`);
+  if (state.device) {
+    parts.push(`<span onclick="loadProjects('${state.device}')">${state.device}</span>`);
+  }
+  if (state.project) {
+    parts.push(`<span onclick="loadSessions('${state.device}','${state.project.hash}','${state.project.name}')">${state.project.name}</span>`);
+  }
+  if (state.session) {
+    const label = state.sessionPreview || state.session.slice(0, 8) + '...';
+    parts.push(`<span>${label}</span>`);
+  }
+  el.innerHTML = parts.join(' &rsaquo; ');
+  el.style.display = parts.length > 1 ? 'block' : 'none';
+}
+
+// ---- Connect ----
+async function connect() {
+  SERVER = document.getElementById('serverUrl').value.replace(/\/$/, '');
+  KEY = document.getElementById('apiKey').value;
+  if (!SERVER || !KEY) { setStatus('Please fill in both fields', 'err'); return; }
+
+  localStorage.setItem('agentpeek-config', JSON.stringify({ server: SERVER, key: KEY }));
+  setStatus('Connecting...');
+  try {
+    await api('/api/health');
+    // Fetch WS URL from server config
+    try {
+      const cfg = await api('/api/bridge/config');
+      WS_URL = cfg.wsUrl || '';
+    } catch {}
+    setStatus('Connected', 'ok');
+    collapseConfig();
+    loadDevices();
+  } catch (e) {
+    setStatus('Failed: ' + e.message, 'err');
+  }
+}
+
+// ---- Devices ----
+async function loadDevices() {
+  state = { device: null, project: null, session: null };
+  disconnectWs();
+  updateBreadcrumb();
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading">Loading devices...</div>';
+
+  try {
+    const data = await api('/api/bridge/devices');
+    if (data.devices.length === 0) {
+      content.innerHTML = '<div class="empty">No devices found</div>';
+      return;
+    }
+    content.innerHTML = '<div class="list">' + data.devices.map(d => `
+      <div class="item" onclick="loadProjects('${d.deviceName}')">
+        <div class="title">${d.deviceName}</div>
+        <div class="subtitle">${osName(d.os)}</div>
+        <div class="meta">
+          <span>${d.projectCount} projects</span>
+          <span>${d.sessionCount} sessions</span>
+          <span>${timeAgo(d.lastActive)}</span>
+        </div>
+      </div>
+    `).join('') + '</div>';
+    showStats(`${data.devices.length} device(s)`);
+  } catch (e) {
+    content.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ---- Projects ----
+async function loadProjects(device) {
+  state = { device, project: null, session: null };
+  disconnectWs();
+  updateBreadcrumb();
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading">Loading projects...</div>';
+
+  try {
+    const data = await api('/api/bridge/projects', { device });
+    content.innerHTML = '<div class="list">' + data.projects.map(p => `
+      <div class="item" onclick="loadSessions('${device}','${p.projectHash}','${p.projectName}')">
+        <div class="title">${p.projectName}</div>
+        <div class="subtitle">${p.projectPath}</div>
+        <div class="meta">
+          <span>${p.sessionCount} sessions</span>
+          <span>${p.activeCount} active</span>
+          <span>${timeAgo(p.lastActive)}</span>
+        </div>
+      </div>
+    `).join('') + '</div>';
+    showStats(`${data.projects.length} project(s)`);
+  } catch (e) {
+    content.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ---- Sessions ----
+async function loadSessions(device, projectHash, projectName) {
+  disconnectWs();
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading">Loading sessions...</div>';
+
+  try {
+    const data = await api('/api/bridge/sessions', { device, project: projectHash });
+    const projName = projectName || projectHash;
+    state = { device, project: { hash: projectHash, name: projName }, session: null };
+    updateBreadcrumb();
+
+    content.innerHTML = '<div class="list">' + data.sessions.map(s => `
+      <div class="item" onclick="loadMessages('${s.sessionId}', '${(s.preview || '').replace(/'/g, "\\'")}')">
+        <div class="title">
+          <span class="badge ${s.isRunning ? 'running' : 'stopped'}">${s.isRunning ? 'Running' : 'Stopped'}</span>
+          ${s.preview || 'No preview'}
+        </div>
+        <div class="subtitle">${s.model || 'unknown model'}</div>
+        <div class="meta">
+          <span>${s.sessionId.slice(0, 8)}...</span>
+          <span>${formatSize(s.size)}</span>
+          <span>${timeAgo(s.lastActive)}</span>
+        </div>
+      </div>
+    `).join('') + '</div>';
+    showStats(`${data.sessions.length} session(s)`);
+  } catch (e) {
+    content.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ---- Messages ----
+async function loadMessages(sessionId, preview) {
+  state.session = sessionId;
+  state.sessionPreview = preview || '';
+  updateBreadcrumb();
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading">Loading messages...</div>';
+
+  try {
+    const t0 = performance.now();
+    const data = await api('/api/bridge/messages', { session: sessionId });
+    const latency = Math.round(performance.now() - t0);
+
+    if (data.messages.length === 0) {
+      if (data.needSync) {
+        content.innerHTML = '<div class="loading">Syncing history from bridge...</div>';
+      } else {
+        content.innerHTML = '<div class="empty">No messages</div>';
+      }
+      // WS panel still needs to show for sync_complete
+      startWs(sessionId);
+      wsMessageCount = 0;
+      showStats('Waiting for sync...');
+      return;
+    }
+
+    content.innerHTML = '<div class="messages">' + data.messages.map(m => renderMessage(m)).join('') + '</div>';
+
+    // Scroll to bottom (wait for render) + load images
+    const el = document.getElementById('content');
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    loadImages(content);
+    wsMessageCount = data.messages.length;
+    showStats(`${data.messages.length} messages | ${latency}ms`);
+
+    // Connect WS for real-time updates
+    startWs(sessionId);
+  } catch (e) {
+    content.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// Classify message: detect thinking, tool_use, tool_result from content blocks
+function classifyMsg(msg) {
+  if (msg.type === 'ai-title') return 'ai-title';
+  if (!Array.isArray(msg.content)) return msg.type;
+  const types = msg.content.map(b => b.type);
+  if (types.includes('thinking') && types.length === 1) return 'thinking';
+  if (types.includes('tool_use')) return 'tool';
+  if (types.includes('tool_result')) return 'tool';
+  return msg.type;
+}
+
+function renderMessage(msg) {
+  const cls = classifyMsg(msg);
+  const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
+
+  if (cls === 'thinking') {
+    const block = msg.content.find(b => b.type === 'thinking');
+    const text = block?.thinking || '';
+    const secs = Math.round((block?.duration_ms || 0) / 1000);
+    const label = secs > 0 ? `Thought for ${secs}s` : 'Thinking';
+    return `<div class="msg thinking">
+      <div class="thinking-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">● ${label} ›</div>
+      <div class="thinking-body">${escapeHtml(text)}</div>
+      <div class="msg-time">${time}</div>
+    </div>`;
+  }
+
+  if (cls === 'tool') {
+    const html = renderContentBlocks(msg.content);
+    return `<div class="msg tool">
+      <div class="msg-content collapsed" onclick="toggleExpand(this)">${html}</div>
+      <div class="expand-btn" onclick="toggleExpand(this.previousElementSibling)">show more</div>
+      <div class="msg-time">${time}</div>
+    </div>`;
+  }
+
+  if (cls === 'ai-title') {
+    return `<div class="msg ai-title">
+      <div class="msg-type">ai-title</div>
+      <div class="msg-content">${escapeHtml(typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content))}</div>
+      <div class="msg-time">${time}</div>
+    </div>`;
+  }
+
+  const contentHtml = renderContentBlocks(msg.content);
+  // Skip empty assistant messages (e.g. empty text block before thinking/tool)
+  if (msg.type === 'assistant' && !contentHtml.trim()) return '';
+  return `<div class="msg ${msg.type}">
+    <div class="msg-type">${msg.type}</div>
+    <div class="msg-content">${contentHtml}</div>
+    <div class="msg-time">${time}</div>
+  </div>`;
+}
+
+function renderContentBlocks(content) {
+  if (typeof content === 'string') return escapeHtml(content);
+  if (!Array.isArray(content)) return escapeHtml(JSON.stringify(content));
+  const parts = [];
+  for (const block of content) {
+    if (block.type === 'image') {
+      if (block.key) parts.push(`<div class="img-placeholder" data-key="${escapeHtml(block.key)}" style="display:inline-block;vertical-align:top;margin:2px 4px 2px 0">...</div>`);
+      else parts.push('<span style="color:#8b949e">[Image]</span>');
+    } else {
+      let text;
+      if (block.type === 'text') text = escapeHtml(block.text || '');
+      else if (block.type === 'tool_use') text = `<span style="color:#d2a8ff">[Tool: ${escapeHtml(block.name || 'unknown')}]</span>\n${escapeHtml(JSON.stringify(block.input || {}, null, 2))}`;
+      else if (block.type === 'tool_result') {
+        const raw = typeof block.content === 'string' ? block.content
+          : Array.isArray(block.content) ? block.content.map(c => c.text || '').join('')
+          : JSON.stringify(block.content);
+        text = `<span style="color:#7ee787">[Result]</span>\n${escapeHtml(raw)}`;
+      } else if (block.type === 'thinking') text = `<span style="color:#8b949e">[Thinking]</span>\n${escapeHtml(block.thinking || '')}`;
+      else text = escapeHtml(JSON.stringify(block));
+      parts.push(text);
+    }
+  }
+  // Join: newline between text blocks, no newline between consecutive images
+  let html = '';
+  const isImg = (p) => p.startsWith('<div class="img-placeholder"');
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      if (isImg(parts[i]) && isImg(parts[i-1])) { /* consecutive images: no separator */ }
+      else html += '\n';
+    }
+    html += parts[i];
+  }
+  return html;
+}
+
+function toggleExpand(el) {
+  if (el.classList.contains('collapsed')) {
+    el.classList.remove('collapsed');
+    el.nextElementSibling.textContent = 'show less';
+  } else {
+    el.classList.add('collapsed');
+    el.nextElementSibling.textContent = 'show more';
+  }
+}
+
+function viewImage(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'img-overlay';
+  overlay.innerHTML = `<img src="${src}" />`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const imageCache = new Map();
+const IMAGE_CACHE_MAX = 200;
+const imageObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const el = entry.target;
+    imageObserver.unobserve(el);
+    loadOneImage(el);
+  }
+}, { rootMargin: '200px' });
+
+async function loadOneImage(el) {
+  const key = el.dataset.key;
+  // Check cache
+  if (imageCache.has(key)) {
+    el.innerHTML = `<img src="${imageCache.get(key)}" style="max-height:60px;border-radius:6px;cursor:pointer" onclick="viewImage(this.src)" />`;
+    return;
+  }
+  try {
+    const res = await fetch(`${SERVER}/api/bridge/image/${key}`, { headers: { 'x-api-key': KEY } });
+    if (!res.ok) { el.textContent = '[Image ' + res.status + ']'; return; }
+    const b64 = await res.text();
+    const dataUrl = `data:image/jpeg;base64,${b64}`;
+    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
+    imageCache.set(key, dataUrl);
+    el.innerHTML = `<img src="${dataUrl}" style="max-height:60px;border-radius:6px;cursor:pointer" onclick="viewImage(this.src)" />`;
+  } catch { el.textContent = '[Image error]'; }
+}
+
+function loadImages(container) {
+  container.querySelectorAll('.img-placeholder[data-key]').forEach((el) => {
+    if (el.dataset.loaded) return;
+    el.dataset.loaded = '1';
+    imageObserver.observe(el);
+  });
+}
+
+function showStats(text) {
+  const el = document.getElementById('stats');
+  el.style.display = 'flex';
+  const wsColor = wsStatusText === 'connected' ? '#3fb950' : wsStatusText === 'reconnecting' ? '#d29922' : '#f85149';
+  const wsHtml = wsStatusText ? `<span><span class="ws-dot" style="background:${wsColor}"></span>WS ${wsStatusText}</span>` : '';
+  el.innerHTML = `<span>${text}</span>${wsHtml}`;
+}
+let wsStatusText = '';
+
+// ---- WebSocket ----
+let ws = null;
+let wsSessionId = null;
+let wsMessageCount = 0;
+let WS_URL = '';
+
+function connectWs() {
+  if (!WS_URL) return;
+  if (ws) { ws.close(); ws = null; }
+  const url = `${WS_URL}?apiKey=${KEY}&role=app`;
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    setWsStatus('connected');
+    if (wsSessionId) subscribeSession(wsSessionId);
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.action === 'messages' && msg.sessionId === wsSessionId) {
+      // Append real-time messages
+      const container = document.querySelector('.messages');
+      if (container) {
+        for (const m of msg.messages) {
+          wsMessageCount++;
+          container.insertAdjacentHTML('beforeend', renderMessage(m));
+        }
+        const el = document.getElementById('content');
+        el.scrollTop = el.scrollHeight;
+        loadImages(container);
+        showStats(`${wsMessageCount} messages (${msg.messages.length} new via WS)`);
+      }
+    } else if (msg.action === 'sync_complete') {
+      // Reload messages from DDB
+      if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
+    }
+  };
+
+  ws.onclose = () => {
+    setWsStatus('disconnected');
+    if (state.session) {
+      setWsStatus('reconnecting');
+      setTimeout(() => { if (state.session) connectWs(); }, 3000);
+    }
+  };
+
+  ws.onerror = () => {};
+}
+
+function subscribeSession(sessionId) {
+  if (wsSessionId && wsSessionId !== sessionId) {
+    // Unsubscribe from previous
+    wsSend({ action: 'unsubscribe', sessionId: wsSessionId });
+  }
+  wsSessionId = sessionId;
+  wsSend({ action: 'subscribe', sessionId });
+}
+
+function wsSend(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
+}
+
+function setWsStatus(status) {
+  wsStatusText = status;
+  // Refresh stats bar to show updated WS status
+  const el = document.getElementById('stats');
+  if (el.style.display !== 'none') {
+    const msgSpan = el.querySelector('span');
+    showStats(msgSpan ? msgSpan.textContent : '');
+  }
+}
+
+function disconnectWs() {
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+    ws = null;
+    wsSessionId = null;
+    setWsStatus('');
+  }
+}
+
+function startWs(sessionId) {
+  wsSessionId = sessionId;
+  if (!ws) connectWs();
+  else subscribeSession(sessionId);
+}
+
+// Auto-connect if saved
+if (saved) {
+  const c = JSON.parse(saved);
+  if (c.server && c.key) setTimeout(connect, 100);
+}
+</script>
+</body>
+</html>

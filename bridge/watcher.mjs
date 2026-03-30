@@ -43,6 +43,7 @@ async function readAndSend(config, filename, sessionId) {
   if (lines.length <= lastLine) return;
 
   let lastParsedLine = lastLine;
+  let gotNewTitle = false;
 
   for (let i = lastLine; i < lines.length; i++) {
     if (!lines[i].trim()) { lastParsedLine = i + 1; continue; }
@@ -51,6 +52,7 @@ async function readAndSend(config, filename, sessionId) {
     lastParsedLine = i + 1;
 
     if (!VALID_TYPES.has(raw.type)) continue;
+    if (raw.type === 'ai-title') gotNewTitle = true;
 
     const msg = await extractForApp(raw);
     if (!msg.uuid) continue;
@@ -61,8 +63,8 @@ async function readAndSend(config, filename, sessionId) {
 
   synced.set(sessionId, lastParsedLine);
 
-  // Sync metadata for new sessions
-  if (lastParsedLine > lastLine && !recentSessions.has(sessionId)) {
+  // Sync metadata: new session or ai-title arrived (update preview)
+  if (lastParsedLine > lastLine && (gotNewTitle || !recentSessions.has(sessionId))) {
     const stat = fs.statSync(filePath);
     const projectHash = path.basename(path.dirname(filename));
     await post('/api/bridge/sync-sessions', {

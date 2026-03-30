@@ -54,15 +54,6 @@ export async function extractForApp(msg) {
         }
         return { type: 'image', placeholder: true };
       }
-      if (block.type === 'tool_result') {
-        const raw = JSON.stringify(block);
-        if (raw.length > 2000) {
-          const text = typeof block.content === 'string' ? block.content
-            : Array.isArray(block.content) ? block.content.map(c => c.text || '').join('')
-            : JSON.stringify(block.content);
-          return { ...block, content: text.slice(0, 500) + `... (${text.length} chars)` };
-        }
-      }
       return block;
     });
   }

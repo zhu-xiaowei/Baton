@@ -7,11 +7,10 @@
 #   ./install.sh --region us-west-2 --stack MyStack --repo my-repo
 #
 # What it does:
-#   1. Creates ECR repo (if needed)
-#   2. Uploads source to S3
-#   3. Builds Docker image via CodeBuild (arm64, no local Docker needed)
-#   4. Deploys/updates CloudFormation stack
-#   5. Prints API URL + API Key + bridge command
+#   1. Build server Docker image (ECR + CodeBuild)
+#   2. Deploy CloudFormation stack + update Lambdas
+#   3. Upload bridge install package to S3
+#   4. Print connection info + bridge install command
 
 set -euo pipefail
 
@@ -61,26 +60,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/src"
 TEMPLATE="$SCRIPT_DIR/template/AgentPeek.template"
 REPO_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
-BUCKET="${REPO_NAME}-build-${REGION}-${ACCOUNT_ID}"
+S3_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-images-${ACCOUNT_ID}"
 CODEBUILD_PROJECT="${STACK_NAME}-build"
 CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 
-# ===== Step 1: ECR =====
-echo "[1/5] Creating ECR repository..."
+# Ensure S3 bucket exists (shared for build artifacts, bridge package, images)
+aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
+
+# ===== Step 1: Build server Docker image =====
+echo "[1/4] Building server Docker image..."
+
+# ECR repo
 aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/dev/null 2>&1 \
-  && echo "  Created: $REPO_NAME" \
-  || echo "  Already exists: $REPO_NAME"
+  && echo "  ECR created: $REPO_NAME" \
+  || echo "  ECR exists: $REPO_NAME"
 
-# ===== Step 2: Upload source to S3 =====
-echo "[2/5] Uploading source to S3..."
-aws s3 mb "s3://${BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
-(cd "$SRC_DIR" && zip -qr /tmp/swift-chat-src.zip .)
-aws s3 cp /tmp/swift-chat-src.zip "s3://${BUCKET}/src.zip" --region "$REGION" --quiet
-rm -f /tmp/swift-chat-src.zip
-echo "  Uploaded to s3://${BUCKET}/src.zip"
-
-# ===== Step 3: CodeBuild =====
-echo "[3/5] Building Docker image via CodeBuild..."
+# Upload source
+(cd "$SRC_DIR" && zip -qr /tmp/agentpeek-src.zip .)
+aws s3 cp /tmp/agentpeek-src.zip "s3://${S3_BUCKET}/build/src.zip" --region "$REGION" --quiet
+rm -f /tmp/agentpeek-src.zip
 
 # Create CodeBuild role if needed
 if ! aws iam get-role --role-name "$CODEBUILD_ROLE" >/dev/null 2>&1; then
@@ -89,20 +87,21 @@ if ! aws iam get-role --role-name "$CODEBUILD_ROLE" >/dev/null 2>&1; then
       "Version":"2012-10-17",
       "Statement":[{"Effect":"Allow","Principal":{"Service":"codebuild.amazonaws.com"},"Action":"sts:AssumeRole"}]
     }' >/dev/null
-  aws iam put-role-policy --role-name "$CODEBUILD_ROLE" --policy-name build-policy \
-    --policy-document '{
-      "Version":"2012-10-17",
-      "Statement":[
-        {"Effect":"Allow","Action":["ecr:*"],"Resource":"*"},
-        {"Effect":"Allow","Action":["ecr-public:GetAuthorizationToken","sts:GetServiceBearerToken"],"Resource":"*"},
-        {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::'"$BUCKET"'/*"},
-        {"Effect":"Allow","Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],"Resource":"*"}
-      ]
-    }'
   echo "  Created IAM role: $CODEBUILD_ROLE"
   echo "  Waiting for role propagation..."
   sleep 10
 fi
+# Always update policy (S3 bucket may change between deploys)
+aws iam put-role-policy --role-name "$CODEBUILD_ROLE" --policy-name build-policy \
+  --policy-document '{
+    "Version":"2012-10-17",
+    "Statement":[
+      {"Effect":"Allow","Action":["ecr:*"],"Resource":"*"},
+      {"Effect":"Allow","Action":["ecr-public:GetAuthorizationToken","sts:GetServiceBearerToken"],"Resource":"*"},
+      {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::'"$S3_BUCKET"'/*"},
+      {"Effect":"Allow","Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],"Resource":"*"}
+    ]
+  }'
 
 # Create or update CodeBuild project
 BUILDSPEC="version: 0.2
@@ -123,11 +122,11 @@ BUILDSPEC_JSON=$(echo "$BUILDSPEC" | python3 -c "import sys,json; print(json.dum
 
 if aws codebuild batch-get-projects --names "$CODEBUILD_PROJECT" --region "$REGION" --query 'projects[0].name' --output text 2>/dev/null | grep -q "$CODEBUILD_PROJECT"; then
   aws codebuild update-project --name "$CODEBUILD_PROJECT" --region "$REGION" \
-    --source '{"type":"S3","location":"'"$BUCKET"'/src.zip","buildspec":'"$BUILDSPEC_JSON"'}' \
+    --source '{"type":"S3","location":"'"$S3_BUCKET"'/build/src.zip","buildspec":'"$BUILDSPEC_JSON"'}' \
     >/dev/null
 else
   aws codebuild create-project --name "$CODEBUILD_PROJECT" --region "$REGION" \
-    --source '{"type":"S3","location":"'"$BUCKET"'/src.zip","buildspec":'"$BUILDSPEC_JSON"'}' \
+    --source '{"type":"S3","location":"'"$S3_BUCKET"'/build/src.zip","buildspec":'"$BUILDSPEC_JSON"'}' \
     --artifacts '{"type":"NO_ARTIFACTS"}' \
     --environment '{"type":"ARM_CONTAINER","image":"aws/codebuild/amazonlinux2-aarch64-standard:3.0","computeType":"BUILD_GENERAL1_SMALL","privilegedMode":true}' \
     --service-role "arn:aws:iam::${ACCOUNT_ID}:role/${CODEBUILD_ROLE}" \
@@ -157,10 +156,9 @@ if [ "$STATUS" != "SUCCEEDED" ]; then
 fi
 echo "  Image: $REPO_URI:$TAG"
 
-# ===== Step 4: CloudFormation =====
-echo "[4/5] Deploying CloudFormation stack..."
+# ===== Step 2: Deploy CloudFormation =====
+echo "[2/4] Deploying CloudFormation stack..."
 IMAGE_URI="$REPO_URI:$TAG"
-IMAGES_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-images-${ACCOUNT_ID}"
 
 STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
@@ -169,7 +167,7 @@ if [ "$STACK_EXISTS" = "DOES_NOT_EXIST" ]; then
   aws cloudformation create-stack \
     --stack-name "$STACK_NAME" --region "$REGION" \
     --template-body "file://$TEMPLATE" \
-    --parameters "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" "ParameterKey=ImagesBucketName,ParameterValue=$IMAGES_BUCKET" \
+    --parameters "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
     --capabilities CAPABILITY_IAM >/dev/null
   echo "  Creating stack..."
   aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME" --region "$REGION"
@@ -177,7 +175,7 @@ else
   aws cloudformation update-stack \
     --stack-name "$STACK_NAME" --region "$REGION" \
     --template-body "file://$TEMPLATE" \
-    --parameters "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" "ParameterKey=ImagesBucketName,ParameterValue=$IMAGES_BUCKET" \
+    --parameters "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
     --capabilities CAPABILITY_IAM >/dev/null 2>&1 \
     && { echo "  Updating stack..."; aws cloudformation wait stack-update-complete --stack-name "$STACK_NAME" --region "$REGION"; } \
     || echo "  No stack changes needed"
@@ -201,14 +199,21 @@ if [ -n "$REST_FUNC" ]; then
     || echo "  REST Lambda update skipped"
 fi
 
-# ===== Step 5: Output =====
-echo "[5/5] Getting connection info..."
+# ===== Step 3: Upload bridge install package =====
+echo "[3/4] Uploading bridge package..."
+BRIDGE_DIR="$SCRIPT_DIR/../bridge"
+BRIDGE_TAR="/tmp/agentpeek-bridge.tar.gz"
+(cd "$BRIDGE_DIR" && tar czf "$BRIDGE_TAR" *.mjs package.json)
+aws s3 cp "$BRIDGE_TAR" "s3://${S3_BUCKET}/install/bridge.tar.gz" --region "$REGION" --quiet
+rm -f "$BRIDGE_TAR"
+echo "  Uploaded to s3://${S3_BUCKET}/install/bridge.tar.gz"
+
+# ===== Step 4: Output =====
+echo "[4/4] Getting connection info..."
 echo ""
 
 API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`APIURL`].OutputValue' --output text)
-WS_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`WsURL`].OutputValue' --output text)
 
 KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
   --query "items[?name=='${STACK_NAME}-api-key'].id" --output text)
@@ -220,7 +225,6 @@ echo "  Deploy complete!"
 echo "================================================"
 echo ""
 echo "  API URL:  $API_URL"
-echo "  WS URL:   $WS_URL"
 echo "  API Key:  $API_KEY"
 echo ""
 echo "  Install bridge (any Mac/Linux):"

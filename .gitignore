@@ -28,8 +28,10 @@ __pycache__/
 # Claude Code
 CLAUDE.md
 
-# Test
-test/
+# Test cache
+test/__pycache__/
+test/.pytest_cache/
+test/.env
 
 # IDE
 .idea/

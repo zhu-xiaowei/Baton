@@ -215,10 +215,17 @@ async def get_install(request: Request, name: str = Query(None)):
     if name:
         name_block = f'NAME="{name}"'
     else:
-        name_block = ('DEFAULT_NAME="$(hostname)"\n'
-                      'printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
-                      'read -r NAME < /dev/tty\n'
-                      'NAME="${NAME:-$DEFAULT_NAME}"')
+        name_block = (
+            '# Read existing name from config, fall back to hostname\n'
+            'EXISTING_NAME=""\n'
+            'if [ -f "$DIR/config.json" ]; then\n'
+            '  EXISTING_NAME=$(python3 -c "import json; print(json.load(open(\'$DIR/config.json\')).get(\'deviceName\',\'\'))" 2>/dev/null || true)\n'
+            'fi\n'
+            'DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"\n'
+            'printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
+            'read -r NAME < /dev/tty\n'
+            'NAME="${NAME:-$DEFAULT_NAME}"'
+        )
     script = (
         '#!/bin/bash\n'
         'set -e\n'
@@ -310,3 +317,5 @@ async def get_image(key: str):
         return Response(content=body, media_type="image/jpeg")
     except s3.exceptions.NoSuchKey:
         return Response(status_code=404, content="Not found")
+    except Exception as e:
+        return Response(status_code=404, content=f"Not found: {e}")
