@@ -6,7 +6,11 @@
     for (const msg of messages) {
       if (!Array.isArray(msg.content)) continue;
       for (const b of msg.content) {
-        if (b.type === 'tool_result' && b.tool_use_id) resultMap[b.tool_use_id] = b;
+        if (b.type === 'tool_result' && b.tool_use_id) {
+          // Attach Agent metadata if present on the message
+          if (msg.toolUseResult) b._agentMeta = msg.toolUseResult;
+          resultMap[b.tool_use_id] = b;
+        }
       }
     }
     return resultMap;

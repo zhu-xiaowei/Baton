@@ -67,6 +67,10 @@
             matching: 'lines', colorScheme: 'dark', highlight: true,
           });
           ui.draw();
+          // Force remove white backgrounds from structural diff2html elements only
+          el.querySelectorAll('.d2h-file-wrapper, .d2h-file-diff, .d2h-code-wrapper, .d2h-diff-table, .d2h-diff-tbody').forEach(node => {
+            node.style.backgroundColor = 'transparent';
+          });
           // Set language on code blocks so hljs knows what to highlight
           const lang = detectLang(fullPath);
           if (lang) {
@@ -82,11 +86,22 @@
             });
           }
           ui.highlightCode();
-          // Fallback: if highlightCode didn't work, manually highlight lines without del/ins
-          if (el.querySelectorAll('[class*="hljs-"]').length === 0 && lang && typeof hljs !== 'undefined') {
+          // Ensure every line gets syntax highlighting
+          if (lang && typeof hljs !== 'undefined') {
             el.querySelectorAll('.d2h-code-line-ctn').forEach(ctn => {
-              if (!ctn.textContent.trim() || ctn.querySelector('del') || ctn.querySelector('ins')) return;
-              try { ctn.innerHTML = hljs.highlight(ctn.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+              if (!ctn.textContent.trim()) return;
+              // Skip if already highlighted
+              if (ctn.querySelector('[class*="hljs-"]')) return;
+              const delIns = ctn.querySelectorAll('del, ins');
+              if (delIns.length > 0) {
+                // Highlight text inside each del/ins separately, preserving the tag
+                delIns.forEach(tag => {
+                  if (!tag.textContent.trim()) return;
+                  try { tag.innerHTML = hljs.highlight(tag.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+                });
+              } else {
+                try { ctn.innerHTML = hljs.highlight(ctn.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+              }
             });
           }
         } catch (e) {
@@ -101,7 +116,8 @@
 
     const status = resultText(result);
     const statusLabel = status.includes('successfully') ? 'Modified' : (status.includes('Created') ? 'Created' : '');
-    return { name: 'Edit', desc: file, status: statusLabel, body: diffHtml };
+    const totalLines = (oldStr ? oldStr.split('\n').length : 0) + (newStr ? newStr.split('\n').length : 0);
+    return { name: 'Edit', desc: file, status: statusLabel, body: diffHtml, collapsible: totalLines > 10 };
   }
 
   // Render Write tool
@@ -141,6 +157,39 @@
       </div>`;
     }).join('');
     return { name: 'Update Todos', desc: '', body: `<div style="padding:4px 0">${html}</div>` };
+  }
+
+  // Render Agent tool with stats
+  function renderAgent(input, result) {
+    const desc = input.description || input.subagent_type || '';
+    const meta = result?._agentMeta;
+    let statsHtml = '';
+    if (meta) {
+      const secs = Math.round((meta.totalDurationMs || 0) / 1000);
+      const calls = meta.totalToolUseCount || 0;
+      statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
+    } else if (!result) {
+      // No result yet — show running timer
+      const timerId = 'timer-' + Math.random().toString(36).slice(2, 8);
+      statsHtml = `<span class="tool-status agent-timer" id="${timerId}">0s</span>`;
+      setTimeout(() => {
+        const start = Date.now();
+        const el = document.getElementById(timerId);
+        if (!el) return;
+        const iv = setInterval(() => {
+          if (!document.getElementById(timerId)) { clearInterval(iv); return; }
+          el.textContent = Math.round((Date.now() - start) / 1000) + 's';
+        }, 1000);
+      }, 50);
+    }
+    const bodyText = result ? truncate(resultText(result), 2000) : '';
+    return {
+      name: 'Agent',
+      desc,
+      _statsHtml: statsHtml,
+      body: bodyText ? `<div class="tool-value">${esc(bodyText)}</div>` : '',
+      collapsible: bodyText.length > 500,
+    };
   }
 
   // Generic fallback
@@ -187,9 +236,13 @@
   // Determine error state from result
   function toolState(result) {
     if (!result) return '';
-    const t = resultText(result).toLowerCase();
     if (result.is_error) return 'error';
-    if (t.includes('error') || t.includes('failed') || t.includes('permission denied')) return 'error';
+    // Only check short results (tool stderr/error messages), not long agent outputs
+    const t = resultText(result);
+    if (t.length < 500) {
+      const low = t.toLowerCase();
+      if (low.includes('error') || low.includes('failed') || low.includes('permission denied')) return 'error';
+    }
     return '';
   }
 
@@ -205,16 +258,17 @@
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
       TodoWrite: () => renderTodo(input, toolResult),
+      Agent: () => renderAgent(input, toolResult),
     };
     const info = (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult);
 
-    const statusHtml = info.status ? `<span class="tool-status">${esc(info.status)}</span>` : '';
+    const statusHtml = info._statsHtml || (info.status ? `<span class="tool-status">${esc(info.status)}</span>` : '');
     const id = 'tool-' + Math.random().toString(36).slice(2, 8);
 
     const noClamp = name === 'TodoWrite';
-    const clampClass = noClamp ? ' no-clamp' : '';
+    const clampClass = noClamp ? ' no-clamp' : (info.collapsible ? ' collapsible' : '');
     const bodyHtml = info.body
       ? `<div class="tool-body">
           <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleToolBody('${id}')"`}>${info.body}</div>

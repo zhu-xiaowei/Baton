@@ -57,13 +57,16 @@ export async function extractForApp(msg) {
       return block;
     });
   }
-  return {
+  const extracted = {
     uuid: msg.uuid || msg.leafUuid || '',
     parentUuid: msg.parentUuid || null,
     type: msg.type || '',
     content,
     timestamp: msg.timestamp || '',
   };
+  // Preserve Agent tool metadata (totalToolUseCount, totalDurationMs, etc.)
+  if (msg.toolUseResult) extracted.toolUseResult = msg.toolUseResult;
+  return extracted;
 }
 
 export async function readNewMessages(filePath, sessionId) {

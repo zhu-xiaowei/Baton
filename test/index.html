@@ -4,10 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AgentPeek Test</title>
-<link rel="stylesheet" href="css/style.css">
 <!-- highlight.js CSS must come BEFORE diff2html CSS (per diff2html docs) -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css">
+<!-- custom CSS last so it overrides diff2html -->
+<link rel="stylesheet" href="css/style.css">
+<style>
+  /* Dark scrollbar - inline to bypass cache */
+  html { color-scheme: dark; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; background: #0d1117; }
+  ::-webkit-scrollbar-track { background: #0d1117; }
+  ::-webkit-scrollbar-thumb { background: #484f58; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #6e7681; }
+  ::-webkit-scrollbar-corner { background: #0d1117; }
+</style>
 </head>
 <body>
 

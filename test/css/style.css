@@ -23,7 +23,7 @@ body {
 .breadcrumb span:hover { text-decoration: underline; }
 
 /* === Content === */
-#content { flex: 1; overflow-y: auto; }
+#content { flex: 1; overflow-y: auto; overflow-x: hidden; }
 
 /* === List items === */
 .list { padding: 4px 0; }
@@ -40,9 +40,26 @@ body {
 .messages { padding: 8px 12px; }
 
 /* === User message === */
-.msg-user { background: #1f6feb; padding: 10px 14px; margin-bottom: 8px; border-radius: 12px; max-width: 88%; margin-left: auto; }
+.msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 4px; border-radius: 12px; }
 .msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
-.msg-user .msg-time { font-size: 10px; color: rgba(255,255,255,0.5); margin-top: 4px; text-align: right; }
+.msg-user .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; text-align: right; }
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
+.file-badge {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 0 10px; height: 36px; font-size: 12px; color: #e6edf3; user-select: none;
+}
+.file-badge:hover { border-color: #58a6ff; }
+.file-badge-icon { font-size: 11px; opacity: 0.7; }
+.file-badge-icon.code { color: #58a6ff; font-family: 'SF Mono', monospace; font-weight: 700; }
+.file-badge-icon.doc { font-style: normal; }
+.file-badge-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-badge-content {
+  display: none; background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 10px 12px; font-size: 12px; color: #8b949e; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto;
+  width: 100%;
+}
 
 /* === Assistant turn (timeline container) === */
 .assistant-turn { margin-bottom: 8px; }
@@ -78,6 +95,7 @@ body {
 .assistant-text pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; }
 .assistant-text pre code { background: none; padding: 0; font-size: 12px; }
 .assistant-text ul, .assistant-text ol { padding-left: 20px; margin: 4px 0; }
+.assistant-text > ul:first-child, .assistant-text > ol:first-child { margin-top: -2px; }
 .assistant-text li { margin: 2px 0; }
 .assistant-text h1, .assistant-text h2, .assistant-text h3 { margin: 12px 0 6px; font-weight: 600; }
 .assistant-text h1 { font-size: 18px; }
@@ -153,13 +171,23 @@ body {
 /* diff2html dark overrides */
 .diff-container .d2h-file-header { display: none; }
 .diff-container .d2h-info { display: none !important; }
-.diff-container .d2h-file-wrapper { border: none; margin: 0; }
+.diff-container .d2h-file-wrapper { border: none !important; margin: 0 !important; }
 .diff-container .d2h-code-linenumber,
 .diff-container td.d2h-code-linenumber { display: none !important; }
-.diff-container .d2h-code-line { padding: 0 0.5em !important; width: 100% !important; }
+.diff-container .d2h-code-line { padding: 0 0.5em !important; }
+.diff-container .d2h-file-wrapper,
+.diff-container .d2h-file-diff,
+.diff-container .d2h-code-wrapper,
+.diff-container .d2h-diff-table,
+.diff-container .d2h-diff-tbody { background-color: transparent !important; }
+/* Darker del/ins backgrounds matching VSCode */
+.diff-container .d2h-del { background-color: rgba(248, 81, 73, 0.25) !important; }
+.diff-container .d2h-ins { background-color: rgba(63, 185, 80, 0.20) !important; }
+.diff-container .d2h-code-line-ctn del { background-color: rgba(248, 81, 73, 0.40) !important; }
+.diff-container .d2h-code-line-ctn ins { background-color: rgba(63, 185, 80, 0.35) !important; text-decoration: none; }
 
 /* === Interrupt (extends tl-item) === */
-.msg-interrupt { color: #8b949e; font-style: italic; font-size: 12px; padding-top: 2px; padding-bottom: 2px; line-height: 21px; }
+.msg-interrupt { color: #8b949e; font-style: italic; font-size: 12px; padding-top: 6px; padding-bottom: 6px; line-height: 21px; }
 .msg-interrupt::before { background: #e1c08d; }
 
 /* === System / AI-title === */
@@ -167,8 +195,8 @@ body {
 .msg-ai-title { padding: 6px 12px; color: #8b949e; font-size: 12px; margin-bottom: 4px; border: 1px solid #30363d; border-radius: 6px; }
 
 /* === Image === */
-.img-placeholder { display: inline-block; vertical-align: top; margin: 2px 4px 2px 0; }
-.img-placeholder img { max-height: 60px; border-radius: 6px; cursor: pointer; }
+.img-placeholder { display: inline-flex; align-items: center; }
+.img-placeholder img { height: 36px; border-radius: 6px; cursor: pointer; object-fit: cover; }
 .img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; }
 .img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
 
@@ -179,6 +207,33 @@ body {
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
 .empty { text-align: center; padding: 40px; color: #6e7681; }
+
+/* === Collapsible diff (>10 lines) === */
+.tool-body-content.collapsible:not(.open) .diff-container {
+  max-height: 240px;
+  overflow: hidden;
+}
+
+/* "Click to expand" hint on hover for all collapsible views */
+.tool-body-content:not(.open):not(.no-clamp),
+.tool-value.clamp:not(.expanded) {
+  position: relative;
+}
+.tool-body-content.collapsible:not(.open):hover::after,
+.tool-value.clamp:not(.expanded):hover::after {
+  content: 'Click to expand';
+  position: absolute;
+  bottom: 4px;
+  right: 8px;
+  font-size: 11px;
+  color: #8b949e;
+  background: rgba(13, 17, 23, 0.9);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  pointer-events: none;
+  z-index: 10;
+}
 
 /* === Timestamp (shared) === */
 .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; }
