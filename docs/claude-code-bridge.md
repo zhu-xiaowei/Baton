@@ -300,36 +300,58 @@ agentpeek/
 - [x] WS: subscribe session → real-time message rendering
 - [x] Status: connection indicator, message count
 
-### Phase 2B: Mobile App
+### Phase 2B: Send messages — Test Viewer 先行验证
 
-目标：React Native app 完整实现。
+目标：在 test viewer 中实现消息发送，跑通完整双向链路，为 mobile 铺路。
 
-#### Step 6: Mobile app init
+链路：`Test Viewer → WS → Server → WS → Bridge → Claude Code → JSONL → Bridge → WS → Viewer`
+
+#### Step 6: 调研 Claude Code 输入机制
+- [ ] 调研 Claude Code 接收外部输入的方式（stdin pipe / tmux send-keys / Agent SDK / VS Code extension API）
+- [ ] 确定最佳方案，考虑 CLI 和 VS Code 两种运行模式
+- [ ] 验证: 手动测试选定方案能否向 Claude Code 发送消息
+
+#### Step 7: Server WS relay — send_message
+- [ ] `bridge_ws.py`: 处理 `send_message` action，app → server → bridge 转发
+- [ ] 部署并验证: wscat 模拟 app 发送，bridge 端收到
+
+#### Step 8: Bridge — 接收并执行 send_message
+- [ ] bridge: 收到 `send_message`，找到对应 session 的 Claude Code 进程
+- [ ] bridge: 通过选定方案注入消息
+- [ ] 验证: 从 wscat 发送消息 → Claude Code 收到并响应 → 响应通过 WS 推回
+
+#### Step 9: Test Viewer — 发送 UI
+- [ ] 消息输入框 + 发送按钮（chat 页面底部）
+- [ ] WS 发送 `{ action: "send_message", sessionId, text }`
+- [ ] 发送后清空输入框，等待响应（已有 WS 实时推送链路）
+- [ ] 验证: 在浏览器输入消息 → Claude Code 响应 → 浏览器实时显示
+
+### Phase 2C: Mobile App
+
+目标：React Native app 完整实现。此时所有接口已在 test viewer 中验证通过，mobile 只需接 UI。
+
+#### Step 10: Mobile app init
 - [ ] `npx react-native init` in mobile/
 - [ ] Install deps, App.tsx, theme, ConfigStorage
 - [ ] Verify: app launches
 
-#### Step 7: Mobile session list
+#### Step 11: Mobile session list
 - [ ] SettingsScreen: manual server + key input
 - [ ] BridgeService.ts: REST client
 - [ ] SessionListScreen: device → project → session (🟢/⚫ indicators)
 - [ ] Verify: app shows real session list from DDB
 
-#### Step 8: Mobile chat
-- [ ] BridgeService.ts: WS client (subscribe/unsubscribe/heartbeat)
+#### Step 12: Mobile chat + send
+- [ ] BridgeService.ts: WS client (subscribe/unsubscribe/heartbeat/send_message)
 - [ ] useClaudeCode.ts: WS buffer → REST load → merge → render → real-time append
-- [ ] ChatScreen: message list + spinner
+- [ ] ChatScreen: message list + input + send
 - [ ] MessageBubble + MarkdownRenderer
 - [ ] MMKV message cache + lastUuid
-- [ ] Verify: open session → history loads → Claude real-time output appears on phone
+- [ ] Verify: open session → history loads → send message → Claude responds → phone 实时显示
 
-### Phase 3: Send messages from phone
-- Bridge: tmux send-keys / kill + Agent SDK resume
-- Same WS + DDB channels
-
-### Phase 4: Production polish
+### Phase 3: Production polish
 - Windows support: bridge process detection, Task Scheduler auto-start, %APPDATA% paths
 - Setup page + QR code, one-line install with auto-start
-- Push notifications, Claude Code markdown, code diff display
+- Push notifications
 - Persist bridge sync state (~/.claude-bridge/sync-state.json) to avoid re-uploading messages on restart
 - DDB TTL: auto-clean messages for sessions inactive > 30 days

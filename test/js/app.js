@@ -144,6 +144,7 @@ async function loadMessages(sessionId, preview) {
     loadImages(content);
     wsMessageCount = data.messages.length;
     wsAllMessages = data.messages.slice();
+    wsRenderedCount = wsAllMessages.length;
     showStats(wsMessageCount + ' messages | ' + latency + 'ms');
 
     startWs(sessionId);

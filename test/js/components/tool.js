@@ -173,7 +173,7 @@
       const calls = meta.totalToolUseCount || 0;
       statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
     } else if (!result) {
-      // No result yet — show running timer
+      // No result yet — show running timer with tool_use id for later update
       const timerId = 'timer-' + Math.random().toString(36).slice(2, 8);
       statsHtml = `<span class="tool-status agent-timer" id="${timerId}">0s</span>`;
       setTimeout(() => {
@@ -181,8 +181,9 @@
         const el = document.getElementById(timerId);
         if (!el) return;
         const iv = setInterval(() => {
-          if (!document.getElementById(timerId)) { clearInterval(iv); return; }
-          el.textContent = Math.round((Date.now() - start) / 1000) + 's';
+          const timer = document.getElementById(timerId);
+          if (!timer || timer.dataset.stopped) { clearInterval(iv); return; }
+          timer.textContent = Math.round((Date.now() - start) / 1000) + 's';
         }, 1000);
       }, 50);
     }

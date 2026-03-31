@@ -107,22 +107,13 @@
     return html.filter(Boolean).join('');
   };
 
-  // Render only the last turn (for WS incremental update)
-  window.renderLastTurn = function (turnMessages, allMessages) {
+  // Render a single message into tl-item HTML fragments (for incremental append)
+  window.renderSingleMessage = function (msg, allMessages) {
+    if (isToolResultOnly(msg) || isInterruptMsg(msg)) return '';
+    if (msg.type !== 'assistant') return '';
     const resultMap = buildToolMaps(allMessages);
-    const turnItems = [];
-    for (const msg of turnMessages) {
-      if (isToolResultOnly(msg)) continue;
-      if (isInterruptMsg(msg)) {
-        turnItems.push({ type: 'interrupt', html: renderInterrupt(msg) });
-        continue;
-      }
-      if (msg.type === 'assistant') {
-        turnItems.push(...extractItems(msg, resultMap));
-        continue;
-      }
-    }
-    if (!turnItems.length) return '';
-    return `<div class="assistant-turn">${turnItems.map(itemToHtml).join('')}</div>`;
+    const items = extractItems(msg, resultMap);
+    return items.map(itemToHtml).join('');
   };
+
 })();

@@ -18,26 +18,11 @@ function connectWs() {
   ws.onmessage = function (e) {
     var msg = JSON.parse(e.data);
     if (msg.action === 'messages' && msg.sessionId === wsSessionId) {
-      var hasNewUserMsg = false;
       for (var i = 0; i < msg.messages.length; i++) {
-        var m = msg.messages[i];
-        wsAllMessages.push(m);
+        wsAllMessages.push(msg.messages[i]);
         wsMessageCount++;
-        if (m.type === 'user' && !isToolResultOnly(m) && !isInterruptMsg(m)) hasNewUserMsg = true;
       }
-
-      if (hasNewUserMsg) {
-        // New user message = turn boundary changed, full re-render
-        var content = document.getElementById('content');
-        content.innerHTML = '<div class="messages">' + renderMessages(wsAllMessages) + '</div>';
-        requestAnimationFrame(function () {
-          content.scrollTo({ top: content.scrollHeight, behavior: 'smooth' });
-        });
-        loadImages(content);
-      } else {
-        // Only re-render the last assistant turn
-        updateLastTurn();
-      }
+      updateLastTurn();
       showStats(wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
@@ -86,55 +71,58 @@ function disconnectWs() {
   }
 }
 
-function updateLastTurn() {
-  // Find messages after the last user text message (= the active turn)
-  var lastUserIdx = -1;
-  for (var i = wsAllMessages.length - 1; i >= 0; i--) {
-    var m = wsAllMessages[i];
-    if (m.type === 'user' && !isToolResultOnly(m) && !isInterruptMsg(m)) {
-      lastUserIdx = i;
-      break;
-    }
-  }
-  var turnMessages = wsAllMessages.slice(lastUserIdx + 1);
-  var turnHtml = renderLastTurn(turnMessages, wsAllMessages);
+// Track last rendered message index to only append new ones
+var wsRenderedCount = 0;
 
+function updateLastTurn() {
   var container = document.querySelector('.messages');
   if (!container) return;
 
-  // Incremental update: only append new items or update the last one
-  var lastTurn = container.querySelector('.assistant-turn:last-child');
-  if (lastTurn) {
-    var temp = document.createElement('div');
-    temp.innerHTML = turnHtml;
-    var newTurn = temp.firstElementChild;
-    if (!newTurn) return;
-    var existingItems = lastTurn.querySelectorAll(':scope > .tl-item');
-    var newItems = newTurn.querySelectorAll(':scope > .tl-item');
-    if (newItems.length > existingItems.length) {
-      // Append only the new items
-      for (var i = existingItems.length; i < newItems.length; i++) {
-        lastTurn.appendChild(newItems[i].cloneNode(true));
+  // Only render messages that haven't been rendered yet
+  var newMessages = wsAllMessages.slice(wsRenderedCount);
+  wsRenderedCount = wsAllMessages.length;
+
+  // Stop any running agent timers when new messages arrive
+  if (newMessages.length > 0) {
+    container.querySelectorAll('.agent-timer:not([data-stopped])').forEach(function (t) {
+      t.dataset.stopped = '1';
+      var meta = null;
+      // Try to find toolUseResult metadata from tool_result messages
+      for (var j = 0; j < newMessages.length; j++) {
+        if (newMessages[j].toolUseResult) { meta = newMessages[j].toolUseResult; break; }
       }
-      // Update the last existing item (may have gotten its tool_result)
-      if (existingItems.length > 0) {
-        var lastExisting = existingItems[existingItems.length - 1];
-        var lastNew = newItems[existingItems.length - 1];
-        if (lastExisting.innerHTML !== lastNew.innerHTML) {
-          lastExisting.innerHTML = lastNew.innerHTML;
-        }
+      if (meta) {
+        var secs = Math.round((meta.totalDurationMs || 0) / 1000);
+        t.textContent = (meta.totalToolUseCount || 0) + ' tool calls, ' + secs + 's';
       }
-    } else if (newItems.length === existingItems.length && existingItems.length > 0) {
-      // Same count: only update the last item (streaming text update)
-      var lastE = existingItems[existingItems.length - 1];
-      var lastN = newItems[newItems.length - 1];
-      if (lastE.innerHTML !== lastN.innerHTML) {
-        lastE.innerHTML = lastN.innerHTML;
-      }
-    }
-  } else {
-    container.insertAdjacentHTML('beforeend', turnHtml);
+    });
   }
+
+  for (var i = 0; i < newMessages.length; i++) {
+    var msg = newMessages[i];
+    if (isToolResultOnly(msg) || isInterruptMsg(msg)) continue;
+
+    // User message: render bubble and append
+    if (msg.type === 'user') {
+      var userHtml = renderUserBubble(msg);
+      if (userHtml) container.insertAdjacentHTML('beforeend', userHtml);
+      continue;
+    }
+
+    if (msg.type !== 'assistant') continue;
+
+    var html = renderSingleMessage(msg, wsAllMessages);
+    if (!html) continue;
+
+    // Append to existing turn or create new one
+    var lastTurn = container.querySelector('.assistant-turn:last-child');
+    if (lastTurn) {
+      lastTurn.insertAdjacentHTML('beforeend', html);
+    } else {
+      container.insertAdjacentHTML('beforeend', '<div class="assistant-turn">' + html + '</div>');
+    }
+  }
+
   var el = document.getElementById('content');
   function scrollIfNearBottom() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
@@ -142,7 +130,6 @@ function updateLastTurn() {
     }
   }
   scrollIfNearBottom();
-  // Catch async diff renders (tool.js setTimeout 50ms)
   setTimeout(scrollIfNearBottom, 150);
   loadImages(container);
   showStats(wsMessageCount + ' messages (live)');
