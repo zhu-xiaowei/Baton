@@ -138,7 +138,9 @@ async function loadMessages(sessionId, preview) {
 
     content.innerHTML = '<div class="messages">' + renderMessages(data.messages) + '</div>';
 
-    requestAnimationFrame(function () { content.scrollTop = content.scrollHeight; });
+    // Scroll to bottom: immediate + after async diff renders
+    content.scrollTop = content.scrollHeight;
+    setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
     loadImages(content);
     wsMessageCount = data.messages.length;
     wsAllMessages = data.messages.slice();

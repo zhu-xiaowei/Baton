@@ -111,13 +111,17 @@
             + (newStr ? newStr.split('\n').map(l => '<span style="color:#3fb950">+ ' + esc(l) + '</span>').join('\n') : '')
             + '</pre>';
         }
+        // Collapse if rendered height exceeds 240px
+        if (el.scrollHeight > 240) {
+          const bodyContent = el.closest('.tool-body-content');
+          if (bodyContent) bodyContent.classList.add('collapsible');
+        }
       }, 50);
     }
 
     const status = resultText(result);
     const statusLabel = status.includes('successfully') ? 'Modified' : (status.includes('Created') ? 'Created' : '');
-    const totalLines = (oldStr ? oldStr.split('\n').length : 0) + (newStr ? newStr.split('\n').length : 0);
-    return { name: 'Edit', desc: file, status: statusLabel, body: diffHtml, collapsible: totalLines > 10 };
+    return { name: 'Edit', desc: file, status: statusLabel, body: diffHtml };
   }
 
   // Render Write tool

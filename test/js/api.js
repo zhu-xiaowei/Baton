@@ -69,6 +69,7 @@ var imageObserver = new IntersectionObserver(function (entries) {
 async function loadOneImage(el) {
   var key = el.dataset.key;
   if (imageCache.has(key)) {
+    el.classList.add('loaded');
     el.innerHTML = '<img src="' + imageCache.get(key) + '" onclick="viewImage(this.src)" />';
     return;
   }
@@ -79,6 +80,7 @@ async function loadOneImage(el) {
     var dataUrl = 'data:image/jpeg;base64,' + b64;
     if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
     imageCache.set(key, dataUrl);
+    el.classList.add('loaded');
     el.innerHTML = '<img src="' + dataUrl + '" onclick="viewImage(this.src)" />';
   } catch { el.textContent = '[Image error]'; }
 }

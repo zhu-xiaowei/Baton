@@ -195,7 +195,13 @@ body {
 .msg-ai-title { padding: 6px 12px; color: #8b949e; font-size: 12px; margin-bottom: 4px; border: 1px solid #30363d; border-radius: 6px; }
 
 /* === Image === */
-.img-placeholder { display: inline-flex; align-items: center; }
+.img-placeholder {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 36px; min-width: 60px; border-radius: 6px;
+  background: #161b22; border: 1px solid #30363d;
+  font-size: 11px; color: #6e7681;
+}
+.img-placeholder.loaded { background: none; border: none; min-width: auto; }
 .img-placeholder img { height: 36px; border-radius: 6px; cursor: pointer; object-fit: cover; }
 .img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; }
 .img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
@@ -214,14 +220,29 @@ body {
   overflow: hidden;
 }
 
-/* "Click to expand" hint on hover for all collapsible views */
-.tool-body-content:not(.open):not(.no-clamp),
-.tool-value.clamp:not(.expanded) {
+/* "Click to expand/collapse" hint on hover */
+.tool-body-content.collapsible,
+.tool-value.clamp {
   position: relative;
 }
 .tool-body-content.collapsible:not(.open):hover::after,
 .tool-value.clamp:not(.expanded):hover::after {
   content: 'Click to expand';
+  position: absolute;
+  bottom: 4px;
+  right: 8px;
+  font-size: 11px;
+  color: #8b949e;
+  background: rgba(13, 17, 23, 0.9);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  pointer-events: none;
+  z-index: 10;
+}
+.tool-body-content.collapsible.open:hover::after,
+.tool-value.clamp.expanded:hover::after {
+  content: 'Click to collapse';
   position: absolute;
   bottom: 4px;
   right: 8px;

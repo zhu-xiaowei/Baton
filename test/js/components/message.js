@@ -83,7 +83,7 @@
       badges.push(fileBadge(d.title, content));
     });
     images.forEach(b => {
-      badges.push(`<div class="img-placeholder" data-key="${esc(b.key)}">...</div>`);
+      badges.push(`<div class="img-placeholder" data-key="${esc(b.key)}">loading</div>`);
     });
     const attachHtml = badges.length ? `<div class="msg-attachments">${badges.join('')}</div>` : '';
 

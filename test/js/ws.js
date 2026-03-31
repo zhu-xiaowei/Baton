@@ -30,7 +30,9 @@ function connectWs() {
         // New user message = turn boundary changed, full re-render
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages">' + renderMessages(wsAllMessages) + '</div>';
-        content.scrollTop = content.scrollHeight;
+        requestAnimationFrame(function () {
+          content.scrollTo({ top: content.scrollHeight, behavior: 'smooth' });
+        });
         loadImages(content);
       } else {
         // Only re-render the last assistant turn
@@ -100,15 +102,48 @@ function updateLastTurn() {
   var container = document.querySelector('.messages');
   if (!container) return;
 
-  // Replace or append last .assistant-turn
+  // Incremental update: only append new items or update the last one
   var lastTurn = container.querySelector('.assistant-turn:last-child');
   if (lastTurn) {
-    lastTurn.outerHTML = turnHtml;
+    var temp = document.createElement('div');
+    temp.innerHTML = turnHtml;
+    var newTurn = temp.firstElementChild;
+    if (!newTurn) return;
+    var existingItems = lastTurn.querySelectorAll(':scope > .tl-item');
+    var newItems = newTurn.querySelectorAll(':scope > .tl-item');
+    if (newItems.length > existingItems.length) {
+      // Append only the new items
+      for (var i = existingItems.length; i < newItems.length; i++) {
+        lastTurn.appendChild(newItems[i].cloneNode(true));
+      }
+      // Update the last existing item (may have gotten its tool_result)
+      if (existingItems.length > 0) {
+        var lastExisting = existingItems[existingItems.length - 1];
+        var lastNew = newItems[existingItems.length - 1];
+        if (lastExisting.innerHTML !== lastNew.innerHTML) {
+          lastExisting.innerHTML = lastNew.innerHTML;
+        }
+      }
+    } else if (newItems.length === existingItems.length && existingItems.length > 0) {
+      // Same count: only update the last item (streaming text update)
+      var lastE = existingItems[existingItems.length - 1];
+      var lastN = newItems[newItems.length - 1];
+      if (lastE.innerHTML !== lastN.innerHTML) {
+        lastE.innerHTML = lastN.innerHTML;
+      }
+    }
   } else {
     container.insertAdjacentHTML('beforeend', turnHtml);
   }
   var el = document.getElementById('content');
-  el.scrollTop = el.scrollHeight;
+  function scrollIfNearBottom() {
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }
+  scrollIfNearBottom();
+  // Catch async diff renders (tool.js setTimeout 50ms)
+  setTimeout(scrollIfNearBottom, 150);
   loadImages(container);
   showStats(wsMessageCount + ' messages (live)');
 }

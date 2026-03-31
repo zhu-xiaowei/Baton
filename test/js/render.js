@@ -38,7 +38,7 @@
         const html = renderToolNode(block, resultMap[block.id] || null);
         items.push({ type: 'tool', state: window._lastToolState || '', html });
       } else if (block.type === 'image' && block.key) {
-        textBuf.push(`<div class="img-placeholder" data-key="${block.key}">...</div>`);
+        textBuf.push(`<div class="img-placeholder" data-key="${block.key}">loading</div>`);
       }
     }
     flush();

@@ -69,13 +69,15 @@ Raw .jsonl (~2KB per message):
 
 Extracted (~0.8KB):
 ```json
-{"uuid":"a7x","type":"assistant","content":[{"type":"text","text":"..."}],"timestamp":"..."}
+{"uuid":"a7x","parentUuid":"p1","type":"assistant","content":[{"type":"text","text":"..."}],"timestamp":"..."}
 ```
 
 Content block processing:
 - `image` → compress 720p JPEG (sharp) → upload S3 → `{ type: "image", key: "hash.jpg" }`
-- `tool_result` > 2KB → truncate to 500 chars
+- `document` → pass through as-is (`{ type: "document", source: { type: "text", data: "..." }, title: "file.txt" }`)
+- `tool_result` with `toolUseResult` → extract Agent metadata (`totalToolUseCount`, `totalDurationMs`, etc.)
 - `text` → keep as-is
+- `thinking`, `tool_use`, `tool_result` → keep as-is
 
 ### Auto-start
 - macOS: launchd plist (`~/Library/LaunchAgents/`)
@@ -242,6 +244,17 @@ agentpeek/
 │       │   └── MarkdownRenderer.tsx
 │       ├── storage/ConfigStorage.ts       # MMKV: config + message cache
 │       └── theme/index.ts
+├── test/
+│   ├── index.html                         # Test viewer — browser app, no build step
+│   ├── css/style.css                      # Dark theme styles
+│   └── js/
+│       ├── components/markdown.js         # Markdown rendering (marked.js)
+│       ├── components/message.js          # User/system bubbles, file badges, document blocks
+│       ├── components/tool.js             # Tool nodes (Bash, Edit, Agent stats/timer, etc.)
+│       ├── render.js                      # Message orchestrator, timeline layout
+│       ├── api.js                         # REST client
+│       ├── ws.js                          # WebSocket client
+│       └── app.js                         # App state, navigation
 └── docs/claude-code-bridge.md
 ```
 
@@ -258,33 +271,34 @@ agentpeek/
 
 目标：所有后端接口可用，本地测试页面验证通过。
 
-#### Step 1: Server REST read endpoints
-- [ ] `bridge_read.py`: GET devices, projects, sessions, messages (from DDB)
-- [ ] Register in main.py, redeploy
-- [ ] Verify: curl all 4 endpoints return correct data
+#### Step 1: Server REST read endpoints ✅
+- [x] `bridge_read.py`: GET devices, projects, sessions, messages (from DDB)
+- [x] Register in main.py, redeploy
+- [x] Verify: curl all 4 endpoints return correct data
 
-#### Step 2: WebSocket API Gateway
-- [ ] CloudFormation: WebSocket API GW + Lambda handler + DDB connections table
-- [ ] `bridge_ws.py`: $connect/$disconnect (DDB connections table), $default (route by action)
-- [ ] Verify: wscat connect, DDB shows connection record
+#### Step 2: WebSocket API Gateway ✅
+- [x] CloudFormation: WebSocket API GW + Lambda handler + DDB connections table
+- [x] `bridge_ws.py`: $connect/$disconnect (DDB connections table), $default (route by action)
+- [x] Verify: wscat connect, DDB shows connection record
 
-#### Step 3: Bridge WS connection + real-time push
-- [ ] bridge.mjs: add WS connection to server (alongside existing HTTP POST)
-- [ ] bridge.mjs: on file change → HTTP POST to DDB + WS push (parallel)
-- [ ] Verify: wscat subscribe → bridge detects file change → wscat receives message
+#### Step 3: Bridge WS connection + real-time push ✅
+- [x] bridge.mjs: add WS connection to server (alongside existing HTTP POST)
+- [x] bridge.mjs: on file change → WS push to server (primary), HTTP POST fallback
+- [x] Verify: wscat subscribe → bridge detects file change → wscat receives message
 
-#### Step 4: Server WS relay
-- [ ] bridge_ws.py: subscribe → record in DDB subscriptions table
-- [ ] bridge_ws.py: bridge WS message → lookup subscribers → post_to_connection to all apps
-- [ ] Verify: two wscat clients subscribe same session → both receive messages
+#### Step 4: Server WS relay ✅
+- [x] bridge_ws.py: subscribe → record in DDB subscriptions table
+- [x] bridge_ws.py: bridge WS message → lookup subscribers → post_to_connection to all apps
+- [x] Verify: two wscat clients subscribe same session → both receive messages
 
-#### Step 5: 本地测试页面 (test.html)
-- [ ] `test/test.html`: 单文件，浏览器直接打开，无需构建
-- [ ] 配置区：输入 server URL + API key
-- [ ] REST 验证：devices → projects → sessions 级联选择，messages 加载显示
-- [ ] WS 验证：subscribe session → 实时显示新消息（raw JSON）
-- [ ] 状态指示：连接状态、消息计数、延迟
-- [ ] 验证：打开页面 → 选择 session → 在 Claude Code 中发消息 → 页面实时显示
+#### Step 5: Test viewer (test/) ✅
+- [x] Modular JS: markdown, message, tool, render, api, ws, app
+- [x] Dark theme with collapsible diffs, syntax highlighting, diff2html
+- [x] User message: file badges (document blocks), ide_opened_file extraction, image thumbnails
+- [x] Agent tool: stats display (tool calls, duration), running timer
+- [x] REST: devices → projects → sessions drill-down, messages load
+- [x] WS: subscribe session → real-time message rendering
+- [x] Status: connection indicator, message count
 
 ### Phase 2B: Mobile App
 

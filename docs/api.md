@@ -295,7 +295,11 @@ Bridge 上传压缩后的图片到 S3。
 
 **说明**:
 - `content` 是 JSON 数组（从 DDB 中 JSON string 反序列化）
-- `type`: `user` | `assistant` | `system` | `summary`
+- `type`: `user` | `assistant` | `system` | `summary` | `ai-title`
+- Content block types: `text`, `image`, `document`, `thinking`, `tool_use`, `tool_result`
+- `document` block: `{ type: "document", source: { type: "text", media_type: "text/plain", data: "..." }, title: "filename.txt" }`
+- `toolUseResult`: Agent 工具执行元数据，附在包含 tool_result 的 user 消息上
+  - `{ status, totalDurationMs, totalToolUseCount, totalTokens, agentId }`
 - 按 `timestamp` 升序排列（对话顺序）
 
 ---
