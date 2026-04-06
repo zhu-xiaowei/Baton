@@ -144,6 +144,18 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "sync_complete":
         if role == "bridge":
             return _handle_sync_complete(body, account_id, endpoint)
+    elif action == "permission_request":
+        if role == "bridge":
+            return _handle_bridge_relay(body, connection_id, endpoint)
+    elif action == "send_message":
+        if role == "app":
+            return _handle_send_message(body, account_id, endpoint)
+    elif action == "new_session":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "new_session")
+    elif action == "permission_reply":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "permission_reply")
     elif action == "heartbeat":
         # Update TTL
         _connections_table.update_item(
@@ -252,6 +264,46 @@ def _handle_sync_complete(body, account_id, endpoint):
             "count": body.get("count", 0),
         })
 
+    return {"statusCode": 200}
+
+
+def _handle_bridge_relay(body, bridge_connection_id, endpoint):
+    """Bridge pushes a notification (e.g. permission_request) — relay to subscribed apps."""
+    session_id = body.get("sessionId", "")
+    if not session_id:
+        return {"statusCode": 400}
+
+    subs = _subscriptions_table.query(
+        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
+    ).get("Items", [])
+
+    for sub in subs:
+        cid = sub.get("connectionId", "")
+        if cid and cid != bridge_connection_id:
+            _post_to_connection(endpoint, cid, body)
+
+    return {"statusCode": 200}
+
+
+def _handle_send_message(body, account_id, endpoint):
+    """App sends a message to Claude Code via bridge — forward to bridge connection."""
+    session_id = body.get("sessionId", "")
+    text = body.get("text", "")
+    if not session_id or not text:
+        return {"statusCode": 400}
+    return _handle_send_to_bridge(body, account_id, endpoint, "send_message")
+
+
+def _handle_send_to_bridge(body, account_id, endpoint, action):
+    """Forward an action to bridge connection(s) for this account."""
+    body["action"] = action
+    resp = _connections_table.scan(
+        FilterExpression="accountId = :aid AND #r = :role",
+        ExpressionAttributeNames={"#r": "role"},
+        ExpressionAttributeValues={":aid": account_id, ":role": "bridge"},
+    )
+    for item in resp.get("Items", []):
+        _post_to_connection(endpoint, item["connectionId"], body)
     return {"statusCode": 200}
 
 

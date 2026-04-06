@@ -1,6 +1,8 @@
 import WebSocket from 'ws';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile } from './session.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey } from './tmux.mjs';
+
 
 let _ws = null;
 let _config = null;
@@ -70,7 +72,7 @@ function connect() {
     console.error(`[ws] error: ${err.message} (code: ${err.code}, type: ${err.type})`);
   });
 
-  _ws.on('unexpected-response', (req, res) => {
+  _ws.on('unexpected-response', (_req, res) => {
     console.error(`[ws] unexpected-response: ${res.statusCode}`);
     let body = '';
     res.on('data', (chunk) => body += chunk);
@@ -90,6 +92,12 @@ async function handleMessage(msg) {
   switch (msg.action) {
     case 'sync_session':
       await handleSyncSession(msg.sessionId);
+      break;
+    case 'send_message':
+      handleSendMessage(msg.sessionId, msg.text);
+      break;
+    case 'permission_reply':
+      handlePermissionReply(msg.sessionId, msg.approved);
       break;
     case 'heartbeat':
       // Server heartbeat response — no-op
@@ -114,4 +122,50 @@ async function handleSyncSession(sessionId) {
     console.log(`[ws] synced ${msgs.length} messages for ${sessionId.slice(0, 8)}`);
   }
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
+}
+
+function handleSendMessage(sessionId, text) {
+  if (!sessionId || !text) return;
+  const result = sendMessageToSession(sessionId, text);
+  if (!result.ok) {
+    console.log(`[ws] send_message failed: ${result.error}`);
+  }
+  wsSend({ action: 'send_message_result', sessionId, ...result });
+}
+
+function handlePermissionReply(sessionId, approved) {
+  if (!sessionId) return;
+  const keys = typeof approved === 'string' ? approved : (approved ? 'y' : 'n');
+
+  // escape = send Escape key (cancel prompt)
+  if (keys === 'escape') {
+    const result = sendKey(sessionId, 'Escape');
+    if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
+    return;
+  }
+
+  // arrow:N = send N down-arrows then Enter (for AskUserQuestion navigation)
+  if (keys.startsWith('arrow:')) {
+    const n = parseInt(keys.slice(6), 10);
+    const result = sendArrowSelect(sessionId, n);
+    if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
+    return;
+  }
+
+  // type:N:text = navigate to "Type something" option N, type text, Enter
+  if (keys.startsWith('type:')) {
+    const parts = keys.split(':');
+    const n = parseInt(parts[1], 10);
+    const text = parts.slice(2).join(':'); // rejoin in case text contains ':'
+    if (text) {
+      const result = sendTypeInput(sessionId, n, text);
+      if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
+    }
+    return;
+  }
+
+  const result = sendMessageToSession(sessionId, keys);
+  if (!result.ok) {
+    console.log(`[ws] permission_reply failed: ${result.error}`);
+  }
 }

@@ -36,7 +36,7 @@
         flush();
         window._lastToolState = '';
         const html = renderToolNode(block, resultMap[block.id] || null);
-        items.push({ type: 'tool', state: window._lastToolState || '', html });
+        items.push({ type: 'tool', state: window._lastToolState || '', html, toolId: block.id });
       } else if (block.type === 'image' && block.key) {
         textBuf.push(`<div class="img-placeholder" data-key="${block.key}">loading</div>`);
       }
@@ -58,7 +58,8 @@
     if (item.type === 'text') cls += ' assistant-text';
     if (item.type === 'thinking') cls += ' thinking-tl';
     if (item.type === 'interrupt') cls += ' msg-interrupt';
-    return `<div class="${cls}">${item.html}</div>`;
+    const toolAttr = item.toolId ? ` data-tool-id="${item.toolId}"` : '';
+    return `<div class="${cls}"${toolAttr}>${item.html}</div>`;
   }
 
   // Main: render all messages, merging consecutive assistant messages into one timeline

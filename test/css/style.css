@@ -206,6 +206,42 @@ body {
 .img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; }
 .img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
 
+/* === Real-time tool OUT === */
+.tool-body-out { border-top: 1px solid #21262d; padding: 6px 10px; }
+.tool-body-out .tool-label { color: #6e7681; font-size: 11px; font-family: monospace; }
+.tool-out-pre { margin: 4px 0 0; font-size: 12px; color: #8b949e; white-space: pre-wrap; word-break: break-word; }
+
+/* === Permission prompt === */
+.permission-prompt { background: #1c2333; border: 1px solid #388bfd; border-radius: 10px; padding: 14px; margin-top: 12px; }
+.permission-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.permission-title { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.permission-close { background: none; border: none; color: #6e7681; font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.permission-close:hover { color: #f85149; }
+.permission-desc { font-size: 12px; color: #8b949e; background: #0d1117; padding: 8px 10px; border-radius: 6px; margin-bottom: 10px; white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; }
+.permission-options { display: flex; flex-direction: column; gap: 6px; }
+.permission-btn { padding: 8px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; font-size: 13px; cursor: pointer; text-align: left; }
+.permission-btn:hover { background: #30363d; }
+.permission-btn.allow { border-color: #238636; }
+.permission-btn.allow:hover { background: #238636; color: #fff; }
+.permission-btn.deny { border-color: #f85149; }
+.permission-btn.deny:hover { background: #f85149; color: #fff; }
+.permission-key { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; background: #30363d; border-radius: 4px; font-size: 11px; color: #8b949e; margin-right: 6px; }
+.permission-label { font-weight: 500; }
+.permission-desc-inline { display: block; font-size: 11px; color: #8b949e; font-weight: 400; margin-top: 2px; }
+.permission-input-wrap { display: flex; gap: 6px; margin-top: 4px; }
+.permission-input { flex: 1; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; outline: none; }
+.permission-input:focus { border-color: #58a6ff; }
+.permission-submit { padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 12px; cursor: pointer; }
+
+/* === Input bar === */
+#input-bar { display: flex; gap: 8px; padding: 8px 12px; background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0; }
+#input-bar input { flex: 1; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; outline: none; }
+#input-bar input:focus { border-color: #58a6ff; }
+#input-bar button { padding: 8px 16px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; white-space: nowrap; }
+#input-bar button:active { background: #2ea043; }
+#input-bar input:disabled { opacity: 0.4; cursor: not-allowed; }
+#input-bar button:disabled { opacity: 0.4; cursor: not-allowed; background: #30363d; }
+
 /* === Stats bar === */
 .stats { padding: 6px 12px; background: #0d1117; border-top: 1px solid #30363d; font-size: 11px; color: #6e7681; text-align: center; flex-shrink: 0; display: flex; justify-content: center; gap: 12px; }
 .ws-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }

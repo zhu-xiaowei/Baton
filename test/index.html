@@ -44,6 +44,12 @@
 <!-- Content area -->
 <div id="content"></div>
 
+<!-- Input bar -->
+<div id="input-bar" style="display:none">
+  <input id="msg-input" placeholder="Send a message..." onkeydown="if(event.key==='Enter')sendMessage()" />
+  <button onclick="sendMessage()">Send</button>
+</div>
+
 <!-- Stats -->
 <div id="stats" class="stats" style="display:none"></div>
 

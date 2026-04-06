@@ -14,6 +14,7 @@ import { initHttp } from './http.mjs';
 import { syncSessions } from './sync.mjs';
 import { startWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
+import { hasTmux } from './tmux.mjs';
 
 const CONFIG = loadConfig();
 initHttp(CONFIG);
@@ -26,6 +27,7 @@ console.log('claude-bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
 if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
+console.log(`  tmux:     ${hasTmux() ? 'found (send message enabled)' : 'not found (send message disabled)'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
 initWs(CONFIG);

@@ -7,6 +7,7 @@ import { getPreview, getModel, readableProjectName, getRunningProjects } from '.
 import { recentSessions } from './sync.mjs';
 import { wsSend } from './ws.mjs';
 
+
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   const busy = new Map(); // sessionId → { pending }

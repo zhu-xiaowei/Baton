@@ -48,10 +48,15 @@ function updateBreadcrumb() {
   el.style.display = parts.length > 1 ? 'block' : 'none';
 }
 
+function showInputBar(visible) {
+  document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
+}
+
 // ---- Devices ----
 async function loadDevices() {
   appState = { device: null, project: null, session: null, sessionPreview: '' };
   disconnectWs();
+  showInputBar(false);
   updateBreadcrumb();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading devices...</div>';
@@ -74,6 +79,7 @@ async function loadDevices() {
 async function loadProjects(device) {
   appState = { device: device, project: null, session: null, sessionPreview: '' };
   disconnectWs();
+  showInputBar(false);
   updateBreadcrumb();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading projects...</div>';
@@ -94,6 +100,7 @@ async function loadProjects(device) {
 // ---- Sessions ----
 async function loadSessions(device, projectHash, projectName) {
   disconnectWs();
+  showInputBar(false);
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading sessions...</div>';
 
@@ -132,11 +139,13 @@ async function loadMessages(sessionId, preview) {
       startWs(sessionId);
       wsMessageCount = 0;
       wsAllMessages = [];
+      showInputBar(true);
       showStats('Waiting for sync...');
       return;
     }
 
     content.innerHTML = '<div class="messages">' + renderMessages(data.messages) + '</div>';
+    showInputBar(true);
 
     // Scroll to bottom: immediate + after async diff renders
     content.scrollTop = content.scrollHeight;
@@ -144,6 +153,7 @@ async function loadMessages(sessionId, preview) {
     loadImages(content);
     wsMessageCount = data.messages.length;
     wsAllMessages = data.messages.slice();
+    checkPendingPrompts(wsAllMessages);
     wsRenderedCount = wsAllMessages.length;
     showStats(wsMessageCount + ' messages | ' + latency + 'ms');
 
