@@ -18,9 +18,11 @@ body {
 .config .status.err { color: #f85149; }
 
 /* === Breadcrumb === */
-.breadcrumb { padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; display: none; flex-shrink: 0; }
-.breadcrumb span { cursor: pointer; color: #58a6ff; }
-.breadcrumb span:hover { text-decoration: underline; }
+.breadcrumb { padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; display: none; flex-shrink: 0; align-items: center; justify-content: space-between; }
+.breadcrumb-nav span { cursor: pointer; color: #58a6ff; }
+.breadcrumb-nav span:hover { text-decoration: underline; }
+.new-session-btn { padding: 0; background: none; color: #58a6ff; border: none; cursor: pointer; flex-shrink: 0; margin-left: auto; opacity: 0.7; }
+.new-session-btn:hover { opacity: 1; }
 
 /* === Content === */
 #content { flex: 1; overflow-y: auto; overflow-x: hidden; }

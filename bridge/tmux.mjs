@@ -1,5 +1,7 @@
 import { execSync } from 'child_process';
-import { findSessionFile } from './session.mjs';
+import fs from 'fs';
+import os from 'os';
+import { readableProjectName } from './session.mjs';
 import path from 'path';
 
 let _tmuxAvailable = null;
@@ -61,8 +63,36 @@ export function sendKeys(target, text) {
   execSync(`tmux send-keys -t "${target}" -- "${escaped}" Enter`, { stdio: 'ignore' });
 }
 
+/**
+ * Kill stale apeek_ tmux sessions (idle > 1 day, no recent .jsonl writes).
+ * Called before creating a new tmux session.
+ */
+export function cleanStaleSessions() {
+  try {
+    const output = execSync(
+      'tmux list-sessions -F "#{session_name} #{session_activity}" 2>/dev/null',
+      { encoding: 'utf-8' }
+    ).trim();
+    if (!output) return;
+
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    for (const line of output.split('\n')) {
+      const [name, activity] = line.split(' ');
+      if (!name.startsWith('apeek_')) continue;
+      const ts = parseInt(activity, 10);
+      if (!ts) continue;
+      if (ts * 1000 < oneDayAgo) {
+        execSync(`tmux kill-session -t "${name}"`, { stdio: 'ignore' });
+        console.log(`[tmux] killed stale session: ${name}`);
+      }
+    }
+  } catch {}
+}
+
 /** Create a new detached tmux session and run a command. */
 export function newTmuxSession(name, cwd, command) {
+  // Clean stale sessions in background, don't block creation
+  setTimeout(cleanStaleSessions, 0);
   if (!hasTmux()) throw new Error('tmux not installed');
   // -d = detached, -s = session name, -c = working directory
   execSync(`tmux new-session -d -s "${name}" -c "${cwd}"`, { stdio: 'ignore' });
@@ -88,7 +118,12 @@ export function getClaudeProcesses() {
         if (!cwd) continue;
         const projectHash = path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-');
         const tmuxTarget = findTmuxPane(pid);
-        results.push({ pid: Number(pid), cwd, projectHash, tmuxTarget });
+        // Get command line args to identify which sessionId this CC is running
+        let args = '';
+        try {
+          args = execSync(`ps -o args= -p ${pid} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+        } catch {}
+        results.push({ pid: Number(pid), cwd, projectHash, tmuxTarget, args });
       } catch {}
     }
   } catch {}
@@ -100,19 +135,10 @@ export function getClaudeProcesses() {
  * Resolves sessionId → project → Claude PID → tmux pane.
  */
 export function findTmuxTargetForSession(sessionId) {
-  const filePath = findSessionFile(sessionId);
-  if (!filePath) return null;
-
-  // Extract project hash from file path: .../projects/<hash>/<sessionId>.jsonl
-  const parts = filePath.split(path.sep);
-  const projIdx = parts.indexOf('projects');
-  if (projIdx < 0 || projIdx + 1 >= parts.length) return null;
-  const projectHash = parts[projIdx + 1];
-
-  // Find a running Claude process for this project
+  // Only match if a CC process has this exact sessionId in its args (--resume <id>)
   const procs = getClaudeProcesses();
-  const match = procs.find(p => p.projectHash === projectHash && p.tmuxTarget);
-  return match ? match.tmuxTarget : null;
+  const exact = procs.find(p => p.tmuxTarget && p.args.includes(sessionId));
+  return exact ? exact.tmuxTarget : null;
 }
 
 /**
@@ -188,7 +214,7 @@ export function sendMessageToSession(sessionId, text) {
   if (!hasTmux()) return { ok: false, error: 'tmux not installed' };
 
   const target = findTmuxTargetForSession(sessionId);
-  if (!target) return { ok: false, error: 'session not found in tmux' };
+  if (!target) return { ok: false, error: 'no_tmux_target' };
 
   try {
     sendKeys(target, text);
@@ -196,4 +222,72 @@ export function sendMessageToSession(sessionId, text) {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+/**
+ * Resolve projectHash back to an absolute directory path.
+ * Hash rule: path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-')
+ * e.g. "-Users-xiaoweii-workspace-rn-agentpeek" → "/Users/xiaoweii/workspace/rn/agentpeek"
+ */
+export function projectHashToPath(projectHash) {
+  // The hash starts with '-' because absolute paths start with '/'
+  // Split by '-', skip leading empty segment, then greedily match real directories
+  const homeDir = os.homedir();
+  const homeHash = path.resolve(homeDir).replace(/[^a-zA-Z0-9-]/g, '-');
+  let remaining = projectHash;
+  let currentDir = '/';
+
+  // If hash starts with home prefix, skip ahead
+  if (remaining.startsWith(homeHash)) {
+    remaining = remaining.slice(homeHash.length).replace(/^-/, '');
+    currentDir = homeDir;
+  } else {
+    // Remove leading '-'
+    remaining = remaining.replace(/^-/, '');
+  }
+
+  if (!remaining) return currentDir;
+
+  const parts = remaining.split('-');
+  let i = 0;
+  while (i < parts.length) {
+    let matched = false;
+    // Try longest match first (handles dir names with hyphens)
+    for (let len = parts.length - i; len >= 1; len--) {
+      const candidate = parts.slice(i, i + len).join('-');
+      const candidatePath = path.join(currentDir, candidate);
+      try {
+        if (fs.statSync(candidatePath).isDirectory()) {
+          currentDir = candidatePath;
+          i += len;
+          matched = true;
+          break;
+        }
+      } catch {}
+    }
+    if (!matched) {
+      // Fallback: join remaining as-is
+      currentDir = path.join(currentDir, parts.slice(i).join('-'));
+      break;
+    }
+  }
+  return currentDir;
+}
+
+/**
+ * Launch Claude Code in a new tmux session for a given sessionId + project.
+ * Returns the tmux session name, or throws on failure.
+ * Naming: apeek_{projectName}_{sessionId first 8 chars}
+ */
+export function launchClaudeSession(sessionId, projectHash) {
+  if (!hasTmux()) throw new Error('tmux not installed');
+
+  const projectPath = projectHashToPath(projectHash);
+  const projectName = readableProjectName(projectHash)
+    .split('/').pop()
+    .replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const tmuxName = `apeek_${projectName}_${sessionId.slice(0, 8)}`;
+
+  newTmuxSession(tmuxName, projectPath, `claude --resume ${sessionId}`);
+  return tmuxName;
 }

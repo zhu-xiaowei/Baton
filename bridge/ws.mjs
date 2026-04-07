@@ -1,10 +1,12 @@
 import WebSocket from 'ws';
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile } from './session.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey } from './tmux.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
+import { CLAUDE_PROJECTS } from './config.mjs';
 
 let _ws = null;
 let _config = null;
@@ -96,7 +98,7 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      handleSendMessage(msg.sessionId, msg.text);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash);
       break;
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
@@ -126,8 +128,9 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text) {
-  if (!sessionId || !text) return;
+async function handleSendMessage(sessionId, text, projectHash) {
+  if (!text) return;
+  if (!sessionId && !projectHash) return;
 
   // Detect claude-bridge: image references and download to local
   const imgPattern = /!\[.*?\]\(claude-bridge:(.+?)\)/g;
@@ -141,11 +144,129 @@ async function handleSendMessage(sessionId, text) {
     }
   }
 
-  const result = sendMessageToSession(sessionId, resolved);
+  // New session: create tmux + claude, send message, detect sessionId
+  if (!sessionId && projectHash) {
+    const result = await handleNewSessionMessage(projectHash, resolved);
+    wsSend({ action: 'send_message_result', ...result });
+    return;
+  }
+
+  let result = sendMessageToSession(sessionId, resolved);
+
+  // No running CC in tmux → auto-launch, then send-keys directly to the new tmux session
+  if (!result.ok && result.error === 'no_tmux_target') {
+    console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching CC...`);
+    const tmuxName = launchForSession(sessionId);
+    if (tmuxName) {
+      const ready = await waitForCCReady(tmuxName);
+      if (ready) {
+        try {
+          sendKeys(tmuxName, resolved);
+          result = { ok: true };
+        } catch (err) {
+          result = { ok: false, error: err.message };
+        }
+      } else {
+        result = { ok: false, error: 'claude did not become ready' };
+      }
+    } else {
+      result = { ok: false, error: 'failed to launch claude' };
+    }
+  }
+
   if (!result.ok) {
     console.log(`[ws] send_message failed: ${result.error}`);
   }
   wsSend({ action: 'send_message_result', sessionId, ...result });
+}
+
+async function handleNewSessionMessage(projectHash, text) {
+  try {
+    const projectPath = projectHashToPath(projectHash);
+    const projectDir = path.join(CLAUDE_PROJECTS, projectHash);
+
+    // Snapshot existing .jsonl files
+    const before = new Set(fs.existsSync(projectDir)
+      ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'))
+      : []);
+
+    const now = new Date();
+    const ts = String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0')
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0');
+    const projName = projectPath.split(path.sep).pop().replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const tmuxName = `apeek_${projName}_${ts}`;
+    newTmuxSession(tmuxName, projectPath, 'claude');
+
+    const ready = await waitForCCReady(tmuxName);
+    if (!ready) return { ok: false, error: 'claude did not become ready' };
+
+    sendKeys(tmuxName, text);
+
+    // Poll for new .jsonl (CC creates it after receiving first message)
+    let sessionId = null;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const after = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+        const fresh = after.find(f => !before.has(f));
+        if (fresh) { sessionId = fresh.replace('.jsonl', ''); break; }
+      } catch {}
+    }
+
+    return { ok: true, sessionId };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Wait for Claude Code to be ready in a tmux pane.
+ * Checks pane content for the '>' prompt. Polls every 500ms, up to 15s.
+ */
+async function waitForCCReady(tmuxTarget) {
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const content = execSync(
+        `tmux capture-pane -t "${tmuxTarget}" -p`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      // Trust dialog: auto-accept "Yes, I trust this folder"
+      if (/Yes, I trust this folder/m.test(content)) {
+        execSync(`tmux send-keys -t "${tmuxTarget}" Enter`, { stdio: 'ignore' });
+        console.log(`[ws] auto-accepted trust dialog for ${tmuxTarget}`);
+        continue;
+      }
+      // CC shows '>' or '❯' prompt when ready for input
+      if (/^[>❯]\s*$/m.test(content)) return true;
+    } catch {}
+  }
+  console.log(`[ws] CC did not become ready within 15s`);
+  return false;
+}
+
+/**
+ * Launch CC in tmux for an existing session.
+ * Returns tmux session name, or null on failure.
+ */
+function launchForSession(sessionId) {
+  const filePath = findSessionFile(sessionId);
+  if (!filePath) return null;
+
+  const parts = filePath.split(path.sep);
+  const projIdx = parts.indexOf('projects');
+  if (projIdx < 0 || projIdx + 1 >= parts.length) return null;
+  const projectHash = parts[projIdx + 1];
+
+  try {
+    return launchClaudeSession(sessionId, projectHash);
+  } catch (err) {
+    console.log(`[ws] launchForSession failed: ${err.message}`);
+    return null;
+  }
 }
 
 async function downloadBridgeImage(key) {

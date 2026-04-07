@@ -44,8 +44,14 @@ function updateBreadcrumb() {
     var label = appState.sessionPreview || appState.session.slice(0, 8) + '...';
     parts.push('<span>' + esc(label) + '</span>');
   }
-  el.innerHTML = parts.join(' &rsaquo; ');
-  el.style.display = parts.length > 1 ? 'block' : 'none';
+  var newBtn = '';
+  if (appState.project) {
+    newBtn = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(appState.project.hash) + '\')" title="New Session">'
+      + '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6.5" stroke-width="1.2"/><line x1="8" y1="5" x2="8" y2="11" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke-width="1"/></svg>'
+      + '</button>';
+  }
+  el.innerHTML = '<div class="breadcrumb-nav">' + parts.join(' &rsaquo; ') + '</div>' + newBtn;
+  el.style.display = parts.length > 1 ? 'flex' : 'none';
 }
 
 function showInputBar(visible) {
@@ -115,7 +121,8 @@ async function loadSessions(device, projectHash, projectName) {
     appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
     updateBreadcrumb();
     saveNav();
-    content.innerHTML = '<div class="list">' + data.sessions.map(function (s) {
+    content.innerHTML = '<div class="list">'
+      + data.sessions.map(function (s) {
       return '<div class="item" onclick="loadMessages(\'' + esc(s.sessionId) + '\', \'' + esc(s.preview || '') + '\')">'
         + '<div class="title"><span class="badge ' + (s.isRunning ? 'running' : 'stopped') + '">' + (s.isRunning ? 'Running' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</div>'
         + '<div class="subtitle">' + esc(s.model || 'unknown model') + '</div>'
@@ -124,6 +131,17 @@ async function loadSessions(device, projectHash, projectName) {
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
   } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+
+function startNewSession(projectHash) {
+  appState.session = '__new__';
+  appState.sessionPreview = 'New Session';
+  updateBreadcrumb();
+  saveNav();
+  var content = document.getElementById('content');
+  content.innerHTML = '<div class="messages"><div class="empty">Send a message to start a new session</div></div>';
+  showInputBar(true);
+  connectWs(null, projectHash);
 }
 
 // ---- Messages ----

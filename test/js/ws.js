@@ -4,9 +4,11 @@ var wsSessionId = null;
 var wsMessageCount = 0;
 var wsStatusText = '';
 var wsAllMessages = []; // track all messages for tool pairing
+var wsProjectHash = null; // for new session creation
 
-function connectWs() {
+function connectWs(_, projectHash) {
   if (!WS_URL) return;
+  if (projectHash) wsProjectHash = projectHash;
   if (ws) { ws.close(); ws = null; }
   ws = new WebSocket(WS_URL + '?apiKey=' + KEY + '&role=app');
 
@@ -26,6 +28,16 @@ function connectWs() {
       showStats(wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === wsSessionId) showPermissionPrompt(msg);
+    } else if (msg.action === 'send_message_result') {
+      // New session: bridge created tmux + CC, returned sessionId
+      if (msg.sessionId && appState.session === '__new__') {
+        appState.session = msg.sessionId;
+        appState.sessionPreview = 'New Session';
+        updateBreadcrumb();
+        saveNav();
+        wsSessionId = msg.sessionId;
+        subscribeSession(msg.sessionId);
+      }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
     }
@@ -184,8 +196,9 @@ function sendMessage() {
   var images = stagedImages.slice();
 
   if (!text && !images.length) return;
-  if (!wsSessionId) return;
   if (!text && images.length) text = '请查看这张图片';
+  // Allow sending without wsSessionId for new sessions (projectHash is used)
+  if (!wsSessionId && appState.session !== '__new__') return;
 
   // Images already uploaded — just assemble refs
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
@@ -203,7 +216,15 @@ function sendMessage() {
 }
 
 function doSend(fullText, displayText, images) {
-  wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText });
+  if (appState.session === '__new__' && wsProjectHash) {
+    wsSend({ action: 'send_message', projectHash: wsProjectHash, text: fullText });
+  } else {
+    wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText });
+  }
+
+  // Remove placeholder text
+  var empty = document.querySelector('.empty');
+  if (empty) empty.remove();
 
   var msgId = 'sent-' + Date.now();
   pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });

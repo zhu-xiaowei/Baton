@@ -147,12 +147,12 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "permission_request":
         if role == "bridge":
             return _handle_bridge_relay(body, connection_id, endpoint)
+    elif action == "send_message_result":
+        if role == "bridge":
+            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "send_message":
         if role == "app":
             return _handle_send_message(body, account_id, endpoint)
-    elif action == "new_session":
-        if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "new_session")
     elif action == "permission_reply":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "permission_reply")
@@ -285,11 +285,24 @@ def _handle_bridge_relay(body, bridge_connection_id, endpoint):
     return {"statusCode": 200}
 
 
+def _handle_bridge_broadcast(body, account_id, bridge_connection_id, endpoint):
+    """Bridge sends a result — broadcast to all app connections for this account."""
+    resp = _connections_table.scan(
+        FilterExpression="accountId = :aid AND #r = :role",
+        ExpressionAttributeNames={"#r": "role"},
+        ExpressionAttributeValues={":aid": account_id, ":role": "app"},
+    )
+    for item in resp.get("Items", []):
+        _post_to_connection(endpoint, item["connectionId"], body)
+    return {"statusCode": 200}
+
+
 def _handle_send_message(body, account_id, endpoint):
     """App sends a message to Claude Code via bridge — forward to bridge connection."""
     session_id = body.get("sessionId", "")
+    project_hash = body.get("projectHash", "")
     text = body.get("text", "")
-    if not session_id or not text:
+    if (not session_id and not project_hash) or not text:
         return {"statusCode": 400}
     return _handle_send_to_bridge(body, account_id, endpoint, "send_message")
 
