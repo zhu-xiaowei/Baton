@@ -1,8 +1,10 @@
 import WebSocket from 'ws';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile } from './session.mjs';
 import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey } from './tmux.mjs';
-
 
 let _ws = null;
 let _config = null;
@@ -124,13 +126,48 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-function handleSendMessage(sessionId, text) {
+async function handleSendMessage(sessionId, text) {
   if (!sessionId || !text) return;
-  const result = sendMessageToSession(sessionId, text);
+
+  // Detect claude-bridge: image references and download to local
+  const imgPattern = /!\[.*?\]\(claude-bridge:(.+?)\)/g;
+  let resolved = text;
+  let match;
+  while ((match = imgPattern.exec(text)) !== null) {
+    const key = match[1];
+    const localPath = await downloadBridgeImage(key);
+    if (localPath) {
+      resolved = resolved.replace(match[0], `![](${localPath})`);
+    }
+  }
+
+  const result = sendMessageToSession(sessionId, resolved);
   if (!result.ok) {
     console.log(`[ws] send_message failed: ${result.error}`);
   }
   wsSend({ action: 'send_message_result', sessionId, ...result });
+}
+
+async function downloadBridgeImage(key) {
+  try {
+    const tmpDir = path.join(os.homedir(), '.claude-bridge', 'tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const localPath = path.join(tmpDir, key);
+    const url = `${_config.server}/api/bridge/image/${key}`;
+    const res = await fetch(url, { headers: { 'x-api-key': _config.apiKey } });
+    if (!res.ok) return null;
+    // API Gateway returns base64-encoded body for binary responses
+    const text = await res.text();
+    const buf = Buffer.from(text, 'base64');
+    // Verify it's a valid image (JPEG starts with FF D8)
+    if (buf[0] === 0xFF && buf[1] === 0xD8) {
+      fs.writeFileSync(localPath, buf);
+    } else {
+      // Might be raw binary (local dev), save as-is
+      fs.writeFileSync(localPath, buf.length > 0 ? buf : text);
+    }
+    return localPath;
+  } catch { return null; }
 }
 
 function handlePermissionReply(sessionId, approved) {

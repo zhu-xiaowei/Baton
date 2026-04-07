@@ -203,8 +203,13 @@ body {
 }
 .img-placeholder.loaded { background: none; border: none; min-width: auto; }
 .img-placeholder img { height: 36px; border-radius: 6px; cursor: pointer; object-fit: cover; }
-.img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; }
-.img-overlay img { max-width: 95%; max-height: 95%; object-fit: contain; }
+.img-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; cursor: pointer; flex-direction: column; }
+.img-overlay img { max-width: 95%; max-height: 85%; object-fit: contain; }
+.gallery-nav { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+.gallery-nav button { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #6e7681; background: rgba(255,255,255,0.1); color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0; }
+.gallery-nav button:hover { background: rgba(255,255,255,0.2); }
+.gallery-nav button:disabled { opacity: 0.3; cursor: default; }
+.gallery-nav span { color: #8b949e; font-size: 13px; }
 
 /* === Real-time tool OUT === */
 .tool-body-out { border-top: 1px solid #21262d; padding: 6px 10px; }
@@ -234,13 +239,24 @@ body {
 .permission-submit { padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 12px; cursor: pointer; }
 
 /* === Input bar === */
-#input-bar { display: flex; gap: 8px; padding: 8px 12px; background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0; }
-#input-bar input { flex: 1; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; outline: none; }
-#input-bar input:focus { border-color: #58a6ff; }
-#input-bar button { padding: 8px 16px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; white-space: nowrap; }
-#input-bar button:active { background: #2ea043; }
-#input-bar input:disabled { opacity: 0.4; cursor: not-allowed; }
-#input-bar button:disabled { opacity: 0.4; cursor: not-allowed; background: #30363d; }
+#input-bar { background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0; display: flex; flex-direction: column; }
+#img-preview-row { display: flex; gap: 6px; padding: 8px 12px 0; flex-wrap: wrap; }
+#img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
+#img-preview-row .img-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; }
+#img-preview-row .img-thumb .img-remove { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; background: rgba(110,118,129,0.8); color: #fff; border: none; border-radius: 50%; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; display: none; z-index: 1; }
+#img-preview-row .img-thumb:hover .img-remove { display: block; }
+.img-upload-overlay { position: absolute; top: 0; left: 0; width: 64px; height: 64px; background: rgba(0,0,0,0.5); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.img-spinner { width: 28px; height: 28px; }
+.input-row { display: flex; gap: 8px; padding: 8px 12px; width: 100%; }
+.img-btn { padding: 8px 12px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; font-size: 18px; cursor: pointer; font-weight: bold; line-height: 1; }
+.img-btn:hover { background: #30363d; color: #e6edf3; }
+.img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#msg-input { flex: 1; min-width: 0; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; outline: none; }
+#msg-input:focus { border-color: #58a6ff; }
+.input-row button:last-child { padding: 8px 16px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.input-row button:last-child:active { background: #2ea043; }
+#msg-input:disabled { opacity: 0.4; cursor: not-allowed; }
+.input-row button:disabled { opacity: 0.4; cursor: not-allowed; background: #30363d; }
 
 /* === Stats bar === */
 .stats { padding: 6px 12px; background: #0d1117; border-top: 1px solid #30363d; font-size: 11px; color: #6e7681; text-align: center; flex-shrink: 0; display: flex; justify-content: center; gap: 12px; }

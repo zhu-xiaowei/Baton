@@ -181,24 +181,44 @@ var pendingSentMessages = [];
 function sendMessage() {
   var input = document.getElementById('msg-input');
   var text = input.value.trim();
-  if (!text || !wsSessionId) return;
-  wsSend({ action: 'send_message', sessionId: wsSessionId, text: text });
+  var images = stagedImages.slice();
 
-  // Optimistic render: show user message immediately with sending status
-  var msgId = 'sent-' + Date.now();
-  pendingSentMessages.push({ id: msgId, text: text });
-  var container = document.querySelector('.messages');
-  if (container) {
-    var time = new Date().toLocaleTimeString();
-    container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" id="' + msgId + '"><div class="msg-text">' + esc(text) + '</div>'
-      + '<div class="msg-time sending-status">sending... ' + time + '</div></div>');
-    var el = document.getElementById('content');
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  if (!text && !images.length) return;
+  if (!wsSessionId) return;
+  if (!text && images.length) text = '请查看这张图片';
+
+  // Images already uploaded — just assemble refs
+  var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
+  if (readyImages.length) {
+    var refs = readyImages.map(function (img) { return '![](claude-bridge:' + img.key + ')'; }).join('\n');
+    doSend(text + '\n' + refs, text, readyImages);
+  } else {
+    doSend(text, text, []);
   }
 
+  stagedImages = [];
+  renderStagedImages();
   input.value = '';
   input.focus();
+}
+
+function doSend(fullText, displayText, images) {
+  wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText });
+
+  var msgId = 'sent-' + Date.now();
+  pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });
+  var container = document.querySelector('.messages');
+  if (container) {
+    var imgHtml = images.map(function (img) {
+      return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" onclick="viewImage(this.src)" /></div>';
+    }).join('');
+    var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
+    container.insertAdjacentHTML('beforeend',
+      '<div class="msg-user" id="' + msgId + '">' + attachHtml
+      + '<div class="msg-text">' + esc(displayText) + '</div>'
+      + '<div class="msg-time sending-status">sending... ' + new Date().toLocaleTimeString() + '</div></div>');
+    document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
+  }
 }
 
 // ---- Permission Prompt ----
@@ -210,9 +230,9 @@ function showPermissionPrompt(msg) {
   // Disable bottom input bar while prompt is active
   var inputBar = document.getElementById('input-bar');
   if (inputBar) {
-    inputBar.querySelector('input').disabled = true;
-    inputBar.querySelector('button').disabled = true;
-    inputBar.querySelector('input').placeholder = 'Please respond to the prompt above...';
+    inputBar.querySelector('#msg-input').disabled = true;
+    inputBar.querySelectorAll('.input-row button').forEach(function(b) { b.disabled = true; });
+    inputBar.querySelector('#msg-input').placeholder = 'Please respond to the prompt above...';
   }
 
   var container = document.querySelector('.messages');
@@ -291,9 +311,9 @@ function dismissPermissionPrompt() {
   // Re-enable bottom input bar
   var inputBar = document.getElementById('input-bar');
   if (inputBar) {
-    inputBar.querySelector('input').disabled = false;
-    inputBar.querySelector('button').disabled = false;
-    inputBar.querySelector('input').placeholder = 'Send a message...';
+    inputBar.querySelector('#msg-input').disabled = false;
+    inputBar.querySelectorAll('.input-row button').forEach(function(b) { b.disabled = false; });
+    inputBar.querySelector('#msg-input').placeholder = 'Send a message...';
   }
 }
 
@@ -387,6 +407,137 @@ function checkPendingPrompts(messages) {
   }
 }
 
+// ---- Image Staging & Sending ----
+
+var stagedImages = []; // { dataUrl, key, uploaded }
+
+function onImagePicked(input) {
+  if (!input.files) return;
+  for (var i = 0; i < input.files.length; i++) stageImageFile(input.files[i]);
+  input.value = '';
+}
+
+function onInputPaste(e) {
+  var items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  var hasImage = false;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image/') === 0) {
+      hasImage = true;
+      stageImageFile(items[i].getAsFile());
+    }
+  }
+  if (hasImage) e.preventDefault();
+}
+
+function stageImageFile(file) {
+  if (!file) return;
+  var entry = { dataUrl: '', key: '', uploaded: false };
+  stagedImages.push(entry);
+  renderStagedImages();
+
+  var reader = new FileReader();
+  reader.onload = function () {
+    var img = new Image();
+    img.onload = function () {
+      // Compress
+      var scale = Math.min(1, 720 / Math.max(img.width, img.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      var dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      var base64 = dataUrl.split(',')[1];
+      var raw = atob(base64);
+      var hashStr = raw.slice(0, 8192) + String(raw.length);
+      var h = 0;
+      for (var hi = 0; hi < hashStr.length; hi++) { h = ((h << 5) - h + hashStr.charCodeAt(hi)) | 0; }
+      var key = Math.abs(h).toString(16).padStart(8, '0') + raw.length.toString(16) + '.jpg';
+
+      entry.dataUrl = dataUrl;
+      entry.key = key;
+      renderStagedImages();
+
+      // Upload immediately
+      fetch(SERVER + '/api/bridge/upload-image', {
+        method: 'POST',
+        headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, data: base64 })
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Upload failed');
+        return res.json();
+      }).then(function () {
+        entry.uploaded = true;
+        renderStagedImages();
+      }).catch(function () {
+        // Remove failed entry
+        var fi = stagedImages.indexOf(entry);
+        if (fi >= 0) stagedImages.splice(fi, 1);
+        renderStagedImages();
+      });
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderStagedImages() {
+  var row = document.getElementById('img-preview-row');
+  if (!stagedImages.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  row.style.display = 'flex';
+  row.innerHTML = stagedImages.map(function (img, i) {
+    var overlay = img.uploaded ? '' : '<div class="img-upload-overlay"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><circle cx="18" cy="18" r="16" fill="none" stroke="#fff" stroke-width="3" stroke-dasharray="100" stroke-dashoffset="' + (img.dataUrl ? '25' : '90') + '" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>';
+    var src = img.dataUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    return '<div class="img-thumb" onclick="viewStagedImage(' + i + ')">'
+      + '<img src="' + src + '">' + overlay
+      + '<button class="img-remove" onclick="event.stopPropagation();removeStagedImage(' + i + ')">&times;</button></div>';
+  }).join('');
+}
+
+function removeStagedImage(i) {
+  stagedImages.splice(i, 1);
+  renderStagedImages();
+}
+
+var galleryIndex = 0;
+function viewStagedImage(i) {
+  galleryIndex = i;
+  showGallery();
+}
+
+function showGallery() {
+  var img = stagedImages[galleryIndex];
+  if (!img || !img.dataUrl) return;
+  var overlay = document.getElementById('imgOverlay');
+  var overlayImg = document.getElementById('imgOverlayImg');
+  overlayImg.src = img.dataUrl;
+  overlay.style.display = 'flex';
+  overlay.onclick = null;
+  // Build nav buttons if multiple
+  var nav = overlay.querySelector('.gallery-nav');
+  if (nav) nav.remove();
+  if (stagedImages.length > 1) {
+    var navHtml = '<div class="gallery-nav">'
+      + '<button onclick="event.stopPropagation();galleryPrev()"' + (galleryIndex <= 0 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>'
+      + '<span>' + (galleryIndex + 1) + ' / ' + stagedImages.length + '</span>'
+      + '<button onclick="event.stopPropagation();galleryNext()"' + (galleryIndex >= stagedImages.length - 1 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg></button>'
+      + '</div>';
+    overlay.insertAdjacentHTML('beforeend', navHtml);
+  }
+  overlay.onclick = function (e) { if (e.target === overlay) { overlay.style.display = 'none'; } };
+}
+
+function galleryPrev() { if (galleryIndex > 0) { galleryIndex--; showGallery(); } }
+function galleryNext() { if (galleryIndex < stagedImages.length - 1) { galleryIndex++; showGallery(); } }
+
+document.addEventListener('keydown', function (e) {
+  var overlay = document.getElementById('imgOverlay');
+  if (!overlay || overlay.style.display !== 'flex') return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); galleryPrev(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); galleryNext(); }
+  else if (e.key === 'Escape') overlay.style.display = 'none';
+});
+
 /** Extract plain text from a message's content field */
 function extractMsgText(msg) {
   if (!msg.content) return '';
@@ -398,21 +549,32 @@ function extractMsgText(msg) {
   return '';
 }
 
+/** Strip ![](…) image references from text for comparison */
+function stripImageRefs(text) {
+  return text.replace(/!\[.*?\]\([^)]+\)/g, '').trim();
+}
+
 /** Check if an incoming user message matches a pending sent message. If so, mark as delivered instead of appending. */
 function tryDedup(msg) {
   if (msg.type !== 'user') return false;
   var text = extractMsgText(msg).trim();
   if (!text) return false;
 
+  var stripped = stripImageRefs(text);
   for (var i = 0; i < pendingSentMessages.length; i++) {
-    if (pendingSentMessages[i].text.trim() === text) {
-      // Match found — update sending status to delivered
+    var pendingText = pendingSentMessages[i].text.trim();
+    if (pendingText === stripped || pendingText === text) {
       var el = document.getElementById(pendingSentMessages[i].id);
       if (el) {
         var status = el.querySelector('.sending-status');
         if (status) {
-          status.innerHTML = '<span style="color:#3fb950">&#10003;</span>';
-          setTimeout(function () { status.style.display = 'none'; }, 2000);
+          // Show ✓ then update to actual timestamp
+          var ts = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
+          status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
+          setTimeout(function () {
+            status.innerHTML = ts;
+            status.style.color = '#6e7681';
+          }, 2000);
         }
       }
       pendingSentMessages.splice(i, 1);

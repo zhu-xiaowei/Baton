@@ -55,6 +55,18 @@
         .join('\n');
     }
 
+    // Extract slash command from CC XML tags before stripping
+    let slashCmd = '';
+    text = text.replace(/<command-name>\/?(\w+)<\/command-name>/g, (_, cmd) => { slashCmd = cmd; return ''; });
+    text = text.replace(/<command-message>.*?<\/command-message>\s*/gs, '');
+    text = text.replace(/<command-args>.*?<\/command-args>\s*/gs, '');
+    text = text.replace(/<local-command-caveat>.*?<\/local-command-caveat>\s*/gs, '');
+    text = text.replace(/<ide_selection>.*?<\/ide_selection>\s*/gs, '');
+    text = text.replace(/<system-reminder>.*?<\/system-reminder>\s*/gs, '');
+
+    // Also catch plain /command at start
+    if (!slashCmd) text = text.replace(/^\/(\w+)\s*/m, (_, cmd) => { slashCmd = cmd; return ''; });
+
     // Extract <ide_opened_file> references from text
     const ideFiles = [];
     text = text.replace(/<ide_opened_file>.*?opened the file (.*?) in the IDE.*?<\/ide_opened_file>\n?/g, (_, path) => {
@@ -67,10 +79,17 @@
       ? msg.content.filter(b => b.type === 'document' && b.title)
       : [];
 
-    // Collect images
+    // Collect images from content blocks
     const images = Array.isArray(msg.content)
       ? msg.content.filter(b => b.type === 'image' && b.key)
       : [];
+
+    // Parse ![](path) markdown image refs in text (from claude-bridge image sends)
+    const mdImages = [];
+    text = text.replace(/!\[.*?\]\(([^)]+)\)\n?/g, (_, imgPath) => {
+      mdImages.push(imgPath);
+      return '';
+    });
 
     // Build attachments row (file badges + images)
     const badges = [];
@@ -85,12 +104,22 @@
     images.forEach(b => {
       badges.push(`<div class="img-placeholder" data-key="${esc(b.key)}">loading</div>`);
     });
+    mdImages.forEach(imgPath => {
+      // Extract image key: from "claude-bridge:key" or filename from absolute path
+      const cbMatch = imgPath.match(/claude-bridge:(.+)/);
+      const key = cbMatch ? cbMatch[1] : imgPath.split('/').pop();
+      if (key && key.match(/\.(jpg|png|jpeg)$/i)) {
+        badges.push(`<div class="img-placeholder" data-key="${esc(key)}">loading</div>`);
+      }
+    });
     const attachHtml = badges.length ? `<div class="msg-attachments">${badges.join('')}</div>` : '';
 
-    if (!text.trim() && !attachHtml) return '';
+    const displayText = slashCmd ? `/${slashCmd}${text.trim() ? ' ' + text.trim() : ''}` : text.trim();
+
+    if (!displayText && !attachHtml) return '';
     return `<div class="msg-user">
       ${attachHtml}
-      ${text.trim() ? `<div class="msg-text">${esc(text.trim())}</div>` : ''}
+      ${displayText ? `<div class="msg-text">${esc(displayText)}</div>` : ''}
       <div class="msg-time">${fmtTime(msg.timestamp)}</div>
     </div>`;
   };

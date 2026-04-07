@@ -46,8 +46,13 @@
 
 <!-- Input bar -->
 <div id="input-bar" style="display:none">
-  <input id="msg-input" placeholder="Send a message..." onkeydown="if(event.key==='Enter')sendMessage()" />
-  <button onclick="sendMessage()">Send</button>
+  <div id="img-preview-row" style="display:none"></div>
+  <div class="input-row">
+    <input type="file" id="img-picker" accept="image/*" multiple style="display:none" onchange="onImagePicked(this)" />
+    <button class="img-btn" onclick="document.getElementById('img-picker').click()" title="Add image">+</button>
+    <input id="msg-input" placeholder="Send a message..." onkeydown="if(event.key==='Enter')sendMessage()" onpaste="onInputPaste(event)" />
+    <button onclick="sendMessage()">Send</button>
+  </div>
 </div>
 
 <!-- Stats -->

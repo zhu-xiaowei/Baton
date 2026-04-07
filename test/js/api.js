@@ -34,7 +34,7 @@ async function api(path, params) {
   return res.json();
 }
 
-async function connect() {
+async function connect(skipLoadDevices) {
   SERVER = document.getElementById('serverUrl').value.replace(/\/$/, '');
   KEY = document.getElementById('apiKey').value;
   if (!SERVER || !KEY) { setStatus('Please fill in both fields', 'err'); return; }
@@ -49,7 +49,7 @@ async function connect() {
     } catch {}
     setStatus('Connected', 'ok');
     collapseConfig();
-    loadDevices();
+    if (!skipLoadDevices) loadDevices();
   } catch (e) {
     setStatus('Failed: ' + e.message, 'err');
   }

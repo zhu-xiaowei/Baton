@@ -31,8 +31,20 @@
     return {
       name: 'Read',
       desc,
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
+      body: readResultBody(result),
     };
+  }
+
+  function readResultBody(result) {
+    if (!result) return '';
+    const c = result.content;
+    if (!c) return '';
+    let text = '';
+    if (typeof c === 'string') text = c;
+    else if (Array.isArray(c)) text = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
+    text = text.trim();
+    if (!text) return '';
+    return `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(text, 2000))}</div>`;
   }
 
   // File extension → hljs language
@@ -142,7 +154,7 @@
     return {
       name,
       desc,
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
     };
   }
 
@@ -274,7 +286,9 @@
 
     const noClamp = name === 'TodoWrite';
     const clampClass = noClamp ? ' no-clamp' : (info.collapsible ? ' collapsible' : '');
-    const bodyHtml = info.body
+    // Strip empty body (e.g. Read image with no text output)
+    const bodyContent = info.body ? info.body.replace(/<[^>]*>/g, '').trim() : '';
+    const bodyHtml = bodyContent
       ? `<div class="tool-body">
           <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleToolBody('${id}')"`}>${info.body}</div>
         </div>`

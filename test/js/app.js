@@ -52,12 +52,17 @@ function showInputBar(visible) {
   document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
 }
 
+function saveNav() {
+  localStorage.setItem('agentpeek-nav', JSON.stringify(appState));
+}
+
 // ---- Devices ----
 async function loadDevices() {
   appState = { device: null, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
+  saveNav();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading devices...</div>';
 
@@ -81,6 +86,7 @@ async function loadProjects(device) {
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
+  saveNav();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading projects...</div>';
 
@@ -108,6 +114,7 @@ async function loadSessions(device, projectHash, projectName) {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
     appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
     updateBreadcrumb();
+    saveNav();
     content.innerHTML = '<div class="list">' + data.sessions.map(function (s) {
       return '<div class="item" onclick="loadMessages(\'' + esc(s.sessionId) + '\', \'' + esc(s.preview || '') + '\')">'
         + '<div class="title"><span class="badge ' + (s.isRunning ? 'running' : 'stopped') + '">' + (s.isRunning ? 'Running' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</div>'
@@ -159,13 +166,36 @@ async function loadMessages(sessionId, preview) {
 
     startWs(sessionId);
   } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  saveNav();
 }
 
-// Auto-connect
+// Auto-connect + restore last session
 (function () {
   var saved = localStorage.getItem('agentpeek-config');
   if (saved) {
     var c = JSON.parse(saved);
-    if (c.server && c.key) setTimeout(connect, 100);
+    if (c.server && c.key) {
+      var nav = localStorage.getItem('agentpeek-nav');
+      var hasNav = false;
+      if (nav) { try { var p = JSON.parse(nav); hasNav = !!(p.session || p.project || p.device); } catch {} }
+      setTimeout(function () {
+        connect(hasNav).then(function () {
+          if (nav) {
+            try {
+              var s = JSON.parse(nav);
+              if (s.session) {
+                appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
+                loadMessages(s.session, s.sessionPreview);
+              } else if (s.project) {
+                loadSessions(s.device, s.project.hash, s.project.name);
+              } else if (s.device) {
+                loadProjects(s.device);
+              }
+            } catch {}
+          }
+        });
+      }, 100);
+      return;
+    }
   }
 })();
