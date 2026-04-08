@@ -29,6 +29,19 @@ function connectWs(_, projectHash) {
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
+      // Mark pending messages as delivered (but keep in list for tryDedup)
+      if (msg.ok && pendingSentMessages.length) {
+        var pending = pendingSentMessages[0];
+        var el = document.getElementById(pending.id);
+        if (el) {
+          var status = el.querySelector('.sending-status');
+          if (status) {
+            var ts = new Date().toLocaleTimeString();
+            status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
+            setTimeout(function () { status.innerHTML = ts; status.style.color = '#6e7681'; }, 2000);
+          }
+        }
+      }
       // New session: bridge created tmux + CC, returned sessionId
       if (msg.sessionId && appState.session === '__new__') {
         appState.session = msg.sessionId;
@@ -267,7 +280,7 @@ function doSend(fullText, displayText, images) {
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     container.insertAdjacentHTML('beforeend',
       '<div class="msg-user" id="' + msgId + '">' + attachHtml
-      + '<div class="msg-text">' + esc(displayText) + '</div>'
+      + '<div class="msg-text' + (displayText.split('\n').length > 3 || displayText.length > 300 ? ' clamped' : '') + '" onclick="this.classList.toggle(\'clamped\');this.classList.toggle(\'expanded\')">' + esc(displayText) + '</div>'
       + '<div class="msg-time sending-status">sending... ' + new Date().toLocaleTimeString() + '</div></div>');
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }

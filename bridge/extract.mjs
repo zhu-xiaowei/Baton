@@ -73,12 +73,15 @@ export async function readNewMessages(filePath, sessionId) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   const lastLine = synced.get(sessionId) ?? 0;
   const newMsgs = [];
+  const metaUuids = new Set();
 
   for (let i = lastLine; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
     if (!VALID_TYPES.has(msg.type)) continue;
+    if (msg.isMeta) { metaUuids.add(msg.uuid); continue; }
+    if (msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
     if (extracted.uuid) newMsgs.push(extracted);
   }

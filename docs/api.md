@@ -396,13 +396,24 @@ TTL: 24h
 
 #### send_message
 
-发送消息到 Claude Code（通过 tmux）。
+发送消息到 Claude Code（通过 tmux）。支持两种模式：
 
+**已有 session:**
 ```json
-{ "action": "send_message", "sessionId": "a1ca0870-xxxx", "text": "help me fix this bug" }
+{ "action": "send_message", "sessionId": "a1ca0870-xxxx", "text": "help me fix this bug", "device": "MacBook-Pro" }
 ```
 
-**Server 处理**: 转发给该 account 的 bridge 连接。
+**新建 session（无 sessionId，带 projectHash）:**
+```json
+{ "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "text": "hello", "device": "MacBook-Pro" }
+```
+
+**Server 处理**: 按 `device` 转发给对应 bridge。Bridge 处理逻辑：
+1. 有 sessionId → 找到对应 tmux pane → sendKeys
+2. 有 sessionId 但无 tmux target → 自动创建 tmux + `claude --resume` → 等 ready → sendKeys
+3. 无 sessionId 有 projectHash → 创建 tmux + `claude` → 等 ready → sendKeys → poll .jsonl 获取新 sessionId
+
+**返回**: Bridge 发 `send_message_result`（含 sessionId）→ Server 广播给所有 app 连接。
 
 ---
 
@@ -411,7 +422,7 @@ TTL: 24h
 回复权限确认或用户选择。
 
 ```json
-{ "action": "permission_reply", "sessionId": "a1ca0870-xxxx", "approved": "arrow:1" }
+{ "action": "permission_reply", "sessionId": "a1ca0870-xxxx", "approved": "arrow:1", "device": "MacBook-Pro" }
 ```
 
 **approved 值**:
@@ -421,21 +432,11 @@ TTL: 24h
 | `type:N:text` | 导航到第 N 个选项（Type something），输入文本 |
 | `escape` | 取消/关闭提示 |
 
-**Server 处理**: 转发给该 account 的 bridge 连接。
+**Server 处理**: 按 `device` 转发给对应 bridge。
 
-**权限检测机制**: App 从 WS 实时消息中的 `tool_use` block 直接检测需要用户确认的工具（AskUserQuestion、ExitPlanMode、Bash、Edit、Write 等），即时渲染选项 UI。不依赖 Bridge 端检测。
-
----
-
-#### new_session
-
-请求 bridge 创建新的 tmux session 并启动 Claude Code。
-
-```json
-{ "action": "new_session", "project": "projectHash", "text": "implement login feature" }
-```
-
-**Server 处理**: 转发给该 account 的 bridge 连接。
+**权限检测机制**: App 从 WS 实时消息中的 `tool_use` block 检测需要用户确认的工具：
+- AskUserQuestion / ExitPlanMode → 立即弹窗
+- Bash / Edit / Write → 延迟判断，若 tool_result 先到则不弹（auto-approved）
 
 ---
 

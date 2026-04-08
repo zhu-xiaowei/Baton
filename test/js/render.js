@@ -96,8 +96,8 @@
         continue;
       }
 
-      // System/summary/ai-title → flush turn, render standalone
-      if (msg.type === 'system' || msg.type === 'summary' || msg.type === 'ai-title') {
+      // Summary/ai-title → flush turn, render standalone
+      if (msg.type === 'summary' || msg.type === 'ai-title') {
         flushTurn();
         html.push(renderSystemMsg(msg));
         continue;

@@ -119,7 +119,7 @@
     if (!displayText && !attachHtml) return '';
     return `<div class="msg-user">
       ${attachHtml}
-      ${displayText ? `<div class="msg-text">${esc(displayText)}</div>` : ''}
+      ${displayText ? `<div class="msg-text${displayText.split('\n').length > 3 || displayText.length > 300 ? ' clamped' : ''}" onclick="this.classList.toggle('clamped');this.classList.toggle('expanded')">${esc(displayText)}</div>` : ''}
       <div class="msg-time">${fmtTime(msg.timestamp)}</div>
     </div>`;
   };

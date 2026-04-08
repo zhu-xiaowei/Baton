@@ -167,12 +167,19 @@ Bridge → Server:  { action: "heartbeat" }
 (every 5 minutes)
 ```
 
-### Send message (Phase 3)
+### Send message
 
 ```
-App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "..." }
-Bridge executes (tmux send-keys / kill + Agent SDK resume)
-Response flows back as normal messages through DDB + WS
+已有 session:
+App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "...", device: "MacBook-Pro" }
+Bridge: findTmuxTarget(sessionId) → sendKeys
+  或: 无 target → 自动 tmux new-session + claude --resume → waitForCCReady → sendKeys
+
+新建 session:
+App → Server → Bridge:  { action: "send_message", projectHash: "xxx", text: "...", device: "MacBook-Pro" }
+Bridge: 创建 tmux + claude → waitForCCReady → sendKeys → poll .jsonl → 返回 sessionId
+Bridge → Server → App:  { action: "send_message_result", ok: true, sessionId: "new-uuid" }
+App subscribes to new sessionId, starts receiving messages
 ```
 
 ## Entering a Session — Complete Flow

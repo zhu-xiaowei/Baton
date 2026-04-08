@@ -43,7 +43,13 @@ body {
 
 /* === User message === */
 .msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 4px; border-radius: 12px; }
-.msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; position: relative; }
+.msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; cursor: pointer; }
+.msg-user .msg-text.clamped::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2em; background: linear-gradient(transparent, #2d333b); pointer-events: none; }
+.msg-user .msg-text.clamped:hover::before { content: 'Click to expand'; position: absolute; bottom: 4px; right: 8px; font-size: 11px; color: #8b949e; z-index: 1; }
+.msg-user .msg-text.expanded { max-height: none; cursor: pointer; }
+.msg-user .msg-text.expanded::after { display: none; }
+.msg-user .msg-text.expanded:hover::before { content: 'Click to collapse'; position: absolute; bottom: 4px; right: 8px; font-size: 11px; color: #8b949e; z-index: 1; }
 .msg-user .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; text-align: right; }
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
 .file-badge {

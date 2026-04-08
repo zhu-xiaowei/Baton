@@ -7,6 +7,7 @@ import { getPreview, getModel, readableProjectName, getRunningProjects } from '.
 import { recentSessions } from './sync.mjs';
 import { wsSend } from './ws.mjs';
 
+const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
@@ -53,6 +54,8 @@ async function readAndSend(config, filename, sessionId) {
     lastParsedLine = i + 1;
 
     if (!VALID_TYPES.has(raw.type)) continue;
+    if (raw.isMeta) { _metaUuids.add(raw.uuid); continue; }
+    if (raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title') gotNewTitle = true;
 
     const msg = await extractForApp(raw);
