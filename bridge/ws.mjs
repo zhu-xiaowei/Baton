@@ -41,7 +41,7 @@ function connect() {
     return;
   }
 
-  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge`;
+  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   _ws = new WebSocket(url);

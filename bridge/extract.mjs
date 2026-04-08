@@ -64,7 +64,6 @@ export async function extractForApp(msg) {
     content,
     timestamp: msg.timestamp || '',
   };
-  // Preserve Agent tool metadata (totalToolUseCount, totalDurationMs, etc.)
   if (msg.toolUseResult) extracted.toolUseResult = msg.toolUseResult;
   return extracted;
 }

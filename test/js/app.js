@@ -123,7 +123,7 @@ async function loadSessions(device, projectHash, projectName) {
     saveNav();
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
-      return '<div class="item" onclick="loadMessages(\'' + esc(s.sessionId) + '\', \'' + esc(s.preview || '') + '\')">'
+      return '<div class="item" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview)">'
         + '<div class="title"><span class="badge ' + (s.isRunning ? 'running' : 'stopped') + '">' + (s.isRunning ? 'Running' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</div>'
         + '<div class="subtitle">' + esc(s.model || 'unknown model') + '</div>'
         + '<div class="meta"><span>' + s.sessionId.slice(0, 8) + '...</span><span>' + formatSize(s.size) + '</span><span>' + timeAgo(s.lastActive) + '</span></div>'

@@ -268,8 +268,8 @@ body {
 .loading { text-align: center; padding: 40px; color: #8b949e; }
 .empty { text-align: center; padding: 40px; color: #6e7681; }
 
-/* === Collapsible diff (>10 lines) === */
-.tool-body-content.collapsible:not(.open) .diff-container {
+/* === Collapsible tool body (long output) === */
+.tool-body-content.collapsible:not(.open) {
   max-height: 240px;
   overflow: hidden;
 }

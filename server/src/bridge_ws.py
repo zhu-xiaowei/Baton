@@ -75,6 +75,7 @@ def _handle_connect(event, connection_id):
     qs = event.get("queryStringParameters") or {}
     api_key = qs.get("apiKey", "")
     role = qs.get("role", "app")  # "app" or "bridge"
+    device = qs.get("device", "")
 
     if not api_key:
         return {"statusCode": 401}
@@ -82,13 +83,16 @@ def _handle_connect(event, connection_id):
     account_id = _account_id(api_key)
     ttl = int(time.time()) + 86400  # 24h
 
-    _connections_table.put_item(Item={
+    item = {
         "connectionId": connection_id,
         "accountId": account_id,
         "role": role,
         "connectedAt": int(time.time()),
         "ttl": ttl,
-    })
+    }
+    if device:
+        item["deviceName"] = device
+    _connections_table.put_item(Item=item)
 
     return {"statusCode": 200}
 
@@ -308,7 +312,8 @@ def _handle_send_message(body, account_id, endpoint):
 
 
 def _handle_send_to_bridge(body, account_id, endpoint, action):
-    """Forward an action to bridge connection(s) for this account."""
+    """Forward an action to bridge connection(s) for this account. If device is specified, only forward to that device's bridge."""
+    device = body.pop("device", "")
     body["action"] = action
     resp = _connections_table.scan(
         FilterExpression="accountId = :aid AND #r = :role",
@@ -316,6 +321,8 @@ def _handle_send_to_bridge(body, account_id, endpoint, action):
         ExpressionAttributeValues={":aid": account_id, ":role": "bridge"},
     )
     for item in resp.get("Items", []):
+        if device and item.get("deviceName", "") != device:
+            continue
         _post_to_connection(endpoint, item["connectionId"], body)
     return {"statusCode": 200}
 

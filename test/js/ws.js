@@ -126,13 +126,27 @@ function updateLastTurn() {
               var outContent = typeof rb.content === 'string' ? rb.content
                 : Array.isArray(rb.content) ? rb.content.map(function(c) { return c.text || ''; }).join('') : '';
               if (outContent) {
-                var bodyEl = node.querySelector('.tool-body');
-                if (bodyEl) {
-                  bodyEl.insertAdjacentHTML('beforeend',
-                    '<div class="tool-body-out"><span class="tool-label">OUT</span><pre class="tool-out-pre">' + esc(outContent) + '</pre></div>');
+                var truncated = outContent.length > 2000 ? outContent.slice(0, 2000) + '…' : outContent;
+                // Append as tool-grid row matching REST render format
+                var outRowHtml = '<div class="tool-row"><div class="tool-label">OUT</div><div class="tool-value">' + esc(truncated) + '</div></div>';
+                var gridEl = node.querySelector('.tool-grid');
+                if (gridEl) {
+                  gridEl.insertAdjacentHTML('beforeend', outRowHtml);
                 } else {
-                  node.insertAdjacentHTML('beforeend',
-                    '<div class="tool-body"><div class="tool-body-out"><span class="tool-label">OUT</span><pre class="tool-out-pre">' + esc(outContent) + '</pre></div></div>');
+                  var bodyEl = node.querySelector('.tool-body');
+                  var html = '<div class="tool-body-out"><span class="tool-label">OUT</span><pre class="tool-out-pre">' + esc(truncated) + '</pre></div>';
+                  if (bodyEl) {
+                    bodyEl.insertAdjacentHTML('beforeend', html);
+                  } else {
+                    node.insertAdjacentHTML('beforeend', '<div class="tool-body">' + html + '</div>');
+                  }
+                }
+                // Add collapsible if content is long
+                if (outContent.length > 500) {
+                  var bodyContent = node.querySelector('.tool-body-content');
+                  if (bodyContent && !bodyContent.classList.contains('collapsible')) {
+                    bodyContent.classList.add('collapsible');
+                  }
                 }
               }
             }
@@ -143,7 +157,7 @@ function updateLastTurn() {
     }
     if (isInterruptMsg(msg)) continue;
 
-    // User message: dedup against pending sent messages, or render new bubble
+    // User message: track permissionMode, dedup, or render
     if (msg.type === 'user') {
       if (tryDedup(msg)) continue;  // matched a pending sent msg — skip rendering
       var userHtml = renderUserBubble(msg);
@@ -165,8 +179,24 @@ function updateLastTurn() {
     }
   }
 
-  // After all messages rendered — check if last message needs a prompt
+  // After all messages rendered — check pending prompts
   dismissPermissionPrompt();
+  // If we were waiting to see if a tool_result arrives, check now
+  if (_pendingToolUse) {
+    var resolved = newMessages.some(function (m) {
+      return Array.isArray(m.content) && m.content.some(function (c) {
+        return c.type === 'tool_result' && c.tool_use_id === _pendingToolUse.id;
+      });
+    });
+    if (resolved) {
+      _pendingToolUse = null; // auto-approved, no prompt needed
+    } else {
+      // tool_result didn't come in this batch — CC is waiting for user
+      var prompt = buildClientPrompt(_pendingToolUse.name, _pendingToolUse.input);
+      _pendingToolUse = null;
+      if (prompt) showPermissionPrompt(prompt);
+    }
+  }
   checkPendingPrompts(wsAllMessages);
 
   var el = document.getElementById('content');
@@ -216,10 +246,11 @@ function sendMessage() {
 }
 
 function doSend(fullText, displayText, images) {
+  var device = appState.device || '';
   if (appState.session === '__new__' && wsProjectHash) {
-    wsSend({ action: 'send_message', projectHash: wsProjectHash, text: fullText });
+    wsSend({ action: 'send_message', projectHash: wsProjectHash, text: fullText, device: device });
   } else {
-    wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText });
+    wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText, device: device });
   }
 
   // Remove placeholder text
@@ -308,7 +339,7 @@ function handlePermissionOption(btn) {
   }
 
   // Direct action — send value as keystroke
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, approved: value });
+  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value });
   dismissPermissionPrompt();
 }
 
@@ -316,13 +347,13 @@ function submitPermissionWithInput(input, value) {
   var text = input.value.trim();
   if (!text) return; // require input
   // Send as type:N:text — bridge navigates to option, types text, Enter
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, approved: value + ':' + text });
+  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value + ':' + text });
   dismissPermissionPrompt();
 }
 
 function cancelPermissionPrompt() {
   // Send Escape to Claude Code
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, approved: 'escape' });
+  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: 'escape' });
   dismissPermissionPrompt();
 }
 
@@ -413,6 +444,8 @@ function buildClientPrompt(toolName, toolInput) {
   return null;
 }
 
+var _pendingToolUse = null;
+
 /** Check if the last message has an unresolved prompt. */
 function checkPendingPrompts(messages) {
   if (!messages.length) return;
@@ -421,8 +454,22 @@ function checkPendingPrompts(messages) {
   for (var i = last.content.length - 1; i >= 0; i--) {
     var b = last.content[i];
     if (b.type === 'tool_use') {
+      // Check if tool_result already exists in messages
+      var hasResult = messages.some(function (m) {
+        return Array.isArray(m.content) && m.content.some(function (c) {
+          return c.type === 'tool_result' && c.tool_use_id === b.id;
+        });
+      });
+      if (hasResult) return;
       var prompt = buildClientPrompt(b.name, b.input);
-      if (prompt) showPermissionPrompt(prompt);
+      if (!prompt) return;
+      // AskUserQuestion / ExitPlanMode always need user input — show immediately
+      if (prompt.type === 'ask_user' || prompt.type === 'plan_approval') {
+        showPermissionPrompt(prompt);
+        return;
+      }
+      // Tool permissions (Bash/Edit/Write) might be auto-approved — defer to check
+      _pendingToolUse = { id: b.id, name: b.name, input: b.input };
       return;
     }
   }

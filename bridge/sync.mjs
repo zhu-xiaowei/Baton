@@ -70,10 +70,11 @@ export async function syncSessions(config) {
     sessions,
   });
 
+  const runningSessions = sessions.filter(s => s.isRunning).length;
   if (isInitialSync) {
-    console.log(`[sync] ${sessions.length} sessions (${running.size} active)`);
-  } else {
-    console.log(`[sync] ${sessions.length} recent sessions (${running.size} active)`);
+    console.log(`[sync] ${sessions.length} sessions, ${runningSessions} running`);
+  } else if (runningSessions > 0) {
+    console.log(`[sync] ${sessions.length} sessions, ${runningSessions} running`);
   }
 
   // Initial message sync

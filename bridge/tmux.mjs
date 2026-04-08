@@ -94,7 +94,8 @@ export function newTmuxSession(name, cwd, command) {
   // Clean stale sessions in background, don't block creation
   setTimeout(cleanStaleSessions, 0);
   if (!hasTmux()) throw new Error('tmux not installed');
-  // -d = detached, -s = session name, -c = working directory
+  // Kill existing session with same name (CC may have exited but tmux lingers)
+  try { execSync(`tmux kill-session -t "${name}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
   execSync(`tmux new-session -d -s "${name}" -c "${cwd}"`, { stdio: 'ignore' });
   if (command) {
     execSync(`tmux send-keys -t "${name}" "${command}" Enter`, { stdio: 'ignore' });
@@ -114,7 +115,7 @@ export function getClaudeProcesses() {
       try {
         const cwd = process.platform === 'darwin'
           ? execSync(`lsof -p ${pid} 2>/dev/null | grep cwd | awk '{print $NF}'`, { encoding: 'utf-8' }).trim()
-          : (() => { try { return require('fs').readlinkSync(`/proc/${pid}/cwd`); } catch { return ''; } })();
+          : (() => { try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return ''; } })();
         if (!cwd) continue;
         const projectHash = path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-');
         const tmuxTarget = findTmuxPane(pid);
