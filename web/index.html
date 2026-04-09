@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AgentPeek Test</title>
+<title>AgentPeek</title>
 <!-- highlight.js CSS must come BEFORE diff2html CSS (per diff2html docs) -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css">
@@ -21,20 +21,22 @@
 </head>
 <body>
 
-<!-- Config -->
-<div class="config" id="configPanel">
-  <div id="configCollapsed" style="display:none; cursor:pointer;" onclick="toggleConfig()">
-    <span class="status ok" style="display:inline">Connected</span>
-    <span style="color:#6e7681; font-size:12px; margin-left:8px;" id="configHostHint"></span>
-    <span style="float:right; color:#58a6ff; font-size:12px;">Edit &#9662;</span>
-  </div>
-  <div id="configExpanded">
-    <input id="serverUrl" placeholder="Server URL (e.g. https://xxx.execute-api.xxx.amazonaws.com/v1)" />
-    <input id="apiKey" placeholder="API Key" />
-    <div class="row">
-      <button onclick="connect()">Connect</button>
-    </div>
-    <div id="configStatus" class="status"></div>
+<!-- Auth guard: redirect to landing if no key -->
+<script>
+(function () {
+  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch {
+    location.replace('landing.html');
+  }
+})();
+</script>
+
+<!-- Top bar -->
+<div class="top-bar">
+  <div class="top-left">&#128301; <span class="top-title">AgentPeek</span></div>
+  <div class="top-right">
+    <a href="setup.html" class="top-action">Setup</a>
+    <span class="top-sep"></span>
+    <a href="#" class="top-action top-logout" onclick="logout();return false">Logout</a>
   </div>
 </div>
 

@@ -75,10 +75,21 @@ aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/de
   && echo "  ECR created: $REPO_NAME" \
   || echo "  ECR exists: $REPO_NAME"
 
+# Copy web/ into build context for Docker
+WEB_DIR="$SCRIPT_DIR/../web"
+rm -rf "$SRC_DIR/web"
+if [ -d "$WEB_DIR" ]; then
+  cp -r "$WEB_DIR" "$SRC_DIR/web"
+  # Exclude non-web files
+  rm -f "$SRC_DIR/web/test_api.py"
+  echo "  Web UI included in build"
+fi
+
 # Upload source
 (cd "$SRC_DIR" && zip -qr /tmp/agentpeek-src.zip .)
 aws s3 cp /tmp/agentpeek-src.zip "s3://${S3_BUCKET}/build/src.zip" --region "$REGION" --quiet
 rm -f /tmp/agentpeek-src.zip
+rm -rf "$SRC_DIR/web"  # cleanup build artifact
 
 # Create CodeBuild role if needed
 if ! aws iam get-role --role-name "$CODEBUILD_ROLE" >/dev/null 2>&1; then
@@ -220,14 +231,13 @@ KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
 API_KEY=$(aws apigateway get-api-key --api-key "$KEY_ID" --include-value --region "$REGION" \
   --query 'value' --output text)
 
+SETUP_URL="$API_URL/setup.html?key=$API_KEY"
+
 echo "================================================"
 echo "  Deploy complete!"
 echo "================================================"
 echo ""
-echo "  API URL:  $API_URL"
-echo "  API Key:  $API_KEY"
-echo ""
-echo "  Install bridge (any Mac/Linux):"
-echo "    curl -s -H \"x-api-key: $API_KEY\" \"$API_URL/api/bridge/install\" | bash"
+echo "  Open this URL to get started:"
+echo "    $SETUP_URL"
 echo ""
 echo "================================================"

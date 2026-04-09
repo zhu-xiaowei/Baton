@@ -27,7 +27,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 ### Phase 2A: NEXT — Backend + 接口验证
 - Server: bridge_read.py (REST read), bridge_ws.py (WS relay), WebSocket API GW
 - Bridge: add WS connection, file change → DDB + WS push in parallel
-- test/test.html: 本地测试页面，验证 REST + WS 全链路
+- web/: 静态页面（landing/viewer/setup），验证 REST + WS 全链路
 
 ### Phase 2B: Mobile App
 - Fresh RN project, SessionList (REST) → Chat (WS), MMKV cache
@@ -54,16 +54,20 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - `readableProjectName()` resolves hash back to real path by walking filesystem
 - `preview` uses `ai-title` from .jsonl, falls back to first user message
 - Filters: skips empty/no-preview files, subagent sessions
-- `isRunning`: `pgrep -f claude` + cwd matching (Linux: `/proc/{pid}/cwd`, macOS: `lsof`)
+- Session `status`: three-state (`running`/`idle`/`stopped`), determined by:
+  - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
+  - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running)
+  - Process detection: `ps aux | grep claude` (not `pgrep`, which fails from Node.js on macOS)
 - `findTmuxTargetForSession`: 精确匹配 CC 进程 args 中的 sessionId → 找到 tmux pane
 - `projectHashToPath()`: 从 hash 反解真实目录路径（逐段验证目录存在）
 - Auto-launch: 无 tmux target 时自动创建 tmux + `claude --resume` + `waitForCCReady`
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd (Linux)
-- Initial sync: full session metadata + messages for active sessions + recent 24h sessions, parallel (concurrency=4)
-- Periodic sync (60s): only `recentSessions` (24h active), refreshes isRunning/preview/lastActive
-- New/resumed session: detected instantly via fs.watch → immediate metadata sync + add to recentSessions
-- 100ms debounce per session: dedup fs.watch duplicate events, zero perceived latency
+- Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
+- Periodic check (5min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
+- Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
+- Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
+- Debounce: busy Map per session dedup fs.watch duplicate events
 - Line-number tracking per session (not UUID set), lightweight
 - Images: sharp compress 720p JPEG → upload S3 via Lambda → store key in message
 - Batching: by byte size (≤4MB/POST), with 200ms delay between batches
@@ -89,7 +93,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 BridgeSessions
   PK: accountId (SHA256(apiKey)[:16])
   SK: deviceName#projectHash#sessionId
-  Attributes: deviceName, projectHash, projectName, sessionId, lastActive, preview, model, isRunning, size, os
+  Attributes: deviceName, projectHash, projectName, sessionId, lastActive, preview, model, status (running/idle/stopped), size, os
 
 BridgeMessages
   PK: sessionId    SK: timestamp#uuid
@@ -127,7 +131,7 @@ Full protocol: `docs/api.md`
 - Server REST read endpoints (devices, projects, sessions, messages)
 - WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
 - Bridge WS connection + real-time push
-- Test viewer (test/) with dark theme, diff2html, markdown, file badges, Agent stats
+- Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
 
 ## Phase 2B: COMPLETE ✅ — Send Messages + Images
 
@@ -171,6 +175,32 @@ Full protocol: `docs/api.md`
 ### macOS / Linux 验证 ✅
 - Linux: `fs.readlinkSync('/proc/{pid}/cwd')` 替代 `lsof`（ESM 兼容）
 - tmux 进程匹配: 精确匹配 args 中的 sessionId
+
+## Web Deployment: COMPLETE ✅ — Static Files + Auth + Setup
+
+### Web Pages (served from FastAPI Lambda)
+- `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
+- `web/index.html` — Session viewer (auth guard redirects to landing if no key)
+- `web/setup.html` — Bridge install command + QR code + connected devices list
+- Top bar: AgentPeek logo + Setup / Logout links
+
+### Auth Flow
+- Key stored in localStorage (`_ak` = btoa, `_as` = server URL)
+- No cookies, no server middleware — static files publicly accessible
+- API calls use `x-api-key` header from localStorage
+- API Gateway `ApiKeyRequired: false` — auth handled by FastAPI layer
+
+### Deployment
+- Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
+- `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
+- Deploy output: single setup URL with embedded key
+
+### Three-State Session Status
+- `running`: CC process alive + jsonl `stop_reason: "tool_use"` or `null`
+- `idle`: CC process alive + jsonl `stop_reason: "end_turn"` or `last-prompt`
+- `stopped`: no CC process for this session
+- Badge colors: running (green), idle (yellow), stopped (gray)
+- Device/Project lists show `runningCount` + `idleCount`
 
 ## Phase 2C: Mobile App
 

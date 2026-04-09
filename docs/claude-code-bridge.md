@@ -50,11 +50,13 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
   - Partial JSON lines (mid-write) → break, synced not advanced, next event re-reads
   - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
   - WS fallback: if WS not connected, HTTP POST to DDB
-  - New session detected → immediately sync session metadata to DDB + add to `recentSessions`
-- **Periodic sync (60s)** → only sync `recentSessions` (24h active) metadata to DDB, NOT full scan
-  - Refreshes `isRunning`, `preview`, `lastActive` for recent sessions
-  - Startup does full sync; periodic sync is incremental
-- **Active detection** → `pgrep -f claude` + cwd matching, re-checked every 60s
+  - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
+- **Periodic check (5min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
+  - Only checks sessions previously known as running/idle
+  - Updates status to stopped if process gone
+- **Status detection** → `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
+  - `getSessionStatus()`: reads jsonl tail `stop_reason` (end_turn → idle, tool_use/null → running)
+  - Three states: `running` (CC working), `idle` (CC waiting for user), `stopped` (no CC process)
 - **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
 
 ### Data extraction
@@ -90,7 +92,7 @@ BridgeSessions
   PK: accountId (SHA256(apiKey)[:16])
   SK: deviceName#projectHash#sessionId
   Attributes: deviceName, projectHash, projectName, sessionId,
-              lastActive, preview, model, isRunning, size, os
+              lastActive, preview, model, status (running/idle/stopped), size, os
   TTL: 90 days
 
 BridgeMessages
@@ -110,7 +112,7 @@ All require `x-api-key` header.
 POST /api/bridge/sync-sessions
 Body: {
   deviceName: "MacBook-Pro", os: "darwin",
-  sessions: [{ id, project, projectName, lastActive, size, preview, isRunning }]
+  sessions: [{ id, project, projectName, lastActive, size, preview, status }]
 }
 
 POST /api/bridge/sync-messages
@@ -124,13 +126,13 @@ Body: {
 
 ```
 GET /api/bridge/devices
-→ { devices: [{ deviceName, os, lastActive, isOnline }] }
+→ { devices: [{ deviceName, os, lastActive, projectCount, sessionCount, runningCount, idleCount }] }
 
 GET /api/bridge/projects?device=MacBook-Pro
-→ { projects: [{ projectHash, projectName, lastActive, sessionCount, activeCount }] }
+→ { projects: [{ projectHash, projectName, lastActive, sessionCount, runningCount, idleCount }] }
 
 GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-...
-→ { sessions: [{ sessionId, preview, lastActive, createdAt, isRunning }] }
+→ { sessions: [{ sessionId, preview, lastActive, size, model, status }] }
 
 GET /api/bridge/messages?session=abc&after=<uuid>
 → { messages: [{ uuid, type, content, timestamp }] }
@@ -225,7 +227,7 @@ agentpeek/
 │   ├── config.mjs                         # CLI args, config loading, server config fetch
 │   ├── http.mjs                           # HTTP POST helper
 │   ├── extract.mjs                        # Message extraction, image compression, DDB upload
-│   ├── session.mjs                        # Preview, model, project name, isRunning detection
+│   ├── session.mjs                        # Preview, model, project name, session status detection
 │   ├── sync.mjs                           # Initial + periodic session sync
 │   ├── watcher.mjs                        # fs.watch → read → WS push
 │   └── ws.mjs                             # WebSocket client, auto-reconnect, sync_session handler
@@ -251,15 +253,17 @@ agentpeek/
 │       │   └── MarkdownRenderer.tsx
 │       ├── storage/ConfigStorage.ts       # MMKV: config + message cache
 │       └── theme/index.ts
-├── test/
-│   ├── index.html                         # Test viewer — browser app, no build step
+├── web/
+│   ├── landing.html                       # API key auth page
+│   ├── index.html                         # Session viewer (auth guard)
+│   ├── setup.html                         # Bridge install + QR code + device list
 │   ├── css/style.css                      # Dark theme styles
 │   └── js/
 │       ├── components/markdown.js         # Markdown rendering (marked.js)
 │       ├── components/message.js          # User/system bubbles, file badges, document blocks
 │       ├── components/tool.js             # Tool nodes (Bash, Edit, Agent stats/timer, etc.)
 │       ├── render.js                      # Message orchestrator, timeline layout
-│       ├── api.js                         # REST client
+│       ├── api.js                         # REST client + auth (localStorage)
 │       ├── ws.js                          # WebSocket client
 │       └── app.js                         # App state, navigation
 └── docs/claude-code-bridge.md
@@ -271,7 +275,7 @@ agentpeek/
 - bridge.mjs watches .jsonl, syncs session metadata + messages to DDB
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
-- Periodic sync (60s) only covers recent 24h sessions, not full scan
+- Periodic check (5min) only detects disappeared CC processes
 - Deployed to us-west-2 (AgentPeekTest), verified
 
 ### Phase 2A: Backend + 接口验证
@@ -298,7 +302,7 @@ agentpeek/
 - [x] bridge_ws.py: bridge WS message → lookup subscribers → post_to_connection to all apps
 - [x] Verify: two wscat clients subscribe same session → both receive messages
 
-#### Step 5: Test viewer (test/) ✅
+#### Step 5: Web viewer (web/) ✅
 - [x] Modular JS: markdown, message, tool, render, api, ws, app
 - [x] Dark theme with collapsible diffs, syntax highlighting, diff2html
 - [x] User message: file badges (document blocks), ide_opened_file extraction, image thumbnails
@@ -358,7 +362,7 @@ agentpeek/
 
 ### Phase 3: Production polish
 - Windows support: bridge process detection, Task Scheduler auto-start, %APPDATA% paths
-- Setup page + QR code, one-line install with auto-start
+- ~~Setup page + QR code, one-line install with auto-start~~ ✅ (web/setup.html)
 - Push notifications
 - Persist bridge sync state (~/.claude-bridge/sync-state.json) to avoid re-uploading messages on restart
 - DDB TTL: auto-clean messages for sessions inactive > 30 days

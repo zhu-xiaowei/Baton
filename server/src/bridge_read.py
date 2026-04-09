@@ -69,11 +69,18 @@ async def get_devices(request: Request):
                 "os": item.get("os", ""),
                 "projectCount": set(),
                 "sessionCount": 0,
+                "runningCount": 0,
+                "idleCount": 0,
                 "lastActive": "",
             }
         d = devices[name]
         d["projectCount"].add(item.get("projectHash", ""))
         d["sessionCount"] += 1
+        status = item.get("status", "stopped")
+        if status == "running":
+            d["runningCount"] += 1
+        elif status == "idle":
+            d["idleCount"] += 1
         la = item.get("lastActive", "")
         if la > d["lastActive"]:
             d["lastActive"] = la
@@ -110,13 +117,17 @@ async def get_projects(request: Request, device: str = Query(...)):
                 "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
                 "projectPath": pn,
                 "sessionCount": 0,
-                "activeCount": 0,
+                "runningCount": 0,
+                "idleCount": 0,
                 "lastActive": "",
             }
         p = projects[ph]
         p["sessionCount"] += 1
-        if item.get("isRunning"):
-            p["activeCount"] += 1
+        status = item.get("status", "stopped")
+        if status == "running":
+            p["runningCount"] += 1
+        elif status == "idle":
+            p["idleCount"] += 1
         la = item.get("lastActive", "")
         if la > p["lastActive"]:
             p["lastActive"] = la
@@ -143,7 +154,7 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
             "lastActive": item.get("lastActive", ""),
             "size": item.get("size", 0),
             "model": item.get("model", ""),
-            "isRunning": item.get("isRunning", False),
+            "status": item.get("status", "stopped"),
         })
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 

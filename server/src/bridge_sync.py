@@ -41,7 +41,7 @@ class SessionItem(BaseModel):
     size: int = 0
     preview: str = ""
     model: str = ""
-    isRunning: bool = False
+    status: str = "stopped"  # "running" | "idle" | "stopped"
 
 
 class SyncSessionsRequest(BaseModel):
@@ -73,7 +73,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "lastActive": s.lastActive,
                 "preview": s.preview,
                 "model": s.model,
-                "isRunning": s.isRunning,
+                "status": s.status,
                 "size": s.size,
                 "updatedAt": datetime.utcnow().isoformat(),
             })

@@ -32,7 +32,7 @@ Bridge 上传 session 元数据到 DDB。
       "size": 102400,
       "preview": "帮我实现 Phase 2 的接口",
       "model": "claude-sonnet-4-5-20250514",
-      "isRunning": true
+      "status": "running"
     }
   ]
 }
@@ -186,7 +186,8 @@ Bridge 上传压缩后的图片到 S3。
       "projectName": "agentpeek",
       "projectPath": "workspace/rn/agentpeek",
       "sessionCount": 15,
-      "activeCount": 2,
+      "runningCount": 1,
+      "idleCount": 1,
       "lastActive": "2026-03-27T10:30:00.000Z"
     }
   ]
@@ -197,7 +198,8 @@ Bridge 上传压缩后的图片到 S3。
 - `projectName`: 路径最后一段（目录名），用于 UI 主标题
 - `projectPath`: 相对 home 的完整路径，用于 UI 副标题
 - `projectHash`: App 调 sessions 接口时需要传回
-- `activeCount`: `isRunning=true` 的 session 数
+- `runningCount`: `status="running"` 的 session 数
+- `idleCount`: `status="idle"` 的 session 数
 - 按 `lastActive` 降序排列
 
 ---
@@ -226,7 +228,7 @@ Bridge 上传压缩后的图片到 S3。
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
       "model": "claude-sonnet-4-5-20250514",
-      "isRunning": true
+      "status": "running"
     },
     {
       "sessionId": "b880a5db-xxxx-xxxx-xxxx",
@@ -234,7 +236,7 @@ Bridge 上传压缩后的图片到 S3。
       "lastActive": "2026-03-26T15:00:00.000Z",
       "size": 8192,
       "model": "claude-opus-4-6-20250610",
-      "isRunning": false
+      "status": "stopped"
     }
   ]
 }
@@ -242,7 +244,7 @@ Bridge 上传压缩后的图片到 S3。
 
 **说明**:
 - 按 `lastActive` 降序排列
-- `isRunning`: 当前是否有 Claude Code 进程在运行
+- `status`: session 状态 (`running`/`idle`/`stopped`)
 
 ---
 

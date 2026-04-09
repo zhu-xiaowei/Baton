@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AgentPeek Setup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0d1117; color: #e6edf3; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 16px;
+  }
+  .header { text-align: center; margin-bottom: 32px; }
+  .header h1 { font-size: 24px; font-weight: 700; }
+  .header p { color: #8b949e; font-size: 13px; margin-top: 4px; }
+  .nav { margin-bottom: 24px; font-size: 13px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .section {
+    width: 100%; max-width: 600px; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 20px; margin-bottom: 20px;
+  }
+  .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .section h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%; background: #238636;
+    font-size: 13px; font-weight: 700; flex-shrink: 0;
+  }
+  .code-block {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 48px 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap;
+    word-break: break-all; position: relative; color: #e6edf3;
+  }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px; padding: 4px 10px;
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    color: #8b949e; font-size: 11px; cursor: pointer;
+  }
+  .copy-btn:hover { background: #30363d; color: #e6edf3; }
+  .copy-btn.copied { background: #238636; color: #fff; border-color: #238636; }
+  .hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+  .qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .qr-wrap canvas { border-radius: 8px; }
+  .qr-url { font-size: 11px; color: #6e7681; word-break: break-all; text-align: center; max-width: 100%; }
+  .devices { margin-top: 12px; }
+  .device-item {
+    padding: 10px 14px;
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 8px;
+  }
+  .device-top { display: flex; align-items: center; gap: 8px; }
+  .device-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; flex-shrink: 0; }
+  .device-dot.running { background: #3fb950; }
+  .device-dot.idle { background: #d29922; }
+  .device-dot.offline { background: #484f58; }
+  .device-name { font-size: 14px; font-weight: 500; }
+  .device-time { font-size: 12px; color: #6e7681; margin-left: auto; }
+  .device-meta { display: flex; justify-content: space-between; font-size: 12px; color: #8b949e; margin-top: 4px; padding-left: 16px; }
+  .empty { color: #6e7681; font-size: 13px; text-align: center; padding: 12px; }
+  .loading { color: #8b949e; font-size: 13px; text-align: center; padding: 12px; }
+</style>
+<!-- QR code library (lightweight, no deps) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+</head>
+<body>
+<!-- Auth guard: must be first to prevent flash -->
+<script>
+(function () {
+  var urlKey = new URLSearchParams(location.search).get('key');
+  if (urlKey) { localStorage.setItem('_ak', btoa(urlKey)); localStorage.setItem('_as', location.origin + location.pathname.replace(/\/[^/]*$/, '')); }
+  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch {
+    location.replace('landing.html');
+  }
+})();
+</script>
+
+<div class="nav">
+  <a href="index.html">&larr; Back to Viewer</a>
+</div>
+
+<div class="header">
+  <h1>&#128301; AgentPeek Setup</h1>
+  <p>Install the bridge on your dev machine to start syncing</p>
+</div>
+
+<!-- Step 1: Install Bridge -->
+<div class="section">
+  <h2><span class="num">1</span> Install Bridge</h2>
+  <p class="hint" style="margin-bottom:10px">Run this command on any Mac or Linux machine with Node.js installed:</p>
+  <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="copy-btn" onclick="copyCmd(this)">Copy</button></div>
+  <p class="hint">This downloads the bridge, configures auto-start (launchd/systemd), and begins syncing immediately.</p>
+</div>
+
+<!-- Step 2: QR Code for mobile -->
+<div class="section">
+  <h2><span class="num">2</span> Open on Phone</h2>
+  <p class="hint" style="margin-bottom:14px">Scan this QR code to open AgentPeek viewer on your phone:</p>
+  <div class="qr-wrap">
+    <canvas id="qrCanvas"></canvas>
+    <div class="qr-url" id="qrUrl"></div>
+  </div>
+</div>
+
+<!-- Step 3: Connected devices -->
+<div class="section">
+  <h2><span class="num">3</span> Connected Devices</h2>
+  <div id="deviceList" class="loading">Loading...</div>
+</div>
+
+<script>
+var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
+var SERVER = location.origin + pathPrefix;
+
+function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch { return ''; } }
+function loadServer() { return localStorage.getItem('_as') || SERVER; }
+
+var KEY = loadKey();
+
+var API_SERVER = loadServer();
+
+async function apiFetch(path, params) {
+  var qs = new URLSearchParams(params || {}).toString();
+  var url = API_SERVER + path + (qs ? '?' + qs : '');
+  var res = await fetch(url, { headers: { 'x-api-key': KEY } });
+  if (!res.ok) throw new Error(res.status);
+  return res.json();
+}
+
+// Step 1: Load install command
+(async function () {
+  var cmdEl = document.getElementById('installCmdText');
+  try {
+    var res = await fetch(API_SERVER + '/api/bridge/install', { headers: { 'x-api-key': KEY } });
+    if (!res.ok) throw new Error(res.status);
+    // The install endpoint returns a shell script — show the curl one-liner
+    var installUrl = API_SERVER + '/api/bridge/install';
+    cmdEl.textContent = 'curl -sL -H "x-api-key: ' + KEY + '" "' + installUrl + '" | bash';
+  } catch (e) {
+    cmdEl.textContent = '# Error loading install command: ' + e.message;
+  }
+})();
+
+// Step 2: QR Code
+(function () {
+  var viewerUrl = SERVER + '/landing.html?key=' + encodeURIComponent(KEY);
+  document.getElementById('qrUrl').textContent = viewerUrl;
+
+  var qr = qrcode(0, 'M');
+  qr.addData(viewerUrl);
+  qr.make();
+
+  var canvas = document.getElementById('qrCanvas');
+  var size = 200;
+  var cellSize = size / qr.getModuleCount();
+  canvas.width = size;
+  canvas.height = size;
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#000000';
+  for (var r = 0; r < qr.getModuleCount(); r++) {
+    for (var c = 0; c < qr.getModuleCount(); c++) {
+      if (qr.isDark(r, c)) {
+        ctx.fillRect(c * cellSize, r * cellSize, cellSize + 0.5, cellSize + 0.5);
+      }
+    }
+  }
+})();
+
+// Step 3: Connected devices
+(async function () {
+  var el = document.getElementById('deviceList');
+  try {
+    var data = await apiFetch('/api/bridge/devices');
+    if (!data.devices || data.devices.length === 0) {
+      el.innerHTML = '<div class="empty">No devices connected yet. Run the install command above to get started.</div>';
+      return;
+    }
+    el.innerHTML = data.devices.map(function (d) {
+      var ago = timeAgo(d.lastActive);
+      var dotClass = d.runningCount > 0 ? 'running' : d.idleCount > 0 ? 'idle' : 'offline';
+      var rc = d.runningCount || 0, ic = d.idleCount || 0;
+      return '<div class="device-item">'
+        + '<div class="device-top">'
+        + '<div class="device-dot ' + dotClass + '"></div>'
+        + '<div class="device-name">' + esc(d.deviceName) + '</div>'
+        + '<div class="device-time">' + ago + '</div>'
+        + '</div>'
+        + '<div class="device-meta"><span>' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span>' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+        + '</div>';
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="empty">Error loading devices: ' + e.message + '</div>';
+  }
+})();
+
+function copyCmd(btn) {
+  var text = document.getElementById('installCmdText').textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
+function timeAgo(iso) {
+  var diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return Math.floor(diff / 86400000) + 'd ago';
+}
+</script>
+
+</body>
+</html>

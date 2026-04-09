@@ -79,36 +79,93 @@ export function readableProjectName(projectHash) {
   return segments.join('/');
 }
 
-export function isSessionActive(project, mtime, runningProjects, latestMtimeByProject) {
-  if (!runningProjects.has(project)) return false;
-  if (mtime >= latestMtimeByProject.get(project)) return true;
-  return Date.now() - mtime < 120_000;
-}
-
-export function getLatestMtimeByProject(items, runningProjects) {
-  const latest = new Map();
-  for (const { project, mtime } of items) {
-    if (!runningProjects.has(project)) continue;
-    if (!latest.has(project) || mtime > latest.get(project)) latest.set(project, mtime);
+/**
+ * Determine session status from CC process state + jsonl content.
+ * Returns "running" | "idle" | "stopped"
+ *
+ * - stopped: no CC process for this session
+ * - running: CC process on this session + jsonl shows active work
+ * - idle: CC process on this session + jsonl shows waiting for user
+ *
+ * @param {string} sessionId - the session UUID
+ * @param {string} filePath - path to .jsonl file
+ * @param {Object} runningInfo - { projects: Set<hash>, sessions: Set<sessionId> }
+ */
+export function getSessionStatus(sessionId, filePath, runningInfo) {
+  // Check if this exact session has a CC process
+  if (!runningInfo.sessions.has(sessionId)) {
+    // Fallback: CC might not have --resume (new session), check project
+    const projectHash = path.basename(path.dirname(filePath));
+    if (!runningInfo.projects.has(projectHash)) return 'stopped';
+    // Project has CC but no session match — could be a different session
+    if (runningInfo.sessions.size > 0) return 'stopped';
+    // No session IDs detected at all (edge case) — fall through to jsonl check
   }
-  return latest;
+
+  // Read last few lines of jsonl to check stop_reason
+  try {
+    const buf = Buffer.alloc(8192);
+    const fd = fs.openSync(filePath, 'r');
+    const stat = fs.fstatSync(fd);
+    const readStart = Math.max(0, stat.size - 8192);
+    const bytesRead = fs.readSync(fd, buf, 0, 8192, readStart);
+    fs.closeSync(fd);
+
+    const tail = buf.slice(0, bytesRead).toString('utf-8');
+    const lines = tail.split('\n').filter(l => l.trim());
+
+    // Scan from last line backwards
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
+      let entry;
+      try { entry = JSON.parse(lines[i]); } catch { continue; }
+
+      if (entry.type === 'last-prompt') return 'idle';
+
+      if (entry.type === 'assistant' && entry.message) {
+        const sr = entry.message.stop_reason;
+        if (sr === 'end_turn') return 'idle';
+        if (sr === 'tool_use' || sr === null) return 'running';
+      }
+
+      if (entry.type === 'user' && Array.isArray(entry.message?.content)) {
+        const hasToolResult = entry.message.content.some(c => c.type === 'tool_result');
+        if (hasToolResult) return 'running';
+      }
+    }
+  } catch {}
+
+  return 'idle';
 }
 
-export function getRunningProjects() {
-  const running = new Set();
+/**
+ * Detect running CC processes. Returns { projects: Set<hash>, sessions: Set<sessionId> }
+ * - projects: project directory hashes with active CC processes
+ * - sessions: exact session IDs extracted from --resume args
+ */
+export function getRunningInfo() {
+  const projects = new Set();
+  const sessions = new Set();
   try {
-    const pids = execSync('pgrep -f "claude" 2>/dev/null').toString().trim().split('\n');
-    for (const pid of pids) {
-      if (!pid) continue;
+    const lines = execSync('ps aux 2>/dev/null').toString().trim().split('\n');
+    for (const line of lines) {
+      if (!line.includes('claude') || line.includes('grep')) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[1];
+      if (!pid || isNaN(pid)) continue;
+
+      // Extract --resume sessionId from process args
+      const resumeMatch = line.match(/--resume\s+([0-9a-f-]{36})/);
+      if (resumeMatch) sessions.add(resumeMatch[1]);
+
       try {
         const cwd = process.platform === 'darwin'
           ? execSync(`lsof -p ${pid} 2>/dev/null | grep cwd | awk '{print $NF}'`).toString().trim()
           : fs.readlinkSync(`/proc/${pid}/cwd`);
-        if (cwd) running.add(path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-'));
+        if (cwd) projects.add(path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-'));
       } catch {}
     }
   } catch {}
-  return running;
+  return { projects, sessions };
 }
 
 // Find .jsonl file path for a sessionId

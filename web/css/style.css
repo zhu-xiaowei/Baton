@@ -7,15 +7,15 @@ body {
   display: flex; flex-direction: column;
 }
 
-/* === Config bar === */
-.config { padding: 12px; background: #161b22; border-bottom: 1px solid #30363d; }
-.config input { width: 100%; padding: 8px 12px; margin-bottom: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 14px; }
-.config .row { display: flex; gap: 8px; }
-.config button { flex: 1; padding: 8px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 14px; cursor: pointer; }
-.config button:active { background: #2ea043; }
-.config .status { margin-top: 8px; font-size: 12px; color: #8b949e; }
-.config .status.ok { color: #3fb950; }
-.config .status.err { color: #f85149; }
+/* === Top bar === */
+.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+.top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+.top-title { font-weight: 600; color: #e6edf3; }
+.top-right { display: flex; align-items: center; gap: 0; }
+.top-action { color: #8b949e; font-size: 12px; text-decoration: none; padding: 4px 10px; border-radius: 4px; }
+.top-action:hover { color: #e6edf3; background: #21262d; }
+.top-sep { width: 1px; height: 12px; background: #30363d; }
+.top-logout:hover { color: #f85149; }
 
 /* === Breadcrumb === */
 .breadcrumb { padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; color: #8b949e; display: none; flex-shrink: 0; align-items: center; justify-content: space-between; }
@@ -31,11 +31,17 @@ body {
 .list { padding: 4px 0; }
 .item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
 .item:active { background: #161b22; }
-.item .title { font-size: 15px; font-weight: 500; }
+.item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.item-top .title { font-size: 15px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.item-time { font-size: 11px; color: #6e7681; white-space: nowrap; flex-shrink: 0; }
 .item .subtitle { font-size: 12px; color: #8b949e; margin-top: 2px; }
-.item .meta { font-size: 11px; color: #6e7681; margin-top: 4px; display: flex; gap: 12px; }
+.item-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.item-status { font-size: 11px; color: #6e7681; white-space: nowrap; }
+.meta-left { font-size: 11px; color: #6e7681; }
+.item .meta { font-size: 11px; color: #6e7681; margin-top: 4px; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 500; }
 .badge.running { background: #238636; color: #fff; }
+.badge.idle { background: #693d11; color: #d29922; }
 .badge.stopped { background: #30363d; color: #8b949e; }
 
 /* === Messages container === */

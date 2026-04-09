@@ -1,29 +1,14 @@
-// API client + config management
-var SERVER = '';
-var KEY = '';
+// API client — reads credentials from localStorage (set by landing.html)
+var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
+var SERVER = (localStorage.getItem('_as') || (location.origin + pathPrefix)).replace(/\/$/, '');
+var KEY = (function () { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch { return ''; } })();
 var WS_URL = '';
 
-function setStatus(msg, type) {
-  var el = document.getElementById('configStatus');
-  el.textContent = msg;
-  el.className = 'status ' + (type || '');
-}
-
-function collapseConfig() {
-  document.getElementById('configExpanded').style.display = 'none';
-  document.getElementById('configHostHint').textContent = SERVER.replace(/https?:\/\//, '').split('/')[0];
-  document.getElementById('configCollapsed').style.display = 'block';
-}
-
-function toggleConfig() {
-  var expanded = document.getElementById('configExpanded');
-  var collapsed = document.getElementById('configCollapsed');
-  if (expanded.style.display === 'none') {
-    expanded.style.display = 'block';
-    collapsed.style.display = 'none';
-  } else {
-    collapseConfig();
-  }
+function logout() {
+  localStorage.removeItem('_ak');
+  localStorage.removeItem('_as');
+  localStorage.removeItem('agentpeek-nav');
+  location.replace('landing.html');
 }
 
 async function api(path, params) {
@@ -34,24 +19,16 @@ async function api(path, params) {
   return res.json();
 }
 
-async function connect(skipLoadDevices) {
-  SERVER = document.getElementById('serverUrl').value.replace(/\/$/, '');
-  KEY = document.getElementById('apiKey').value;
-  if (!SERVER || !KEY) { setStatus('Please fill in both fields', 'err'); return; }
-
-  localStorage.setItem('agentpeek-config', JSON.stringify({ server: SERVER, key: KEY }));
-  setStatus('Connecting...');
+async function initConnection() {
   try {
     await api('/api/health');
     try {
       var cfg = await api('/api/bridge/config');
       WS_URL = cfg.wsUrl || '';
     } catch {}
-    setStatus('Connected', 'ok');
-    collapseConfig();
-    if (!skipLoadDevices) loadDevices();
-  } catch (e) {
-    setStatus('Failed: ' + e.message, 'err');
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -98,13 +75,3 @@ function viewImage(src) {
   document.getElementById('imgOverlayImg').src = src;
   overlay.style.display = 'flex';
 }
-
-// Load saved config
-(function () {
-  var saved = localStorage.getItem('agentpeek-config');
-  if (saved) {
-    var c = JSON.parse(saved);
-    document.getElementById('serverUrl').value = c.server || '';
-    document.getElementById('apiKey').value = c.key || '';
-  }
-})();

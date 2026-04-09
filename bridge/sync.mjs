@@ -5,19 +5,22 @@ import { post } from './http.mjs';
 import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
-  isSessionActive, getLatestMtimeByProject, getRunningProjects,
+  getSessionStatus, getRunningInfo,
 } from './session.mjs';
 
-// Sessions active in last 24h — only these get synced in periodic poll
+// Sessions seen in last 24h — only these get metadata synced by watcher
 export const recentSessions = new Set();
 let isInitialSync = true;
+
+// Cache of last-known status per sessionId for periodic stopped detection
+export const lastKnownStatus = new Map();
 
 export async function syncSessions(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) {
     console.log('No claude projects directory found yet.');
     return;
   }
-  const running = getRunningProjects();
+  const runningInfo = getRunningInfo();
   const recentCutoff = Date.now() - 86400_000;
   const sessions = [];
   const projectSessions = new Map();
@@ -38,6 +41,8 @@ export async function syncSessions(config) {
       if (stat.mtimeMs > recentCutoff) recentSessions.add(sessionId);
       if (!isInitialSync && !recentSessions.has(sessionId)) continue;
 
+      const status = getSessionStatus(sessionId, filePath, runningInfo);
+
       sessions.push({
         id: sessionId,
         project,
@@ -46,8 +51,8 @@ export async function syncSessions(config) {
         size: stat.size,
         preview,
         model: getModel(filePath),
-        isRunning: false,
-        _mtime: stat.mtimeMs,
+        status,
+        _filePath: filePath,
       });
 
       if (!projectSessions.has(project)) projectSessions.set(project, []);
@@ -55,50 +60,48 @@ export async function syncSessions(config) {
     }
   }
 
-  // Determine isRunning
-  const latestMtime = getLatestMtimeByProject(
-    sessions.map(s => ({ project: s.project, mtime: s._mtime })), running
-  );
+  // Update status cache
   for (const s of sessions) {
-    s.isRunning = isSessionActive(s.project, s._mtime, running, latestMtime);
-    delete s._mtime;
+    lastKnownStatus.set(s.id, s.status);
+    delete s._filePath;
   }
 
-  await post('/api/bridge/sync-sessions', {
-    deviceName: config.deviceName,
-    os: process.platform,
-    sessions,
-  });
+  // ~350-800 bytes per session, 5000 ≈ 1.7-4MB, safe under Lambda 6MB limit
+  const BATCH = 5000;
+  for (let i = 0; i < sessions.length; i += BATCH) {
+    await post('/api/bridge/sync-sessions', {
+      deviceName: config.deviceName,
+      os: process.platform,
+      sessions: sessions.slice(i, i + BATCH),
+    });
+  }
 
-  const runningSessions = sessions.filter(s => s.isRunning).length;
+  const runningCount = sessions.filter(s => s.status === 'running').length;
+  const idleCount = sessions.filter(s => s.status === 'idle').length;
   if (isInitialSync) {
-    console.log(`[sync] ${sessions.length} sessions, ${runningSessions} running`);
-  } else if (runningSessions > 0) {
-    console.log(`[sync] ${sessions.length} sessions, ${runningSessions} running`);
+    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
+  } else if (runningCount > 0 || idleCount > 0) {
+    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
   }
 
-  // Initial message sync
+  // Initial message sync — running/idle + recent 24h sessions
   const syncJobs = [];
   const syncedSessionIds = new Set();
-  const latestMtimeForSync = getLatestMtimeByProject(
-    [...projectSessions.entries()].flatMap(([project, items]) =>
-      items.map(s => ({ project, mtime: s.mtime }))
-    ), running
-  );
   const recentCutoffMs = Date.now() - 86400_000;
 
-  for (const [project, items] of projectSessions) {
+  for (const [, items] of projectSessions) {
     for (const s of items) {
       if (synced.has(s.sessionId) || syncedSessionIds.has(s.sessionId)) continue;
-      const isActive = isSessionActive(project, s.mtime, running, latestMtimeForSync);
+      const status = lastKnownStatus.get(s.sessionId) || 'stopped';
+      const isLive = status !== 'stopped';
       const isRecent = s.mtime > recentCutoffMs;
-      if (!isActive && !isRecent) continue;
+      if (!isLive && !isRecent) continue;
       syncedSessionIds.add(s.sessionId);
       syncJobs.push(async () => {
         const msgs = await readNewMessages(s.filePath, s.sessionId);
         if (msgs.length > 0) {
           await uploadMessages(s.sessionId, msgs);
-          console.log(`[init] ${s.sessionId.slice(0, 8)}: ${msgs.length} messages (${isActive ? 'active' : 'recent'})`);
+          console.log(`[init] ${s.sessionId.slice(0, 8)}: ${msgs.length} messages (${isLive ? status : 'recent'})`);
           return msgs.length;
         }
         return 0;
@@ -107,7 +110,7 @@ export async function syncSessions(config) {
   }
 
   if (syncJobs.length > 0) {
-    console.log(`[init] syncing ${syncJobs.length} sessions (active + recent 24h)`);
+    console.log(`[init] syncing ${syncJobs.length} sessions (running/idle + recent 24h)`);
     const CONCURRENCY = 4;
     let total = 0;
     let next = 0;
@@ -129,4 +132,51 @@ export async function syncSessions(config) {
     if (total > 0) console.log(`[init] ${total} messages synced to DDB`);
   }
   isInitialSync = false;
+}
+
+/**
+ * Lightweight periodic check: only detect processes that disappeared.
+ * Called every 5 minutes. If a session was running/idle but CC process is gone,
+ * sync just that session's status to "stopped".
+ */
+export async function checkStopped(config) {
+  if (!fs.existsSync(CLAUDE_PROJECTS)) return;
+  const runningInfo = getRunningInfo();
+  const updates = [];
+
+  for (const [sessionId, prevStatus] of lastKnownStatus) {
+    if (prevStatus === 'stopped') continue;
+
+    // Find the session's project hash
+    for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
+      const filePath = path.join(CLAUDE_PROJECTS, project, `${sessionId}.jsonl`);
+      if (!fs.existsSync(filePath)) continue;
+
+      const newStatus = getSessionStatus(sessionId, filePath, runningInfo);
+      if (newStatus !== prevStatus) {
+        lastKnownStatus.set(sessionId, newStatus);
+        const stat = fs.statSync(filePath);
+        updates.push({
+          id: sessionId,
+          project,
+          projectName: readableProjectName(project),
+          lastActive: stat.mtime.toISOString(),
+          size: stat.size,
+          preview: getPreview(filePath) || '',
+          model: getModel(filePath),
+          status: newStatus,
+        });
+      }
+      break;
+    }
+  }
+
+  if (updates.length > 0) {
+    await post('/api/bridge/sync-sessions', {
+      deviceName: config.deviceName,
+      os: process.platform,
+      sessions: updates,
+    });
+    console.log(`[check] ${updates.length} session(s) → stopped`);
+  }
 }

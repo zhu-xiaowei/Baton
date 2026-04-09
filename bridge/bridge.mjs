@@ -8,10 +8,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, SYNC_INTERVAL } from './config.mjs';
+import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL } from './config.mjs';
 import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
-import { syncSessions } from './sync.mjs';
+import { syncSessions, checkStopped } from './sync.mjs';
 import { startWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 import { hasTmux } from './tmux.mjs';
@@ -33,7 +33,7 @@ console.log(`  watching: ${CLAUDE_PROJECTS}`);
 initWs(CONFIG);
 if (!CONFIG.skipInit) {
   await syncSessions(CONFIG);
-  setInterval(() => syncSessions(CONFIG), SYNC_INTERVAL);
+  setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 } else {
   // Skip to end of all files so we only see new messages
   const { synced } = await import('./extract.mjs');

@@ -3,8 +3,8 @@ import path from 'path';
 import { CLAUDE_PROJECTS, VALID_TYPES } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, getRunningProjects } from './session.mjs';
-import { recentSessions } from './sync.mjs';
+import { getPreview, getModel, readableProjectName, getRunningInfo, getSessionStatus } from './session.mjs';
+import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend } from './ws.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
@@ -67,24 +67,31 @@ async function readAndSend(config, filename, sessionId) {
 
   synced.set(sessionId, lastParsedLine);
 
-  // Sync metadata: new session or ai-title arrived (update preview)
-  if (lastParsedLine > lastLine && (gotNewTitle || !recentSessions.has(sessionId))) {
-    const stat = fs.statSync(filePath);
-    const projectHash = path.basename(path.dirname(filename));
-    await post('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: [{
-        id: sessionId,
-        project: projectHash,
-        projectName: readableProjectName(projectHash),
-        lastActive: stat.mtime.toISOString(),
-        size: stat.size,
-        preview: getPreview(filePath) || 'New session',
-        model: getModel(filePath),
-        isRunning: getRunningProjects().has(projectHash),
-      }],
-    });
-    recentSessions.add(sessionId);
+  // Sync metadata only when status changed, new session, or ai-title arrived
+  if (lastParsedLine > lastLine) {
+    const newStatus = getSessionStatus(sessionId, filePath, getRunningInfo());
+    const statusChanged = newStatus !== lastKnownStatus.get(sessionId);
+    const isNew = !recentSessions.has(sessionId);
+
+    if (statusChanged || isNew || gotNewTitle) {
+      const stat = fs.statSync(filePath);
+      const projectHash = path.basename(path.dirname(filename));
+      lastKnownStatus.set(sessionId, newStatus);
+      await post('/api/bridge/sync-sessions', {
+        deviceName: config.deviceName,
+        os: process.platform,
+        sessions: [{
+          id: sessionId,
+          project: projectHash,
+          projectName: readableProjectName(projectHash),
+          lastActive: stat.mtime.toISOString(),
+          size: stat.size,
+          preview: getPreview(filePath) || 'New session',
+          model: getModel(filePath),
+          status: newStatus,
+        }],
+      });
+      recentSessions.add(sessionId);
+    }
   }
 }

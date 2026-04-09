@@ -1,6 +1,8 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 import os
 
 app = FastAPI()
@@ -15,6 +17,18 @@ app.include_router(read_router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# Redirect bare / to landing page
+@app.get("/")
+async def root_redirect():
+    return RedirectResponse(url="landing.html")
+
+
+# Serve web static files (landing, viewer, setup)
+WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+if os.path.isdir(WEB_DIR):
+    app.mount("/", StaticFiles(directory=WEB_DIR), name="web")
 
 
 if __name__ == "__main__":

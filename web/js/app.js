@@ -76,10 +76,10 @@ async function loadDevices() {
     var data = await api('/api/bridge/devices');
     if (data.devices.length === 0) { content.innerHTML = '<div class="empty">No devices found</div>'; return; }
     content.innerHTML = '<div class="list">' + data.devices.map(function (d) {
+      var rc = d.runningCount || 0, ic = d.idleCount || 0;
       return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
-        + '<div class="title">' + esc(d.deviceName) + '</div>'
-        + '<div class="subtitle">' + osName(d.os) + '</div>'
-        + '<div class="meta"><span>' + d.projectCount + ' projects</span><span>' + d.sessionCount + ' sessions</span><span>' + timeAgo(d.lastActive) + '</span></div>'
+        + '<div class="item-top"><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+        + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
         + '</div>';
     }).join('') + '</div>';
     showStats(data.devices.length + ' device(s)');
@@ -99,10 +99,11 @@ async function loadProjects(device) {
   try {
     var data = await api('/api/bridge/projects', { device: device });
     content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
+      var rc = p.runningCount || 0, ic = p.idleCount || 0;
       return '<div class="item" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\')">'
-        + '<div class="title">' + esc(p.projectName) + '</div>'
+        + '<div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
         + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
-        + '<div class="meta"><span>' + p.sessionCount + ' sessions</span><span>' + p.activeCount + ' active</span><span>' + timeAgo(p.lastActive) + '</span></div>'
+        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
         + '</div>';
     }).join('') + '</div>';
     showStats(data.projects.length + ' project(s)');
@@ -124,9 +125,8 @@ async function loadSessions(device, projectHash, projectName) {
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
       return '<div class="item" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview)">'
-        + '<div class="title"><span class="badge ' + (s.isRunning ? 'running' : 'stopped') + '">' + (s.isRunning ? 'Running' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</div>'
-        + '<div class="subtitle">' + esc(s.model || 'unknown model') + '</div>'
-        + '<div class="meta"><span>' + s.sessionId.slice(0, 8) + '...</span><span>' + formatSize(s.size) + '</span><span>' + timeAgo(s.lastActive) + '</span></div>'
+        + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
         + '</div>';
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
@@ -189,31 +189,26 @@ async function loadMessages(sessionId, preview) {
 
 // Auto-connect + restore last session
 (function () {
-  var saved = localStorage.getItem('agentpeek-config');
-  if (saved) {
-    var c = JSON.parse(saved);
-    if (c.server && c.key) {
-      var nav = localStorage.getItem('agentpeek-nav');
-      var hasNav = false;
-      if (nav) { try { var p = JSON.parse(nav); hasNav = !!(p.session || p.project || p.device); } catch {} }
-      setTimeout(function () {
-        connect(hasNav).then(function () {
-          if (nav) {
-            try {
-              var s = JSON.parse(nav);
-              if (s.session) {
-                appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
-                loadMessages(s.session, s.sessionPreview);
-              } else if (s.project) {
-                loadSessions(s.device, s.project.hash, s.project.name);
-              } else if (s.device) {
-                loadProjects(s.device);
-              }
-            } catch {}
-          }
-        });
-      }, 100);
-      return;
+  if (!KEY) return; // auth guard in index.html handles redirect
+  var nav = localStorage.getItem('agentpeek-nav');
+  initConnection().then(function (ok) {
+    if (!ok) { document.getElementById('content').innerHTML = '<div class="empty">Connection failed. <a href="landing.html" style="color:#58a6ff">Re-enter API key</a></div>'; return; }
+    if (nav) {
+      try {
+        var s = JSON.parse(nav);
+        if (s.session) {
+          appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
+          loadMessages(s.session, s.sessionPreview);
+        } else if (s.project) {
+          loadSessions(s.device, s.project.hash, s.project.name);
+        } else if (s.device) {
+          loadProjects(s.device);
+        } else {
+          loadDevices();
+        }
+      } catch { loadDevices(); }
+    } else {
+      loadDevices();
     }
-  }
+  });
 })();
