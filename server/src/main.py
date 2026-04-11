@@ -16,7 +16,12 @@ app.include_router(read_router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": os.environ.get("APP_VERSION", "dev")}
+
+
+@app.get("/api/version")
+async def version():
+    return {"version": os.environ.get("APP_VERSION", "dev")}
 
 
 # Redirect bare / to landing page

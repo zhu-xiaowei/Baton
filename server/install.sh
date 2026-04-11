@@ -85,6 +85,13 @@ if [ -d "$WEB_DIR" ]; then
   echo "  Web UI included in build"
 fi
 
+# Read version from version.json
+VERSION_FILE="$SCRIPT_DIR/../version.json"
+if [ -f "$VERSION_FILE" ]; then
+  APP_VERSION=$(python3 -c "import json; d=json.load(open('$VERSION_FILE')); print(d['version'])" 2>/dev/null || echo "dev")
+  echo "  Version: $APP_VERSION"
+fi
+
 # Upload source
 (cd "$SRC_DIR" && zip -qr /tmp/agentpeek-src.zip .)
 aws s3 cp /tmp/agentpeek-src.zip "s3://${S3_BUCKET}/build/src.zip" --region "$REGION" --quiet
@@ -123,7 +130,7 @@ phases:
       - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPO_URI
   build:
     commands:
-      - docker build -t $REPO_NAME:$TAG -f Dockerfile .
+      - docker build --build-arg APP_VERSION=$APP_VERSION -t $REPO_NAME:$TAG -f Dockerfile .
       - docker tag $REPO_NAME:$TAG $REPO_URI:$TAG
   post_build:
     commands:
@@ -146,6 +153,7 @@ fi
 
 # Start build and wait
 BUILD_ID=$(aws codebuild start-build --project-name "$CODEBUILD_PROJECT" --region "$REGION" \
+  --environment-variables-override "name=APP_VERSION,value=${APP_VERSION:-dev},type=PLAINTEXT" \
   --query 'build.id' --output text)
 echo "  Build started: $BUILD_ID"
 

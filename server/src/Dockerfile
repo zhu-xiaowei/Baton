@@ -10,4 +10,7 @@ COPY bridge_ws.py .
 COPY web/ web/
 RUN pip install --no-cache-dir -r requirements.txt
 
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 CMD ["python", "main.py"]
