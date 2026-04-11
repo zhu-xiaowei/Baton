@@ -152,38 +152,51 @@ async function loadMessages(sessionId, preview) {
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading messages...</div>';
 
+  // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
+  wsAllMessages = [];
+  wsMessageCount = 0;
+  wsLastTimestamp = '';
+  startWs(sessionId);
+
   try {
     var t0 = performance.now();
-    var data = await api('/api/bridge/messages', { session: sessionId });
+    var result = await bufferAndFetch(sessionId, '');
     var latency = Math.round(performance.now() - t0);
 
-    if (data.messages.length === 0) {
-      content.innerHTML = data.needSync
+    if (wsAllMessages.length === 0) {
+      content.innerHTML = result.needSync
         ? '<div class="loading">Syncing history from bridge...</div>'
         : '<div class="empty">No messages</div>';
-      startWs(sessionId);
-      wsMessageCount = 0;
-      wsAllMessages = [];
       showInputBar(true);
       showStats('Waiting for sync...');
+      saveNav();
       return;
     }
 
-    content.innerHTML = '<div class="messages">' + renderMessages(data.messages) + '</div>';
+    // Render
+    content.innerHTML = '<div class="messages">' + renderMessages(wsAllMessages) + '</div>';
     showInputBar(true);
 
-    // Scroll to bottom: immediate + after async diff renders
+    // Update breadcrumb with latest ai-title
+    for (var i = wsAllMessages.length - 1; i >= 0; i--) {
+      if (wsAllMessages[i].type === 'ai-title' && wsAllMessages[i].content) {
+        appState.sessionPreview = typeof wsAllMessages[i].content === 'string' ? wsAllMessages[i].content : '';
+        updateBreadcrumb(); saveNav();
+        break;
+      }
+    }
+
     content.scrollTop = content.scrollHeight;
     setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
     loadImages(content);
-    wsMessageCount = data.messages.length;
-    wsAllMessages = data.messages.slice();
+    clampOverflow(content.querySelector('.messages'));
     checkPendingPrompts(wsAllMessages);
     wsRenderedCount = wsAllMessages.length;
     showStats(wsMessageCount + ' messages | ' + latency + 'ms');
-
-    startWs(sessionId);
-  } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  } catch (e) {
+    _wsBuffer = null;
+    content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  }
   saveNav();
 }
 

@@ -50,13 +50,12 @@ body {
 /* === User message === */
 .msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 4px; border-radius: 12px; }
 .msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; position: relative; }
-.msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; cursor: pointer; }
+.msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; }
 .msg-user .msg-text.clamped::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2em; background: linear-gradient(transparent, #2d333b); pointer-events: none; }
-.msg-user .msg-text.clamped:hover::before { content: 'Click to expand'; position: absolute; bottom: 4px; right: 8px; font-size: 11px; color: #8b949e; z-index: 1; }
-.msg-user .msg-text.expanded { max-height: none; cursor: pointer; }
+.msg-user .msg-text.expanded { max-height: none; }
 .msg-user .msg-text.expanded::after { display: none; }
-.msg-user .msg-text.expanded:hover::before { content: 'Click to collapse'; position: absolute; bottom: 4px; right: 8px; font-size: 11px; color: #8b949e; z-index: 1; }
-.msg-user .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; text-align: right; }
+.msg-user .msg-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.msg-user .msg-meta .msg-time { font-size: 10px; color: #6e7681; }
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
 .file-badge {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
@@ -286,40 +285,31 @@ body {
   overflow: hidden;
 }
 
-/* "Click to expand/collapse" hint on hover */
-.tool-body-content.collapsible,
+/* Expand/collapse button — always visible, mobile-friendly */
+.clamp-btn {
+  display: inline-block;
+  font-size: 10px;
+  color: #8b949e;
+  background: rgba(22, 27, 34, 0.92);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 0.5px solid #30363d;
+  cursor: pointer;
+  user-select: none;
+  z-index: 11;
+  line-height: 1.4;
+}
+.clamp-btn:active { background: #30363d; }
+/* User msg: button in meta row (static, not absolute) */
+.msg-meta .clamp-btn { position: static; }
+/* Inside tool body/value: positioned at bottom-right */
+.tool-body-content,
 .tool-value.clamp {
   position: relative;
 }
-.tool-body-content.collapsible:not(.open):hover::after,
-.tool-value.clamp:not(.expanded):hover::after {
-  content: 'Click to expand';
-  position: absolute;
-  bottom: 4px;
-  right: 8px;
-  font-size: 11px;
-  color: #8b949e;
-  background: rgba(13, 17, 23, 0.9);
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid #30363d;
-  pointer-events: none;
-  z-index: 10;
-}
-.tool-body-content.collapsible.open:hover::after,
-.tool-value.clamp.expanded:hover::after {
-  content: 'Click to collapse';
-  position: absolute;
-  bottom: 4px;
-  right: 8px;
-  font-size: 11px;
-  color: #8b949e;
-  background: rgba(13, 17, 23, 0.9);
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid #30363d;
-  pointer-events: none;
-  z-index: 10;
+.tool-body .clamp-btn,
+.tool-value .clamp-btn {
+  position: absolute; bottom: 4px; right: 4px;
 }
 
 /* === Timestamp (shared) === */

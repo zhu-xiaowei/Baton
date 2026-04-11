@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, VALID_TYPES } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, getRunningInfo, getSessionStatus } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend } from './ws.mjs';
 
@@ -46,6 +46,7 @@ async function readAndSend(config, filename, sessionId) {
 
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
+  let lastStatus = null; // track status from parsed entries directly
 
   for (let i = lastLine; i < lines.length; i++) {
     if (!lines[i].trim()) { lastParsedLine = i + 1; continue; }
@@ -53,9 +54,14 @@ async function readAndSend(config, filename, sessionId) {
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
 
+    // Track status from every parsed entry (statusFromEntry returns null for non-status types)
+    const s = statusFromEntry(raw);
+    if (s) lastStatus = s;
+
     if (!VALID_TYPES.has(raw.type)) continue;
-    if (raw.isMeta) { _metaUuids.add(raw.uuid); continue; }
-    if (raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
+    // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
+    if (raw.isMeta && raw.type === 'user') { _metaUuids.add(raw.uuid); continue; }
+    if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title') gotNewTitle = true;
 
     const msg = await extractForApp(raw);
@@ -68,12 +74,13 @@ async function readAndSend(config, filename, sessionId) {
   synced.set(sessionId, lastParsedLine);
 
   // Sync metadata only when status changed, new session, or ai-title arrived
-  if (lastParsedLine > lastLine) {
-    const newStatus = getSessionStatus(sessionId, filePath, getRunningInfo());
+  if (lastParsedLine > lastLine && lastStatus) {
+    const newStatus = lastStatus;
     const statusChanged = newStatus !== lastKnownStatus.get(sessionId);
     const isNew = !recentSessions.has(sessionId);
 
     if (statusChanged || isNew || gotNewTitle) {
+
       const stat = fs.statSync(filePath);
       const projectHash = path.basename(path.dirname(filename));
       lastKnownStatus.set(sessionId, newStatus);

@@ -51,12 +51,20 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
   - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
   - WS fallback: if WS not connected, HTTP POST to DDB
   - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
-- **Periodic check (5min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
+- **Periodic check (1min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
   - Only checks sessions previously known as running/idle
   - Updates status to stopped if process gone
-- **Status detection** → `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
-  - `getSessionStatus()`: reads jsonl tail `stop_reason` (end_turn → idle, tool_use/null → running)
-  - Three states: `running` (CC working), `idle` (CC waiting for user), `stopped` (no CC process)
+- **Status detection** → three-layer architecture:
+  - `statusFromEntry(entry)`: pure function, entry → running/idle/null. Shared by watcher + file reader
+  - `getSessionStatus()`: reads last lines of jsonl via reverse `\n` scan + process detection. Used by syncSessions/checkStopped
+  - Watcher: uses `statusFromEntry()` directly on already-parsed data (no file re-read)
+  - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
+  - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → idle, `tool_use`/`null` → running, `user` last → running
+  - terminal/tmux CC: `--resume` flag → exact session match → precise status
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (content=running → keep, content=idle + mtime > 2min → stopped)
+- **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
+  - Skip `isMeta` user messages (avoid duplicate user input)
+  - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
 - **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
 
 ### Data extraction
@@ -189,22 +197,26 @@ App subscribes to new sessionId, starts receiving messages
 ```
 App taps session "abc":
 
-1. Establish WS subscribe + start buffering (don't display)
+1. _wsBuffer = [] → start buffering WS messages
    WS: { action: "subscribe", sessionId: "abc" }
 
-2. REST load from DDB (parallel with step 1)
-   GET /api/bridge/messages?session=abc&after=<last-local-uuid>
+2. bufferAndFetch(sessionId, '') → REST load from DDB
+   GET /api/bridge/messages?session=abc
    → DDB has cached messages → return instantly (<100ms)
    → DDB empty → return empty (bridge hasn't synced this session yet)
 
-3. Render REST result immediately
+3. Merge: DDB results + _wsBuffer, dedup by uuid, sort by timestamp
 
-4. Merge WS buffer: filter messages with timestamp > last REST message's timestamp
-   Append to rendered list. (UUID dedup as fallback for same-millisecond edge case)
+4. _wsBuffer = null → switch to real-time mode. Render merged result.
+   Track wsLastTimestamp for reconnect recovery.
 
-5. Initialization complete. Subsequent WS messages → append directly, no dedup needed.
+5. Subsequent WS messages → append directly via updateLastTurn().
 
-6. App leaves session:
+6. WS reconnect → subscribe + recoverMissing():
+   _wsBuffer = [] → bufferAndFetch(sessionId, wsLastTimestamp)
+   Same buffer+fetch+merge pattern, dedup + sort + full re-render.
+
+7. App leaves session:
    WS: { action: "unsubscribe", sessionId: "abc" }
    Save to MMKV: messages + lastUuid
 ```
@@ -275,7 +287,7 @@ agentpeek/
 - bridge.mjs watches .jsonl, syncs session metadata + messages to DDB
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
-- Periodic check (5min) only detects disappeared CC processes
+- Periodic check (1min) only detects disappeared CC processes
 - Deployed to us-west-2 (AgentPeekTest), verified
 
 ### Phase 2A: Backend + 接口验证
@@ -311,31 +323,21 @@ agentpeek/
 - [x] WS: subscribe session → real-time message rendering
 - [x] Status: connection indicator, message count
 
-### Phase 2B: Send messages — Test Viewer 先行验证
+### Phase 2B: Send messages + Viewer polish ✅
 
-目标：在 test viewer 中实现消息发送，跑通完整双向链路，为 mobile 铺路。
+链路：`Viewer → WS → Server → WS → Bridge → tmux send-keys → Claude Code → JSONL → Bridge → WS → Viewer`
 
-链路：`Test Viewer → WS → Server → WS → Bridge → Claude Code → JSONL → Bridge → WS → Viewer`
-
-#### Step 6: 调研 Claude Code 输入机制
-- [ ] 调研 Claude Code 接收外部输入的方式（stdin pipe / tmux send-keys / Agent SDK / VS Code extension API）
-- [ ] 确定最佳方案，考虑 CLI 和 VS Code 两种运行模式
-- [ ] 验证: 手动测试选定方案能否向 Claude Code 发送消息
-
-#### Step 7: Server WS relay — send_message
-- [ ] `bridge_ws.py`: 处理 `send_message` action，app → server → bridge 转发
-- [ ] 部署并验证: wscat 模拟 app 发送，bridge 端收到
-
-#### Step 8: Bridge — 接收并执行 send_message
-- [ ] bridge: 收到 `send_message`，找到对应 session 的 Claude Code 进程
-- [ ] bridge: 通过选定方案注入消息
-- [ ] 验证: 从 wscat 发送消息 → Claude Code 收到并响应 → 响应通过 WS 推回
-
-#### Step 9: Test Viewer — 发送 UI
-- [ ] 消息输入框 + 发送按钮（chat 页面底部）
-- [ ] WS 发送 `{ action: "send_message", sessionId, text }`
-- [ ] 发送后清空输入框，等待响应（已有 WS 实时推送链路）
-- [ ] 验证: 在浏览器输入消息 → Claude Code 响应 → 浏览器实时显示
+- [x] tmux send-keys 方案（全平台通用，零侵入）
+- [x] Server WS relay: send_message, permission_reply
+- [x] Bridge: findTmuxTarget → sendKeys, auto-launch tmux + claude --resume
+- [x] Viewer: 消息发送 + 乐观渲染 + 去重, 权限确认 + 用户交互, 图片发送 via S3
+- [x] WS reconnect recovery: track wsLastTimestamp → recoverMissing() on reconnect
+- [x] Unified expand/collapse: .clamp-btn (always visible, mobile-friendly), post-render overflow detection
+- [x] WS tool_result: reuse renderToolNode() (same as history, no separate code path)
+- [x] ai-title: real-time breadcrumb update (WS + REST history)
+- [x] Diff view fix: normalize trailing newlines for correct diff output
+- [x] CC internal tag filtering: system-reminder, task-notification, etc.
+- [x] Setup page: URL key auto-strip via history.replaceState
 
 ### Phase 2C: Mobile App
 

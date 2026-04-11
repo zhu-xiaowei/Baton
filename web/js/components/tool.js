@@ -44,7 +44,7 @@
     else if (Array.isArray(c)) text = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
     text = text.trim();
     if (!text) return '';
-    return `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(text, 2000))}</div>`;
+    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(text, 2000))}</div>`;
   }
 
   // File extension → hljs language
@@ -72,7 +72,10 @@
         const el = document.getElementById(diffId);
         if (!el || typeof Diff === 'undefined' || typeof Diff2HtmlUI === 'undefined') return;
         try {
-          const patch = Diff.createTwoFilesPatch(file, file, oldStr, newStr, '', '', { context: 3 });
+          // Ensure trailing newlines so diff library doesn't flag unchanged lines
+          const a = oldStr.endsWith('\n') ? oldStr : oldStr + '\n';
+          const b = newStr.endsWith('\n') ? newStr : newStr + '\n';
+          const patch = Diff.createTwoFilesPatch(file, file, a, b, '', '', { context: 3 });
           const ui = new Diff2HtmlUI(el, patch, {
             drawFileList: false, fileListToggle: false, fileContentToggle: false,
             stickyFileHeaders: false, outputFormat: 'line-by-line',
@@ -126,7 +129,11 @@
         // Collapse if rendered height exceeds 240px
         if (el.scrollHeight > 240) {
           const bodyContent = el.closest('.tool-body-content');
-          if (bodyContent) bodyContent.classList.add('collapsible');
+          if (bodyContent && !bodyContent.classList.contains('collapsible')) {
+            bodyContent.classList.add('collapsible');
+            bodyContent.insertAdjacentHTML('beforeend',
+              '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.parentElement)">Show more</span>');
+          }
         }
       }, 50);
     }
@@ -142,7 +149,7 @@
     return {
       name: 'Write',
       desc: file,
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(resultText(result), 500))}</div>` : '',
+      body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(resultText(result), 500))}</div>` : '',
     };
   }
 
@@ -154,7 +161,7 @@
     return {
       name,
       desc,
-      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleClamp(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
     };
   }
 
@@ -286,11 +293,9 @@
 
     const noClamp = name === 'TodoWrite';
     const clampClass = noClamp ? ' no-clamp' : (info.collapsible ? ' collapsible' : '');
-    // Strip empty body (e.g. Read image with no text output)
-    const bodyContent = info.body ? info.body.replace(/<[^>]*>/g, '').trim() : '';
-    const bodyHtml = bodyContent
+    const bodyHtml = info.body
       ? `<div class="tool-body">
-          <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleToolBody('${id}')"`}>${info.body}</div>
+          <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body}</div>
         </div>`
       : '';
 
@@ -300,15 +305,5 @@
         ${statusHtml}
       </div>
       ${bodyHtml}`;
-  };
-
-  window.toggleToolBody = function (id) {
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle('open');
-  };
-
-  // Toggle clamp on tool-value elements
-  window.toggleClamp = function (el) {
-    el.classList.toggle('expanded');
   };
 })();

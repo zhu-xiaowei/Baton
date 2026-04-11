@@ -226,26 +226,31 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                 "messages": messages,
             })
 
-    # 2. Write to DDB (cache)
+    # 2. Write to DDB (cache) with one retry
     if _messages_table:
-        try:
-            from datetime import datetime
-            with _messages_table.batch_writer() as batch:
-                for msg in messages:
-                    uuid = msg.get("uuid", "")
-                    if not uuid:
-                        continue
-                    timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
-                    batch.put_item(Item={
-                        "sessionId": session_id,
-                        "sk": f"{timestamp}#{uuid}",
-                        "uuid": uuid,
-                        "type": msg.get("type", ""),
-                        "content": json.dumps(msg.get("content", ""), ensure_ascii=False),
-                        "timestamp": timestamp,
-                    })
-        except Exception as e:
-            print(f"DDB write error: {e}")
+        for attempt in range(2):
+            try:
+                from datetime import datetime
+                with _messages_table.batch_writer() as batch:
+                    for msg in messages:
+                        uuid = msg.get("uuid", "")
+                        if not uuid:
+                            continue
+                        timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
+                        batch.put_item(Item={
+                            "sessionId": session_id,
+                            "sk": f"{timestamp}#{uuid}",
+                            "uuid": uuid,
+                            "type": msg.get("type", ""),
+                            "content": json.dumps(msg.get("content", ""), ensure_ascii=False),
+                            "timestamp": timestamp,
+                        })
+                break
+            except Exception as e:
+                if attempt == 0:
+                    print(f"DDB write error (retrying): {e}")
+                else:
+                    print(f"DDB write error (gave up): {e}")
 
     return {"statusCode": 200}
 

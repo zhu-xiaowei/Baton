@@ -4,6 +4,8 @@ var wsSessionId = null;
 var wsMessageCount = 0;
 var wsStatusText = '';
 var wsAllMessages = []; // track all messages for tool pairing
+var wsLastTimestamp = ''; // track for reconnect recovery
+var _wsBuffer = null; // null = normal mode, [] = buffering during initial load
 var wsProjectHash = null; // for new session creation
 
 function connectWs(_, projectHash) {
@@ -14,15 +16,24 @@ function connectWs(_, projectHash) {
 
   ws.onopen = function () {
     setWsStatus('connected');
-    if (wsSessionId) subscribeSession(wsSessionId);
+    if (wsSessionId) {
+      subscribeSession(wsSessionId);
+      if (wsLastTimestamp) recoverMissing();
+    }
   };
 
   ws.onmessage = function (e) {
     var msg = JSON.parse(e.data);
     if (msg.action === 'messages' && msg.sessionId === wsSessionId) {
+      if (_wsBuffer !== null) {
+        // Buffering during initial load — collect, don't render yet
+        _wsBuffer.push.apply(_wsBuffer, msg.messages);
+        return;
+      }
       for (var i = 0; i < msg.messages.length; i++) {
         wsAllMessages.push(msg.messages[i]);
         wsMessageCount++;
+        if (msg.messages[i].timestamp) wsLastTimestamp = msg.messages[i].timestamp;
       }
       updateLastTurn();
       showStats(wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
@@ -128,42 +139,35 @@ function updateLastTurn() {
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
 
-    // tool_result → append OUT to matching tool_use node
+    // tool_result → re-render matching tool_use node with full result (same as history)
     if (isToolResultOnly(msg)) {
       if (Array.isArray(msg.content)) {
         for (var ri = 0; ri < msg.content.length; ri++) {
           var rb = msg.content[ri];
-          if (rb.type === 'tool_result' && rb.tool_use_id) {
-            var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
-            if (node && !node.querySelector('.tool-body-out')) {
-              var outContent = typeof rb.content === 'string' ? rb.content
-                : Array.isArray(rb.content) ? rb.content.map(function(c) { return c.text || ''; }).join('') : '';
-              if (outContent) {
-                var truncated = outContent.length > 2000 ? outContent.slice(0, 2000) + '…' : outContent;
-                // Append as tool-grid row matching REST render format
-                var outRowHtml = '<div class="tool-row"><div class="tool-label">OUT</div><div class="tool-value">' + esc(truncated) + '</div></div>';
-                var gridEl = node.querySelector('.tool-grid');
-                if (gridEl) {
-                  gridEl.insertAdjacentHTML('beforeend', outRowHtml);
-                } else {
-                  var bodyEl = node.querySelector('.tool-body');
-                  var html = '<div class="tool-body-out"><span class="tool-label">OUT</span><pre class="tool-out-pre">' + esc(truncated) + '</pre></div>';
-                  if (bodyEl) {
-                    bodyEl.insertAdjacentHTML('beforeend', html);
-                  } else {
-                    node.insertAdjacentHTML('beforeend', '<div class="tool-body">' + html + '</div>');
-                  }
-                }
-                // Add collapsible if content is long
-                if (outContent.length > 500) {
-                  var bodyContent = node.querySelector('.tool-body-content');
-                  if (bodyContent && !bodyContent.classList.contains('collapsible')) {
-                    bodyContent.classList.add('collapsible');
-                  }
-                }
+          if (rb.type !== 'tool_result' || !rb.tool_use_id) continue;
+          var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
+          if (!node) continue;
+          // Find original tool_use block from message history
+          var toolUseBlock = null;
+          for (var mi = 0; mi < wsAllMessages.length; mi++) {
+            var am = wsAllMessages[mi];
+            if (!Array.isArray(am.content)) continue;
+            for (var bi = 0; bi < am.content.length; bi++) {
+              if (am.content[bi].type === 'tool_use' && am.content[bi].id === rb.tool_use_id) {
+                toolUseBlock = am.content[bi];
+                break;
               }
             }
+            if (toolUseBlock) break;
           }
+          if (!toolUseBlock) continue;
+          // Attach Agent metadata if present
+          if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
+          window._lastToolState = '';
+          node.innerHTML = renderToolNode(toolUseBlock, rb);
+          // Update state class (error/warning)
+          var state = window._lastToolState || '';
+          node.className = 'tl-item tool-node' + (state ? ' ' + state : '');
         }
       }
       continue;
@@ -175,6 +179,12 @@ function updateLastTurn() {
       if (tryDedup(msg)) continue;  // matched a pending sent msg — skip rendering
       var userHtml = renderUserBubble(msg);
       if (userHtml) container.insertAdjacentHTML('beforeend', userHtml);
+      continue;
+    }
+
+    if (msg.type === 'ai-title') {
+      var title = typeof msg.content === 'string' ? msg.content : '';
+      if (title) { appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
       continue;
     }
 
@@ -221,6 +231,7 @@ function updateLastTurn() {
   scrollIfNearBottom();
   setTimeout(scrollIfNearBottom, 150);
   loadImages(container);
+  clampOverflow(container);
   showStats(wsMessageCount + ' messages (live)');
 }
 
@@ -228,6 +239,55 @@ function startWs(sessionId) {
   wsSessionId = sessionId;
   if (!ws) connectWs();
   else subscribeSession(sessionId);
+}
+
+/**
+ * Buffer WS → fetch DDB → merge + dedup → return merged messages.
+ * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
+ */
+async function bufferAndFetch(sessionId, after) {
+  _wsBuffer = [];
+  try {
+    var params = { session: sessionId };
+    if (after) params.after = after;
+    var data = await api('/api/bridge/messages', params);
+    var all = (data.messages || []).concat(_wsBuffer || []);
+    _wsBuffer = null;
+    // Dedup against existing wsAllMessages
+    var existing = {};
+    for (var i = 0; i < wsAllMessages.length; i++) existing[wsAllMessages[i].uuid] = 1;
+    var added = 0;
+    for (var i = 0; i < all.length; i++) {
+      if (!existing[all[i].uuid]) {
+        wsAllMessages.push(all[i]);
+        wsMessageCount++;
+        added++;
+      }
+    }
+    if (added > 0) {
+      wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
+    }
+    wsLastTimestamp = wsAllMessages.length ? wsAllMessages[wsAllMessages.length - 1].timestamp || '' : '';
+    return { added: added, needSync: data.needSync };
+  } catch (e) { _wsBuffer = null; throw e; }
+}
+
+// Reconnect recovery
+async function recoverMissing() {
+  try {
+    var result = await bufferAndFetch(wsSessionId, wsLastTimestamp);
+    if (!result.added) return;
+    var container = document.querySelector('.messages');
+    if (container) {
+      container.innerHTML = renderMessages(wsAllMessages);
+      wsRenderedCount = wsAllMessages.length;
+      loadImages(container);
+      clampOverflow(container);
+      checkPendingPrompts(wsAllMessages);
+      container.parentElement.scrollTop = container.parentElement.scrollHeight;
+    }
+    showStats(wsMessageCount + ' messages (' + result.added + ' recovered)');
+  } catch (e) {}
 }
 
 // Track pending (optimistically rendered) messages for dedup
@@ -280,8 +340,9 @@ function doSend(fullText, displayText, images) {
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     container.insertAdjacentHTML('beforeend',
       '<div class="msg-user" id="' + msgId + '">' + attachHtml
-      + '<div class="msg-text' + (displayText.split('\n').length > 3 || displayText.length > 300 ? ' clamped' : '') + '" onclick="this.classList.toggle(\'clamped\');this.classList.toggle(\'expanded\')">' + esc(displayText) + '</div>'
-      + '<div class="msg-time sending-status">sending... ' + new Date().toLocaleTimeString() + '</div></div>');
+      + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
+      + '<div class="msg-meta"><span class="msg-time sending-status">sending... ' + new Date().toLocaleTimeString() + '</span></div></div>');
+    clampOverflow(container);
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
 }

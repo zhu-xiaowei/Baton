@@ -91,50 +91,90 @@ export function readableProjectName(projectHash) {
  * @param {string} filePath - path to .jsonl file
  * @param {Object} runningInfo - { projects: Set<hash>, sessions: Set<sessionId> }
  */
-export function getSessionStatus(sessionId, filePath, runningInfo) {
-  // Check if this exact session has a CC process
-  if (!runningInfo.sessions.has(sessionId)) {
-    // Fallback: CC might not have --resume (new session), check project
-    const projectHash = path.basename(path.dirname(filePath));
-    if (!runningInfo.projects.has(projectHash)) return 'stopped';
-    // Project has CC but no session match — could be a different session
-    if (runningInfo.sessions.size > 0) return 'stopped';
-    // No session IDs detected at all (edge case) — fall through to jsonl check
+/**
+ * Pure function: given a parsed jsonl entry, return status or null (not a status-relevant type).
+ */
+export function statusFromEntry(entry) {
+  if (!entry) return null;
+  const t = entry.type;
+  if (t === 'last-prompt') return 'idle';
+  if (t === 'assistant' && entry.message) {
+    const sr = entry.message.stop_reason;
+    if (sr === null) return 'running'; // streaming
+    if (sr === 'tool_use') return 'running';
+    if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'idle';
   }
+  if (t === 'user') return 'running';
+  return null; // file-history-snapshot, queue-operation, etc.
+}
 
-  // Read last few lines of jsonl to check stop_reason
+/**
+ * Read last lines of jsonl and determine content status.
+ */
+function readStatusFromFile(filePath) {
   try {
-    const buf = Buffer.alloc(8192);
     const fd = fs.openSync(filePath, 'r');
     const stat = fs.fstatSync(fd);
-    const readStart = Math.max(0, stat.size - 8192);
-    const bytesRead = fs.readSync(fd, buf, 0, 8192, readStart);
-    fs.closeSync(fd);
+    const fileSize = stat.size;
+    if (fileSize === 0) { fs.closeSync(fd); return 'idle'; }
 
-    const tail = buf.slice(0, bytesRead).toString('utf-8');
-    const lines = tail.split('\n').filter(l => l.trim());
-
-    // Scan from last line backwards
-    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
-      let entry;
-      try { entry = JSON.parse(lines[i]); } catch { continue; }
-
-      if (entry.type === 'last-prompt') return 'idle';
-
-      if (entry.type === 'assistant' && entry.message) {
-        const sr = entry.message.stop_reason;
-        if (sr === 'end_turn') return 'idle';
-        if (sr === 'tool_use' || sr === null) return 'running';
-      }
-
-      if (entry.type === 'user' && Array.isArray(entry.message?.content)) {
-        const hasToolResult = entry.message.content.some(c => c.type === 'tool_result');
-        if (hasToolResult) return 'running';
+    // Find last 6 newlines via reverse scan
+    const newlines = [];
+    const chunkSize = 4096;
+    for (let pos = fileSize - 2; pos >= 0 && newlines.length < 6; pos -= chunkSize) {
+      const start = Math.max(0, pos - chunkSize + 1);
+      const len = pos - start + 1;
+      const chunk = Buffer.alloc(len);
+      fs.readSync(fd, chunk, 0, len, start);
+      for (let j = len - 1; j >= 0 && newlines.length < 6; j--) {
+        if (chunk[j] === 0x0A) newlines.push(start + j);
       }
     }
-  } catch {}
 
+    const readFrom = newlines.length > 0 ? newlines[newlines.length - 1] + 1 : 0;
+    const tailLen = fileSize - readFrom;
+    const tailBuf = Buffer.alloc(tailLen);
+    fs.readSync(fd, tailBuf, 0, tailLen, readFrom);
+    fs.closeSync(fd);
+
+    const lines = tailBuf.toString('utf-8').split('\n').filter(l => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let entry;
+      try { entry = JSON.parse(lines[i]); } catch {
+        if (i === lines.length - 1) return 'running'; // CC mid-write
+        continue;
+      }
+      const s = statusFromEntry(entry);
+      if (s) return s;
+    }
+  } catch {}
   return 'idle';
+}
+
+/**
+ * Determine session status. Used by syncSessions() and checkStopped().
+ * Watcher uses statusFromEntry() directly with already-parsed data.
+ */
+export function getSessionStatus(sessionId, filePath, runningInfo) {
+  // 1. No CC process for this project → stopped
+  if (!runningInfo.sessions.has(sessionId)) {
+    const projectHash = path.basename(path.dirname(filePath));
+    if (!runningInfo.projects.has(projectHash)) return 'stopped';
+    if (runningInfo.sessions.size > 0) return 'stopped';
+  }
+
+  // 2. Read jsonl content to determine status
+  const contentStatus = readStatusFromFile(filePath);
+
+  // 3. VS Code (no --resume): if content says idle and file is stale → stopped
+  //    If content says running (e.g. pending Agent tool_use), keep running regardless of mtime
+  if (!runningInfo.sessions.has(sessionId) && contentStatus === 'idle') {
+    try {
+      if (Date.now() - fs.statSync(filePath).mtimeMs > 120_000) return 'stopped';
+    } catch { return 'stopped'; }
+  }
+
+  return contentStatus;
 }
 
 /**

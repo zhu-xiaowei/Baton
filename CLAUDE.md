@@ -56,15 +56,17 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Filters: skips empty/no-preview files, subagent sessions
 - Session `status`: three-state (`running`/`idle`/`stopped`), determined by:
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
-  - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running)
+  - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running, `user` last → running)
   - Process detection: `ps aux | grep claude` (not `pgrep`, which fails from Node.js on macOS)
+  - terminal/tmux CC: `--resume` flag → exact session match → precise status
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (< 2min → jsonl analysis, > 2min → stopped)
 - `findTmuxTargetForSession`: 精确匹配 CC 进程 args 中的 sessionId → 找到 tmux pane
 - `projectHashToPath()`: 从 hash 反解真实目录路径（逐段验证目录存在）
 - Auto-launch: 无 tmux target 时自动创建 tmux + `claude --resume` + `waitForCCReady`
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd (Linux)
 - Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
-- Periodic check (5min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
+- Periodic check (1min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
 - Debounce: busy Map per session dedup fs.watch duplicate events
@@ -214,3 +216,8 @@ Full protocol: `docs/api.md`
 ### SwiftChat markdown reference
 `/Users/xiaoweii/workspace/rn/swift-chat/react-native/src/core/markdown/`
 Key files: Parser.tsx, Markdown.tsx, CustomMarkdownRenderer.tsx, CustomCodeHighlighter.tsx
+
+## Known Issues / TODO
+
+- **WS 128KB 帧限制**: API Gateway WS payload 上限 128KB。超大消息（如 Edit 大文件）WS 发送失败，bridge 自动 fallback 到 HTTP 写 DDB，但 app 实时收不到（刷新后可见）。DDB 单条 item 上限 400KB，超过会丢失。极少触发，暂不处理。
+- **VS Code CC 状态精度**: VS Code 扩展启动 CC 无 `--resume` flag，无法精确匹配 session。使用 mtime 启发式（2 分钟），空闲超时后显示 stopped 而非 idle。terminal/tmux 启动的 CC 不受影响。

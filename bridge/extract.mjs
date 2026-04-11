@@ -80,8 +80,9 @@ export async function readNewMessages(filePath, sessionId) {
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
     if (!VALID_TYPES.has(msg.type)) continue;
-    if (msg.isMeta) { metaUuids.add(msg.uuid); continue; }
-    if (msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
+    // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
+    if (msg.isMeta && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
+    if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
     if (extracted.uuid) newMsgs.push(extracted);
   }

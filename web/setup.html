@@ -70,7 +70,12 @@
 <script>
 (function () {
   var urlKey = new URLSearchParams(location.search).get('key');
-  if (urlKey) { localStorage.setItem('_ak', btoa(urlKey)); localStorage.setItem('_as', location.origin + location.pathname.replace(/\/[^/]*$/, '')); }
+  if (urlKey) {
+    localStorage.setItem('_ak', btoa(urlKey));
+    localStorage.setItem('_as', location.origin + location.pathname.replace(/\/[^/]*$/, ''));
+    // Remove key from URL bar to avoid exposing it
+    history.replaceState(null, '', location.pathname);
+  }
   try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch {
     location.replace('landing.html');
   }
