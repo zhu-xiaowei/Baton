@@ -46,3 +46,6 @@ test/.env
 .env
 .env.local
 node_modules/
+
+# Source code references
+claude-code-source-code/
