@@ -169,7 +169,7 @@ function updateLastTurn() {
 
   // Sort batch by timestamp
   if (newMessages.length > 1) {
-    newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
+    newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
   }
 
   for (var i = 0; i < newMessages.length; i++) {
@@ -233,11 +233,18 @@ function updateLastTurn() {
       var prev = before.previousElementSibling;
       if (prev && prev.classList.contains('assistant-turn')) {
         prev.insertAdjacentHTML('beforeend', html);
-        if (msg.timestamp) prev.dataset.ts = msg.timestamp; // update turn's ts to latest
+        if (msg.timestamp) prev.dataset.ts = msg.timestamp;
         continue;
       }
+      // Insert new turn; then merge with next sibling if it's also a turn (out-of-order arrival)
       before.insertAdjacentHTML('beforebegin',
         '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
+      var inserted = before.previousElementSibling;
+      if (before.classList.contains('assistant-turn')) {
+        while (before.firstChild) inserted.appendChild(before.firstChild);
+        if (before.dataset.ts) inserted.dataset.ts = before.dataset.ts;
+        before.remove();
+      }
     } else {
       // Append to end (before pending). Check if last real element is assistant-turn.
       var firstPending = container.querySelector('[data-pending]');
@@ -253,23 +260,18 @@ function updateLastTurn() {
     }
   }
 
-  // Post-render checks
+  // Prompt check: if mode already detected → instant. First time → 2s debounce to detect.
   dismissPermissionPrompt();
-  if (_pendingToolUse) {
-    var resolved = newMessages.some(function (m) {
-      return Array.isArray(m.content) && m.content.some(function (c) {
-        return c.type === 'tool_result' && c.tool_use_id === _pendingToolUse.id;
-      });
-    });
-    if (resolved) {
-      _pendingToolUse = null;
-    } else {
-      var prompt = buildClientPrompt(_pendingToolUse.name, _pendingToolUse.input);
-      _pendingToolUse = null;
-      if (prompt) showPermissionPrompt(prompt);
-    }
+  if (_promptCheckTimer) clearTimeout(_promptCheckTimer);
+  var delay = _toolApproveMode ? 0 : 2000; // known mode → instant, unknown → wait 2s
+  if (delay === 0) {
+    checkPendingPrompts(wsAllMessages);
+  } else {
+    _promptCheckTimer = setTimeout(function () {
+      _promptCheckTimer = null;
+      checkPendingPrompts(wsAllMessages);
+    }, delay);
   }
-  checkPendingPrompts(wsAllMessages);
 
   var el = document.getElementById('content');
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
@@ -311,7 +313,7 @@ async function bufferAndFetch(sessionId, after) {
       }
     }
     if (added > 0) {
-      wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
+      wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
     }
     wsLastTimestamp = wsAllMessages.length ? wsAllMessages[wsAllMessages.length - 1].timestamp || '' : '';
     return { added: added, needSync: data.needSync };
@@ -527,6 +529,7 @@ function cancelPermissionPrompt() {
 }
 
 function dismissPermissionPrompt() {
+  if (_promptCheckTimer) { clearTimeout(_promptCheckTimer); _promptCheckTimer = null; }
   var el = document.getElementById('permission-prompt');
   if (el) el.remove();
   // Re-enable bottom input bar
@@ -613,9 +616,11 @@ function buildClientPrompt(toolName, toolInput) {
   return null;
 }
 
-var _pendingToolUse = null;
+var _promptCheckTimer = null;
+// null = not yet detected, 'auto' = auto-approved, 'manual' = needs user confirmation
+var _toolApproveMode = localStorage.getItem('_toolApproveMode'); // null | 'auto' | 'manual'
 
-/** Check if the last message has an unresolved prompt. */
+/** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
   if (!messages.length) return;
   var last = messages[messages.length - 1];
@@ -623,22 +628,36 @@ function checkPendingPrompts(messages) {
   for (var i = last.content.length - 1; i >= 0; i--) {
     var b = last.content[i];
     if (b.type === 'tool_use') {
-      // Check if tool_result already exists in messages
       var hasResult = messages.some(function (m) {
         return Array.isArray(m.content) && m.content.some(function (c) {
           return c.type === 'tool_result' && c.tool_use_id === b.id;
         });
       });
-      if (hasResult) return;
+      if (hasResult) {
+        // tool_result arrived without user action → auto-approve environment
+        if (!_toolApproveMode) {
+          _toolApproveMode = 'auto';
+          localStorage.setItem('_toolApproveMode', 'auto');
+        }
+        return;
+      }
       var prompt = buildClientPrompt(b.name, b.input);
       if (!prompt) return;
-      // AskUserQuestion / ExitPlanMode always need user input — show immediately
+      // AskUserQuestion / ExitPlanMode → always show
       if (prompt.type === 'ask_user' || prompt.type === 'plan_approval') {
         showPermissionPrompt(prompt);
         return;
       }
-      // Tool permissions (Bash/Edit/Write) might be auto-approved — defer to check
-      _pendingToolUse = { id: b.id, name: b.name, input: b.input };
+      // Bash/Edit/Write — use cached mode for instant decision
+      if (_toolApproveMode === 'auto') return;        // known auto-approve → skip
+      if (_toolApproveMode === 'manual') {             // known manual → show immediately
+        showPermissionPrompt(prompt);
+        return;
+      }
+      // First time: not yet detected → timer fired after 2s without tool_result → manual
+      _toolApproveMode = 'manual';
+      localStorage.setItem('_toolApproveMode', 'manual');
+      showPermissionPrompt(prompt);
       return;
     }
   }

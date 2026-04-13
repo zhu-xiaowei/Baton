@@ -195,6 +195,19 @@ function optimisticSend(text) {
   dom.append(n);
 }
 
+function makeItem(blockLabel) {
+  const item = new Node('tl-item');
+  item.text = blockLabel;
+  return item;
+}
+
+function makeTurn(ts, item) {
+  const turn = new Node('assistant-turn', { 'data-ts': ts });
+  item._parent = turn;
+  turn.children.push(item);
+  return turn;
+}
+
 function processNewMessages() {
   const batch = wsAllMessages.slice(wsRenderedCount);
   wsRenderedCount = wsAllMessages.length;
@@ -203,9 +216,13 @@ function processNewMessages() {
   for (const msg of batch) {
     if (isToolResultOnly(msg)) continue;
 
+    // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
       if (tryDedup(msg)) continue;
-      const n = new Node('msg-user', { ...(msg.uuid ? { 'data-uuid': msg.uuid } : {}), ...(msg.timestamp ? { 'data-ts': msg.timestamp } : {}) });
+      const n = new Node('msg-user', {
+        ...(msg.uuid ? { 'data-uuid': msg.uuid } : {}),
+        ...(msg.timestamp ? { 'data-ts': msg.timestamp } : {}),
+      });
       n.text = getText(msg).trim().slice(0, 50);
       const before = findInsertBefore(msg.timestamp);
       if (before) dom.insertBefore(before, n); else dom.append(n);
@@ -215,42 +232,44 @@ function processNewMessages() {
     if (msg.type === 'ai-title') continue;
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
-    // Collect block types for this assistant message
+    // Assistant message — insert by timestamp, merge into adjacent turns
     const blockTypes = getBlockTypes(msg);
     if (!blockTypes.length) continue;
+    const item = makeItem(blockTypes.join('+'));
 
-    const blockLabel = blockTypes.join('+');
-
-    // ── Insert logic (parentUuid → fallback timestamp) ──
-    const parentEl = msg.parentUuid ? dom.querySelector(`[data-uuid="${msg.parentUuid}"]`) : null;
-
-    if (parentEl) {
-      const nextSib = parentEl.nextElementSibling;
-      if (nextSib?.type === 'assistant-turn' && nextSib.attrs['data-parent'] === msg.parentUuid) {
-        const item = new Node('tl-item'); item.text = blockLabel; item._parent = nextSib; nextSib.children.push(item);
-      } else {
-        const turn = new Node('assistant-turn', { 'data-parent': msg.parentUuid });
-        const item = new Node('tl-item'); item.text = blockLabel; item._parent = turn; turn.children.push(item);
-        dom.insertAfter(parentEl, turn);
+    const before = findInsertBefore(msg.timestamp);
+    if (before) {
+      const prev = before.previousElementSibling;
+      if (prev?.type === 'assistant-turn') {
+        // Merge into previous turn
+        item._parent = prev;
+        prev.children.push(item);
+        if (msg.timestamp) prev.attrs['data-ts'] = msg.timestamp;
+        continue;
+      }
+      // Insert new turn, then merge with next if also a turn (out-of-order arrival)
+      const turn = makeTurn(msg.timestamp || '', item);
+      dom.insertBefore(before, turn);
+      if (before.type === 'assistant-turn') {
+        // Merge next turn's children into the new turn
+        while (before.children.length) {
+          const child = before.children.shift();
+          child._parent = turn;
+          turn.children.push(child);
+        }
+        if (before.attrs['data-ts']) turn.attrs['data-ts'] = before.attrs['data-ts'];
+        dom.children.splice(dom.children.indexOf(before), 1);
       }
     } else {
-      // Fallback: timestamp
-      const before = findInsertBefore(msg.timestamp);
-      let lastTurn = null;
-      if (before) {
-        const prev = before.previousElementSibling;
-        lastTurn = prev?.type === 'assistant-turn' ? prev : null;
-      } else {
-        const last = dom.lastElementChild;
-        lastTurn = last?.type === 'assistant-turn' ? last : null;
+      // Append to end. Check if last element is assistant-turn to merge.
+      const last = dom.lastElementChild;
+      if (last?.type === 'assistant-turn') {
+        item._parent = last;
+        last.children.push(item);
+        if (msg.timestamp) last.attrs['data-ts'] = msg.timestamp;
+        continue;
       }
-      if (lastTurn) {
-        const item = new Node('tl-item'); item.text = blockLabel; item._parent = lastTurn; lastTurn.children.push(item);
-      } else {
-        const turn = new Node('assistant-turn');
-        const item = new Node('tl-item'); item.text = blockLabel; item._parent = turn; turn.children.push(item);
-        if (before) dom.insertBefore(before, turn); else dom.append(turn);
-      }
+      dom.append(makeTurn(msg.timestamp || '', item));
     }
   }
 }

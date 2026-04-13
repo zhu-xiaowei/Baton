@@ -9,9 +9,12 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 from bridge_sync import bridge_router
-from bridge_read import read_router
+from bridge_read import read_router, get_install
 app.include_router(bridge_router)
 app.include_router(read_router)
+
+# Short alias for install endpoint
+app.get("/api/install")(get_install)
 
 
 @app.get("/api/health")

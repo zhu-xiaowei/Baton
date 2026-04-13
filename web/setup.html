@@ -138,10 +138,10 @@ async function apiFetch(path, params) {
 (async function () {
   var cmdEl = document.getElementById('installCmdText');
   try {
-    var res = await fetch(API_SERVER + '/api/bridge/install', { headers: { 'x-api-key': KEY } });
+    var res = await fetch(API_SERVER + '/api/install', { headers: { 'x-api-key': KEY } });
     if (!res.ok) throw new Error(res.status);
     // The install endpoint returns a shell script — show the curl one-liner
-    var installUrl = API_SERVER + '/api/bridge/install';
+    var installUrl = API_SERVER + '/api/install';
     cmdEl.textContent = 'curl -sL -H "x-api-key: ' + KEY + '" "' + installUrl + '" | bash';
   } catch (e) {
     cmdEl.textContent = '# Error loading install command: ' + e.message;

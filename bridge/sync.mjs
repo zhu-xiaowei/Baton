@@ -177,6 +177,5 @@ export async function checkStopped(config) {
       os: process.platform,
       sessions: updates,
     });
-    console.log(`[check] ${updates.length} session(s) → stopped`);
   }
 }
