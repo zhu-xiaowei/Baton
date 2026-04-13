@@ -133,13 +133,28 @@ export function getClaudeProcesses() {
 
 /**
  * Find tmux target for a given sessionId.
- * Resolves sessionId → project → Claude PID → tmux pane.
+ * 1. Match CC process with --resume <sessionId> in args
+ * 2. Fallback: match tmux session named apeek_*_<sessionId[:8]> (for new sessions renamed after creation)
  */
 export function findTmuxTargetForSession(sessionId) {
-  // Only match if a CC process has this exact sessionId in its args (--resume <id>)
+  // Primary: match CC process with this exact sessionId in its args (--resume <id>)
   const procs = getClaudeProcesses();
   const exact = procs.find(p => p.tmuxTarget && p.args.includes(sessionId));
-  return exact ? exact.tmuxTarget : null;
+  if (exact) return exact.tmuxTarget;
+
+  // Fallback: match tmux session name ending with sessionId prefix
+  if (!hasTmux()) return null;
+  const suffix = `_${sessionId.slice(0, 8)}`;
+  try {
+    const output = execSync(
+      'tmux list-sessions -F "#{session_name}" 2>/dev/null',
+      { encoding: 'utf-8' }
+    ).trim();
+    for (const name of output.split('\n')) {
+      if (name.startsWith('apeek_') && name.endsWith(suffix)) return name;
+    }
+  } catch {}
+  return null;
 }
 
 /**

@@ -138,6 +138,13 @@ function startNewSession(projectHash) {
   appState.sessionPreview = 'New Session';
   updateBreadcrumb();
   saveNav();
+  // Reset WS message state for new session
+  wsAllMessages = [];
+  wsMessageCount = 0;
+  wsRenderedCount = 0;
+  wsLastTimestamp = '';
+  wsSessionId = null;
+  pendingSentMessages = [];
   var content = document.getElementById('content');
   content.innerHTML = '<div class="messages"><div class="empty">Send a message to start a new session</div></div>';
   showInputBar(true);

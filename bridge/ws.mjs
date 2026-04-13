@@ -14,6 +14,10 @@ let _reconnectTimer = null;
 const HEARTBEAT_INTERVAL = 5 * 60_000;
 const RECONNECT_DELAY = 5_000;
 
+// Launch locks: prevent concurrent tmux creation for same project/session
+// Key: projectHash or sessionId, Value: Promise<{ok, sessionId?, tmuxName?}>
+const _launchLocks = new Map();
+
 export function initWs(config) {
   _config = config;
   connect();
@@ -98,7 +102,7 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId);
       break;
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
@@ -132,7 +136,7 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash) {
+async function handleSendMessage(sessionId, text, projectHash, requestId) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
 
@@ -150,7 +154,25 @@ async function handleSendMessage(sessionId, text, projectHash) {
 
   // New session: create tmux + claude, send message, detect sessionId
   if (!sessionId && projectHash) {
-    const result = await handleNewSessionMessage(projectHash, resolved);
+    const lockKey = requestId || projectHash;
+
+    // If already launching for this requestId, wait then send to existing session
+    if (_launchLocks.has(lockKey)) {
+      console.log(`[ws] waiting for in-flight launch (${lockKey.slice(0, 8)})...`);
+      const prev = await _launchLocks.get(lockKey);
+      if (prev.ok && prev.tmuxName) {
+        try { sendKeys(prev.tmuxName, resolved); } catch {}
+        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId });
+      } else {
+        wsSend({ action: 'send_message_result', ok: false, error: 'previous launch failed' });
+      }
+      return;
+    }
+
+    const promise = handleNewSessionMessage(projectHash, resolved);
+    _launchLocks.set(lockKey, promise);
+    const result = await promise;
+    setTimeout(() => _launchLocks.delete(lockKey), 30_000);
     wsSend({ action: 'send_message_result', ...result });
     return;
   }
@@ -159,22 +181,33 @@ async function handleSendMessage(sessionId, text, projectHash) {
 
   // No running CC in tmux → auto-launch, then send-keys directly to the new tmux session
   if (!result.ok && result.error === 'no_tmux_target') {
-    console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching CC...`);
-    const tmuxName = launchForSession(sessionId);
-    if (tmuxName) {
-      const ready = await waitForCCReady(tmuxName);
-      if (ready) {
-        try {
-          sendKeys(tmuxName, resolved);
-          result = { ok: true };
-        } catch (err) {
-          result = { ok: false, error: err.message };
-        }
+    // If already launching for this session, wait then send
+    if (_launchLocks.has(sessionId)) {
+      console.log(`[ws] waiting for in-flight launch (session ${sessionId.slice(0, 8)})...`);
+      const prev = await _launchLocks.get(sessionId);
+      if (prev.ok && prev.tmuxName) {
+        try { sendKeys(prev.tmuxName, resolved); result = { ok: true }; } catch (err) { result = { ok: false, error: err.message }; }
       } else {
-        result = { ok: false, error: 'claude did not become ready' };
+        result = { ok: false, error: 'previous launch failed' };
       }
     } else {
-      result = { ok: false, error: 'failed to launch claude' };
+      console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching CC...`);
+      const promise = (async () => {
+        const tmuxName = launchForSession(sessionId);
+        if (!tmuxName) return { ok: false, error: 'failed to launch claude' };
+        const ready = await waitForCCReady(tmuxName);
+        if (!ready) return { ok: false, error: 'claude did not become ready' };
+        return { ok: true, tmuxName };
+      })();
+      _launchLocks.set(sessionId, promise);
+      const launchResult = await promise;
+      setTimeout(() => _launchLocks.delete(sessionId), 30_000);
+
+      if (launchResult.ok) {
+        try { sendKeys(launchResult.tmuxName, resolved); result = { ok: true }; } catch (err) { result = { ok: false, error: err.message }; }
+      } else {
+        result = launchResult;
+      }
     }
   }
 
@@ -220,7 +253,17 @@ async function handleNewSessionMessage(projectHash, text) {
       } catch {}
     }
 
-    return { ok: true, sessionId };
+    // Rename tmux session to include sessionId, matching launchClaudeSession convention
+    // so findTmuxTargetForSession can find it by name suffix
+    let finalTmuxName = tmuxName;
+    if (sessionId) {
+      finalTmuxName = `apeek_${projName}_${sessionId.slice(0, 8)}`;
+      try {
+        execSync(`tmux rename-session -t "${tmuxName}" "${finalTmuxName}"`, { stdio: 'ignore' });
+      } catch {}
+    }
+
+    return { ok: true, sessionId, tmuxName: finalTmuxName };
   } catch (err) {
     return { ok: false, error: err.message };
   }

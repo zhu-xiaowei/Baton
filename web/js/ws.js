@@ -7,11 +7,15 @@ var wsAllMessages = []; // track all messages for tool pairing
 var wsLastTimestamp = ''; // track for reconnect recovery
 var _wsBuffer = null; // null = normal mode, [] = buffering during initial load
 var wsProjectHash = null; // for new session creation
+var wsRequestId = null; // unique ID per new-session creation flow
 var wsRunning = false; // track if session is actively running
 
 function connectWs(_, projectHash) {
   if (!WS_URL) return;
-  if (projectHash) wsProjectHash = projectHash;
+  if (projectHash) {
+    wsProjectHash = projectHash;
+    wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
   if (ws) { ws.close(); ws = null; }
   ws = new WebSocket(WS_URL + '?apiKey=' + KEY + '&role=app');
 
@@ -41,16 +45,23 @@ function connectWs(_, projectHash) {
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
-      // Mark pending messages as delivered (but keep in list for tryDedup)
+      // Mark first undelivered pending message as delivered
       if (msg.ok && pendingSentMessages.length) {
-        var pending = pendingSentMessages[0];
-        var el = document.getElementById(pending.id);
-        if (el) {
-          var status = el.querySelector('.sending-status');
-          if (status) {
-            var ts = new Date().toLocaleTimeString();
-            status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
-            setTimeout(function () { status.innerHTML = ts; status.style.color = '#6e7681'; }, 2000);
+        // Find first pending that hasn't been delivered yet
+        var pending = null;
+        for (var pi = 0; pi < pendingSentMessages.length; pi++) {
+          if (!pendingSentMessages[pi].delivered) { pending = pendingSentMessages[pi]; break; }
+        }
+        if (pending) {
+          pending.delivered = true;
+          var el = document.getElementById(pending.id);
+          if (el) {
+            var status = el.querySelector('.sending-status');
+            if (status) {
+              var ts = new Date().toLocaleTimeString();
+              status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
+              setTimeout(function () { status.innerHTML = ts; status.style.color = '#6e7681'; }, 2000);
+            }
           }
         }
       }
@@ -61,6 +72,7 @@ function connectWs(_, projectHash) {
         updateBreadcrumb();
         saveNav();
         wsSessionId = msg.sessionId;
+        wsRequestId = null;
         subscribeSession(msg.sessionId);
       }
     } else if (msg.action === 'sync_complete') {
@@ -111,63 +123,59 @@ function disconnectWs() {
   }
 }
 
-// Track last rendered message index to only append new ones
+// Track last rendered message index
 var wsRenderedCount = 0;
 
-/** Sort new messages by timestamp within the same batch. */
-function reorderIfNeeded(newMessages) {
-  if (newMessages.length > 1) {
-    newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
-  }
-  return newMessages;
-}
-
-/** Find the first child element with data-ts > timestamp. Returns null if none (append to end). */
+/**
+ * Find insertion point: scan from end, return first element with data-ts > timestamp.
+ * Skips elements without data-ts (pending messages). Returns null = insert at end of real messages.
+ */
 function findInsertBefore(container, timestamp) {
   if (!timestamp) return null;
   var kids = container.children;
   var result = null;
   for (var i = kids.length - 1; i >= 0; i--) {
-    if (kids[i].dataset.ts && kids[i].dataset.ts > timestamp) {
+    var ts = kids[i].dataset.ts;
+    if (!ts) continue; // skip pending (no data-ts)
+    if (ts > timestamp) {
       result = kids[i];
-    } else if (kids[i].dataset.ts && kids[i].dataset.ts <= timestamp) {
-      break;
+    } else {
+      break; // found ts <= ours, stop
     }
   }
   return result;
+}
+
+/** Insert html at correct timestamp position, before any pending messages. */
+function insertAtTimestamp(container, html, timestamp) {
+  var before = findInsertBefore(container, timestamp);
+  if (before) {
+    before.insertAdjacentHTML('beforebegin', html);
+  } else {
+    // Append after all real messages, before pending
+    var firstPending = container.querySelector('[data-pending]');
+    if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
+    else container.insertAdjacentHTML('beforeend', html);
+  }
 }
 
 function updateLastTurn() {
   var container = document.querySelector('.messages');
   if (!container) return;
 
-  // Only render messages that haven't been rendered yet
   var newMessages = wsAllMessages.slice(wsRenderedCount);
   wsRenderedCount = wsAllMessages.length;
+  if (!newMessages.length) return;
 
-  // Ensure timestamp order within batch
-  newMessages = reorderIfNeeded(newMessages);
-
-  // Stop any running agent timers when new messages arrive
-  if (newMessages.length > 0) {
-    container.querySelectorAll('.agent-timer:not([data-stopped])').forEach(function (t) {
-      t.dataset.stopped = '1';
-      var meta = null;
-      // Try to find toolUseResult metadata from tool_result messages
-      for (var j = 0; j < newMessages.length; j++) {
-        if (newMessages[j].toolUseResult) { meta = newMessages[j].toolUseResult; break; }
-      }
-      if (meta) {
-        var secs = Math.round((meta.totalDurationMs || 0) / 1000);
-        t.textContent = (meta.totalToolUseCount || 0) + ' tool calls, ' + secs + 's';
-      }
-    });
+  // Sort batch by timestamp
+  if (newMessages.length > 1) {
+    newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
   }
 
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
 
-    // tool_result → re-render matching tool_use node with full result (same as history)
+    // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
       if (Array.isArray(msg.content)) {
         for (var ri = 0; ri < msg.content.length; ri++) {
@@ -175,49 +183,42 @@ function updateLastTurn() {
           if (rb.type !== 'tool_result' || !rb.tool_use_id) continue;
           var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
           if (!node) continue;
-          // Find original tool_use block from message history
           var toolUseBlock = null;
           for (var mi = 0; mi < wsAllMessages.length; mi++) {
             var am = wsAllMessages[mi];
             if (!Array.isArray(am.content)) continue;
             for (var bi = 0; bi < am.content.length; bi++) {
-              if (am.content[bi].type === 'tool_use' && am.content[bi].id === rb.tool_use_id) {
-                toolUseBlock = am.content[bi];
-                break;
-              }
+              if (am.content[bi].type === 'tool_use' && am.content[bi].id === rb.tool_use_id) { toolUseBlock = am.content[bi]; break; }
             }
             if (toolUseBlock) break;
           }
           if (!toolUseBlock) continue;
-          // Attach Agent metadata if present
           if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
           window._lastToolState = '';
           node.innerHTML = renderToolNode(toolUseBlock, rb);
-          // Update state class (error/warning)
           var state = window._lastToolState || '';
           node.className = 'tl-item tool-node' + (state ? ' ' + state : '');
         }
       }
       continue;
     }
-    // User message (but not interrupt — interrupt falls through to assistant render path)
+
+    // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
-      if (userHtml) {
-        var userInsert = findInsertBefore(container, msg.timestamp);
-        if (userInsert) userInsert.insertAdjacentHTML('beforebegin', userHtml);
-        else container.insertAdjacentHTML('beforeend', userHtml);
-      }
+      if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
       continue;
     }
 
+    // ai-title
     if (msg.type === 'ai-title') {
       var title = typeof msg.content === 'string' ? msg.content : '';
       if (title) { appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
       continue;
     }
 
+    // Assistant message
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
     wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
@@ -226,27 +227,34 @@ function updateLastTurn() {
     var html = renderSingleMessage(msg, wsAllMessages);
     if (!html) continue;
 
-    // Insert at correct position by timestamp
-    var insertBefore = findInsertBefore(container, msg.timestamp);
-    var lastTurn;
-    if (insertBefore) {
-      var prev = insertBefore.previousElementSibling;
-      lastTurn = (prev && prev.classList.contains('assistant-turn')) ? prev : null;
+    // Find insert position, then check if previous sibling is an assistant-turn to merge into
+    var before = findInsertBefore(container, msg.timestamp);
+    if (before) {
+      var prev = before.previousElementSibling;
+      if (prev && prev.classList.contains('assistant-turn')) {
+        prev.insertAdjacentHTML('beforeend', html);
+        if (msg.timestamp) prev.dataset.ts = msg.timestamp; // update turn's ts to latest
+        continue;
+      }
+      before.insertAdjacentHTML('beforebegin',
+        '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
     } else {
-      lastTurn = container.querySelector('.assistant-turn:last-child');
-    }
-    if (lastTurn) {
-      lastTurn.insertAdjacentHTML('beforeend', html);
-    } else if (insertBefore) {
-      insertBefore.insertAdjacentHTML('beforebegin', '<div class="assistant-turn">' + html + '</div>');
-    } else {
-      container.insertAdjacentHTML('beforeend', '<div class="assistant-turn">' + html + '</div>');
+      // Append to end (before pending). Check if last real element is assistant-turn.
+      var firstPending = container.querySelector('[data-pending]');
+      var lastReal = firstPending ? firstPending.previousElementSibling : container.lastElementChild;
+      if (lastReal && lastReal.classList.contains('assistant-turn')) {
+        lastReal.insertAdjacentHTML('beforeend', html);
+        if (msg.timestamp) lastReal.dataset.ts = msg.timestamp;
+        continue;
+      }
+      var turnHtml = '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>';
+      if (firstPending) firstPending.insertAdjacentHTML('beforebegin', turnHtml);
+      else container.insertAdjacentHTML('beforeend', turnHtml);
     }
   }
 
-  // After all messages rendered — check pending prompts
+  // Post-render checks
   dismissPermissionPrompt();
-  // If we were waiting to see if a tool_result arrives, check now
   if (_pendingToolUse) {
     var resolved = newMessages.some(function (m) {
       return Array.isArray(m.content) && m.content.some(function (c) {
@@ -254,9 +262,8 @@ function updateLastTurn() {
       });
     });
     if (resolved) {
-      _pendingToolUse = null; // auto-approved, no prompt needed
+      _pendingToolUse = null;
     } else {
-      // tool_result didn't come in this batch — CC is waiting for user
       var prompt = buildClientPrompt(_pendingToolUse.name, _pendingToolUse.input);
       _pendingToolUse = null;
       if (prompt) showPermissionPrompt(prompt);
@@ -265,13 +272,10 @@ function updateLastTurn() {
   checkPendingPrompts(wsAllMessages);
 
   var el = document.getElementById('content');
-  function scrollIfNearBottom() {
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    }
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    setTimeout(function () { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }, 150);
   }
-  scrollIfNearBottom();
-  setTimeout(scrollIfNearBottom, 150);
   loadImages(container);
   clampOverflow(container);
   showStats(wsMessageCount + ' messages (live)');
@@ -412,7 +416,7 @@ function doSend(fullText, displayText, images) {
   updateSendBtn();
   var device = appState.device || '';
   if (appState.session === '__new__' && wsProjectHash) {
-    wsSend({ action: 'send_message', projectHash: wsProjectHash, text: fullText, device: device });
+    wsSend({ action: 'send_message', projectHash: wsProjectHash, requestId: wsRequestId, text: fullText, device: device });
   } else {
     wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText, device: device });
   }
@@ -430,7 +434,7 @@ function doSend(fullText, displayText, images) {
     }).join('');
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" id="' + msgId + '">' + attachHtml
+      '<div class="msg-user" id="' + msgId + '" data-pending="1">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
@@ -787,7 +791,7 @@ function stripImageRefs(text) {
   return text.replace(/!\[.*?\]\([^)]+\)/g, '').trim();
 }
 
-/** Check if an incoming user message matches a pending sent message. If so, mark as delivered instead of appending. */
+/** Match incoming user message against pending. Remove pending DOM element; real message is inserted by timestamp. */
 function tryDedup(msg) {
   if (msg.type !== 'user') return false;
   var text = extractMsgText(msg).trim();
@@ -798,21 +802,9 @@ function tryDedup(msg) {
     var pendingText = pendingSentMessages[i].text.trim();
     if (pendingText === stripped || pendingText === text) {
       var el = document.getElementById(pendingSentMessages[i].id);
-      if (el) {
-        // Update data-ts to real timestamp so assistant insertion finds correct position
-        if (msg.timestamp) el.dataset.ts = msg.timestamp;
-        var status = el.querySelector('.sending-status');
-        if (status) {
-          var ts = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
-          status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
-          setTimeout(function () {
-            status.innerHTML = ts;
-            status.style.color = '#6e7681';
-          }, 2000);
-        }
-      }
+      if (el) el.remove(); // remove optimistic element; real one is inserted at correct ts
       pendingSentMessages.splice(i, 1);
-      return true;
+      return false; // return false so caller inserts the real message
     }
   }
   return false;
