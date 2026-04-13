@@ -130,10 +130,15 @@ def _handle_message(event, connection_id, endpoint):
 
     action = body.get("action", "")
 
-    # Get connection info
+    # Get connection info — if missing (e.g. DDB cleared), force reconnect.
+    # Client's onclose handler will auto-reconnect → $connect rewrites the record.
     conn = _connections_table.get_item(Key={"connectionId": connection_id}).get("Item")
     if not conn:
-        return {"statusCode": 401}
+        try:
+            _apigw_client(endpoint).delete_connection(ConnectionId=connection_id)
+        except Exception:
+            pass
+        return {"statusCode": 200}
 
     role = conn.get("role", "app")
     account_id = conn.get("accountId", "")
@@ -160,6 +165,9 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "permission_reply":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "permission_reply")
+    elif action == "interrupt":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "interrupt")
     elif action == "heartbeat":
         # Update TTL
         _connections_table.update_item(

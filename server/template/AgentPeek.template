@@ -470,12 +470,47 @@
           ]
         }
       }
+    },
+    "CDN": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": { "Fn::Sub": "${AWS::StackName} CDN" },
+          "HttpVersion": "http2and3",
+          "PriceClass": "PriceClass_200",
+          "Origins": [
+            {
+              "Id": "api",
+              "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "OriginPath": "/v1",
+              "CustomOriginConfig": {
+                "OriginProtocolPolicy": "https-only"
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "api",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
+            "CachedMethods": ["GET", "HEAD"],
+            "Compress": true,
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+          }
+        }
+      },
+      "DependsOn": ["ApiStage"]
     }
   },
   "Outputs": {
     "APIURL": {
       "Description": "API URL",
       "Value": { "Fn::Sub": "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+    },
+    "CloudFrontURL": {
+      "Description": "CloudFront URL (use this for faster access)",
+      "Value": { "Fn::Sub": "https://${CDN.DomainName}" }
     },
     "WsURL": {
       "Description": "WebSocket URL",

@@ -65,6 +65,7 @@ export async function extractForApp(msg) {
     timestamp: msg.timestamp || '',
   };
   if (msg.toolUseResult) extracted.toolUseResult = msg.toolUseResult;
+  if (msg.message?.stop_reason) extracted.stopReason = msg.message.stop_reason;
   return extracted;
 }
 

@@ -1,5 +1,9 @@
 # AgentPeek — Project Context
 
+## Workflow Rules
+
+- **先方案后代码**: 所有代码改动必须先给出详细方案（改哪些文件、改什么、为什么），用户明确确认后才能修改代码。未经确认不得动代码。
+
 ## What is this
 
 AgentPeek is a mobile app + bridge + server that lets you view and interact with Claude Code sessions from your phone. Three components:

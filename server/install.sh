@@ -234,12 +234,19 @@ echo ""
 API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`APIURL`].OutputValue' --output text)
 
+CF_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text 2>/dev/null || echo "")
+
 KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
   --query "items[?name=='${STACK_NAME}-api-key'].id" --output text)
 API_KEY=$(aws apigateway get-api-key --api-key "$KEY_ID" --include-value --region "$REGION" \
   --query 'value' --output text)
 
-SETUP_URL="$API_URL/setup.html?key=$API_KEY"
+if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
+  SETUP_URL="$CF_URL/setup.html?key=$API_KEY"
+else
+  SETUP_URL="$API_URL/setup.html?key=$API_KEY"
+fi
 
 echo "================================================"
 echo "  Deploy complete!"

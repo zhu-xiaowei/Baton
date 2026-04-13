@@ -7,6 +7,7 @@ var wsAllMessages = []; // track all messages for tool pairing
 var wsLastTimestamp = ''; // track for reconnect recovery
 var _wsBuffer = null; // null = normal mode, [] = buffering during initial load
 var wsProjectHash = null; // for new session creation
+var wsRunning = false; // track if session is actively running
 
 function connectWs(_, projectHash) {
   if (!WS_URL) return;
@@ -105,12 +106,36 @@ function disconnectWs() {
     ws.close();
     ws = null;
     wsSessionId = null;
+    wsRunning = false;
     setWsStatus('');
   }
 }
 
 // Track last rendered message index to only append new ones
 var wsRenderedCount = 0;
+
+/** Sort new messages by timestamp within the same batch. */
+function reorderIfNeeded(newMessages) {
+  if (newMessages.length > 1) {
+    newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : 1; });
+  }
+  return newMessages;
+}
+
+/** Find the first child element with data-ts > timestamp. Returns null if none (append to end). */
+function findInsertBefore(container, timestamp) {
+  if (!timestamp) return null;
+  var kids = container.children;
+  var result = null;
+  for (var i = kids.length - 1; i >= 0; i--) {
+    if (kids[i].dataset.ts && kids[i].dataset.ts > timestamp) {
+      result = kids[i];
+    } else if (kids[i].dataset.ts && kids[i].dataset.ts <= timestamp) {
+      break;
+    }
+  }
+  return result;
+}
 
 function updateLastTurn() {
   var container = document.querySelector('.messages');
@@ -119,6 +144,9 @@ function updateLastTurn() {
   // Only render messages that haven't been rendered yet
   var newMessages = wsAllMessages.slice(wsRenderedCount);
   wsRenderedCount = wsAllMessages.length;
+
+  // Ensure timestamp order within batch
+  newMessages = reorderIfNeeded(newMessages);
 
   // Stop any running agent timers when new messages arrive
   if (newMessages.length > 0) {
@@ -172,13 +200,15 @@ function updateLastTurn() {
       }
       continue;
     }
-    if (isInterruptMsg(msg)) continue;
-
-    // User message: track permissionMode, dedup, or render
-    if (msg.type === 'user') {
-      if (tryDedup(msg)) continue;  // matched a pending sent msg — skip rendering
+    // User message (but not interrupt — interrupt falls through to assistant render path)
+    if (msg.type === 'user' && !isInterruptMsg(msg)) {
+      if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
-      if (userHtml) container.insertAdjacentHTML('beforeend', userHtml);
+      if (userHtml) {
+        var userInsert = findInsertBefore(container, msg.timestamp);
+        if (userInsert) userInsert.insertAdjacentHTML('beforebegin', userHtml);
+        else container.insertAdjacentHTML('beforeend', userHtml);
+      }
       continue;
     }
 
@@ -188,15 +218,27 @@ function updateLastTurn() {
       continue;
     }
 
-    if (msg.type !== 'assistant') continue;
+    if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
+
+    wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
+    updateSendBtn();
 
     var html = renderSingleMessage(msg, wsAllMessages);
     if (!html) continue;
 
-    // Append to existing turn or create new one
-    var lastTurn = container.querySelector('.assistant-turn:last-child');
+    // Insert at correct position by timestamp
+    var insertBefore = findInsertBefore(container, msg.timestamp);
+    var lastTurn;
+    if (insertBefore) {
+      var prev = insertBefore.previousElementSibling;
+      lastTurn = (prev && prev.classList.contains('assistant-turn')) ? prev : null;
+    } else {
+      lastTurn = container.querySelector('.assistant-turn:last-child');
+    }
     if (lastTurn) {
       lastTurn.insertAdjacentHTML('beforeend', html);
+    } else if (insertBefore) {
+      insertBefore.insertAdjacentHTML('beforebegin', '<div class="assistant-turn">' + html + '</div>');
     } else {
       container.insertAdjacentHTML('beforeend', '<div class="assistant-turn">' + html + '</div>');
     }
@@ -315,10 +357,59 @@ function sendMessage() {
   stagedImages = [];
   renderStagedImages();
   input.value = '';
+  input.style.height = 'auto';
   input.focus();
 }
 
+// Textarea: Enter sends, Shift+Enter newline, auto-grow, toggle send/stop button
+var _stopSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/></svg>';
+var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
+function updateSendBtn() {
+  var btn = document.getElementById('send-btn');
+  var hasText = document.getElementById('msg-input').value.trim().length > 0;
+  if (hasText) {
+    btn.innerHTML = _sendSvg;
+    btn.className = 'has-text';
+    btn.disabled = false;
+  } else if (wsRunning) {
+    btn.innerHTML = _stopSvg;
+    btn.className = 'is-stop';
+    btn.disabled = false;
+  } else {
+    btn.innerHTML = _sendSvg;
+    btn.className = '';
+    btn.disabled = true;
+  }
+}
+function onSendBtnClick() {
+  if (document.getElementById('msg-input').value.trim()) {
+    sendMessage();
+    updateSendBtn();
+  } else if (wsRunning) {
+    interruptSession();
+  }
+}
+function interruptSession() {
+  if (!wsSessionId) return;
+  wsSend({ action: 'interrupt', sessionId: wsSessionId, device: appState.device || '' });
+  wsRunning = false;
+  updateSendBtn();
+}
+(function () {
+  var el = document.getElementById('msg-input');
+  el.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
+  });
+  el.addEventListener('input', function () {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+    updateSendBtn();
+  });
+})();
+
 function doSend(fullText, displayText, images) {
+  wsRunning = true;
+  updateSendBtn();
   var device = appState.device || '';
   if (appState.session === '__new__' && wsProjectHash) {
     wsSend({ action: 'send_message', projectHash: wsProjectHash, text: fullText, device: device });
@@ -341,7 +432,7 @@ function doSend(fullText, displayText, images) {
     container.insertAdjacentHTML('beforeend',
       '<div class="msg-user" id="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
-      + '<div class="msg-meta"><span class="msg-time sending-status">sending... ' + new Date().toLocaleTimeString() + '</span></div></div>');
+      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
@@ -708,9 +799,10 @@ function tryDedup(msg) {
     if (pendingText === stripped || pendingText === text) {
       var el = document.getElementById(pendingSentMessages[i].id);
       if (el) {
+        // Update data-ts to real timestamp so assistant insertion finds correct position
+        if (msg.timestamp) el.dataset.ts = msg.timestamp;
         var status = el.querySelector('.sending-status');
         if (status) {
-          // Show ✓ then update to actual timestamp
           var ts = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
           status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
           setTimeout(function () {

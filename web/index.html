@@ -52,13 +52,18 @@
   <div class="input-row">
     <input type="file" id="img-picker" accept="image/*" multiple style="display:none" onchange="onImagePicked(this)" />
     <button class="img-btn" onclick="document.getElementById('img-picker').click()" title="Add image">+</button>
-    <input id="msg-input" placeholder="Send a message..." onkeydown="if(event.key==='Enter')sendMessage()" onpaste="onInputPaste(event)" />
-    <button onclick="sendMessage()">Send</button>
+    <textarea id="msg-input" rows="1" placeholder="Send a message..." onpaste="onInputPaste(event)"></textarea>
+    <button id="send-btn" onclick="onSendBtnClick()"><svg viewBox="0 0 24 24" width="16" height="16"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
   </div>
 </div>
 
 <!-- Stats -->
 <div id="stats" class="stats" style="display:none"></div>
+
+<!-- Scroll-to-bottom button -->
+<button id="scroll-bottom-btn" class="scroll-bottom-btn" style="display:none" onclick="scrollToBottom()">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+</button>
 
 <!-- Image overlay -->
 <div id="imgOverlay" class="img-overlay" style="display:none" onclick="this.style.display='none'">

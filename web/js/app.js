@@ -124,7 +124,7 @@ async function loadSessions(device, projectHash, projectName) {
     saveNav();
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
-      return '<div class="item" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview)">'
+      return '<div class="item" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status)">'
         + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
         + '</div>';
@@ -145,9 +145,11 @@ function startNewSession(projectHash) {
 }
 
 // ---- Messages ----
-async function loadMessages(sessionId, preview) {
+async function loadMessages(sessionId, preview, status) {
   appState.session = sessionId;
   appState.sessionPreview = preview || '';
+  wsRunning = (status === 'running');
+  updateSendBtn();
   updateBreadcrumb();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="loading">Loading messages...</div>';
@@ -199,6 +201,30 @@ async function loadMessages(sessionId, preview) {
   }
   saveNav();
 }
+
+// ---- Scroll-to-bottom ----
+function scrollToBottom() {
+  var el = document.getElementById('content');
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+}
+
+(function () {
+  var btn = document.getElementById('scroll-bottom-btn');
+  var content = document.getElementById('content');
+
+  // Show/hide button based on scroll position
+  content.addEventListener('scroll', function () {
+    if (!appState.session) return;
+    var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
+    btn.style.display = atBottom ? 'none' : 'flex';
+  });
+
+  // Tap top bar to scroll to top (skip Setup/Logout links)
+  document.querySelector('.top-bar').addEventListener('click', function (e) {
+    if (e.target.closest('.top-action')) return;
+    if (appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+})();
 
 // Auto-connect + restore last session
 (function () {

@@ -103,6 +103,10 @@ async function handleMessage(msg) {
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
       break;
+    case 'interrupt':
+      sendKey(msg.sessionId, 'Escape');
+      sendKey(msg.sessionId, 'C-u');
+      break;
     case 'heartbeat':
       // Server heartbeat response — no-op
       break;

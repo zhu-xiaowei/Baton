@@ -110,7 +110,10 @@
 
   // Render a single message into tl-item HTML fragments (for incremental append)
   window.renderSingleMessage = function (msg, allMessages) {
-    if (isToolResultOnly(msg) || isInterruptMsg(msg)) return '';
+    if (isToolResultOnly(msg)) return '';
+    if (isInterruptMsg(msg)) {
+      return itemToHtml({ type: 'interrupt', html: renderInterrupt(msg) });
+    }
     if (msg.type !== 'assistant') return '';
     const resultMap = buildToolMaps(allMessages);
     const items = extractItems(msg, resultMap);
