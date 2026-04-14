@@ -32,8 +32,11 @@ body {
 .list { padding: 4px 0; }
 .item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
 .item:active { background: #161b22; }
-.item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.item-top .title { font-size: 15px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.item-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.device-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; flex-shrink: 0; }
+.device-dot.online { background: #3fb950; }
+.device-dot.offline { background: #484f58; }
+.item-top .title { font-size: 15px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .item-time { font-size: 11px; color: #6e7681; white-space: nowrap; flex-shrink: 0; }
 .item .subtitle { font-size: 12px; color: #8b949e; margin-top: 2px; }
 .item-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }

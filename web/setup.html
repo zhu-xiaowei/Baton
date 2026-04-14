@@ -53,8 +53,7 @@
   }
   .device-top { display: flex; align-items: center; gap: 8px; }
   .device-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; flex-shrink: 0; }
-  .device-dot.running { background: #3fb950; }
-  .device-dot.idle { background: #d29922; }
+  .device-dot.online { background: #3fb950; }
   .device-dot.offline { background: #484f58; }
   .device-name { font-size: 14px; font-weight: 500; }
   .device-time { font-size: 12px; color: #6e7681; margin-left: auto; }
@@ -186,7 +185,7 @@ async function apiFetch(path, params) {
     }
     el.innerHTML = data.devices.map(function (d) {
       var ago = timeAgo(d.lastActive);
-      var dotClass = d.runningCount > 0 ? 'running' : d.idleCount > 0 ? 'idle' : 'offline';
+      var dotClass = d.online ? 'online' : 'offline';
       var rc = d.runningCount || 0, ic = d.idleCount || 0;
       return '<div class="device-item">'
         + '<div class="device-top">'

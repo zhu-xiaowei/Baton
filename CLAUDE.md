@@ -63,14 +63,14 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
   - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running, `user` last → running)
   - Process detection: `ps aux | grep claude` (not `pgrep`, which fails from Node.js on macOS)
   - terminal/tmux CC: `--resume` flag → exact session match → precise status
-  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (< 2min → jsonl analysis, > 2min → stopped)
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (< 5min → jsonl analysis, > 5min → stopped)
 - `findTmuxTargetForSession`: 精确匹配 CC 进程 args 中的 sessionId → 找到 tmux pane
 - `projectHashToPath()`: 从 hash 反解真实目录路径（逐段验证目录存在）
 - Auto-launch: 无 tmux target 时自动创建 tmux + `claude --resume` + `waitForCCReady`
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
-- Always-on: launchd (macOS) / systemd (Linux)
+- Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
 - Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
-- Periodic check (1min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
+- Periodic check (5min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
 - Debounce: busy Map per session dedup fs.watch duplicate events
@@ -113,7 +113,7 @@ BridgeMessages
 ```
 POST /api/bridge/sync-sessions              — bridge uploads session metadata
 POST /api/bridge/sync-messages              — bridge 启动时批量同步（运行时改走 WS）
-GET  /api/bridge/devices                    — device list
+GET  /api/bridge/devices                    — device list (含 online 字段，查 connections 表)
 GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
 GET  /api/bridge/messages?session=X&after=ts — messages (incremental, ts=ISO timestamp)
@@ -150,7 +150,9 @@ Full protocol: `docs/api.md`
 ### 权限确认 + 用户交互
 - Viewer 从 tool_use 检测 AskUserQuestion / ExitPlanMode / Bash / Edit / Write
 - AskUserQuestion / ExitPlanMode: 立即弹窗（CC 在等用户回答）
-- Bash / Edit / Write: 延迟判断，tool_result 先到则不弹（auto-approved）
+- Bash / Edit / Write: 5 秒等待 tool_result，到了则标记 auto，没到则标记 manual 并弹窗
+- 模式缓存在内存（不存 localStorage），刷新页面重新检测
+- tool_result 到达时无条件关闭弹窗
 - 选项卡片 UI（arrow:N, type:N:text, escape）
 - 实时 tool_result (OUT) 追加（tool-grid 结构 + collapsible 折叠）
 
@@ -220,6 +222,23 @@ Full protocol: `docs/api.md`
 ### SwiftChat markdown reference
 `/Users/xiaoweii/workspace/rn/swift-chat/react-native/src/core/markdown/`
 Key files: Parser.tsx, Markdown.tsx, CustomMarkdownRenderer.tsx, CustomCodeHighlighter.tsx
+
+## Future: tmux capture-pane 实时状态（未实现）
+
+CC 有大量中间状态不写 jsonl，只在终端显示。`tmux capture-pane -p` 是唯一获取途径：
+
+- **思考动画**: Pondering... / Vibing... / Computing... 等临时状态文本
+- **thinking 过程**: 推理内容实时展示
+- **权限等待**: 精确检测 CC 是否在等用户确认（区分 "在跑长命令" vs "在等审批"）
+- **进度信息**: tool 执行中的输出
+
+### 权限检测方案
+当前 viewer 用 5 秒定时器启发式判断是否弹权限弹窗，存在误判（auto-approve 的长命令也会弹）。
+更优方案：bridge 检测到 tool_use 后等几秒 → capture-pane 一次 → 看到权限提示则推 `permission_needed` 给 viewer。
+性能：capture-pane 读一屏文本 ~5ms，仅在 tool_use 时触发，开销可忽略。
+
+### 实现方向
+作为 "tmux live state" 模块统一设计，bridge 定期或按需 capture-pane，解析 CC 终端状态，通过 WS 推送给 viewer。
 
 ## Known Issues / TODO
 

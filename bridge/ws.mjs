@@ -11,7 +11,8 @@ import { CLAUDE_PROJECTS } from './config.mjs';
 let _ws = null;
 let _config = null;
 let _reconnectTimer = null;
-const HEARTBEAT_INTERVAL = 5 * 60_000;
+let _heartbeatTimer = null;
+const HEARTBEAT_INTERVAL = 4 * 60_000;
 const RECONNECT_DELAY = 5_000;
 
 // Launch locks: prevent concurrent tmux creation for same project/session
@@ -45,6 +46,14 @@ function connect() {
     return;
   }
 
+  // Clean up old connection
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+  if (_ws) {
+    _ws.removeAllListeners();
+    _ws.terminate();
+    _ws = null;
+  }
+
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
@@ -52,12 +61,9 @@ function connect() {
 
   _ws.on('open', () => {
     console.log('[ws] connected');
-    // Start heartbeat
-    const hb = setInterval(() => {
+    _heartbeatTimer = setInterval(() => {
       if (_ws?.readyState === WebSocket.OPEN) {
         _ws.send(JSON.stringify({ action: 'heartbeat' }));
-      } else {
-        clearInterval(hb);
       }
     }, HEARTBEAT_INTERVAL);
   });
@@ -84,7 +90,10 @@ function connect() {
     console.error(`[ws] unexpected-response: ${res.statusCode}`);
     let body = '';
     res.on('data', (chunk) => body += chunk);
-    res.on('end', () => console.error(`[ws] response body: ${body.slice(0, 200)}`));
+    res.on('end', () => {
+      console.error(`[ws] response body: ${body.slice(0, 200)}`);
+      scheduleReconnect();
+    });
   });
 }
 

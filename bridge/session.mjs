@@ -170,7 +170,7 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   //    If content says running (e.g. pending Agent tool_use), keep running regardless of mtime
   if (!runningInfo.sessions.has(sessionId) && contentStatus === 'idle') {
     try {
-      if (Date.now() - fs.statSync(filePath).mtimeMs > 120_000) return 'stopped';
+      if (Date.now() - fs.statSync(filePath).mtimeMs > 300_000) return 'stopped';
     } catch { return 'stopped'; }
   }
 

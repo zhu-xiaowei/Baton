@@ -16,7 +16,7 @@ function connectWs(_, projectHash) {
     wsProjectHash = projectHash;
     wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   }
-  if (ws) { ws.close(); ws = null; }
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
   ws = new WebSocket(WS_URL + '?apiKey=' + KEY + '&role=app');
 
   ws.onopen = function () {
@@ -71,9 +71,8 @@ function connectWs(_, projectHash) {
         appState.sessionPreview = 'New Session';
         updateBreadcrumb();
         saveNav();
-        wsSessionId = msg.sessionId;
         wsRequestId = null;
-        subscribeSession(msg.sessionId);
+        loadMessages(msg.sessionId, 'New Session');
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
@@ -174,7 +173,6 @@ function updateLastTurn() {
 
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
-
     // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
       if (Array.isArray(msg.content)) {
@@ -246,7 +244,7 @@ function updateLastTurn() {
         before.remove();
       }
     } else {
-      // Append to end (before pending). Check if last real element is assistant-turn.
+      // Append after all real messages, before pending.
       var firstPending = container.querySelector('[data-pending]');
       var lastReal = firstPending ? firstPending.previousElementSibling : container.lastElementChild;
       if (lastReal && lastReal.classList.contains('assistant-turn')) {
@@ -260,18 +258,8 @@ function updateLastTurn() {
     }
   }
 
-  // Prompt check: if mode already detected → instant. First time → 2s debounce to detect.
-  dismissPermissionPrompt();
-  if (_promptCheckTimer) clearTimeout(_promptCheckTimer);
-  var delay = _toolApproveMode ? 0 : 2000; // known mode → instant, unknown → wait 2s
-  if (delay === 0) {
-    checkPendingPrompts(wsAllMessages);
-  } else {
-    _promptCheckTimer = setTimeout(function () {
-      _promptCheckTimer = null;
-      checkPendingPrompts(wsAllMessages);
-    }, delay);
-  }
+  // Prompt check: per-tool_use detection, no global mode cache
+  checkPendingPrompts(wsAllMessages);
 
   var el = document.getElementById('content');
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
@@ -529,7 +517,8 @@ function cancelPermissionPrompt() {
 }
 
 function dismissPermissionPrompt() {
-  if (_promptCheckTimer) { clearTimeout(_promptCheckTimer); _promptCheckTimer = null; }
+  if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
+  _pendingToolUseId = null;
   var el = document.getElementById('permission-prompt');
   if (el) el.remove();
   // Re-enable bottom input bar
@@ -616,51 +605,79 @@ function buildClientPrompt(toolName, toolInput) {
   return null;
 }
 
-var _promptCheckTimer = null;
-// null = not yet detected, 'auto' = auto-approved, 'manual' = needs user confirmation
-var _toolApproveMode = localStorage.getItem('_toolApproveMode'); // null | 'auto' | 'manual'
+// Tool approval mode detection: in-memory only, reset on page refresh
+// null = not yet detected, 'auto' = auto-approved, 'manual' = needs confirmation
+var _toolApproveMode = null;
+var _pendingToolUseId = null;
+var _pendingToolTimer = null;
+var TOOL_PROMPT_DELAY = 5000; // 5s — first-time detection wait
 
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
   if (!messages.length) return;
   var last = messages[messages.length - 1];
   if (last.type !== 'assistant' || !Array.isArray(last.content)) return;
+
+  // Find the last tool_use in the last assistant message
+  var toolUse = null;
   for (var i = last.content.length - 1; i >= 0; i--) {
-    var b = last.content[i];
-    if (b.type === 'tool_use') {
-      var hasResult = messages.some(function (m) {
-        return Array.isArray(m.content) && m.content.some(function (c) {
-          return c.type === 'tool_result' && c.tool_use_id === b.id;
-        });
-      });
-      if (hasResult) {
-        // tool_result arrived without user action → auto-approve environment
-        if (!_toolApproveMode) {
-          _toolApproveMode = 'auto';
-          localStorage.setItem('_toolApproveMode', 'auto');
-        }
-        return;
-      }
-      var prompt = buildClientPrompt(b.name, b.input);
-      if (!prompt) return;
-      // AskUserQuestion / ExitPlanMode → always show
-      if (prompt.type === 'ask_user' || prompt.type === 'plan_approval') {
-        showPermissionPrompt(prompt);
-        return;
-      }
-      // Bash/Edit/Write — use cached mode for instant decision
-      if (_toolApproveMode === 'auto') return;        // known auto-approve → skip
-      if (_toolApproveMode === 'manual') {             // known manual → show immediately
-        showPermissionPrompt(prompt);
-        return;
-      }
-      // First time: not yet detected → timer fired after 2s without tool_result → manual
-      _toolApproveMode = 'manual';
-      localStorage.setItem('_toolApproveMode', 'manual');
-      showPermissionPrompt(prompt);
-      return;
-    }
+    if (last.content[i].type === 'tool_use') { toolUse = last.content[i]; break; }
   }
+  if (!toolUse) return;
+
+  // Check if tool_result already arrived
+  var hasResult = messages.some(function (m) {
+    return Array.isArray(m.content) && m.content.some(function (c) {
+      return c.type === 'tool_result' && c.tool_use_id === toolUse.id;
+    });
+  });
+  if (hasResult) {
+    // tool_result arrived → dismiss any visible prompt
+    if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
+    _pendingToolUseId = null;
+    dismissPermissionPrompt();
+    if (!_toolApproveMode) _toolApproveMode = 'auto';
+    return;
+  }
+
+  var prompt = buildClientPrompt(toolUse.name, toolUse.input);
+  if (!prompt) return;
+
+  // AskUserQuestion / ExitPlanMode → always show immediately
+  if (prompt.type === 'ask_user' || prompt.type === 'plan_approval') {
+    if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
+    _pendingToolUseId = null;
+    showPermissionPrompt(prompt);
+    return;
+  }
+
+  // Bash/Edit/Write — mode already detected → instant decision
+  if (_toolApproveMode === 'auto') return;
+  if (_toolApproveMode === 'manual') {
+    showPermissionPrompt(prompt);
+    return;
+  }
+
+  // First time: wait 5s for tool_result to detect mode
+  if (_pendingToolUseId === toolUse.id) return; // already waiting on this one
+  if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
+  _pendingToolUseId = toolUse.id;
+  _pendingToolTimer = setTimeout(function () {
+    _pendingToolTimer = null;
+    // Re-check: tool_result might have arrived during the wait
+    var resolved = wsAllMessages.some(function (m) {
+      return Array.isArray(m.content) && m.content.some(function (c) {
+        return c.type === 'tool_result' && c.tool_use_id === _pendingToolUseId;
+      });
+    });
+    if (resolved) {
+      _toolApproveMode = 'auto';
+    } else {
+      _toolApproveMode = 'manual';
+      showPermissionPrompt(prompt);
+    }
+    _pendingToolUseId = null;
+  }, TOOL_PROMPT_DELAY);
 }
 
 // ---- Image Staging & Sending ----

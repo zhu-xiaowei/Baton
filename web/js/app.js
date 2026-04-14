@@ -77,8 +77,9 @@ async function loadDevices() {
     if (data.devices.length === 0) { content.innerHTML = '<div class="empty">No devices found</div>'; return; }
     content.innerHTML = '<div class="list">' + data.devices.map(function (d) {
       var rc = d.runningCount || 0, ic = d.idleCount || 0;
+      var dotClass = d.online ? 'online' : 'offline';
       return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
-        + '<div class="item-top"><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+        + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
         + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
         + '</div>';
     }).join('') + '</div>';

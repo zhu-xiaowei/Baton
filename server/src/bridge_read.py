@@ -57,6 +57,25 @@ async def get_devices(request: Request):
 
     items = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(account_id))
 
+    # Check which devices have active bridge WS connections
+    online_devices = set()
+    try:
+        import boto3
+        ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        conn_table = ddb.Table(os.environ["CONNECTIONS_TABLE"])
+        resp = conn_table.scan(
+            FilterExpression="accountId = :aid AND #r = :role",
+            ExpressionAttributeNames={"#r": "role"},
+            ExpressionAttributeValues={":aid": account_id, ":role": "bridge"},
+            ProjectionExpression="deviceName",
+        )
+        for c in resp.get("Items", []):
+            dn = c.get("deviceName", "")
+            if dn:
+                online_devices.add(dn)
+    except Exception:
+        pass
+
     # Aggregate by deviceName
     devices = {}
     for item in items:
@@ -72,6 +91,7 @@ async def get_devices(request: Request):
                 "runningCount": 0,
                 "idleCount": 0,
                 "lastActive": "",
+                "online": name in online_devices,
             }
         d = devices[name]
         d["projectCount"].add(item.get("projectHash", ""))
@@ -298,6 +318,7 @@ async def get_install(request: Request, name: str = Query(None)):
         '[Install]\n'
         'WantedBy=default.target\n'
         'SVC_EOF\n'
+        '  sudo loginctl enable-linger $(whoami) 2>/dev/null || loginctl enable-linger $(whoami) 2>/dev/null || true\n'
         '  systemctl --user daemon-reload\n'
         '  systemctl --user enable claude-bridge\n'
         '  systemctl --user restart claude-bridge\n'
