@@ -60,7 +60,7 @@ function showInputBar(visible) {
 }
 
 function saveNav() {
-  localStorage.setItem('agentpeek-nav', JSON.stringify(appState));
+  sessionStorage.setItem('agentpeek-nav', JSON.stringify(appState));
 }
 
 // ---- Devices ----
@@ -277,7 +277,7 @@ function scrollToBottom() {
 // Auto-connect + restore last session
 (function () {
   if (!KEY) return; // auth guard in index.html handles redirect
-  var nav = localStorage.getItem('agentpeek-nav');
+  var nav = sessionStorage.getItem('agentpeek-nav');
   initConnection().then(function (ok) {
     if (!ok) { document.getElementById('content').innerHTML = '<div class="empty">Connection failed. <a href="landing.html" style="color:#58a6ff">Re-enter API key</a></div>'; return; }
     if (nav) {
