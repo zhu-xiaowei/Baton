@@ -204,12 +204,21 @@ async def get_messages(request: Request, session: str = Query(...), after: str =
             content = json.loads(content)
         except (json.JSONDecodeError, TypeError):
             pass
-        messages.append({
+        msg = {
             "uuid": item.get("uuid", ""),
             "type": item.get("type", ""),
             "content": content,
             "timestamp": item.get("timestamp", ""),
-        })
+        }
+        if item.get("stopReason"):
+            msg["stopReason"] = item["stopReason"]
+        tur = item.get("toolUseResult", "")
+        if tur:
+            try:
+                msg["toolUseResult"] = json.loads(tur)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        messages.append(msg)
 
     need_sync = len(messages) == 0 and not after
     if need_sync:

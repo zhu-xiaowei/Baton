@@ -245,14 +245,19 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                         if not uuid:
                             continue
                         timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
-                        batch.put_item(Item={
+                        item = {
                             "sessionId": session_id,
                             "sk": f"{timestamp}#{uuid}",
                             "uuid": uuid,
                             "type": msg.get("type", ""),
                             "content": json.dumps(msg.get("content", ""), ensure_ascii=False),
                             "timestamp": timestamp,
-                        })
+                        }
+                        if msg.get("stopReason"):
+                            item["stopReason"] = msg["stopReason"]
+                        if msg.get("toolUseResult"):
+                            item["toolUseResult"] = json.dumps(msg["toolUseResult"], ensure_ascii=False)
+                        batch.put_item(Item=item)
                 break
             except Exception as e:
                 if attempt == 0:
@@ -326,8 +331,9 @@ def _handle_send_message(body, account_id, endpoint):
 
 def _handle_send_to_bridge(body, account_id, endpoint, action):
     """Forward an action to bridge connection(s) for this account. If device is specified, only forward to that device's bridge."""
-    device = body.pop("device", "")
-    body["action"] = action
+    device = body.get("device", "")
+    payload = {k: v for k, v in body.items() if k != "device"}
+    payload["action"] = action
     resp = _connections_table.scan(
         FilterExpression="accountId = :aid AND #r = :role",
         ExpressionAttributeNames={"#r": "role"},
@@ -336,7 +342,7 @@ def _handle_send_to_bridge(body, account_id, endpoint, action):
     for item in resp.get("Items", []):
         if device and item.get("deviceName", "") != device:
             continue
-        _post_to_connection(endpoint, item["connectionId"], body)
+        _post_to_connection(endpoint, item["connectionId"], payload)
     return {"statusCode": 200}
 
 

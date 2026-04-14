@@ -104,7 +104,12 @@ export function statusFromEntry(entry) {
     if (sr === 'tool_use') return 'running';
     if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'idle';
   }
-  if (t === 'user') return 'running';
+  if (t === 'user') {
+    const c = entry.message?.content;
+    if (Array.isArray(c) && c.length === 1 && c[0].type === 'text'
+      && c[0].text === '[Request interrupted by user]') return 'idle';
+    return 'running';
+  }
   return null; // file-history-snapshot, queue-operation, etc.
 }
 

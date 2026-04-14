@@ -93,14 +93,19 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
                 continue
             content = json.dumps(msg.get("content", ""), ensure_ascii=False)
             timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
-            batch.put_item(Item={
+            item = {
                 "sessionId": req.sessionId,
                 "sk": f"{timestamp}#{uuid}",
                 "uuid": uuid,
                 "type": msg.get("type", ""),
                 "content": content,
                 "timestamp": timestamp,
-            })
+            }
+            if msg.get("stopReason"):
+                item["stopReason"] = msg["stopReason"]
+            if msg.get("toolUseResult"):
+                item["toolUseResult"] = json.dumps(msg["toolUseResult"], ensure_ascii=False)
+            batch.put_item(Item=item)
             written += 1
 
     return {"written": written}

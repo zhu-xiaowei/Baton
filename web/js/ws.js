@@ -66,7 +66,7 @@ function connectWs(_, projectHash) {
         }
       }
       // New session: bridge created tmux + CC, returned sessionId
-      if (msg.sessionId && appState.session === '__new__') {
+      if (msg.sessionId && appState.session === '__new__' && (!msg.requestId || msg.requestId === wsRequestId)) {
         appState.session = msg.sessionId;
         appState.sessionPreview = 'New Session';
         updateBreadcrumb();

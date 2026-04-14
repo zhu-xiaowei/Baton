@@ -174,29 +174,27 @@
 
   window.clampOverflow = function (container) {
     if (!container) return;
-    requestAnimationFrame(function () {
-      container.querySelectorAll('.msg-text:not(.clamped):not(.expanded)').forEach(function (el) {
-        if (el.scrollHeight > 60) {
-          el.classList.add('clamped');
-          var meta = el.parentElement.querySelector('.msg-meta');
-          if (meta && !meta.querySelector('.clamp-btn')) meta.insertAdjacentHTML('beforeend', BTN_MSG);
-        }
+    container.querySelectorAll('.msg-text:not(.clamped):not(.expanded)').forEach(function (el) {
+      if (el.scrollHeight > 60) {
+        el.classList.add('clamped');
+        var meta = el.parentElement.querySelector('.msg-meta');
+        if (meta && !meta.querySelector('.clamp-btn')) meta.insertAdjacentHTML('beforeend', BTN_MSG);
+      }
+    });
+    container.querySelectorAll('.tool-value.clamp:not(.expanded)').forEach(function (el) {
+      if (el.scrollHeight > el.clientHeight + 2 && !el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
+    });
+    container.querySelectorAll('.tool-body-content.collapsible:not(.open)').forEach(function (el) {
+      if (!el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
+    });
+    // Tool body with clamped .tool-value children (Bash IN/OUT, etc.)
+    container.querySelectorAll('.tool-body-content:not(.open):not(.no-clamp):not(.collapsible)').forEach(function (el) {
+      if (el.querySelector('.clamp-btn')) return;
+      var hasOverflow = false;
+      el.querySelectorAll('.tool-value').forEach(function (v) {
+        if (v.scrollHeight > v.clientHeight + 2) hasOverflow = true;
       });
-      container.querySelectorAll('.tool-value.clamp:not(.expanded)').forEach(function (el) {
-        if (el.scrollHeight > el.clientHeight + 2 && !el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
-      });
-      container.querySelectorAll('.tool-body-content.collapsible:not(.open)').forEach(function (el) {
-        if (!el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
-      });
-      // Tool body with clamped .tool-value children (Bash IN/OUT, etc.)
-      container.querySelectorAll('.tool-body-content:not(.open):not(.no-clamp):not(.collapsible)').forEach(function (el) {
-        if (el.querySelector('.clamp-btn')) return;
-        var hasOverflow = false;
-        el.querySelectorAll('.tool-value').forEach(function (v) {
-          if (v.scrollHeight > v.clientHeight + 2) hasOverflow = true;
-        });
-        if (hasOverflow) el.insertAdjacentHTML('beforeend', BTN);
-      });
+      if (hasOverflow) el.insertAdjacentHTML('beforeend', BTN);
     });
   };
 })();

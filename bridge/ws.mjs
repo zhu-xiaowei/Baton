@@ -171,9 +171,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
       const prev = await _launchLocks.get(lockKey);
       if (prev.ok && prev.tmuxName) {
         try { sendKeys(prev.tmuxName, resolved); } catch {}
-        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId });
+        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId, requestId });
       } else {
-        wsSend({ action: 'send_message_result', ok: false, error: 'previous launch failed' });
+        wsSend({ action: 'send_message_result', ok: false, error: 'previous launch failed', requestId });
       }
       return;
     }
@@ -182,7 +182,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
     _launchLocks.set(lockKey, promise);
     const result = await promise;
     setTimeout(() => _launchLocks.delete(lockKey), 30_000);
-    wsSend({ action: 'send_message_result', ...result });
+    wsSend({ action: 'send_message_result', ...result, requestId });
     return;
   }
 
@@ -283,6 +283,7 @@ async function handleNewSessionMessage(projectHash, text) {
  * Checks pane content for the '>' prompt. Polls every 500ms, up to 15s.
  */
 async function waitForCCReady(tmuxTarget) {
+  let trustAccepted = false;
   for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 500));
     try {
@@ -290,10 +291,11 @@ async function waitForCCReady(tmuxTarget) {
         `tmux capture-pane -t "${tmuxTarget}" -p`,
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
       );
-      // Trust dialog: auto-accept "Yes, I trust this folder"
-      if (/Yes, I trust this folder/m.test(content)) {
+      // Trust dialog: auto-accept "Yes, I trust this folder" (once only — text lingers in pane buffer)
+      if (!trustAccepted && /Yes, I trust this folder/m.test(content)) {
         execSync(`tmux send-keys -t "${tmuxTarget}" Enter`, { stdio: 'ignore' });
         console.log(`[ws] auto-accepted trust dialog for ${tmuxTarget}`);
+        trustAccepted = true;
         continue;
       }
       // CC shows '>' or '❯' prompt when ready for input
