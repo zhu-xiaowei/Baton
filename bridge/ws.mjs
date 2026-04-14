@@ -116,6 +116,9 @@ async function handleMessage(msg) {
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
       break;
+    case 'create_project':
+      await handleCreateProject(msg.projectPath);
+      break;
     case 'interrupt':
       sendKey(msg.sessionId, 'Escape');
       sendKey(msg.sessionId, 'C-u');
@@ -226,9 +229,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
   wsSend({ action: 'send_message_result', sessionId, ...result });
 }
 
-async function handleNewSessionMessage(projectHash, text) {
+async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
   try {
-    const projectPath = projectHashToPath(projectHash);
+    const projectPath = rawProjectPath || projectHashToPath(projectHash);
     const projectDir = path.join(CLAUDE_PROJECTS, projectHash);
 
     // Snapshot existing .jsonl files
@@ -275,6 +278,28 @@ async function handleNewSessionMessage(projectHash, text) {
     return { ok: true, sessionId, tmuxName: finalTmuxName };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+async function handleCreateProject(rawPath) {
+  if (!rawPath) {
+    wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
+    return;
+  }
+  try {
+    // Resolve relative or non-home paths to home directory
+    const home = os.homedir();
+    let projectPath = rawPath;
+    if (!projectPath.startsWith(home)) {
+      projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
+    }
+    console.log(`[ws] create_project: ${projectPath}`);
+    fs.mkdirSync(projectPath, { recursive: true });
+    const projectHash = path.resolve(projectPath).replace(/[^a-zA-Z0-9-]/g, '-');
+    const result = await handleNewSessionMessage(projectHash, 'Hello', projectPath);
+    wsSend({ action: 'create_project_result', ...result, projectPath: rawPath });
+  } catch (err) {
+    wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
   }
 }
 

@@ -65,6 +65,20 @@
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
 </button>
 
+<!-- New Project modal -->
+<div id="newProjectModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeNewProjectModal()">
+  <div class="modal-box">
+    <div class="modal-title">New Project</div>
+    <div class="modal-desc">Enter directory name (relative to home) or full path</div>
+    <input id="newProjectInput" class="modal-input" type="text" placeholder="e.g. asset/demo" autocomplete="off" onkeydown="if(event.key==='Enter')submitNewProject();if(event.key==='Escape')closeNewProjectModal();" />
+    <div class="modal-error" id="newProjectError"></div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" onclick="closeNewProjectModal()">Cancel</button>
+      <button class="modal-btn confirm" onclick="submitNewProject()">Create</button>
+    </div>
+  </div>
+</div>
+
 <!-- Image overlay -->
 <div id="imgOverlay" class="img-overlay" style="display:none" onclick="this.style.display='none'">
   <img id="imgOverlayImg" />

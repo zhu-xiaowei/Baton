@@ -45,10 +45,11 @@ function updateBreadcrumb() {
     parts.push('<span>' + esc(label) + '</span>');
   }
   var newBtn = '';
+  var _addSvg = '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6.5" stroke-width="1.2"/><line x1="8" y1="5" x2="8" y2="11" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke-width="1"/></svg>';
   if (appState.project) {
-    newBtn = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(appState.project.hash) + '\')" title="New Session">'
-      + '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6.5" stroke-width="1.2"/><line x1="8" y1="5" x2="8" y2="11" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke-width="1"/></svg>'
-      + '</button>';
+    newBtn = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+  } else if (appState.device && !appState.project) {
+    newBtn = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   }
   el.innerHTML = '<div class="breadcrumb-nav">' + parts.join(' &rsaquo; ') + '</div>' + newBtn;
   el.style.display = parts.length > 1 ? 'flex' : 'none';
@@ -132,6 +133,45 @@ async function loadSessions(device, projectHash, projectName) {
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
   } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+
+function createNewProject() {
+  var modal = document.getElementById('newProjectModal');
+  var input = document.getElementById('newProjectInput');
+  var err = document.getElementById('newProjectError');
+  input.value = '';
+  err.textContent = '';
+  modal.style.display = 'flex';
+  setTimeout(function () { input.focus(); }, 100);
+}
+
+function closeNewProjectModal() {
+  if (_pendingCreatePath) {
+    _pendingCreatePath = null;
+    disconnectWs();
+  }
+  var modal = document.getElementById('newProjectModal');
+  modal.style.display = 'none';
+  var input = document.getElementById('newProjectInput');
+  var btn = modal.querySelector('.modal-btn.confirm');
+  if (input) input.disabled = false;
+  if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
+}
+
+function submitNewProject() {
+  var input = document.getElementById('newProjectInput');
+  var err = document.getElementById('newProjectError');
+  var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
+  var projectPath = input.value.trim();
+  if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
+  err.textContent = '';
+  _pendingCreatePath = projectPath;
+  // Loading state: disable inputs, show spinner on button
+  input.disabled = true;
+  btn.disabled = true;
+  btn.dataset.origText = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span>Creating';
+  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: appState.device || '' });
 }
 
 function startNewSession(projectHash) {

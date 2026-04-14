@@ -168,6 +168,14 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "interrupt":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "interrupt")
+    elif action == "create_project":
+        if role == "app":
+            if not body.get("projectPath"):
+                return {"statusCode": 400}
+            return _handle_send_to_bridge(body, account_id, endpoint, "create_project")
+    elif action == "create_project_result":
+        if role == "bridge":
+            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "heartbeat":
         # Update TTL
         _connections_table.update_item(

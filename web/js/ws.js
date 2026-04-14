@@ -9,6 +9,8 @@ var _wsBuffer = null; // null = normal mode, [] = buffering during initial load
 var wsProjectHash = null; // for new session creation
 var wsRequestId = null; // unique ID per new-session creation flow
 var wsRunning = false; // track if session is actively running
+var _pendingWsSend = null; // queued message to send on WS open
+var _pendingCreatePath = null; // projectPath for create_project matching
 
 function connectWs(_, projectHash) {
   if (!WS_URL) return;
@@ -24,6 +26,10 @@ function connectWs(_, projectHash) {
     if (wsSessionId) {
       subscribeSession(wsSessionId);
       if (wsLastTimestamp) recoverMissing();
+    }
+    if (_pendingWsSend) {
+      wsSend(_pendingWsSend);
+      _pendingWsSend = null;
     }
   };
 
@@ -58,9 +64,8 @@ function connectWs(_, projectHash) {
           if (el) {
             var status = el.querySelector('.sending-status');
             if (status) {
-              var ts = new Date().toLocaleTimeString();
-              status.innerHTML = '<span style="color:#3fb950">&#10003;</span> ' + ts;
-              setTimeout(function () { status.innerHTML = ts; status.style.color = '#6e7681'; }, 2000);
+              status.innerHTML = new Date().toLocaleTimeString();
+              status.style.color = '#6e7681';
             }
           }
         }
@@ -76,6 +81,23 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
+    } else if (msg.action === 'create_project_result') {
+      if (_pendingCreatePath && msg.projectPath === _pendingCreatePath) {
+        _pendingCreatePath = null;
+        disconnectWs();
+        if (msg.ok) {
+          closeNewProjectModal();
+          loadProjects(appState.device);
+        } else {
+          // Show error in modal, reset button
+          var err = document.getElementById('newProjectError');
+          var input = document.getElementById('newProjectInput');
+          var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
+          if (err) err.textContent = msg.error || 'Unknown error';
+          if (input) input.disabled = false;
+          if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
+        }
+      }
     }
   };
 
@@ -119,6 +141,15 @@ function disconnectWs() {
     wsSessionId = null;
     wsRunning = false;
     setWsStatus('');
+  }
+}
+
+function ensureWsAndSend(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    wsSend(data);
+  } else {
+    _pendingWsSend = data;
+    connectWs();
   }
 }
 
