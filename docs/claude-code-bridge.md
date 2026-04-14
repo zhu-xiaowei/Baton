@@ -60,8 +60,9 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
   - Watcher: uses `statusFromEntry()` directly on already-parsed data (no file re-read)
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
   - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → idle, `tool_use`/`null` → running, `user` last → running
+  - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
   - terminal/tmux CC: `--resume` flag → exact session match → precise status
-  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (content=running → keep, content=idle + mtime > 2min → stopped)
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)

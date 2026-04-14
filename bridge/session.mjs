@@ -106,8 +106,13 @@ export function statusFromEntry(entry) {
   }
   if (t === 'user') {
     const c = entry.message?.content;
-    if (Array.isArray(c) && c.length === 1 && c[0].type === 'text'
-      && c[0].text === '[Request interrupted by user]') return 'idle';
+    if (Array.isArray(c)) {
+      // [Request interrupted by user] or [Request interrupted by user for tool use]
+      if (c.length === 1 && c[0].type === 'text'
+        && c[0].text.startsWith('[Request interrupted by user')) return 'idle';
+      // tool_result with is_error=true only (user interrupted during tool execution)
+      if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'idle';
+    }
     return 'running';
   }
   return null; // file-history-snapshot, queue-operation, etc.
@@ -171,9 +176,9 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   // 2. Read jsonl content to determine status
   const contentStatus = readStatusFromFile(filePath);
 
-  // 3. VS Code (no --resume): if content says idle and file is stale → stopped
-  //    If content says running (e.g. pending Agent tool_use), keep running regardless of mtime
-  if (!runningInfo.sessions.has(sessionId) && contentStatus === 'idle') {
+  // 3. VS Code (no --resume): file stale > 5min → stopped regardless of content
+  //    A truly running session always writes to jsonl, keeping mtime fresh
+  if (!runningInfo.sessions.has(sessionId)) {
     try {
       if (Date.now() - fs.statSync(filePath).mtimeMs > 300_000) return 'stopped';
     } catch { return 'stopped'; }

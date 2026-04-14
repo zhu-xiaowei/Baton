@@ -63,7 +63,8 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
   - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running, `user` last → running)
   - Process detection: `ps aux | grep claude` (not `pgrep`, which fails from Node.js on macOS)
   - terminal/tmux CC: `--resume` flag → exact session match → precise status
-  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (< 5min → jsonl analysis, > 5min → stopped)
+  - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
 - `findTmuxTargetForSession`: 精确匹配 CC 进程 args 中的 sessionId → 找到 tmux pane
 - `projectHashToPath()`: 从 hash 反解真实目录路径（逐段验证目录存在）
 - Auto-launch: 无 tmux target 时自动创建 tmux + `claude --resume` + `waitForCCReady`
@@ -243,4 +244,4 @@ CC 有大量中间状态不写 jsonl，只在终端显示。`tmux capture-pane -
 ## Known Issues / TODO
 
 - **WS 128KB 帧限制**: API Gateway WS payload 上限 128KB。超大消息（如 Edit 大文件）WS 发送失败，bridge 自动 fallback 到 HTTP 写 DDB，但 app 实时收不到（刷新后可见）。DDB 单条 item 上限 400KB，超过会丢失。极少触发，暂不处理。
-- **VS Code CC 状态精度**: VS Code 扩展启动 CC 无 `--resume` flag，无法精确匹配 session。使用 mtime 启发式（2 分钟），空闲超时后显示 stopped 而非 idle。terminal/tmux 启动的 CC 不受影响。
+- **VS Code CC 状态精度**: VS Code 扩展启动 CC 无 `--resume` flag，无法精确匹配 session。使用 mtime 启发式（5 分钟），超时后一律 stopped。terminal/tmux 启动的 CC 不受影响。
