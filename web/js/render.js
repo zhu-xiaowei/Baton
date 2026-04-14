@@ -52,14 +52,15 @@
     return items;
   }
 
-  function itemToHtml(item) {
+  function itemToHtml(item, timestamp) {
     let cls = 'tl-item';
     if (item.type === 'tool') cls += ' tool-node' + (item.state ? ' ' + item.state : '');
     if (item.type === 'text') cls += ' assistant-text';
     if (item.type === 'thinking') cls += ' thinking-tl';
     if (item.type === 'interrupt') cls += ' msg-interrupt';
     const toolAttr = item.toolId ? ` data-tool-id="${item.toolId}"` : '';
-    return `<div class="${cls}"${toolAttr}>${item.html}</div>`;
+    const tsAttr = timestamp ? ` data-ts="${timestamp}"` : '';
+    return `<div class="${cls}"${toolAttr}${tsAttr}>${item.html}</div>`;
   }
 
   // Main: render all messages, merging consecutive assistant messages into one timeline
@@ -70,7 +71,7 @@
 
     function flushTurn() {
       if (!turnItems.length) return;
-      html.push(`<div class="assistant-turn">${turnItems.map(itemToHtml).join('')}</div>`);
+      html.push(`<div class="assistant-turn">${turnItems.map(i => itemToHtml(i, i.ts)).join('')}</div>`);
       turnItems = [];
     }
 
@@ -78,7 +79,7 @@
       if (isToolResultOnly(msg)) continue;
 
       if (isInterruptMsg(msg)) {
-        turnItems.push({ type: 'interrupt', html: renderInterrupt(msg) });
+        turnItems.push({ type: 'interrupt', html: renderInterrupt(msg), ts: msg.timestamp });
         continue;
       }
 
@@ -92,7 +93,7 @@
       // Assistant → extract items into current turn
       if (msg.type === 'assistant') {
         const items = extractItems(msg, resultMap);
-        turnItems.push(...items);
+        turnItems.push(...items.map(i => ({ ...i, ts: msg.timestamp })));
         continue;
       }
 
@@ -112,12 +113,12 @@
   window.renderSingleMessage = function (msg, allMessages) {
     if (isToolResultOnly(msg)) return '';
     if (isInterruptMsg(msg)) {
-      return itemToHtml({ type: 'interrupt', html: renderInterrupt(msg) });
+      return itemToHtml({ type: 'interrupt', html: renderInterrupt(msg) }, msg.timestamp);
     }
     if (msg.type !== 'assistant') return '';
     const resultMap = buildToolMaps(allMessages);
     const items = extractItems(msg, resultMap);
-    return items.map(itemToHtml).join('');
+    return items.map(function (i) { return itemToHtml(i, msg.timestamp); }).join('');
   };
 
 })();

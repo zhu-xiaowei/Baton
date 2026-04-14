@@ -166,6 +166,9 @@ function updateLastTurn() {
   wsRenderedCount = wsAllMessages.length;
   if (!newMessages.length) return;
 
+  var el = document.getElementById('content');
+  var wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
+
   // Sort batch by timestamp
   if (newMessages.length > 1) {
     newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
@@ -225,26 +228,22 @@ function updateLastTurn() {
     var html = renderSingleMessage(msg, wsAllMessages);
     if (!html) continue;
 
-    // Find insert position, then check if previous sibling is an assistant-turn to merge into
-    var before = findInsertBefore(container, msg.timestamp);
-    if (before) {
-      var prev = before.previousElementSibling;
-      if (prev && prev.classList.contains('assistant-turn')) {
-        prev.insertAdjacentHTML('beforeend', html);
-        if (msg.timestamp) prev.dataset.ts = msg.timestamp;
-        continue;
+    // Scan all tl-items by data-ts to find insertion position
+    var allItems = container.querySelectorAll('.tl-item[data-ts]');
+    var target = null;
+    for (var j = allItems.length - 1; j >= 0; j--) {
+      if (allItems[j].dataset.ts > msg.timestamp) {
+        target = allItems[j];
+      } else {
+        break;
       }
-      // Insert new turn; then merge with next sibling if it's also a turn (out-of-order arrival)
-      before.insertAdjacentHTML('beforebegin',
-        '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
-      var inserted = before.previousElementSibling;
-      if (before.classList.contains('assistant-turn')) {
-        while (before.firstChild) inserted.appendChild(before.firstChild);
-        if (before.dataset.ts) inserted.dataset.ts = before.dataset.ts;
-        before.remove();
-      }
+    }
+
+    if (target) {
+      // Insert before target, inside its parent turn
+      target.insertAdjacentHTML('beforebegin', html);
     } else {
-      // Append after all real messages, before pending.
+      // Latest message — append to last turn or create new one
       var firstPending = container.querySelector('[data-pending]');
       var lastReal = firstPending ? firstPending.previousElementSibling : container.lastElementChild;
       if (lastReal && lastReal.classList.contains('assistant-turn')) {
@@ -261,8 +260,7 @@ function updateLastTurn() {
   // Prompt check: per-tool_use detection, no global mode cache
   checkPendingPrompts(wsAllMessages);
 
-  var el = document.getElementById('content');
-  if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+  if (wasNearBottom) {
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     setTimeout(function () { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }, 150);
   }
