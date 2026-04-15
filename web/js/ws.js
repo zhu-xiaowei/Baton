@@ -305,7 +305,11 @@ function updateLastTurn() {
     }
   }
 
-  // Prompt check: per-tool_use detection, no global mode cache
+  // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
+  if (document.getElementById('permission-prompt')) {
+    dismissPermissionPrompt();
+    _toolApproveMode = 'auto';
+  }
   checkPendingPrompts(wsAllMessages);
 
   if (wasNearBottom) {
@@ -381,7 +385,7 @@ function sendMessage() {
   var images = stagedImages.slice();
 
   if (!text && !images.length) return;
-  if (!text && images.length) text = '请查看这张图片';
+  if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
   if (!wsSessionId && appState.session !== '__new__') return;
 
@@ -422,12 +426,18 @@ function updateSendBtn() {
   }
 }
 function onSendBtnClick() {
-  if (document.getElementById('msg-input').value.trim()) {
+  var input = document.getElementById('msg-input');
+  var isMobile = /Mobi|Android/i.test(navigator.userAgent);
+  var kbWasUp = isMobile && window.visualViewport && window.visualViewport.height < window.innerHeight * 0.75;
+
+  if (input.value.trim()) {
     sendMessage();
     updateSendBtn();
   } else if (wsRunning) {
     interruptSession();
   }
+
+  if (isMobile && !kbWasUp) input.blur();
 }
 function interruptSession() {
   if (!wsSessionId) return;

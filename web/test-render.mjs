@@ -7,8 +7,8 @@
  *
  * Usage:
  *   node web/test-render.mjs <jsonl-path|sessionId>
- *   node web/test-render.mjs <path> --from "请回答A"
- *   node web/test-render.mjs <path> --optimistic "请回答A,请回答B"
+ *   node web/test-render.mjs <path> --from "answer A"
+ *   node web/test-render.mjs <path> --optimistic "answer A,answer B"
  *   node web/test-render.mjs <path> --batch 2
  */
 
