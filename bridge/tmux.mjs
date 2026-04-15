@@ -306,7 +306,7 @@ export function launchClaudeSession(sessionId, projectHash) {
 
   const projectPath = projectHashToPath(projectHash);
   if (!fs.existsSync(projectPath)) {
-    throw new Error('project_not_found');
+    throw new Error('Project directory not found. Please recreate the project.');
   }
   const projectName = readableProjectName(projectHash)
     .split('/').pop()

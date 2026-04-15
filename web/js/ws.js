@@ -67,7 +67,7 @@ function connectWs(_, projectHash) {
                 status.innerHTML = new Date().toLocaleTimeString();
                 status.style.color = '#6e7681';
               } else {
-                status.innerHTML = (msg.error || 'send failed').replace('project_not_found', 'Project directory not found. Please recreate the project first.');
+                status.innerHTML = msg.error || 'Send failed';
                 status.style.color = '#f85149';
               }
             }
@@ -385,7 +385,7 @@ function sendMessage() {
   renderStagedImages();
   input.value = '';
   input.style.height = 'auto';
-  input.focus();
+  if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
 }
 
 // Textarea: Enter sends, Shift+Enter newline, auto-grow, toggle send/stop button

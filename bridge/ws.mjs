@@ -176,7 +176,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
         try { sendKeys(prev.tmuxName, resolved); } catch {}
         wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId, requestId });
       } else {
-        wsSend({ action: 'send_message_result', ok: false, error: 'previous launch failed', requestId });
+        wsSend({ action: 'send_message_result', ok: false, error: 'Previous launch failed. Please try again.', requestId });
       }
       return;
     }
@@ -200,17 +200,18 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
       if (prev.ok && prev.tmuxName) {
         try { sendKeys(prev.tmuxName, resolved); result = { ok: true }; } catch (err) { result = { ok: false, error: err.message }; }
       } else {
-        result = { ok: false, error: 'previous launch failed' };
+        result = { ok: false, error: 'Previous launch failed. Please try again.' };
       }
     } else {
       console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching CC...`);
       const promise = (async () => {
-        const tmuxName = launchForSession(sessionId);
-        if (!tmuxName) return { ok: false, error: 'failed to launch claude' };
+        let tmuxName;
+        try { tmuxName = launchForSession(sessionId); } catch (err) { return { ok: false, error: err.message }; }
+        if (!tmuxName) return { ok: false, error: 'Failed to launch Claude. Session file may be missing.' };
         const ready = await waitForCCReady(tmuxName);
         if (!ready) {
           try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-          return { ok: false, error: 'claude did not become ready' };
+          return { ok: false, error: 'Claude did not become ready after 15s.' };
         }
         return { ok: true, tmuxName };
       })();
@@ -255,7 +256,7 @@ async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
     const ready = await waitForCCReady(tmuxName);
     if (!ready) {
       try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-      return { ok: false, error: 'claude did not become ready' };
+      return { ok: false, error: 'Claude did not become ready after 15s.' };
     }
 
     sendKeys(tmuxName, text);
@@ -354,7 +355,7 @@ function launchForSession(sessionId) {
     return launchClaudeSession(sessionId, projectHash);
   } catch (err) {
     console.log(`[ws] launchForSession failed: ${err.message}`);
-    return null;
+    throw err;
   }
 }
 
