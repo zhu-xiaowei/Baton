@@ -142,7 +142,7 @@ export function findTmuxTargetForSession(sessionId) {
   const exact = procs.find(p => p.tmuxTarget && p.args.includes(sessionId));
   if (exact) return exact.tmuxTarget;
 
-  // Fallback: match tmux session name ending with sessionId prefix
+  // Fallback: match tmux session name ending with sessionId prefix, verify claude is running inside
   if (!hasTmux()) return null;
   const suffix = `_${sessionId.slice(0, 8)}`;
   try {
@@ -151,7 +151,13 @@ export function findTmuxTargetForSession(sessionId) {
       { encoding: 'utf-8' }
     ).trim();
     for (const name of output.split('\n')) {
-      if (name.startsWith('apeek_') && name.endsWith(suffix)) return name;
+      if (name.startsWith('apeek_') && name.endsWith(suffix)) {
+        // Verify the pane is actually running claude, not a leftover bash shell
+        try {
+          const cmd = execSync(`tmux list-panes -t "${name}" -F "#{pane_current_command}" 2>/dev/null`, { encoding: 'utf-8' }).trim();
+          if (cmd.includes('claude') || cmd.includes('node')) return name;
+        } catch {}
+      }
     }
   } catch {}
   return null;

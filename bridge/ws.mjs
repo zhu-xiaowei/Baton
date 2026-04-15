@@ -208,7 +208,10 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
         const tmuxName = launchForSession(sessionId);
         if (!tmuxName) return { ok: false, error: 'failed to launch claude' };
         const ready = await waitForCCReady(tmuxName);
-        if (!ready) return { ok: false, error: 'claude did not become ready' };
+        if (!ready) {
+          try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+          return { ok: false, error: 'claude did not become ready' };
+        }
         return { ok: true, tmuxName };
       })();
       _launchLocks.set(sessionId, promise);
@@ -250,7 +253,10 @@ async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
     newTmuxSession(tmuxName, projectPath, 'claude');
 
     const ready = await waitForCCReady(tmuxName);
-    if (!ready) return { ok: false, error: 'claude did not become ready' };
+    if (!ready) {
+      try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+      return { ok: false, error: 'claude did not become ready' };
+    }
 
     sendKeys(tmuxName, text);
 
