@@ -429,6 +429,8 @@ function onSendBtnClick() {
   if (input.value.trim()) {
     sendMessage();
     updateSendBtn();
+    // Keep keyboard open on mobile after sending
+    if (isMobile && kbWasUp) input.focus();
   } else if (wsRunning) {
     interruptSession();
   }

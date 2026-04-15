@@ -288,7 +288,8 @@ body {
 .permission-submit { padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 12px; cursor: pointer; }
 
 /* === Input bar === */
-#input-bar { background: #0d1117; padding: 8px 12px 14px; flex-shrink: 0; display: flex; flex-direction: column; }
+#input-bar { background: #0d1117; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0; display: flex; flex-direction: column; }
+@media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
 #img-preview-row .img-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; }
@@ -325,7 +326,7 @@ body {
 /* === Active session cards === */
 .active-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
   padding: 0 12px 8px;
 }
@@ -336,6 +337,7 @@ body {
   padding: 12px 14px;
   cursor: pointer;
   transition: all 0.2s ease;
+  overflow: hidden;
 }
 .active-card:hover {
   transform: translateY(-1px);
@@ -350,14 +352,12 @@ body {
 .card-header {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
 }
-.card-project { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.card-project { font-size: 14px; font-weight: 600; color: #e6edf3; min-width: 0; }
 .card-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .card-time { font-size: 11px; color: #6e7681; white-space: nowrap; }
 
 .card-title {
   font-size: 13px; color: #c9d1d9; line-height: 1.4;
-  overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
   margin-bottom: 6px;
 }
 
@@ -365,9 +365,9 @@ body {
 .card-device { font-size: 11px; color: #6e7681; }
 .card-right { display: none; }
 
-/* Responsive: tablet */
-@media (max-width: 768px) {
-  .active-grid { grid-template-columns: 1fr; }
+/* Responsive: desktop 2-col */
+@media (min-width: 640px) {
+  .active-grid { grid-template-columns: repeat(2, 1fr); }
 }
 /* Responsive: mobile */
 @media (max-width: 480px) {
