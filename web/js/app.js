@@ -23,12 +23,27 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
 }
 
-function showStats(text) {
-  var el = document.getElementById('stats');
-  el.style.display = 'flex';
-  var wsColor = wsStatusText === 'connected' ? '#3fb950' : wsStatusText === 'reconnecting' ? '#d29922' : '#f85149';
-  var wsHtml = wsStatusText ? '<span><span class="ws-dot" style="background:' + wsColor + '"></span>WS ' + wsStatusText + '</span>' : '';
-  el.innerHTML = '<span>' + text + '</span>' + wsHtml;
+function showStats() {}  // no-op, stats bar removed
+
+function showWsBanner(status) {
+  var existing = document.getElementById('ws-banner');
+  if (status === 'connected' || status === '') {
+    if (existing) existing.remove();
+    return;
+  }
+  var content = document.getElementById('content');
+  if (!content) return;
+  if (!existing) {
+    content.insertAdjacentHTML('afterbegin', '<div id="ws-banner" class="ws-banner"></div>');
+    existing = document.getElementById('ws-banner');
+  }
+  if (status === 'reconnecting') {
+    existing.className = 'ws-banner warn';
+    existing.textContent = 'Reconnecting...';
+  } else {
+    existing.className = 'ws-banner error';
+    existing.textContent = 'Disconnected';
+  }
 }
 
 function updateBreadcrumb() {
@@ -45,13 +60,21 @@ function updateBreadcrumb() {
     parts.push('<span>' + esc(label) + '</span>');
   }
   var newBtn = '';
-  var _addSvg = '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6.5" stroke-width="1.2"/><line x1="8" y1="5" x2="8" y2="11" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke-width="1"/></svg>';
+  var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
   if (appState.project) {
     newBtn = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (appState.device && !appState.project) {
     newBtn = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   }
-  el.innerHTML = '<div class="breadcrumb-nav">' + parts.join(' &rsaquo; ') + '</div>' + newBtn;
+  var titleHtml = '';
+  if (appState.session) {
+    parts.pop();
+    var titleText = esc(appState.sessionPreview || appState.session.slice(0, 8) + '...');
+    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
+  }
+  el.innerHTML = '<div class="breadcrumb-nav">'
+    + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
+    + '</div>' + newBtn;
   el.style.display = parts.length > 1 ? 'flex' : 'none';
 }
 
@@ -63,6 +86,22 @@ function saveNav() {
   sessionStorage.setItem('agentpeek-nav', JSON.stringify(appState));
 }
 
+// ---- Active session card click ----
+function openActiveSession(el) {
+  var d = el.dataset;
+  appState = {
+    device: d.device,
+    project: { hash: d.phash, name: d.pname },
+    session: null,
+    sessionPreview: ''
+  };
+  loadMessages(d.sid, d.preview, d.status);
+}
+
+function shortModel(m) {
+  return (m || 'unknown').replace(/^claude-/, '');
+}
+
 // ---- Devices ----
 async function loadDevices() {
   appState = { device: null, project: null, session: null, sessionPreview: '' };
@@ -71,21 +110,68 @@ async function loadDevices() {
   updateBreadcrumb();
   saveNav();
   var content = document.getElementById('content');
-  content.innerHTML = '<div class="loading">Loading devices...</div>';
 
-  try {
-    var data = await api('/api/bridge/devices');
-    if (data.devices.length === 0) { content.innerHTML = '<div class="empty">No devices found</div>'; return; }
-    content.innerHTML = '<div class="list">' + data.devices.map(function (d) {
+  // Skeleton
+  content.innerHTML = '<div class="section-title">Active Sessions</div>'
+    + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
+    + '<div class="section-title">Devices</div>'
+    + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
+
+  // Fire both independently
+  api('/api/bridge/active-sessions').then(function (activeData) {
+    var el = document.getElementById('active-section');
+    var titleEl = el && el.previousElementSibling;
+    if (!el) return;
+    if (!activeData.sessions || activeData.sessions.length === 0) {
+      el.remove();
+      if (titleEl) titleEl.remove();
+      return;
+    }
+    if (titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
+    el.innerHTML = activeData.sessions.map(function (s) {
+      return '<div class="active-card ' + esc(s.status) + '"'
+        + ' data-sid="' + esc(s.sessionId) + '"'
+        + ' data-preview="' + esc(s.preview || '') + '"'
+        + ' data-status="' + esc(s.status) + '"'
+        + ' data-device="' + esc(s.deviceName) + '"'
+        + ' data-phash="' + esc(s.projectHash) + '"'
+        + ' data-pname="' + esc(s.projectName) + '"'
+        + ' onclick="openActiveSession(this)">'
+        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="badge ' + esc(s.status) + '">' + (s.status === 'running' ? 'Running' : 'Idle') + '</span></div>'
+        + '<div class="card-title">' + esc(s.preview || 'No preview') + '</div>'
+        + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '</div>';
+    }).join('');
+  }).catch(function () {
+    var el = document.getElementById('active-section');
+    var titleEl = el && el.previousElementSibling;
+    if (el) el.remove();
+    if (titleEl) titleEl.remove();
+  });
+
+  api('/api/bridge/devices').then(function (devData) {
+    var el = document.getElementById('devices-section');
+    var titleEl = el && el.previousElementSibling;
+    if (!el) return;
+    if (devData.devices.length === 0) {
+      el.remove();
+      if (titleEl) titleEl.remove();
+      return;
+    }
+    if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
+    el.innerHTML = devData.devices.map(function (d) {
       var rc = d.runningCount || 0, ic = d.idleCount || 0;
       var dotClass = d.online ? 'online' : 'offline';
       return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
         + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
         + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
         + '</div>';
-    }).join('') + '</div>';
-    showStats(data.devices.length + ' device(s)');
-  } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+    }).join('');
+    showStats(devData.devices.length + ' device(s)');
+  }).catch(function (e) {
+    var el = document.getElementById('devices-section');
+    if (el) el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  });
 }
 
 // ---- Projects ----
@@ -96,7 +182,7 @@ async function loadProjects(device) {
   updateBreadcrumb();
   saveNav();
   var content = document.getElementById('content');
-  content.innerHTML = '<div class="loading">Loading projects...</div>';
+  content.innerHTML = '<div class="list">' + skeletonItems(4) + '</div>';
 
   try {
     var data = await api('/api/bridge/projects', { device: device });
@@ -117,7 +203,7 @@ async function loadSessions(device, projectHash, projectName) {
   disconnectWs();
   showInputBar(false);
   var content = document.getElementById('content');
-  content.innerHTML = '<div class="loading">Loading sessions...</div>';
+  content.innerHTML = '<div class="list">' + skeletonItems(5) + '</div>';
 
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });

@@ -114,6 +114,12 @@
   <div id="deviceList" class="loading">Loading...</div>
 </div>
 
+<!-- Logout -->
+<div class="section" style="text-align:center; padding:14px;">
+  <a href="#" onclick="localStorage.removeItem('_ak');localStorage.removeItem('_as');location.replace('landing.html');return false"
+     style="color:#f85149; font-size:13px; text-decoration:none;">Log out</a>
+</div>
+
 <script>
 var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
 var SERVER = location.origin + pathPrefix;

@@ -50,6 +50,33 @@ async def get_config():
     return {"wsUrl": ws_url}
 
 
+@read_router.get("/active-sessions")
+async def get_active_sessions(request: Request):
+    """Return all running/idle sessions across all devices for dashboard."""
+    sessions_table, _ = _tables()
+    account_id = _account_id(request)
+
+    items = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(account_id))
+
+    sessions = []
+    for item in items:
+        status = item.get("status", "stopped")
+        if status not in ("running", "idle"):
+            continue
+        pn = item.get("projectName", "")
+        sessions.append({
+            "sessionId": item.get("sessionId", ""),
+            "preview": item.get("preview", ""),
+            "status": status,
+            "deviceName": item.get("deviceName", ""),
+            "projectHash": item.get("projectHash", ""),
+            "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
+            "lastActive": item.get("lastActive", ""),
+        })
+    sessions.sort(key=lambda x: x["lastActive"], reverse=True)
+    return {"sessions": sessions}
+
+
 @read_router.get("/devices")
 async def get_devices(request: Request):
     sessions_table, _ = _tables()

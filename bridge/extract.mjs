@@ -10,8 +10,8 @@ export const synced = new Map();
 async function processImage(base64Data) {
   const buffer = Buffer.from(base64Data, 'base64');
   const compressed = await sharp(buffer)
-    .resize(720, 720, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 80 })
+    .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
     .toBuffer();
 
   const hashInput = Buffer.concat([compressed.subarray(0, 8192), Buffer.from(String(compressed.length))]);

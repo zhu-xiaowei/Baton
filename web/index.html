@@ -12,10 +12,10 @@
 <style>
   /* Dark scrollbar - inline to bypass cache */
   html { color-scheme: dark; }
-  ::-webkit-scrollbar { width: 8px; height: 8px; background: #0d1117; }
-  ::-webkit-scrollbar-track { background: #0d1117; }
-  ::-webkit-scrollbar-thumb { background: #484f58; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #6e7681; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; background: transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #6e7681; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #8b949e; }
   ::-webkit-scrollbar-corner { background: #0d1117; }
 </style>
 </head>
@@ -33,11 +33,9 @@
 <!-- Top bar -->
 <div class="top-bar">
   <div class="top-left">&#128301; <span class="top-title">AgentPeek</span></div>
-  <div class="top-right">
-    <a href="setup.html" class="top-action">Setup</a>
-    <span class="top-sep"></span>
-    <a href="#" class="top-action top-logout" onclick="logout();return false">Logout</a>
-  </div>
+  <a href="setup.html" class="top-gear" title="Settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </a>
 </div>
 
 <!-- Breadcrumb -->
@@ -57,8 +55,7 @@
   </div>
 </div>
 
-<!-- Stats -->
-<div id="stats" class="stats" style="display:none"></div>
+<!-- Stats (removed, replaced by ws-banner) -->
 
 <!-- Scroll-to-bottom button -->
 <button id="scroll-bottom-btn" class="scroll-bottom-btn" style="display:none" onclick="scrollToBottom()">
@@ -91,9 +88,12 @@
 <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
 
 <!-- App modules (order matters) -->
+<script src="js/components/skeleton.js"></script>
 <script src="js/components/markdown.js"></script>
 <script src="js/components/tool.js"></script>
 <script src="js/components/message.js"></script>
+<script src="js/components/permission.js"></script>
+<script src="js/components/image.js"></script>
 <script src="js/render.js"></script>
 <script src="js/api.js"></script>
 <script src="js/ws.js"></script>
