@@ -42,9 +42,10 @@ function connectWs(_, projectHash) {
         return;
       }
       for (var i = 0; i < msg.messages.length; i++) {
-        wsAllMessages.push(msg.messages[i]);
+        var m = msg.messages[i];
+        wsAllMessages.push(m);
         wsMessageCount++;
-        if (msg.messages[i].timestamp) wsLastTimestamp = msg.messages[i].timestamp;
+        if (m.timestamp) wsLastTimestamp = m.timestamp;
       }
       updateLastTurn();
       showStats(wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
@@ -81,7 +82,19 @@ function connectWs(_, projectHash) {
         updateBreadcrumb();
         saveNav();
         wsRequestId = null;
-        loadMessages(msg.sessionId, 'New Session');
+        subscribeSession(msg.sessionId);
+        // Fetch missed messages, then replace pending bubbles with real data
+        bufferAndFetch(msg.sessionId, '').then(function () {
+          var container = document.querySelector('.messages');
+          if (container && wsAllMessages.length) {
+            container.innerHTML = renderMessages(wsAllMessages);
+            wsRenderedCount = wsAllMessages.length;
+            pendingSentMessages = [];
+            loadImages(container);
+            clampOverflow(container);
+            container.parentElement.scrollTop = container.parentElement.scrollHeight;
+          }
+        }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
@@ -263,8 +276,8 @@ function updateLastTurn() {
     var html = renderSingleMessage(msg, wsAllMessages);
     if (!html) continue;
 
-    // Scan all tl-items by data-ts to find insertion position
-    var allItems = container.querySelectorAll('.tl-item[data-ts]');
+    // Scan all elements with data-ts to find insertion position
+    var allItems = container.querySelectorAll('[data-ts]');
     var target = null;
     for (var j = allItems.length - 1; j >= 0; j--) {
       if (allItems[j].dataset.ts > msg.timestamp) {
