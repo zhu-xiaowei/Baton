@@ -51,9 +51,8 @@ function connectWs(_, projectHash) {
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
-      // Mark first undelivered pending message as delivered
-      if (msg.ok && pendingSentMessages.length) {
-        // Find first pending that hasn't been delivered yet
+      // Mark first undelivered pending message as delivered (or failed)
+      if (pendingSentMessages.length) {
         var pending = null;
         for (var pi = 0; pi < pendingSentMessages.length; pi++) {
           if (!pendingSentMessages[pi].delivered) { pending = pendingSentMessages[pi]; break; }
@@ -64,8 +63,13 @@ function connectWs(_, projectHash) {
           if (el) {
             var status = el.querySelector('.sending-status');
             if (status) {
-              status.innerHTML = new Date().toLocaleTimeString();
-              status.style.color = '#6e7681';
+              if (msg.ok) {
+                status.innerHTML = new Date().toLocaleTimeString();
+                status.style.color = '#6e7681';
+              } else {
+                status.innerHTML = (msg.error || 'send failed').replace('project_not_found', 'Project directory not found. Please recreate the project first.');
+                status.style.color = '#f85149';
+              }
             }
           }
         }

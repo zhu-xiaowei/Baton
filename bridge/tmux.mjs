@@ -305,6 +305,9 @@ export function launchClaudeSession(sessionId, projectHash) {
   if (!hasTmux()) throw new Error('tmux not installed');
 
   const projectPath = projectHashToPath(projectHash);
+  if (!fs.existsSync(projectPath)) {
+    throw new Error('project_not_found');
+  }
   const projectName = readableProjectName(projectHash)
     .split('/').pop()
     .replace(/[^a-zA-Z0-9_.-]/g, '_');
