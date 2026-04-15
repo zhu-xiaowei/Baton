@@ -100,6 +100,8 @@ body {
 .tl-item:last-child::after { bottom: calc(100% - 16px); }
 /* Only child: no line at all */
 .tl-item:only-child::after { display: none; }
+/* Bare tl-item outside assistant-turn (WS incremental insert): no connector */
+.messages > .tl-item::after { display: none; }
 
 /* Assistant text (as timeline item) */
 .assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; }
