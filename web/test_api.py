@@ -381,6 +381,37 @@ class TestWebSocket:
             app.close()
             bridge.close()
 
+    def test_bridge_receives_ack_after_push(self):
+        """Bridge sends messages via WS → bridge receives messages_ack."""
+        import websockets.sync.client as wsc
+        ws_url = _get_ws_url()
+        if not ws_url:
+            pytest.skip("No WS URL configured")
+
+        session_id = "test-ack-" + str(int(__import__("time").time()))
+
+        bridge = wsc.connect(f"{ws_url}?apiKey={KEY}&role=bridge")
+        bridge.send(json.dumps({
+            "action": "messages",
+            "sessionId": session_id,
+            "messages": [{
+                "uuid": "test-ack-uuid-001",
+                "type": "user",
+                "content": "ack test",
+                "timestamp": "2026-04-15T00:00:00Z",
+            }],
+        }))
+
+        try:
+            msg = bridge.recv(timeout=5)
+            data = json.loads(msg)
+            assert data["action"] == "messages_ack"
+            assert data["sessionId"] == session_id
+        except TimeoutError:
+            pytest.fail("Bridge did not receive messages_ack within 5s")
+        finally:
+            bridge.close()
+
     def test_unsubscribe_stops_relay(self):
         """After unsubscribe, app should NOT receive messages for that session."""
         import websockets.sync.client as wsc

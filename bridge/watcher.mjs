@@ -5,7 +5,7 @@ import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
-import { wsSend } from './ws.mjs';
+import { wsSendWithAck } from './ws.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 
@@ -67,8 +67,8 @@ async function readAndSend(config, filename, sessionId) {
     const msg = await extractForApp(raw);
     if (!msg.uuid) continue;
 
-    const sent = wsSend({ action: 'messages', sessionId, messages: [msg] });
-    if (!sent) await uploadMessages(sessionId, [msg]);
+    const acked = await wsSendWithAck({ action: 'messages', sessionId, messages: [msg] });
+    if (!acked) await uploadMessages(sessionId, [msg]);
   }
 
   synced.set(sessionId, lastParsedLine);

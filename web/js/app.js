@@ -1,5 +1,6 @@
 // App state, routing, page loading
 var appState = { device: null, project: null, session: null, sessionPreview: '' };
+var deviceOnlineMap = {};
 
 function osName(os) {
   return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown';
@@ -80,6 +81,7 @@ function updateBreadcrumb() {
 
 function showInputBar(visible) {
   document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
+  if (!visible) document.getElementById('scroll-bottom-btn').style.display = 'none';
 }
 
 function saveNav() {
@@ -159,6 +161,7 @@ async function loadDevices() {
       return;
     }
     if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
+    devData.devices.forEach(function (d) { deviceOnlineMap[d.deviceName] = d.online; });
     el.innerHTML = devData.devices.map(function (d) {
       var rc = d.runningCount || 0, ic = d.idleCount || 0;
       var dotClass = d.online ? 'online' : 'offline';
@@ -300,11 +303,15 @@ async function loadMessages(sessionId, preview, status) {
     var latency = Math.round(performance.now() - t0);
 
     if (wsAllMessages.length === 0) {
-      content.innerHTML = result.needSync
-        ? '<div class="loading">Syncing history from bridge...</div>'
-        : '<div class="empty">No messages</div>';
+      if (result.needSync) {
+        var online = deviceOnlineMap[appState.device] !== false;
+        content.innerHTML = online
+          ? '<div class="loading">Syncing history from bridge...</div>'
+          : '<div class="empty">Bridge offline — no cached messages</div>';
+      } else {
+        content.innerHTML = '<div class="empty">No messages</div>';
+      }
       showInputBar(true);
-      showStats('Waiting for sync...');
       saveNav();
       return;
     }

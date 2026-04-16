@@ -1,5 +1,9 @@
 /* === Base === */
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; scrollbar-color: #30363d transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 html, body { height: 100%; overflow: clip; }
 body {
@@ -288,7 +292,7 @@ body {
 .permission-submit { padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 12px; cursor: pointer; }
 
 /* === Input bar === */
-#input-bar { background: #0d1117; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0; display: flex; flex-direction: column; }
+#input-bar { background: #0d1117; padding: 8px 12px; flex-shrink: 0; display: flex; flex-direction: column; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
@@ -297,11 +301,11 @@ body {
 #img-preview-row .img-thumb:hover .img-remove { display: block; }
 .img-upload-overlay { position: absolute; top: 0; left: 0; width: 64px; height: 64px; background: rgba(0,0,0,0.5); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
 .img-spinner { width: 28px; height: 28px; }
-.input-row { display: flex; gap: 8px; width: 100%; align-items: flex-end; background: #161b22; border: 1px solid #30363d; border-radius: 22px; padding: 4px 4px 4px 6px; }
+.input-row { display: flex; gap: 4px; width: 100%; align-items: flex-end; background: #161b22; border: 1px solid #30363d; border-radius: 22px; padding: 4px 4px 4px 4px; }
 .img-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: #30363d; border: none; color: #c9d1d9; font-size: 18px; cursor: pointer; font-weight: bold; line-height: 1; border-radius: 50%; flex-shrink: 0; }
 .img-btn:hover { background: #6e7681; }
 .img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-#msg-input { flex: 1; min-width: 0; padding: 6px 8px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 96px; overflow-y: hidden; line-height: 1.4; font-family: inherit; }
+#msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 96px; overflow-y: hidden; line-height: 1.4; font-family: inherit; }
 #send-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: #484f58; border: none; border-radius: 50%; color: #e6edf3; cursor: pointer; flex-shrink: 0; }
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 #send-btn.has-text { background: #e6edf3; color: #0d1117; }
@@ -359,6 +363,7 @@ body {
 .card-title {
   font-size: 13px; color: #c9d1d9; line-height: 1.4;
   margin-bottom: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .card-bottom { display: flex; justify-content: space-between; align-items: center; }
@@ -438,7 +443,7 @@ body {
 
 /* === Scroll-to-bottom button === */
 .scroll-bottom-btn {
-  position: fixed; right: 16px; bottom: 100px;
+  position: fixed; right: 16px; bottom: 80px;
   width: 36px; height: 36px; border-radius: 50%;
   background: #21262d; border: 1px solid #30363d; color: #8b949e;
   cursor: pointer; align-items: center; justify-content: center;

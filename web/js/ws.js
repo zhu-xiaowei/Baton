@@ -1,3 +1,13 @@
+// Baseline viewport height (no keyboard) for keyboard detection
+var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+
+// iOS: sync body height to visual viewport so keyboard doesn't leave a gap
+if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
+  window.visualViewport.addEventListener('resize', function () {
+    document.body.style.height = window.visualViewport.height + 'px';
+  });
+}
+
 // WebSocket connection management
 var ws = null;
 var wsSessionId = null;
@@ -424,7 +434,7 @@ function updateSendBtn() {
 function onSendBtnClick() {
   var input = document.getElementById('msg-input');
   var isMobile = /Mobi|Android/i.test(navigator.userAgent);
-  var kbWasUp = isMobile && window.visualViewport && window.visualViewport.height < window.innerHeight * 0.75;
+  var kbWasUp = isMobile && window.visualViewport && window.visualViewport.height < _vpBaseHeight * 0.75;
 
   if (input.value.trim()) {
     sendMessage();

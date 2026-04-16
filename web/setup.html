@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AgentPeek Setup</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { color-scheme: dark; }
@@ -14,10 +15,10 @@
     padding: 24px 16px;
   }
   .header { text-align: center; margin-bottom: 32px; }
-  .header h1 { font-size: 24px; font-weight: 700; }
-  .header p { color: #8b949e; font-size: 13px; margin-top: 4px; }
+  .header h1 { font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .header p { color: #8b949e; font-size: 13px; margin-top: 6px; }
   .nav { margin-bottom: 24px; font-size: 13px; }
-  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a { color: #58a6ff; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
   .nav a:hover { text-decoration: underline; }
   .section {
     width: 100%; max-width: 600px; background: #161b22; border: 1px solid #30363d;
@@ -43,9 +44,15 @@
   .copy-btn:hover { background: #30363d; color: #e6edf3; }
   .copy-btn.copied { background: #238636; color: #fff; border-color: #238636; }
   .hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
-  .qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .qr-wrap canvas { border-radius: 8px; }
-  .qr-url { font-size: 11px; color: #6e7681; word-break: break-all; text-align: center; max-width: 100%; }
+  .qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .qr-frame { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; }
+  .qr-frame canvas { border-radius: 4px; display: block; }
+  .url-block {
+    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 10px 48px 10px 14px; position: relative;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #8b949e;
+    line-height: 1.5; word-break: break-all;
+  }
   .devices { margin-top: 12px; }
   .device-item {
     padding: 10px 14px;
@@ -86,7 +93,7 @@
 </div>
 
 <div class="header">
-  <h1>&#128301; AgentPeek Setup</h1>
+  <h1><span style="font-size:28px">🔭</span> AgentPeek Setup</h1>
   <p>Install the bridge on your dev machine to start syncing</p>
 </div>
 
@@ -103,8 +110,8 @@
   <h2><span class="num">2</span> Open on Phone</h2>
   <p class="hint" style="margin-bottom:14px">Scan this QR code to open AgentPeek viewer on your phone:</p>
   <div class="qr-wrap">
-    <canvas id="qrCanvas"></canvas>
-    <div class="qr-url" id="qrUrl"></div>
+    <div class="qr-frame"><canvas id="qrCanvas"></canvas></div>
+    <div class="url-block"><span id="qrUrl"></span><button class="copy-btn" onclick="copyUrl(this)">Copy</button></div>
   </div>
 </div>
 
@@ -115,9 +122,9 @@
 </div>
 
 <!-- Logout -->
-<div class="section" style="text-align:center; padding:14px;">
-  <a href="#" onclick="localStorage.removeItem('_ak');localStorage.removeItem('_as');location.replace('landing.html');return false"
-     style="color:#f85149; font-size:13px; text-decoration:none;">Log out</a>
+<div style="text-align:center; margin-bottom:32px;">
+  <button onclick="localStorage.removeItem('_ak');localStorage.removeItem('_as');location.replace('landing.html')"
+    style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; font-size:13px; cursor:pointer;">Log out</button>
 </div>
 
 <script>
@@ -207,13 +214,18 @@ async function apiFetch(path, params) {
   }
 })();
 
-function copyCmd(btn) {
-  var text = document.getElementById('installCmdText').textContent;
+function copyText(btn, text) {
   navigator.clipboard.writeText(text).then(function () {
     btn.textContent = 'Copied!';
     btn.classList.add('copied');
     setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
   });
+}
+function copyCmd(btn) {
+  copyText(btn, document.getElementById('installCmdText').textContent);
+}
+function copyUrl(btn) {
+  copyText(btn, document.getElementById('qrUrl').textContent);
 }
 
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }

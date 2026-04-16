@@ -273,6 +273,11 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                 else:
                     print(f"DDB write error (gave up): {e}")
 
+    # 3. Ack back to bridge so it can advance synced position
+    _post_to_connection(endpoint, bridge_connection_id, {
+        "action": "messages_ack", "sessionId": session_id,
+    })
+
     return {"statusCode": 200}
 
 

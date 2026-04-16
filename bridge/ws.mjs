@@ -34,6 +34,19 @@ export function wsSend(data) {
   }
 }
 
+// Ack-based send: resolves true if server acks within timeout, false otherwise
+const _pendingAcks = new Map(); // sessionId → { resolve, timer }
+
+export function wsSendWithAck(data, timeout = 5000) {
+  return new Promise((resolve) => {
+    if (!wsSend(data)) return resolve(false);
+    const sid = data.sessionId;
+    // If there's already a pending ack for this session, let it timeout naturally
+    const timer = setTimeout(() => { _pendingAcks.delete(sid); resolve(false); }, timeout);
+    _pendingAcks.set(sid, { resolve, timer });
+  });
+}
+
 function connect() {
   if (!_config) return;
 
@@ -123,6 +136,11 @@ async function handleMessage(msg) {
       sendKey(msg.sessionId, 'Escape');
       sendKey(msg.sessionId, 'C-u');
       break;
+    case 'messages_ack': {
+      const p = _pendingAcks.get(msg.sessionId);
+      if (p) { clearTimeout(p.timer); _pendingAcks.delete(msg.sessionId); p.resolve(true); }
+      break;
+    }
     case 'heartbeat':
       // Server heartbeat response — no-op
       break;
