@@ -1,12 +1,8 @@
 // Baseline viewport height (no keyboard) for keyboard detection
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 
-// iOS: sync body height to visual viewport so keyboard doesn't leave a gap
-if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
-  window.visualViewport.addEventListener('resize', function () {
-    document.body.style.height = window.visualViewport.height + 'px';
-  });
-}
+// iOS: viewport-fit=cover handles keyboard avoidance natively.
+// Do NOT set body.style.height here — it breaks the flex layout when keyboard opens.
 
 // WebSocket connection management
 var ws = null;
