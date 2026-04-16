@@ -329,6 +329,8 @@ async function loadMessages(sessionId, preview, status) {
       }
     }
 
+    updateSpinner();
+
     content.scrollTop = content.scrollHeight;
     setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
     loadImages(content);

@@ -163,6 +163,7 @@ function disconnectWs() {
     ws = null;
     wsSessionId = null;
     wsRunning = false;
+    updateSpinner();
     setWsStatus('');
   }
 }
@@ -260,6 +261,8 @@ function updateLastTurn() {
 
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
+      wsRunning = true;
+      updateSendBtn();
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
@@ -430,6 +433,7 @@ function updateSendBtn() {
     btn.className = '';
     btn.disabled = true;
   }
+  if (typeof updateSpinner === 'function') updateSpinner();
 }
 function onSendBtnClick() {
   var input = document.getElementById('msg-input');
