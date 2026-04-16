@@ -4,6 +4,21 @@ Web viewer (`web/`) 中已验证的前端逻辑，mobile app 需实现相同流�
 
 ---
 
+## 0. iOS Keyboard / Viewport
+
+iOS Safari 弹出键盘时不缩小 `window.innerHeight`，只缩小 `visualViewport.height`，导致 input bar 被键盘遮挡。
+
+```javascript
+// ws.js: 监听 visualViewport resize，同步 body 高度
+if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
+  window.visualViewport.addEventListener('resize', function () {
+    document.body.style.height = window.visualViewport.height + 'px';
+  });
+}
+```
+
+键盘检测基线：`_vpBaseHeight = visualViewport.height`（页面加载时快照），发送消息后不 blur input 以保持键盘。
+
 ## 1. Auth & Connection
 
 ```

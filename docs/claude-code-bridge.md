@@ -49,7 +49,8 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
   - Per-session busy flag prevents concurrent reads (pending events replayed after)
   - Partial JSON lines (mid-write) → break, synced not advanced, next event re-reads
   - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
-  - WS fallback: if WS not connected, HTTP POST to DDB
+  - WS ack: `wsSendWithAck` 等待 server `messages_ack`（5s 超时），收到 ack 才推进 synced 行号
+  - WS fallback: ack 超时或 WS 未连接 → HTTP POST to DDB
   - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
 - **Periodic check (1min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
   - Only checks sessions previously known as running/idle
@@ -84,7 +85,7 @@ Extracted (~0.8KB):
 ```
 
 Content block processing:
-- `image` → compress 720p JPEG (sharp) → upload S3 → `{ type: "image", key: "hash.jpg" }`
+- `image` → compress 1280px JPEG quality=90 (sharp) → upload S3 → `{ type: "image", key: "hash.jpg" }`
 - `document` → pass through as-is (`{ type: "document", source: { type: "text", data: "..." }, title: "file.txt" }`)
 - `tool_result` with `toolUseResult` → extract Agent metadata (`totalToolUseCount`, `totalDurationMs`, etc.)
 - `text` → keep as-is

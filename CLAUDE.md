@@ -76,8 +76,9 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
 - Debounce: busy Map per session dedup fs.watch duplicate events
 - Line-number tracking per session (not UUID set), lightweight
-- Images: sharp compress 720p JPEG → upload S3 via Lambda → store key in message
+- Images: sharp compress 1280px JPEG (quality=90) → upload S3 via Lambda → store key in message
 - Batching: by byte size (≤4MB/POST), with 200ms delay between batches
+- WS ack: `wsSendWithAck` 等待 server `messages_ack` 回复（5s 超时），未收到 ack 则 fallback HTTP POST 写 DDB
 
 ### Server
 - FastAPI in Docker Lambda, API Key auth
@@ -191,7 +192,9 @@ Full protocol: `docs/api.md`
 - `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
 - `web/index.html` — Session viewer (auth guard redirects to landing if no key)
 - `web/setup.html` — Bridge install command + QR code + connected devices list
-- Top bar: AgentPeek logo + Setup / Logout links
+- Top bar: AgentPeek 🔭 logo + Setup gear icon
+- Favicon: 🔭 emoji（data:image/svg+xml inline，所有页面统一）
+- `web/setup.html` — QR URL 带 Copy 按钮，QR 码白色背景框，Logout 独立按钮
 
 ### Auth Flow
 - Key stored in localStorage (`_ak` = btoa, `_as` = server URL)

@@ -605,6 +605,18 @@ Bridge 完成按需同步后通知 server。
 
 ### Server → Bridge (推送)
 
+#### messages_ack
+
+Server 收到 bridge 的 messages 并处理后，回复 ack 让 bridge 推进 synced 指针。
+
+```json
+{ "action": "messages_ack", "sessionId": "a1ca0870-xxxx" }
+```
+
+**Bridge 处理**: `wsSendWithAck` 等待此消息（5s 超时）。收到 → resolve(true)，bridge 推进行号。超时 → resolve(false)，bridge fallback HTTP POST 写 DDB。
+
+---
+
 #### sync_session
 
 Server 通知 bridge 同步指定 session 的消息到 DDB（由 GET /messages 的 needSync 触发）。
