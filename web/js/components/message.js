@@ -137,7 +137,7 @@
     const label = secs > 0 ? `Thought for ${secs}s` : 'Thinking';
     const id = 'think-' + Math.random().toString(36).slice(2, 8);
     return `<div class="thinking-block">
-      <div class="thinking-toggle" onclick="var b=document.getElementById('${id}');b.style.display=b.style.display==='block'?'none':'block'">${label} &#8250;</div>
+      <div class="thinking-toggle" onclick="this.classList.toggle('open');var b=document.getElementById('${id}');b.style.display=b.style.display==='block'?'none':'block'">${label} <span class="thinking-chevron">&#8250;</span></div>
       <div class="thinking-body" id="${id}">${esc(block.thinking || '')}</div>
     </div>`;
   };

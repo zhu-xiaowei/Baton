@@ -289,7 +289,7 @@ async function loadMessages(sessionId, preview, status) {
   updateSendBtn();
   updateBreadcrumb();
   var content = document.getElementById('content');
-  content.innerHTML = '<div class="loading">Loading messages...</div>';
+  content.innerHTML = skeletonMessages();
 
   // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
   wsAllMessages = [];
@@ -306,7 +306,7 @@ async function loadMessages(sessionId, preview, status) {
       if (result.needSync) {
         var online = deviceOnlineMap[appState.device] !== false;
         content.innerHTML = online
-          ? '<div class="loading">Syncing history from bridge...</div>'
+          ? skeletonMessages()
           : '<div class="empty">Bridge offline — no cached messages</div>';
       } else {
         content.innerHTML = '<div class="empty">No messages</div>';

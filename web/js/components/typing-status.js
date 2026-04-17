@@ -1,6 +1,6 @@
 // CC-style status — "✢ Coding..." with typing cursor animation while CC is running
 (function () {
-  var FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+  var FRAMES = ['·', '✢', '✦', '✶', '✻', '✽', '✻', '✶', '✦', '✢'];
   var GLYPH_MS = 120;
   var TYPING_MS = 800;
   var PAUSE_MS = 1500;
@@ -61,14 +61,19 @@
       return;
     }
 
+    var content = document.getElementById('content');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cc-spinner';
       el.className = 'cc-spinner';
-      var bar = document.getElementById('input-bar');
-      (bar ? bar.parentNode : document.body).insertBefore(el, bar);
+      if (content) content.appendChild(el);
+      else document.body.appendChild(el);
+    }
+    if (content && el.parentNode === content && el !== content.lastElementChild) {
+      content.appendChild(el);
     }
     el.style.display = 'flex';
+    if (content) content.scrollTop = content.scrollHeight;
 
     if (!_glyphIv) {
       var frame = 0;

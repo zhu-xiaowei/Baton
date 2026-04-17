@@ -68,7 +68,7 @@ body {
 .messages { padding: 8px 12px; }
 
 /* === User message === */
-.msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 4px; border-radius: 12px; }
+.msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 8px; border-radius: 12px; }
 .msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; position: relative; }
 .msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; }
 .msg-user .msg-text.clamped::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2em; background: linear-gradient(transparent, #2d333b); pointer-events: none; }
@@ -149,6 +149,8 @@ body {
 .thinking-block { padding: 0; margin: 0; line-height: 21px; }
 .thinking-toggle { cursor: pointer; color: #8b949e; font-size: 12px; user-select: none; }
 .thinking-toggle:hover { color: #e6edf3; }
+.thinking-chevron { display: inline-block; transition: transform 0.2s ease; transform-origin: 45% 55%; }
+.thinking-toggle.open .thinking-chevron { transform: rotate(90deg); }
 .thinking-body { display: none; margin-top: 6px; color: #8b949e; font-size: 12px; white-space: pre-wrap; line-height: 1.5; max-height: 300px; overflow-y: auto; }
 
 /* === Tool node (extends tl-item) === */
@@ -403,6 +405,8 @@ body {
 .skel-mt4 { margin-top: 4px; }
 .skeleton-card { pointer-events: none; }
 .skeleton-item { pointer-events: none; }
+.skeleton-messages { pointer-events: none; }
+.skeleton-messages .skel { display: block; }
 
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
@@ -454,13 +458,13 @@ body {
 
 /* === CC Spinner (status indicator, above input bar) === */
 .cc-spinner {
-  display: none; align-items: center; gap: 8px;
-  padding: 6px 16px;
+  display: none; align-items: center; gap: 10px;
+  padding: 0 16px 16px;
   color: #8b949e; font-size: 13px;
   flex-shrink: 0;
   min-height: 28px;
 }
-.cc-spinner-glyph { font-size: 14px; color: #fff; min-width: 16px; text-align: center; line-height: 16px; height: 16px; }
+.cc-spinner-glyph { font-size: 13px; color: #fff; min-width: 14px; text-align: center; line-height: 16px; height: 16px; }
 .cc-spinner-verb { color: #fff; white-space: nowrap; line-height: 16px; height: 16px; }
 .cc-cursor { display: inline-block; width: 3px; height: 13px; background: #fff; border-radius: 1px; vertical-align: -1px; }
 
