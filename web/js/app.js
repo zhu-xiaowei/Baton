@@ -81,7 +81,7 @@ function updateBreadcrumb() {
 
 function showInputBar(visible) {
   document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
-  if (!visible) document.getElementById('scroll-bottom-btn').style.display = 'none';
+  if (!visible) { document.getElementById('scroll-bottom-btn').style.display = 'none'; wsRunning = false; updateSpinner(); }
 }
 
 function saveNav() {
@@ -329,7 +329,16 @@ async function loadMessages(sessionId, preview, status) {
       }
     }
 
-    updateSpinner();
+    // Infer running state from last assistant message (covers page refresh where status param is missing)
+    if (!status) {
+      for (var ri = wsAllMessages.length - 1; ri >= 0; ri--) {
+        if (wsAllMessages[ri].type === 'assistant') {
+          wsRunning = wsAllMessages[ri].stopReason !== 'end_turn';
+          break;
+        }
+      }
+    }
+    updateSendBtn();
 
     content.scrollTop = content.scrollHeight;
     setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);

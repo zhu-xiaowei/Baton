@@ -258,7 +258,6 @@ function updateLastTurn() {
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
       wsRunning = true;
-      updateSendBtn();
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
@@ -276,7 +275,6 @@ function updateLastTurn() {
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
     wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
-    updateSendBtn();
 
     var html = renderSingleMessage(msg, wsAllMessages);
     if (!html) continue;
@@ -310,6 +308,8 @@ function updateLastTurn() {
     }
   }
 
+  updateSendBtn();
+
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
   if (document.getElementById('permission-prompt')) {
     dismissPermissionPrompt();
@@ -318,8 +318,7 @@ function updateLastTurn() {
   checkPendingPrompts(wsAllMessages);
 
   if (wasNearBottom) {
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    setTimeout(function () { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); }, 150);
+    el.scrollTop = el.scrollHeight;
   }
   loadImages(container);
   clampOverflow(container);

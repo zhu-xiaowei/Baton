@@ -63,6 +63,7 @@
 
     var content = document.getElementById('content');
     if (!el) {
+      stopTimers();
       el = document.createElement('div');
       el.id = 'cc-spinner';
       el.className = 'cc-spinner';
@@ -73,7 +74,6 @@
       content.appendChild(el);
     }
     el.style.display = 'flex';
-    if (content) content.scrollTop = content.scrollHeight;
 
     if (!_glyphIv) {
       var frame = 0;
