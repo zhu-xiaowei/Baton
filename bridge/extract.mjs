@@ -75,6 +75,7 @@ export async function readNewMessages(filePath, sessionId) {
   const lastLine = synced.get(sessionId) ?? 0;
   const newMsgs = [];
   const metaUuids = new Set();
+  let aiTitleIdx = -1;
 
   for (let i = lastLine; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
@@ -85,7 +86,14 @@ export async function readNewMessages(filePath, sessionId) {
     if (msg.isMeta && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
-    if (extracted.uuid) newMsgs.push(extracted);
+    if (!extracted.uuid) continue;
+    // ai-title may appear multiple times per session (title updates); keep only the latest
+    if (extracted.type === 'ai-title') {
+      if (aiTitleIdx >= 0) newMsgs[aiTitleIdx] = extracted;
+      else { aiTitleIdx = newMsgs.length; newMsgs.push(extracted); }
+      continue;
+    }
+    newMsgs.push(extracted);
   }
 
   synced.set(sessionId, lines.length);
