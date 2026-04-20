@@ -120,7 +120,7 @@ body {
 .messages > .tl-item::after { display: none; }
 
 /* Assistant text (as timeline item) */
-.assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; }
+.assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
 .assistant-text:empty { display: none; }
 
 /* === Markdown in assistant text === */
@@ -132,11 +132,12 @@ body {
 .assistant-text ul, .assistant-text ol { padding-left: 20px; margin: 4px 0; }
 .assistant-text > ul:first-child, .assistant-text > ol:first-child { margin-top: -2px; }
 .assistant-text li { margin: 2px 0; }
-.assistant-text h1, .assistant-text h2, .assistant-text h3 { margin: 12px 0 6px; font-weight: 600; }
+.assistant-text h1, .assistant-text h2, .assistant-text h3 { margin: 12px 0 6px; font-weight: 600; line-height: 1.3; }
+.assistant-text > h1:first-child, .assistant-text > h2:first-child, .assistant-text > h3:first-child { margin-top: 0; }
 .assistant-text h1 { font-size: 18px; }
 .assistant-text h2 { font-size: 16px; }
 .assistant-text h3 { font-size: 14px; }
-.assistant-text table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.assistant-text table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; width: max-content; max-width: 100%; }
 .assistant-text th, .assistant-text td { border: 1px solid #30363d; padding: 6px 10px; font-size: 12px; }
 .assistant-text th { background: #161b22; }
 .assistant-text blockquote { border-left: 3px solid #30363d; padding-left: 12px; color: #8b949e; margin: 8px 0; }
