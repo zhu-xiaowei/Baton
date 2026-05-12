@@ -412,6 +412,7 @@ body {
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
 .empty { text-align: center; padding: 40px; color: #6e7681; }
+.loading-older { text-align: center; padding: 12px; color: #8b949e; font-size: 13px; }
 
 /* === Collapsible tool body (long output) === */
 .tool-body-content.collapsible:not(.open) {

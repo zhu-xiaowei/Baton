@@ -175,6 +175,9 @@ function ensureWsAndSend(data) {
 
 // Track last rendered message index
 var wsRenderedCount = 0;
+var wsHasMore = false; // server says there are older messages
+var wsOldestTimestamp = ''; // cursor for loading older messages
+var wsLoadingOlder = false; // prevent concurrent older-message fetches
 
 /**
  * Find insertion point: scan from end, return first element with data-ts > timestamp.
@@ -358,8 +361,45 @@ async function bufferAndFetch(sessionId, after) {
       wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
     }
     wsLastTimestamp = wsAllMessages.length ? wsAllMessages[wsAllMessages.length - 1].timestamp || '' : '';
+    // Save pagination state from initial load
+    if (!after && data.hasMore !== undefined) {
+      wsHasMore = data.hasMore;
+      wsOldestTimestamp = data.oldestTimestamp || '';
+    }
     return { added: added, needSync: data.needSync };
   } catch (e) { _wsBuffer = null; throw e; }
+}
+
+/**
+ * Load older messages (triggered by scroll-to-top).
+ * Prepends to wsAllMessages and returns the loaded messages for DOM prepend.
+ */
+async function loadOlderMessages(sessionId) {
+  if (wsLoadingOlder || !wsHasMore || !wsOldestTimestamp) return null;
+  wsLoadingOlder = true;
+  try {
+    var data = await api('/api/bridge/messages', { session: sessionId, before: wsOldestTimestamp });
+    var msgs = data.messages || [];
+    wsHasMore = data.hasMore;
+    wsOldestTimestamp = data.oldestTimestamp || '';
+    // Dedup and prepend
+    var existing = {};
+    for (var i = 0; i < wsAllMessages.length; i++) existing[wsAllMessages[i].uuid] = 1;
+    var newMsgs = [];
+    for (var i = 0; i < msgs.length; i++) {
+      if (!existing[msgs[i].uuid]) {
+        newMsgs.push(msgs[i]);
+        wsMessageCount++;
+      }
+    }
+    if (newMsgs.length) {
+      wsAllMessages = newMsgs.concat(wsAllMessages);
+      wsRenderedCount += newMsgs.length;
+    }
+    return newMsgs;
+  } finally {
+    wsLoadingOlder = false;
+  }
 }
 
 // Reconnect recovery

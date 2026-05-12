@@ -283,6 +283,9 @@ function startNewSession(projectHash) {
   wsMessageCount = 0;
   wsRenderedCount = 0;
   wsLastTimestamp = '';
+  wsHasMore = false;
+  wsOldestTimestamp = '';
+  wsLoadingOlder = false;
   wsSessionId = null;
   pendingSentMessages = [];
   var content = document.getElementById('content');
@@ -306,6 +309,9 @@ async function loadMessages(sessionId, preview, status) {
   wsAllMessages = [];
   wsMessageCount = 0;
   wsLastTimestamp = '';
+  wsHasMore = false;
+  wsOldestTimestamp = '';
+  wsLoadingOlder = false;
   startWs(sessionId);
 
   try {
@@ -377,11 +383,15 @@ function scrollToBottom() {
   var btn = document.getElementById('scroll-bottom-btn');
   var content = document.getElementById('content');
 
-  // Show/hide button based on scroll position
   content.addEventListener('scroll', function () {
     if (!appState.session) return;
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
     btn.style.display = atBottom ? 'none' : 'flex';
+
+    // Load older messages when scrolling near top
+    if (content.scrollTop < 800 && wsHasMore && !wsLoadingOlder) {
+      loadOlderAndPrepend();
+    }
   });
 
   // Tap top bar to scroll to top (skip Setup/Logout links)
@@ -390,6 +400,36 @@ function scrollToBottom() {
     if (appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
   });
 })();
+
+async function loadOlderAndPrepend() {
+  if (!appState.session || appState.session === '__new__') return;
+  var content = document.getElementById('content');
+  var container = content.querySelector('.messages');
+  if (!container) return;
+
+  // Show loading indicator at top
+  var loader = document.createElement('div');
+  loader.className = 'loading-older';
+  loader.textContent = 'Loading...';
+  container.insertBefore(loader, container.firstChild);
+
+  var prevHeight = content.scrollHeight;
+
+  var msgs = await loadOlderMessages(appState.session);
+  // Remove loader
+  if (loader.parentNode) loader.remove();
+  if (!msgs || !msgs.length) return;
+
+  // Render older messages and prepend
+  var html = renderMessages(msgs);
+  container.insertAdjacentHTML('afterbegin', html);
+  loadImages(container);
+  clampOverflow(container);
+
+  // Restore scroll position so content doesn't jump
+  var newHeight = content.scrollHeight;
+  content.scrollTop += (newHeight - prevHeight);
+}
 
 // Auto-connect + restore last session
 (function () {

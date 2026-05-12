@@ -208,22 +208,8 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
     return {"sessions": sessions}
 
 
-@read_router.get("/messages")
-async def get_messages(request: Request, session: str = Query(...), after: str = Query(None)):
-    _, messages_table = _tables()
-
-    if after:
-        # Range query: sk > "timestamp#\xff" to skip all messages at the exact cutoff timestamp
-        items = _query_all(
-            messages_table,
-            KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").gt(f"{after}#\xff"),
-        )
-    else:
-        items = _query_all(
-            messages_table,
-            KeyConditionExpression=Key("sessionId").eq(session),
-        )
-
+def _parse_messages(items):
+    """Convert DDB items to message dicts."""
     messages = []
     for item in items:
         content = item.get("content", "")
@@ -246,10 +232,70 @@ async def get_messages(request: Request, session: str = Query(...), after: str =
             except (json.JSONDecodeError, TypeError):
                 pass
         messages.append(msg)
+    return messages
 
-    need_sync = len(messages) == 0 and not after
+
+def _query_page(table, limit, **kwargs):
+    """Query DDB with a limit, returning (items, has_more)."""
+    items = []
+    response = table.query(Limit=limit, **kwargs)
+    items.extend(response.get("Items", []))
+    has_more = "LastEvaluatedKey" in response
+    if len(items) >= limit:
+        return items[:limit], True
+    while "LastEvaluatedKey" in response and len(items) < limit:
+        remaining = limit - len(items)
+        response = table.query(Limit=remaining, ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
+        items.extend(response.get("Items", []))
+    return items[:limit], "LastEvaluatedKey" in response or len(items) > limit
+
+
+@read_router.get("/messages")
+async def get_messages(
+    request: Request,
+    session: str = Query(...),
+    after: str = Query(None),
+    before: str = Query(None),
+    limit: int = Query(None),
+):
+    _, messages_table = _tables()
+
+    if after:
+        # Forward query: used by WS reconnect recovery
+        items = _query_all(
+            messages_table,
+            KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").gt(f"{after}#\xff"),
+        )
+        messages = _parse_messages(items)
+        return {"messages": messages, "hasMore": False, "needSync": False}
+
+    page_limit = min(limit, 500) if limit else 100
+
+    if before:
+        # Reverse query: fetch messages BEFORE a timestamp (older messages)
+        items, has_more = _query_page(
+            messages_table,
+            page_limit,
+            KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").lt(f"{before}"),
+            ScanIndexForward=False,
+        )
+        items.reverse()
+        messages = _parse_messages(items)
+        oldest_ts = messages[0]["timestamp"] if messages else ""
+        return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_ts, "needSync": False}
+
+    # Default: fetch latest N messages (reverse scan, then flip)
+    items, has_more = _query_page(
+        messages_table,
+        page_limit,
+        KeyConditionExpression=Key("sessionId").eq(session),
+        ScanIndexForward=False,
+    )
+    items.reverse()
+    messages = _parse_messages(items)
+
+    need_sync = len(messages) == 0
     if need_sync:
-        # Trigger bridge to sync this session via WS
         try:
             account_id = _account_id(request)
             ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
@@ -259,7 +305,8 @@ async def get_messages(request: Request, session: str = Query(...), after: str =
         except Exception as e:
             print(f"needSync trigger error: {e}")
 
-    return {"messages": messages, "needSync": need_sync}
+    oldest_ts = messages[0]["timestamp"] if messages else ""
+    return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_ts, "needSync": need_sync}
 
 
 @read_router.get("/install")
