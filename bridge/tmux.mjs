@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import { readableProjectName } from './session.mjs';
@@ -57,10 +57,11 @@ export function findTmuxPane(pid) {
 /** Send keystrokes to a tmux pane. */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  // Use -- to prevent send-keys from interpreting text as flags
-  // Escape double quotes in text
-  const escaped = text.replace(/"/g, '\\"');
-  execSync(`tmux send-keys -t "${target}" -- "${escaped}" Enter`, { stdio: 'ignore' });
+  spawnSync('tmux', [
+    'send-keys', '-t', target, 'C-u', ';',
+    'send-keys', '-l', '-t', target, '--', text, ';',
+    'send-keys', '-t', target, 'Enter'
+  ], { stdio: 'ignore' });
 }
 
 /**
@@ -200,11 +201,10 @@ export function sendTypeInput(sessionId, n, text) {
     for (let i = 0; i < n; i++) {
       execSync(`tmux send-keys -t "${target}" Down`, { stdio: 'ignore' });
     }
-    // Type the text directly (inline input activates on focus)
-    const escaped = text.replace(/"/g, '\\"');
-    execSync(`tmux send-keys -t "${target}" -- "${escaped}"`, { stdio: 'ignore' });
-    // Submit
-    execSync(`tmux send-keys -t "${target}" Enter`, { stdio: 'ignore' });
+    spawnSync('tmux', [
+      'send-keys', '-l', '-t', target, '--', text, ';',
+      'send-keys', '-t', target, 'Enter'
+    ], { stdio: 'ignore' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };

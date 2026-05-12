@@ -1,6 +1,7 @@
 // App state, routing, page loading
 var appState = { device: null, project: null, session: null, sessionPreview: '' };
 var deviceOnlineMap = {};
+var _navVersion = 0;
 
 function osName(os) {
   return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown';
@@ -106,6 +107,7 @@ function shortModel(m) {
 
 // ---- Devices ----
 async function loadDevices() {
+  var myNav = ++_navVersion;
   appState = { device: null, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
@@ -121,6 +123,7 @@ async function loadDevices() {
 
   // Fire both independently
   api('/api/bridge/active-sessions').then(function (activeData) {
+    if (_navVersion !== myNav) return;
     var el = document.getElementById('active-section');
     var titleEl = el && el.previousElementSibling;
     if (!el) return;
@@ -145,6 +148,7 @@ async function loadDevices() {
         + '</div>';
     }).join('');
   }).catch(function () {
+    if (_navVersion !== myNav) return;
     var el = document.getElementById('active-section');
     var titleEl = el && el.previousElementSibling;
     if (el) el.remove();
@@ -152,6 +156,7 @@ async function loadDevices() {
   });
 
   api('/api/bridge/devices').then(function (devData) {
+    if (_navVersion !== myNav) return;
     var el = document.getElementById('devices-section');
     var titleEl = el && el.previousElementSibling;
     if (!el) return;
@@ -172,6 +177,7 @@ async function loadDevices() {
     }).join('');
     showStats(devData.devices.length + ' device(s)');
   }).catch(function (e) {
+    if (_navVersion !== myNav) return;
     var el = document.getElementById('devices-section');
     if (el) el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   });
@@ -179,6 +185,7 @@ async function loadDevices() {
 
 // ---- Projects ----
 async function loadProjects(device) {
+  var myNav = ++_navVersion;
   appState = { device: device, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
@@ -189,6 +196,7 @@ async function loadProjects(device) {
 
   try {
     var data = await api('/api/bridge/projects', { device: device });
+    if (_navVersion !== myNav) return;
     content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
       var rc = p.runningCount || 0, ic = p.idleCount || 0;
       return '<div class="item" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\')">'
@@ -198,11 +206,12 @@ async function loadProjects(device) {
         + '</div>';
     }).join('') + '</div>';
     showStats(data.projects.length + ' project(s)');
-  } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- Sessions ----
 async function loadSessions(device, projectHash, projectName) {
+  var myNav = ++_navVersion;
   disconnectWs();
   showInputBar(false);
   var content = document.getElementById('content');
@@ -210,6 +219,7 @@ async function loadSessions(device, projectHash, projectName) {
 
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
+    if (_navVersion !== myNav) return;
     appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
     updateBreadcrumb();
     saveNav();
@@ -221,7 +231,7 @@ async function loadSessions(device, projectHash, projectName) {
         + '</div>';
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
-  } catch (e) { content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 }
 
 function createNewProject() {
@@ -283,6 +293,7 @@ function startNewSession(projectHash) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
+  var myNav = ++_navVersion;
   appState.session = sessionId;
   appState.sessionPreview = preview || '';
   wsRunning = (status === 'running');
@@ -300,6 +311,7 @@ async function loadMessages(sessionId, preview, status) {
   try {
     var t0 = performance.now();
     var result = await bufferAndFetch(sessionId, '');
+    if (_navVersion !== myNav) return;
     var latency = Math.round(performance.now() - t0);
 
     if (wsAllMessages.length === 0) {
@@ -348,6 +360,7 @@ async function loadMessages(sessionId, preview, status) {
     wsRenderedCount = wsAllMessages.length;
     showStats(wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
+    if (_navVersion !== myNav) return;
     _wsBuffer = null;
     content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
