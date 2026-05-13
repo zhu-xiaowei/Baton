@@ -74,8 +74,12 @@ function connect() {
   _ws = new WebSocket(url, {
     lookup: (hostname, opts, cb) => {
       dns.resolve4(hostname, (err, addrs) => {
-        if (err) return dns.lookup(hostname, opts, cb);
-        cb(null, addrs[0], 4);
+        if (err || !addrs || !addrs.length) return dns.lookup(hostname, opts, cb);
+        if (opts.all) {
+          cb(null, addrs.map(a => ({ address: a, family: 4 })));
+        } else {
+          cb(null, addrs[0], 4);
+        }
       });
     },
   });
