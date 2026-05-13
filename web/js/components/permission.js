@@ -1,8 +1,9 @@
 // ---- Permission Prompt ----
 
 function showPermissionPrompt(msg) {
-  // Remove any existing prompt
-  dismissPermissionPrompt();
+  // Remove any existing prompt DOM (without clearing wizard state)
+  var existing = document.getElementById('permission-prompt');
+  if (existing) existing.remove();
 
   // Disable bottom input bar while prompt is active
   var inputBar = document.getElementById('input-bar');
@@ -65,6 +66,23 @@ function handlePermissionOption(btn) {
 
   // Direct action — send value as keystroke
   wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value });
+  if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
+    _wizardIndex++;
+    var nq = _wizardQuestions[_wizardIndex];
+    var stepPrefix = '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ';
+    var opts = (nq.options || []).map(function(o, i) { return { label: o.label, description: o.description || '', value: 'arrow:' + i, key: String(i+1) }; });
+    opts.push({ label: 'Type something...', value: 'type:' + (nq.options||[]).length, key: String((nq.options||[]).length+1), hasInput: true, placeholder: 'Type your response...' });
+    showPermissionPrompt({ type: 'ask_user', title: stepPrefix + (nq.header ? '[' + nq.header + '] ' : '') + (nq.question || ''), options: opts });
+    return;
+  }
+  if (_wizardQuestions && _wizardIndex === _wizardQuestions.length - 1) {
+    showPermissionPrompt({ type: 'ask_user', title: 'Submit answers?', options: [
+      { label: 'Submit answers', value: 'arrow:0', key: '1' },
+      { label: 'Cancel', value: 'arrow:1', key: '2' }
+    ]});
+    _wizardQuestions = null; _wizardIndex = 0;
+    return;
+  }
   dismissPermissionPrompt();
 }
 
@@ -73,6 +91,23 @@ function submitPermissionWithInput(input, value) {
   if (!text) return; // require input
   // Send as type:N:text — bridge navigates to option, types text, Enter
   wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value + ':' + text });
+  if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
+    _wizardIndex++;
+    var nq = _wizardQuestions[_wizardIndex];
+    var stepPrefix = '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ';
+    var opts = (nq.options || []).map(function(o, i) { return { label: o.label, description: o.description || '', value: 'arrow:' + i, key: String(i+1) }; });
+    opts.push({ label: 'Type something...', value: 'type:' + (nq.options||[]).length, key: String((nq.options||[]).length+1), hasInput: true, placeholder: 'Type your response...' });
+    showPermissionPrompt({ type: 'ask_user', title: stepPrefix + (nq.header ? '[' + nq.header + '] ' : '') + (nq.question || ''), options: opts });
+    return;
+  }
+  if (_wizardQuestions && _wizardIndex === _wizardQuestions.length - 1) {
+    showPermissionPrompt({ type: 'ask_user', title: 'Submit answers?', options: [
+      { label: 'Submit answers', value: 'arrow:0', key: '1' },
+      { label: 'Cancel', value: 'arrow:1', key: '2' }
+    ]});
+    _wizardQuestions = null; _wizardIndex = 0;
+    return;
+  }
   dismissPermissionPrompt();
 }
 
@@ -85,6 +120,7 @@ function cancelPermissionPrompt() {
 function dismissPermissionPrompt() {
   if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
   _pendingToolUseId = null;
+  _wizardQuestions = null; _wizardIndex = 0;
   var el = document.getElementById('permission-prompt');
   if (el) el.remove();
   // Re-enable bottom input bar
@@ -101,9 +137,13 @@ function dismissPermissionPrompt() {
 /** Build prompt info from a tool_use block. Returns null if not a user-facing prompt. */
 function buildClientPrompt(toolName, toolInput) {
   if (toolName === 'AskUserQuestion') {
-    var q = (toolInput.questions && toolInput.questions[0]) || toolInput;
+    var allQ = toolInput.questions || [toolInput];
+    if (allQ.length > 1) { _wizardQuestions = allQ; _wizardIndex = 0; }
+    else { _wizardQuestions = null; _wizardIndex = 0; }
+    var q = allQ[_wizardIndex];
     var question = q.question || q.text || '';
     var header = q.header || '';
+    var stepPrefix = _wizardQuestions ? '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ' : '';
     var rawOptions = q.options || [];
     var options = rawOptions.map(function (opt, i) {
       return {
@@ -124,7 +164,7 @@ function buildClientPrompt(toolName, toolInput) {
     });
     return {
       type: 'ask_user',
-      title: header ? '[' + header + '] ' + question : question,
+      title: stepPrefix + (header ? '[' + header + '] ' + question : question),
       options: options
     };
   }
@@ -177,6 +217,10 @@ var _toolApproveMode = null;
 var _pendingToolUseId = null;
 var _pendingToolTimer = null;
 var TOOL_PROMPT_DELAY = 5000; // 5s — first-time detection wait
+
+// Multi-question wizard state
+var _wizardQuestions = null;
+var _wizardIndex = 0;
 
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {

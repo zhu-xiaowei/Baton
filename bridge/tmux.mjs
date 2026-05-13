@@ -54,12 +54,15 @@ export function findTmuxPane(pid) {
   return null;
 }
 
-/** Send keystrokes to a tmux pane. */
+/** Send text to a tmux pane via bracketed paste (atomic, no size limit, CJK-safe). */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  spawnSync('tmux', ['send-keys', '-t', target, 'C-u'], { stdio: 'ignore' });
-  spawnSync('tmux', ['send-keys', '-l', '-t', target, '--', text], { stdio: 'ignore' });
-  spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
+  // Clear any partial input (Escape is reliable for Ink apps, C-u is not)
+  spawnSync('tmux', ['send-keys', '-t', target, 'Escape'], { stdio: 'ignore' });
+  // Load buffer from stdin — no size limit (set-buffer caps at ~16KB)
+  spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Paste with bracketed paste (-p) + no LF→CR (-r) + delete buffer (-d), then Enter — chained for atomicity
+  spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
 }
 
 /**
@@ -199,10 +202,8 @@ export function sendTypeInput(sessionId, n, text) {
     for (let i = 0; i < n; i++) {
       execSync(`tmux send-keys -t "${target}" Down`, { stdio: 'ignore' });
     }
-    spawnSync('tmux', [
-      'send-keys', '-l', '-t', target, '--', text, ';',
-      'send-keys', '-t', target, 'Enter'
-    ], { stdio: 'ignore' });
+    spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
+    spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
