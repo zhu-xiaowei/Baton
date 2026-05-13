@@ -241,7 +241,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
         const ready = await waitForCCReady(tmuxName);
         if (!ready) {
           try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-          return { ok: false, error: 'Claude did not become ready after 15s.' };
+          return { ok: false, error: 'Claude did not become ready after 30s.' };
         }
         return { ok: true, tmuxName };
       })();
@@ -286,7 +286,7 @@ async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
     const ready = await waitForCCReady(tmuxName);
     if (!ready) {
       try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-      return { ok: false, error: 'Claude did not become ready after 15s.' };
+      return { ok: false, error: 'Claude did not become ready after 30s.' };
     }
 
     sendKeys(tmuxName, text);
@@ -342,11 +342,11 @@ async function handleCreateProject(rawPath) {
 
 /**
  * Wait for Claude Code to be ready in a tmux pane.
- * Checks pane content for the '>' prompt. Polls every 500ms, up to 15s.
+ * Checks pane content for the '>' prompt. Polls every 500ms, up to 30s.
  */
 async function waitForCCReady(tmuxTarget) {
   let trustAccepted = false;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 500));
     try {
       const content = execSync(
@@ -364,7 +364,7 @@ async function waitForCCReady(tmuxTarget) {
       if (/^[>❯]\s*$/m.test(content)) return true;
     } catch {}
   }
-  console.log(`[ws] CC did not become ready within 15s`);
+  console.log(`[ws] CC did not become ready within 30s`);
   return false;
 }
 

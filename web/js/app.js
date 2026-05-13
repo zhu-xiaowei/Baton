@@ -338,14 +338,7 @@ async function loadMessages(sessionId, preview, status) {
     content.innerHTML = '<div class="messages">' + renderMessages(wsAllMessages) + '</div>';
     showInputBar(true);
 
-    // Update breadcrumb with latest ai-title
-    for (var i = wsAllMessages.length - 1; i >= 0; i--) {
-      if (wsAllMessages[i].type === 'ai-title' && wsAllMessages[i].content) {
-        appState.sessionPreview = typeof wsAllMessages[i].content === 'string' ? wsAllMessages[i].content : '';
-        updateBreadcrumb(); saveNav();
-        break;
-      }
-    }
+    updateTitleFromMessages();
 
     // Infer running state from last assistant message (covers page refresh where status param is missing)
     if (!status) {

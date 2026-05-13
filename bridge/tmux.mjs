@@ -57,11 +57,9 @@ export function findTmuxPane(pid) {
 /** Send keystrokes to a tmux pane. */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  spawnSync('tmux', [
-    'send-keys', '-t', target, 'C-u', ';',
-    'send-keys', '-l', '-t', target, '--', text, ';',
-    'send-keys', '-t', target, 'Enter'
-  ], { stdio: 'ignore' });
+  spawnSync('tmux', ['send-keys', '-t', target, 'C-u'], { stdio: 'ignore' });
+  spawnSync('tmux', ['send-keys', '-l', '-t', target, '--', text], { stdio: 'ignore' });
+  spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
 }
 
 /**
@@ -92,14 +90,14 @@ export function cleanStaleSessions() {
 
 /** Create a new detached tmux session and run a command. */
 export function newTmuxSession(name, cwd, command) {
-  // Clean stale sessions in background, don't block creation
   setTimeout(cleanStaleSessions, 0);
   if (!hasTmux()) throw new Error('tmux not installed');
-  // Kill existing session with same name (CC may have exited but tmux lingers)
   try { execSync(`tmux kill-session -t "${name}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-  execSync(`tmux new-session -d -s "${name}" -c "${cwd}"`, { stdio: 'ignore' });
+
+  execSync(`tmux new-session -d -s "${name}" -c "${cwd}"`);
+
   if (command) {
-    execSync(`tmux send-keys -t "${name}" "${command}" Enter`, { stdio: 'ignore' });
+    execSync(`tmux send-keys -t "${name}" "${command}" Enter`);
   }
 }
 

@@ -4,6 +4,16 @@ var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : windo
 // iOS: viewport-fit=cover handles keyboard avoidance natively.
 // Do NOT set body.style.height here — it breaks the flex layout when keyboard opens.
 
+function updateTitleFromMessages() {
+  for (var i = wsAllMessages.length - 1; i >= 0; i--) {
+    if (wsAllMessages[i].type === 'ai-title' && wsAllMessages[i].content) {
+      appState.sessionPreview = typeof wsAllMessages[i].content === 'string' ? wsAllMessages[i].content : '';
+      updateBreadcrumb(); saveNav();
+      return;
+    }
+  }
+}
+
 // WebSocket connection management
 var ws = null;
 var wsSessionId = null;
@@ -99,6 +109,7 @@ function connectWs(_, projectHash) {
             loadImages(container);
             clampOverflow(container);
             container.parentElement.scrollTop = container.parentElement.scrollHeight;
+            updateTitleFromMessages();
           }
         }).catch(function () {});
       }
@@ -269,8 +280,7 @@ function updateLastTurn() {
 
     // ai-title
     if (msg.type === 'ai-title') {
-      var title = typeof msg.content === 'string' ? msg.content : '';
-      if (title) { appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
+      updateTitleFromMessages();
       continue;
     }
 
