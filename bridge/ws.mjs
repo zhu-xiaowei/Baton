@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import dns from 'dns';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -70,7 +71,14 @@ function connect() {
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
-  _ws = new WebSocket(url);
+  _ws = new WebSocket(url, {
+    lookup: (hostname, opts, cb) => {
+      dns.resolve4(hostname, (err, addrs) => {
+        if (err) return dns.lookup(hostname, opts, cb);
+        cb(null, addrs[0], 4);
+      });
+    },
+  });
 
   _ws.on('open', () => {
     console.log('[ws] connected');
