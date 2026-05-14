@@ -398,6 +398,7 @@ async def get_install(request: Request, name: str = Query(None)):
         f'{server} --key {api_key} --name $NAME\n'
         'Restart=on-failure\n'
         'RestartSec=5\n'
+        'KillMode=process\n'
         '[Install]\n'
         'WantedBy=default.target\n'
         'SVC_EOF\n'

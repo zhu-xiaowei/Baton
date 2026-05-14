@@ -54,12 +54,13 @@ export function findTmuxPane(pid) {
   return null;
 }
 
-/** Send text to a tmux pane via bracketed paste (atomic, no size limit, CJK-safe). */
+/** Send text to a tmux pane via paste-buffer (atomic, no size limit, CJK-safe). */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  spawnSync('tmux', ['send-keys', '-t', target, 'Escape'], { stdio: 'ignore' });
+  spawnSync('tmux', ['send-keys', '-t', target, 'C-u'], { stdio: 'ignore' });
   spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
-  spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
+  spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-d'], { stdio: 'ignore' });
+  spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
 }
 
 /**
@@ -200,7 +201,8 @@ export function sendTypeInput(sessionId, n, text) {
       spawnSync('tmux', ['send-keys', '-t', target, 'Down'], { stdio: 'ignore' });
     }
     spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
-    spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
+    spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-d'], { stdio: 'ignore' });
+    spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
