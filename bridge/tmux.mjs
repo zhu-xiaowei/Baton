@@ -57,11 +57,8 @@ export function findTmuxPane(pid) {
 /** Send text to a tmux pane via bracketed paste (atomic, no size limit, CJK-safe). */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  // Clear any partial input (Escape is reliable for Ink apps, C-u is not)
   spawnSync('tmux', ['send-keys', '-t', target, 'Escape'], { stdio: 'ignore' });
-  // Load buffer from stdin — no size limit (set-buffer caps at ~16KB)
   spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
-  // Paste with bracketed paste (-p) + no LF→CR (-r) + delete buffer (-d), then Enter — chained for atomicity
   spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
 }
 
@@ -178,9 +175,9 @@ export function sendArrowSelect(sessionId, n) {
 
   try {
     for (let i = 0; i < n; i++) {
-      execSync(`tmux send-keys -t "${target}" Down`, { stdio: 'ignore' });
+      spawnSync('tmux', ['send-keys', '-t', target, 'Down'], { stdio: 'ignore' });
     }
-    execSync(`tmux send-keys -t "${target}" Enter`, { stdio: 'ignore' });
+    spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -200,7 +197,7 @@ export function sendTypeInput(sessionId, n, text) {
   try {
     // Navigate to the "Type something" / "Other" option
     for (let i = 0; i < n; i++) {
-      execSync(`tmux send-keys -t "${target}" Down`, { stdio: 'ignore' });
+      spawnSync('tmux', ['send-keys', '-t', target, 'Down'], { stdio: 'ignore' });
     }
     spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
     spawnSync('tmux', ['paste-buffer', '-b', 'bridge_send', '-t', target, '-dpr', ';', 'send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
@@ -220,7 +217,7 @@ export function sendKey(sessionId, key) {
   const target = findTmuxTargetForSession(sessionId);
   if (!target) return { ok: false, error: 'session not found in tmux' };
   try {
-    execSync(`tmux send-keys -t "${target}" "${key}"`, { stdio: 'ignore' });
+    spawnSync('tmux', ['send-keys', '-t', target, key], { stdio: 'ignore' });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
