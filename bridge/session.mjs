@@ -23,7 +23,7 @@ export function getPreview(filePath) {
           const content = msg.message.content;
           const text = typeof content === 'string' ? content
             : Array.isArray(content) ? (content.find(c => c.type === 'text')?.text || '') : '';
-          if (text.length > 3 && !text.startsWith('<') && text !== 'Warmup') {
+          if (text.length > 0 && !text.startsWith('<') && text !== 'Warmup') {
             firstUserMsg = text.slice(0, 100);
           }
         }

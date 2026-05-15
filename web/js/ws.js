@@ -13,7 +13,7 @@ function updateTitleFromMessages() {
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
     if (!firstUser && m.type === 'user') {
       var t = extractMsgText(m).trim();
-      if (t && t.length > 3) firstUser = t.slice(0, 100);
+      if (t) firstUser = t.slice(0, 100);
     }
   }
   var title = customTitle || aiTitle || lastPrompt || firstUser;

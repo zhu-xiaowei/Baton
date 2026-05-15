@@ -452,7 +452,7 @@ async function loadOlderAndPrepend() {
       history.replaceState(null, '', location.pathname + location.search);
       var seg = hash.split('/').map(decodeURIComponent);
       var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
-      if (seg.length >= 3 && seg[2]) {
+      if (seg.length >= 3 && seg[2] && seg[2] !== '__new__') {
         appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
         loadMessages(seg[2], '');
       } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
@@ -461,7 +461,7 @@ async function loadOlderAndPrepend() {
     } else if (nav) {
       try {
         var s = JSON.parse(nav);
-        if (s.session) {
+        if (s.session && s.session !== '__new__') {
           appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
           loadMessages(s.session, s.sessionPreview);
         } else if (s.project) {
