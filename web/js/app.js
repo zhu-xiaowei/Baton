@@ -84,10 +84,14 @@ function updateBreadcrumb() {
     var titleText = esc(appState.sessionPreview || appState.session.slice(0, 8) + '...');
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
   }
-  el.innerHTML = '<div class="breadcrumb-nav">'
+  el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
     + '</div>';
   el.style.display = parts.length > 1 ? 'flex' : 'none';
+}
+
+function toggleBreadcrumbExpand(nav) {
+  nav.classList.toggle('expanded');
 }
 
 function showInputBar(visible) {
@@ -237,7 +241,7 @@ async function loadSessions(device, projectHash, projectName) {
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
       var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
-      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status);return false;">'
+      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="if(window.getSelection().toString())return false;loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status);return false;">'
         + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
         + '</a>';
