@@ -102,13 +102,14 @@ function connect() {
     }
   });
 
-  _ws.on('close', () => {
-    console.log('[ws] disconnected, reconnecting...');
+  _ws.on('close', (code, reason) => {
+    console.log(`[ws] disconnected (code=${code}, reason=${reason?.toString() || ''}), reconnecting...`);
     scheduleReconnect();
   });
 
   _ws.on('error', (err) => {
     console.error(`[ws] error: ${err.message} (code: ${err.code}, type: ${err.type})`);
+    scheduleReconnect();
   });
 
   _ws.on('unexpected-response', (_req, res) => {
