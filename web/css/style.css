@@ -16,13 +16,12 @@ body {
 .top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .top-title { font-weight: 600; color: #e6edf3; }
-.top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; color: #6e7681; text-decoration: none; transition: all 0.15s; }
+.top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; transition: all 0.15s; }
 .top-gear:hover { color: #e6edf3; background: #21262d; }
 
 /* === Breadcrumb === */
-.breadcrumb { padding: 6px 46px 6px 8px; background: #0d1117; border-bottom: 1px solid #30363d; font-size: 12px; color: #484f58; display: none; flex-shrink: 0; position: relative; z-index: 10; }
-.breadcrumb-title { font-size: 13px; color: #c9d1d9; line-height: 1.8; }
-.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 6px; }
+.breadcrumb { padding: 6px 12px 6px 8px; background: #0d1117; border-bottom: 1px solid #30363d; font-size: 12px; color: #484f58; display: none; flex-shrink: 0; position: relative; z-index: 10; }
+.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; }
 .breadcrumb-nav > span:first-child { margin-left: -6px; }
 .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title),
 .breadcrumb-nav a {
@@ -34,14 +33,14 @@ body {
 .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):hover,
 .breadcrumb-nav a:hover { background: #21262d; border-color: #484f58; color: #e6edf3; }
 .breadcrumb-sep { color: #8b949e; font-size: 13px; padding: 0 2px; vertical-align: middle; }
-.breadcrumb-title { font-size: 13px; color: #c9d1d9; vertical-align: middle; }
+.breadcrumb-title { font-size: 13px; color: #c9d1d9; line-height: 1.8; vertical-align: middle; }
 .new-session-btn {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  background: #161b22; border: 1px solid #30363d; border-radius: 50%;
-  color: #8b949e; cursor: pointer; transition: all 0.15s;
-  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  background: transparent; border: none; border-radius: 50%;
+  color: #6e7681; cursor: pointer; transition: all 0.15s;
 }
-.new-session-btn:hover { background: #21262d; border-color: #484f58; color: #e6edf3; }
+.new-session-btn svg { padding: 4px; width: 22px; height: 22px; border: 1px solid currentColor; border-radius: 50%; background: #161b22; }
+.new-session-btn:hover { background: #21262d; color: #e6edf3; }
 
 /* === Content === */
 #content { flex: 1; overflow-y: auto; overflow-x: hidden; }
