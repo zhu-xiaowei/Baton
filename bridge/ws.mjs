@@ -170,7 +170,9 @@ async function handleSyncSession(sessionId) {
     return;
   }
 
-  const msgs = await readAllMessages(filePath, sessionId);
+  const projectHash = path.basename(path.dirname(filePath));
+  const projectDir = projectHashToPath(projectHash);
+  const msgs = await readAllMessages(filePath, sessionId, projectDir);
   if (msgs.length > 0) {
     await uploadMessages(sessionId, msgs);
     console.log(`[ws] synced ${msgs.length} messages for ${sessionId.slice(0, 8)}`);

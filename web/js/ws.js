@@ -333,7 +333,6 @@ function updateLastTurn() {
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
   if (document.getElementById('permission-prompt')) {
     dismissPermissionPrompt();
-    _toolApproveMode = 'auto';
   }
   checkPendingPrompts(wsAllMessages);
 

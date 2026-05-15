@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import sharp from 'sharp';
 import { post } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES } from './config.mjs';
+import { isToolAllowed } from './permissions.mjs';
 
 // Track sync position: sessionId → line number
 export const synced = new Map();
@@ -22,7 +23,7 @@ async function processImage(base64Data) {
   return key;
 }
 
-export async function extractForApp(msg) {
+export async function extractForApp(msg, projectDir) {
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
     return { uuid: `${msg.type}_${Date.now()}`, type: msg.type, content, timestamp: msg.timestamp || new Date().toISOString() };
@@ -49,6 +50,11 @@ export async function extractForApp(msg) {
         }
         return { type: 'image', placeholder: true };
       }
+      // Mark tool_use blocks with needsPermission
+      if (block.type === 'tool_use' && msg.type === 'assistant') {
+        const allowed = isToolAllowed(block.name, block.input, projectDir);
+        return { ...block, needsPermission: !allowed };
+      }
       return block;
     });
   }
@@ -64,7 +70,7 @@ export async function extractForApp(msg) {
   return extracted;
 }
 
-export async function readNewMessages(filePath, sessionId) {
+export async function readNewMessages(filePath, sessionId, projectDir) {
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   const lastLine = synced.get(sessionId) ?? 0;
@@ -79,7 +85,7 @@ export async function readNewMessages(filePath, sessionId) {
     if (!VALID_TYPES.has(msg.type)) continue;
     if (msg.isMeta && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
-    const extracted = await extractForApp(msg);
+    const extracted = await extractForApp(msg, projectDir);
     if (!extracted.uuid) continue;
     if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
       if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
@@ -94,9 +100,9 @@ export async function readNewMessages(filePath, sessionId) {
 }
 
 // Read ALL messages from a session file (for on-demand sync)
-export async function readAllMessages(filePath, sessionId) {
+export async function readAllMessages(filePath, sessionId, projectDir) {
   synced.delete(sessionId); // Reset position to read from beginning
-  return readNewMessages(filePath, sessionId);
+  return readNewMessages(filePath, sessionId, projectDir);
 }
 
 export async function uploadMessages(sessionId, messages) {

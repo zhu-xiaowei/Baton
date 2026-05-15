@@ -118,7 +118,6 @@ function cancelPermissionPrompt() {
 }
 
 function dismissPermissionPrompt() {
-  if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
   _pendingToolUseId = null;
   _wizardQuestions = null; _wizardIndex = 0;
   var el = document.getElementById('permission-prompt');
@@ -211,16 +210,10 @@ function buildClientPrompt(toolName, toolInput) {
   return null;
 }
 
-// Tool approval mode detection: in-memory only, reset on page refresh
-// null = not yet detected, 'auto' = auto-approved, 'manual' = needs confirmation
-var _toolApproveMode = null;
-var _pendingToolUseId = null;
-var _pendingToolTimer = null;
-var TOOL_PROMPT_DELAY = 5000; // 5s — first-time detection wait
-
 // Multi-question wizard state
 var _wizardQuestions = null;
 var _wizardIndex = 0;
+var _pendingToolUseId = null;
 
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
@@ -242,50 +235,17 @@ function checkPendingPrompts(messages) {
     });
   });
   if (hasResult) {
-    // tool_result arrived → dismiss any visible prompt
-    if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
     _pendingToolUseId = null;
     dismissPermissionPrompt();
-    if (!_toolApproveMode) _toolApproveMode = 'auto';
     return;
   }
+
+  // Bridge marks each tool_use with needsPermission — trust it
+  if (!toolUse.needsPermission) return;
 
   var prompt = buildClientPrompt(toolUse.name, toolUse.input);
   if (!prompt) return;
 
-  // AskUserQuestion / ExitPlanMode → always show immediately
-  if (prompt.type === 'ask_user' || prompt.type === 'plan_approval') {
-    if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
-    _pendingToolUseId = null;
-    showPermissionPrompt(prompt);
-    return;
-  }
-
-  // Bash/Edit/Write — mode already detected → instant decision
-  if (_toolApproveMode === 'auto') return;
-  if (_toolApproveMode === 'manual') {
-    showPermissionPrompt(prompt);
-    return;
-  }
-
-  // First time: wait 5s for tool_result to detect mode
-  if (_pendingToolUseId === toolUse.id) return; // already waiting on this one
-  if (_pendingToolTimer) { clearTimeout(_pendingToolTimer); _pendingToolTimer = null; }
   _pendingToolUseId = toolUse.id;
-  _pendingToolTimer = setTimeout(function () {
-    _pendingToolTimer = null;
-    // Re-check: tool_result might have arrived during the wait
-    var resolved = wsAllMessages.some(function (m) {
-      return Array.isArray(m.content) && m.content.some(function (c) {
-        return c.type === 'tool_result' && c.tool_use_id === _pendingToolUseId;
-      });
-    });
-    if (resolved) {
-      _toolApproveMode = 'auto';
-    } else {
-      _toolApproveMode = 'manual';
-      showPermissionPrompt(prompt);
-    }
-    _pendingToolUseId = null;
-  }, TOOL_PROMPT_DELAY);
+  showPermissionPrompt(prompt);
 }

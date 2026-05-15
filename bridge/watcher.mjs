@@ -6,8 +6,10 @@ import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSendWithAck } from './ws.mjs';
+import { projectHashToPath } from './tmux.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
+const _projectDirs = new Map(); // projectHash → resolved project directory
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
@@ -38,6 +40,11 @@ async function readAndSend(config, filename, sessionId) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
 
+  const projectHash = path.basename(path.dirname(filename));
+  if (!_projectDirs.has(projectHash)) {
+    _projectDirs.set(projectHash, projectHashToPath(projectHash));
+  }
+
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
@@ -64,7 +71,7 @@ async function readAndSend(config, filename, sessionId) {
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
 
-    const msg = await extractForApp(raw);
+    const msg = await extractForApp(raw, _projectDirs.get(projectHash));
     if (!msg.uuid) continue;
 
     const acked = await wsSendWithAck({ action: 'messages', sessionId, messages: [msg] });
