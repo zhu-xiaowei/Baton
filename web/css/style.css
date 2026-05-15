@@ -24,13 +24,15 @@ body {
 .breadcrumb-title { font-size: 13px; color: #c9d1d9; line-height: 1.8; }
 .breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 6px; }
 .breadcrumb-nav > span:first-child { margin-left: -6px; }
-.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title) {
+.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title),
+.breadcrumb-nav a {
   display: inline-block; cursor: pointer; color: #c9d1d9; background: #161b22; border: 1px solid #30363d;
   padding: 1px 5px; border-radius: 12px; font-size: 11px; white-space: nowrap;
   max-width: 140px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
-  transition: all 0.15s;
+  transition: all 0.15s; text-decoration: none;
 }
-.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):hover { background: #21262d; border-color: #484f58; color: #e6edf3; }
+.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):hover,
+.breadcrumb-nav a:hover { background: #21262d; border-color: #484f58; color: #e6edf3; }
 .breadcrumb-sep { color: #8b949e; font-size: 13px; padding: 0 2px; vertical-align: middle; }
 .breadcrumb-title { font-size: 13px; color: #c9d1d9; vertical-align: middle; }
 .new-session-btn {
@@ -46,13 +48,13 @@ body {
 
 /* === List items === */
 .list { padding: 4px 0; }
-.item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; }
+.item { padding: 12px 16px; border-bottom: 1px solid #21262d; cursor: pointer; display: block; text-decoration: none; color: inherit; }
 .item:active { background: #161b22; }
 .item-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .device-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; flex-shrink: 0; }
 .device-dot.online { background: #3fb950; }
 .device-dot.offline { background: #484f58; }
-.item-top .title { font-size: 15px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.item-top .title { font-size: 15px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .item-time { font-size: 11px; color: #6e7681; white-space: nowrap; flex-shrink: 0; }
 .item .subtitle { font-size: 12px; color: #8b949e; margin-top: 2px; }
 .item-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }

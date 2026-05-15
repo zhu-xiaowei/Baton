@@ -48,14 +48,21 @@ function showWsBanner(status) {
   }
 }
 
+function navHref(view, params) {
+  if (view === 'devices') return '#/';
+  if (view === 'projects') return '#/' + encodeURIComponent(params.device);
+  if (view === 'sessions') return '#/' + encodeURIComponent(params.device) + '/' + encodeURIComponent(params.projectHash);
+  return '#/';
+}
+
 function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
-  var parts = ['<span onclick="loadDevices()">Devices</span>'];
+  var parts = ['<a href="' + navHref('devices') + '" onclick="loadDevices();return false;">Devices</a>'];
   if (appState.device) {
-    parts.push('<span onclick="loadProjects(\'' + esc(appState.device) + '\')">' + esc(appState.device) + '</span>');
+    parts.push('<a href="' + navHref('projects', {device: appState.device}) + '" onclick="loadProjects(\'' + esc(appState.device) + '\');return false;">' + esc(appState.device) + '</a>');
   }
   if (appState.project) {
-    parts.push('<span onclick="loadSessions(\'' + esc(appState.device) + '\',\'' + esc(appState.project.hash) + '\',\'' + esc(appState.project.name) + '\')">' + esc(appState.project.name) + '</span>');
+    parts.push('<a href="' + navHref('sessions', {device: appState.device, projectHash: appState.project.hash}) + '" onclick="loadSessions(\'' + esc(appState.device) + '\',\'' + esc(appState.project.hash) + '\',\'' + esc(appState.project.name) + '\');return false;">' + esc(appState.project.name) + '</a>');
   }
   if (appState.session) {
     var label = appState.sessionPreview || appState.session.slice(0, 8) + '...';
@@ -199,11 +206,12 @@ async function loadProjects(device) {
     if (_navVersion !== myNav) return;
     content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
       var rc = p.runningCount || 0, ic = p.idleCount || 0;
-      return '<div class="item" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\')">'
+      var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
+      return '<a class="item" href="' + projHref + '" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;">'
         + '<div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
         + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
         + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
-        + '</div>';
+        + '</a>';
     }).join('') + '</div>';
     showStats(data.projects.length + ' project(s)');
   } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
@@ -225,10 +233,11 @@ async function loadSessions(device, projectHash, projectName) {
     saveNav();
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
-      return '<div class="item" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status)">'
+      var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
+      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status);return false;">'
         + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
-        + '</div>';
+        + '</a>';
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
   } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
@@ -430,7 +439,19 @@ async function loadOlderAndPrepend() {
   var nav = sessionStorage.getItem('agentpeek-nav');
   initConnection().then(function (ok) {
     if (!ok) { document.getElementById('content').innerHTML = '<div class="empty">Connection failed. <a href="landing.html" style="color:#58a6ff">Re-enter API key</a></div>'; return; }
-    if (nav) {
+    // URL hash takes priority (supports Cmd+Click new tab), then clear it
+    var hash = location.hash.replace(/^#\/?/, '');
+    if (hash) {
+      history.replaceState(null, '', location.pathname + location.search);
+      var seg = hash.split('/').map(decodeURIComponent);
+      var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
+      if (seg.length >= 3 && seg[2]) {
+        appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
+        loadMessages(seg[2], '');
+      } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
+      else if (seg.length >= 1 && seg[0]) { loadProjects(seg[0]); }
+      else { loadDevices(); }
+    } else if (nav) {
       try {
         var s = JSON.parse(nav);
         if (s.session) {

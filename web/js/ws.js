@@ -5,13 +5,19 @@ var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : windo
 // Do NOT set body.style.height here — it breaks the flex layout when keyboard opens.
 
 function updateTitleFromMessages() {
-  for (var i = wsAllMessages.length - 1; i >= 0; i--) {
-    if (wsAllMessages[i].type === 'ai-title' && wsAllMessages[i].content) {
-      appState.sessionPreview = typeof wsAllMessages[i].content === 'string' ? wsAllMessages[i].content : '';
-      updateBreadcrumb(); saveNav();
-      return;
+  var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
+  for (var i = 0; i < wsAllMessages.length; i++) {
+    var m = wsAllMessages[i];
+    if (m.type === 'custom-title' && m.content) customTitle = m.content;
+    if (m.type === 'ai-title' && m.content) aiTitle = m.content;
+    if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
+    if (!firstUser && m.type === 'user') {
+      var t = extractMsgText(m).trim();
+      if (t && t.length > 3) firstUser = t.slice(0, 100);
     }
   }
+  var title = customTitle || aiTitle || lastPrompt || firstUser;
+  if (title) { appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
 }
 
 // WebSocket connection management
@@ -59,6 +65,7 @@ function connectWs(_, projectHash) {
       }
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
+        if (m.uuid && wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
         wsAllMessages.push(m);
         wsMessageCount++;
         if (m.timestamp) wsLastTimestamp = m.timestamp;
@@ -278,8 +285,8 @@ function updateLastTurn() {
       continue;
     }
 
-    // ai-title
-    if (msg.type === 'ai-title') {
+    // Metadata types: update title only, don't render
+    if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
       updateTitleFromMessages();
       continue;
     }

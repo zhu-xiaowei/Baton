@@ -23,14 +23,9 @@ async function processImage(base64Data) {
 }
 
 export async function extractForApp(msg) {
-  // ai-title: special format
-  if (msg.type === 'ai-title') {
-    return {
-      uuid: msg.sessionId || '',
-      type: 'ai-title',
-      content: msg.aiTitle || '',
-      timestamp: msg.timestamp || '',
-    };
+  if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
+    const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
+    return { uuid: `${msg.type}_${Date.now()}`, type: msg.type, content, timestamp: msg.timestamp || new Date().toISOString() };
   }
 
   let content = msg.message?.content ?? '';
@@ -75,22 +70,20 @@ export async function readNewMessages(filePath, sessionId) {
   const lastLine = synced.get(sessionId) ?? 0;
   const newMsgs = [];
   const metaUuids = new Set();
-  let aiTitleIdx = -1;
+  const metaIdx = {}; // type → index in newMsgs (keep only latest per type)
 
   for (let i = lastLine; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
     if (!VALID_TYPES.has(msg.type)) continue;
-    // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
     if (msg.isMeta && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
     if (!extracted.uuid) continue;
-    // ai-title may appear multiple times per session (title updates); keep only the latest
-    if (extracted.type === 'ai-title') {
-      if (aiTitleIdx >= 0) newMsgs[aiTitleIdx] = extracted;
-      else { aiTitleIdx = newMsgs.length; newMsgs.push(extracted); }
+    if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
+      if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
+      else { metaIdx[extracted.type] = newMsgs.length; newMsgs.push(extracted); }
       continue;
     }
     newMsgs.push(extracted);

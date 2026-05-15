@@ -98,12 +98,14 @@
         continue;
       }
 
-      // Summary/ai-title → flush turn, render standalone
-      if (msg.type === 'summary' || msg.type === 'ai-title') {
+      // Summary → flush turn, render standalone
+      if (msg.type === 'summary') {
         flushTurn();
         html.push(renderSystemMsg(msg));
         continue;
       }
+      // Metadata types: skip rendering (used for title only)
+      if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') continue;
     }
     flushTurn();
 

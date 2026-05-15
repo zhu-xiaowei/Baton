@@ -5,7 +5,7 @@ import os from 'os';
 export const BRIDGE_HOME = path.join(os.homedir(), '.claude-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
 export const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
-export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title']);
+export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 'custom-title', 'last-prompt']);
 export const CHECK_STOPPED_INTERVAL = 300_000; // 5 min — detect disappeared CC processes
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 

@@ -62,7 +62,7 @@ async function readAndSend(config, filename, sessionId) {
     // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
     if (raw.isMeta && raw.type === 'user') { _metaUuids.add(raw.uuid); continue; }
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
-    if (raw.type === 'ai-title') gotNewTitle = true;
+    if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
 
     const msg = await extractForApp(raw);
     if (!msg.uuid) continue;

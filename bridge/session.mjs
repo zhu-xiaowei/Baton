@@ -7,14 +7,18 @@ import { CLAUDE_PROJECTS } from './config.mjs';
 export function getPreview(filePath) {
   try {
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
+    let customTitle = '';
     let aiTitle = '';
+    let lastPrompt = '';
     let firstUserMsg = '';
 
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
+        if (msg.type === 'custom-title' && msg.customTitle) customTitle = msg.customTitle;
         if (msg.type === 'ai-title' && msg.aiTitle) aiTitle = msg.aiTitle;
+        if (msg.type === 'last-prompt' && msg.lastPrompt) lastPrompt = msg.lastPrompt;
         if (!firstUserMsg && msg.type === 'user' && msg.message?.content) {
           const content = msg.message.content;
           const text = typeof content === 'string' ? content
@@ -25,7 +29,7 @@ export function getPreview(filePath) {
         }
       } catch {}
     }
-    return aiTitle || firstUserMsg;
+    return customTitle || aiTitle || lastPrompt || firstUserMsg;
   } catch {}
   return '';
 }
