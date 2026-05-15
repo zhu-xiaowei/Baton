@@ -13,7 +13,7 @@ body {
 }
 
 /* === Top bar === */
-.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .top-title { font-weight: 600; color: #e6edf3; }
 .top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; transition: all 0.15s; }
@@ -21,7 +21,7 @@ body {
 
 /* === Breadcrumb === */
 .breadcrumb { padding: 6px 12px 6px 8px; background: #0d1117; border-bottom: 1px solid #30363d; font-size: 12px; color: #484f58; display: none; flex-shrink: 0; position: relative; z-index: 10; }
-.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; }
+.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; max-height: 3.6em; overflow: hidden; }
 .breadcrumb-nav > span:first-child { margin-left: -6px; }
 .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title),
 .breadcrumb-nav a {
