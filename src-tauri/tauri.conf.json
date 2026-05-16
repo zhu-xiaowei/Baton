@@ -32,6 +32,9 @@
     ],
     "android": {
       "minSdkVersion": 24
+    },
+    "iOS": {
+      "developmentTeam": "BUA6W9H7T3"
     }
   }
 }
