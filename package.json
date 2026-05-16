@@ -1,0 +1,16 @@
+{
+  "name": "agentpeek",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "dev:android": "tauri android dev",
+    "build:android": "tauri android build --apk",
+    "dev:ios": "tauri ios dev",
+    "build:ios": "tauri ios build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0"
+  }
+}

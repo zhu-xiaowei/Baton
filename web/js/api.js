@@ -1,7 +1,7 @@
 // API client — reads credentials from localStorage (set by landing.html)
 var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
 var SERVER = (localStorage.getItem('_as') || (location.origin + pathPrefix)).replace(/\/$/, '');
-var KEY = (function () { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch { return ''; } })();
+var KEY = (function () { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } })();
 var WS_URL = '';
 
 function logout() {
@@ -25,9 +25,9 @@ async function initConnection() {
     try {
       var cfg = await api('/api/bridge/config');
       WS_URL = cfg.wsUrl || '';
-    } catch {}
+    } catch(e) {}
     return true;
-  } catch {
+  } catch(e) {
     return false;
   }
 }
@@ -59,7 +59,7 @@ async function loadOneImage(el) {
     imageCache.set(key, dataUrl);
     el.classList.add('loaded');
     el.innerHTML = '<img src="' + dataUrl + '" onclick="viewImage(this.src)" />';
-  } catch { el.textContent = '[Image error]'; }
+  } catch(e) { el.textContent = '[Image error]'; }
 }
 
 function loadImages(container) {

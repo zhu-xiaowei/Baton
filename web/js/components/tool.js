@@ -112,10 +112,10 @@
                 // Highlight text inside each del/ins separately, preserving the tag
                 delIns.forEach(tag => {
                   if (!tag.textContent.trim()) return;
-                  try { tag.innerHTML = hljs.highlight(tag.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+                  try { tag.innerHTML = hljs.highlight(tag.textContent, { language: lang, ignoreIllegals: true }).value; } catch(e) {}
                 });
               } else {
-                try { ctn.innerHTML = hljs.highlight(ctn.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+                try { ctn.innerHTML = hljs.highlight(ctn.textContent, { language: lang, ignoreIllegals: true }).value; } catch(e) {}
               }
             });
           }

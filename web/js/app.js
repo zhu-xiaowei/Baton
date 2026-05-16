@@ -57,7 +57,7 @@ function navHref(view, params) {
 
 function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
-  var parts = ['<a href="' + navHref('devices') + '" onclick="loadDevices();return false;">Devices</a>'];
+  var parts = [];
   if (appState.device) {
     parts.push('<a href="' + navHref('projects', {device: appState.device}) + '" onclick="loadProjects(\'' + esc(appState.device) + '\');return false;">' + esc(appState.device) + '</a>');
   }
@@ -87,7 +87,7 @@ function updateBreadcrumb() {
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
     + '</div>';
-  el.style.display = parts.length > 1 ? 'flex' : 'none';
+  el.style.display = parts.length > 0 ? 'flex' : 'none';
 }
 
 function toggleBreadcrumbExpand(nav) {
@@ -471,7 +471,7 @@ async function loadOlderAndPrepend() {
         } else {
           loadDevices();
         }
-      } catch { loadDevices(); }
+      } catch(e) { loadDevices(); }
     } else {
       loadDevices();
     }

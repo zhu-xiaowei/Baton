@@ -6,11 +6,11 @@
 
 ## What is this
 
-AgentPeek is a mobile app + bridge + server that lets you view and interact with Claude Code sessions from your phone. Three components:
+AgentPeek is a cross-platform app + bridge + server that lets you view and interact with Claude Code sessions from your phone or desktop. Three components:
 
 1. **bridge/** — Node.js script running on Mac/Linux (always-on, auto-start), watches Claude Code's `.jsonl` session files
 2. **server/** — AWS Lambda (FastAPI) + DynamoDB + WebSocket API GW, relays between bridge and app
-3. **mobile/** — React Native app (NOT YET CREATED), displays sessions and messages
+3. **web/ + src-tauri/** — Static HTML/CSS/JS frontend, packaged as native app via Tauri v2 (Android/iOS/Desktop)
 
 Brand name "AgentPeek" is only in user-facing places. Internal code uses generic names so renaming is easy.
 
@@ -19,7 +19,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 **Messages never touch DynamoDB.** They flow through WebSocket only:
 - DDB: session metadata only (device/project/session lists for browsing)
 - WS: all message content (history load + real-time)
-- App MMKV: local message cache
+- App localStorage: local auth/nav state cache
 
 ## Current Status
 
@@ -214,18 +214,35 @@ Full protocol: `docs/api.md`
 - Badge colors: running (green), idle (yellow), stopped (gray)
 - Device/Project lists show `runningCount` + `idleCount`
 
-## Phase 2C: Mobile App
+## Phase 2C: Native App (Tauri v2)
 
-所有接口已在 test viewer 验证，mobile 只需接 UI。
+Tauri v2 将 web/ 静态前端打包为原生 app，零 web 代码改动。
 
-### Step 10-12: Init + Session List + Chat + Send
-- [ ] RN 项目初始化，导航，theme，MMKV
-- [ ] Session 列表 (REST) + Chat 页面 (WS 实时 + 发送)
-- [ ] MessageBubble + MarkdownRenderer
+### Architecture
+- `src-tauri/` 在项目根目录（sibling to web/, bridge/, server/）
+- `frontendDist: "../web"` — 直接 serve 静态 HTML/CSS/JS
+- `withGlobalTauri: true` — JS 通过 `window.__TAURI__` 访问原生 API
+- Bundle identifier: `com.agentpeek.app`
+- 内置 dev server（不需要 http-server），hot-reload
 
-### SwiftChat markdown reference
-`/Users/xiaoweii/workspace/rn/swift-chat/react-native/src/core/markdown/`
-Key files: Parser.tsx, Markdown.tsx, CustomMarkdownRenderer.tsx, CustomCodeHighlighter.tsx
+### Targets
+- Android: primary（先验证）
+- iOS: secondary
+- Desktop (macOS/Win/Linux): bonus，同配置
+
+### Commands
+```
+npx tauri android dev       — Android 设备/模拟器开发
+npx tauri android build     — 发布 APK/AAB
+npx tauri ios dev           — iOS 模拟器开发
+npx tauri ios build         — 发布 IPA
+npx tauri dev               — 桌面开发
+```
+
+### Native Features (planned)
+- QR 扫码登录: `tauri-plugin-barcode-scanner` 官方插件
+- 本地通知: `tauri-plugin-notification`
+- 生物识别: `tauri-plugin-biometric`
 
 ## Future: tmux capture-pane 实时状态（未实现）
 

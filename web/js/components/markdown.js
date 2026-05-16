@@ -3,7 +3,7 @@
   marked.setOptions({
     highlight: function (code, lang) {
       if (lang && hljs.getLanguage(lang)) {
-        try { return hljs.highlight(code, { language: lang }).value; } catch {}
+        try { return hljs.highlight(code, { language: lang }).value; } catch(e) {}
       }
       return hljs.highlightAuto(code).value;
     },

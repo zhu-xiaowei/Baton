@@ -7,15 +7,9 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 
-# React Native (mobile/)
-mobile/ios/Pods/
-mobile/ios/build/
-mobile/android/build/
-mobile/android/.gradle/
-mobile/android/app/build/
-mobile/android/local.properties
-mobile/*.xcworkspace
-mobile/*.xcodeproj/xcuserdata/
+# Tauri
+src-tauri/target/
+src-tauri/gen/
 
 # Python
 __pycache__/
@@ -29,9 +23,9 @@ __pycache__/
 CLAUDE.md
 
 # Test cache
-test/__pycache__/
-test/.pytest_cache/
-test/.env
+tests/__pycache__/
+tests/.pytest_cache/
+tests/.env
 
 # IDE
 .idea/
@@ -45,7 +39,9 @@ test/.env
 # Env
 .env
 .env.local
-node_modules/
+
+# Root
+package-lock.json
 
 # Source code references
 claude-code-source-code/

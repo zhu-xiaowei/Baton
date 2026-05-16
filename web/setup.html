@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AgentPeek Setup</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 <style>
@@ -13,13 +13,16 @@
     background: #0d1117; color: #e6edf3; min-height: 100vh;
     display: flex; flex-direction: column; align-items: center;
     padding: 24px 16px;
+    padding-top: 24px;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
   }
-  .header { text-align: center; margin-bottom: 32px; }
+  .header { text-align: center; margin-bottom: 24px; }
   .header h1 { font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; }
   .header p { color: #8b949e; font-size: 13px; margin-top: 6px; }
-  .nav { margin-bottom: 24px; font-size: 13px; }
-  .nav a { color: #58a6ff; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
-  .nav a:hover { text-decoration: underline; }
+  .setup-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 8px; padding-top: env(safe-area-inset-top, 6px); background: #161b22; border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 10; margin: -24px -16px 24px -16px; width: calc(100% + 32px); }
+  .setup-bar .back { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+  .setup-bar .back:hover { color: #e6edf3; background: #21262d; }
+  .setup-bar .title { font-size: 13px; font-weight: 600; color: #e6edf3; }
   .section {
     width: 100%; max-width: 600px; background: #161b22; border: 1px solid #30363d;
     border-radius: 10px; padding: 20px; margin-bottom: 20px;
@@ -82,18 +85,18 @@
     // Remove key from URL bar to avoid exposing it
     history.replaceState(null, '', location.pathname);
   }
-  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch {
+  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch(e) {
     location.replace('landing.html');
   }
 })();
 </script>
 
-<div class="nav">
-  <a href="index.html">&larr; Back to Viewer</a>
+<div class="setup-bar">
+  <a href="index.html" class="back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></a>
+  <span class="title">Setup</span>
 </div>
 
 <div class="header">
-  <h1><span style="font-size:28px">🔭</span> AgentPeek Setup</h1>
   <p>Install the bridge on your dev machine to start syncing</p>
 </div>
 
@@ -131,7 +134,7 @@
 var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
 var SERVER = location.origin + pathPrefix;
 
-function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch { return ''; } }
+function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } }
 function loadServer() { return localStorage.getItem('_as') || SERVER; }
 
 var KEY = loadKey();

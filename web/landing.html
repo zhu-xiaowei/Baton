@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AgentPeek</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 <style>
@@ -10,11 +10,14 @@
   html { color-scheme: dark; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0d1117; color: #e6edf3; min-height: 100vh;
-    display: flex; align-items: center; justify-content: center;
+    background: #0d1117; color: #e6edf3;
+    display: flex; align-items: flex-start; justify-content: center;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    overflow-y: auto; padding-top: env(safe-area-inset-top, 0px);
   }
   .card {
     width: 100%; max-width: 400px; padding: 40px 32px; text-align: center;
+    padding-top: 80px;
   }
   .logo { font-size: 48px; margin-bottom: 8px; }
   h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
@@ -35,10 +38,6 @@
   .btn:active { background: #196c2e; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #f85149; font-size: 12px; margin-top: 8px; display: none; }
-  .links { margin-top: 24px; font-size: 12px; color: #6e7681; }
-  .links a { color: #58a6ff; text-decoration: none; }
-  .links a:hover { text-decoration: underline; }
-  .server-hint { font-size: 11px; color: #6e7681; margin-top: 4px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -48,6 +47,11 @@
   <h1>AgentPeek</h1>
   <p class="tagline">Monitor Claude Code sessions<br>from anywhere, in real-time.</p>
 
+  <div class="input-group" id="serverGroup" style="display:none">
+    <label>Server URL</label>
+    <input id="serverInput" type="url" placeholder="https://xxx.execute-api.xxx.amazonaws.com" autocomplete="off" />
+  </div>
+
   <div class="input-group">
     <label>API Key</label>
     <input id="keyInput" type="password" placeholder="Paste your API key" autocomplete="off"
@@ -56,65 +60,60 @@
 
   <button class="btn" id="connectBtn" onclick="doConnect()">Connect</button>
   <div class="error" id="error"></div>
-  <div class="server-hint" id="serverHint"></div>
-
-  <div class="links">
-    <a href="setup.html" id="setupLink" style="display:none">Setup Bridge</a>
-  </div>
 </div>
 
 <script>
-// Derive server base URL from current page origin + path prefix
-// e.g. https://xxx.execute-api.xxx.amazonaws.com/v1/landing.html -> /v1
-var pathPrefix = location.pathname.replace(/\/[^/]*$/, ''); // strip filename
-var SERVER = location.origin + pathPrefix;
-
 // Storage helpers (btoa/atob obfuscation)
 function saveKey(key) { localStorage.setItem('_ak', btoa(key)); }
-function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch { return ''; } }
+function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } }
 function saveServer(url) { localStorage.setItem('_as', url); }
 function loadServer() { return localStorage.getItem('_as') || ''; }
+
+// Determine if running inside Tauri/native (non-http origin)
+var isNativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
+var SERVER = '';
+
+if (isNativeApp) {
+  // Native app: need user to provide server URL
+  SERVER = loadServer();
+  document.getElementById('serverGroup').style.display = 'block';
+  if (SERVER) document.getElementById('serverInput').value = SERVER;
+} else {
+  // Web: derive from current origin
+  var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
+  SERVER = location.origin + pathPrefix;
+}
 
 // Check URL ?key= param
 var urlKey = new URLSearchParams(location.search).get('key');
 if (urlKey) {
   saveKey(urlKey);
-  saveServer(SERVER);
-  // Clean URL and redirect
+  if (!isNativeApp) saveServer(SERVER);
   location.replace('index.html');
 } else {
-  // Check localStorage
   var storedKey = loadKey();
   var storedServer = loadServer();
   if (storedKey && storedServer) {
-    // Already have key — go to viewer
     location.replace('index.html');
   }
 }
 
-// Show server hint
-document.getElementById('serverHint').textContent = SERVER;
 
 // Pre-fill if key exists but user navigated back (e.g. logout)
 var existing = loadKey();
 if (existing) document.getElementById('keyInput').value = existing;
 
-// Setup link: only show when we have a key
-function updateSetupLink() {
-  var link = document.getElementById('setupLink');
-  var key = document.getElementById('keyInput').value.trim() || loadKey();
-  if (key) {
-    link.href = 'setup.html';
-    link.style.display = 'inline';
-  }
-}
-updateSetupLink();
-document.getElementById('keyInput').addEventListener('input', updateSetupLink);
-
 async function doConnect() {
   var key = document.getElementById('keyInput').value.trim();
   var errEl = document.getElementById('error');
   var btn = document.getElementById('connectBtn');
+
+  // For native app, read server URL from input
+  var serverUrl = SERVER;
+  if (isNativeApp) {
+    serverUrl = (document.getElementById('serverInput').value || '').trim().replace(/\/+$/, '');
+    if (!serverUrl) { errEl.textContent = 'Please enter server URL'; errEl.style.display = 'block'; return; }
+  }
 
   if (!key) { errEl.textContent = 'Please enter an API key'; errEl.style.display = 'block'; return; }
 
@@ -123,18 +122,17 @@ async function doConnect() {
   errEl.style.display = 'none';
 
   try {
-    var res = await fetch(SERVER + '/api/health', { headers: { 'x-api-key': key } });
+    var res = await fetch(serverUrl + '/api/health', { headers: { 'x-api-key': key } });
     if (!res.ok) throw new Error('Server returned ' + res.status);
 
-    // Verify key works with a real API call
-    var devRes = await fetch(SERVER + '/api/bridge/devices', { headers: { 'x-api-key': key } });
+    var devRes = await fetch(serverUrl + '/api/bridge/devices', { headers: { 'x-api-key': key } });
     if (!devRes.ok) throw new Error('Invalid API key');
 
     saveKey(key);
-    saveServer(SERVER);
+    saveServer(serverUrl);
     location.replace('index.html');
   } catch (e) {
-    errEl.textContent = e.message;
+    errEl.textContent = e.message || 'Connection failed';
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.textContent = 'Connect';

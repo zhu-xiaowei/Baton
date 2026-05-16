@@ -1,8 +1,14 @@
 // Baseline viewport height (no keyboard) for keyboard detection
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 
-// iOS: viewport-fit=cover handles keyboard avoidance natively.
-// Do NOT set body.style.height here — it breaks the flex layout when keyboard opens.
+// Keyboard avoidance: fix body height to visualViewport so top-bar stays put
+if (window.visualViewport) {
+  var _vpHandler = function() {
+    document.body.style.height = window.visualViewport.height + 'px';
+  };
+  window.visualViewport.addEventListener('resize', _vpHandler);
+  _vpHandler();
+}
 
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
