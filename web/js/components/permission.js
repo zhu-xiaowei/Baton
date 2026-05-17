@@ -206,8 +206,20 @@ function buildClientPrompt(toolName, toolInput) {
       ]
     };
   }
-  // Not a user-facing prompt tool
-  return null;
+  // Fallback: unknown tool (MCP tools, etc.) — generic permission prompt
+  var desc = '';
+  try { desc = JSON.stringify(toolInput, null, 2); } catch(e) {}
+  if (desc.length > 500) desc = desc.substring(0, 500) + '…';
+  return {
+    type: 'tool_permission',
+    title: toolName,
+    description: desc,
+    options: [
+      { label: 'Yes', value: 'arrow:0', key: '1' },
+      { label: 'Yes, always', value: 'arrow:1', key: '2' },
+      { label: 'No', value: 'arrow:2', key: '3' }
+    ]
+  };
 }
 
 // Multi-question wizard state
