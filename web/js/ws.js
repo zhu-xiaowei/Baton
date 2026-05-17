@@ -465,11 +465,13 @@ function sendMessage() {
   // Allow sending without wsSessionId for new sessions (projectHash is used)
   if (!state.wsSessionId && state.appState.session !== '__new__') return;
 
-  // Images already uploaded — just assemble refs
+  // Images already uploaded — just assemble refs.
+  // Keep image markdown refs on the SAME line as text (separated by spaces) — putting `!`
+  // at line start triggers Ink's shell-out mode in CC, causing bash syntax errors.
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
   if (readyImages.length) {
-    var refs = readyImages.map(function (img) { return '![](claude-bridge:' + img.key + ')'; }).join('\n');
-    doSend(text + '\n' + refs, text, readyImages);
+    var refs = readyImages.map(function (img) { return '![](claude-bridge:' + img.key + ')'; }).join(' ');
+    doSend(text + ' ' + refs, text, readyImages);
   } else {
     doSend(text, text, []);
   }
