@@ -2,9 +2,22 @@
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #484f58; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+::-webkit-scrollbar-thumb { background: rgba(139, 148, 158, 0.6); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139, 148, 158, 0.9); }
+
+/* === Custom scroll indicator (iOS WKWebView fix) === */
+.si-track {
+  position: absolute; right: 0; width: 8px;
+  pointer-events: none; z-index: 200;
+  opacity: 0; transition: opacity 0.3s ease;
+}
+.si-track.si-visible { opacity: 1; }
+.si-thumb {
+  position: absolute; right: 2px; width: 4px;
+  background: rgba(180, 188, 198, 0.7); border-radius: 2px;
+  will-change: transform;
+}
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; color-scheme: dark; }
 html, body { height: 100%; overflow: clip; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -14,7 +27,7 @@ body {
 }
 
 /* === Top bar === */
-.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; padding-top: env(safe-area-inset-top, 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; padding-top: max(env(safe-area-inset-top), 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .top-title { font-weight: 600; color: #e6edf3; }
 .top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; transition: all 0.15s; }
@@ -305,6 +318,7 @@ body {
 
 /* === Input bar === */
 #input-bar { background: #0d1117; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0; display: flex; flex-direction: column; }
+#input-bar.kb-up { padding-bottom: 8px; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
@@ -458,7 +472,8 @@ body {
 
 /* === Scroll-to-bottom button === */
 .scroll-bottom-btn {
-  position: fixed; right: 16px; bottom: 80px;
+  position: fixed; right: 16px;
+  /* bottom is set by JS based on #input-bar height (see app.js positionScrollBtn) */
   width: 36px; height: 36px; border-radius: 50%;
   background: #21262d; border: 1px solid #30363d; color: #8b949e;
   cursor: pointer; align-items: center; justify-content: center;

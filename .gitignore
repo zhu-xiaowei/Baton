@@ -25,9 +25,6 @@ __pycache__/
 # Bridge
 ~/.claude-bridge/
 
-# Claude Code
-CLAUDE.md
-
 # Test cache
 tests/__pycache__/
 tests/.pytest_cache/

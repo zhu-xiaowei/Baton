@@ -388,6 +388,24 @@ function scrollToBottom() {
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 }
 
+// Keep scroll-to-bottom button 12px above #input-bar regardless of platform/keyboard/safe-area.
+function positionScrollBtn() {
+  var bar = document.getElementById('input-bar');
+  var btn = document.getElementById('scroll-bottom-btn');
+  if (!bar || !btn) return;
+  var h = bar.offsetHeight;
+  if (h === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
+  btn.style.bottom = (h + 12) + 'px';
+}
+(function () {
+  var bar = document.getElementById('input-bar');
+  if (bar && window.ResizeObserver) {
+    new ResizeObserver(positionScrollBtn).observe(bar);
+  }
+  window.addEventListener('resize', positionScrollBtn);
+  positionScrollBtn();
+})();
+
 (function () {
   var btn = document.getElementById('scroll-bottom-btn');
   var content = document.getElementById('content');

@@ -1,13 +1,32 @@
-// Baseline viewport height (no keyboard) for keyboard detection
+// Keyboard handling. Android: shrink body so flex matches visible area
+// (prevents input-bar drag). iOS: toggle kb-up to drop redundant safe-area
+// padding when keyboard covers home indicator. Both: re-pin #content to
+// bottom across the keyboard animation.
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
-// Keyboard avoidance: fix body height to visualViewport so top-bar stays put
 if (window.visualViewport) {
-  var _vpHandler = function() {
-    document.body.style.height = window.visualViewport.height + 'px';
-  };
-  window.visualViewport.addEventListener('resize', _vpHandler);
-  _vpHandler();
+  var _wasKbUp = false;
+  window.visualViewport.addEventListener('resize', function () {
+    var vv = window.visualViewport;
+    var kbUp = vv.height < _vpBaseHeight * 0.75;
+    if (!_isIOS) {
+      document.body.style.bottom = 'auto';
+      document.body.style.height = vv.height + 'px';
+    } else {
+      var bar = document.getElementById('input-bar');
+      if (bar) bar.classList.toggle('kb-up', kbUp);
+    }
+    if (kbUp !== _wasKbUp) {
+      var c = document.getElementById('content');
+      if (c && typeof appState !== 'undefined' && appState.session) {
+        [50, 200, 400].forEach(function (d) {
+          setTimeout(function () { c.scrollTop = c.scrollHeight; }, d);
+        });
+      }
+    }
+    _wasKbUp = kbUp;
+  });
 }
 
 function updateTitleFromMessages() {

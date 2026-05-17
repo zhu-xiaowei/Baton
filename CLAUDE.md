@@ -42,13 +42,15 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 
 ## Deployed Test Environment
 
+**API URL and API key live in `.env.local` (gitignored). When you need them,
+read that file** — do not hardcode them in committed code. Variables:
+`AGENTPEEK_API_URL`, `AGENTPEEK_API_KEY`. See `.env.local.example` for the
+template. S3 bucket / ECR repo / AWS account id are derived automatically by
+`server/install.sh` from the stack name + `aws sts get-caller-identity`.
+
 - **Region**: us-west-2
 - **Stack**: AgentPeekTest
-- **API URL**: https://d08cs70rb3.execute-api.us-west-2.amazonaws.com/v1
-- **API Key**: 9LS7hlOlvG4MMUYFsz3avkF7u7flnsv80CwpjD3h
-- **DDB Tables**: AgentPeekTest-bridge-sessions, AgentPeekTest-bridge-messages
-- **S3 Bucket**: agentpeektest-images-949580910056
-- **ECR**: 949580910056.dkr.ecr.us-west-2.amazonaws.com/agentpeek-api:latest
+- **DDB Tables**: `AgentPeekTest-bridge-sessions`, `AgentPeekTest-bridge-messages`
 - **Deploy**: `cd server && ./install.sh --region us-west-2 --stack AgentPeekTest`
 
 ## Key Technical Decisions
