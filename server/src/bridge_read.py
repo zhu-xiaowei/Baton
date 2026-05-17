@@ -422,15 +422,20 @@ async def get_install(request: Request, name: str = Query(None)):
 
 @read_router.get("/image/{key}")
 async def get_image(key: str):
+    """Return JPEG as base64-encoded text (text/plain).
+    The frontend (loadOneImage) reads it via res.text() and assembles a data: URL.
+    Returning text avoids API Gateway binary-encoding pitfalls and is compatible with GZip middleware.
+    """
+    import base64
     import boto3
     bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
     if not bucket:
-        return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
+        return Response(status_code=500, content="BRIDGE_IMAGES_BUCKET not configured")
     s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     try:
         obj = s3.get_object(Bucket=bucket, Key=f"images/{key}")
         body = obj["Body"].read()
-        return Response(content=body, media_type="image/jpeg")
+        return Response(content=base64.b64encode(body).decode("ascii"), media_type="text/plain")
     except s3.exceptions.NoSuchKey:
         return Response(status_code=404, content="Not found")
     except Exception as e:
