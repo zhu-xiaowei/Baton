@@ -10,7 +10,7 @@
     "tauri:dev": "tauri dev",
     "dev:android": "tauri android dev",
     "build:android": "tauri android build --apk",
-    "dev:ios": "tauri ios dev",
+    "dev:ios": "tauri ios dev \"iPhone 17 Pro\"",
     "build:ios": "tauri ios build",
     "release:ios": "./scripts/release-ios.sh"
   },

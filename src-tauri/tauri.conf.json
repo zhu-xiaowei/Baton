@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "lsof -ti:5173 >/dev/null 2>&1 || npm run dev",
     "beforeBuildCommand": "npm run build"
   },
   "app": {
@@ -16,7 +16,8 @@
         "title": "AgentPeek",
         "width": 390,
         "height": 844,
-        "resizable": true
+        "resizable": true,
+        "backgroundColor": "#0d1117"
       }
     ],
     "security": {

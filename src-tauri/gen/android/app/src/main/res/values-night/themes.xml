@@ -4,5 +4,6 @@
         <item name="android:navigationBarColor">#0d1117</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowBackground">@color/agentpeek_background</item>
     </style>
 </resources>
