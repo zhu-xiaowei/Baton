@@ -7,6 +7,9 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 
+# Vite build output
+dist/
+
 # Tauri
 src-tauri/target/
 src-tauri/gen/android/build/
@@ -42,9 +45,6 @@ tests/.env
 # Env
 .env
 .env.local
-
-# Root
-package-lock.json
 
 # Source code references
 claude-code-source-code/

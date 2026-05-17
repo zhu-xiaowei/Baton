@@ -1,4 +1,6 @@
 // CC-style status — "✢ Coding..." with typing cursor animation while CC is running
+import { state } from '../state.js';
+
 (function () {
   var FRAMES = ['·', '✢', '✦', '✶', '✻', '✽', '✻', '✶', '✦', '✢'];
   var GLYPH_MS = 120;
@@ -52,7 +54,7 @@
 
   window.updateSpinner = function () {
     var el = document.getElementById('cc-spinner');
-    var shouldShow = typeof wsRunning !== 'undefined' && wsRunning;
+    var shouldShow = state.wsRunning;
 
     if (!shouldShow) {
       if (el) el.style.display = 'none';

@@ -2,8 +2,11 @@
 // (prevents input-bar drag). iOS: toggle kb-up to drop redundant safe-area
 // padding when keyboard covers home indicator. Both: re-pin #content to
 // bottom across the keyboard animation.
+import { state } from './state.js';
+
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+var _pendingWsSend = null; // queued message to send on WS open
 
 if (window.visualViewport) {
   var _wasKbUp = false;
@@ -19,7 +22,7 @@ if (window.visualViewport) {
     }
     if (kbUp !== _wasKbUp) {
       var c = document.getElementById('content');
-      if (c && typeof appState !== 'undefined' && appState.session) {
+      if (c && state.appState.session) {
         [50, 200, 400].forEach(function (d) {
           setTimeout(function () { c.scrollTop = c.scrollHeight; }, d);
         });
@@ -31,8 +34,8 @@ if (window.visualViewport) {
 
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
-  for (var i = 0; i < wsAllMessages.length; i++) {
-    var m = wsAllMessages[i];
+  for (var i = 0; i < state.wsAllMessages.length; i++) {
+    var m = state.wsAllMessages[i];
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
@@ -42,37 +45,34 @@ function updateTitleFromMessages() {
     }
   }
   var title = customTitle || aiTitle || lastPrompt || firstUser;
-  if (title) { appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
+  if (title) { state.appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
 }
 
-// WebSocket connection management
-var ws = null;
-var wsSessionId = null;
-var wsMessageCount = 0;
-var wsStatusText = '';
-var wsAllMessages = []; // track all messages for tool pairing
-var wsLastTimestamp = ''; // track for reconnect recovery
-var _wsBuffer = null; // null = normal mode, [] = buffering during initial load
-var wsProjectHash = null; // for new session creation
-var wsRequestId = null; // unique ID per new-session creation flow
-var wsRunning = false; // track if session is actively running
-var _pendingWsSend = null; // queued message to send on WS open
-var _pendingCreatePath = null; // projectPath for create_project matching
-
 function connectWs(_, projectHash) {
-  if (!WS_URL) return;
-  if (projectHash) {
-    wsProjectHash = projectHash;
-    wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  if (!state.WS_URL) {
+    // First launch + no cached _wsurl: fetch config, then retry once
+    var args = [_, projectHash];
+    api('/api/bridge/config').then(function (cfg) {
+      if (cfg.wsUrl) {
+        state.WS_URL = cfg.wsUrl;
+        localStorage.setItem('_wsurl', cfg.wsUrl);
+        connectWs.apply(null, args);
+      }
+    }).catch(function () {});
+    return;
   }
-  if (ws) { ws.onclose = null; ws.close(); ws = null; }
-  ws = new WebSocket(WS_URL + '?apiKey=' + KEY + '&role=app');
+  if (projectHash) {
+    state.wsProjectHash = projectHash;
+    state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+  if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
+  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app');
 
-  ws.onopen = function () {
+  state.ws.onopen = function () {
     setWsStatus('connected');
-    if (wsSessionId) {
-      subscribeSession(wsSessionId);
-      if (wsLastTimestamp) recoverMissing();
+    if (state.wsSessionId) {
+      subscribeSession(state.wsSessionId);
+      if (state.wsLastTimestamp) recoverMissing();
     }
     if (_pendingWsSend) {
       wsSend(_pendingWsSend);
@@ -80,31 +80,31 @@ function connectWs(_, projectHash) {
     }
   };
 
-  ws.onmessage = function (e) {
+  state.ws.onmessage = function (e) {
     var msg = JSON.parse(e.data);
-    if (msg.action === 'messages' && msg.sessionId === wsSessionId) {
-      if (_wsBuffer !== null) {
+    if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
+      if (state._wsBuffer !== null) {
         // Buffering during initial load — collect, don't render yet
-        _wsBuffer.push.apply(_wsBuffer, msg.messages);
+        state._wsBuffer.push.apply(state._wsBuffer, msg.messages);
         return;
       }
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
-        if (m.uuid && wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
-        wsAllMessages.push(m);
-        wsMessageCount++;
-        if (m.timestamp) wsLastTimestamp = m.timestamp;
+        if (m.uuid && state.wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
+        state.wsAllMessages.push(m);
+        state.wsMessageCount++;
+        if (m.timestamp) state.wsLastTimestamp = m.timestamp;
       }
       updateLastTurn();
-      showStats(wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
+      showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'permission_request') {
-      if (msg.sessionId === wsSessionId) showPermissionPrompt(msg);
+      if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
       // Mark first undelivered pending message as delivered (or failed)
-      if (pendingSentMessages.length) {
+      if (state.pendingSentMessages.length) {
         var pending = null;
-        for (var pi = 0; pi < pendingSentMessages.length; pi++) {
-          if (!pendingSentMessages[pi].delivered) { pending = pendingSentMessages[pi]; break; }
+        for (var pi = 0; pi < state.pendingSentMessages.length; pi++) {
+          if (!state.pendingSentMessages[pi].delivered) { pending = state.pendingSentMessages[pi]; break; }
         }
         if (pending) {
           pending.delivered = true;
@@ -124,20 +124,20 @@ function connectWs(_, projectHash) {
         }
       }
       // New session: bridge created tmux + CC, returned sessionId
-      if (msg.sessionId && appState.session === '__new__' && (!msg.requestId || msg.requestId === wsRequestId)) {
-        appState.session = msg.sessionId;
-        appState.sessionPreview = 'New Session';
+      if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
+        state.appState.session = msg.sessionId;
+        state.appState.sessionPreview = 'New Session';
         updateBreadcrumb();
         saveNav();
-        wsRequestId = null;
+        state.wsRequestId = null;
         subscribeSession(msg.sessionId);
         // Fetch missed messages, then replace pending bubbles with real data
         bufferAndFetch(msg.sessionId, '').then(function () {
           var container = document.querySelector('.messages');
-          if (container && wsAllMessages.length) {
-            container.innerHTML = renderMessages(wsAllMessages);
-            wsRenderedCount = wsAllMessages.length;
-            pendingSentMessages = [];
+          if (container && state.wsAllMessages.length) {
+            container.innerHTML = renderMessages(state.wsAllMessages);
+            state.wsRenderedCount = state.wsAllMessages.length;
+            state.pendingSentMessages = [];
             loadImages(container);
             clampOverflow(container);
             container.parentElement.scrollTop = container.parentElement.scrollHeight;
@@ -146,14 +146,14 @@ function connectWs(_, projectHash) {
         }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
-      if (msg.sessionId === wsSessionId) loadMessages(msg.sessionId);
+      if (msg.sessionId === state.wsSessionId) loadMessages(msg.sessionId);
     } else if (msg.action === 'create_project_result') {
-      if (_pendingCreatePath && msg.projectPath === _pendingCreatePath) {
-        _pendingCreatePath = null;
+      if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
+        state._pendingCreatePath = null;
         disconnectWs();
         if (msg.ok) {
           closeNewProjectModal();
-          loadProjects(appState.device);
+          loadProjects(state.appState.device);
         } else {
           // Show error in modal, reset button
           var err = document.getElementById('newProjectError');
@@ -167,60 +167,54 @@ function connectWs(_, projectHash) {
     }
   };
 
-  ws.onclose = function () {
+  state.ws.onclose = function () {
     setWsStatus('disconnected');
-    if (appState.session) {
+    if (state.appState.session) {
       setWsStatus('reconnecting');
-      setTimeout(function () { if (appState.session) connectWs(); }, 3000);
+      setTimeout(function () { if (state.appState.session) connectWs(); }, 3000);
     }
   };
 
-  ws.onerror = function () {};
+  state.ws.onerror = function () {};
 }
 
 function subscribeSession(sessionId) {
-  if (wsSessionId && wsSessionId !== sessionId) {
-    wsSend({ action: 'unsubscribe', sessionId: wsSessionId });
+  if (state.wsSessionId && state.wsSessionId !== sessionId) {
+    wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
   }
-  wsSessionId = sessionId;
+  state.wsSessionId = sessionId;
   wsSend({ action: 'subscribe', sessionId: sessionId });
 }
 
 function wsSend(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(data));
 }
 
 function setWsStatus(status) {
-  wsStatusText = status;
+  state.wsStatusText = status;
   showWsBanner(status);
 }
 
 function disconnectWs() {
-  if (ws) {
-    ws.onclose = null;
-    ws.close();
-    ws = null;
-    wsSessionId = null;
-    wsRunning = false;
+  if (state.ws) {
+    state.ws.onclose = null;
+    state.ws.close();
+    state.ws = null;
+    state.wsSessionId = null;
+    state.wsRunning = false;
     updateSpinner();
     setWsStatus('');
   }
 }
 
 function ensureWsAndSend(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     wsSend(data);
   } else {
     _pendingWsSend = data;
     connectWs();
   }
 }
-
-// Track last rendered message index
-var wsRenderedCount = 0;
-var wsHasMore = false; // server says there are older messages
-var wsOldestTimestamp = ''; // cursor for loading older messages
-var wsLoadingOlder = false; // prevent concurrent older-message fetches
 
 /**
  * Find insertion point: scan from end, return first element with data-ts > timestamp.
@@ -259,8 +253,8 @@ function updateLastTurn() {
   var container = document.querySelector('.messages');
   if (!container) return;
 
-  var newMessages = wsAllMessages.slice(wsRenderedCount);
-  wsRenderedCount = wsAllMessages.length;
+  var newMessages = state.wsAllMessages.slice(state.wsRenderedCount);
+  state.wsRenderedCount = state.wsAllMessages.length;
   if (!newMessages.length) return;
 
   var el = document.getElementById('content');
@@ -282,8 +276,8 @@ function updateLastTurn() {
           var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
           if (!node) continue;
           var toolUseBlock = null;
-          for (var mi = 0; mi < wsAllMessages.length; mi++) {
-            var am = wsAllMessages[mi];
+          for (var mi = 0; mi < state.wsAllMessages.length; mi++) {
+            var am = state.wsAllMessages[mi];
             if (!Array.isArray(am.content)) continue;
             for (var bi = 0; bi < am.content.length; bi++) {
               if (am.content[bi].type === 'tool_use' && am.content[bi].id === rb.tool_use_id) { toolUseBlock = am.content[bi]; break; }
@@ -294,8 +288,8 @@ function updateLastTurn() {
           if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
           window._lastToolState = '';
           node.innerHTML = renderToolNode(toolUseBlock, rb);
-          var state = window._lastToolState || '';
-          node.className = 'tl-item tool-node' + (state ? ' ' + state : '');
+          var toolStateClass = window._lastToolState || '';
+          node.className = 'tl-item tool-node' + (toolStateClass ? ' ' + toolStateClass : '');
         }
       }
       continue;
@@ -303,7 +297,7 @@ function updateLastTurn() {
 
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
-      wsRunning = true;
+      state.wsRunning = true;
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
@@ -319,9 +313,9 @@ function updateLastTurn() {
     // Assistant message
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
-    wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
+    state.wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
 
-    var html = renderSingleMessage(msg, wsAllMessages);
+    var html = renderSingleMessage(msg, state.wsAllMessages);
     if (!html) continue;
 
     // Scan all elements with data-ts to find insertion position
@@ -359,19 +353,19 @@ function updateLastTurn() {
   if (document.getElementById('permission-prompt')) {
     dismissPermissionPrompt();
   }
-  checkPendingPrompts(wsAllMessages);
+  checkPendingPrompts(state.wsAllMessages);
 
   if (wasNearBottom) {
     el.scrollTop = el.scrollHeight;
   }
   loadImages(container);
   clampOverflow(container);
-  showStats(wsMessageCount + ' messages (live)');
+  showStats(state.wsMessageCount + ' messages (live)');
 }
 
 function startWs(sessionId) {
-  wsSessionId = sessionId;
-  if (!ws) connectWs();
+  state.wsSessionId = sessionId;
+  if (!state.ws) connectWs();
   else subscribeSession(sessionId);
 }
 
@@ -380,35 +374,35 @@ function startWs(sessionId) {
  * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
  */
 async function bufferAndFetch(sessionId, after) {
-  _wsBuffer = [];
+  state._wsBuffer = [];
   try {
     var params = { session: sessionId };
     if (after) params.after = after;
     var data = await api('/api/bridge/messages', params);
-    var all = (data.messages || []).concat(_wsBuffer || []);
-    _wsBuffer = null;
+    var all = (data.messages || []).concat(state._wsBuffer || []);
+    state._wsBuffer = null;
     // Dedup against existing wsAllMessages
     var existing = {};
-    for (var i = 0; i < wsAllMessages.length; i++) existing[wsAllMessages[i].uuid] = 1;
+    for (var i = 0; i < state.wsAllMessages.length; i++) existing[state.wsAllMessages[i].uuid] = 1;
     var added = 0;
     for (var i = 0; i < all.length; i++) {
       if (!existing[all[i].uuid]) {
-        wsAllMessages.push(all[i]);
-        wsMessageCount++;
+        state.wsAllMessages.push(all[i]);
+        state.wsMessageCount++;
         added++;
       }
     }
     if (added > 0) {
-      wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
+      state.wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
     }
-    wsLastTimestamp = wsAllMessages.length ? wsAllMessages[wsAllMessages.length - 1].timestamp || '' : '';
+    state.wsLastTimestamp = state.wsAllMessages.length ? state.wsAllMessages[state.wsAllMessages.length - 1].timestamp || '' : '';
     // Save pagination state from initial load
     if (!after && data.hasMore !== undefined) {
-      wsHasMore = data.hasMore;
-      wsOldestTimestamp = data.oldestTimestamp || '';
+      state.wsHasMore = data.hasMore;
+      state.wsOldestTimestamp = data.oldestTimestamp || '';
     }
     return { added: added, needSync: data.needSync };
-  } catch (e) { _wsBuffer = null; throw e; }
+  } catch (e) { state._wsBuffer = null; throw e; }
 }
 
 /**
@@ -416,63 +410,60 @@ async function bufferAndFetch(sessionId, after) {
  * Prepends to wsAllMessages and returns the loaded messages for DOM prepend.
  */
 async function loadOlderMessages(sessionId) {
-  if (wsLoadingOlder || !wsHasMore || !wsOldestTimestamp) return null;
-  wsLoadingOlder = true;
+  if (state.wsLoadingOlder || !state.wsHasMore || !state.wsOldestTimestamp) return null;
+  state.wsLoadingOlder = true;
   try {
-    var data = await api('/api/bridge/messages', { session: sessionId, before: wsOldestTimestamp });
+    var data = await api('/api/bridge/messages', { session: sessionId, before: state.wsOldestTimestamp });
     var msgs = data.messages || [];
-    wsHasMore = data.hasMore;
-    wsOldestTimestamp = data.oldestTimestamp || '';
+    state.wsHasMore = data.hasMore;
+    state.wsOldestTimestamp = data.oldestTimestamp || '';
     // Dedup and prepend
     var existing = {};
-    for (var i = 0; i < wsAllMessages.length; i++) existing[wsAllMessages[i].uuid] = 1;
+    for (var i = 0; i < state.wsAllMessages.length; i++) existing[state.wsAllMessages[i].uuid] = 1;
     var newMsgs = [];
     for (var i = 0; i < msgs.length; i++) {
       if (!existing[msgs[i].uuid]) {
         newMsgs.push(msgs[i]);
-        wsMessageCount++;
+        state.wsMessageCount++;
       }
     }
     if (newMsgs.length) {
-      wsAllMessages = newMsgs.concat(wsAllMessages);
-      wsRenderedCount += newMsgs.length;
+      state.wsAllMessages = newMsgs.concat(state.wsAllMessages);
+      state.wsRenderedCount += newMsgs.length;
     }
     return newMsgs;
   } finally {
-    wsLoadingOlder = false;
+    state.wsLoadingOlder = false;
   }
 }
 
 // Reconnect recovery
 async function recoverMissing() {
   try {
-    var result = await bufferAndFetch(wsSessionId, wsLastTimestamp);
+    var result = await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp);
     if (!result.added) return;
     var container = document.querySelector('.messages');
     if (container) {
-      container.innerHTML = renderMessages(wsAllMessages);
-      wsRenderedCount = wsAllMessages.length;
+      container.innerHTML = renderMessages(state.wsAllMessages);
+      state.wsRenderedCount = state.wsAllMessages.length;
       loadImages(container);
       clampOverflow(container);
-      checkPendingPrompts(wsAllMessages);
+      checkPendingPrompts(state.wsAllMessages);
       container.parentElement.scrollTop = container.parentElement.scrollHeight;
     }
-    showStats(wsMessageCount + ' messages (' + result.added + ' recovered)');
+    showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');
   } catch (e) {}
 }
-
-// Track pending (optimistically rendered) messages for dedup
-var pendingSentMessages = [];
 
 function sendMessage() {
   var input = document.getElementById('msg-input');
   var text = input.value.trim();
-  var images = stagedImages.slice();
+  var images = state.stagedImages.slice();
 
   if (!text && !images.length) return;
   if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
-  if (!wsSessionId && appState.session !== '__new__') return;
+  if (!state.wsSessionId && state.appState.session !== '__new__') return;
 
   // Images already uploaded — just assemble refs
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
@@ -483,7 +474,7 @@ function sendMessage() {
     doSend(text, text, []);
   }
 
-  stagedImages = [];
+  state.stagedImages = [];
   renderStagedImages();
   input.value = '';
   input.style.height = 'auto';
@@ -500,7 +491,7 @@ function updateSendBtn() {
     btn.innerHTML = _sendSvg;
     btn.className = 'has-text';
     btn.disabled = false;
-  } else if (wsRunning) {
+  } else if (state.wsRunning) {
     btn.innerHTML = _stopSvg;
     btn.className = 'is-stop';
     btn.disabled = false;
@@ -521,16 +512,16 @@ function onSendBtnClick() {
     updateSendBtn();
     // Keep keyboard open on mobile after sending
     if (isMobile && kbWasUp) input.focus();
-  } else if (wsRunning) {
+  } else if (state.wsRunning) {
     interruptSession();
   }
 
   if (isMobile && !kbWasUp) input.blur();
 }
 function interruptSession() {
-  if (!wsSessionId) return;
-  wsSend({ action: 'interrupt', sessionId: wsSessionId, device: appState.device || '' });
-  wsRunning = false;
+  if (!state.wsSessionId) return;
+  wsSend({ action: 'interrupt', sessionId: state.wsSessionId, device: state.appState.device || '' });
+  state.wsRunning = false;
   updateSendBtn();
 }
 (function () {
@@ -546,13 +537,13 @@ function interruptSession() {
 })();
 
 function doSend(fullText, displayText, images) {
-  wsRunning = true;
+  state.wsRunning = true;
   updateSendBtn();
-  var device = appState.device || '';
-  if (appState.session === '__new__' && wsProjectHash) {
-    wsSend({ action: 'send_message', projectHash: wsProjectHash, requestId: wsRequestId, text: fullText, device: device });
+  var device = state.appState.device || '';
+  if (state.appState.session === '__new__' && state.wsProjectHash) {
+    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, text: fullText, device: device });
   } else {
-    wsSend({ action: 'send_message', sessionId: wsSessionId, text: fullText, device: device });
+    wsSend({ action: 'send_message', sessionId: state.wsSessionId, text: fullText, device: device });
   }
 
   // Remove placeholder text
@@ -560,7 +551,7 @@ function doSend(fullText, displayText, images) {
   if (empty) empty.remove();
 
   var msgId = 'sent-' + Date.now();
-  pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });
+  state.pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -601,14 +592,25 @@ function tryDedup(msg) {
   if (!text) return false;
 
   var stripped = stripImageRefs(text);
-  for (var i = 0; i < pendingSentMessages.length; i++) {
-    var pendingText = pendingSentMessages[i].text.trim();
+  for (var i = 0; i < state.pendingSentMessages.length; i++) {
+    var pendingText = state.pendingSentMessages[i].text.trim();
     if (pendingText === stripped || pendingText === text) {
-      var el = document.getElementById(pendingSentMessages[i].id);
+      var el = document.getElementById(state.pendingSentMessages[i].id);
       if (el) el.remove(); // remove optimistic element; real one is inserted at correct ts
-      pendingSentMessages.splice(i, 1);
+      state.pendingSentMessages.splice(i, 1);
       return false; // return false so caller inserts the real message
     }
   }
   return false;
 }
+
+// Function bridges for inline HTML handlers + IIFE consumers.
+// All shared state lives in state.js, not on window.
+Object.assign(window, {
+  updateTitleFromMessages,
+  connectWs, subscribeSession, wsSend, setWsStatus, disconnectWs, ensureWsAndSend,
+  startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
+  findInsertBefore, insertAtTimestamp, updateLastTurn,
+  sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
+  extractMsgText, stripImageRefs, tryDedup,
+});

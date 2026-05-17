@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AgentPeek Setup</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
+<script type="module" src="js/entry-setup.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { color-scheme: dark; }
@@ -71,25 +72,8 @@
   .empty { color: #6e7681; font-size: 13px; text-align: center; padding: 12px; }
   .loading { color: #8b949e; font-size: 13px; text-align: center; padding: 12px; }
 </style>
-<!-- QR code library (lightweight, no deps) -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 </head>
 <body>
-<!-- Auth guard: must be first to prevent flash -->
-<script>
-(function () {
-  var urlKey = new URLSearchParams(location.search).get('key');
-  if (urlKey) {
-    localStorage.setItem('_ak', btoa(urlKey));
-    localStorage.setItem('_as', location.origin + location.pathname.replace(/\/[^/]*$/, ''));
-    // Remove key from URL bar to avoid exposing it
-    history.replaceState(null, '', location.pathname);
-  }
-  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch(e) {
-    location.replace('landing.html');
-  }
-})();
-</script>
 
 <div class="setup-bar">
   <a href="index.html" class="back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></a>
@@ -126,121 +110,9 @@
 
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:32px;">
-  <button onclick="localStorage.removeItem('_ak');localStorage.removeItem('_as');location.replace('landing.html')"
+  <button onclick="logout()"
     style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; font-size:13px; cursor:pointer;">Log out</button>
 </div>
-
-<script>
-var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
-var SERVER = location.origin + pathPrefix;
-
-function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } }
-function loadServer() { return localStorage.getItem('_as') || SERVER; }
-
-var KEY = loadKey();
-
-var API_SERVER = loadServer();
-
-async function apiFetch(path, params) {
-  var qs = new URLSearchParams(params || {}).toString();
-  var url = API_SERVER + path + (qs ? '?' + qs : '');
-  var res = await fetch(url, { headers: { 'x-api-key': KEY } });
-  if (!res.ok) throw new Error(res.status);
-  return res.json();
-}
-
-// Step 1: Load install command
-(async function () {
-  var cmdEl = document.getElementById('installCmdText');
-  try {
-    var res = await fetch(API_SERVER + '/api/install', { headers: { 'x-api-key': KEY } });
-    if (!res.ok) throw new Error(res.status);
-    // The install endpoint returns a shell script — show the curl one-liner
-    var installUrl = API_SERVER + '/api/install';
-    cmdEl.textContent = 'curl -sL -H "x-api-key: ' + KEY + '" "' + installUrl + '" | bash';
-  } catch (e) {
-    cmdEl.textContent = '# Error loading install command: ' + e.message;
-  }
-})();
-
-// Step 2: QR Code
-(function () {
-  var viewerUrl = SERVER + '/landing.html?key=' + encodeURIComponent(KEY);
-  document.getElementById('qrUrl').textContent = viewerUrl;
-
-  var qr = qrcode(0, 'M');
-  qr.addData(viewerUrl);
-  qr.make();
-
-  var canvas = document.getElementById('qrCanvas');
-  var size = 200;
-  var cellSize = size / qr.getModuleCount();
-  canvas.width = size;
-  canvas.height = size;
-  var ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = '#000000';
-  for (var r = 0; r < qr.getModuleCount(); r++) {
-    for (var c = 0; c < qr.getModuleCount(); c++) {
-      if (qr.isDark(r, c)) {
-        ctx.fillRect(c * cellSize, r * cellSize, cellSize + 0.5, cellSize + 0.5);
-      }
-    }
-  }
-})();
-
-// Step 3: Connected devices
-(async function () {
-  var el = document.getElementById('deviceList');
-  try {
-    var data = await apiFetch('/api/bridge/devices');
-    if (!data.devices || data.devices.length === 0) {
-      el.innerHTML = '<div class="empty">No devices connected yet. Run the install command above to get started.</div>';
-      return;
-    }
-    el.innerHTML = data.devices.map(function (d) {
-      var ago = timeAgo(d.lastActive);
-      var dotClass = d.online ? 'online' : 'offline';
-      var rc = d.runningCount || 0, ic = d.idleCount || 0;
-      return '<div class="device-item">'
-        + '<div class="device-top">'
-        + '<div class="device-dot ' + dotClass + '"></div>'
-        + '<div class="device-name">' + esc(d.deviceName) + '</div>'
-        + '<div class="device-time">' + ago + '</div>'
-        + '</div>'
-        + '<div class="device-meta"><span>' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span>' + rc + ' running &middot; ' + ic + ' idle</span></div>'
-        + '</div>';
-    }).join('');
-  } catch (e) {
-    el.innerHTML = '<div class="empty">Error loading devices: ' + e.message + '</div>';
-  }
-})();
-
-function copyText(btn, text) {
-  navigator.clipboard.writeText(text).then(function () {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
-  });
-}
-function copyCmd(btn) {
-  copyText(btn, document.getElementById('installCmdText').textContent);
-}
-function copyUrl(btn) {
-  copyText(btn, document.getElementById('qrUrl').textContent);
-}
-
-function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
-function timeAgo(iso) {
-  var diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-  return Math.floor(diff / 86400000) + 'd ago';
-}
-</script>
 
 </body>
 </html>

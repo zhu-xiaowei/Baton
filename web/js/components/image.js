@@ -1,6 +1,5 @@
 // ---- Image Staging & Sending ----
-
-var stagedImages = []; // { dataUrl, key, uploaded }
+import { state } from '../state.js';
 
 function onImagePicked(input) {
   if (!input.files) return;
@@ -24,7 +23,7 @@ function onInputPaste(e) {
 function stageImageFile(file) {
   if (!file) return;
   var entry = { dataUrl: '', key: '', uploaded: false };
-  stagedImages.push(entry);
+  state.stagedImages.push(entry);
   renderStagedImages();
 
   var reader = new FileReader();
@@ -50,22 +49,17 @@ function stageImageFile(file) {
       renderStagedImages();
 
       // Upload immediately
-      fetch(SERVER + '/api/bridge/upload-image', {
-        method: 'POST',
-        headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: key, data: base64 })
-      }).then(function (res) {
-        if (!res.ok) throw new Error('Upload failed');
-        return res.json();
-      }).then(function () {
-        entry.uploaded = true;
-        renderStagedImages();
-      }).catch(function () {
-        // Remove failed entry
-        var fi = stagedImages.indexOf(entry);
-        if (fi >= 0) stagedImages.splice(fi, 1);
-        renderStagedImages();
-      });
+      apiPost('/api/bridge/upload-image', { key: key, data: base64 })
+        .then(function () {
+          entry.uploaded = true;
+          renderStagedImages();
+        })
+        .catch(function () {
+          // Remove failed entry
+          var fi = state.stagedImages.indexOf(entry);
+          if (fi >= 0) state.stagedImages.splice(fi, 1);
+          renderStagedImages();
+        });
     };
     img.src = reader.result;
   };
@@ -74,9 +68,9 @@ function stageImageFile(file) {
 
 function renderStagedImages() {
   var row = document.getElementById('img-preview-row');
-  if (!stagedImages.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  if (!state.stagedImages.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
   row.style.display = 'flex';
-  row.innerHTML = stagedImages.map(function (img, i) {
+  row.innerHTML = state.stagedImages.map(function (img, i) {
     var overlay = img.uploaded ? '' : '<div class="img-upload-overlay"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><circle cx="18" cy="18" r="16" fill="none" stroke="#fff" stroke-width="3" stroke-dasharray="100" stroke-dashoffset="' + (img.dataUrl ? '25' : '90') + '" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>';
     var src = img.dataUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
     return '<div class="img-thumb" onclick="viewStagedImage(' + i + ')">'
@@ -86,7 +80,7 @@ function renderStagedImages() {
 }
 
 function removeStagedImage(i) {
-  stagedImages.splice(i, 1);
+  state.stagedImages.splice(i, 1);
   renderStagedImages();
 }
 
@@ -97,7 +91,7 @@ function viewStagedImage(i) {
 }
 
 function showGallery() {
-  var img = stagedImages[galleryIndex];
+  var img = state.stagedImages[galleryIndex];
   if (!img || !img.dataUrl) return;
   var overlay = document.getElementById('imgOverlay');
   var overlayImg = document.getElementById('imgOverlayImg');
@@ -107,11 +101,11 @@ function showGallery() {
   // Build nav buttons if multiple
   var nav = overlay.querySelector('.gallery-nav');
   if (nav) nav.remove();
-  if (stagedImages.length > 1) {
+  if (state.stagedImages.length > 1) {
     var navHtml = '<div class="gallery-nav">'
       + '<button onclick="event.stopPropagation();galleryPrev()"' + (galleryIndex <= 0 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>'
-      + '<span>' + (galleryIndex + 1) + ' / ' + stagedImages.length + '</span>'
-      + '<button onclick="event.stopPropagation();galleryNext()"' + (galleryIndex >= stagedImages.length - 1 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg></button>'
+      + '<span>' + (galleryIndex + 1) + ' / ' + state.stagedImages.length + '</span>'
+      + '<button onclick="event.stopPropagation();galleryNext()"' + (galleryIndex >= state.stagedImages.length - 1 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg></button>'
       + '</div>';
     overlay.insertAdjacentHTML('beforeend', navHtml);
   }
@@ -119,7 +113,7 @@ function showGallery() {
 }
 
 function galleryPrev() { if (galleryIndex > 0) { galleryIndex--; showGallery(); } }
-function galleryNext() { if (galleryIndex < stagedImages.length - 1) { galleryIndex++; showGallery(); } }
+function galleryNext() { if (galleryIndex < state.stagedImages.length - 1) { galleryIndex++; showGallery(); } }
 
 document.addEventListener('keydown', function (e) {
   var overlay = document.getElementById('imgOverlay');
@@ -127,4 +121,10 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'ArrowLeft') { e.preventDefault(); galleryPrev(); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); galleryNext(); }
   else if (e.key === 'Escape') overlay.style.display = 'none';
+});
+
+// Function bridges for inline HTML handlers (state.stagedImages lives in state.js).
+Object.assign(window, {
+  onImagePicked, onInputPaste, stageImageFile, renderStagedImages, removeStagedImage,
+  viewStagedImage, showGallery, galleryPrev, galleryNext,
 });

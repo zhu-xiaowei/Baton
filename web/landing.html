@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AgentPeek</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
+<script type="module" src="js/entry-landing.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { color-scheme: dark; }
@@ -61,84 +62,6 @@
   <button class="btn" id="connectBtn" onclick="doConnect()">Connect</button>
   <div class="error" id="error"></div>
 </div>
-
-<script>
-// Storage helpers (btoa/atob obfuscation)
-function saveKey(key) { localStorage.setItem('_ak', btoa(key)); }
-function loadKey() { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } }
-function saveServer(url) { localStorage.setItem('_as', url); }
-function loadServer() { return localStorage.getItem('_as') || ''; }
-
-// Determine if running inside Tauri/native (non-http origin)
-var isNativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
-var SERVER = '';
-
-if (isNativeApp) {
-  // Native app: need user to provide server URL
-  SERVER = loadServer();
-  document.getElementById('serverGroup').style.display = 'block';
-  if (SERVER) document.getElementById('serverInput').value = SERVER;
-} else {
-  // Web: derive from current origin
-  var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
-  SERVER = location.origin + pathPrefix;
-}
-
-// Check URL ?key= param
-var urlKey = new URLSearchParams(location.search).get('key');
-if (urlKey) {
-  saveKey(urlKey);
-  if (!isNativeApp) saveServer(SERVER);
-  location.replace('index.html');
-} else {
-  var storedKey = loadKey();
-  var storedServer = loadServer();
-  if (storedKey && storedServer) {
-    location.replace('index.html');
-  }
-}
-
-
-// Pre-fill if key exists but user navigated back (e.g. logout)
-var existing = loadKey();
-if (existing) document.getElementById('keyInput').value = existing;
-
-async function doConnect() {
-  var key = document.getElementById('keyInput').value.trim();
-  var errEl = document.getElementById('error');
-  var btn = document.getElementById('connectBtn');
-
-  // For native app, read server URL from input
-  var serverUrl = SERVER;
-  if (isNativeApp) {
-    serverUrl = (document.getElementById('serverInput').value || '').trim().replace(/\/+$/, '');
-    if (!serverUrl) { errEl.textContent = 'Please enter server URL'; errEl.style.display = 'block'; return; }
-  }
-
-  if (!key) { errEl.textContent = 'Please enter an API key'; errEl.style.display = 'block'; return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Connecting...';
-  errEl.style.display = 'none';
-
-  try {
-    var res = await fetch(serverUrl + '/api/health', { headers: { 'x-api-key': key } });
-    if (!res.ok) throw new Error('Server returned ' + res.status);
-
-    var devRes = await fetch(serverUrl + '/api/bridge/devices', { headers: { 'x-api-key': key } });
-    if (!devRes.ok) throw new Error('Invalid API key');
-
-    saveKey(key);
-    saveServer(serverUrl);
-    location.replace('index.html');
-  } catch (e) {
-    errEl.textContent = e.message || 'Connection failed';
-    errEl.style.display = 'block';
-    btn.disabled = false;
-    btn.textContent = 'Connect';
-  }
-}
-</script>
 
 </body>
 </html>

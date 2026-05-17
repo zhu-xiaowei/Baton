@@ -1,6 +1,6 @@
 // App state, routing, page loading
-var appState = { device: null, project: null, session: null, sessionPreview: '' };
-var deviceOnlineMap = {};
+import { state } from './state.js';
+
 var _navVersion = 0;
 
 function osName(os) {
@@ -58,30 +58,30 @@ function navHref(view, params) {
 function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
-  if (appState.device) {
-    parts.push('<a href="' + navHref('projects', {device: appState.device}) + '" onclick="loadProjects(\'' + esc(appState.device) + '\');return false;">' + esc(appState.device) + '</a>');
+  if (state.appState.device) {
+    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(state.appState.device) + '</a>');
   }
-  if (appState.project) {
-    parts.push('<a href="' + navHref('sessions', {device: appState.device, projectHash: appState.project.hash}) + '" onclick="loadSessions(\'' + esc(appState.device) + '\',\'' + esc(appState.project.hash) + '\',\'' + esc(appState.project.name) + '\');return false;">' + esc(appState.project.name) + '</a>');
+  if (state.appState.project) {
+    parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
   }
-  if (appState.session) {
-    var label = appState.sessionPreview || appState.session.slice(0, 8) + '...';
+  if (state.appState.session) {
+    var label = state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...';
     parts.push('<span>' + esc(label) + '</span>');
   }
   var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
   var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
   var topRight = document.getElementById('top-right');
-  if (appState.project) {
-    topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
-  } else if (appState.device && !appState.project) {
+  if (state.appState.project) {
+    topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+  } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   } else {
     topRight.innerHTML = _gearHtml;
   }
   var titleHtml = '';
-  if (appState.session) {
+  if (state.appState.session) {
     parts.pop();
-    var titleText = esc(appState.sessionPreview || appState.session.slice(0, 8) + '...');
+    var titleText = esc(state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...');
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
   }
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
@@ -96,17 +96,17 @@ function toggleBreadcrumbExpand(nav) {
 
 function showInputBar(visible) {
   document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
-  if (!visible) { document.getElementById('scroll-bottom-btn').style.display = 'none'; wsRunning = false; updateSpinner(); }
+  if (!visible) { document.getElementById('scroll-bottom-btn').style.display = 'none'; state.wsRunning = false; updateSpinner(); }
 }
 
 function saveNav() {
-  sessionStorage.setItem('agentpeek-nav', JSON.stringify(appState));
+  sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
 }
 
 // ---- Active session card click ----
 function openActiveSession(el) {
   var d = el.dataset;
-  appState = {
+  state.appState = {
     device: d.device,
     project: { hash: d.phash, name: d.pname },
     session: null,
@@ -122,7 +122,7 @@ function shortModel(m) {
 // ---- Devices ----
 async function loadDevices() {
   var myNav = ++_navVersion;
-  appState = { device: null, project: null, session: null, sessionPreview: '' };
+  state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
@@ -180,7 +180,7 @@ async function loadDevices() {
       return;
     }
     if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
-    devData.devices.forEach(function (d) { deviceOnlineMap[d.deviceName] = d.online; });
+    devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
     el.innerHTML = devData.devices.map(function (d) {
       var rc = d.runningCount || 0, ic = d.idleCount || 0;
       var dotClass = d.online ? 'online' : 'offline';
@@ -200,7 +200,7 @@ async function loadDevices() {
 // ---- Projects ----
 async function loadProjects(device) {
   var myNav = ++_navVersion;
-  appState = { device: device, project: null, session: null, sessionPreview: '' };
+  state.appState = { device: device, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
@@ -235,7 +235,7 @@ async function loadSessions(device, projectHash, projectName) {
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
     if (_navVersion !== myNav) return;
-    appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
+    state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
     updateBreadcrumb();
     saveNav();
     content.innerHTML = '<div class="list">'
@@ -261,8 +261,8 @@ function createNewProject() {
 }
 
 function closeNewProjectModal() {
-  if (_pendingCreatePath) {
-    _pendingCreatePath = null;
+  if (state._pendingCreatePath) {
+    state._pendingCreatePath = null;
     disconnectWs();
   }
   var modal = document.getElementById('newProjectModal');
@@ -280,30 +280,30 @@ function submitNewProject() {
   var projectPath = input.value.trim();
   if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
   err.textContent = '';
-  _pendingCreatePath = projectPath;
+  state._pendingCreatePath = projectPath;
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
   btn.disabled = true;
   btn.dataset.origText = btn.textContent;
   btn.innerHTML = '<span class="spinner"></span>Creating';
-  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: appState.device || '' });
+  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
 }
 
 function startNewSession(projectHash) {
-  appState.session = '__new__';
-  appState.sessionPreview = 'New Session';
+  state.appState.session = '__new__';
+  state.appState.sessionPreview = 'New Session';
   updateBreadcrumb();
   saveNav();
   // Reset WS message state for new session
-  wsAllMessages = [];
-  wsMessageCount = 0;
-  wsRenderedCount = 0;
-  wsLastTimestamp = '';
-  wsHasMore = false;
-  wsOldestTimestamp = '';
-  wsLoadingOlder = false;
-  wsSessionId = null;
-  pendingSentMessages = [];
+  state.wsAllMessages = [];
+  state.wsMessageCount = 0;
+  state.wsRenderedCount = 0;
+  state.wsLastTimestamp = '';
+  state.wsHasMore = false;
+  state.wsOldestTimestamp = '';
+  state.wsLoadingOlder = false;
+  state.wsSessionId = null;
+  state.pendingSentMessages = [];
   var content = document.getElementById('content');
   content.innerHTML = '<div class="messages"><div class="empty">Send a message to start a new session</div></div>';
   showInputBar(true);
@@ -313,21 +313,21 @@ function startNewSession(projectHash) {
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
   var myNav = ++_navVersion;
-  appState.session = sessionId;
-  appState.sessionPreview = preview || '';
-  wsRunning = (status === 'running');
+  state.appState.session = sessionId;
+  state.appState.sessionPreview = preview || '';
+  state.wsRunning = (status === 'running');
   updateSendBtn();
   updateBreadcrumb();
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
 
   // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
-  wsAllMessages = [];
-  wsMessageCount = 0;
-  wsLastTimestamp = '';
-  wsHasMore = false;
-  wsOldestTimestamp = '';
-  wsLoadingOlder = false;
+  state.wsAllMessages = [];
+  state.wsMessageCount = 0;
+  state.wsLastTimestamp = '';
+  state.wsHasMore = false;
+  state.wsOldestTimestamp = '';
+  state.wsLoadingOlder = false;
   startWs(sessionId);
 
   try {
@@ -336,9 +336,9 @@ async function loadMessages(sessionId, preview, status) {
     if (_navVersion !== myNav) return;
     var latency = Math.round(performance.now() - t0);
 
-    if (wsAllMessages.length === 0) {
+    if (state.wsAllMessages.length === 0) {
       if (result.needSync) {
-        var online = deviceOnlineMap[appState.device] !== false;
+        var online = state.deviceOnlineMap[state.appState.device] !== false;
         content.innerHTML = online
           ? skeletonMessages()
           : '<div class="empty">Bridge offline — no cached messages</div>';
@@ -351,16 +351,16 @@ async function loadMessages(sessionId, preview, status) {
     }
 
     // Render
-    content.innerHTML = '<div class="messages">' + renderMessages(wsAllMessages) + '</div>';
+    content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
     showInputBar(true);
 
     updateTitleFromMessages();
 
     // Infer running state from last assistant message (covers page refresh where status param is missing)
     if (!status) {
-      for (var ri = wsAllMessages.length - 1; ri >= 0; ri--) {
-        if (wsAllMessages[ri].type === 'assistant') {
-          wsRunning = wsAllMessages[ri].stopReason !== 'end_turn';
+      for (var ri = state.wsAllMessages.length - 1; ri >= 0; ri--) {
+        if (state.wsAllMessages[ri].type === 'assistant') {
+          state.wsRunning = state.wsAllMessages[ri].stopReason !== 'end_turn';
           break;
         }
       }
@@ -371,12 +371,12 @@ async function loadMessages(sessionId, preview, status) {
     setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
     loadImages(content);
     clampOverflow(content.querySelector('.messages'));
-    checkPendingPrompts(wsAllMessages);
-    wsRenderedCount = wsAllMessages.length;
-    showStats(wsMessageCount + ' messages | ' + latency + 'ms');
+    checkPendingPrompts(state.wsAllMessages);
+    state.wsRenderedCount = state.wsAllMessages.length;
+    showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
     if (_navVersion !== myNav) return;
-    _wsBuffer = null;
+    state._wsBuffer = null;
     content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
   saveNav();
@@ -411,12 +411,12 @@ function positionScrollBtn() {
   var content = document.getElementById('content');
 
   content.addEventListener('scroll', function () {
-    if (!appState.session) return;
+    if (!state.appState.session) return;
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
     btn.style.display = atBottom ? 'none' : 'flex';
 
     // Load older messages when scrolling near top
-    if (content.scrollTop < 800 && wsHasMore && !wsLoadingOlder) {
+    if (content.scrollTop < 800 && state.wsHasMore && !state.wsLoadingOlder) {
       loadOlderAndPrepend();
     }
   });
@@ -424,12 +424,12 @@ function positionScrollBtn() {
   // Tap top bar to scroll to top (skip Setup/Logout links)
   document.querySelector('.top-bar').addEventListener('click', function (e) {
     if (e.target.closest('.top-action')) return;
-    if (appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
+    if (state.appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
   });
 })();
 
 async function loadOlderAndPrepend() {
-  if (!appState.session || appState.session === '__new__') return;
+  if (!state.appState.session || state.appState.session === '__new__') return;
   var content = document.getElementById('content');
   var container = content.querySelector('.messages');
   if (!container) return;
@@ -442,7 +442,7 @@ async function loadOlderAndPrepend() {
 
   var prevHeight = content.scrollHeight;
 
-  var msgs = await loadOlderMessages(appState.session);
+  var msgs = await loadOlderMessages(state.appState.session);
   // Remove loader
   if (loader.parentNode) loader.remove();
   if (!msgs || !msgs.length) return;
@@ -460,38 +460,56 @@ async function loadOlderAndPrepend() {
 
 // Auto-connect + restore last session
 (function () {
-  if (!KEY) return; // auth guard in index.html handles redirect
-  var nav = sessionStorage.getItem('agentpeek-nav');
-  initConnection().then(function (ok) {
-    if (!ok) { document.getElementById('content').innerHTML = '<div class="empty">Connection failed. <a href="landing.html" style="color:#58a6ff">Re-enter API key</a></div>'; return; }
-    // URL hash takes priority (supports Cmd+Click new tab), then clear it
-    var hash = location.hash.replace(/^#\/?/, '');
-    if (hash) {
-      history.replaceState(null, '', location.pathname + location.search);
-      var seg = hash.split('/').map(decodeURIComponent);
-      var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
-      if (seg.length >= 3 && seg[2] && seg[2] !== '__new__') {
-        appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
-        loadMessages(seg[2], '');
-      } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
-      else if (seg.length >= 1 && seg[0]) { loadProjects(seg[0]); }
-      else { loadDevices(); }
-    } else if (nav) {
-      try {
-        var s = JSON.parse(nav);
-        if (s.session && s.session !== '__new__') {
-          appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
-          loadMessages(s.session, s.sessionPreview);
-        } else if (s.project) {
-          loadSessions(s.device, s.project.hash, s.project.name);
-        } else if (s.device) {
-          loadProjects(s.device);
-        } else {
-          loadDevices();
-        }
-      } catch(e) { loadDevices(); }
-    } else {
-      loadDevices();
+  if (!state.KEY) return; // auth guard in index.html handles redirect
+
+  // Refresh ws config in background (cached in localStorage; doesn't block skeleton)
+  api('/api/bridge/config').then(function (cfg) {
+    if (cfg.wsUrl && cfg.wsUrl !== state.WS_URL) {
+      state.WS_URL = cfg.wsUrl;
+      localStorage.setItem('_wsurl', cfg.wsUrl);
     }
-  });
+  }).catch(function () {});
+
+  // Route immediately so skeleton shows without waiting for any network call
+  var nav = sessionStorage.getItem('agentpeek-nav');
+  var hash = location.hash.replace(/^#\/?/, '');
+  if (hash) {
+    history.replaceState(null, '', location.pathname + location.search);
+    var seg = hash.split('/').map(decodeURIComponent);
+    var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
+    if (seg.length >= 3 && seg[2] && seg[2] !== '__new__') {
+      state.appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
+      loadMessages(seg[2], '');
+    } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
+    else if (seg.length >= 1 && seg[0]) { loadProjects(seg[0]); }
+    else { loadDevices(); }
+  } else if (nav) {
+    try {
+      var s = JSON.parse(nav);
+      if (s.session && s.session !== '__new__') {
+        state.appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
+        loadMessages(s.session, s.sessionPreview);
+      } else if (s.project) {
+        loadSessions(s.device, s.project.hash, s.project.name);
+      } else if (s.device) {
+        loadProjects(s.device);
+      } else {
+        loadDevices();
+      }
+    } catch(e) { loadDevices(); }
+  } else {
+    loadDevices();
+  }
 })();
+
+// Function bridges for inline HTML handlers + legacy IIFE consumers.
+// All shared state lives in state.js, not on window.
+Object.assign(window, {
+  osName, timeAgo, formatSize, esc,
+  showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
+  showInputBar, saveNav, openActiveSession, shortModel,
+  loadDevices, loadProjects, loadSessions,
+  createNewProject, closeNewProjectModal, submitNewProject,
+  startNewSession, loadMessages,
+  scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
+});

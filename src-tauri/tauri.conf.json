@@ -4,7 +4,10 @@
   "version": "0.2.0",
   "identifier": "com.agentpeek.app",
   "build": {
-    "frontendDist": "../web"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": true,

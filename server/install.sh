@@ -75,15 +75,20 @@ aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/de
   && echo "  ECR created: $REPO_NAME" \
   || echo "  ECR exists: $REPO_NAME"
 
-# Copy web/ into build context for Docker
+# Stage build context: server/src/* + frontend sources (web/, package.json, vite.config.js, lock).
+# Vite build happens inside the Dockerfile (multi-stage) — no host node dependency required.
 WEB_DIR="$SCRIPT_DIR/../web"
-rm -rf "$SRC_DIR/web"
-if [ -d "$WEB_DIR" ]; then
-  cp -r "$WEB_DIR" "$SRC_DIR/web"
-  # Exclude non-web files
-  rm -f "$SRC_DIR/web/test_api.py"
-  echo "  Web UI included in build"
-fi
+ROOT_DIR="$SCRIPT_DIR/.."
+BUILD_CTX=$(mktemp -d)
+trap 'rm -rf "$BUILD_CTX"' EXIT
+
+# Server files (Dockerfile + python sources + requirements)
+cp -r "$SRC_DIR"/. "$BUILD_CTX/"
+rm -f "$BUILD_CTX/test_api.py" 2>/dev/null || true
+# Frontend sources (Dockerfile stage 1 builds vite from these)
+cp -r "$WEB_DIR" "$BUILD_CTX/web"
+rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
+cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 
 # Read version from version.json
 VERSION_FILE="$SCRIPT_DIR/../version.json"
@@ -92,11 +97,10 @@ if [ -f "$VERSION_FILE" ]; then
   echo "  Version: $APP_VERSION"
 fi
 
-# Upload source
-(cd "$SRC_DIR" && zip -qr /tmp/agentpeek-src.zip .)
+# Upload source (Vite + web + python all in one build context)
+(cd "$BUILD_CTX" && zip -qr /tmp/agentpeek-src.zip .)
 aws s3 cp /tmp/agentpeek-src.zip "s3://${S3_BUCKET}/build/src.zip" --region "$REGION" --quiet
 rm -f /tmp/agentpeek-src.zip
-rm -rf "$SRC_DIR/web"  # cleanup build artifact
 
 # Create CodeBuild role if needed
 if ! aws iam get-role --role-name "$CODEBUILD_ROLE" >/dev/null 2>&1; then

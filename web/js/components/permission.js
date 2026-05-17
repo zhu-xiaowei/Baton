@@ -1,4 +1,5 @@
 // ---- Permission Prompt ----
+import { state } from '../state.js';
 
 function showPermissionPrompt(msg) {
   // Remove any existing prompt DOM (without clearing wizard state)
@@ -65,7 +66,7 @@ function handlePermissionOption(btn) {
   }
 
   // Direct action — send value as keystroke
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value });
+  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: value });
   if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
     _wizardIndex++;
     var nq = _wizardQuestions[_wizardIndex];
@@ -90,7 +91,7 @@ function submitPermissionWithInput(input, value) {
   var text = input.value.trim();
   if (!text) return; // require input
   // Send as type:N:text — bridge navigates to option, types text, Enter
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: value + ':' + text });
+  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: value + ':' + text });
   if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
     _wizardIndex++;
     var nq = _wizardQuestions[_wizardIndex];
@@ -113,7 +114,7 @@ function submitPermissionWithInput(input, value) {
 
 function cancelPermissionPrompt() {
   // Send Escape to Claude Code
-  wsSend({ action: 'permission_reply', sessionId: wsSessionId, device: appState.device || '', approved: 'escape' });
+  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: 'escape' });
   dismissPermissionPrompt();
 }
 
@@ -261,3 +262,9 @@ function checkPendingPrompts(messages) {
   _pendingToolUseId = toolUse.id;
   showPermissionPrompt(prompt);
 }
+
+Object.assign(window, {
+  showPermissionPrompt, handlePermissionOption, submitPermissionWithInput,
+  cancelPermissionPrompt, dismissPermissionPrompt,
+  buildClientPrompt, checkPendingPrompts,
+});

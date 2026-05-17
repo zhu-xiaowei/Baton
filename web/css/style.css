@@ -2,8 +2,8 @@
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(139, 148, 158, 0.6); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(139, 148, 158, 0.9); }
+::-webkit-scrollbar-thumb { background: #3a4049; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4a5059; }
 
 /* === Custom scroll indicator (iOS WKWebView fix) === */
 .si-track {
@@ -14,7 +14,7 @@
 .si-track.si-visible { opacity: 1; }
 .si-thumb {
   position: absolute; right: 2px; width: 4px;
-  background: rgba(180, 188, 198, 0.7); border-radius: 2px;
+  background: #3a4049; border-radius: 2px;
   will-change: transform;
 }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; color-scheme: dark; }

@@ -1,38 +1,80 @@
-// API client — reads credentials from localStorage (set by landing.html)
-var pathPrefix = location.pathname.replace(/\/[^/]*$/, '');
-var SERVER = (localStorage.getItem('_as') || (location.origin + pathPrefix)).replace(/\/$/, '');
-var KEY = (function () { try { var v = localStorage.getItem('_ak'); return v ? atob(v) : ''; } catch(e) { return ''; } })();
-var WS_URL = '';
+// API client — unified util for all pages
+// Credentials default to localStorage; can be overridden per-call via opts.{key,server} (used by landing.html before login)
 
-function logout() {
+import { state } from './state.js';
+
+state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
+state.KEY = (function () {
+  try {
+    var v = localStorage.getItem('_ak');
+    if (!v) return '';
+    var decoded = atob(v);
+    if (!/^[A-Za-z0-9_\-]+$/.test(decoded)) {
+      localStorage.removeItem('_ak');
+      return '';
+    }
+    return decoded;
+  } catch(e) {
+    localStorage.removeItem('_ak');
+    return '';
+  }
+})();
+state.WS_URL = localStorage.getItem('_wsurl') || '';
+
+function setCredentials(key, server) {
+  state.KEY = key;
+  if (server) state.SERVER = server.replace(/\/+$/, '');
+  localStorage.setItem('_ak', btoa(key));
+  if (server) localStorage.setItem('_as', state.SERVER);
+}
+
+function clearCredentials() {
+  state.KEY = '';
+  state.WS_URL = '';
   localStorage.removeItem('_ak');
   localStorage.removeItem('_as');
+  localStorage.removeItem('_wsurl');
   localStorage.removeItem('agentpeek-nav');
+}
+
+function logout() {
+  clearCredentials();
   location.replace('landing.html');
 }
 
-async function api(path, params) {
+function _build(path, params, opts) {
   var qs = new URLSearchParams(params || {}).toString();
-  var url = SERVER + path + (qs ? '?' + qs : '');
-  var res = await fetch(url, { headers: { 'x-api-key': KEY } });
+  return ((opts && opts.server) || state.SERVER) + path + (qs ? '?' + qs : '');
+}
+
+function _hdr(opts) {
+  var h = { 'x-api-key': (opts && opts.key) || state.KEY };
+  if (opts && opts.contentType) h['Content-Type'] = opts.contentType;
+  return h;
+}
+
+async function _do(path, params, opts, init) {
+  var res = await fetch(_build(path, params, opts), Object.assign({ headers: _hdr(opts) }, init || {}));
+  if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+  return res;
+}
+
+async function api(path, params, opts) {
+  return (await _do(path, params, opts)).json();
+}
+
+async function apiText(path, params, opts) {
+  return (await _do(path, params, opts)).text();
+}
+
+async function apiPost(path, body, opts) {
+  var hdr = _hdr(Object.assign({}, opts, { contentType: 'application/json' }));
+  var res = await fetch(_build(path, null, opts), { method: 'POST', headers: hdr, body: JSON.stringify(body || {}) });
   if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
   return res.json();
 }
 
-async function initConnection() {
-  try {
-    await api('/api/health');
-    try {
-      var cfg = await api('/api/bridge/config');
-      WS_URL = cfg.wsUrl || '';
-    } catch(e) {}
-    return true;
-  } catch(e) {
-    return false;
-  }
-}
-
-// Image loading
+// ---- Image loading ----
 var imageCache = new Map();
 var IMAGE_CACHE_MAX = 200;
 var imageObserver = new IntersectionObserver(function (entries) {
@@ -51,9 +93,7 @@ async function loadOneImage(el) {
     return;
   }
   try {
-    var res = await fetch(SERVER + '/api/bridge/image/' + key, { headers: { 'x-api-key': KEY } });
-    if (!res.ok) { el.textContent = '[Image ' + res.status + ']'; return; }
-    var b64 = await res.text();
+    var b64 = await apiText('/api/bridge/image/' + key);
     var dataUrl = 'data:image/jpeg;base64,' + b64;
     if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
     imageCache.set(key, dataUrl);
@@ -75,3 +115,11 @@ function viewImage(src) {
   document.getElementById('imgOverlayImg').src = src;
   overlay.style.display = 'flex';
 }
+
+// Function bridges for inline HTML handlers + legacy IIFE consumers.
+// State (KEY/SERVER/WS_URL) lives in state.js, not on window.
+Object.assign(window, {
+  setCredentials, clearCredentials, logout,
+  api, apiText, apiPost,
+  loadOneImage, loadImages, viewImage,
+});

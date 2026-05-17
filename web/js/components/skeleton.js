@@ -38,3 +38,5 @@ function skeletonItems(n) {
   }
   return items;
 }
+
+Object.assign(window, { skeletonCards, skeletonMessages, skeletonItems });
