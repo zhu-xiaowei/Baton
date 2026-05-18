@@ -141,14 +141,13 @@ async function loadDevices() {
   saveNav();
   var content = document.getElementById('content');
 
-  // First call (right after inline shell painted) reuses __preload + __inlineRendered.
-  // Both are one-shot — subsequent calls always re-fetch + re-render.
+  // Reuse inline shell render only on the first call — the one right after inline shell paints.
+  // __preload is consumed (set to null) after first call, so subsequent logo clicks always re-render.
   var preload = window.__preload;
-  var inlineDone = window.__inlineRendered;
-  window.__inlineRendered = false;
+  var reuseInline = !!preload && !!(document.getElementById('devices-section') || document.getElementById('active-section'));
   if (preload) window.__preload = null;
 
-  if (!inlineDone) {
+  if (!reuseInline) {
     content.innerHTML = '<div class="section-title">Active Sessions</div>'
       + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
       + '<div class="section-title">Devices</div>'
@@ -158,7 +157,7 @@ async function loadDevices() {
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
 
-  if (inlineDone) {
+  if (reuseInline) {
     Promise.resolve(devicesPromise).then(function (devData) {
       if (devData && devData.devices) devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
     }).catch(function () {});

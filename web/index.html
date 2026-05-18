@@ -21,7 +21,7 @@
      Hide body briefly on iOS so users see the dark background instead of content jumping down.
      Android renders correctly on first frame, so it skips this. */
   @supports (-webkit-touch-callout:none){body{opacity:0}body.ready{opacity:1;transition:opacity .1s}}
-  .top-left{font-size:13px;display:flex;align-items:center;gap:4px}
+  .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
   .top-title{font-weight:600;color:#e6edf3}
   a.top-gear,a.top-gear:link,a.top-gear:visited{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;color:#6e7681;text-decoration:none}
   .breadcrumb{display:none;flex-shrink:0}
@@ -104,8 +104,6 @@
     content.addEventListener('click', function (e) {
       var t = e.target.closest('[data-nav]');
       if (!t) return;
-      // User navigated away — inline shell's render is no longer the active view.
-      window.__inlineRendered = false;
       var act = t.dataset.nav;
       var run = function () {
         if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
