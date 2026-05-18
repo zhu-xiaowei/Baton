@@ -28,13 +28,25 @@
   h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
   .tagline { color: #8b949e; font-size: 14px; margin-bottom: 32px; line-height: 1.5; }
   .input-group { margin-bottom: 16px; text-align: left; }
-  .input-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+  .input-group label { display: block; font-size: 12px; color: #c9d1d9; margin-bottom: 6px; }
   .input-group input {
     width: 100%; padding: 10px 14px; background: #161b22; border: 1px solid #30363d;
     border-radius: 8px; color: #e6edf3; font-size: 14px; outline: none;
   }
   .input-group input:focus { border-color: #58a6ff; }
-  .input-group input::placeholder { color: #484f58; }
+  .input-group input::placeholder { color: #6e7681; }
+  .input-row { position: relative; }
+  .input-row input { width: 100%; padding-right: 44px; }
+  .scan-btn {
+    position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+    width: 32px; height: 32px; padding: 0;
+    background: transparent; border: none; border-radius: 6px;
+    color: #8b949e; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .scan-btn:hover { color: #58a6ff; background: rgba(88,166,255,0.08); }
+  .scan-btn:active { background: rgba(88,166,255,0.16); }
+  .scan-btn svg { width: 20px; height: 20px; display: block; }
+  .scan-btn svg path { fill: currentColor; }
   .btn {
     width: 100%; padding: 12px; background: #238636; border: none; border-radius: 8px;
     color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px;
@@ -43,6 +55,14 @@
   .btn:active { background: #196c2e; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #f85149; font-size: 12px; margin-top: 8px; display: none; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; vertical-align: -2px;
+    border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  body.scanning { background: transparent !important; }
+  body.scanning .card { visibility: hidden; }
 </style>
 </head>
 <body>
@@ -54,7 +74,18 @@
 
   <div class="input-group" id="serverGroup" style="display:none">
     <label>Server URL</label>
-    <input id="serverInput" type="url" placeholder="https://xxx.execute-api.xxx.amazonaws.com" autocomplete="off" />
+    <div class="input-row">
+      <input id="serverInput" type="url" placeholder="Paste your Server URL" autocomplete="off" />
+      <button type="button" class="scan-btn" id="scanBtn" aria-label="Scan QR code" title="Scan QR code">
+        <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+          <path d="M192 416C172.8 416 160 403.2 160 384L160 256c0-51.2 44.8-96 96-96l128 0c19.2 0 32 12.8 32 32S403.2 224 384 224L256 224C236.8 224 224 236.8 224 256l0 128C224 403.2 211.2 416 192 416z"/>
+          <path d="M384 864 256 864c-51.2 0-96-44.8-96-96l0-128c0-19.2 12.8-32 32-32S224 620.8 224 640l0 128c0 19.2 12.8 32 32 32l128 0c19.2 0 32 12.8 32 32S403.2 864 384 864z"/>
+          <path d="M768 864l-128 0c-19.2 0-32-12.8-32-32s12.8-32 32-32l128 0c19.2 0 32-12.8 32-32l0-128c0-19.2 12.8-32 32-32s32 12.8 32 32l0 128C864 819.2 819.2 864 768 864z"/>
+          <path d="M832 416c-19.2 0-32-12.8-32-32L800 256c0-19.2-12.8-32-32-32l-128 0C620.8 224 608 211.2 608 192S620.8 160 640 160l128 0c51.2 0 96 44.8 96 96l0 128C864 403.2 851.2 416 832 416z"/>
+          <path d="M832 544 192 544C172.8 544 160 531.2 160 512S172.8 480 192 480l640 0c19.2 0 32 12.8 32 32S851.2 544 832 544z"/>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <div class="input-group">

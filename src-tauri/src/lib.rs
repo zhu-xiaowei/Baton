@@ -9,6 +9,8 @@ pub fn run() {
             .build(),
         )?;
       }
+      #[cfg(any(target_os = "android", target_os = "ios"))]
+      app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
       Ok(())
     })
     .run(tauri::generate_context!())
