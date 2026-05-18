@@ -21,13 +21,11 @@
     padding-top: 24px;
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
   }
-  .header { text-align: center; margin-bottom: 24px; }
-  .header h1 { font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .header p { color: #8b949e; font-size: 13px; margin-top: 6px; }
-  .setup-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; padding-top: calc(6px + env(safe-area-inset-top, 0px)); background: #161b22; border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 10; margin: -24px -16px 24px -16px; width: calc(100% + 32px); }
-  .setup-bar .back { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+  .setup-bar { display: flex; align-items: center; padding: 6px 8px; padding-top: calc(6px + env(safe-area-inset-top, 0px)); background: #161b22; border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 10; margin: -24px -16px 24px -16px; width: calc(100% + 32px); }
+  .setup-bar .back { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s; flex-shrink: 0; }
   .setup-bar .back:hover { color: #e6edf3; background: #21262d; }
-  .setup-bar .title { font-size: 13px; font-weight: 600; color: #e6edf3; }
+  .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: #e6edf3; }
+  .setup-bar .spacer { width: 28px; flex-shrink: 0; }
   .section {
     width: 100%; max-width: 600px; background: #161b22; border: 1px solid #30363d;
     border-radius: 10px; padding: 20px; margin-bottom: 20px;
@@ -57,24 +55,12 @@
   .qr-frame canvas { border-radius: 4px; display: block; }
   .url-block {
     width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
-    padding: 10px 48px 10px 14px; position: relative;
+    padding: 10px 56px 10px 14px; position: relative;
     font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #8b949e;
-    line-height: 1.5; word-break: break-all;
+    line-height: 1.5; white-space: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
   }
-  .devices { margin-top: 12px; }
-  .device-item {
-    padding: 10px 14px;
-    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 8px;
-  }
-  .device-top { display: flex; align-items: center; gap: 8px; }
-  .device-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; flex-shrink: 0; }
-  .device-dot.online { background: #3fb950; }
-  .device-dot.offline { background: #484f58; }
-  .device-name { font-size: 14px; font-weight: 500; }
-  .device-time { font-size: 12px; color: #6e7681; margin-left: auto; }
-  .device-meta { display: flex; justify-content: space-between; font-size: 12px; color: #8b949e; margin-top: 4px; padding-left: 16px; }
-  .empty { color: #6e7681; font-size: 13px; text-align: center; padding: 12px; }
-  .loading { color: #8b949e; font-size: 13px; text-align: center; padding: 12px; }
+  .url-block::-webkit-scrollbar { height: 4px; }
+  .url-block::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -82,10 +68,7 @@
 <div class="setup-bar">
   <a href="index.html" class="back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></a>
   <span class="title">Setup</span>
-</div>
-
-<div class="header">
-  <p>Install the bridge on your dev machine to start syncing</p>
+  <span class="spacer"></span>
 </div>
 
 <!-- Step 1: Install Bridge -->
@@ -93,7 +76,6 @@
   <h2><span class="num">1</span> Install Bridge</h2>
   <p class="hint" style="margin-bottom:10px">Run this command on any Mac or Linux machine with Node.js installed:</p>
   <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="copy-btn" onclick="copyCmd(this)">Copy</button></div>
-  <p class="hint">This downloads the bridge, configures auto-start (launchd/systemd), and begins syncing immediately.</p>
 </div>
 
 <!-- Step 2: QR Code for mobile -->
@@ -104,12 +86,6 @@
     <div class="qr-frame"><canvas id="qrCanvas"></canvas></div>
     <div class="url-block"><span id="qrUrl"></span><button class="copy-btn" onclick="copyUrl(this)">Copy</button></div>
   </div>
-</div>
-
-<!-- Step 3: Connected devices -->
-<div class="section">
-  <h2><span class="num">3</span> Connected Devices</h2>
-  <div id="deviceList" class="loading">Loading...</div>
 </div>
 
 <!-- Logout -->
