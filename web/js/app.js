@@ -99,8 +99,16 @@ function toggleBreadcrumbExpand(nav) {
 }
 
 function showInputBar(visible) {
-  document.getElementById('input-bar').style.display = visible ? 'flex' : 'none';
-  if (!visible) { document.getElementById('scroll-bottom-btn').style.display = 'none'; state.wsRunning = false; updateSpinner(); }
+  var bar = document.getElementById('input-bar');
+  bar.style.display = visible ? 'flex' : 'none';
+  if (!visible) {
+    document.getElementById('scroll-bottom-btn').style.display = 'none';
+    document.body.classList.remove('new-session');
+    // Restore input-bar to body if it was moved into #content
+    if (bar.parentElement !== document.body) document.body.appendChild(bar);
+    state.wsRunning = false;
+    updateSpinner();
+  }
 }
 
 function saveNav() {
@@ -327,10 +335,24 @@ async function startNewSession(projectHash) {
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
   state.wsSessionId = null;
+  state.wsRunning = false;
   state.pendingSentMessages = [];
+  if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
-  content.innerHTML = '<div class="messages"><div class="empty">Send a message to start a new session</div></div>';
+  content.innerHTML =
+    '<div class="new-session-hero">'
+      + '<div class="hero-logo">🔭</div>'
+      + '<div class="hero-title">AgentPeek</div>'
+    + '</div>'
+    + '<div class="messages" hidden></div>';
+  document.body.classList.add('new-session');
   showInputBar(true);
+  // Move input-bar into #content so it sits with the hero in centered flex group.
+  // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
+  var bar = document.getElementById('input-bar');
+  if (bar && bar.parentElement !== content) content.appendChild(bar);
+  // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
+  if (typeof updateSendBtn === 'function') updateSendBtn();
   connectWs(null, projectHash);
 }
 
@@ -338,6 +360,7 @@ async function startNewSession(projectHash) {
 async function loadMessages(sessionId, preview, status) {
   // Update state + breadcrumb before any await — a fast follow-up nav must not be
   // overwritten when this call resumes.
+  document.body.classList.remove('new-session');
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';

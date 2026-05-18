@@ -554,8 +554,31 @@ function onSendBtnClick() {
   var input = document.getElementById('msg-input');
   var isMobile = /Mobi|Android/i.test(navigator.userAgent);
   var kbWasUp = isMobile && window.visualViewport && window.visualViewport.height < _vpBaseHeight * 0.75;
+  // New-session first send: dismiss keyboard before the centered→bottom swap
+  var isFirstNewSessionSend = document.body.classList.contains('new-session');
 
   if (input.value.trim()) {
+    if (isMobile && kbWasUp && isFirstNewSessionSend) {
+      input.blur();
+      var doSendAfterKbDown = function () { sendMessage(); updateSendBtn(); };
+      if (window.visualViewport) {
+        var onResize = function () {
+          if (window.visualViewport.height >= _vpBaseHeight * 0.95) {
+            window.visualViewport.removeEventListener('resize', onResize);
+            doSendAfterKbDown();
+          }
+        };
+        window.visualViewport.addEventListener('resize', onResize);
+        setTimeout(function () {
+          window.visualViewport.removeEventListener('resize', onResize);
+          doSendAfterKbDown();
+        }, 350);
+      } else {
+        setTimeout(doSendAfterKbDown, 250);
+      }
+      return;
+    }
+
     sendMessage();
     updateSendBtn();
     // Keep keyboard open on mobile after sending
@@ -597,6 +620,18 @@ function doSend(fullText, displayText, images) {
   // Remove placeholder text
   var empty = document.querySelector('.empty');
   if (empty) empty.remove();
+
+  // Exit new-session centered layout once the user sends the first message
+  if (document.body.classList.contains('new-session')) {
+    document.body.classList.remove('new-session');
+    var hero = document.querySelector('.new-session-hero');
+    if (hero) hero.remove();
+    var msgs = document.querySelector('.messages');
+    if (msgs) msgs.removeAttribute('hidden');
+    // Restore input-bar to body (it was moved into #content for centered layout)
+    var bar = document.getElementById('input-bar');
+    if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
+  }
 
   var msgId = 'sent-' + Date.now();
   state.pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });

@@ -320,6 +320,16 @@ body {
 #input-bar { background: #0d1117; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); flex-shrink: 0; display: flex; flex-direction: column; }
 #input-bar.kb-up { padding-bottom: 8px; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
+
+/* === New-session centered layout (hero + input above the fold) ===
+   Input-bar is moved into #content (DOM move in app.js) so it sits with the
+   hero in a vertically-centered group. On first send it's restored to body. */
+body.new-session #content { display: flex; flex-direction: column; justify-content: center; align-items: stretch; padding-bottom: 8vh; }
+body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; width: 100%; align-self: center; background: transparent; }
+@media (min-width: 481px) { body.new-session #content > #input-bar { padding: 0 40px; } }
+.new-session-hero { text-align: center; padding: 0 24px 20px; }
+.hero-logo { font-size: 40px; line-height: 1; }
+.hero-title { font-size: 18px; font-weight: 600; color: #e6edf3; margin-top: 8px; letter-spacing: 0.2px; }
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
 #img-preview-row .img-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; }
