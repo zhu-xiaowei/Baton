@@ -372,6 +372,7 @@ async function loadMessages(sessionId, preview, status) {
   updateSendBtn();
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
+  showInputBar(true);
 
   // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
   state.wsAllMessages = [];
