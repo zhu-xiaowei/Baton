@@ -14,6 +14,7 @@ function devApiUrl() {
 export default defineConfig({
   root: 'web',
   base: './',
+  cacheDir: '../node_modules/.vite',
   build: {
     outDir: '../dist',
     emptyOutDir: true,
