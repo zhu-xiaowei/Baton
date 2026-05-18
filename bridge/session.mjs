@@ -4,6 +4,26 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS } from './config.mjs';
 
+// Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
+const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
+
+export function extractFirstPromptFromMsg(msg) {
+  if (msg.type !== 'user' || msg.isMeta || msg.isCompactSummary) return '';
+  const content = msg.message?.content;
+  const texts = typeof content === 'string' ? [content]
+    : Array.isArray(content) ? content.filter(b => b.type === 'text' && b.text).map(b => b.text)
+    : [];
+  for (const raw of texts) {
+    const t = raw.replace(/\n/g, ' ').trim();
+    if (!t) continue;
+    const bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
+    if (bash) return `! ${bash[1].trim()}`;
+    if (SKIP_FIRST_PROMPT.test(t)) continue;
+    return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
+  }
+  return '';
+}
+
 export function getPreview(filePath) {
   try {
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
@@ -19,13 +39,9 @@ export function getPreview(filePath) {
         if (msg.type === 'custom-title' && msg.customTitle) customTitle = msg.customTitle;
         if (msg.type === 'ai-title' && msg.aiTitle) aiTitle = msg.aiTitle;
         if (msg.type === 'last-prompt' && msg.lastPrompt) lastPrompt = msg.lastPrompt;
-        if (!firstUserMsg && msg.type === 'user' && msg.message?.content) {
-          const content = msg.message.content;
-          const text = typeof content === 'string' ? content
-            : Array.isArray(content) ? (content.find(c => c.type === 'text')?.text || '') : '';
-          if (text.length > 0 && !text.startsWith('<') && text !== 'Warmup') {
-            firstUserMsg = text.slice(0, 100);
-          }
+        if (!firstUserMsg) {
+          const fp = extractFirstPromptFromMsg(msg);
+          if (fp) firstUserMsg = fp;
         }
       } catch {}
     }

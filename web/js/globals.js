@@ -1,11 +1,40 @@
-// Pin npm-installed libs onto window so legacy IIFE modules can read them as bare globals.
-// Imported FIRST in entry-index.js so it fully executes before any IIFE module runs.
-import { marked } from 'marked';
-import hljs from 'highlight.js';
-import * as Diff from 'diff';
-import { Diff2HtmlUI } from 'diff2html/lib-esm/ui/js/diff2html-ui';
+// Lazy loader for viewer-only libs (marked / hljs / diff / diff2html) and viewer modules.
+// Triggered after first paint (inline shell or app.js IIFE) so device-list path doesn't pay
+// the ~1.3MB download. Calling multiple times returns the same promise.
 
-window.marked = marked;
-window.hljs = hljs;
-window.Diff = Diff;
-window.Diff2HtmlUI = Diff2HtmlUI;
+let _libsPromise = null;
+
+async function loadViewerLibs() {
+  if (_libsPromise) return _libsPromise;
+  _libsPromise = (async function () {
+    // Phase 1: vendor libs + their CSS. markdown.js's top-level marked.setOptions()
+    // requires marked + hljs to be on window first, so phase 2 must run after this.
+    const [markedMod, hljsMod, diffMod, diff2htmlMod] = await Promise.all([
+      import('marked'),
+      import('highlight.js'),
+      import('diff'),
+      import('diff2html/lib-esm/ui/js/diff2html-ui'),
+      import('highlight.js/styles/vs2015.css'),
+      import('diff2html/bundles/css/diff2html.min.css'),
+    ]);
+    window.marked = markedMod.marked;
+    window.hljs = hljsMod.default;
+    window.Diff = diffMod;
+    window.Diff2HtmlUI = diff2htmlMod.Diff2HtmlUI;
+
+    // Phase 2: viewer modules (IIFEs that read window.marked/hljs at top level).
+    await Promise.all([
+      import('./components/markdown.js'),
+      import('./components/tool.js'),
+      import('./components/message.js'),
+      import('./components/permission.js'),
+      import('./components/typing-status.js'),
+      import('./components/image.js'),
+      import('./render.js'),
+      import('./ws.js'),
+    ]);
+  })();
+  return _libsPromise;
+}
+
+window.loadViewerLibs = loadViewerLibs;

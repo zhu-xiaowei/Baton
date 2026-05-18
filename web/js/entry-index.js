@@ -1,25 +1,23 @@
-// Entry for index.html — main viewer page
-// Imports CSS, vendors CDN libs to window globals, then loads the legacy IIFE app modules in order.
+// Entry for index.html — first-paint modules only.
+// Heavy viewer libs (marked/hljs/diff/diff2html + components/render/ws) are loaded
+// lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders
+// the device list (or when the user opens a session, whichever comes first).
 
-// CSS (vite bundles into the HTML)
-import 'highlight.js/styles/vs2015.css';
-import 'diff2html/bundles/css/diff2html.min.css';
 import '../css/style.css';
 
-// Globals MUST be imported and fully executed before any IIFE module runs.
-// (A separate module ensures its window.X = ... assignments complete before markdown.js et al.)
-import './globals.js';
-
-// App modules — order matters (api defines KEY/SERVER/WS_URL first; ws/app reference them)
+import './state.js';
 import './api.js';
 import './components/skeleton.js';
-import './components/markdown.js';
-import './components/tool.js';
-import './components/message.js';
-import './components/permission.js';
-import './components/typing-status.js';
-import './components/image.js';
-import './render.js';
-import './ws.js';
+import './globals.js';   // defines window.loadViewerLibs (does NOT download libs yet)
 import './app.js';
 import './scroll-indicator.js';
+
+// Replay any clicks queued by the inline shell before app.js was ready.
+if (Array.isArray(window.__navQueue)) {
+  var q = window.__navQueue;
+  window.__navQueue = null;
+  for (var i = 0; i < q.length; i++) { try { q[i](); } catch (e) {} }
+}
+
+// Inline shell already rendered first paint and asked for viewer-libs preheat.
+if (window.__preheatViewer) window.loadViewerLibs();

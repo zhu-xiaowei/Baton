@@ -83,7 +83,7 @@ export async function readNewMessages(filePath, sessionId, projectDir) {
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
     if (!VALID_TYPES.has(msg.type)) continue;
-    if (msg.isMeta && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
+    if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg, projectDir);
     if (!extracted.uuid) continue;

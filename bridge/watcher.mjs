@@ -83,7 +83,8 @@ async function readAndSend(config, filename, sessionId) {
   // Sync metadata only when status changed, new session, or ai-title arrived
   if (lastParsedLine > lastLine && lastStatus) {
     const newStatus = lastStatus;
-    const statusChanged = newStatus !== lastKnownStatus.get(sessionId);
+    const oldStatus = lastKnownStatus.get(sessionId);
+    const statusChanged = newStatus !== oldStatus;
     const isNew = !recentSessions.has(sessionId);
 
     if (statusChanged || isNew || gotNewTitle) {
@@ -91,6 +92,16 @@ async function readAndSend(config, filename, sessionId) {
       const stat = fs.statSync(filePath);
       const projectHash = path.basename(path.dirname(filename));
       lastKnownStatus.set(sessionId, newStatus);
+      // Counter delta — server uses this to ADD/SUBTRACT counters on DEV#/PROJ# items.
+      // 'new' means this session wasn't in our cache before (sessionCount += 1).
+      const statusDelta = (statusChanged || isNew) ? {
+        deviceName: config.deviceName,
+        projectHash,
+        from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'stopped'),
+        to: newStatus,
+        projectName: readableProjectName(projectHash),
+        lastActive: stat.mtime.toISOString(),
+      } : null;
       await post('/api/bridge/sync-sessions', {
         deviceName: config.deviceName,
         os: process.platform,
@@ -104,6 +115,7 @@ async function readAndSend(config, filename, sessionId) {
           model: getModel(filePath),
           status: newStatus,
         }],
+        ...(statusDelta ? { statusDelta } : {}),
       });
       recentSessions.add(sessionId);
     }

@@ -60,7 +60,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/src"
 TEMPLATE="$SCRIPT_DIR/template/AgentPeek.template"
 REPO_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
-S3_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-images-${ACCOUNT_ID}"
+S3_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-${REGION}-images-${ACCOUNT_ID}"
 CODEBUILD_PROJECT="${STACK_NAME}-build"
 CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 

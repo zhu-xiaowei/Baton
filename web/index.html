@@ -27,6 +27,120 @@
   .breadcrumb{display:none;flex-shrink:0}
   #content{flex:1;overflow-y:auto}
 </style>
+<!-- Inline shell: auth guard + parallel fetch (devices + active-sessions) + first paint.
+     Runs before entry-index.js so the network request flies out at HTML parse time.
+     entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
+<script>
+(function () {
+  var key = '';
+  try { key = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
+  if (!key) { location.replace('landing.html'); return; }
+  var server = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
+  var hdr = { 'x-api-key': key };
+
+  // Fire both requests immediately (network flies out before any other JS loads).
+  window.__preload = {
+    active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+  };
+
+  // If user lands on a deep link (#/device/... ), let app.js handle routing.
+  // Only the empty-hash case gets inline-rendered (the common case).
+  var hash = (location.hash || '').replace(/^#\/?/, '');
+  var willRenderInline = !hash;
+
+  function timeAgo(iso) {
+    var d = Date.now() - new Date(iso).getTime();
+    if (d < 60000) return 'just now';
+    if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+    if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+    return Math.floor(d / 86400000) + 'd ago';
+  }
+  function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;'); }
+
+  function renderInline(activeData, devData) {
+    var content = document.getElementById('content');
+    if (!content) return;
+    var html = '';
+    var actives = (activeData && activeData.sessions) || [];
+    if (actives.length) {
+      html += '<div class="section-title">Active Sessions (' + actives.length + ')</div>';
+      html += '<div id="active-section" class="active-grid">';
+      html += actives.map(function (s) {
+        return '<div class="active-card ' + esc(s.status) + '"'
+          + ' data-nav="active"'
+          + ' data-sid="' + esc(s.sessionId) + '"'
+          + ' data-preview="' + esc(s.preview || '') + '"'
+          + ' data-status="' + esc(s.status) + '"'
+          + ' data-device="' + esc(s.deviceName) + '"'
+          + ' data-phash="' + esc(s.projectHash) + '"'
+          + ' data-pname="' + esc(s.projectName) + '">'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="badge ' + esc(s.status) + '">' + (s.status === 'running' ? 'Running' : 'Idle') + '</span></div>'
+          + '<div class="card-title">' + esc(s.preview || 'No preview') + '</div>'
+          + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+          + '</div>';
+      }).join('');
+      html += '</div>';
+    }
+    var devs = (devData && devData.devices) || [];
+    if (devs.length) {
+      html += '<div class="section-title">Devices (' + devs.length + ')</div>';
+      html += '<div id="devices-section" class="list">';
+      html += devs.map(function (d) {
+        var rc = d.runningCount || 0, ic = d.idleCount || 0;
+        var dotClass = d.online ? 'online' : 'offline';
+        return '<div class="item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+          + '</div>';
+      }).join('');
+      html += '</div>';
+    }
+    if (!html) html = '<div class="empty">No devices yet</div>';
+    content.innerHTML = html;
+
+    // Event delegation: route clicks through app.js once it's loaded; queue if not yet.
+    content.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-nav]');
+      if (!t) return;
+      // User navigated away — inline shell's render is no longer the active view.
+      window.__inlineRendered = false;
+      var act = t.dataset.nav;
+      var run = function () {
+        if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
+        else if (act === 'active' && typeof window.openActiveSession === 'function') window.openActiveSession(t);
+      };
+      if (typeof window.loadProjects === 'function') run();
+      else (window.__navQueue = window.__navQueue || []).push(run);
+    });
+
+    // First paint done — kick off viewer-libs preheat (during user "thinking time" before they click a session).
+    if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
+    else window.__preheatViewer = true;
+
+    window.__inlineRendered = true;
+  }
+
+  function whenReady(fn) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else fn();
+  }
+
+  if (willRenderInline) {
+    Promise.all([window.__preload.active, window.__preload.devices]).then(function (results) {
+      whenReady(function () { renderInline(results[0], results[1]); });
+    });
+  } else {
+    // Deep link: still preheat viewer libs (user is heading into a message view).
+    Promise.all([window.__preload.active, window.__preload.devices]).then(function () {
+      if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
+      else window.__preheatViewer = true;
+    });
+  }
+})();
+</script>
+
 <!-- All CSS + JS bundled via Vite from js/entry-index.js -->
 <script type="module" src="js/entry-index.js"></script>
 <script>
@@ -40,15 +154,6 @@
 </script>
 </head>
 <body>
-
-<!-- Auth guard: redirect to landing if no key -->
-<script>
-(function () {
-  try { var k = localStorage.getItem('_ak'); if (!k || !atob(k)) throw 0; } catch(e) {
-    location.replace('landing.html');
-  }
-})();
-</script>
 
 <!-- Top bar -->
 <div class="top-bar" onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">

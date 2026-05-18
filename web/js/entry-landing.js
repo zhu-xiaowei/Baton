@@ -17,8 +17,13 @@ import './api.js';
   // Check URL ?key= param
   var urlKey = new URLSearchParams(location.search).get('key');
   if (urlKey) {
-    setCredentials(urlKey, isNativeApp ? null : defaultServer);
-    location.replace('index.html');
+    var serverForUrlKey = isNativeApp ? null : defaultServer;
+    setCredentials(urlKey, serverForUrlKey);
+    // Cache wsUrl so index.html doesn't have to fetch /config later.
+    api('/api/bridge/config', null, { key: urlKey, server: serverForUrlKey || undefined })
+      .then(function (cfg) { if (cfg && cfg.wsUrl) localStorage.setItem('_wsurl', cfg.wsUrl); })
+      .catch(function () {})
+      .then(function () { location.replace('index.html'); });
     return;
   } else if (state.KEY && (!isNativeApp || localStorage.getItem('_as'))) {
     location.replace('index.html');
@@ -46,8 +51,14 @@ import './api.js';
     errEl.style.display = 'none';
 
     try {
-      await api('/api/bridge/devices', null, { key: key, server: serverUrl });
+      // devices verifies the key; config returns wsUrl. Run in parallel.
+      var results = await Promise.all([
+        api('/api/bridge/devices', null, { key: key, server: serverUrl }),
+        api('/api/bridge/config', null, { key: key, server: serverUrl }).catch(function () { return null; })
+      ]);
       setCredentials(key, serverUrl);
+      var cfg = results[1];
+      if (cfg && cfg.wsUrl) localStorage.setItem('_wsurl', cfg.wsUrl);
       location.replace('index.html');
     } catch (e) {
       errEl.textContent = e.message && e.message.indexOf('401') === 0 ? 'Invalid API key' : (e.message || 'Connection failed');

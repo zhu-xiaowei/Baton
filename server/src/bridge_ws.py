@@ -36,6 +36,23 @@ def _account_id(api_key):
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
+def _query_connections(account_id, role):
+    """Query ConnectionsTable.accountId-role-index for active connections.
+    Auto-paginates. Returns list of items with deviceName + connectionId."""
+    from boto3.dynamodb.conditions import Key
+    items = []
+    kwargs = {
+        "IndexName": "accountId-role-index",
+        "KeyConditionExpression": Key("accountId").eq(account_id) & Key("role").eq(role),
+    }
+    resp = _connections_table.query(**kwargs)
+    items.extend(resp.get("Items", []))
+    while "LastEvaluatedKey" in resp:
+        resp = _connections_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
+        items.extend(resp.get("Items", []))
+    return items
+
+
 def _post_to_connection(endpoint, connection_id, data):
     """Send data to a WebSocket connection. Returns False if connection is gone."""
     client = _apigw_client(endpoint)
@@ -104,13 +121,19 @@ def _handle_disconnect(connection_id):
     except Exception:
         pass
 
-    # Clean up subscriptions (scan is OK here — low volume, only on disconnect)
+    # Clean up subscriptions via connectionId-index GSI (vs Scan over the whole table).
     try:
-        resp = _subscriptions_table.scan(
-            FilterExpression="connectionId = :cid",
-            ExpressionAttributeValues={":cid": connection_id},
-        )
-        for item in resp.get("Items", []):
+        from boto3.dynamodb.conditions import Key
+        kwargs = {
+            "IndexName": "connectionId-index",
+            "KeyConditionExpression": Key("connectionId").eq(connection_id),
+        }
+        resp = _subscriptions_table.query(**kwargs)
+        items = resp.get("Items", [])
+        while "LastEvaluatedKey" in resp:
+            resp = _subscriptions_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
+            items.extend(resp.get("Items", []))
+        for item in items:
             _subscriptions_table.delete_item(Key={
                 "sessionId": item["sessionId"],
                 "connectionId": connection_id,
@@ -322,12 +345,7 @@ def _handle_bridge_relay(body, bridge_connection_id, endpoint):
 
 def _handle_bridge_broadcast(body, account_id, bridge_connection_id, endpoint):
     """Bridge sends a result — broadcast to all app connections for this account."""
-    resp = _connections_table.scan(
-        FilterExpression="accountId = :aid AND #r = :role",
-        ExpressionAttributeNames={"#r": "role"},
-        ExpressionAttributeValues={":aid": account_id, ":role": "app"},
-    )
-    for item in resp.get("Items", []):
+    for item in _query_connections(account_id, "app"):
         _post_to_connection(endpoint, item["connectionId"], body)
     return {"statusCode": 200}
 
@@ -347,12 +365,7 @@ def _handle_send_to_bridge(body, account_id, endpoint, action):
     device = body.get("device", "")
     payload = {k: v for k, v in body.items() if k != "device"}
     payload["action"] = action
-    resp = _connections_table.scan(
-        FilterExpression="accountId = :aid AND #r = :role",
-        ExpressionAttributeNames={"#r": "role"},
-        ExpressionAttributeValues={":aid": account_id, ":role": "bridge"},
-    )
-    for item in resp.get("Items", []):
+    for item in _query_connections(account_id, "bridge"):
         if device and item.get("deviceName", "") != device:
             continue
         _post_to_connection(endpoint, item["connectionId"], payload)
@@ -362,13 +375,7 @@ def _handle_send_to_bridge(body, account_id, endpoint, action):
 def notify_bridge_sync(session_id, account_id, endpoint):
     """Called by REST API to trigger bridge sync via WS. Finds bridge connection and sends sync_session."""
     _init()
-    # Find bridge connections for this account
-    resp = _connections_table.scan(
-        FilterExpression="accountId = :aid AND #r = :role",
-        ExpressionAttributeNames={"#r": "role"},
-        ExpressionAttributeValues={":aid": account_id, ":role": "bridge"},
-    )
-    for item in resp.get("Items", []):
+    for item in _query_connections(account_id, "bridge"):
         _post_to_connection(endpoint, item["connectionId"], {
             "action": "sync_session",
             "sessionId": session_id,

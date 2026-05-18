@@ -24,7 +24,7 @@
   .header { text-align: center; margin-bottom: 24px; }
   .header h1 { font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; }
   .header p { color: #8b949e; font-size: 13px; margin-top: 6px; }
-  .setup-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 8px; padding-top: env(safe-area-inset-top, 6px); background: #161b22; border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 10; margin: -24px -16px 24px -16px; width: calc(100% + 32px); }
+  .setup-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; padding-top: calc(6px + env(safe-area-inset-top, 0px)); background: #161b22; border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 10; margin: -24px -16px 24px -16px; width: calc(100% + 32px); }
   .setup-bar .back { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
   .setup-bar .back:hover { color: #e6edf3; background: #21262d; }
   .setup-bar .title { font-size: 13px; font-weight: 600; color: #e6edf3; }

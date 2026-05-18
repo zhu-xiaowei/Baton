@@ -45,9 +45,12 @@
                   ],
                   "Resource": [
                     { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
+                    { "Fn::Sub": "${BridgeSessionsTable.Arn}/index/*" },
                     { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
                     { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
-                    { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
+                    { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
+                    { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
+                    { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" }
                   ]
                 },
                 {
@@ -61,7 +64,7 @@
                     "s3:PutObject",
                     "s3:GetObject"
                   ],
-                  "Resource": { "Fn::Sub": "arn:aws:s3:::${BridgeImagesBucket}/*" }
+                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/*" }
                 }
               ]
             }
@@ -78,13 +81,13 @@
           "Variables": {
             "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
-            "BRIDGE_IMAGES_BUCKET": { "Ref": "BridgeImagesBucket" },
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" }
           }
         },
-        "MemorySize": 256,
+        "MemorySize": 1024,
         "PackageType": "Image",
         "ReservedConcurrentExecutions": 10,
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
@@ -436,7 +439,9 @@
                 "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem"],
                 "Resource": [
                   { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
+                  { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
                   { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
+                  { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
                   { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
                 ]
               },
@@ -456,10 +461,22 @@
         "TableName": { "Fn::Sub": "${AWS::StackName}-connections" },
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
-          { "AttributeName": "connectionId", "AttributeType": "S" }
+          { "AttributeName": "connectionId", "AttributeType": "S" },
+          { "AttributeName": "accountId", "AttributeType": "S" },
+          { "AttributeName": "role", "AttributeType": "S" }
         ],
         "KeySchema": [
           { "AttributeName": "connectionId", "KeyType": "HASH" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "accountId-role-index",
+            "KeySchema": [
+              { "AttributeName": "accountId", "KeyType": "HASH" },
+              { "AttributeName": "role", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "INCLUDE", "NonKeyAttributes": ["deviceName"] }
+          }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
@@ -477,6 +494,15 @@
           { "AttributeName": "sessionId", "KeyType": "HASH" },
           { "AttributeName": "connectionId", "KeyType": "RANGE" }
         ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "connectionId-index",
+            "KeySchema": [
+              { "AttributeName": "connectionId", "KeyType": "HASH" }
+            ],
+            "Projection": { "ProjectionType": "KEYS_ONLY" }
+          }
+        ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
     },
@@ -487,11 +513,22 @@
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
           { "AttributeName": "accountId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" }
+          { "AttributeName": "sk", "AttributeType": "S" },
+          { "AttributeName": "activeStatus", "AttributeType": "S" }
         ],
         "KeySchema": [
           { "AttributeName": "accountId", "KeyType": "HASH" },
           { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "accountId-activeStatus-index",
+            "KeySchema": [
+              { "AttributeName": "accountId", "KeyType": "HASH" },
+              { "AttributeName": "activeStatus", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "ALL" }
+          }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
@@ -510,27 +547,6 @@
           { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "BridgeImagesBucket": {
-      "Type": "AWS::S3::Bucket",
-      "Properties": {
-        "BucketName": { "Ref": "ImagesBucketName" },
-        "PublicAccessBlockConfiguration": {
-          "BlockPublicAcls": true,
-          "BlockPublicPolicy": true,
-          "IgnorePublicAcls": true,
-          "RestrictPublicBuckets": true
-        },
-        "LifecycleConfiguration": {
-          "Rules": [
-            {
-              "Id": "ExpireOldImages",
-              "Status": "Enabled",
-              "ExpirationInDays": 90
-            }
-          ]
-        }
       }
     },
     "CDN": {

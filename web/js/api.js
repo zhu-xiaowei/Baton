@@ -55,6 +55,8 @@ function _hdr(opts) {
 
 async function _do(path, params, opts, init) {
   var res = await fetch(_build(path, params, opts), Object.assign({ headers: _hdr(opts) }, init || {}));
+  // Skip auto-logout when caller passed explicit key (landing.html validates user input).
+  if ((res.status === 401 || res.status === 403) && !(opts && opts.key)) logout();
   if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
   return res;
 }
@@ -70,6 +72,7 @@ async function apiText(path, params, opts) {
 async function apiPost(path, body, opts) {
   var hdr = _hdr(Object.assign({}, opts, { contentType: 'application/json' }));
   var res = await fetch(_build(path, null, opts), { method: 'POST', headers: hdr, body: JSON.stringify(body || {}) });
+  if ((res.status === 401 || res.status === 403) && !(opts && opts.key)) logout();
   if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
   return res.json();
 }

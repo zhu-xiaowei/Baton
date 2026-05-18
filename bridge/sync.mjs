@@ -7,16 +7,21 @@ import {
   getPreview, getModel, readableProjectName,
   getSessionStatus, getRunningInfo,
 } from './session.mjs';
-import { projectHashToPath } from './tmux.mjs';
+import { projectHashToPath, cleanStaleSessions } from './tmux.mjs';
 
 // Sessions seen in last 24h — only these get metadata synced by watcher
 export const recentSessions = new Set();
 let isInitialSync = true;
 
+// Stale tmux cleanup throttle: piggybacks on checkStopped's 5-min tick but only
+// actually runs every hour (24h staleness threshold doesn't need higher cadence).
+const STALE_CLEAN_INTERVAL_MS = 60 * 60 * 1000;
+let _lastStaleCleanMs = 0;
+
 // Cache of last-known status per sessionId for periodic stopped detection
 export const lastKnownStatus = new Map();
 
-export async function syncSessions(config) {
+export async function syncSessions(config, opts = {}) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) {
     console.log('No claude projects directory found yet.');
     return;
@@ -67,13 +72,59 @@ export async function syncSessions(config) {
     delete s._filePath;
   }
 
-  // ~350-800 bytes per session, 5000 ≈ 1.7-4MB, safe under Lambda 6MB limit
+  // Compute device + project aggregates for the new single-table layout (DEV# / PROJ# items).
+  // Server uses these to populate counters without scanning all sessions.
+  const projects = new Map(); // projectHash -> aggregate
+  let deviceLastActive = '';
+  for (const s of sessions) {
+    if (s.lastActive > deviceLastActive) deviceLastActive = s.lastActive;
+    let p = projects.get(s.project);
+    if (!p) {
+      p = {
+        projectHash: s.project,
+        projectName: s.projectName || s.project,
+        sessionCount: 0, runningCount: 0, idleCount: 0,
+        lastActive: '',
+      };
+      projects.set(s.project, p);
+    }
+    p.sessionCount++;
+    if (s.status === 'running') p.runningCount++;
+    else if (s.status === 'idle') p.idleCount++;
+    if (s.lastActive > p.lastActive) p.lastActive = s.lastActive;
+  }
+  const projectAggregates = Array.from(projects.values());
+  const deviceAggregate = {
+    sessionCount: sessions.length,
+    projectCount: projectAggregates.length,
+    runningCount: sessions.filter(s => s.status === 'running').length,
+    idleCount: sessions.filter(s => s.status === 'idle').length,
+    lastActive: deviceLastActive,
+  };
+
+  // ~350-800 bytes per session, 5000 ≈ 1.7-4MB, safe under Lambda 6MB limit.
+  // Send device+projects aggregates only on the FIRST batch (server overwrites them).
   const BATCH = 5000;
   for (let i = 0; i < sessions.length; i += BATCH) {
-    await post('/api/bridge/sync-sessions', {
+    const body = {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: sessions.slice(i, i + BATCH),
+    };
+    if (i === 0) {
+      body.device = deviceAggregate;
+      body.projects = projectAggregates;
+    }
+    await post('/api/bridge/sync-sessions', body);
+  }
+  // Edge case: zero sessions — still need a single request to clear DEV#/PROJ# items.
+  if (sessions.length === 0) {
+    await post('/api/bridge/sync-sessions', {
+      deviceName: config.deviceName,
+      os: process.platform,
+      sessions: [],
+      device: deviceAggregate,
+      projects: projectAggregates,
     });
   }
 
@@ -83,6 +134,26 @@ export async function syncSessions(config) {
     console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
   } else if (runningCount > 0 || idleCount > 0) {
     console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
+  }
+
+  // skipMessages: caller wants metadata-only sync (e.g. --skip-init mode).
+  // Mark all jsonl files as already-synced-to-end so the watcher won't replay them as new.
+  if (opts.skipMessages) {
+    for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
+      const dir = path.join(CLAUDE_PROJECTS, project);
+      try {
+        if (!fs.statSync(dir).isDirectory()) continue;
+      } catch { continue; }
+      for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.jsonl') && !f.startsWith('.'))) {
+        const fp = path.join(dir, file);
+        try {
+          const lines = fs.readFileSync(fp, 'utf-8').split('\n').length;
+          synced.set(file.replace('.jsonl', ''), lines);
+        } catch {}
+      }
+    }
+    isInitialSync = false;
+    return;
   }
 
   // Initial message sync — running/idle + recent 24h sessions
@@ -137,14 +208,25 @@ export async function syncSessions(config) {
 }
 
 /**
- * Lightweight periodic check: only detect processes that disappeared.
- * Called every 5 minutes. If a session was running/idle but CC process is gone,
- * sync just that session's status to "stopped".
+ * Periodic check (every 5 min). Two jobs:
+ *  1. Kill stale apeek_ tmux sessions (idle > 24h) — runs at most once/hour via throttle.
+ *     Order matters: kill stale tmux FIRST so the running-process scan below sees the
+ *     freshly-disappeared CC processes and flips their DDB status to stopped in the same tick.
+ *  2. Detect CC processes that have disappeared and flip running/idle → stopped.
  */
 export async function checkStopped(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
+
+  // 1. Stale tmux cleanup — throttled to once per hour.
+  const now = Date.now();
+  if (now - _lastStaleCleanMs >= STALE_CLEAN_INTERVAL_MS) {
+    _lastStaleCleanMs = now;
+    try { cleanStaleSessions(); } catch {}
+  }
+
   const runningInfo = getRunningInfo();
   const updates = [];
+  const statusDeltas = [];
 
   for (const [sessionId, prevStatus] of lastKnownStatus) {
     if (prevStatus === 'stopped') continue;
@@ -158,15 +240,24 @@ export async function checkStopped(config) {
       if (newStatus !== prevStatus) {
         lastKnownStatus.set(sessionId, newStatus);
         const stat = fs.statSync(filePath);
+        const lastActive = stat.mtime.toISOString();
         updates.push({
           id: sessionId,
           project,
           projectName: readableProjectName(project),
-          lastActive: stat.mtime.toISOString(),
+          lastActive,
           size: stat.size,
           preview: getPreview(filePath) || '',
           model: getModel(filePath),
           status: newStatus,
+        });
+        statusDeltas.push({
+          deviceName: config.deviceName,
+          projectHash: project,
+          projectName: readableProjectName(project),
+          from: prevStatus,
+          to: newStatus,
+          lastActive,
         });
       }
       break;
@@ -178,6 +269,7 @@ export async function checkStopped(config) {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: updates,
+      statusDeltas,
     });
   }
 }

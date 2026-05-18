@@ -91,7 +91,7 @@ export function cleanStaleSessions() {
 
 /** Create a new detached tmux session and run a command. */
 export function newTmuxSession(name, cwd, command) {
-  setTimeout(cleanStaleSessions, 0);
+  // Stale cleanup runs from checkStopped's hourly tick — no need to trigger it here.
   if (!hasTmux()) throw new Error('tmux not installed');
   try { execSync(`tmux kill-session -t "${name}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
 

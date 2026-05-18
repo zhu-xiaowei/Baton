@@ -32,6 +32,30 @@ if (window.visualViewport) {
   });
 }
 
+// Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
+var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
+
+function extractFirstPromptFromMsg(msg) {
+  if (msg.type !== 'user') return '';
+  var c = msg.content;
+  var texts = [];
+  if (typeof c === 'string') texts = [c];
+  else if (Array.isArray(c)) {
+    for (var i = 0; i < c.length; i++) {
+      if (c[i] && c[i].type === 'text' && c[i].text) texts.push(c[i].text);
+    }
+  }
+  for (var j = 0; j < texts.length; j++) {
+    var t = texts[j].replace(/\n/g, ' ').trim();
+    if (!t) continue;
+    var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
+    if (bash) return '! ' + bash[1].trim();
+    if (SKIP_FIRST_PROMPT.test(t)) continue;
+    return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
+  }
+  return '';
+}
+
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
   for (var i = 0; i < state.wsAllMessages.length; i++) {
@@ -39,13 +63,20 @@ function updateTitleFromMessages() {
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
-    if (!firstUser && m.type === 'user') {
-      var t = extractMsgText(m).trim();
-      if (t) firstUser = t.slice(0, 100);
+    if (!firstUser) {
+      var fp = extractFirstPromptFromMsg(m);
+      if (fp) firstUser = fp;
     }
   }
+  var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
+  if (tier === 0) return;
+  if (tier < (state._titleTier || 0)) return;
   var title = customTitle || aiTitle || lastPrompt || firstUser;
-  if (title) { state.appState.sessionPreview = title; updateBreadcrumb(); saveNav(); }
+  if (title === state.appState.sessionPreview) return;
+  state.appState.sessionPreview = title;
+  state._titleTier = tier;
+  updateBreadcrumb();
+  saveNav();
 }
 
 function connectWs(_, projectHash) {
@@ -146,7 +177,20 @@ function connectWs(_, projectHash) {
         }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
-      if (msg.sessionId === state.wsSessionId) loadMessages(msg.sessionId);
+      if (msg.sessionId !== state.wsSessionId) return;
+      // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
+      // and re-triggers needSync, causing a render-loop with title flicker.
+      bufferAndFetch(msg.sessionId, '').then(function () {
+        if (state.wsAllMessages.length === 0) return;
+        var content = document.getElementById('content');
+        content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
+        state.wsRenderedCount = state.wsAllMessages.length;
+        state.wsLoadCompleteTs = state.wsLastTimestamp || '';
+        updateTitleFromMessages();
+        loadImages(content);
+        clampOverflow(content.querySelector('.messages'));
+        content.scrollTop = content.scrollHeight;
+      }).catch(function () {});
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -297,7 +341,7 @@ function updateLastTurn() {
 
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
-      state.wsRunning = true;
+      if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) state.wsRunning = true;
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
@@ -313,7 +357,9 @@ function updateLastTurn() {
     // Assistant message
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
-    state.wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
+    if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) {
+      state.wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
+    }
 
     var html = renderSingleMessage(msg, state.wsAllMessages);
     if (!html) continue;

@@ -6,8 +6,6 @@
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
-import fs from 'fs';
-import path from 'path';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL } from './config.mjs';
 import { loadConfig, fetchServerConfig } from './config.mjs';
@@ -45,21 +43,10 @@ console.log(`  tmux:     ${hasTmux() ? 'found (send message enabled)' : 'not fou
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
 initWs(CONFIG);
-if (!CONFIG.skipInit) {
-  await syncSessions(CONFIG);
-  setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
-} else {
-  // Skip to end of all files so we only see new messages
-  const { synced } = await import('./extract.mjs');
-  for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
-    const dir = path.join(CLAUDE_PROJECTS, project);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'))) {
-      const fp = path.join(dir, file);
-      const lines = fs.readFileSync(fp, 'utf-8').split('\n').length;
-      synced.set(file.replace('.jsonl', ''), lines);
-    }
-  }
-  console.log('[skip-init] skipping sync, watching new messages only');
-}
+// Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
+// --skip-init only skips replaying historical messages — metadata is cheap and required
+// for the periodic checkStopped() to detect disappeared CC processes.
+await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
+if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
+setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 startWatcher(CONFIG);

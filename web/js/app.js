@@ -3,6 +3,10 @@ import { state } from './state.js';
 
 var _navVersion = 0;
 
+// Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
+if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
+if (typeof window.updateSpinner !== 'function') window.updateSpinner = function () {};
+
 function osName(os) {
   return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown';
 }
@@ -129,14 +133,32 @@ async function loadDevices() {
   saveNav();
   var content = document.getElementById('content');
 
-  // Skeleton
-  content.innerHTML = '<div class="section-title">Active Sessions</div>'
-    + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
-    + '<div class="section-title">Devices</div>'
-    + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
+  // First call (right after inline shell painted) reuses __preload + __inlineRendered.
+  // Both are one-shot — subsequent calls always re-fetch + re-render.
+  var preload = window.__preload;
+  var inlineDone = window.__inlineRendered;
+  window.__inlineRendered = false;
+  if (preload) window.__preload = null;
+
+  if (!inlineDone) {
+    content.innerHTML = '<div class="section-title">Active Sessions</div>'
+      + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
+      + '<div class="section-title">Devices</div>'
+      + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
+  }
+
+  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
+  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
+
+  if (inlineDone) {
+    Promise.resolve(devicesPromise).then(function (devData) {
+      if (devData && devData.devices) devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+    }).catch(function () {});
+    return;
+  }
 
   // Fire both independently
-  api('/api/bridge/active-sessions').then(function (activeData) {
+  Promise.resolve(activePromise).then(function (activeData) {
     if (_navVersion !== myNav) return;
     var el = document.getElementById('active-section');
     var titleEl = el && el.previousElementSibling;
@@ -169,7 +191,7 @@ async function loadDevices() {
     if (titleEl) titleEl.remove();
   });
 
-  api('/api/bridge/devices').then(function (devData) {
+  Promise.resolve(devicesPromise).then(function (devData) {
     if (_navVersion !== myNav) return;
     var el = document.getElementById('devices-section');
     var titleEl = el && el.previousElementSibling;
@@ -227,17 +249,17 @@ async function loadProjects(device) {
 // ---- Sessions ----
 async function loadSessions(device, projectHash, projectName) {
   var myNav = ++_navVersion;
+  state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
+  updateBreadcrumb();
+  saveNav();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="list">' + skeletonItems(5) + '</div>';
 
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
     if (_navVersion !== myNav) return;
-    state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
-    updateBreadcrumb();
-    saveNav();
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
       var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
@@ -273,7 +295,7 @@ function closeNewProjectModal() {
   if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
 }
 
-function submitNewProject() {
+async function submitNewProject() {
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
   var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
@@ -286,10 +308,12 @@ function submitNewProject() {
   btn.disabled = true;
   btn.dataset.origText = btn.textContent;
   btn.innerHTML = '<span class="spinner"></span>Creating';
+  await window.loadViewerLibs();
   ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
 }
 
-function startNewSession(projectHash) {
+async function startNewSession(projectHash) {
+  await window.loadViewerLibs();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
   updateBreadcrumb();
@@ -312,12 +336,18 @@ function startNewSession(projectHash) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
+  // Update state + breadcrumb before any await — a fast follow-up nav must not be
+  // overwritten when this call resumes.
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';
+  // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
+  state._titleTier = preview ? 3 : 0;
   state.wsRunning = (status === 'running');
-  updateSendBtn();
   updateBreadcrumb();
+  await window.loadViewerLibs();
+  if (_navVersion !== myNav) return;
+  updateSendBtn();
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
 
@@ -365,6 +395,8 @@ async function loadMessages(sessionId, preview, status) {
         }
       }
     }
+    // Watermark: only WS messages newer than this can flip wsRunning.
+    state.wsLoadCompleteTs = state.wsLastTimestamp || '';
     updateSendBtn();
 
     content.scrollTop = content.scrollHeight;
@@ -461,14 +493,8 @@ async function loadOlderAndPrepend() {
 // Auto-connect + restore last session
 (function () {
   if (!state.KEY) return; // auth guard in index.html handles redirect
-
-  // Refresh ws config in background (cached in localStorage; doesn't block skeleton)
-  api('/api/bridge/config').then(function (cfg) {
-    if (cfg.wsUrl && cfg.wsUrl !== state.WS_URL) {
-      state.WS_URL = cfg.wsUrl;
-      localStorage.setItem('_wsurl', cfg.wsUrl);
-    }
-  }).catch(function () {});
+  // Inline shell already painted + replayed navigation — skip to avoid clearing its state.
+  if (window.__inlineRendered) return;
 
   // Route immediately so skeleton shows without waiting for any network call
   var nav = sessionStorage.getItem('agentpeek-nav');
