@@ -21,6 +21,11 @@ function parseArgs() {
   return parsed;
 }
 
+export function saveConfig(config) {
+  fs.mkdirSync(BRIDGE_HOME, { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
 export function loadConfig() {
   const cliArgs = parseArgs();
   let config;

@@ -6,9 +6,9 @@
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL } from './config.mjs';
-import { loadConfig, fetchServerConfig } from './config.mjs';
+import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped } from './sync.mjs';
 import { startWatcher } from './watcher.mjs';
@@ -49,4 +49,33 @@ initWs(CONFIG);
 await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
+
+// Self-update: every CHECK_STOPPED_INTERVAL, compare local vs server version.
+// First tick after boot is a calibration (records version, never upgrades) so
+// that re-installing doesn't loop. Subsequent ticks trigger reinstall on mismatch.
+let _firstUpdateTick = true;
+async function checkUpdate() {
+  try {
+    const res = await fetch(`${CONFIG.server}/api/version`, { headers: { 'x-api-key': CONFIG.apiKey } });
+    if (!res.ok) return;
+    const { version } = await res.json();
+    if (!version || version === 'dev') return;
+    if (_firstUpdateTick) {
+      _firstUpdateTick = false;
+      if (CONFIG.version !== version) { CONFIG.version = version; saveConfig(CONFIG); }
+      return;
+    }
+    if (version === CONFIG.version) return;
+    console.log(`[update] ${CONFIG.version} → ${version}, reinstalling...`);
+    // Update CONFIG.version BEFORE spawn so a failed install won't re-trigger every tick.
+    CONFIG.version = version;
+    saveConfig(CONFIG);
+    const baseUrl = CONFIG.server.replace(/\/v1\/?$/, '');
+    spawn('bash', ['-c', `curl -sL -H "x-api-key: $X_API_KEY" "${baseUrl}/api/install" | bash`],
+      { detached: true, stdio: 'ignore', env: { ...process.env, X_API_KEY: CONFIG.apiKey } }).unref();
+  } catch {}
+}
+checkUpdate();
+setInterval(checkUpdate, CHECK_STOPPED_INTERVAL);
+
 startWatcher(CONFIG);
