@@ -63,9 +63,30 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   body.scanning { background: transparent !important; }
   body.scanning .card { visibility: hidden; }
+  #scanOverlay { display: none; }
+  body.scanning #scanOverlay {
+    display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 9999;
+  }
+  .scan-close {
+    pointer-events: auto;
+    position: absolute;
+    top: max(env(safe-area-inset-top, 0px), 16px);
+    right: max(env(safe-area-inset-right, 0px), 16px);
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); border: none; color: #fff;
+    font-size: 22px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .scan-close:active { background: rgba(0,0,0,0.7); }
 </style>
 </head>
 <body>
+
+<div id="scanOverlay">
+  <button type="button" class="scan-close" id="scanCloseBtn" aria-label="Close">×</button>
+</div>
 
 <div class="card">
   <div class="logo">🔭</div>

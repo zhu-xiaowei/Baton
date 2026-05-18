@@ -74,15 +74,18 @@ import './api.js';
 
   window.doConnect = doConnect;
 
+  var scanModule = null;
   function setupScan() {
     var scanBtn = document.getElementById('scanBtn');
+    var closeBtn = document.getElementById('scanCloseBtn');
     if (!scanBtn) return;
+    if (closeBtn) closeBtn.addEventListener('click', cancelScan);
     scanBtn.addEventListener('click', async function () {
       var errEl = document.getElementById('error');
       errEl.style.display = 'none';
       try {
         var mod = await import('@tauri-apps/plugin-barcode-scanner');
-        // Request camera permission if not yet granted.
+        scanModule = mod;
         var perm = await mod.checkPermissions();
         if (perm !== 'granted') {
           perm = await mod.requestPermissions();
@@ -92,20 +95,32 @@ import './api.js';
             return;
           }
         }
-        // Make webview transparent so the camera preview is visible.
         document.body.classList.add('scanning');
-        var result = await mod.scan({ windowed: false, formats: [mod.Format.QRCode] });
+        var result = await mod.scan({ windowed: true, formats: [mod.Format.QRCode] });
         document.body.classList.remove('scanning');
+        scanModule = null;
         var content = (result && result.content) ? String(result.content).trim() : '';
         if (!content) return;
         applyScannedUrl(content);
       } catch (e) {
         document.body.classList.remove('scanning');
-        errEl.textContent = (e && e.message) ? e.message : 'Scan failed';
+        scanModule = null;
+        var msg = (e && e.message) ? String(e.message) : '';
+        // User-cancelled: silent (Tauri throws "cancelled" or similar)
+        if (/cancel/i.test(msg)) return;
+        errEl.textContent = msg || 'Scan failed';
         errEl.style.display = 'block';
       }
     });
   }
+
+  function cancelScan() {
+    if (scanModule && typeof scanModule.cancel === 'function') {
+      scanModule.cancel().catch(function () {});
+    }
+    document.body.classList.remove('scanning');
+  }
+  window.cancelScan = cancelScan;
 
   function applyScannedUrl(raw) {
     var errEl = document.getElementById('error');

@@ -102,7 +102,7 @@ function showInputBar(visible) {
   var bar = document.getElementById('input-bar');
   bar.style.display = visible ? 'flex' : 'none';
   if (!visible) {
-    document.getElementById('scroll-bottom-btn').style.display = 'none';
+    document.getElementById('scroll-bottom-btn').classList.remove('visible');
     document.body.classList.remove('new-session');
     // Restore input-bar to body if it was moved into #content
     if (bar.parentElement !== document.body) document.body.appendChild(bar);
@@ -468,7 +468,7 @@ function positionScrollBtn() {
   content.addEventListener('scroll', function () {
     if (!state.appState.session) return;
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
-    btn.style.display = atBottom ? 'none' : 'flex';
+    btn.classList.toggle('visible', !atBottom);
 
     // Load older messages when scrolling near top
     if (content.scrollTop < 800 && state.wsHasMore && !state.wsLoadingOlder) {
