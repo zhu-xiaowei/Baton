@@ -19,5 +19,5 @@ if (Array.isArray(window.__navQueue)) {
   for (var i = 0; i < q.length; i++) { try { q[i](); } catch (e) {} }
 }
 
-// Inline shell already rendered first paint and asked for viewer-libs preheat.
-if (window.__preheatViewer) window.loadViewerLibs();
+// Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
+if (window.__preheatViewer) setTimeout(window.loadViewerLibs, 1500);

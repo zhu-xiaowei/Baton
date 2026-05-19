@@ -113,24 +113,27 @@
       else (window.__navQueue = window.__navQueue || []).push(run);
     });
 
-    // First paint done — kick off viewer-libs preheat (during user "thinking time" before they click a session).
-    if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
+    // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
+    if (typeof window.loadViewerLibs === 'function') setTimeout(window.loadViewerLibs, 1500);
     else window.__preheatViewer = true;
 
     window.__inlineRendered = true;
   }
 
-  function whenReady(fn) {
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+  // Wait for #content to be parsed, not DOMContentLoaded — avoids waiting for module chunks.
+  function whenContentReady(fn) {
+    if (document.getElementById('content')) return fn();
+    var iv = setInterval(function () {
+      if (document.getElementById('content')) { clearInterval(iv); fn(); }
+    }, 10);
   }
 
   if (willRenderInline) {
     Promise.all([window.__preload.active, window.__preload.devices]).then(function (results) {
-      whenReady(function () { renderInline(results[0], results[1]); });
+      whenContentReady(function () { renderInline(results[0], results[1]); });
     });
   } else {
-    // Deep link: still preheat viewer libs (user is heading into a message view).
+    // Deep link: preheat immediately, user is heading to a message view.
     Promise.all([window.__preload.active, window.__preload.devices]).then(function () {
       if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
       else window.__preheatViewer = true;
