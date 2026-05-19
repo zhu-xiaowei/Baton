@@ -1,5 +1,4 @@
 import WebSocket from 'ws';
-import dns from 'dns';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -13,8 +12,14 @@ let _ws = null;
 let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
+let _consecutiveFailures = 0;
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const RECONNECT_DELAY = 5_000;
+// After this many consecutive reconnect failures (~1 min at 5s delay), exit so launchd
+// restarts us with a fresh DNS resolver / TCP stack. Long-lived Node processes can get
+// stuck in DNS/network states (c-ares cache, mDNSResponder negative cache, stale sockets)
+// that no in-process retry can recover from. Fail-fast + supervisor restart is the cure.
+const MAX_CONSECUTIVE_FAILURES = 12;
 
 // Launch locks: prevent concurrent tmux creation for same project/session
 // Key: projectHash or sessionId, Value: Promise<{ok, sessionId?, tmuxName?}>
@@ -71,21 +76,11 @@ function connect() {
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
-  _ws = new WebSocket(url, {
-    lookup: (hostname, opts, cb) => {
-      dns.resolve4(hostname, (err, addrs) => {
-        if (err || !addrs || !addrs.length) return dns.lookup(hostname, opts, cb);
-        if (opts.all) {
-          cb(null, addrs.map(a => ({ address: a, family: 4 })));
-        } else {
-          cb(null, addrs[0], 4);
-        }
-      });
-    },
-  });
+  _ws = new WebSocket(url);
 
   _ws.on('open', () => {
     console.log('[ws] connected');
+    _consecutiveFailures = 0;
     _heartbeatTimer = setInterval(() => {
       if (_ws?.readyState === WebSocket.OPEN) {
         _ws.send(JSON.stringify({ action: 'heartbeat' }));
@@ -125,6 +120,11 @@ function connect() {
 
 function scheduleReconnect() {
   if (_reconnectTimer) return;
+  _consecutiveFailures += 1;
+  if (_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    console.error(`[ws] ${_consecutiveFailures} consecutive failures, exiting for launchd restart (clears DNS/network state)`);
+    process.exit(1);
+  }
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
     connect();
