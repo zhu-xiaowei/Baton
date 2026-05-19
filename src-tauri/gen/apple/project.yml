@@ -52,7 +52,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.2.0
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
     entitlements:
       path: agentpeek_iOS/agentpeek_iOS.entitlements
     scheme:

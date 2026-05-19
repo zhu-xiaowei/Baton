@@ -236,10 +236,15 @@ Tauri v2 将 web/ 静态前端打包为原生 app，零 web 代码改动。
 ```
 npx tauri android dev       — Android 设备/模拟器开发
 npx tauri android build     — 发布 APK/AAB
-npx tauri ios dev           — iOS 模拟器开发
-npx tauri ios build         — 发布 IPA
+npm run dev:ios             — iOS 模拟器开发 (iPhone 17 Pro)
+npm run build:ios           — 本地构建 iOS IPA（不上传）
+npm run release:ios         — 构建 + 自动 bump CFBundleVersion + 上传 TestFlight
 npx tauri dev               — 桌面开发
 ```
+
+`release:ios` 需要 `.env.local` 里配 `APPSTORE_KEY_ID` / `APPSTORE_ISSUER_ID`，
+对应 .p8 key 放在 `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`。
+脚本：`scripts/release-ios.sh`。
 
 ### Native Features (planned)
 - QR 扫码登录: `tauri-plugin-barcode-scanner` 官方插件
