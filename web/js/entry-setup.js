@@ -1,4 +1,4 @@
-// Entry for setup.html — install command + QR
+// Entry for setup.html — install command + Start URL QR
 import { state } from './state.js';
 import './api.js';
 import qrcode from 'qrcode-generator';
@@ -12,16 +12,19 @@ import qrcode from 'qrcode-generator';
   }
   if (!state.KEY) { location.replace('landing.html'); return; }
 
-  // Step 1: Render install command
+  // Step 1: Install command — full text, single Copy button.
+  // Key is shown in plain text; user is already authenticated to view this page.
   var cmdEl = document.getElementById('installCmdText');
   cmdEl.textContent = 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
 
-  // Step 2: QR Code
-  var viewerUrl = state.SERVER + '/landing.html?key=' + encodeURIComponent(state.KEY);
-  document.getElementById('qrUrl').textContent = viewerUrl;
+  // Step 2: Start URL — same single-URL format the install.sh prints, but
+  // backed by the permanent API key (so the QR doesn't expire). Browsers
+  // and the native app both accept ?t= and ?key= via the landing page.
+  var startUrl = state.SERVER + '/?key=' + encodeURIComponent(state.KEY);
+  document.getElementById('qrUrl').textContent = startUrl;
 
   var qr = qrcode(0, 'M');
-  qr.addData(viewerUrl);
+  qr.addData(startUrl);
   qr.make();
 
   var canvas = document.getElementById('qrCanvas');
@@ -41,10 +44,9 @@ import qrcode from 'qrcode-generator';
     }
   }
 
-  // Helpers used inside this scope
   function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(function () {
-      btn.textContent = 'Copied!';
+      btn.textContent = '✓';
       btn.classList.add('copied');
       setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
     });
@@ -52,7 +54,13 @@ import qrcode from 'qrcode-generator';
   function copyCmd(btn) { copyText(btn, document.getElementById('installCmdText').textContent); }
   function copyUrl(btn) { copyText(btn, document.getElementById('qrUrl').textContent); }
 
-  // Expose handlers used by inline onclick attributes
   window.copyCmd = copyCmd;
   window.copyUrl = copyUrl;
+
+  // App version — baked at build time from package.json, shown on all platforms.
+  var verEl = document.getElementById('appVersion');
+  if (verEl && typeof __APP_VERSION__ !== 'undefined') {
+    verEl.textContent = 'v' + __APP_VERSION__;
+    verEl.style.display = 'block';
+  }
 })();

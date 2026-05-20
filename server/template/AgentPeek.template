@@ -50,7 +50,8 @@
                     { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
                     { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
                     { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
-                    { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" }
+                    { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
+                    { "Fn::GetAtt": ["SystemTable", "Arn"] }
                   ]
                 },
                 {
@@ -84,7 +85,8 @@
             "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
-            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" }
+            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+            "SYSTEM_TABLE": { "Ref": "SystemTable" }
           }
         },
         "MemorySize": 1024,
@@ -544,6 +546,22 @@
         ],
         "KeySchema": [
           { "AttributeName": "sessionId", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "SystemTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-system" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "pk", "KeyType": "HASH" },
           { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }

@@ -46,6 +46,8 @@ function showPermissionPrompt(msg) {
   html += '</div></div>';
 
   container.insertAdjacentHTML('beforeend', html);
+  var sp = document.getElementById('cc-spinner');
+  if (sp) sp.style.display = 'none';
   var el = document.getElementById('content');
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 }
@@ -130,6 +132,7 @@ function dismissPermissionPrompt() {
     inputBar.querySelectorAll('.input-row button').forEach(function(b) { b.disabled = false; });
     inputBar.querySelector('#msg-input').placeholder = 'Send a message...';
   }
+  if (typeof updateSpinner === 'function') updateSpinner();
 }
 
 // ---- Client-side prompt detection ----
@@ -207,7 +210,8 @@ function buildClientPrompt(toolName, toolInput) {
       ]
     };
   }
-  // Fallback: unknown tool (MCP tools, etc.) — generic permission prompt
+  // Fallback: MCP tools only — generic permission prompt
+  if (toolName.indexOf('mcp__') !== 0) return null;
   var desc = '';
   try { desc = JSON.stringify(toolInput, null, 2); } catch(e) {}
   if (desc.length > 500) desc = desc.substring(0, 500) + '…';

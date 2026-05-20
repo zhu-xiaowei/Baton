@@ -15,11 +15,8 @@ let _heartbeatTimer = null;
 let _consecutiveFailures = 0;
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const RECONNECT_DELAY = 5_000;
-// After this many consecutive reconnect failures (~1 min at 5s delay), exit so launchd
-// restarts us with a fresh DNS resolver / TCP stack. Long-lived Node processes can get
-// stuck in DNS/network states (c-ares cache, mDNSResponder negative cache, stale sockets)
-// that no in-process retry can recover from. Fail-fast + supervisor restart is the cure.
-const MAX_CONSECUTIVE_FAILURES = 12;
+const SLOW_RECONNECT_DELAY = 5 * 60_000;
+const SLOW_RECONNECT_THRESHOLD = 12;
 
 // Launch locks: prevent concurrent tmux creation for same project/session
 // Key: projectHash or sessionId, Value: Promise<{ok, sessionId?, tmuxName?}>
@@ -121,14 +118,15 @@ function connect() {
 function scheduleReconnect() {
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
-  if (_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-    console.error(`[ws] ${_consecutiveFailures} consecutive failures, exiting for launchd restart (clears DNS/network state)`);
-    process.exit(1);
+  const delay = _consecutiveFailures >= SLOW_RECONNECT_THRESHOLD
+    ? SLOW_RECONNECT_DELAY : RECONNECT_DELAY;
+  if (_consecutiveFailures === SLOW_RECONNECT_THRESHOLD) {
+    console.log(`[ws] ${_consecutiveFailures} failures, switching to 5-min reconnect interval`);
   }
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
     connect();
-  }, RECONNECT_DELAY);
+  }, delay);
 }
 
 async function handleMessage(msg) {

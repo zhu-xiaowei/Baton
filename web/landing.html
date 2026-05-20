@@ -61,43 +61,21 @@
     border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  body.scanning { background: transparent !important; }
-  body.scanning .card { visibility: hidden; }
-  #scanOverlay { display: none; }
-  body.scanning #scanOverlay {
-    display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    pointer-events: none; z-index: 9999;
-  }
-  .scan-close {
-    pointer-events: auto;
-    position: absolute;
-    top: max(env(safe-area-inset-top, 0px), 16px);
-    right: max(env(safe-area-inset-right, 0px), 16px);
-    width: 36px; height: 36px; border-radius: 50%;
-    background: rgba(0,0,0,0.5); border: none; color: #fff;
-    font-size: 22px; line-height: 1; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .scan-close:active { background: rgba(0,0,0,0.7); }
 </style>
 </head>
 <body>
-
-<div id="scanOverlay">
-  <button type="button" class="scan-close" id="scanCloseBtn" aria-label="Close">×</button>
-</div>
 
 <div class="card">
   <div class="logo">🔭</div>
   <h1>AgentPeek</h1>
   <p class="tagline">Monitor Claude Code sessions<br>from anywhere, in real-time.</p>
 
-  <div class="input-group" id="serverGroup" style="display:none">
-    <label>Server URL</label>
+  <div class="input-group">
+    <label>Start URL</label>
     <div class="input-row">
-      <input id="serverInput" type="url" placeholder="Paste your Server URL" autocomplete="off" />
-      <button type="button" class="scan-btn" id="scanBtn" aria-label="Scan QR code" title="Scan QR code">
+      <input id="startUrlInput" type="url" placeholder="Paste your AgentPeek Start URL" autocomplete="off"
+        onkeydown="if(event.key==='Enter')doConnect()" />
+      <button type="button" class="scan-btn" id="scanBtn" aria-label="Scan QR code" title="Scan QR code" style="display:none">
         <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
           <path d="M192 416C172.8 416 160 403.2 160 384L160 256c0-51.2 44.8-96 96-96l128 0c19.2 0 32 12.8 32 32S403.2 224 384 224L256 224C236.8 224 224 236.8 224 256l0 128C224 403.2 211.2 416 192 416z"/>
           <path d="M384 864 256 864c-51.2 0-96-44.8-96-96l0-128c0-19.2 12.8-32 32-32S224 620.8 224 640l0 128c0 19.2 12.8 32 32 32l128 0c19.2 0 32 12.8 32 32S403.2 864 384 864z"/>
@@ -107,12 +85,6 @@
         </svg>
       </button>
     </div>
-  </div>
-
-  <div class="input-group">
-    <label>API Key</label>
-    <input id="keyInput" type="password" placeholder="Paste your API key" autocomplete="off"
-      onkeydown="if(event.key==='Enter')doConnect()" />
   </div>
 
   <button class="btn" id="connectBtn" onclick="doConnect()">Connect</button>

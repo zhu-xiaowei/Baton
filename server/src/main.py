@@ -1,9 +1,10 @@
+import time
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 import os
 
 app = FastAPI()
@@ -30,16 +31,48 @@ async def version():
     return {"version": os.environ.get("APP_VERSION", "dev")}
 
 
-# Redirect bare / to landing page
-@app.get("/")
-async def root_redirect():
-    return RedirectResponse(url="landing.html")
+# Token exchange — landing page swaps a one-time token for the real API key.
+# Path is OUTSIDE /api/ so API Gateway does not require an api key.
+class ExchangeTokenBody(BaseModel):
+    token: str
 
 
-# Serve web static files (landing, viewer, setup)
+@app.post("/auth/exchange-token")
+async def exchange_token(body: ExchangeTokenBody, response: Response):
+    import boto3
+    table_name = os.environ.get("SYSTEM_TABLE", "")
+    if not table_name:
+        response.status_code = 500
+        return {"error": "system table not configured"}
+
+    token = (body.token or "").strip()
+    if not token or len(token) > 128:
+        response.status_code = 400
+        return {"error": "invalid token"}
+
+    ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    table = ddb.Table(table_name)
+
+    item = table.get_item(Key={"pk": "TOKEN", "sk": token}).get("Item")
+    if not item:
+        response.status_code = 401
+        return {"error": "invalid or expired"}
+
+    ttl = int(item.get("ttl", 0))
+    if ttl and ttl < int(time.time()):
+        table.delete_item(Key={"pk": "TOKEN", "sk": token})
+        response.status_code = 401
+        return {"error": "invalid or expired"}
+
+    return {"apiKey": item.get("apiKey", "")}
+
+
+# Serve web static files (landing, viewer, setup).
+# html=True maps "/" to index.html and lets the SPA shortcut script handle
+# ?t= / ?key= → landing.html without a server-side redirect (preserves query).
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 if os.path.isdir(WEB_DIR):
-    app.mount("/", StaticFiles(directory=WEB_DIR), name="web")
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
 if __name__ == "__main__":

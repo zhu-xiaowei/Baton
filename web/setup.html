@@ -37,30 +37,23 @@
     font-size: 13px; font-weight: 700; flex-shrink: 0;
   }
   .code-block {
-    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
-    padding: 14px 48px 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
+    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap;
     word-break: break-all; position: relative; color: #e6edf3;
   }
-  .copy-btn {
-    position: absolute; top: 8px; right: 8px; padding: 4px 10px;
-    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-    color: #8b949e; font-size: 11px; cursor: pointer;
+  .code-btn {
+    position: absolute; top: 6px; right: 6px; padding: 3px 10px;
+    background: rgba(33, 38, 45, 0.92); border: 1px solid #30363d; border-radius: 6px;
+    color: #8b949e; font-size: 11px; cursor: pointer; backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
   }
-  .copy-btn:hover { background: #30363d; color: #e6edf3; }
-  .copy-btn.copied { background: #238636; color: #fff; border-color: #238636; }
+  .code-btn:hover { background: #30363d; color: #e6edf3; }
+  .code-btn.copied { background: #238636; color: #fff; border-color: #238636; }
   .hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
-  .qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .qr-wrap { display: flex; flex-direction: column; align-items: center; }
   .qr-frame { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; }
   .qr-frame canvas { border-radius: 4px; display: block; }
-  .url-block {
-    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
-    padding: 10px 56px 10px 14px; position: relative;
-    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #8b949e;
-    line-height: 1.5; white-space: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-  }
-  .url-block::-webkit-scrollbar { height: 4px; }
-  .url-block::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -75,24 +68,33 @@
 <div class="section">
   <h2><span class="num">1</span> Install Bridge</h2>
   <p class="hint" style="margin-bottom:10px">Run this command on any Mac or Linux machine with Node.js installed:</p>
-  <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="copy-btn" onclick="copyCmd(this)">Copy</button></div>
+  <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
 </div>
 
-<!-- Step 2: QR Code for mobile -->
+<!-- Step 2: Start URL — paste into another browser or the AgentPeek app -->
 <div class="section">
-  <h2><span class="num">2</span> Open on Phone</h2>
-  <p class="hint" style="margin-bottom:14px">Scan this QR code to open AgentPeek viewer on your phone:</p>
+  <h2><span class="num">2</span> Start URL</h2>
+  <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the AgentPeek app to sign in.</p>
+  <div class="code-block" id="qrUrlBlock"><span id="qrUrl"></span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
+</div>
+
+<!-- Step 3: QR Code (scan version of the same Start URL) -->
+<div class="section">
+  <h2><span class="num">3</span> Scan QR Code</h2>
+  <p class="hint" style="margin-bottom:14px">Scan with the AgentPeek app on your phone to sign in.</p>
   <div class="qr-wrap">
     <div class="qr-frame"><canvas id="qrCanvas"></canvas></div>
-    <div class="url-block"><span id="qrUrl"></span><button class="copy-btn" onclick="copyUrl(this)">Copy</button></div>
   </div>
 </div>
 
 <!-- Logout -->
-<div style="text-align:center; margin-bottom:32px;">
+<div style="text-align:center; margin-bottom:8px;">
   <button onclick="logout()"
     style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; font-size:13px; cursor:pointer;">Log out</button>
 </div>
+
+<!-- App version (iOS only — undefined elsewhere, hidden by default) -->
+<div id="appVersion" style="text-align:center; margin-bottom:32px; color:#6e7681; font-size:11px; display:none;"></div>
 
 </body>
 </html>

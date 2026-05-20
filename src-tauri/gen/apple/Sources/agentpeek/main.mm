@@ -4,48 +4,157 @@
 #import <objc/runtime.h>
 
 static int _agentpeek_swizzle_attempts = 0;
+static int _agentpeek_cancel_swizzle_attempts = 0;
 
-// Brand background #0d1117 — applied to WKWebView so the first frame matches the
-// LaunchScreen / native window, eliminating the white flash before HTML CSS loads.
-static UIColor *agentpeek_brand_bg(void) {
-    return [UIColor colorWithRed:13.0/255.0 green:17.0/255.0 blue:23.0/255.0 alpha:1.0];
+// Find the barcode-scanner Swift class. Its runtime name is mangled with the module
+// prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
+// runtime class list to locate it by suffix.
+static Class agentpeek_find_class_by_suffix(const char *suffix) {
+    int count = objc_getClassList(NULL, 0);
+    if (count <= 0) return NULL;
+    Class *classes = (Class *)malloc(sizeof(Class) * count);
+    objc_getClassList(classes, count);
+    Class found = NULL;
+    for (int i = 0; i < count; i++) {
+        const char *name = class_getName(classes[i]);
+        if (name && strstr(name, suffix)) { found = classes[i]; break; }
+    }
+    free(classes);
+    return found;
 }
 
-// Swizzle WKWebView's designated initializer so every webview is born with a
-// dark background — the very first frame painted to screen is #0d1117 instead
-// of the WKWebView default white surface.
-static void agentpeek_install_webview_bg_swizzle(void) {
+// Plugin's cancel(_:) is called from a background dispatch queue (Tauri IPC) but
+// internally calls UIView.removeFromSuperview, which requires the main thread.
+// On iOS 17+, UIKit asserts on this and crashes (NSAssertion / SIGABRT).
+// Fix by swizzling cancel(_:) to dispatch to main thread first.
+static void agentpeek_install_scanner_cancel_swizzle(void) {
+    Class plugin = agentpeek_find_class_by_suffix("BarcodeScannerPlugin");
+    if (!plugin) {
+        if (_agentpeek_cancel_swizzle_attempts++ < 30) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
+        }
+        return;
+    }
+    SEL sel = @selector(cancel:);
+    Method m = class_getInstanceMethod(plugin, sel);
+    if (!m) return;
+    IMP origImp = method_getImplementation(m);
+    IMP newImp = imp_implementationWithBlock(^(id self_, id invoke) {
+        if ([NSThread isMainThread]) {
+            ((void (*)(id, SEL, id))origImp)(self_, sel, invoke);
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                ((void (*)(id, SEL, id))origImp)(self_, sel, invoke);
+            });
+        }
+    });
+    method_setImplementation(m, newImp);
+}
+
+// Inject a native close (×) button when the barcode scanner shows its CameraView.
+// We attach the button to the keyWindow (full-screen frame, immune to whatever frame
+// CameraView's superview has) and pin it to the window's safeAreaLayoutGuide so it
+// reliably appears at the top-right under the Dynamic Island / notch. We then poll
+// every 200ms; once the CameraView is gone (scan finished or cancelled), we remove
+// the button. Tapping the button evaluates window.__cancelScan() in the webview.
+static void agentpeek_install_scan_close_swizzle(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        Class cls = [WKWebView class];
+        SEL sel = @selector(didAddSubview:);
+        Method orig = class_getInstanceMethod([UIView class], sel);
+        IMP origImp = method_getImplementation(orig);
+        IMP newImp = imp_implementationWithBlock(^(UIView *self, UIView *subview) {
+            ((void (*)(id, SEL, UIView *))origImp)(self, sel, subview);
 
-        // 1. -initWithFrame:configuration: (designated initializer)
-        SEL initSel = @selector(initWithFrame:configuration:);
-        Method initOrig = class_getInstanceMethod(cls, initSel);
-        IMP initOrigImp = method_getImplementation(initOrig);
-        IMP initNewImp = imp_implementationWithBlock(^id(WKWebView *self, CGRect frame, WKWebViewConfiguration *config) {
-            id result = ((id (*)(id, SEL, CGRect, WKWebViewConfiguration *))initOrigImp)(self, initSel, frame, config);
-            if (result) {
-                ((WKWebView *)result).opaque = NO;
-                ((WKWebView *)result).backgroundColor = agentpeek_brand_bg();
-                ((WKWebView *)result).scrollView.backgroundColor = agentpeek_brand_bg();
+            const char *clsName = object_getClassName(subview);
+            if (!clsName || strstr(clsName, "CameraView") == NULL) return;
+
+            // Find webview anywhere in the scene to evaluate JS on.
+            __block WKWebView *webView = nil;
+            for (UIView *sib in self.subviews) {
+                if ([sib isKindOfClass:[WKWebView class]]) { webView = (WKWebView *)sib; break; }
             }
-            return result;
-        });
-        method_setImplementation(initOrig, initNewImp);
+            if (!webView) {
+                UIView *parent = self.superview;
+                while (parent && !webView) {
+                    for (UIView *sib in parent.subviews) {
+                        if ([sib isKindOfClass:[WKWebView class]]) { webView = (WKWebView *)sib; break; }
+                    }
+                    parent = parent.superview;
+                }
+            }
+            if (!webView) return;
 
-        // 2. Belt-and-suspenders: also swizzle -didMoveToWindow so any webview
-        //    that bypasses the init swizzle (e.g. via decoder) still gets the bg.
-        SEL movSel = @selector(didMoveToWindow);
-        Method movOrig = class_getInstanceMethod(cls, movSel);
-        IMP movOrigImp = method_getImplementation(movOrig);
-        IMP movNewImp = imp_implementationWithBlock(^(WKWebView *self) {
-            ((void (*)(id, SEL))movOrigImp)(self, movSel);
-            self.opaque = NO;
-            self.backgroundColor = agentpeek_brand_bg();
-            self.scrollView.backgroundColor = agentpeek_brand_bg();
+            // Find the key window (button host).
+            __block UIWindow *kw = nil;
+            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+                if ([s isKindOfClass:[UIWindowScene class]]) {
+                    for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                        if (w.isKeyWindow) { kw = w; break; }
+                    }
+                }
+                if (kw) break;
+            }
+            if (!kw) return;
+
+            // Remove any leftover button from previous scan.
+            for (UIView *v in [kw.subviews copy]) {
+                if (v.tag == 0xC10E) [v removeFromSuperview];
+            }
+
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+            btn.tag = 0xC10E;
+            btn.translatesAutoresizingMaskIntoConstraints = NO;
+            btn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+            btn.tintColor = [UIColor whiteColor];
+            // SF Symbol "xmark" is centered by design — avoids the baseline offset
+            // that the "×" Unicode glyph (U+00D7) has inside a UIButton.
+            UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration
+                configurationWithPointSize:14 weight:UIImageSymbolWeightSemibold];
+            UIImage *icon = [UIImage systemImageNamed:@"xmark" withConfiguration:cfg];
+            [btn setImage:icon forState:UIControlStateNormal];
+            btn.layer.cornerRadius = 22;
+
+            __weak WKWebView *weakWeb = webView;
+            __weak UIView *weakCam = subview;
+            __weak UIButton *weakBtn = btn;
+            [btn addAction:[UIAction actionWithTitle:@"" image:nil identifier:nil
+                                             handler:^(UIAction *action) {
+                [weakWeb evaluateJavaScript:@"window.__cancelScan && window.__cancelScan()" completionHandler:nil];
+            }] forControlEvents:UIControlEventTouchUpInside];
+
+            [kw addSubview:btn];
+            [kw bringSubviewToFront:btn];
+
+            UILayoutGuide *safe = kw.safeAreaLayoutGuide;
+            [NSLayoutConstraint activateConstraints:@[
+                [btn.topAnchor constraintEqualToAnchor:safe.topAnchor constant:8],
+                [btn.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12],
+                [btn.widthAnchor constraintEqualToConstant:44],
+                [btn.heightAnchor constraintEqualToConstant:44],
+            ]];
+
+            // Poll for cameraView removal. As long as the cameraView is alive AND has a
+            // superview, keep the button. Once it's gone or detached, remove the button.
+            __block void (^tick)(void) = nil;
+            tick = ^{
+                UIView *cam = weakCam;
+                UIButton *b = weakBtn;
+                if (!b || b.window == nil) { tick = nil; return; }
+                if (!cam || cam.superview == nil) {
+                    [b removeFromSuperview];
+                    tick = nil;
+                    return;
+                }
+                [b.superview bringSubviewToFront:b];
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), tick);
+            };
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), tick);
         });
-        method_setImplementation(movOrig, movNewImp);
+        method_setImplementation(orig, newImp);
     });
 }
 
@@ -88,8 +197,9 @@ static void agentpeek_install_kb_swizzle(void) {
 
 int main(int argc, char * argv[]) {
 	[WKWebView class]; // force-load WebKit framework
-	agentpeek_install_webview_bg_swizzle(); // dark webview background — must run before any WKWebView is created
+	agentpeek_install_scan_close_swizzle();
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
 	ffi::start_app();
 	return 0;
 }

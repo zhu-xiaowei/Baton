@@ -31,7 +31,7 @@ process.on('SIGTERM', () => process.exit(0));
 const CONFIG = loadConfig();
 initHttp(CONFIG);
 
-// Auto-discover WS URL from server
+// Auto-discover WS URL from server (retry every 5 min if network unavailable at boot)
 const serverConfig = await fetchServerConfig(CONFIG);
 if (serverConfig.wsUrl) CONFIG.wsUrl = serverConfig.wsUrl;
 
@@ -42,7 +42,15 @@ if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
 console.log(`  tmux:     ${hasTmux() ? 'found (send message enabled)' : 'not found (send message disabled)'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
-initWs(CONFIG);
+if (CONFIG.wsUrl) {
+  initWs(CONFIG);
+} else {
+  console.log('[ws] wsUrl not available, will retry every 5 min');
+  const wsRetry = setInterval(async () => {
+    const sc = await fetchServerConfig(CONFIG);
+    if (sc.wsUrl) { CONFIG.wsUrl = sc.wsUrl; clearInterval(wsRetry); initWs(CONFIG); }
+  }, 5 * 60_000);
+}
 // Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
 // --skip-init only skips replaying historical messages — metadata is cheap and required
 // for the periodic checkStopped() to detect disappeared CC processes.

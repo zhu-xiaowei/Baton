@@ -365,7 +365,17 @@ fi
 
 # ===== Step 2: Deploy CloudFormation =====
 echo "[2/4] Deploying CloudFormation stack..."
-IMAGE_URI="$REPO_URI:$TAG"
+# Use image digest (immutable) so CFN detects parameter changes and updates the
+# Lambda function automatically. With a mutable :tag the parameter string never
+# changes between deploys and CFN treats the Lambda as unchanged, leaving it
+# pinned to the previous image digest.
+IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$REPO_NAME" --region "$REGION" \
+  --image-ids "imageTag=$TAG" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)
+if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "None" ]; then
+  echo "${C_RED}ERROR: Failed to resolve image digest for ${REPO_NAME}:${TAG}${C_RESET}" >&2
+  exit 1
+fi
+IMAGE_URI="${REPO_URI}@${IMAGE_DIGEST}"
 
 cfn_dump_failure() {
   echo ""
@@ -401,20 +411,13 @@ else
 fi
 echo "  ${C_GREEN}✓${C_RESET} Stack ready"
 
-# Update WS Lambda code (standalone Python, not Docker)
+# Update WS Lambda code (standalone Python zip — CFN template stores a placeholder
+# so the real handler is pushed out-of-band each deploy).
 WS_FUNC="${STACK_NAME}-ws-handler"
 WS_ZIP="/tmp/agentpeek-ws-lambda.zip"
 (cd "$SRC_DIR" && zip -q "$WS_ZIP" bridge_ws.py)
 aws lambda update-function-code --function-name "$WS_FUNC" --zip-file "fileb://$WS_ZIP" --region "$REGION" >/dev/null 2>&1 || true
 rm -f "$WS_ZIP"
-
-# Force update REST Lambda to latest Docker image (tag is reused)
-REST_FUNC=$(aws cloudformation describe-stack-resource --stack-name "$STACK_NAME" --logical-resource-id APIHandler --region "$REGION" \
-  --query 'StackResourceDetail.PhysicalResourceId' --output text 2>/dev/null || echo "")
-if [ -n "$REST_FUNC" ] && [ "$REST_FUNC" != "None" ]; then
-  aws lambda update-function-code --function-name "$REST_FUNC" --image-uri "$IMAGE_URI" --region "$REGION" >/dev/null
-  aws lambda wait function-updated --function-name "$REST_FUNC" --region "$REGION"
-fi
 
 # ===== Step 3: Upload bridge install package =====
 echo "[3/4] Uploading bridge package..."
@@ -442,42 +445,45 @@ fi
 API_KEY=$(aws apigateway get-api-key --api-key "$KEY_ID" --include-value --region "$REGION" \
   --query 'value' --output text)
 
-# Public URL (no key — user fetches key from console)
-# QR payload: bare origin + ?key= — consumed by app's applyScannedUrl for auto-config
 if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
   BASE_URL="$CF_URL"
 else
   BASE_URL="$API_URL"
 fi
-QR_PAYLOAD="${BASE_URL}?key=${API_KEY}"
-API_KEY_CONSOLE="https://${REGION}.console.aws.amazon.com/apigateway/main/api-keys?region=${REGION}"
+
+# Generate token (12h TTL) — exchanged on first page load for the real API key.
+# Lets us print a single URL without exposing the key in console / shell history.
+SYSTEM_TABLE="${STACK_NAME}-system"
+TOKEN=$(openssl rand -hex 16)
+TOKEN_TTL=$(($(date +%s) + 43200))
+aws dynamodb put-item \
+  --table-name "$SYSTEM_TABLE" --region "$REGION" \
+  --item "{\"pk\":{\"S\":\"TOKEN\"},\"sk\":{\"S\":\"$TOKEN\"},\"apiKey\":{\"S\":\"$API_KEY\"},\"ttl\":{\"N\":\"$TOKEN_TTL\"}}" \
+  >/dev/null
+
+OPEN_URL="${BASE_URL}/?t=${TOKEN}"
 
 echo ""
 echo "${C_GREEN}${LINE}${C_RESET}"
 echo "${C_GREEN}${C_BOLD}  ✓ Deploy successful!${C_RESET}"
 echo "${C_GREEN}${LINE}${C_RESET}"
-echo "  ${C_BOLD}1. Open AgentPeek${C_RESET}"
-echo "     $BASE_URL"
 echo ""
-echo "  ${C_BOLD}2. Get your API Key${C_RESET}"
-echo "     $API_KEY_CONSOLE"
-echo "     copy the key named '${STACK_NAME}-api-key'"
+echo "  ${C_BOLD}AgentPeek Start URL${C_RESET} ${C_DIM}(expires in 12 hours)${C_RESET}"
 echo ""
-echo "  ${C_BOLD}3. Install Bridge${C_RESET}"
-echo "     click the ⚙ icon (top-right) → copy the bridge install command"
-echo "     run it on the Mac/Linux machine where Claude Code lives"
+echo "  ${C_BOLD}${OPEN_URL}${C_RESET}"
+echo ""
 echo "${C_GREEN}${LINE}${C_RESET}"
 
 # Print scannable QR if Node.js is available (non-fatal if not)
 if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
   QR_CACHE="$HOME/.cache/agentpeek-qr"
   echo ""
-  echo "  ${C_BOLD}Scan to auto-configure the app:${C_RESET}"
+  echo "  ${C_BOLD}Or scan to open on phone:${C_RESET}"
   (
     mkdir -p "$QR_CACHE" && cd "$QR_CACHE"
     [ ! -d node_modules/qrcode-terminal ] && \
       npm install --silent --no-fund --no-audit qrcode-terminal@0.12.0 >/dev/null 2>&1
-    QR_PAYLOAD="$QR_PAYLOAD" node -e \
+    QR_PAYLOAD="$OPEN_URL" node -e \
       "require('qrcode-terminal').generate(process.env.QR_PAYLOAD,{small:true})" \
       2>/dev/null | sed 's/^/  /'
   ) || true
