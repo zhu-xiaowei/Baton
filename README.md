@@ -1,4 +1,4 @@
-# AgentPeek 🔭
+# 🔭 AgentPeek
 
 <p align="center">
   <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
@@ -36,7 +36,9 @@ Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `
 - [Node.js](https://nodejs.org/) >= 20
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) (required for sending messages back to Claude Code)
 
-Open the Start URL in a browser → copy the one-line **Install bridge** command from the Setup page → run it on the machine where Claude Code is running.
+1. Open the **Start URL** in your browser 
+2. Copy the one-line **Install bridge** command from the Setup page 
+3. Run it on the machine where Claude Code is running
 
 ### 3. Download App
 
@@ -47,7 +49,7 @@ Open the Start URL in a browser → copy the one-line **Install bridge** command
 | iOS      | Coming soon |
 | Windows  | Coming soon |
 
-You can also use the web viewer directly — no app install needed.
+After download the app, scan the QR code to get started.
 
 ---
 
