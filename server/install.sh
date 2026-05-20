@@ -183,13 +183,10 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 # Ensure S3 bucket exists (shared for build artifacts, bridge package, images)
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
-# App version: semantic from version.json + short git hash (e.g. "0.2.0-92144c3").
+# App version: semantic from package.json + short git hash (e.g. "0.2.0-92144c3").
 # Git hash auto-bumps every commit — bridge auto-update triggers on each redeploy.
-VERSION_FILE="$ROOT_DIR/version.json"
-SEMANTIC="dev"
-if [ -f "$VERSION_FILE" ]; then
-  SEMANTIC=$(python3 -c "import json; print(json.load(open('$VERSION_FILE'))['version'])" 2>/dev/null || echo "dev")
-fi
+SEMANTIC=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/package.json" | head -1)
+SEMANTIC="${SEMANTIC:-dev}"
 GIT_HASH=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo "")
 if [ -n "$GIT_HASH" ]; then
   APP_VERSION="${SEMANTIC}-${GIT_HASH}"
@@ -250,7 +247,7 @@ phases:
   post_build:
     commands:
       - docker push $REPO_URI:$TAG'
-BUILDSPEC_JSON=$(echo "$BUILDSPEC" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+BUILDSPEC_JSON=$(printf '%s' "$BUILDSPEC" | awk 'BEGIN{printf "\""} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); if(NR>1) printf "\\n"; printf "%s",$0} END{printf "\""}')
 
 PROJECT_EXISTS=$(aws codebuild batch-get-projects --names "$CODEBUILD_PROJECT" --region "$REGION" \
   --query 'projects[0].name' --output text 2>/dev/null | grep -q "$CODEBUILD_PROJECT" && echo true || echo false)

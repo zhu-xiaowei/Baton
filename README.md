@@ -1,13 +1,16 @@
 # AgentPeek 🔭
 
+<p align="center">
+  <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
+</p>
+
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
 ```
-┌─────────┐       ┌─────────┐       ┌─────────────┐
-│  Bridge │──WS──▶│  Server │◀──WS──│  App/Web    │
-│ (Ec2,   │       │ (AWS    │       │ (phone/     │
-│  Mac)   │       │  Lambda)│       │  desktop)   │
-└─────────┘       └─────────┘       └─────────────┘
+┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
+│  (EC2, Mac)    │               │  (AWS Lambda)  │               │  (phone/desktop) │
+└────────────────┘               └────────────────┘               └──────────────────┘
 ```
 
 **Bridge** watches Claude Code session files on your machine, **Server** relays messages via WebSocket, **App** renders the conversation with full markdown/diff/image support and lets you send messages back.
