@@ -21,24 +21,13 @@ View and interact with your [Claude Code](https://github.com/anthropics/claude-c
 
 ### 1. Deploy Server
 
-**Prerequisites:**
-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with credentials that can create CloudFormation stacks, Lambda, DynamoDB, API Gateway, ECR, CodeBuild, and S3 resources
-- Git
-
-One command deploys the entire backend (Lambda + DynamoDB + WebSocket API Gateway) to your AWS account:
+Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/agentpeek/main/server/install.sh | bash
 ```
 
-On success, it prints a **Start URL** (valid 12h) and a QR code. Open the URL in a browser or scan it on your phone.
-
-Options:
-
-```bash
-# Specify region / stack name / AWS profile
-curl -fsSL ... | bash -s -- --region us-west-2 --stack MyStack --profile myprofile
-```
+Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
 
 
 ### 2. Install Bridge
@@ -47,7 +36,7 @@ curl -fsSL ... | bash -s -- --region us-west-2 --stack MyStack --profile myprofi
 - [Node.js](https://nodejs.org/) >= 20
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) (required for sending messages back to Claude Code)
 
-Open the Start URL in a browser → copy the one-line bridge install command from the Setup page → run it on the machine where Claude Code is running. The command is pre-filled with your API key and server URL.
+Open the Start URL in a browser → copy the one-line **Install bridge** command from the Setup page → run it on the machine where Claude Code is running.
 
 ### 3. Download App
 
