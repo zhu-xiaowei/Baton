@@ -2,7 +2,7 @@
 
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
-Built on AWS serverless (Lambda + DynamoDB + API Gateway). Zero intrusion to Claude Code — it watches session files without wrapping or modifying the `claude` command.
+AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code.
 
 <p align="center">
   <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
