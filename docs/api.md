@@ -1,22 +1,22 @@
 # AgentPeek API Specification
 
-## 通用
+## General
 
 **Base URL**: `https://{api-id}.execute-api.{region}.amazonaws.com/v1`
 
-**认证**: 所有接口（REST + WS）均需 API Key
+**Authentication**: All endpoints (REST + WS) require an API Key
 - REST: `x-api-key` header
-- WS: 连接时 query string `?apiKey=xxx`
+- WS: query string `?apiKey=xxx` on connection
 
-**accountId 派生**: `SHA256(apiKey)[:16]`，用于 DDB 查询，原始 key 不存储
+**accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
 
 ---
 
-## REST API — Bridge → Server (已实现 ✅)
+## REST API — Bridge → Server
 
 ### POST /api/bridge/sync-sessions
 
-Bridge 上传 session 元数据到 DDB。
+Bridge uploads session metadata to DDB.
 
 **Request**
 ```json
@@ -30,7 +30,7 @@ Bridge 上传 session 元数据到 DDB。
       "projectName": "agentpeek",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
-      "preview": "帮我实现 Phase 2 的接口",
+      "preview": "Help me implement Phase 2 APIs",
       "model": "claude-sonnet-4-5-20250514",
       "status": "running"
     }
@@ -43,7 +43,7 @@ Bridge 上传 session 元数据到 DDB。
 { "synced": 1 }
 ```
 
-**DDB 写入**: BridgeSessions 表
+**DDB write**: BridgeSessions table
 - PK: `accountId`
 - SK: `{deviceName}#{project}#{id}`
 
@@ -51,7 +51,7 @@ Bridge 上传 session 元数据到 DDB。
 
 ### POST /api/bridge/sync-messages
 
-Bridge 批量上传消息到 DDB。用于启动时初始同步（top 2 sessions per project）。运行时实时消息改由 WS 推送，Lambda 写 DDB。
+Bridge batch-uploads messages to DDB. Used for initial sync on startup (top 2 sessions per project). Real-time messages during runtime are pushed via WS, with Lambda writing to DDB.
 
 **Request**
 ```json
@@ -79,16 +79,16 @@ Bridge 批量上传消息到 DDB。用于启动时初始同步（top 2 sessions 
 { "written": 2 }
 ```
 
-**DDB 写入**: BridgeMessages 表
+**DDB write**: BridgeMessages table
 - PK: `sessionId`
 - SK: `{timestamp}#{uuid}`
-- content 存为 JSON 字符串
+- content stored as JSON string
 
 ---
 
 ### POST /api/bridge/upload-image
 
-Bridge 上传压缩后的图片到 S3。
+Bridge uploads a compressed image to S3.
 
 **Request**
 ```json
@@ -103,17 +103,17 @@ Bridge 上传压缩后的图片到 S3。
 { "key": "903158ab6d09b5657c3529f3e4c9e5f8.jpg", "size": 45321 }
 ```
 
-**S3 存储路径**: `images/{key}`（如 `images/903158ab6d09b5657c3529f3e4c9e5f8.jpg`）
+**S3 storage path**: `images/{key}` (e.g. `images/903158ab6d09b5657c3529f3e4c9e5f8.jpg`)
 
 ---
 
-## REST API — 通用
+## REST API — General
 
 ### GET /api/health
 
-连通性检查，app 启动时首先调用。
+Connectivity check, called by app on startup.
 
-**Query**: 无
+**Query**: none
 
 **Response** `200`
 ```json
@@ -124,9 +124,9 @@ Bridge 上传压缩后的图片到 S3。
 
 ### GET /api/bridge/config
 
-返回服务端配置，供 bridge/app 自动发现 WS URL 等。
+Returns server configuration for bridge/app auto-discovery of WS URL, etc.
 
-**Query**: 无
+**Query**: none
 
 **Response** `200`
 ```json
@@ -139,22 +139,22 @@ Bridge 上传压缩后的图片到 S3。
 
 ### GET /api/bridge/install
 
-生成 bridge 安装脚本（shell），setup 页面使用。自动配置 launchd (macOS) 或 systemd (Linux) 自启动服务。
+Generates a bridge install script (shell), used by the setup page. Automatically configures launchd (macOS) or systemd (Linux) auto-start service.
 
 **Query**:
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `name` | ❌ | 设备名（省略则脚本中交互式询问，默认 hostname） |
+| Param | Required | Description |
+|-------|----------|-------------|
+| `name` | No | Device name (if omitted, script asks interactively, defaults to hostname) |
 
-**别名**: `GET /api/install`（同一 handler）
+**Alias**: `GET /api/install` (same handler)
 
-**Response** `200`: `text/plain` shell 脚本
+**Response** `200`: `text/plain` shell script
 
-**脚本逻辑**:
-1. 下载 bridge.tar.gz（S3 presigned URL，1h 有效）
+**Script logic**:
+1. Download bridge.tar.gz (S3 presigned URL, valid 1h)
 2. npm install
-3. 写入 launchd plist / systemd service（含 server URL + API key + device name）
-4. 启动服务
+3. Write launchd plist / systemd service (contains server URL + API key + device name)
+4. Start service
 
 ---
 
@@ -162,11 +162,11 @@ Bridge 上传压缩后的图片到 S3。
 
 ### GET /api/bridge/devices
 
-获取当前账号下所有设备列表。
+Get all devices under the current account.
 
-**Query**: 无
+**Query**: none
 
-**逻辑**: 扫描 BridgeSessions 表 (PK=accountId)，按 `deviceName` 去重聚合
+**Logic**: Scan BridgeSessions table (PK=accountId), aggregate by `deviceName`
 
 **Response** `200`
 ```json
@@ -196,29 +196,29 @@ Bridge 上传压缩后的图片到 S3。
 }
 ```
 
-**说明**:
-- `projectCount`: 该设备下的项目数（按 `projectHash` 去重）
-- `sessionCount`: 该设备下的 session 总数
-- `runningCount`: `status="running"` 的 session 数
-- `idleCount`: `status="idle"` 的 session 数
-- `lastActive`: 该设备下最新 session 的 lastActive
-- `online`: bridge WS 是否在线（查 Connections 表 role=bridge 且 deviceName 匹配）
-- 按 `lastActive` 降序排列
+**Notes**:
+- `projectCount`: number of projects on this device (deduplicated by `projectHash`)
+- `sessionCount`: total sessions on this device
+- `runningCount`: sessions with `status="running"`
+- `idleCount`: sessions with `status="idle"`
+- `lastActive`: most recent session's lastActive on this device
+- `online`: whether bridge WS is connected (checks Connections table for role=bridge with matching deviceName)
+- Sorted by `lastActive` descending
 
 ---
 
 ### GET /api/bridge/projects
 
-获取指定设备下的项目列表。
+Get projects under a specific device.
 
 **Query**:
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `device` | ✅ | 设备名 |
+| Param | Required | Description |
+|-------|----------|-------------|
+| `device` | Yes | Device name |
 
-**示例**: `GET /api/bridge/projects?device=MacBook-Pro`
+**Example**: `GET /api/bridge/projects?device=MacBook-Pro`
 
-**逻辑**: 扫描 BridgeSessions (PK=accountId, SK begins_with `{device}#`)，按 `projectHash` 聚合
+**Logic**: Scan BridgeSessions (PK=accountId, SK begins_with `{device}#`), aggregate by `projectHash`
 
 **Response** `200`
 ```json
@@ -237,29 +237,29 @@ Bridge 上传压缩后的图片到 S3。
 }
 ```
 
-**说明**:
-- `projectName`: 路径最后一段（目录名），用于 UI 主标题
-- `projectPath`: 相对 home 的完整路径，用于 UI 副标题
-- `projectHash`: App 调 sessions 接口时需要传回
-- `runningCount`: `status="running"` 的 session 数
-- `idleCount`: `status="idle"` 的 session 数
-- 按 `lastActive` 降序排列
+**Notes**:
+- `projectName`: last path segment (directory name), used as UI title
+- `projectPath`: full path relative to home, used as UI subtitle
+- `projectHash`: passed back when calling the sessions endpoint
+- `runningCount`: sessions with `status="running"`
+- `idleCount`: sessions with `status="idle"`
+- Sorted by `lastActive` descending
 
 ---
 
 ### GET /api/bridge/sessions
 
-获取指定设备+项目下的 session 列表。
+Get sessions under a specific device + project.
 
 **Query**:
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `device` | ✅ | 设备名 |
-| `project` | ✅ | projectHash |
+| Param | Required | Description |
+|-------|----------|-------------|
+| `device` | Yes | Device name |
+| `project` | Yes | projectHash |
 
-**示例**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek`
+**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek`
 
-**逻辑**: 查询 BridgeSessions (PK=accountId, SK begins_with `{device}#{project}#`)
+**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `{device}#{project}#`)
 
 **Response** `200`
 ```json
@@ -267,7 +267,7 @@ Bridge 上传压缩后的图片到 S3。
   "sessions": [
     {
       "sessionId": "a1ca0870-xxxx-xxxx-xxxx",
-      "preview": "帮我实现 Phase 2 的接口",
+      "preview": "Help me implement Phase 2 APIs",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
       "model": "claude-sonnet-4-5-20250514",
@@ -285,32 +285,32 @@ Bridge 上传压缩后的图片到 S3。
 }
 ```
 
-**说明**:
-- 按 `lastActive` 降序排列
-- `status`: session 状态 (`running`/`idle`/`stopped`)
+**Notes**:
+- Sorted by `lastActive` descending
+- `status`: session state (`running`/`idle`/`stopped`)
 
 ---
 
 ### GET /api/bridge/messages
 
-获取指定 session 的消息列表，支持增量加载。
+Get messages for a specific session, supports incremental loading.
 
 **Query**:
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `session` | ✅ | sessionId |
-| `after` | ❌ | ISO 8601 timestamp，返回此时间之后的消息 |
+| Param | Required | Description |
+|-------|----------|-------------|
+| `session` | Yes | sessionId |
+| `after` | No | ISO 8601 timestamp, returns messages after this time |
 
-**示例**:
-- 全量: `GET /api/bridge/messages?session=a1ca0870-xxxx`
-- 增量: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z`
+**Examples**:
+- Full load: `GET /api/bridge/messages?session=a1ca0870-xxxx`
+- Incremental: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z`
 
-**逻辑**:
-- 无 `after`: 查询 BridgeMessages (PK=sessionId)，返回全部
-- 有 `after`: 查询 BridgeMessages (PK=sessionId, SK > after#\xff)，一次查询
-- DDB 为空时: 返回 `needSync: true`，同时通过 WS 通知 bridge 同步该 session
+**Logic**:
+- No `after`: query BridgeMessages (PK=sessionId), return all
+- With `after`: query BridgeMessages (PK=sessionId, SK > after#\xff), single query
+- DDB empty: return `needSync: true`, simultaneously notify bridge via WS to sync this session
 
-**Response** `200` — 有消息:
+**Response** `200` — has messages:
 ```json
 {
   "messages": [...],
@@ -318,7 +318,7 @@ Bridge 上传压缩后的图片到 S3。
 }
 ```
 
-**Response** `200` — DDB 无缓存（需要 bridge 同步）:
+**Response** `200` — DDB has no cache (needs bridge sync):
 ```json
 {
   "messages": [],
@@ -326,63 +326,63 @@ Bridge 上传压缩后的图片到 S3。
 }
 ```
 
-**needSync 触发的后续流程**:
+**needSync triggered flow**:
 ```
-1. Server 返回 needSync: true，同时通过 WS 通知 bridge:
+1. Server returns needSync: true, simultaneously notifies bridge via WS:
    → { action: "sync_session", sessionId: "abc" }
-2. Bridge 收到后读 .jsonl → POST /sync-messages 写 DDB
-3. Bridge 完成后 WS 通知 server:
+2. Bridge receives it, reads .jsonl → POST /sync-messages to write DDB
+3. Bridge completes, notifies server via WS:
    → { action: "sync_complete", sessionId: "abc" }
-4. Server 转发给订阅该 session 的 app:
+4. Server forwards to all apps subscribed to this session:
    → { action: "sync_complete", sessionId: "abc" }
-5. App 收到后重新 GET /messages → 有数据了 → 渲染
+5. App receives it, re-fetches GET /messages → has data now → render
 ```
 
-**说明**:
-- `content` 是 JSON 数组（从 DDB 中 JSON string 反序列化）
+**Notes**:
+- `content` is a JSON array (deserialized from JSON string in DDB)
 - `type`: `user` | `assistant` | `system` | `summary` | `ai-title`
 - Content block types: `text`, `image`, `document`, `thinking`, `tool_use`, `tool_result`
 - `document` block: `{ type: "document", source: { type: "text", media_type: "text/plain", data: "..." }, title: "filename.txt" }`
-- 按 `timestamp` 升序排列（对话顺序）
+- Sorted by `timestamp` ascending (conversation order)
 
-**DDB 未存储的字段**（仅通过 WS 实时传递，REST 返回中不含）:
-- `stopReason`: assistant 消息的停止原因（`end_turn` / `tool_use` / null），前端用于判断 wsRunning 状态
-- `toolUseResult`: Agent 工具执行元数据 `{ status, totalDurationMs, totalToolUseCount, totalTokens, agentId }`，附在 tool_result 消息上
-- 影响：页面刷新后从 DDB 加载的消息不含这些字段。wsRunning 可从 session status 降级获取，Agent stats 丢失
+**Fields NOT stored in DDB** (only passed via WS real-time, not in REST response):
+- `stopReason`: assistant message stop reason (`end_turn` / `tool_use` / null), used by frontend to determine wsRunning state
+- `toolUseResult`: Agent tool execution metadata `{ status, totalDurationMs, totalToolUseCount, totalTokens, agentId }`, attached to tool_result messages
+- Impact: messages loaded from DDB after page refresh lack these fields. wsRunning can degrade to session-level `status`, Agent stats are lost
 
 ---
 
 ### GET /api/bridge/image/{key}
 
-获取图片（代理 S3）。
+Get image (proxied from S3).
 
-**Path 参数**:
-| 参数 | 说明 |
-|------|------|
-| `key` | 图片文件名，如 `903158ab.jpg` |
+**Path params**:
+| Param | Description |
+|-------|-------------|
+| `key` | Image filename, e.g. `903158ab.jpg` |
 
-**逻辑**: 从 S3 `images/{key}` 读取并返回
+**Logic**: Read from S3 `images/{key}` and return
 
 **Response** `200`: JPEG binary, `Content-Type: image/jpeg`
 
-**说明**: App 通过此接口加载图片，避免直接暴露 S3
+**Notes**: App loads images via this endpoint to avoid exposing S3 directly
 
 ---
 
 ## WebSocket API
 
-**连接地址**: `wss://{ws-api-id}.execute-api.{region}.amazonaws.com/v1?apiKey=xxx&role=app`
+**Connection URL**: `wss://{ws-api-id}.execute-api.{region}.amazonaws.com/v1?apiKey=xxx&role=app`
 
-**Query 参数**:
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `apiKey` | ✅ | API Key |
-| `role` | ✅ | `app`（手机/web）或 `bridge` |
-| `device` | ❌ | 设备名（bridge 必传，用于 device 路由） |
+**Query params**:
+| Param | Required | Description |
+|-------|----------|-------------|
+| `apiKey` | Yes | API Key |
+| `role` | Yes | `app` (phone/web) or `bridge` |
+| `device` | No | Device name (required for bridge, used for device routing) |
 
-### 连接管理
+### Connection Management
 
-**$connect**: 验证 apiKey → 存 connectionId 到 DDB Connections 表
+**$connect**: Validate apiKey → store connectionId in DDB Connections table
 ```
 DDB Connections:
   PK: connectionId
@@ -390,11 +390,11 @@ DDB Connections:
   TTL: 24h
 ```
 
-`deviceName` 仅 bridge 连接携带，用于：
-- `send_message` / `permission_reply` / `interrupt` 的 device 路由（只转发到匹配的 bridge）
-- `GET /devices` 的 online 状态判断
+`deviceName` is only carried by bridge connections, used for:
+- Device routing for `send_message` / `permission_reply` / `interrupt` (only forwarded to matching bridge)
+- Online status in `GET /devices`
 
-**$disconnect**: 删除 connectionId + 清理相关订阅记录
+**$disconnect**: Delete connectionId + clean up related subscription records
 
 ---
 
@@ -402,18 +402,18 @@ DDB Connections:
 
 #### subscribe
 
-订阅某个 session 的实时消息。
+Subscribe to real-time messages for a session.
 
 ```json
 { "action": "subscribe", "sessionId": "a1ca0870-xxxx" }
 ```
 
-**Server 处理**:
-1. 记录订阅关系到 DDB Subscriptions 表
-2. 查找该 accountId 下的 bridge 连接
-3. 通知 bridge 开始推送该 session
+**Server handling**:
+1. Record subscription in DDB Subscriptions table
+2. Find bridge connections under this accountId
+3. Notify bridge to start pushing this session
 
-**Subscriptions 表**:
+**Subscriptions table**:
 ```
 PK: sessionId
 SK: connectionId
@@ -425,83 +425,83 @@ TTL: 24h
 
 #### unsubscribe
 
-取消订阅。
+Cancel subscription.
 
 ```json
 { "action": "unsubscribe", "sessionId": "a1ca0870-xxxx" }
 ```
 
-**Server 处理**: 删除 Subscriptions 表中对应记录
+**Server handling**: Delete corresponding record in Subscriptions table
 
 ---
 
 #### heartbeat
 
-保持连接。
+Keep connection alive.
 
 ```json
 { "action": "heartbeat" }
 ```
 
-**Server 处理**: 更新 Connections 表 TTL，返回 `{ "action": "heartbeat", "ts": "..." }`
+**Server handling**: Update Connections table TTL, return `{ "action": "heartbeat", "ts": "..." }`
 
 ---
 
 #### send_message
 
-发送消息到 Claude Code（通过 tmux）。支持两种模式：
+Send a message to Claude Code (via tmux). Supports two modes:
 
-**已有 session:**
+**Existing session:**
 ```json
 { "action": "send_message", "sessionId": "a1ca0870-xxxx", "text": "help me fix this bug", "device": "MacBook-Pro" }
 ```
 
-**新建 session（无 sessionId，带 projectHash）:**
+**New session (no sessionId, with projectHash):**
 ```json
 { "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "text": "hello", "device": "MacBook-Pro" }
 ```
 
-**Server 处理**: 按 `device` 转发给对应 bridge。Bridge 处理逻辑：
-1. 有 sessionId → 找到对应 tmux pane → sendKeys
-2. 有 sessionId 但无 tmux target → 自动创建 tmux + `claude --resume` → 等 ready → sendKeys
-3. 无 sessionId 有 projectHash → 创建 tmux + `claude` → 等 ready → sendKeys → poll .jsonl 获取新 sessionId
+**Server handling**: Forward to matching bridge by `device`. Bridge handling:
+1. Has sessionId → find corresponding tmux pane → sendKeys
+2. Has sessionId but no tmux target → auto-create tmux + `claude --resume` → wait ready → sendKeys
+3. No sessionId, has projectHash → create tmux + `claude` → wait ready → sendKeys → poll .jsonl for new sessionId
 
-**返回**: Bridge 发 `send_message_result`（含 sessionId）→ Server 广播给所有 app 连接。
+**Return**: Bridge sends `send_message_result` (with sessionId) → Server broadcasts to all app connections.
 
 ---
 
 #### permission_reply
 
-回复权限确认或用户选择。
+Reply to a permission confirmation or user choice.
 
 ```json
 { "action": "permission_reply", "sessionId": "a1ca0870-xxxx", "approved": "arrow:1", "device": "MacBook-Pro" }
 ```
 
-**approved 值**:
-| 值 | 说明 |
-|------|------|
-| `arrow:N` | 选择第 N 个选项（0-based，适用于所有选择 UI） |
-| `type:N:text` | 导航到第 N 个选项（Type something），输入文本 |
-| `escape` | 取消/关闭提示 |
+**approved values**:
+| Value | Description |
+|-------|-------------|
+| `arrow:N` | Select the Nth option (0-based, applies to all selection UIs) |
+| `type:N:text` | Navigate to Nth option (Type something), enter text, press Enter |
+| `escape` | Cancel/dismiss the prompt |
 
-**Server 处理**: 按 `device` 转发给对应 bridge。
+**Server handling**: Forward to matching bridge by `device`.
 
-**权限检测机制**: App 从 WS 实时消息中的 `tool_use` block 检测需要用户确认的工具：
-- AskUserQuestion / ExitPlanMode → 立即弹窗
-- Bash / Edit / Write → 延迟判断，若 tool_result 先到则不弹（auto-approved）
+**Permission detection mechanism**: App detects tools requiring user confirmation from `tool_use` blocks in WS real-time messages:
+- AskUserQuestion / ExitPlanMode → show prompt immediately
+- Bash / Edit / Write → delayed judgment; if tool_result arrives first, don't show (auto-approved)
 
 ---
 
 #### interrupt
 
-中断 Claude Code 当前运行（等同 Ctrl+C）。
+Interrupt the currently running Claude Code (equivalent to Ctrl+C).
 
 ```json
 { "action": "interrupt", "sessionId": "a1ca0870-xxxx", "device": "MacBook-Pro" }
 ```
 
-**Server 处理**: 按 `device` 转发给对应 bridge。Bridge 向匹配的 tmux pane 发送中断信号。
+**Server handling**: Forward to matching bridge by `device`. Bridge sends interrupt signal to the matching tmux pane.
 
 ---
 
@@ -509,7 +509,7 @@ TTL: 24h
 
 #### messages
 
-Bridge 推送新消息到 Server。
+Bridge pushes new messages to Server.
 
 ```json
 {
@@ -526,13 +526,13 @@ Bridge 推送新消息到 Server。
 }
 ```
 
-**Server (Lambda) 处理**:
-1. 查 Subscriptions 表 (PK=sessionId) → 获取所有订阅的 app connectionId
-2. 并行执行：
-   - **有订阅** → `post_to_connection` 推给所有 app（优先，延迟敏感）
-   - **写 DDB** → BridgeMessages 表（兜底缓存，不阻塞推送）
+**Server (Lambda) handling**:
+1. Query Subscriptions table (PK=sessionId) → get all subscribed app connectionIds
+2. Execute in parallel:
+   - **Has subscribers** → `post_to_connection` push to all apps (priority, latency-sensitive)
+   - **Write DDB** → BridgeMessages table (fallback cache, non-blocking)
 
-推送给 app 的消息格式：
+Message format pushed to app:
 ```json
 {
   "action": "messages",
@@ -541,16 +541,16 @@ Bridge 推送新消息到 Server。
 }
 ```
 
-**说明**:
-- Bridge 只通过 WS 发送消息，不再直接 HTTP POST 写 DDB
-- DDB 写入由 Lambda 负责，与 app 推送并行
-- 无 app 订阅时只写 DDB，不浪费转发
+**Notes**:
+- Bridge only sends messages via WS, no longer writes DDB directly via HTTP POST
+- DDB writes are handled by Lambda, in parallel with app push
+- When no app is subscribed, only writes DDB (no wasted forwarding)
 
 ---
 
 #### permission_request
 
-Bridge 检测到权限确认需求，推送给订阅该 session 的所有 app。
+Bridge detects a permission confirmation need, pushes to all apps subscribed to the session.
 
 ```json
 {
@@ -565,19 +565,19 @@ Bridge 检测到权限确认需求，推送给订阅该 session 的所有 app。
 }
 ```
 
-**Server 处理**: `_handle_bridge_relay` — 按 sessionId 查 Subscriptions 表，转发给所有订阅的 app 连接（排除 bridge 自身）。
+**Server handling**: `_handle_bridge_relay` — query Subscriptions table by sessionId, forward to all subscribed app connections (excluding bridge itself).
 
 ---
 
 #### send_message_result
 
-Bridge 处理完 send_message 后返回结果。
+Bridge returns the result after processing send_message.
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "新创建的sessionId（仅新session时）" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)" }
 ```
 
-**Server 处理**: `_handle_bridge_broadcast` — 广播给该 accountId 下**所有** app 连接（不限于订阅者）。
+**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId (not limited to subscribers).
 
 ---
 
@@ -587,56 +587,56 @@ Bridge 处理完 send_message 后返回结果。
 { "action": "heartbeat" }
 ```
 
-同 App heartbeat。
+Same as App heartbeat.
 
 ---
 
 #### sync_complete
 
-Bridge 完成按需同步后通知 server。
+Bridge notifies server after completing an on-demand sync.
 
 ```json
 { "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
 ```
 
-**Server 处理**: 转发给所有订阅该 session 的 app。
+**Server handling**: Forward to all apps subscribed to this session.
 
 ---
 
-### Server → Bridge (推送)
+### Server → Bridge (Push)
 
 #### messages_ack
 
-Server 收到 bridge 的 messages 并处理后，回复 ack 让 bridge 推进 synced 指针。
+Server acknowledges receipt and processing of bridge messages, allowing bridge to advance its synced pointer.
 
 ```json
 { "action": "messages_ack", "sessionId": "a1ca0870-xxxx" }
 ```
 
-**Bridge 处理**: `wsSendWithAck` 等待此消息（5s 超时）。收到 → resolve(true)，bridge 推进行号。超时 → resolve(false)，bridge fallback HTTP POST 写 DDB。
+**Bridge handling**: `wsSendWithAck` waits for this message (5s timeout). Received → resolve(true), bridge advances line number. Timeout → resolve(false), bridge falls back to HTTP POST to DDB.
 
 ---
 
 #### sync_session
 
-Server 通知 bridge 同步指定 session 的消息到 DDB（由 GET /messages 的 needSync 触发）。
+Server notifies bridge to sync a specific session's messages to DDB (triggered by GET /messages returning needSync).
 
 ```json
 { "action": "sync_session", "sessionId": "a1ca0870-xxxx" }
 ```
 
-**Bridge 处理**:
-1. 根据 sessionId 找到对应的 .jsonl 文件
-2. 读取并提取消息 → POST /sync-messages 写 DDB
-3. 完成后 WS 发送 `sync_complete`
+**Bridge handling**:
+1. Find the corresponding .jsonl file by sessionId
+2. Read and extract messages → POST /sync-messages to write DDB
+3. On completion, send `sync_complete` via WS
 
 ---
 
-### Server → App (推送)
+### Server → App (Push)
 
 #### messages
 
-Server 转发 bridge 的消息给 app（仅推给订阅了该 sessionId 的 app 连接）。
+Server forwards bridge messages to app (only pushed to app connections subscribed to this sessionId).
 
 ```json
 {
@@ -650,7 +650,7 @@ Server 转发 bridge 的消息给 app（仅推给订阅了该 sessionId 的 app 
 
 #### permission_request
 
-Server 转发 bridge 的权限确认请求（仅推给订阅了该 sessionId 的 app 连接）。
+Server forwards bridge permission confirmation request (only pushed to app connections subscribed to this sessionId).
 
 ```json
 {
@@ -666,17 +666,17 @@ Server 转发 bridge 的权限确认请求（仅推给订阅了该 sessionId 的
 
 #### send_message_result
 
-Server 转发 bridge 的发送结果（广播给该 account 下**所有** app 连接）。
+Server forwards bridge send result (broadcast to **all** app connections under this account).
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "新sessionId（仅新session时）" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)" }
 ```
 
 ---
 
 #### sync_complete
 
-通知 app 某个 session 的历史消息已同步到 DDB，app 可以重新 GET /messages。
+Notifies app that a session's historical messages have been synced to DDB, app can re-fetch GET /messages.
 
 ```json
 { "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
@@ -684,9 +684,9 @@ Server 转发 bridge 的发送结果（广播给该 account 下**所有** app �
 
 ---
 
-## 错误响应
+## Error Responses
 
-所有接口统一错误格式：
+All endpoints use a unified error format:
 
 ```json
 {
@@ -695,47 +695,47 @@ Server 转发 bridge 的发送结果（广播给该 account 下**所有** app �
 }
 ```
 
-| HTTP Status | error_code | 场景 |
-|-------------|------------|------|
-| 401 | `unauthorized` | 缺少或无效的 API Key |
-| 400 | `bad_request` | 缺少必填参数 |
-| 404 | `not_found` | 资源不存在 |
-| 500 | `internal_error` | 服务端异常 |
+| HTTP Status | error_code | Scenario |
+|-------------|------------|----------|
+| 401 | `unauthorized` | Missing or invalid API Key |
+| 400 | `bad_request` | Missing required parameters |
+| 404 | `not_found` | Resource does not exist |
+| 500 | `internal_error` | Server-side exception |
 
 ---
 
-## DynamoDB 表总览
+## DynamoDB Table Overview
 
-| 表名 | PK | SK | 用途 | TTL |
-|------|----|----|------|-----|
-| BridgeSessions | accountId | deviceName#projectHash#sessionId | Session 元数据 | 90 天 |
-| BridgeMessages | sessionId | timestamp#uuid | 消息缓存（仅 uuid/type/content/timestamp） | 30 天 |
-| Connections | connectionId | — | WS 连接记录（含 role, deviceName?） | 24h |
-| Subscriptions | sessionId | connectionId | WS 订阅关系 | 24h |
+| Table | PK | SK | Purpose | TTL |
+|-------|----|----|---------|-----|
+| BridgeSessions | accountId | deviceName#projectHash#sessionId | Session metadata | 90 days |
+| BridgeMessages | sessionId | timestamp#uuid | Message cache (uuid/type/content/timestamp only) | 30 days |
+| Connections | connectionId | — | WS connection records (includes role, deviceName?) | 24h |
+| Subscriptions | sessionId | connectionId | WS subscription relationships | 24h |
 
 ---
 
-## 已知限制 & 设计备注
+## Known Limitations & Design Notes
 
-### DDB 消息字段丢失
+### DDB message field loss
 
-DDB 仅存 `uuid`, `type`, `content`, `timestamp` 四个字段。以下字段仅在 WS 实时路径传递，DDB/REST 不含：
-- `stopReason` — 页面刷新后无法从消息判断 wsRunning，需降级到 session 级 `status`
-- `toolUseResult` — Agent 子任务统计信息刷新后丢失
-- `parentUuid` — 消息父子关系
+DDB only stores `uuid`, `type`, `content`, `timestamp` (four fields). The following fields are only passed via WS real-time path, not in DDB/REST:
+- `stopReason` — after page refresh, cannot determine wsRunning from messages; degrades to session-level `status`
+- `toolUseResult` — Agent sub-task statistics are lost after refresh
+- `parentUuid` — message parent-child relationships
 
-### Connections 表 scan
+### Connections table scan
 
-`send_message` / `permission_reply` / `interrupt` 转发给 bridge 时，按 `accountId + role` 做 DDB scan（Connections 表无 GSI）。当前连接量小无影响，大规模需加 GSI on accountId。`_handle_disconnect` 清理 Subscriptions 也是 scan（PK=sessionId 无法反向按 connectionId 查询）。
+Forwarding `send_message` / `permission_reply` / `interrupt` to bridge scans DDB by `accountId + role` (Connections table has no GSI). Current connection volume is small, no impact — at scale would need GSI on accountId. `_handle_disconnect` cleanup of Subscriptions is also a scan (PK=sessionId cannot reverse-lookup by connectionId).
 
-### send_message_result 广播范围
+### send_message_result broadcast scope
 
-`send_message_result` 使用 `_handle_bridge_broadcast` 广播给 account 下**所有** app 连接，而非仅请求方。多设备/多标签页同时打开时，所有 app 都会收到新 session 的 `sessionId`。当前前端通过 `appState.session === '__new__'` 判断是否处理，不影响功能。
+`send_message_result` uses `_handle_bridge_broadcast` to broadcast to **all** app connections under the account, not just the requester. When multiple devices/tabs are open, all apps receive the new session's `sessionId`. Frontend handles this via `appState.session === '__new__'` check — no functional impact.
 
-### body.pop("device") 原地修改
+### body.pop("device") in-place mutation
 
-`_handle_send_to_bridge` 中 `body.pop("device")` 直接修改传入的 dict，strip 掉 device 再转发给 bridge。当前所有调用方（send_message / permission_reply / interrupt）调用后立即 return，不复用 body，因此无实际 bug。但如果将来有复用 body 的场景需注意。
+`_handle_send_to_bridge` uses `body.pop("device")` to mutate the passed dict, stripping device before forwarding to bridge. All current callers (send_message / permission_reply / interrupt) return immediately after the call and don't reuse body, so no actual bug. But note if body is reused in the future.
 
-### 图片接口无 account 隔离
+### Image endpoint has no account isolation
 
-`GET /api/bridge/image/{key}` 不校验 accountId，任何有效 API key 可访问任意图片。依赖 key 为 hash 值不可猜测。`POST /upload-image` 同理不关联 account。
+`GET /api/bridge/image/{key}` does not verify accountId — any valid API key can access any image. Relies on the key being a hash value that is not guessable. `POST /upload-image` similarly does not associate with an account.

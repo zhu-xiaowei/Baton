@@ -1,15 +1,15 @@
-# Frontend Patterns (Web Viewer / Mobile App)
+# Frontend Patterns (Web Viewer)
 
-Web viewer (`web/`) 中已验证的前端逻辑，mobile app 需实现相同流程。
+Verified frontend logic from the web viewer (`web/`).
 
 ---
 
 ## 0. iOS Keyboard / Viewport
 
-iOS Safari 弹出键盘时不缩小 `window.innerHeight`，只缩小 `visualViewport.height`，导致 input bar 被键盘遮挡。
+iOS Safari does not shrink `window.innerHeight` when the keyboard appears — it only shrinks `visualViewport.height`, causing the input bar to be hidden behind the keyboard.
 
 ```javascript
-// ws.js: 监听 visualViewport resize，同步 body 高度
+// ws.js: listen to visualViewport resize, sync body height
 if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
   window.visualViewport.addEventListener('resize', function () {
     document.body.style.height = window.visualViewport.height + 'px';
@@ -17,7 +17,7 @@ if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
 }
 ```
 
-键盘检测基线：`_vpBaseHeight = visualViewport.height`（页面加载时快照），发送消息后不 blur input 以保持键盘。
+Keyboard detection baseline: `_vpBaseHeight = visualViewport.height` (snapshot at page load). After sending a message, don't blur the input to keep the keyboard open.
 
 ## 1. Auth & Connection
 
@@ -25,114 +25,114 @@ if (/iPhone|iPad|iPod/.test(navigator.userAgent) && window.visualViewport) {
 localStorage: _ak (btoa API key), _as (server URL)
 ```
 
-1. `initConnection()`: GET `/api/health` 验证连通性
-2. GET `/api/bridge/config` 获取 `wsUrl`（WebSocket endpoint）
-3. 所有 REST 请求带 `x-api-key` header
+1. `initConnection()`: GET `/api/health` to verify connectivity
+2. GET `/api/bridge/config` to get `wsUrl` (WebSocket endpoint)
+3. All REST requests include `x-api-key` header
 
 ## 2. Navigation & State Restore
 
-层级: **Devices → Projects → Sessions → Messages**
+Hierarchy: **Devices → Projects → Sessions → Messages**
 
 ```
 appState = { device, project: { hash, name }, session, sessionPreview }
 ```
 
-- 每次导航更新 `appState` 并持久化到 `localStorage('agentpeek-nav')`
-- 启动时读取持久化状态，直接跳转到上次页面（跳过中间层级加载）
-- 切换 session 时先 `disconnectWs()`，再连接新 session
+- Each navigation updates `appState` and persists to `localStorage('agentpeek-nav')`
+- On startup, reads persisted state and jumps directly to the last page (skips intermediate hierarchy loading)
+- When switching sessions: `disconnectWs()` first, then connect to new session
 
-## 3. 进入 Session：初始消息加载
+## 3. Entering a Session: Initial Message Load
 
-**关键设计：先订阅 WS，再从 DDB 拉历史，合并去重。** 这确保不丢失加载期间的实时消息。
+**Key design: subscribe to WS first, then pull history from DDB, merge and deduplicate.** This ensures no real-time messages are lost during the loading period.
 
 ```
 loadMessages(sessionId):
-  1. wsAllMessages = []，重置状态
+  1. wsAllMessages = [], reset state
   2. startWs(sessionId) → subscribe
-  3. _wsBuffer = []          ← 开启缓冲模式，WS 消息暂存不渲染
-  4. GET /api/bridge/messages?session=X  ← 从 DDB 拉历史
+  3. _wsBuffer = []          ← enable buffer mode, WS messages stored without rendering
+  4. GET /api/bridge/messages?session=X  ← pull history from DDB
   5. merged = ddbMessages.concat(_wsBuffer)
-  6. _wsBuffer = null         ← 关闭缓冲，后续 WS 消息直接渲染
-  7. 按 uuid 去重（已有的不重复加入）
-  8. 按 timestamp 排序
-  9. renderMessages(wsAllMessages)  ← 全量渲染
+  6. _wsBuffer = null         ← disable buffer, subsequent WS messages render directly
+  7. Deduplicate by uuid (skip already-existing)
+  8. Sort by timestamp
+  9. renderMessages(wsAllMessages)  ← full render
   10. scrollToBottom
 ```
 
-**`needSync` 处理**：如果 DDB 无消息且 `needSync=true`（bridge 正在同步），显示 loading，等待 `sync_complete` WS 事件后重新 loadMessages。
+**`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show loading state. Wait for `sync_complete` WS event, then re-run loadMessages.
 
-## 4. 实时消息处理（WS）
+## 4. Real-time Message Handling (WS)
 
-### 4.1 WS 消息类型
+### 4.1 WS Message Types
 
-| action | 方向 | 处理 |
-|--------|------|------|
-| `messages` | Server → App | 新消息到达，增量渲染 |
-| `permission_request` | Server → App | 权限确认弹窗（server-side 检测） |
-| `send_message_result` | Server → App | 发送确认 + 新 session 的 sessionId |
-| `sync_complete` | Server → App | bridge 同步完成，重新 loadMessages |
-| `interrupt` | App → Server → Bridge | 中断当前运行（等同 Ctrl+C） |
+| action | Direction | Handling |
+|--------|-----------|----------|
+| `messages` | Server → App | New messages arrived, incremental render |
+| `permission_request` | Server → App | Permission confirmation popup (server-side detection) |
+| `send_message_result` | Server → App | Send confirmation + new session's sessionId |
+| `sync_complete` | Server → App | Bridge sync complete, re-run loadMessages |
+| `interrupt` | App → Server → Bridge | Interrupt current run (equivalent to Ctrl+C) |
 
-### 4.2 消息分类处理
+### 4.2 Message Classification
 
-每条消息按类型走不同路径：
+Each message is routed by type:
 
 ```
-新消息到达:
-  ├── isToolResultOnly?   → 按 tool_use_id 就地更新对应 tool 节点
-  ├── user + !isInterrupt → 先 tryDedup（匹配已发送的乐观消息），再按 timestamp 插入
-  ├── ai-title            → 更新面包屑标题，不渲染到消息列表
-  ├── isInterrupt         → 渲染为 tl-item（type=interrupt），归入 assistant-turn
-  └── assistant           → 更新 wsRunning 状态，按 timestamp 插入（见下一节）
+New message arrives:
+  ├── isToolResultOnly?   → update corresponding tool node in-place by tool_use_id
+  ├── user + !isInterrupt → tryDedup first (match against sent optimistic messages), then insert by timestamp
+  ├── ai-title            → update breadcrumb title, don't render to message list
+  ├── isInterrupt         → render as tl-item (type=interrupt), placed in assistant-turn
+  └── assistant           → update wsRunning state, insert by timestamp (see next section)
 ```
 
-### 4.3 tool_result 就地更新
+### 4.3 tool_result In-place Update
 
-tool_result 消息不创建新 DOM 节点。通过 `tool_use_id` 找到已渲染的 tool_use 节点，替换其 innerHTML：
+tool_result messages don't create new DOM nodes. Find the already-rendered tool_use node by `tool_use_id` and replace its innerHTML:
 
 ```
 container.querySelector('[data-tool-id="' + tool_use_id + '"]')
   → node.innerHTML = renderToolNode(toolUseBlock, resultBlock)
 ```
 
-## 5. 消息排序与插入
+## 5. Message Ordering & Insertion
 
-**核心原则：所有元素（tl-item、user-msg）都带 `data-ts`，插入时按 timestamp 扫描定位。**
+**Core principle: all elements (tl-item, user-msg) carry `data-ts`, inserted by scanning for timestamp position.**
 
-WS 消息到达顺序 != timestamp 顺序（bridge 推送有延迟差异），必须按 timestamp 插入。
+WS message arrival order != timestamp order (bridge push has varying delays), so must insert by timestamp.
 
-### 5.1 Assistant 消息插入
+### 5.1 Assistant Message Insertion
 
 ```
-渲染出 html（可能含多个 tl-item，每个带 data-ts）
+Render html (may contain multiple tl-items, each with data-ts)
   │
   ▼
-从后往前扫描所有 .tl-item[data-ts]
-找第一个 data-ts > msg.timestamp → target
+Scan all .tl-item[data-ts] from back to front
+Find first with data-ts > msg.timestamp → target
   │
-  ├── 找到 → target.insertAdjacentHTML('beforebegin', html)
-  │          （自动插入到 target 所在 assistant-turn 内部）
+  ├── Found → target.insertAdjacentHTML('beforebegin', html)
+  │          (auto-inserts into the assistant-turn containing target)
   │
-  └── 没找到（最新消息）
-       ├── 最后元素是 assistant-turn → 追加到末尾
-       └── 否则 → 创建新 assistant-turn
+  └── Not found (latest message)
+       ├── Last element is assistant-turn → append to end
+       └── Otherwise → create new assistant-turn
 ```
 
-### 5.2 User 消息插入
+### 5.2 User Message Insertion
 
 ```
 findInsertBefore(container, timestamp):
-  从后往前扫描 container 直接子元素的 data-ts
-  找第一个 > timestamp 的 → 插入到它前面
-  没找到 → 追加到末尾（pending 消息之前）
+  Scan container's direct children from back to front by data-ts
+  Find first > timestamp → insert before it
+  Not found → append to end (before pending messages)
 ```
 
-### 5.3 DOM 结构
+### 5.3 DOM Structure
 
 ```
 .messages (container)
-  ├── .msg-user [data-ts]          ← user 消息（container 直接子元素）
-  ├── .assistant-turn [data-ts]    ← assistant 回复分组
+  ├── .msg-user [data-ts]          ← user message (direct child of container)
+  ├── .assistant-turn [data-ts]    ← assistant reply group
   │     ├── .tl-item [data-ts]     ← thinking / text / tool
   │     ├── .tl-item [data-ts]
   │     └── .tl-item [data-ts]
@@ -143,44 +143,44 @@ findInsertBefore(container, timestamp):
 
 ## 6. Auto-scroll
 
-**在 DOM 插入前检查**是否 near-bottom，插入后根据结果决定是否滚动：
+**Check before DOM insertion** whether near-bottom, then decide whether to scroll after insertion:
 
 ```javascript
-// 插入前
+// Before insertion
 var wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
 
-// ... DOM 插入 ...
+// ... DOM insertion ...
 
-// 插入后
+// After insertion
 if (wasNearBottom) {
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  setTimeout(() => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }), 150); // clampOverflow 后补偿
+  setTimeout(() => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }), 150); // compensate after clampOverflow
 }
 ```
 
-**为什么不在插入后检查**：大消息（如 CC 最终结果 10+ 行）会让 scrollHeight 增加超过阈值，导致判定"用户不在底部"而不滚动。
+**Why not check after insertion**: large messages (e.g. CC final result 10+ lines) increase scrollHeight beyond the threshold, causing a false "user is not at bottom" judgment that prevents scrolling.
 
-## 7. wsRunning 状态 + Send/Stop 按钮
+## 7. wsRunning State + Send/Stop Button
 
-`wsRunning` 控制输入栏按钮形态，来源 4 处：
+`wsRunning` controls the input bar button appearance, updated from 4 sources:
 
 ```
-wsRunning 更新:
+wsRunning updates:
   loadMessages(_, _, status)     → wsRunning = (status === 'running')
-  收到 assistant 消息            → wsRunning = (stopReason !== 'end_turn')
+  Receive assistant message      → wsRunning = (stopReason !== 'end_turn')
   doSend()                       → wsRunning = true
   interruptSession()             → wsRunning = false
 ```
 
-### 按钮状态机
+### Button State Machine
 
 ```
-有文字输入              → 显示发送箭头（↑），点击 sendMessage
-无文字 + wsRunning      → 显示停止方块（■），点击 interruptSession
-无文字 + !wsRunning     → 显示发送箭头，disabled
+Has text input              → show send arrow (↑), click sends message
+No text + wsRunning         → show stop square (■), click interrupts session
+No text + !wsRunning        → show send arrow, disabled
 ```
 
-### Interrupt（中断运行）
+### Interrupt (Stop Running)
 
 ```
 interruptSession():
@@ -189,210 +189,205 @@ interruptSession():
   updateSendBtn()
 ```
 
-等同 CC 终端里的 Ctrl+C / Escape。Bridge 收到后向对应 tmux pane 发送中断信号。
+Equivalent to Ctrl+C / Escape in the CC terminal. Bridge sends interrupt signal to the corresponding tmux pane.
 
-## 8. WS 断开重连
+## 8. WS Disconnect & Reconnect
 
 ```
 ws.onclose:
-  1. 状态改为 'reconnecting'
-  2. 3 秒后重连 connectWs()
+  1. State changes to 'reconnecting'
+  2. Reconnect via connectWs() after 3 seconds
 
-ws.onopen（重连时）:
-  1. 重新 subscribe 当前 sessionId
-  2. 如果有 wsLastTimestamp → recoverMissing()
+ws.onopen (on reconnect):
+  1. Re-subscribe to current sessionId
+  2. If wsLastTimestamp exists → recoverMissing()
 
 recoverMissing():
-  1. bufferAndFetch(sessionId, after=wsLastTimestamp)  ← 只拉断线期间的增量
-  2. 合并去重到 wsAllMessages
-  3. 如果有新消息 → 全量重新渲染（container.innerHTML = renderMessages）
+  1. bufferAndFetch(sessionId, after=wsLastTimestamp)  ← only pull incremental during disconnect
+  2. Merge and deduplicate into wsAllMessages
+  3. If new messages exist → full re-render (container.innerHTML = renderMessages)
 ```
 
-**`wsLastTimestamp`**：每次收到新消息时更新为最新 timestamp，重连时用它作为增量查询的起点。
+**`wsLastTimestamp`**: Updated to the latest timestamp each time a new message is received. Used as the incremental query start point on reconnect.
 
-## 9. New Session 创建
+## 9. New Session Creation
 
 ```
 startNewSession(projectHash):
   1. appState.session = '__new__'
-  2. 重置所有消息状态
-  3. connectWs(null, projectHash)  ← WS 连接带 projectHash
-  4. 显示空消息页 + 输入框
+  2. Reset all message state
+  3. connectWs(null, projectHash)  ← WS connection carries projectHash
+  4. Show empty message page + input bar
 
-用户发送消息:
+User sends message:
   1. wsSend({ action: 'send_message', projectHash, requestId, text, device })
-     （注意：没有 sessionId，用 projectHash 告诉 bridge 创建新 session）
-  2. 乐观渲染用户消息
+     (Note: no sessionId, projectHash tells bridge to create a new session)
+  2. Optimistically render user message
 
-Bridge 处理:
-  → 创建 tmux + claude --resume → 等待 CC ready → sendKeys
-  → 返回 send_message_result { ok: true, sessionId: 新ID }
+Bridge handling:
+  → Create tmux + claude --resume → wait for CC ready → sendKeys
+  → Return send_message_result { ok: true, sessionId: newId }
 
-收到 sessionId:
-  1. appState.session = msg.sessionId（替换 '__new__'）
-  2. loadMessages(sessionId)  ← 正常加载流程
+On receiving sessionId:
+  1. appState.session = msg.sessionId (replace '__new__')
+  2. loadMessages(sessionId)  ← normal load flow
 ```
 
-## 10. 发送消息 & 乐观渲染
+## 10. Sending Messages & Optimistic Rendering
 
 ```
 sendMessage():
-  1. WS 发送 { action: 'send_message', sessionId, text, device }
-  2. 在 pendingSentMessages 记录 { id, text }
-  3. DOM 末尾插入乐观消息（带 data-pending，显示 "sending..."）
+  1. WS send { action: 'send_message', sessionId, text, device }
+  2. Record in pendingSentMessages { id, text }
+  3. Insert optimistic message at DOM end (with data-pending, shows "sending...")
 
-WS 返回 send_message_result { ok: true }:
-  → 找到第一个未确认的 pending → 标记 delivered，更新状态为 ✓ + 时间
+WS returns send_message_result { ok: true }:
+  → Find first unconfirmed pending → mark delivered, update status to ✓ + time
 
-WS 收到真实 user 消息:
-  → tryDedup：匹配 pendingSentMessages 中的文本
-  → 匹配到 → 删除乐观 DOM 节点，插入真实消息（带正确 timestamp）
+WS receives real user message:
+  → tryDedup: match text against pendingSentMessages
+  → Matched → delete optimistic DOM node, insert real message (with correct timestamp)
 ```
 
-## 11. 权限确认 (Permission Prompt)
+## 11. Permission Prompt
 
-两种来源，同一个 UI：
+Two sources, same UI:
 
 ### 11.1 Server-side (permission_request action)
-Bridge 直接通过 WS 发 permission_request（较少使用）。
+Bridge sends permission_request directly via WS (less commonly used).
 
 ### 11.2 Client-side (checkPendingPrompts)
-**每次消息更新后**扫描最后一条 assistant 消息的 tool_use：
+**After each message update**, scan the last assistant message's tool_use:
 
 ```
-tool_use 类型判断:
-  ├── AskUserQuestion / ExitPlanMode → 立即弹窗（CC 在等用户回答）
-  └── Bash / Edit / Write           → 延迟判断（5 秒）
-       ├── 5秒内 tool_result 到达 → auto-approved 模式，不弹窗
-       └── 5秒后无 result        → manual 模式，弹窗确认
+tool_use type judgment:
+  ├── AskUserQuestion / ExitPlanMode → show prompt immediately (CC is waiting for user answer)
+  └── Bash / Edit / Write           → delayed judgment (5 seconds)
+       ├── tool_result arrives within 5s → auto-approved mode, no prompt
+       └── No result after 5s          → manual mode, show confirmation prompt
 ```
 
-**模式缓存**：`_toolApproveMode` 首次检测后全局缓存（`auto` / `manual`），后续所有 Bash/Edit/Write 类 tool 立即判断，不区分 tool 类型。刷新页面重置。
+**Mode cache**: `_toolApproveMode` is globally cached after first detection (`auto` / `manual`). All subsequent Bash/Edit/Write tools are judged immediately regardless of tool type. Resets on page refresh.
 
-### 11.3 弹窗时禁用输入栏
+### 11.3 Input Bar Disabled During Prompt
 
-显示 permission prompt 时，底部输入栏 disabled + placeholder 改为 "Please respond to the prompt above..."。dismiss 时恢复。防止用户同时发送消息和回复权限。
+When showing a permission prompt, the bottom input bar is disabled + placeholder changes to "Please respond to the prompt above...". Restored on dismiss. Prevents user from simultaneously sending messages and replying to permissions.
 
-### 11.4 用户操作
+### 11.4 User Actions
 
 ```
 wsSend({ action: 'permission_reply', sessionId, device, approved: value })
 
-value 格式:
-  - 'arrow:N'     → 选择第 N 个选项（bridge 发送方向键导航）
-  - 'type:N:text' → 导航到第 N 个选项，输入文本，回车
-  - 'escape'      → 发送 Escape 取消
+value formats:
+  - 'arrow:N'     → select Nth option (bridge sends arrow key navigation)
+  - 'type:N:text' → navigate to Nth option, type text, press Enter
+  - 'escape'      → send Escape to cancel
 ```
 
-## 12. 图片处理
+## 12. Image Handling
 
-### 发送图片
+### Sending Images
 ```
-选择/粘贴图片 → 压缩(720p JPEG) → 上传 S3 → 获得 key
-发送时: text + '\n![](claude-bridge:key)'
-Bridge 收到 → 下载 S3 → 替换为本地路径 → CC Read tool 读取
-```
-
-### 显示图片
-```
-消息中 image block { type: 'image', key } → 渲染为 .img-placeholder[data-key]
-IntersectionObserver (rootMargin 200px) → 进入视口时 GET /api/bridge/image/:key
-LRU 缓存 (max 200)
+Select/paste image → compress (720p JPEG) → upload to S3 → get key
+On send: text + '\n![](claude-bridge:key)'
+Bridge receives → download from S3 → replace with local path → CC Read tool reads it
 ```
 
-## 13. User 消息 XML 标签过滤
+### Displaying Images
+```
+Image block { type: 'image', key } in message → render as .img-placeholder[data-key]
+IntersectionObserver (rootMargin 200px) → load via GET /api/bridge/image/:key when entering viewport
+LRU cache (max 200)
+```
 
-CC 内部会在 user 消息中注入大量 XML 标签（IDE 上下文、system reminder 等），必须过滤后再显示。
+## 13. User Message XML Tag Filtering
+
+CC internally injects many XML tags into user messages (IDE context, system reminders, etc.) that must be filtered before display.
 
 ```
 renderUserBubble(msg):
-  1. 提取 <command-name> → 显示为 /slashCmd 前缀
-  2. 删除: <command-message>, <command-args>, <local-command-caveat>
-  3. 删除: <ide_selection>, <system-reminder>, <task-notification>
-  4. 提取 <ide_opened_file> → 文件路径渲染为 file badge
-  5. 提取纯文本 /command 前缀 → 也显示为 slashCmd
-  6. 提取 ![](claude-bridge:key) → 渲染为图片
-  7. 提取 document content blocks → 渲染为可展开的 file badge
+  1. Extract <command-name> → display as /slashCmd prefix
+  2. Remove: <command-message>, <command-args>, <local-command-caveat>
+  3. Remove: <ide_selection>, <system-reminder>, <task-notification>
+  4. Extract <ide_opened_file> → render file path as file badge
+  5. Extract plain text /command prefix → also display as slashCmd
+  6. Extract ![](claude-bridge:key) → render as image
+  7. Extract document content blocks → render as expandable file badge
 ```
 
-**不过滤的后果**：用户消息会显示大段 XML 噪音（几百行 system-reminder 等）。
+**Consequence of not filtering**: user messages would display pages of XML noise (hundreds of lines of system-reminder, etc.).
 
-## 14. Markdown 渲染
+## 14. Markdown Rendering
 
-Assistant text blocks 通过 `renderMd(text)` 渲染为 HTML：
+Assistant text blocks rendered to HTML via `renderMd(text)`:
 
 ```
-marked.js (GFM + breaks) + highlight.js (代码高亮)
+marked.js (GFM + breaks) + highlight.js (code highlighting)
 ```
 
-Mobile 需要等价的 markdown renderer。参考实现：
-`/Users/xiaoweii/workspace/rn/swift-chat/react-native/src/core/markdown/`
+## 15. Thinking Block Rendering
 
-## 15. Thinking 块渲染
-
-Assistant 消息中 `thinking` block 渲染为可折叠区域：
+`thinking` blocks in assistant messages rendered as collapsible regions:
 
 ```
 { type: 'thinking', thinking: '...', duration_ms: 5000 }
-  → "Thought for 5s ›"（默认折叠）
-  → 点击展开显示思考内容（纯文本）
+  → "Thought for 5s ›" (collapsed by default)
+  → Click to expand and show thinking content (plain text)
 ```
 
-## 16. Tool 渲染分类
+## 16. Tool Rendering Categories
 
-每种 tool_use 有专门的渲染模式。通用结构：
+Each tool_use has a dedicated rendering mode. Common structure:
 
 ```
 tool-node
   ├── tool-header: [tool-name] [tool-desc] [tool-status?]
-  └── tool-body (可折叠)
+  └── tool-body (collapsible)
        └── tool-body-content
 ```
 
-### 各 tool 渲染规则
+### Tool Rendering Rules
 
 | Tool | desc | body |
 |------|------|------|
-| **Bash** | `description` 或 command 前 60 字符 | IN: `<code>command</code>` + OUT: result text |
-| **Read** | 文件路径 + `(lines N-M)` | result 文本（可能为空则隐藏整个 body） |
-| **Edit** | 文件路径 | **diff2html** 渲染 old_string→new_string（含语法高亮），高度 >240px 自动折叠 |
-| **Write** | 文件路径 | result 文本 |
-| **Grep/Glob** | pattern + path | result 文本 |
-| **TodoWrite** | (空) | 勾选列表：✓completed（灰+删除线）、\*in_progress（白）、○pending（灰） |
-| **Agent** | description 或 subagent_type | stats: `N tool calls, Ns`；运行中显示实时计时器；result 文本 |
-| **其他** | JSON 前 80 字符 | IN/OUT grid |
+| **Bash** | `description` or first 60 chars of command | IN: `<code>command</code>` + OUT: result text |
+| **Read** | file path + `(lines N-M)` | result text (hidden entirely if empty) |
+| **Edit** | file path | **diff2html** render old_string→new_string (with syntax highlighting), auto-collapse if height >240px |
+| **Write** | file path | result text |
+| **Grep/Glob** | pattern + path | result text |
+| **TodoWrite** | (empty) | checklist: ✓completed (gray+strikethrough), \*in_progress (white), ○pending (gray) |
+| **Agent** | description or subagent_type | stats: `N tool calls, Ns`; running shows real-time timer; result text |
+| **Other** | first 80 chars of JSON | IN/OUT grid |
 
-### Error 状态
+### Error State
 
-`result.is_error` 或 result 文本含 error/failed/permission denied → tool-node 加 `.error` class（红色边框）。
+`result.is_error` or result text contains error/failed/permission denied → tool-node gets `.error` class (red border).
 
-## 17. Clamp/Expand 长内容折叠
+## 17. Clamp/Expand Long Content Folding
 
-每次渲染后（全量和增量）必须调用 `clampOverflow(container)`：
+Must call `clampOverflow(container)` after every render (both full and incremental):
 
 ```
 clampOverflow():
-  ├── .msg-text: scrollHeight > 60px → 加 clamped + "Show more" 按钮
-  ├── .tool-value.clamp: 溢出 → "Show more"
+  ├── .msg-text: scrollHeight > 60px → add clamped + "Show more" button
+  ├── .tool-value.clamp: overflow → "Show more"
   ├── .tool-body-content.collapsible: → "Show more"
-  └── .tool-body-content 内有溢出的 .tool-value → "Show more"
+  └── .tool-body-content with overflowing .tool-value → "Show more"
 
 toggleExpand(el):
   ├── .msg-text → toggle clamped/expanded
   ├── .tool-body-content → toggle open
   └── .tool-value → toggle expanded
-  → 更新按钮文本 "Show more" ↔ "Show less"
+  → Update button text "Show more" ↔ "Show less"
 ```
 
-Mobile 等价实现：RN `numberOfLines` + expand state toggle。
+## 18. Post-render Checklist
 
-## 18. 渲染后处理 Checklist
-
-每次 DOM 更新后（全量渲染 / 增量 updateLastTurn / 重连恢复）需执行：
+After every DOM update (full render / incremental updateLastTurn / reconnect recovery):
 
 ```
-1. loadImages(container)    — 注册 IntersectionObserver 懒加载图片
-2. clampOverflow(container) — 检测溢出，添加折叠按钮
-3. checkPendingPrompts()    — 检测权限弹窗
-4. auto-scroll 判断         — wasNearBottom → scrollToBottom
+1. loadImages(container)    — register IntersectionObserver for lazy-loading images
+2. clampOverflow(container) — detect overflow, add collapse buttons
+3. checkPendingPrompts()    — detect permission prompts
+4. auto-scroll judgment     — wasNearBottom → scrollToBottom
 ```
