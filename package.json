@@ -12,7 +12,8 @@
     "build:android": "tauri android build --apk",
     "dev:ios": "tauri ios dev \"iPhone 17 Pro\"",
     "build:ios": "tauri ios build",
-    "release:ios": "./scripts/release-ios.sh"
+    "release:ios": "./scripts/release-ios.sh",
+    "build:mac": "./scripts/release-mac.sh"
   },
   "dependencies": {
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",

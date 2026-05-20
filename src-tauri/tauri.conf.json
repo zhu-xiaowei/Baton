@@ -14,10 +14,14 @@
     "windows": [
       {
         "title": "AgentPeek",
-        "width": 390,
-        "height": 844,
+        "width": 1024,
+        "height": 768,
+        "minWidth": 480,
+        "minHeight": 400,
         "resizable": true,
-        "backgroundColor": "#0d1117"
+        "backgroundColor": "#161b22",
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -39,6 +43,24 @@
     },
     "iOS": {
       "developmentTeam": "BUA6W9H7T3"
+    },
+    "macOS": {
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.13",
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
     }
   }
 }

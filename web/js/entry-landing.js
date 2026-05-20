@@ -9,8 +9,9 @@ import './api.js';
   // Tauri/native (non-http origin) lets the QR scanner button show, and we
   // accept Start URLs from any origin. Browser is bound to its own origin.
   var isNativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
+  var isMobileApp = isNativeApp && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
-  if (isNativeApp) {
+  if (isMobileApp) {
     var scanBtn = document.getElementById('scanBtn');
     if (scanBtn) scanBtn.style.display = 'flex';
     setupScan();
