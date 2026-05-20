@@ -115,9 +115,15 @@ import './api.js';
             return;
           }
         }
-        // windowed:false → camera fully covers the webview. Native × button is
-        // injected on the keyWindow by main.mm and calls window.__cancelScan.
+        // windowed:false → camera fully covers the webview. iOS: native × button
+        // injected by main.mm. Android: system back button cancels via onBackButtonPress.
+        var backListener = null;
+        try {
+          var appMod = await import('@tauri-apps/api/app');
+          backListener = await appMod.onBackButtonPress(function () { window.__cancelScan(); });
+        } catch (_) {}
         var result = await mod.scan({ windowed: false, formats: [mod.Format.QRCode] });
+        if (backListener) backListener.unregister();
         scanModule = null;
         var content = (result && result.content) ? String(result.content).trim() : '';
         if (!content) return;
@@ -129,6 +135,7 @@ import './api.js';
           errEl.style.display = 'block';
         });
       } catch (e) {
+        if (backListener) backListener.unregister();
         scanModule = null;
         var msg = (e && e.message) ? String(e.message) : '';
         if (/cancel/i.test(msg)) return;
