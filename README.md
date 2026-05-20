@@ -2,11 +2,11 @@
 
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
-AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code.
-
 <p align="center">
   <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
 </p>
+
+AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code.
 
 ## Quick Start
 
@@ -23,12 +23,10 @@ Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `
 
 ### 2. Install Bridge
 
-**Prerequisites:**
-- [Node.js](https://nodejs.org/) >= 20
-- [tmux](https://github.com/tmux/tmux/wiki/Installing) (required for sending messages back to Claude Code)
+Requires [Node.js](https://nodejs.org/) >= 20 and [tmux](https://github.com/tmux/tmux/wiki/Installing).
 
-1. Open the **Start URL** in your browser 
-2. Copy the one-line **Install bridge** command from the Setup page 
+1. Open the **Start URL** in your browser
+2. Copy the one-line **Install bridge** command from the Setup page
 3. Run it on the machine where Claude Code is running
 
 ### 3. Download App
