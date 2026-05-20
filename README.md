@@ -1,0 +1,80 @@
+# AgentPeek 🔭
+
+View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
+
+```
+┌─────────┐       ┌─────────┐       ┌─────────────┐
+│  Bridge │──WS──▶│  Server │◀──WS──│  App/Web    │
+│ (Ec2,   │       │ (AWS    │       │ (phone/     │
+│  Mac)   │       │  Lambda)│       │  desktop)   │
+└─────────┘       └─────────┘       └─────────────┘
+```
+
+**Bridge** watches Claude Code session files on your machine, **Server** relays messages via WebSocket, **App** renders the conversation with full markdown/diff/image support and lets you send messages back.
+
+---
+
+## Quick Start
+
+### 1. Deploy Server
+
+**Prerequisites:**
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with credentials that can create CloudFormation stacks, Lambda, DynamoDB, API Gateway, ECR, CodeBuild, and S3 resources
+- Git
+
+One command deploys the entire backend (Lambda + DynamoDB + WebSocket API Gateway) to your AWS account:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/agentpeek/main/server/install.sh | bash
+```
+
+On success, it prints a **Start URL** (valid 12h) and a QR code. Open the URL in a browser or scan it on your phone.
+
+Options:
+
+```bash
+# Specify region / stack name / AWS profile
+curl -fsSL ... | bash -s -- --region us-west-2 --stack MyStack --profile myprofile
+```
+
+
+### 2. Install Bridge
+
+**Prerequisites:**
+- [Node.js](https://nodejs.org/) >= 20
+- [tmux](https://github.com/tmux/tmux/wiki/Installing) (required for sending messages back to Claude Code)
+
+Open the Start URL in a browser → copy the one-line bridge install command from the Setup page → run it on the machine where Claude Code is running. The command is pre-filled with your API key and server URL.
+
+### 3. Download App
+
+| Platform | Download |
+|----------|----------|
+| Android  | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) |
+| macOS    | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.dmg) |
+| iOS      | Coming soon |
+| Windows  | Coming soon |
+
+You can also use the web viewer directly — no app install needed.
+
+---
+
+## Features
+
+- **Multi-device browsing** — list all connected devices, projects, and sessions at a glance
+- **Real-time session view** — ultra-fast sync via WebSocket as Claude Code works
+- **Session status** — running (green) / idle (yellow) / stopped (gray) indicators
+- **Send messages** — type prompts directly from phone or desktop, delivered via tmux
+- **Send images** — paste or pick photos, compressed & uploaded to S3, read by Claude Code
+- **Permission approval** — approve or deny tool calls (Bash, Edit, Write) remotely
+- **Start / stop sessions** — launch new Claude Code sessions or interrupt running ones
+- **Code diff rendering** — inline diffs with syntax highlighting for file changes
+- **Markdown support** — full GFM rendering for Claude's responses
+- **Execution nodes** — collapsible tool_use/tool_result blocks showing what Claude did
+- **Dark theme UI** — clean, mobile-optimized interface that works on any screen size
+
+---
+
+## License
+
+MIT
