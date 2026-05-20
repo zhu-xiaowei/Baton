@@ -6,6 +6,8 @@
 
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
+Built on AWS serverless (Lambda + DynamoDB + API Gateway). Zero intrusion to Claude Code — it watches session files without wrapping or modifying the `claude` command.
+
 ```
 ┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
