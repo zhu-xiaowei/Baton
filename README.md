@@ -1,23 +1,12 @@
 # 🔭 AgentPeek
 
-<p align="center">
-  <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
-</p>
-
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
 Built on AWS serverless (Lambda + DynamoDB + API Gateway). Zero intrusion to Claude Code — it watches session files without wrapping or modifying the `claude` command.
 
-```
-┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
-│     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
-│  (EC2, Mac)    │               │  (AWS Lambda)  │               │  (phone/desktop) │
-└────────────────┘               └────────────────┘               └──────────────────┘
-```
-
-**Bridge** watches Claude Code session files on your machine, **Server** relays messages via WebSocket, **App** renders the conversation with full markdown/diff/image support and lets you send messages back.
-
----
+<p align="center">
+  <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
+</p>
 
 ## Quick Start
 
@@ -51,7 +40,7 @@ Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `
 | iOS      | Coming soon |
 | Windows  | Coming soon |
 
-After download the app, scan the QR code to get started.
+After downloading the app, scan the QR code to get started.
 
 ---
 
@@ -68,6 +57,19 @@ After download the app, scan the QR code to get started.
 - **Markdown support** — full GFM rendering for Claude's responses
 - **Execution nodes** — collapsible tool_use/tool_result blocks showing what Claude did
 - **Dark theme UI** — clean, mobile-optimized interface that works on any screen size
+
+---
+
+## Architecture
+
+```
+┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
+│  (EC2, Mac)    │               │  (AWS Lambda)  │               │  (phone/desktop) │
+└────────────────┘               └────────────────┘               └──────────────────┘
+```
+
+**Bridge** watches Claude Code session files on your machine, **Server** relays messages via WebSocket, **App** renders the conversation with full markdown/diff/image support and lets you send messages back.
 
 ---
 
