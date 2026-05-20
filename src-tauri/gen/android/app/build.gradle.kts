@@ -62,6 +62,12 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    applicationVariants.all {
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                .outputFileName = "AgentPeek.apk"
+        }
+    }
 }
 
 rust {
