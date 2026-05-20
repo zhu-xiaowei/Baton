@@ -135,9 +135,11 @@ static void agentpeek_install_scan_close_swizzle(void) {
                 [btn.heightAnchor constraintEqualToConstant:44],
             ]];
 
-            // Poll for cameraView removal. As long as the cameraView is alive AND has a
-            // superview, keep the button. Once it's gone or detached, remove the button.
+            // Poll for cameraView removal — remove button when camera is gone.
+            // Intentional retain cycle: tick holds itself via __block; broken by tick=nil on exit.
             __block void (^tick)(void) = nil;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-retain-cycles"
             tick = ^{
                 UIView *cam = weakCam;
                 UIButton *b = weakBtn;
@@ -151,6 +153,7 @@ static void agentpeek_install_scan_close_swizzle(void) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), tick);
             };
+#pragma clang diagnostic pop
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), tick);
         });
