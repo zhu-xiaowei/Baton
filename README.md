@@ -64,10 +64,16 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 ┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
 │  (EC2, Mac)    │               │  (AWS Lambda)  │               │  (phone/desktop) │
-└────────────────┘               └────────────────┘               └──────────────────┘
+└────────────────┘               └───────┬────────┘               └──────────────────┘
+                                         │
+                                         ▼
+                                 ┌────────────────┐
+                                 │   DynamoDB     │
+                                 │(metadata + msg)│
+                                 └────────────────┘
 ```
 
-**Bridge** watches Claude Code session files on your machine, **Server** relays messages via WebSocket, **App** renders the conversation with full markdown/diff/image support and lets you send messages back.
+**Bridge** watches Claude Code session files and pushes messages via WebSocket. **Server** relays real-time messages to connected clients and caches them in DynamoDB. **App** loads session history from DDB on open (instant, <100ms) for performance and offline availability, then subscribes via WebSocket for real-time updates.
 
 ---
 

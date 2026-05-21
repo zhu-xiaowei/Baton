@@ -2,7 +2,7 @@
 
 ## Workflow Rules
 
-- **先方案后代码**: 所有代码改动必须先给出详细方案（改哪些文件、改什么、为什么），用户明确确认后才能修改代码。未经确认不得动代码。
+- **Plan before code**: All code changes must be preceded by a detailed proposal (which files, what changes, why). Only modify code after explicit user confirmation.
 
 ## What is this
 
@@ -28,16 +28,24 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - bridge.mjs watches .jsonl files, detects new messages in real-time
 - Deployed to us-west-2 (AgentPeekTest), verified 300+ sessions
 
-### Phase 2A: NEXT — Backend + 接口验证
-- Server: bridge_read.py (REST read), bridge_ws.py (WS relay), WebSocket API GW
-- Bridge: add WS connection, file change → DDB + WS push in parallel
-- web/: 静态页面（landing/viewer/setup），验证 REST + WS 全链路
+### Phase 2A: COMPLETE ✅ — Backend + API Verification
+- Server REST read endpoints (devices, projects, sessions, messages)
+- WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
+- Bridge WS connection + real-time push
+- Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
 
-### Phase 2B: Mobile App
-- Fresh RN project, SessionList (REST) → Chat (WS), MMKV cache
+### Phase 2B: COMPLETE ✅ — Send Messages + Images + Auto-tmux + Device Routing
+- Message sending via tmux send-keys (cross-platform, zero-intrusion)
+- Permission prompt detection + approval UI
+- Image upload via S3 + `claude-bridge:` protocol
+- Auto-create tmux session when no CC process running
+- Device routing for multi-bridge setups
 
-### Phase 3: LATER — Send messages from phone
-### Phase 4: LATER — Production polish
+### Phase 2C: COMPLETE ✅ — Native App (Tauri v2)
+- Tauri v2 wraps web/ as native app, zero web code changes
+- Android, iOS (TestFlight), macOS builds
+
+### Phase 3: LATER — Production polish
 - Persist bridge sync state to disk, avoid re-uploading messages on restart
 
 ## Deployed Test Environment
@@ -48,7 +56,7 @@ read that file** — do not hardcode them in committed code. Variables:
 template. S3 bucket / ECR repo / AWS account id are derived automatically by
 `server/install.sh` from the stack name + `aws sts get-caller-identity`.
 
-- **Region**: us-west-2
+- **Region**: us-west-2 (or ap-southeast-1)
 - **Stack**: AgentPeekTest
 - **DDB Tables**: `AgentPeekTest-bridge-sessions`, `AgentPeekTest-bridge-messages`
 - **Deploy**: `cd server && ./install.sh --region us-west-2 --stack AgentPeekTest`
@@ -67,9 +75,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - terminal/tmux CC: `--resume` flag → exact session match → precise status
   - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
   - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
-- `findTmuxTargetForSession`: 精确匹配 CC 进程 args 中的 sessionId → 找到 tmux pane
-- `projectHashToPath()`: 从 hash 反解真实目录路径（逐段验证目录存在）
-- Auto-launch: 无 tmux target 时自动创建 tmux + `claude --resume` + `waitForCCReady`
+- `findTmuxTargetForSession`: exact match CC process args sessionId → find tmux pane
+- `projectHashToPath()`: reverse hash to real directory path (validates each segment exists)
+- Auto-launch: no tmux target → auto-create tmux + `claude --resume` + `waitForCCReady`
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
 - Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
@@ -80,16 +88,17 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Line-number tracking per session (not UUID set), lightweight
 - Images: sharp compress 1280px JPEG (quality=90) → upload S3 via Lambda → store key in message
 - Batching: by byte size (≤4MB/POST), with 200ms delay between batches
-- WS ack: `wsSendWithAck` 等待 server `messages_ack` 回复（5s 超时），未收到 ack 则 fallback HTTP POST 写 DDB
+- WS ack: `wsSendWithAck` waits for server `messages_ack` reply (5s timeout), falls back to HTTP POST to DDB if no ack
 
 ### Server
 - FastAPI in Docker Lambda, API Key auth
 - DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
+- Bridge install script (`/api/install`): auto-installs tmux if missing, exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility
 
 ### Message Flow (WS single path + DDB cache)
-- Bridge detects new message → WS push to server (单一链路，不直接写 DDB)
-- Lambda 收到消息 → 并行: post_to_connection 推 app (优先) + 写 DDB (缓存)
+- Bridge detects new message → WS push to server (single path, never writes DDB directly)
+- Lambda receives message → parallel: post_to_connection to app (priority) + write DDB (cache)
 - Bridge extracts: uuid, parentUuid, type, content, timestamp, toolUseResult (drops model/usage/cwd/version, ~40-60% smaller)
 - Content blocks preserved: text, image (compressed), document, thinking, tool_use, tool_result
 - App opens session → REST from DDB (instant, <100ms) + WS subscribe for real-time
@@ -116,11 +125,12 @@ BridgeMessages
 ### REST
 ```
 POST /api/bridge/sync-sessions              — bridge uploads session metadata
-POST /api/bridge/sync-messages              — bridge 启动时批量同步（运行时改走 WS）
-GET  /api/bridge/devices                    — device list (含 online 字段，查 connections 表)
+POST /api/bridge/sync-messages              — bridge bulk sync on startup (runtime uses WS)
+GET  /api/bridge/devices                    — device list (includes online field from connections table)
 GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
 GET  /api/bridge/messages?session=X&after=ts — messages (incremental, ts=ISO timestamp)
+GET  /api/install                           — bridge install script (auto-installs tmux, sets up service)
 ```
 
 ### WebSocket (real-time)
@@ -136,67 +146,49 @@ Server → App:           { action: "messages", sessionId, messages }
 
 Full protocol: `docs/api.md`
 
-## Phase 2A: COMPLETE ✅
+## Send Messages Architecture
 
-- Server REST read endpoints (devices, projects, sessions, messages)
-- WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
-- Bridge WS connection + real-time push
-- Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
+Approach: tmux send-keys (cross-platform, zero-intrusion)
 
-## Phase 2B: COMPLETE ✅ — Send Messages + Images
-
-方案: tmux send-keys（全平台通用，零侵入）
-
-### 消息发送
+### Message Sending
 - Viewer → WS → Server → Bridge → tmux send-keys → CC
-- 乐观渲染 + 去重 + 时间戳更新
+- Optimistic rendering + dedup + timestamp update
 
-### 权限确认 + 用户交互
-- Viewer 从 tool_use 检测 AskUserQuestion / ExitPlanMode / Bash / Edit / Write
-- AskUserQuestion / ExitPlanMode: 立即弹窗（CC 在等用户回答）
-- Bash / Edit / Write: 5 秒等待 tool_result，到了则标记 auto，没到则标记 manual 并弹窗
-- 模式缓存在内存（不存 localStorage），刷新页面重新检测
-- tool_result 到达时无条件关闭弹窗
-- 选项卡片 UI（arrow:N, type:N:text, escape）
-- 实时 tool_result (OUT) 追加（tool-grid 结构 + collapsible 折叠）
+### Permission Detection + User Interaction
+- Viewer detects AskUserQuestion / ExitPlanMode / Bash / Edit / Write from tool_use
+- AskUserQuestion / ExitPlanMode: show prompt immediately (CC is waiting for user)
+- Bash / Edit / Write: 5s wait for tool_result; if received → mark auto; if not → mark manual and show prompt
+- Mode cached in memory (not localStorage), re-detected on page refresh
+- tool_result arrival unconditionally closes prompt dialog
+- Option card UI (arrow:N, type:N:text, escape)
+- Real-time tool_result (OUT) appended (tool-grid structure + collapsible)
 
-### 图片发送
-- S3 上传 + ![](claude-bridge:key) 协议
-- Bridge 下载 → 替换绝对路径 → CC Read tool 读取
-- 多图 staging + gallery + 粘贴支持
+### Image Sending
+- S3 upload + `![](claude-bridge:key)` protocol
+- Bridge downloads → replaces with absolute path → CC Read tool reads it
+- Multi-image staging + gallery + paste support
 
-### UI
-- CC 内部 XML 标签过滤，空 Read 输出隐藏
-- 刷新页面保持导航状态
+### Auto-create tmux Session
+- Existing session with no CC process → Bridge auto `tmux new-session` + `claude --resume <id>` + wait ready + sendKeys
+- New Session: Viewer "+ New Session" button → `send_message` with projectHash → Bridge creates tmux + claude → poll .jsonl for sessionId → return to Viewer for subscribe
+- Trust dialog auto-confirm (detects "Yes, I trust this folder" → Enter)
+- tmux naming: resume `apeek_{project}_{sessionId first 8 chars}`, new `apeek_{project}_{MMDDHHmmss}`
+- Old session cleanup: async cleanup `apeek_*` sessions inactive >1 day when creating new tmux
+- Duplicate session name: kill existing before creating
 
-## Phase 2B-next: COMPLETE ✅ — Auto-create tmux + Device Routing
+### Device Routing
+- Bridge WS connection includes `device` parameter
+- Server stores `deviceName`, filters send_message/permission_reply forwarding by device
+- Viewer sends messages with `device: appState.device`
 
-### 自动创建 tmux session
-- 已有 session 无 CC 运行 → Bridge 自动 `tmux new-session` + `claude --resume <id>` + 等 ready + sendKeys
-- New Session: Viewer "+ New Session" 按钮 → `send_message` 带 projectHash → Bridge 创建 tmux + claude → poll .jsonl 获取 sessionId → 返回给 Viewer subscribe
-- Trust dialog 自动确认（检测 "Yes, I trust this folder" → Enter）
-- tmux 命名: resume `apeek_{project}_{sessionId前8位}`, new `apeek_{project}_{MMDDHHmmss}`
-- 旧 session 清理: 创建新 tmux 时异步清理 >1 天无活动的 `apeek_*` sessions
-- 重复 session name: 创建前 kill 同名 session
-
-### Device 路由
-- Bridge WS 连接带 `device` 参数
-- Server 存 `deviceName`，转发 send_message/permission_reply 时按 device 过滤
-- Viewer 发消息带 `device: appState.device`
-
-### macOS / Linux 验证 ✅
-- Linux: `fs.readlinkSync('/proc/{pid}/cwd')` 替代 `lsof`（ESM 兼容）
-- tmux 进程匹配: 精确匹配 args 中的 sessionId
-
-## Web Deployment: COMPLETE ✅ — Static Files + Auth + Setup
+## Web Deployment
 
 ### Web Pages (served from FastAPI Lambda)
 - `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
 - `web/index.html` — Session viewer (auth guard redirects to landing if no key)
 - `web/setup.html` — Bridge install command + QR code + connected devices list
-- Top bar: AgentPeek 🔭 logo + Setup gear icon
-- Favicon: 🔭 emoji（data:image/svg+xml inline，所有页面统一）
-- `web/setup.html` — QR URL 带 Copy 按钮，QR 码白色背景框，Logout 独立按钮
+- Top bar: AgentPeek logo + Setup gear icon
+- Favicon: inline data:image/svg+xml (all pages unified)
 
 ### Auth Flow
 - Key stored in localStorage (`_ak` = btoa, `_as` = server URL)
@@ -207,7 +199,7 @@ Full protocol: `docs/api.md`
 ### Deployment
 - Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
-- Deploy output: single setup URL with embedded key
+- Deploy output: single setup URL with embedded token (12h TTL)
 
 ### Three-State Session Status
 - `running`: CC process alive + jsonl `stop_reason: "tool_use"` or `null`
@@ -216,59 +208,59 @@ Full protocol: `docs/api.md`
 - Badge colors: running (green), idle (yellow), stopped (gray)
 - Device/Project lists show `runningCount` + `idleCount`
 
-## Phase 2C: Native App (Tauri v2)
+## Native App (Tauri v2)
 
-Tauri v2 将 web/ 静态前端打包为原生 app，零 web 代码改动。
+Tauri v2 wraps web/ static frontend as native app, zero web code changes.
 
 ### Architecture
-- `src-tauri/` 在项目根目录（sibling to web/, bridge/, server/）
-- `frontendDist: "../web"` — 直接 serve 静态 HTML/CSS/JS
-- `withGlobalTauri: true` — JS 通过 `window.__TAURI__` 访问原生 API
+- `src-tauri/` at project root (sibling to web/, bridge/, server/)
+- `frontendDist: "../web"` — directly serves static HTML/CSS/JS
+- `withGlobalTauri: true` — JS accesses native API via `window.__TAURI__`
 - Bundle identifier: `com.agentpeek.app`
-- 内置 dev server（不需要 http-server），hot-reload
+- Built-in dev server (no http-server needed), hot-reload
 
 ### Targets
-- Android: primary（先验证）
-- iOS: secondary
-- Desktop (macOS/Win/Linux): bonus，同配置
+- Android: primary
+- iOS: secondary (TestFlight)
+- Desktop (macOS/Win/Linux): bonus, same config
 
 ### Commands
 ```
-npx tauri android dev       — Android 设备/模拟器开发
-npx tauri android build     — 发布 APK/AAB
-npm run dev:ios             — iOS 模拟器开发 (iPhone 17 Pro)
-npm run build:ios           — 本地构建 iOS IPA（不上传）
-npm run release:ios         — 构建 + 自动 bump CFBundleVersion + 上传 TestFlight
-npx tauri dev               — 桌面开发
+npx tauri android dev       — Android device/emulator dev
+npx tauri android build     — release APK/AAB
+npm run dev:ios             — iOS simulator dev (iPhone 17 Pro)
+npm run build:ios           — local iOS IPA build (no upload)
+npm run release:ios         — build + auto bump CFBundleVersion + upload TestFlight
+npx tauri dev               — desktop dev
 ```
 
-`release:ios` 需要 `.env.local` 里配 `APPSTORE_KEY_ID` / `APPSTORE_ISSUER_ID`，
-对应 .p8 key 放在 `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`。
-脚本：`scripts/release-ios.sh`。
+`release:ios` requires `APPSTORE_KEY_ID` / `APPSTORE_ISSUER_ID` in `.env.local`,
+with .p8 key at `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
+Script: `scripts/release-ios.sh`.
 
 ### Native Features (planned)
-- QR 扫码登录: `tauri-plugin-barcode-scanner` 官方插件
-- 本地通知: `tauri-plugin-notification`
-- 生物识别: `tauri-plugin-biometric`
+- QR scan login: `tauri-plugin-barcode-scanner`
+- Local notifications: `tauri-plugin-notification`
+- Biometric auth: `tauri-plugin-biometric`
 
-## Future: tmux capture-pane 实时状态（未实现）
+## Future: tmux capture-pane Live State (not implemented)
 
-CC 有大量中间状态不写 jsonl，只在终端显示。`tmux capture-pane -p` 是唯一获取途径：
+CC has many intermediate states not written to jsonl, only displayed in terminal. `tmux capture-pane -p` is the only way to capture them:
 
-- **思考动画**: Pondering... / Vibing... / Computing... 等临时状态文本
-- **thinking 过程**: 推理内容实时展示
-- **权限等待**: 精确检测 CC 是否在等用户确认（区分 "在跑长命令" vs "在等审批"）
-- **进度信息**: tool 执行中的输出
+- **Thinking animation**: Pondering... / Vibing... / Computing... etc.
+- **Thinking content**: reasoning displayed in real-time
+- **Permission waiting**: precise detection of whether CC is waiting for user confirmation (vs. running a long command)
+- **Progress info**: tool execution output
 
-### 权限检测方案
-当前 viewer 用 5 秒定时器启发式判断是否弹权限弹窗，存在误判（auto-approve 的长命令也会弹）。
-更优方案：bridge 检测到 tool_use 后等几秒 → capture-pane 一次 → 看到权限提示则推 `permission_needed` 给 viewer。
-性能：capture-pane 读一屏文本 ~5ms，仅在 tool_use 时触发，开销可忽略。
+### Permission Detection Improvement
+Current viewer uses 5s timer heuristic to decide whether to show permission prompt — false positives exist (auto-approved long commands also trigger it).
+Better approach: bridge detects tool_use → waits a few seconds → capture-pane once → sees permission prompt → pushes `permission_needed` to viewer.
+Performance: capture-pane reads one screen of text in ~5ms, triggered only on tool_use, negligible overhead.
 
-### 实现方向
-作为 "tmux live state" 模块统一设计，bridge 定期或按需 capture-pane，解析 CC 终端状态，通过 WS 推送给 viewer。
+### Implementation Direction
+Design as a "tmux live state" module: bridge periodically or on-demand capture-pane, parse CC terminal state, push via WS to viewer.
 
 ## Known Issues / TODO
 
-- **WS 128KB 帧限制**: API Gateway WS payload 上限 128KB。超大消息（如 Edit 大文件）WS 发送失败，bridge 自动 fallback 到 HTTP 写 DDB，但 app 实时收不到（刷新后可见）。DDB 单条 item 上限 400KB，超过会丢失。极少触发，暂不处理。
-- **VS Code CC 状态精度**: VS Code 扩展启动 CC 无 `--resume` flag，无法精确匹配 session。使用 mtime 启发式（5 分钟），超时后一律 stopped。terminal/tmux 启动的 CC 不受影响。
+- **WS 128KB frame limit**: API Gateway WS payload max 128KB. Oversized messages (e.g., Edit large files) fail WS send, bridge auto-falls back to HTTP write to DDB, but app won't receive in real-time (visible after refresh). DDB single item max 400KB, exceeding this causes data loss. Rarely triggered, not addressing now.
+- **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → stopped). terminal/tmux-launched CC unaffected.
