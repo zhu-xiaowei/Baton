@@ -34,7 +34,7 @@ Requires [Node.js](https://nodejs.org/) >= 20.
 | iOS | Android | macOS | Windows |
 |:---:|:---:|:---:|:---:|
 | <img src="docs/assets/agentpeek_ios.png" width="120"> | <img src="docs/assets/agentpeek_android.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.dmg) | Coming soon |
+| [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.dmg) | [AgentPeek.exe](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.exe) |
 
 After downloading the app, scan the QR code or input the Start URL to get started.
 

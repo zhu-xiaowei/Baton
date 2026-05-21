@@ -61,6 +61,12 @@
           "height": 400
         }
       }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": true
+      }
     }
   }
 }
