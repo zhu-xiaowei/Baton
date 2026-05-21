@@ -33,8 +33,8 @@ Requires [Node.js](https://nodejs.org/) >= 20.
 
 | Platform | Download |
 |----------|----------|
-| iOS      | [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) <br> <img src="docs/assets/agentpeek_ios.png" width="80"> |
-| Android  | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) <br> <img src="docs/assets/agentpeek_android.png" width="80"> |
+| iOS      | <img src="docs/assets/agentpeek_ios.png" width="120"> <br> [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) |
+| Android  | <img src="docs/assets/agentpeek_android.png" width="120"> <br> [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) |
 | macOS    | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.dmg) |
 | Windows  | Coming soon |
 
