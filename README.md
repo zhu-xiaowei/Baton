@@ -25,7 +25,7 @@ Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `
 
 Requires [Node.js](https://nodejs.org/) >= 20 and [tmux](https://github.com/tmux/tmux/wiki/Installing).
 
-1. Open the **Start URL** in your browser
+1. Open the **Start URL** in your browser — this is your web dashboard
 2. Copy the one-line **Install bridge** command from the Setup page
 3. Run it on the machine where Claude Code is running
 
