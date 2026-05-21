@@ -18,12 +18,12 @@ Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-star
 curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/agentpeek/main/server/install.sh | bash
 ```
 
-Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
+Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
 
 
 ### 2. Install Bridge
 
-Requires [Node.js](https://nodejs.org/) >= 20 and [tmux](https://github.com/tmux/tmux/wiki/Installing).
+Requires [Node.js](https://nodejs.org/) >= 20.
 
 1. Open the **Start URL** in your browser (this is also the web viewer)
 2. Copy the one-line **Install bridge** command from the Setup page
@@ -38,7 +38,7 @@ Requires [Node.js](https://nodejs.org/) >= 20 and [tmux](https://github.com/tmux
 | iOS      | [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) |
 | Windows  | Coming soon |
 
-After downloading the app, scan the QR code to get started.
+After downloading the app, scan the QR code or input the Start URL to get started.
 
 ---
 
