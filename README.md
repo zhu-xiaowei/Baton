@@ -6,7 +6,7 @@ View and interact with your [Claude Code](https://github.com/anthropics/claude-c
   <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
 </p>
 
-AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code.
+AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code. All data stays in your own AWS account — fast, real-time, and always in sync.
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ Requires [Node.js](https://nodejs.org/) >= 20 and [tmux](https://github.com/tmux
 |----------|----------|
 | Android  | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.apk) |
 | macOS    | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/0.2.0/AgentPeek.dmg) |
-| iOS      | Coming soon |
+| iOS      | [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) |
 | Windows  | Coming soon |
 
 After downloading the app, scan the QR code to get started.
