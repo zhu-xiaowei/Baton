@@ -77,7 +77,7 @@ wait_stack() {
       local progress=""
       if [ -n "$resources" ]; then
         total=$(echo "$resources" | wc -l | tr -d ' ')
-        done_count=$(echo "$resources" | grep -cE 'CREATE_COMPLETE|UPDATE_COMPLETE' 2>/dev/null || echo 0)
+        done_count=$(echo "$resources" | grep -cE 'CREATE_COMPLETE|UPDATE_COMPLETE' 2>/dev/null || true)
         latest=$(echo "$resources" | grep -E 'IN_PROGRESS' | head -1 | awk '{print $1}')
         [ ${#latest} -gt 30 ] && latest="${latest:0:27}..."
         if [ -n "$latest" ]; then
