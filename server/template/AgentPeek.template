@@ -37,13 +37,27 @@
                   "Action": [
                     "dynamodb:PutItem",
                     "dynamodb:GetItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:UpdateItem",
                     "dynamodb:Query",
+                    "dynamodb:Scan",
                     "dynamodb:BatchWriteItem"
                   ],
                   "Resource": [
                     { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
-                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                    { "Fn::Sub": "${BridgeSessionsTable.Arn}/index/*" },
+                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
+                    { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
+                    { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
+                    { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
+                    { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
+                    { "Fn::GetAtt": ["SystemTable", "Arn"] }
                   ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "execute-api:ManageConnections",
+                  "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
                 },
                 {
                   "Effect": "Allow",
@@ -51,7 +65,7 @@
                     "s3:PutObject",
                     "s3:GetObject"
                   ],
-                  "Resource": { "Fn::Sub": "arn:aws:s3:::${BridgeImagesBucket}/*" }
+                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/*" }
                 }
               ]
             }
@@ -68,10 +82,14 @@
           "Variables": {
             "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
-            "BRIDGE_IMAGES_BUCKET": { "Ref": "BridgeImagesBucket" }
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
+            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
+            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+            "SYSTEM_TABLE": { "Ref": "SystemTable" }
           }
         },
-        "MemorySize": 256,
+        "MemorySize": 1024,
         "PackageType": "Image",
         "ReservedConcurrentExecutions": 10,
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
@@ -95,6 +113,68 @@
         "PathPart": "{proxy+}"
       }
     },
+    "ApiResource": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ParentId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
+        "PathPart": "api"
+      }
+    },
+    "ApiProxyResource": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ParentId": { "Ref": "ApiResource" },
+        "PathPart": "{proxy+}"
+      }
+    },
+    "ApiProxyMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Ref": "ApiProxyResource" },
+        "HttpMethod": "ANY",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": true,
+        "Integration": {
+          "Type": "AWS_PROXY",
+          "IntegrationHttpMethod": "POST",
+          "Uri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${APIHandler.Arn}/invocations" },
+          "Credentials": { "Fn::GetAtt": ["ApiGatewayRole", "Arn"] }
+        }
+      }
+    },
+    "ApiProxyOptionsMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Ref": "ApiProxyResource" },
+        "HttpMethod": "OPTIONS",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "IntegrationResponses": [{
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }]
+        },
+        "MethodResponses": [{
+          "StatusCode": "200",
+          "ResponseParameters": {
+            "method.response.header.Access-Control-Allow-Headers": true,
+            "method.response.header.Access-Control-Allow-Methods": true,
+            "method.response.header.Access-Control-Allow-Origin": true
+          }
+        }]
+      }
+    },
     "RootMethod": {
       "Type": "AWS::ApiGateway::Method",
       "Properties": {
@@ -102,7 +182,7 @@
         "ResourceId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -118,7 +198,7 @@
         "ResourceId": { "Ref": "ProxyResource" },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -127,18 +207,78 @@
         }
       }
     },
-    "ApiDeployment": {
+    "RootOptionsMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Fn::GetAtt": ["RestApi", "RootResourceId"] },
+        "HttpMethod": "OPTIONS",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "IntegrationResponses": [{
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }]
+        },
+        "MethodResponses": [{
+          "StatusCode": "200",
+          "ResponseParameters": {
+            "method.response.header.Access-Control-Allow-Headers": true,
+            "method.response.header.Access-Control-Allow-Methods": true,
+            "method.response.header.Access-Control-Allow-Origin": true
+          }
+        }]
+      }
+    },
+    "ProxyOptionsMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": { "Ref": "RestApi" },
+        "ResourceId": { "Ref": "ProxyResource" },
+        "HttpMethod": "OPTIONS",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "IntegrationResponses": [{
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            }
+          }]
+        },
+        "MethodResponses": [{
+          "StatusCode": "200",
+          "ResponseParameters": {
+            "method.response.header.Access-Control-Allow-Headers": true,
+            "method.response.header.Access-Control-Allow-Methods": true,
+            "method.response.header.Access-Control-Allow-Origin": true
+          }
+        }]
+      }
+    },
+    "ApiDeploymentV2": {
       "Type": "AWS::ApiGateway::Deployment",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" }
       },
-      "DependsOn": ["RootMethod", "ProxyMethod"]
+      "DependsOn": ["RootMethod", "ProxyMethod", "RootOptionsMethod", "ProxyOptionsMethod", "ApiProxyMethod", "ApiProxyOptionsMethod"]
     },
     "ApiStage": {
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeployment" },
+        "DeploymentId": { "Ref": "ApiDeploymentV2" },
         "StageName": "v1"
       }
     },
@@ -201,6 +341,173 @@
         "UsagePlanId": { "Ref": "UsagePlan" }
       }
     },
+    "WsApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ws" },
+        "ProtocolType": "WEBSOCKET",
+        "RouteSelectionExpression": "$request.body.action"
+      }
+    },
+    "WsConnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$connect",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsDisconnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$disconnect",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsDefaultRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "RouteKey": "$default",
+        "Target": { "Fn::Sub": "integrations/${WsIntegration}" }
+      }
+    },
+    "WsIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsHandler.Arn}/invocations" }
+      }
+    },
+    "WsStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" },
+        "StageName": "v1",
+        "AutoDeploy": true
+      }
+    },
+    "WsHandler": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${AWS::StackName}-ws-handler" },
+        "Architectures": ["arm64"],
+        "Runtime": "python3.12",
+        "Handler": "bridge_ws.handler",
+        "Code": {
+          "ZipFile": "# placeholder — replaced by deploy"
+        },
+        "Environment": {
+          "Variables": {
+            "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
+            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+          }
+        },
+        "MemorySize": 128,
+        "Role": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] },
+        "Timeout": 30
+      }
+    },
+    "WsLambdaPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": { "Ref": "WsHandler" },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+      }
+    },
+    "WsLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [
+          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }
+        ],
+        "Policies": [{
+          "PolicyName": "WsPolicy",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchWriteItem"],
+                "Resource": [
+                  { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
+                  { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
+                  { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
+                  { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
+                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "execute-api:ManageConnections",
+                "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "ConnectionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-connections" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "connectionId", "AttributeType": "S" },
+          { "AttributeName": "accountId", "AttributeType": "S" },
+          { "AttributeName": "role", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "connectionId", "KeyType": "HASH" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "accountId-role-index",
+            "KeySchema": [
+              { "AttributeName": "accountId", "KeyType": "HASH" },
+              { "AttributeName": "role", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "INCLUDE", "NonKeyAttributes": ["deviceName"] }
+          }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "SubscriptionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${AWS::StackName}-subscriptions" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "sessionId", "AttributeType": "S" },
+          { "AttributeName": "connectionId", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "sessionId", "KeyType": "HASH" },
+          { "AttributeName": "connectionId", "KeyType": "RANGE" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "connectionId-index",
+            "KeySchema": [
+              { "AttributeName": "connectionId", "KeyType": "HASH" }
+            ],
+            "Projection": { "ProjectionType": "KEYS_ONLY" }
+          }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
     "BridgeSessionsTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -208,11 +515,22 @@
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
           { "AttributeName": "accountId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" }
+          { "AttributeName": "sk", "AttributeType": "S" },
+          { "AttributeName": "activeStatus", "AttributeType": "S" }
         ],
         "KeySchema": [
           { "AttributeName": "accountId", "KeyType": "HASH" },
           { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "accountId-activeStatus-index",
+            "KeySchema": [
+              { "AttributeName": "accountId", "KeyType": "HASH" },
+              { "AttributeName": "activeStatus", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "ALL" }
+          }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
@@ -233,32 +551,66 @@
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
     },
-    "BridgeImagesBucket": {
-      "Type": "AWS::S3::Bucket",
+    "SystemTable": {
+      "Type": "AWS::DynamoDB::Table",
       "Properties": {
-        "BucketName": { "Ref": "ImagesBucketName" },
-        "PublicAccessBlockConfiguration": {
-          "BlockPublicAcls": true,
-          "BlockPublicPolicy": true,
-          "IgnorePublicAcls": true,
-          "RestrictPublicBuckets": true
-        },
-        "LifecycleConfiguration": {
-          "Rules": [
-            {
-              "Id": "ExpireOldImages",
-              "Status": "Enabled",
-              "ExpirationInDays": 90
-            }
-          ]
-        }
+        "TableName": { "Fn::Sub": "${AWS::StackName}-system" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "pk", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
+    },
+    "CDN": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": { "Fn::Sub": "${AWS::StackName} CDN" },
+          "HttpVersion": "http2and3",
+          "PriceClass": "PriceClass_200",
+          "Origins": [
+            {
+              "Id": "api",
+              "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "OriginPath": "/v1",
+              "CustomOriginConfig": {
+                "OriginProtocolPolicy": "https-only"
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "api",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
+            "CachedMethods": ["GET", "HEAD"],
+            "Compress": true,
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+          }
+        }
+      },
+      "DependsOn": ["ApiStage"]
     }
   },
   "Outputs": {
     "APIURL": {
       "Description": "API URL",
       "Value": { "Fn::Sub": "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+    },
+    "CloudFrontURL": {
+      "Description": "CloudFront URL (use this for faster access)",
+      "Value": { "Fn::Sub": "https://${CDN.DomainName}" }
+    },
+    "WsURL": {
+      "Description": "WebSocket URL",
+      "Value": { "Fn::Sub": "wss://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
     },
     "ApiKeyConsole": {
       "Description": "Find your API Key here",

@@ -17,17 +17,15 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
 │ bridge       │              │ - Message cache       │           │ Chat view    │
 │              │              │                       │           │ (markdown)   │
 │              │◄────── WS ──►│ WebSocket API GW      │◄── WS ──►│              │
-│              │              │ (real-time push)      │           │ MMKV cache   │
+│              │              │ (real-time push)      │           │              │
 └──────────────┘              └───────────────────────┘           └──────────────┘
 ```
 
 **Key principles:**
 - **DDB**: session metadata (bridge REST) + message cache (Lambda writes on WS receive)
-- **WS**: bridge → Lambda → app 推送 + DDB 写入并行（bridge 只需一个 WS 连接）
-- **App MMKV**: local cache (fast re-open, offline viewing)
+- **WS**: bridge → Lambda → app push + DDB write in parallel (bridge only needs one WS connection)
 - **Data minimization**: bridge extracts only uuid, type, content, timestamp (~40-60% smaller)
 - **Multi-device**: server broadcasts to all subscribed app connections
-- **Better than Happy**: Happy uses notify+pull (3 round trips), we use DDB+direct push (1 round trip)
 
 ## Bridge
 
@@ -45,14 +43,29 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
 5. Start `fs.watch` on all `.jsonl` files (no age filter)
 
 ### Runtime (always-on, auto-start on boot)
-- **File change** → 100ms debounce per session (dedup `fs.watch` duplicate events) → read new lines → extract → POST to DDB
-  - New session detected (`synced` has no entry) → immediately sync session metadata to DDB + add to `recentSessions`
-  - Resumed historical session (not in `recentSessions`) → immediately sync session metadata + add to `recentSessions`
-  - Phase 2: also WS push for real-time
-- **Periodic sync (60s)** → only sync `recentSessions` (24h active) metadata to DDB, NOT full scan
-  - Refreshes `isRunning`, `preview`, `lastActive` for recent sessions
-  - Startup does full sync; periodic sync is incremental
-- **Active detection** → `pgrep -f claude` + cwd matching, re-checked every 60s
+- **File change** → fs.watch triggers → immediately read new lines → extract → WS push to server
+  - Per-session busy flag prevents concurrent reads (pending events replayed after)
+  - Partial JSON lines (mid-write) → break, synced not advanced, next event re-reads
+  - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
+  - WS ack: `wsSendWithAck` waits for server `messages_ack` (5s timeout), only advances synced line on ack
+  - WS fallback: ack timeout or WS disconnected → HTTP POST to DDB
+  - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
+- **Periodic check (1min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
+  - Only checks sessions previously known as running/idle
+  - Updates status to stopped if process gone
+- **Status detection** → three-layer architecture:
+  - `statusFromEntry(entry)`: pure function, entry → running/idle/null. Shared by watcher + file reader
+  - `getSessionStatus()`: reads last lines of jsonl via reverse `\n` scan + process detection. Used by syncSessions/checkStopped
+  - Watcher: uses `statusFromEntry()` directly on already-parsed data (no file re-read)
+  - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
+  - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → idle, `tool_use`/`null` → running, `user` last → running
+  - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
+  - terminal/tmux CC: `--resume` flag → exact session match → precise status
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
+- **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
+  - Skip `isMeta` user messages (avoid duplicate user input)
+  - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
+- **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
 
 ### Data extraction
 
@@ -66,13 +79,15 @@ Raw .jsonl (~2KB per message):
 
 Extracted (~0.8KB):
 ```json
-{"uuid":"a7x","type":"assistant","content":[{"type":"text","text":"..."}],"timestamp":"..."}
+{"uuid":"a7x","parentUuid":"p1","type":"assistant","content":[{"type":"text","text":"..."}],"timestamp":"..."}
 ```
 
 Content block processing:
-- `image` → compress 720p JPEG (sharp) → upload S3 → `{ type: "image", key: "hash.jpg" }`
-- `tool_result` > 2KB → truncate to 500 chars
+- `image` → compress 1280px JPEG quality=90 (sharp) → upload S3 → `{ type: "image", key: "hash.jpg" }`
+- `document` → pass through as-is (`{ type: "document", source: { type: "text", data: "..." }, title: "file.txt" }`)
+- `tool_result` with `toolUseResult` → extract Agent metadata (`totalToolUseCount`, `totalDurationMs`, etc.)
 - `text` → keep as-is
+- `thinking`, `tool_use`, `tool_result` → keep as-is
 
 ### Auto-start
 - macOS: launchd plist (`~/Library/LaunchAgents/`)
@@ -85,7 +100,7 @@ BridgeSessions
   PK: accountId (SHA256(apiKey)[:16])
   SK: deviceName#projectHash#sessionId
   Attributes: deviceName, projectHash, projectName, sessionId,
-              lastActive, preview, model, isRunning, size, os
+              lastActive, preview, model, status (running/idle/stopped), size, os
   TTL: 90 days
 
 BridgeMessages
@@ -105,7 +120,7 @@ All require `x-api-key` header.
 POST /api/bridge/sync-sessions
 Body: {
   deviceName: "MacBook-Pro", os: "darwin",
-  sessions: [{ id, project, projectName, lastActive, size, preview, isRunning }]
+  sessions: [{ id, project, projectName, lastActive, size, preview, status }]
 }
 
 POST /api/bridge/sync-messages
@@ -119,15 +134,15 @@ Body: {
 
 ```
 GET /api/bridge/devices
-→ { devices: [{ deviceName, os, lastActive, isOnline }] }
+→ { devices: [{ deviceName, os, lastActive, projectCount, sessionCount, runningCount, idleCount }] }
 
 GET /api/bridge/projects?device=MacBook-Pro
-→ { projects: [{ projectHash, projectName, lastActive, sessionCount, activeCount }] }
+→ { projects: [{ projectHash, projectName, lastActive, sessionCount, runningCount, idleCount }] }
 
 GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-...
-→ { sessions: [{ sessionId, preview, lastActive, createdAt, isRunning }] }
+→ { sessions: [{ sessionId, preview, lastActive, size, model, status }] }
 
-GET /api/bridge/messages?session=abc&after=<uuid>
+GET /api/bridge/messages?session=abc&after=<timestamp>
 → { messages: [{ uuid, type, content, timestamp }] }
 ```
 
@@ -140,10 +155,10 @@ Three participants: App, Server (relay), Bridge. All on persistent WS connection
 ```
 Bridge detects new message in .jsonl:
   1. Bridge → WS → API GW → Lambda
-  2. Lambda 并行:
-     a. 查 Subscriptions → post_to_connection → App (优先，延迟敏感)
-     b. 写 DDB BridgeMessages (兜底缓存，不阻塞推送)
-  Bridge 只维护一个 WS 连接，不再直接 HTTP POST 写 DDB。
+  2. Lambda in parallel:
+     a. Query Subscriptions → post_to_connection → App (priority, latency-sensitive)
+     b. Write DDB BridgeMessages (fallback cache, non-blocking)
+  Bridge maintains one WS connection, no longer writes DDB directly via HTTP POST.
 ```
 
 ### App subscribe/unsubscribe
@@ -162,12 +177,19 @@ Bridge → Server:  { action: "heartbeat" }
 (every 5 minutes)
 ```
 
-### Send message (Phase 3)
+### Send message
 
 ```
-App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "..." }
-Bridge executes (tmux send-keys / kill + Agent SDK resume)
-Response flows back as normal messages through DDB + WS
+Existing session:
+App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "...", device: "MacBook-Pro" }
+Bridge: findTmuxTarget(sessionId) → sendKeys
+  or: no target → auto tmux new-session + claude --resume → waitForCCReady → sendKeys
+
+New session:
+App → Server → Bridge:  { action: "send_message", projectHash: "xxx", text: "...", device: "MacBook-Pro" }
+Bridge: create tmux + claude → waitForCCReady → sendKeys → poll .jsonl → return sessionId
+Bridge → Server → App:  { action: "send_message_result", ok: true, sessionId: "new-uuid" }
+App subscribes to new sessionId, starts receiving messages
 ```
 
 ## Entering a Session — Complete Flow
@@ -175,24 +197,27 @@ Response flows back as normal messages through DDB + WS
 ```
 App taps session "abc":
 
-1. Establish WS subscribe + start buffering (don't display)
+1. _wsBuffer = [] → start buffering WS messages
    WS: { action: "subscribe", sessionId: "abc" }
 
-2. REST load from DDB (parallel with step 1)
-   GET /api/bridge/messages?session=abc&after=<last-local-uuid>
+2. bufferAndFetch(sessionId, '') → REST load from DDB
+   GET /api/bridge/messages?session=abc
    → DDB has cached messages → return instantly (<100ms)
    → DDB empty → return empty (bridge hasn't synced this session yet)
 
-3. Render REST result immediately
+3. Merge: DDB results + _wsBuffer, dedup by uuid, sort by timestamp
 
-4. Merge WS buffer: filter messages with timestamp > last REST message's timestamp
-   Append to rendered list. (UUID dedup as fallback for same-millisecond edge case)
+4. _wsBuffer = null → switch to real-time mode. Render merged result.
+   Track wsLastTimestamp for reconnect recovery.
 
-5. Initialization complete. Subsequent WS messages → append directly, no dedup needed.
+5. Subsequent WS messages → append directly via updateLastTurn().
 
-6. App leaves session:
+6. WS reconnect → subscribe + recoverMissing():
+   _wsBuffer = [] → bufferAndFetch(sessionId, wsLastTimestamp)
+   Same buffer+fetch+merge pattern, dedup + sort + full re-render.
+
+7. App leaves session:
    WS: { action: "unsubscribe", sessionId: "abc" }
-   Save to MMKV: messages + lastUuid
 ```
 
 ### Why DDB + WS is better than WS-only
@@ -209,101 +234,114 @@ App taps session "abc":
 ```
 agentpeek/
 ├── bridge/
-│   └── bridge.mjs                         # File watcher + HTTP POST + WS
+│   ├── bridge.mjs          # Entry point — startup, orchestration
+│   ├── config.mjs          # CLI args, config loading, server config fetch
+│   ├── http.mjs            # HTTP POST helper
+│   ├── extract.mjs         # Message extraction, image compression, DDB upload
+│   ├── session.mjs         # Preview, model, project name, session status detection
+│   ├── permissions.mjs     # Permission prompt detection via tmux capture-pane
+│   ├── tmux.mjs            # tmux target discovery, sendKeys, auto-launch
+│   ├── sync.mjs            # Initial + periodic session sync
+│   ├── watcher.mjs         # fs.watch → read → WS push
+│   └── ws.mjs              # WebSocket client, auto-reconnect, sync_session handler
 ├── server/
 │   ├── src/
-│   │   ├── main.py                        # FastAPI entry
-│   │   ├── bridge_sync.py                 # POST sync-sessions, sync-messages
-│   │   ├── bridge_read.py                 # GET devices/projects/sessions/messages
-│   │   └── bridge_ws.py                   # WS relay
+│   │   ├── main.py         # FastAPI entry
+│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image
+│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image
+│   │   └── bridge_ws.py    # WS relay ($connect/$disconnect/$default)
 │   ├── template/AgentPeek.template
-│   └── install.sh
-├── mobile/                                # Fresh RN project
-│   └── src/
-│       ├── App.tsx
-│       ├── screens/
-│       │   ├── SessionListScreen.tsx      # REST from DDB
-│       │   ├── ChatScreen.tsx             # REST history + WS real-time
-│       │   └── SettingsScreen.tsx
-│       ├── service/BridgeService.ts       # REST + WS client
-│       ├── hooks/useClaudeCode.ts
-│       ├── components/
-│       │   ├── MessageBubble.tsx
-│       │   └── MarkdownRenderer.tsx
-│       ├── storage/ConfigStorage.ts       # MMKV: config + message cache
-│       └── theme/index.ts
-└── docs/claude-code-bridge.md
+│   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
+├── web/
+│   ├── landing.html        # API key auth page
+│   ├── index.html          # Session viewer (auth guard)
+│   ├── setup.html          # Bridge install + QR code + device list
+│   ├── css/style.css       # Dark theme styles
+│   └── js/
+│       ├── entry-index.js  # Entry point for index.html
+│       ├── entry-landing.js # Entry point for landing.html
+│       ├── entry-setup.js  # Entry point for setup.html
+│       ├── globals.js      # Shared constants and utilities
+│       ├── state.js        # App state management
+│       ├── api.js          # REST client + auth (localStorage)
+│       ├── ws.js           # WebSocket client
+│       ├── app.js          # Navigation, session lifecycle
+│       ├── render.js       # Message orchestrator, timeline layout
+│       ├── scroll-indicator.js # Scroll-to-bottom indicator
+│       └── components/
+│           ├── markdown.js     # Markdown rendering (marked.js + highlight.js)
+│           ├── message.js      # User/system bubbles, file badges, document blocks
+│           ├── tool.js         # Tool nodes (Bash, Edit, Agent stats/timer, etc.)
+│           ├── image.js        # Image lazy-loading, upload, gallery
+│           ├── permission.js   # Permission prompt UI (options, input, escape)
+│           ├── skeleton.js     # Loading skeleton placeholders
+│           └── typing-status.js # Typing/thinking status indicator
+├── src-tauri/
+│   ├── tauri.conf.json     # Tauri v2 config (frontendDist: "../web")
+│   ├── Cargo.toml          # Rust dependencies
+│   ├── src/                # Rust backend (minimal, mostly native API bridges)
+│   ├── capabilities/       # Permission capabilities for plugins
+│   ├── icons/              # App icons (all platforms)
+│   └── gen/                # Generated platform projects (android/, apple/)
+├── scripts/
+│   ├── release-ios.sh      # Build + bump CFBundleVersion + upload TestFlight
+│   └── release-mac.sh      # macOS DMG build with code signing + notarization
+├── docs/
+│   ├── api.md              # Full API specification
+│   ├── claude-code-bridge.md  # This file
+│   ├── frontend-patterns.md   # Frontend rendering patterns
+│   └── assets/             # Images (promo.avif, etc.)
+├── package.json            # Root package (Vite + Tauri CLI)
+└── vite.config.js          # Vite config for web/ bundling
 ```
 
 ## Phases
 
 ### Phase 1: Bridge → DDB ✅ Complete
 - bridge.mjs watches .jsonl, syncs session metadata + messages to DDB
-- New/resumed sessions detected instantly via fs.watch (no 60s delay)
-- 100ms debounce per session to dedup fs.watch duplicate events
-- Periodic sync (60s) only covers recent 24h sessions, not full scan
+- New/resumed sessions detected instantly via fs.watch
+- fs.watch → immediate read → WS push (no debounce, no polling)
+- Periodic check (1min) only detects disappeared CC processes
 - Deployed to us-west-2 (AgentPeekTest), verified
 
-### Phase 2A: Backend + 接口验证
+### Phase 2A: Backend + API Validation ✅ Complete
 
-目标：所有后端接口可用，本地测试页面验证通过。
+- Server REST read endpoints (devices, projects, sessions, messages)
+- WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
+- Bridge WS connection + real-time push
+- Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
 
-#### Step 1: Server REST read endpoints
-- [ ] `bridge_read.py`: GET devices, projects, sessions, messages (from DDB)
-- [ ] Register in main.py, redeploy
-- [ ] Verify: curl all 4 endpoints return correct data
+### Phase 2B: Send Messages + Images ✅ Complete
 
-#### Step 2: WebSocket API Gateway
-- [ ] CloudFormation: WebSocket API GW + Lambda handler + DDB connections table
-- [ ] `bridge_ws.py`: $connect/$disconnect (DDB connections table), $default (route by action)
-- [ ] Verify: wscat connect, DDB shows connection record
+- tmux send-keys (cross-platform, zero-intrusion approach)
+- Server WS relay: send_message, permission_reply, interrupt
+- Bridge: findTmuxTarget → sendKeys, auto-launch tmux + claude --resume
+- Viewer: message sending + optimistic rendering + dedup, permission prompt + user interaction, image sending via S3
+- WS reconnect recovery: track wsLastTimestamp → recoverMissing() on reconnect
+- Auto-create tmux session when no existing target + device routing
+- Permission detection: client-side tool_use scanning + server-side capture-pane
 
-#### Step 3: Bridge WS connection + real-time push
-- [ ] bridge.mjs: add WS connection to server (alongside existing HTTP POST)
-- [ ] bridge.mjs: on file change → HTTP POST to DDB + WS push (parallel)
-- [ ] Verify: wscat subscribe → bridge detects file change → wscat receives message
+### Phase 2C: Native App (Tauri v2) ✅ Complete
 
-#### Step 4: Server WS relay
-- [ ] bridge_ws.py: subscribe → record in DDB subscriptions table
-- [ ] bridge_ws.py: bridge WS message → lookup subscribers → post_to_connection to all apps
-- [ ] Verify: two wscat clients subscribe same session → both receive messages
+Tauri v2 wraps the web/ static frontend as a native app — zero web code changes.
 
-#### Step 5: 本地测试页面 (test.html)
-- [ ] `test/test.html`: 单文件，浏览器直接打开，无需构建
-- [ ] 配置区：输入 server URL + API key
-- [ ] REST 验证：devices → projects → sessions 级联选择，messages 加载显示
-- [ ] WS 验证：subscribe session → 实时显示新消息（raw JSON）
-- [ ] 状态指示：连接状态、消息计数、延迟
-- [ ] 验证：打开页面 → 选择 session → 在 Claude Code 中发消息 → 页面实时显示
+- `src-tauri/` at project root (sibling to web/, bridge/, server/)
+- `frontendDist: "../web"` — directly serves static HTML/CSS/JS
+- `withGlobalTauri: true` — JS accesses native APIs via `window.__TAURI__`
+- Bundle identifier: `com.agentpeek.app`
 
-### Phase 2B: Mobile App
+**Targets:**
+- Android: APK via `npm run build:android`
+- iOS: IPA via `npm run build:ios`, TestFlight via `npm run release:ios`
+- macOS: DMG via `npm run build:mac` (code signed + notarized)
 
-目标：React Native app 完整实现。
+**Native plugins:**
+- QR code login: `tauri-plugin-barcode-scanner`
+- Local notifications: `tauri-plugin-notification` (planned)
+- Biometric auth: `tauri-plugin-biometric` (planned)
 
-#### Step 6: Mobile app init
-- [ ] `npx react-native init` in mobile/
-- [ ] Install deps, App.tsx, theme, ConfigStorage
-- [ ] Verify: app launches
-
-#### Step 7: Mobile session list
-- [ ] SettingsScreen: manual server + key input
-- [ ] BridgeService.ts: REST client
-- [ ] SessionListScreen: device → project → session (🟢/⚫ indicators)
-- [ ] Verify: app shows real session list from DDB
-
-#### Step 8: Mobile chat
-- [ ] BridgeService.ts: WS client (subscribe/unsubscribe/heartbeat)
-- [ ] useClaudeCode.ts: WS buffer → REST load → merge → render → real-time append
-- [ ] ChatScreen: message list + spinner
-- [ ] MessageBubble + MarkdownRenderer
-- [ ] MMKV message cache + lastUuid
-- [ ] Verify: open session → history loads → Claude real-time output appears on phone
-
-### Phase 3: Send messages from phone
-- Bridge: tmux send-keys / kill + Agent SDK resume
-- Same WS + DDB channels
-
-### Phase 4: Production polish
-- Setup page + QR code, one-line install with auto-start
-- Push notifications, Claude Code markdown, code diff display
+### Phase 3: Production Polish (Future)
+- Windows support: bridge process detection, Task Scheduler auto-start, %APPDATA% paths
+- Push notifications
 - Persist bridge sync state (~/.claude-bridge/sync-state.json) to avoid re-uploading messages on restart
+- DDB TTL: auto-clean messages for sessions inactive > 30 days

@@ -7,15 +7,18 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 
-# React Native (mobile/)
-mobile/ios/Pods/
-mobile/ios/build/
-mobile/android/build/
-mobile/android/.gradle/
-mobile/android/app/build/
-mobile/android/local.properties
-mobile/*.xcworkspace
-mobile/*.xcodeproj/xcuserdata/
+# Vite build output
+dist/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/android/build/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/.idea/
+src-tauri/gen/android/.cxx/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/*.keystore
 
 # Python
 __pycache__/
@@ -25,8 +28,10 @@ __pycache__/
 # Bridge
 ~/.claude-bridge/
 
-# Claude Code
-CLAUDE.md
+# Test cache
+tests/__pycache__/
+tests/.pytest_cache/
+tests/.env
 
 # IDE
 .idea/
@@ -40,4 +45,6 @@ CLAUDE.md
 # Env
 .env
 .env.local
-node_modules/
+
+# Source code references
+claude-code-source-code/

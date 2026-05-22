@@ -1,0 +1,565 @@
+// App state, routing, page loading
+import { state } from './state.js';
+
+var _navVersion = 0;
+
+// Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
+if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
+if (typeof window.updateSpinner !== 'function') window.updateSpinner = function () {};
+
+function osName(os) {
+  return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown';
+}
+
+function timeAgo(iso) {
+  var diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return Math.floor(diff / 86400000) + 'd ago';
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
+}
+
+function showStats() {}  // no-op, stats bar removed
+
+function showWsBanner(status) {
+  var existing = document.getElementById('ws-banner');
+  if (status === 'connected' || status === '') {
+    if (existing) existing.remove();
+    return;
+  }
+  var content = document.getElementById('content');
+  if (!content) return;
+  if (!existing) {
+    content.insertAdjacentHTML('afterbegin', '<div id="ws-banner" class="ws-banner"></div>');
+    existing = document.getElementById('ws-banner');
+  }
+  if (status === 'reconnecting') {
+    existing.className = 'ws-banner warn';
+    existing.textContent = 'Reconnecting...';
+  } else {
+    existing.className = 'ws-banner error';
+    existing.textContent = 'Disconnected';
+  }
+}
+
+function navHref(view, params) {
+  if (view === 'devices') return '#/';
+  if (view === 'projects') return '#/' + encodeURIComponent(params.device);
+  if (view === 'sessions') return '#/' + encodeURIComponent(params.device) + '/' + encodeURIComponent(params.projectHash);
+  return '#/';
+}
+
+function updateBreadcrumb() {
+  var el = document.getElementById('breadcrumb');
+  var parts = [];
+  if (state.appState.device) {
+    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(state.appState.device) + '</a>');
+  }
+  if (state.appState.project) {
+    parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
+  }
+  if (state.appState.session) {
+    var label = state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...';
+    parts.push('<span>' + esc(label) + '</span>');
+  }
+  var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
+  var topRight = document.getElementById('top-right');
+  if (state.appState.project) {
+    topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+  } else if (state.appState.device && !state.appState.project) {
+    topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
+  } else {
+    topRight.innerHTML = _gearHtml;
+  }
+  var titleHtml = '';
+  if (state.appState.session) {
+    parts.pop();
+    var titleText = esc(state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...');
+    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
+  }
+  el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
+    + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
+    + '</div>';
+  el.style.display = parts.length > 0 ? 'flex' : 'none';
+}
+
+function toggleBreadcrumbExpand(nav) {
+  nav.classList.toggle('expanded');
+}
+
+function showInputBar(visible) {
+  var bar = document.getElementById('input-bar');
+  bar.style.display = visible ? 'flex' : 'none';
+  if (!visible) {
+    if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
+    document.getElementById('scroll-bottom-btn').classList.remove('visible');
+    document.body.classList.remove('new-session');
+    // Restore input-bar to body if it was moved into #content
+    if (bar.parentElement !== document.body) document.body.appendChild(bar);
+    state.wsRunning = false;
+    updateSpinner();
+  }
+}
+
+function saveNav() {
+  sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
+}
+
+// ---- Active session card click ----
+function openActiveSession(el) {
+  var d = el.dataset;
+  state.appState = {
+    device: d.device,
+    project: { hash: d.phash, name: d.pname },
+    session: null,
+    sessionPreview: ''
+  };
+  loadMessages(d.sid, d.preview, d.status);
+}
+
+function shortModel(m) {
+  return (m || 'unknown').replace(/^claude-/, '');
+}
+
+// ---- Devices ----
+async function loadDevices() {
+  var myNav = ++_navVersion;
+  state.appState = { device: null, project: null, session: null, sessionPreview: '' };
+  disconnectWs();
+  showInputBar(false);
+  updateBreadcrumb();
+  saveNav();
+  var content = document.getElementById('content');
+
+  // Reuse inline shell render only on the first call — the one right after inline shell paints.
+  // __preload is consumed (set to null) after first call, so subsequent logo clicks always re-render.
+  var preload = window.__preload;
+  var reuseInline = !!preload && !!(document.getElementById('devices-section') || document.getElementById('active-section'));
+  if (preload) window.__preload = null;
+
+  if (!reuseInline) {
+    content.innerHTML = '<div class="section-title">Active Sessions</div>'
+      + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
+      + '<div class="section-title">Devices</div>'
+      + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
+  }
+
+  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
+  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
+
+  if (reuseInline) {
+    Promise.resolve(devicesPromise).then(function (devData) {
+      if (devData && devData.devices) devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+    }).catch(function () {});
+    return;
+  }
+
+  // Fire both independently
+  Promise.resolve(activePromise).then(function (activeData) {
+    if (_navVersion !== myNav) return;
+    var el = document.getElementById('active-section');
+    var titleEl = el && el.previousElementSibling;
+    if (!el) return;
+    if (!activeData.sessions || activeData.sessions.length === 0) {
+      el.remove();
+      if (titleEl) titleEl.remove();
+      return;
+    }
+    if (titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
+    el.innerHTML = activeData.sessions.map(function (s) {
+      return '<div class="active-card ' + esc(s.status) + '"'
+        + ' data-sid="' + esc(s.sessionId) + '"'
+        + ' data-preview="' + esc(s.preview || '') + '"'
+        + ' data-status="' + esc(s.status) + '"'
+        + ' data-device="' + esc(s.deviceName) + '"'
+        + ' data-phash="' + esc(s.projectHash) + '"'
+        + ' data-pname="' + esc(s.projectName) + '"'
+        + ' onclick="openActiveSession(this)">'
+        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="badge ' + esc(s.status) + '">' + (s.status === 'running' ? 'Running' : 'Idle') + '</span></div>'
+        + '<div class="card-title">' + esc(s.preview || 'No preview') + '</div>'
+        + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '</div>';
+    }).join('');
+  }).catch(function () {
+    if (_navVersion !== myNav) return;
+    var el = document.getElementById('active-section');
+    var titleEl = el && el.previousElementSibling;
+    if (el) el.remove();
+    if (titleEl) titleEl.remove();
+  });
+
+  Promise.resolve(devicesPromise).then(function (devData) {
+    if (_navVersion !== myNav) return;
+    var el = document.getElementById('devices-section');
+    var titleEl = el && el.previousElementSibling;
+    if (!el) return;
+    if (devData.devices.length === 0) {
+      el.remove();
+      if (titleEl) titleEl.remove();
+      return;
+    }
+    if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
+    devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+    el.innerHTML = devData.devices.map(function (d) {
+      var rc = d.runningCount || 0, ic = d.idleCount || 0;
+      var dotClass = d.online ? 'online' : 'offline';
+      return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
+        + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+        + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+        + '</div>';
+    }).join('');
+    showStats(devData.devices.length + ' device(s)');
+  }).catch(function (e) {
+    if (_navVersion !== myNav) return;
+    var el = document.getElementById('devices-section');
+    if (el) el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  });
+}
+
+// ---- Projects ----
+async function loadProjects(device) {
+  var myNav = ++_navVersion;
+  state.appState = { device: device, project: null, session: null, sessionPreview: '' };
+  disconnectWs();
+  showInputBar(false);
+  updateBreadcrumb();
+  saveNav();
+  var content = document.getElementById('content');
+  content.innerHTML = '<div class="list">' + skeletonItems(4) + '</div>';
+
+  try {
+    var data = await api('/api/bridge/projects', { device: device });
+    if (_navVersion !== myNav) return;
+    content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
+      var rc = p.runningCount || 0, ic = p.idleCount || 0;
+      var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
+      return '<a class="item" href="' + projHref + '" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;">'
+        + '<div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
+        + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
+        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+        + '</a>';
+    }).join('') + '</div>';
+    showStats(data.projects.length + ' project(s)');
+  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+
+// ---- Sessions ----
+async function loadSessions(device, projectHash, projectName) {
+  var myNav = ++_navVersion;
+  state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
+  disconnectWs();
+  showInputBar(false);
+  updateBreadcrumb();
+  saveNav();
+  var content = document.getElementById('content');
+  content.innerHTML = '<div class="list">' + skeletonItems(5) + '</div>';
+
+  try {
+    var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
+    if (_navVersion !== myNav) return;
+    content.innerHTML = '<div class="list">'
+      + data.sessions.map(function (s) {
+      var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
+      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="if(window.getSelection().toString())return false;loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status);return false;">'
+        + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
+        + '</a>';
+    }).join('') + '</div>';
+    showStats(data.sessions.length + ' session(s)');
+  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+
+function createNewProject() {
+  var modal = document.getElementById('newProjectModal');
+  var input = document.getElementById('newProjectInput');
+  var err = document.getElementById('newProjectError');
+  input.value = '';
+  err.textContent = '';
+  modal.style.display = 'flex';
+  setTimeout(function () { input.focus(); }, 100);
+}
+
+function closeNewProjectModal() {
+  if (state._pendingCreatePath) {
+    state._pendingCreatePath = null;
+    disconnectWs();
+  }
+  var modal = document.getElementById('newProjectModal');
+  modal.style.display = 'none';
+  var input = document.getElementById('newProjectInput');
+  var btn = modal.querySelector('.modal-btn.confirm');
+  if (input) input.disabled = false;
+  if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
+}
+
+async function submitNewProject() {
+  var input = document.getElementById('newProjectInput');
+  var err = document.getElementById('newProjectError');
+  var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
+  var projectPath = input.value.trim();
+  if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
+  err.textContent = '';
+  state._pendingCreatePath = projectPath;
+  // Loading state: disable inputs, show spinner on button
+  input.disabled = true;
+  btn.disabled = true;
+  btn.dataset.origText = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span>Creating';
+  await window.loadViewerLibs();
+  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+}
+
+async function startNewSession(projectHash) {
+  await window.loadViewerLibs();
+  state.appState.session = '__new__';
+  state.appState.sessionPreview = 'New Session';
+  updateBreadcrumb();
+  saveNav();
+  // Reset WS message state for new session
+  state.wsAllMessages = [];
+  state.wsMessageCount = 0;
+  state.wsRenderedCount = 0;
+  state.wsLastTimestamp = '';
+  state.wsHasMore = false;
+  state.wsOldestTimestamp = '';
+  state.wsLoadingOlder = false;
+  state.wsSessionId = null;
+  state.wsRunning = false;
+  state.pendingSentMessages = [];
+  if (typeof updateSpinner === 'function') updateSpinner();
+  var content = document.getElementById('content');
+  content.innerHTML =
+    '<div class="new-session-hero">'
+      + '<div class="hero-logo">🔭</div>'
+      + '<div class="hero-title">AgentPeek</div>'
+    + '</div>'
+    + '<div class="messages" hidden></div>';
+  document.body.classList.add('new-session');
+  showInputBar(true);
+  // Move input-bar into #content so it sits with the hero in centered flex group.
+  // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
+  var bar = document.getElementById('input-bar');
+  if (bar && bar.parentElement !== content) content.appendChild(bar);
+  // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
+  if (typeof updateSendBtn === 'function') updateSendBtn();
+  connectWs(null, projectHash);
+}
+
+// ---- Messages ----
+async function loadMessages(sessionId, preview, status) {
+  // Update state + breadcrumb before any await — a fast follow-up nav must not be
+  // overwritten when this call resumes.
+  document.body.classList.remove('new-session');
+  var myNav = ++_navVersion;
+  state.appState.session = sessionId;
+  state.appState.sessionPreview = preview || '';
+  // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
+  state._titleTier = preview ? 3 : 0;
+  state.wsRunning = (status === 'running');
+  updateBreadcrumb();
+  await window.loadViewerLibs();
+  if (_navVersion !== myNav) return;
+  updateSendBtn();
+  var content = document.getElementById('content');
+  content.innerHTML = skeletonMessages();
+  showInputBar(true);
+
+  // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
+  state.wsAllMessages = [];
+  state.wsMessageCount = 0;
+  state.wsLastTimestamp = '';
+  state.wsHasMore = false;
+  state.wsOldestTimestamp = '';
+  state.wsLoadingOlder = false;
+  startWs(sessionId);
+
+  try {
+    var t0 = performance.now();
+    var result = await bufferAndFetch(sessionId, '');
+    if (_navVersion !== myNav) return;
+    var latency = Math.round(performance.now() - t0);
+
+    if (state.wsAllMessages.length === 0) {
+      if (result.needSync) {
+        var online = state.deviceOnlineMap[state.appState.device] !== false;
+        content.innerHTML = online
+          ? skeletonMessages()
+          : '<div class="empty">Bridge offline — no cached messages</div>';
+      } else {
+        content.innerHTML = '<div class="empty">No messages</div>';
+      }
+      showInputBar(true);
+      saveNav();
+      return;
+    }
+
+    // Render
+    content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
+    showInputBar(true);
+
+    updateTitleFromMessages();
+
+    // Infer running state from last assistant message (covers page refresh where status param is missing)
+    if (!status) {
+      for (var ri = state.wsAllMessages.length - 1; ri >= 0; ri--) {
+        if (state.wsAllMessages[ri].type === 'assistant') {
+          state.wsRunning = state.wsAllMessages[ri].stopReason !== 'end_turn';
+          break;
+        }
+      }
+    }
+    // Watermark: only WS messages newer than this can flip wsRunning.
+    state.wsLoadCompleteTs = state.wsLastTimestamp || '';
+    updateSendBtn();
+
+    content.scrollTop = content.scrollHeight;
+    setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
+    loadImages(content);
+    clampOverflow(content.querySelector('.messages'));
+    checkPendingPrompts(state.wsAllMessages);
+    state.wsRenderedCount = state.wsAllMessages.length;
+    showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
+  } catch (e) {
+    if (_navVersion !== myNav) return;
+    state._wsBuffer = null;
+    content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  }
+  saveNav();
+}
+
+// ---- Scroll-to-bottom ----
+function scrollToBottom() {
+  var el = document.getElementById('content');
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+}
+
+// Keep scroll-to-bottom button 12px above #input-bar regardless of platform/keyboard/safe-area.
+function positionScrollBtn() {
+  var bar = document.getElementById('input-bar');
+  var btn = document.getElementById('scroll-bottom-btn');
+  if (!bar || !btn) return;
+  var h = bar.offsetHeight;
+  if (h === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
+  btn.style.bottom = (h + 12) + 'px';
+}
+(function () {
+  var bar = document.getElementById('input-bar');
+  if (bar && window.ResizeObserver) {
+    new ResizeObserver(positionScrollBtn).observe(bar);
+  }
+  window.addEventListener('resize', positionScrollBtn);
+  positionScrollBtn();
+})();
+
+(function () {
+  var btn = document.getElementById('scroll-bottom-btn');
+  var content = document.getElementById('content');
+
+  content.addEventListener('scroll', function () {
+    if (!state.appState.session) return;
+    var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
+    btn.classList.toggle('visible', !atBottom);
+
+    // Load older messages when scrolling near top
+    if (content.scrollTop < 800 && state.wsHasMore && !state.wsLoadingOlder) {
+      loadOlderAndPrepend();
+    }
+  });
+
+  // Tap top bar to scroll to top (skip Setup/Logout links)
+  document.querySelector('.top-bar').addEventListener('click', function (e) {
+    if (e.target.closest('.top-action')) return;
+    if (state.appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+})();
+
+async function loadOlderAndPrepend() {
+  if (!state.appState.session || state.appState.session === '__new__') return;
+  var content = document.getElementById('content');
+  var container = content.querySelector('.messages');
+  if (!container) return;
+
+  // Show loading indicator at top
+  var loader = document.createElement('div');
+  loader.className = 'loading-older';
+  loader.textContent = 'Loading...';
+  container.insertBefore(loader, container.firstChild);
+
+  var prevHeight = content.scrollHeight;
+
+  var msgs = await loadOlderMessages(state.appState.session);
+  // Remove loader
+  if (loader.parentNode) loader.remove();
+  if (!msgs || !msgs.length) return;
+
+  // Render older messages and prepend
+  var html = renderMessages(msgs);
+  container.insertAdjacentHTML('afterbegin', html);
+  loadImages(container);
+  clampOverflow(container);
+
+  // Restore scroll position so content doesn't jump
+  var newHeight = content.scrollHeight;
+  content.scrollTop += (newHeight - prevHeight);
+}
+
+// Auto-connect + restore last session
+(function () {
+  if (!state.KEY) return; // auth guard in index.html handles redirect
+  // Inline shell already painted + replayed navigation — skip to avoid clearing its state.
+  if (window.__inlineRendered) return;
+
+  // Route immediately so skeleton shows without waiting for any network call
+  var nav = sessionStorage.getItem('agentpeek-nav');
+  var hash = location.hash.replace(/^#\/?/, '');
+  if (hash) {
+    history.replaceState(null, '', location.pathname + location.search);
+    var seg = hash.split('/').map(decodeURIComponent);
+    var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
+    if (seg.length >= 3 && seg[2] && seg[2] !== '__new__') {
+      state.appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
+      loadMessages(seg[2], '');
+    } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
+    else if (seg.length >= 1 && seg[0]) { loadProjects(seg[0]); }
+    else { loadDevices(); }
+  } else if (nav) {
+    try {
+      var s = JSON.parse(nav);
+      if (s.session && s.session !== '__new__') {
+        state.appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
+        loadMessages(s.session, s.sessionPreview);
+      } else if (s.project) {
+        loadSessions(s.device, s.project.hash, s.project.name);
+      } else if (s.device) {
+        loadProjects(s.device);
+      } else {
+        loadDevices();
+      }
+    } catch(e) { loadDevices(); }
+  } else {
+    loadDevices();
+  }
+})();
+
+// Function bridges for inline HTML handlers + legacy IIFE consumers.
+// All shared state lives in state.js, not on window.
+Object.assign(window, {
+  osName, timeAgo, formatSize, esc,
+  showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
+  showInputBar, saveNav, openActiveSession, shortModel,
+  loadDevices, loadProjects, loadSessions,
+  createNewProject, closeNewProjectModal, submitNewProject,
+  startNewSession, loadMessages,
+  scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
+});
