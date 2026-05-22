@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, VALID_TYPES } from './config.mjs';
+import { CLAUDE_PROJECTS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry } from './session.mjs';
@@ -15,16 +15,23 @@ export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   const busy = new Map(); // sessionId → { pending }
 
-  fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith('.jsonl')) return;
-    if (filename.includes('subagents')) return;
-    const sessionId = path.basename(filename, '.jsonl');
+  if (NEEDS_POLLING) {
+    // WSL2: inotify doesn't work on /mnt/ (9P filesystem), use polling
+    const mtimes = new Map(); // filePath → mtimeMs
+    console.log('[watcher] WSL detected, using polling (2s interval)');
+    setInterval(() => pollProjects(config, busy, mtimes), 2000);
+  } else {
+    fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
+      if (!filename?.endsWith('.jsonl')) return;
+      if (filename.includes('subagents')) return;
+      const sessionId = path.basename(filename, '.jsonl');
 
-    const state = busy.get(sessionId);
-    if (state) { state.pending = true; return; }
-    busy.set(sessionId, { pending: false });
-    processLoop(config, filename, sessionId);
-  });
+      const state = busy.get(sessionId);
+      if (state) { state.pending = true; return; }
+      busy.set(sessionId, { pending: false });
+      processLoop(config, filename, sessionId);
+    });
+  }
 
   async function processLoop(config, filename, sessionId) {
     const state = busy.get(sessionId);
@@ -34,6 +41,38 @@ export function startWatcher(config) {
     } while (state.pending);
     busy.delete(sessionId);
   }
+}
+
+function pollProjects(config, busy, mtimes) {
+  if (!fs.existsSync(CLAUDE_PROJECTS)) return;
+  try {
+    for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
+      const projectDir = path.join(CLAUDE_PROJECTS, project);
+      try { if (!fs.statSync(projectDir).isDirectory()) continue; } catch { continue; }
+      for (const file of fs.readdirSync(projectDir)) {
+        if (!file.endsWith('.jsonl') || file.startsWith('.')) continue;
+        const filePath = path.join(projectDir, file);
+        try {
+          const mtime = fs.statSync(filePath).mtimeMs;
+          const prev = mtimes.get(filePath);
+          if (prev === mtime) continue;
+          mtimes.set(filePath, mtime);
+          if (prev === undefined) continue; // first scan, don't trigger
+
+          const filename = path.join(project, file);
+          const sessionId = path.basename(file, '.jsonl');
+          const state = busy.get(sessionId);
+          if (state) { state.pending = true; continue; }
+          busy.set(sessionId, { pending: false });
+          (async () => {
+            const s = busy.get(sessionId);
+            do { s.pending = false; await readAndSend(config, filename, sessionId); } while (s.pending);
+            busy.delete(sessionId);
+          })();
+        } catch {}
+      }
+    }
+  } catch {}
 }
 
 async function readAndSend(config, filename, sessionId) {

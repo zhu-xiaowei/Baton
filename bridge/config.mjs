@@ -9,6 +9,10 @@ export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 
 export const CHECK_STOPPED_INTERVAL = 300_000; // 5 min — detect disappeared CC processes
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 
+// WSL detection: fs.watch inotify doesn't work on /mnt/ (9P filesystem)
+export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
+export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {};

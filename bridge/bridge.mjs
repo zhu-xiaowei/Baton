@@ -6,8 +6,10 @@
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
-import { execSync, spawn } from 'child_process';
-import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL } from './config.mjs';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped } from './sync.mjs';
@@ -15,18 +17,21 @@ import { startWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 import { hasTmux } from './tmux.mjs';
 
-// Ensure single instance: kill old bridge processes, graceful exit on SIGTERM
+// Ensure single instance via PID lock file (cross-platform, works on WSL too)
+const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
 try {
-  const lines = execSync('ps aux 2>/dev/null').toString().split('\n');
-  for (const line of lines) {
-    if (!line.includes('bridge.mjs') || line.includes('grep')) continue;
-    const pid = parseInt(line.trim().split(/\s+/)[1]);
-    if (pid && pid !== process.pid) {
-      try { process.kill(pid); console.log(`[init] killed old bridge (PID ${pid})`); } catch {}
+  if (!fs.existsSync(BRIDGE_HOME)) fs.mkdirSync(BRIDGE_HOME, { recursive: true });
+  if (fs.existsSync(LOCK_FILE)) {
+    const oldPid = parseInt(fs.readFileSync(LOCK_FILE, 'utf-8').trim());
+    if (oldPid && oldPid !== process.pid) {
+      try { process.kill(oldPid); console.log(`[init] killed old bridge (PID ${oldPid})`); } catch {}
     }
   }
+  fs.writeFileSync(LOCK_FILE, String(process.pid));
 } catch {}
+process.on('exit', () => { try { fs.unlinkSync(LOCK_FILE); } catch {} });
 process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
 
 const CONFIG = loadConfig();
 initHttp(CONFIG);

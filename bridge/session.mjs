@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import { CLAUDE_PROJECTS } from './config.mjs';
+import { CLAUDE_PROJECTS, IS_WSL } from './config.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -67,14 +67,26 @@ export function getModel(filePath) {
 export function readableProjectName(projectHash) {
   const homeHash = path.resolve(os.homedir()).replace(/[^a-zA-Z0-9-]/g, '-');
   let remaining = projectHash;
-  if (remaining.startsWith(homeHash)) remaining = remaining.slice(homeHash.length);
-  remaining = remaining.replace(/^-/, '');
-  if (!remaining) return '~';
-
-  const segments = [];
   let currentDir = os.homedir();
-  const parts = remaining.split('-');
+  const segments = [];
 
+  // Windows hash on WSL: "C-Users-Admin-workspace" → resolve via /mnt/c/
+  const winDriveMatch = projectHash.match(/^([A-Z])-/);
+  if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
+    const drive = winDriveMatch[1].toLowerCase();
+    currentDir = `/mnt/${drive}`;
+    remaining = projectHash.slice(2);
+  } else if (remaining.startsWith(homeHash)) {
+    remaining = remaining.slice(homeHash.length);
+    remaining = remaining.replace(/^-/, '');
+    if (!remaining) return '~';
+  } else {
+    remaining = remaining.replace(/^-/, '');
+  }
+
+  if (!remaining) return currentDir;
+
+  const parts = remaining.split('-');
   let i = 0;
   while (i < parts.length) {
     let matched = false;
@@ -186,8 +198,11 @@ function readStatusFromFile(filePath) {
  * Watcher uses statusFromEntry() directly with already-parsed data.
  */
 export function getSessionStatus(sessionId, filePath, runningInfo) {
-  // 1. No CC process for this project → stopped
-  if (!runningInfo.sessions.has(sessionId)) {
+  // WSL monitoring Windows CC: can't detect processes, use mtime + content only
+  const wslMode = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
+
+  // 1. No CC process for this project → stopped (skip on WSL)
+  if (!wslMode && !runningInfo.sessions.has(sessionId)) {
     const projectHash = path.basename(path.dirname(filePath));
     if (!runningInfo.projects.has(projectHash)) return 'stopped';
     if (runningInfo.sessions.size > 0) return 'stopped';
@@ -196,7 +211,7 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   // 2. Read jsonl content to determine status
   const contentStatus = readStatusFromFile(filePath);
 
-  // 3. VS Code (no --resume): file stale > 5min → stopped regardless of content
+  // 3. File stale > 5min → stopped regardless of content
   //    A truly running session always writes to jsonl, keeping mtime fresh
   if (!runningInfo.sessions.has(sessionId)) {
     try {
@@ -211,10 +226,19 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
  * Detect running CC processes. Returns { projects: Set<hash>, sessions: Set<sessionId> }
  * - projects: project directory hashes with active CC processes
  * - sessions: exact session IDs extracted from --resume args
+ *
+ * On WSL watching /mnt/ paths: Windows CC processes are invisible to Linux ps,
+ * so we return empty sets and rely on mtime heuristic (same as VS Code CC).
  */
 export function getRunningInfo() {
   const projects = new Set();
   const sessions = new Set();
+
+  // WSL bridge monitoring Windows CC: can't see Windows processes, use mtime fallback
+  if (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/')) {
+    return { projects, sessions };
+  }
+
   try {
     const lines = execSync('ps aux 2>/dev/null').toString().trim().split('\n');
     for (const line of lines) {

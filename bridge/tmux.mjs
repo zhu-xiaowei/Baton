@@ -248,21 +248,27 @@ export function sendMessageToSession(sessionId, text) {
  * Resolve projectHash back to an absolute directory path.
  * Hash rule: path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-')
  * e.g. "-Users-xiaoweii-workspace-rn-agentpeek" → "/Users/xiaoweii/workspace/rn/agentpeek"
+ *
+ * Windows CC generates hashes like "C-Users-Admin-workspace-project" (drive letter prefix).
+ * On WSL, we map these to /mnt/c/Users/Admin/workspace/project.
  */
 export function projectHashToPath(projectHash) {
-  // The hash starts with '-' because absolute paths start with '/'
-  // Split by '-', skip leading empty segment, then greedily match real directories
   const homeDir = os.homedir();
   const homeHash = path.resolve(homeDir).replace(/[^a-zA-Z0-9-]/g, '-');
   let remaining = projectHash;
   let currentDir = '/';
 
-  // If hash starts with home prefix, skip ahead
-  if (remaining.startsWith(homeHash)) {
+  // Windows hash detection: starts with single uppercase letter (drive letter)
+  // e.g. "C-Users-Admin-workspace" → /mnt/c/Users/Admin/workspace (on WSL)
+  const winDriveMatch = projectHash.match(/^([A-Z])-/);
+  if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
+    const drive = winDriveMatch[1].toLowerCase();
+    currentDir = `/mnt/${drive}`;
+    remaining = projectHash.slice(2); // remove "C-"
+  } else if (remaining.startsWith(homeHash)) {
     remaining = remaining.slice(homeHash.length).replace(/^-/, '');
     currentDir = homeDir;
   } else {
-    // Remove leading '-'
     remaining = remaining.replace(/^-/, '');
   }
 
@@ -272,7 +278,6 @@ export function projectHashToPath(projectHash) {
   let i = 0;
   while (i < parts.length) {
     let matched = false;
-    // Try longest match first (handles dir names with hyphens)
     for (let len = parts.length - i; len >= 1; len--) {
       const candidate = parts.slice(i, i + len).join('-');
       const candidatePath = path.join(currentDir, candidate);
@@ -286,7 +291,6 @@ export function projectHashToPath(projectHash) {
       } catch {}
     }
     if (!matched) {
-      // Fallback: join remaining as-is
       currentDir = path.join(currentDir, parts.slice(i).join('-'));
       break;
     }
