@@ -30,6 +30,10 @@ export async function extractForApp(msg, projectDir) {
   }
 
   let content = msg.message?.content ?? '';
+  // Normalize \r → \n (tmux paste-buffer converts \n to \r in terminal input)
+  if (typeof content === 'string') {
+    content = content.replace(/\r\n?/g, '\n');
+  }
   if (Array.isArray(content)) {
     const imageJobs = [];
     for (let i = 0; i < content.length; i++) {
@@ -54,6 +58,10 @@ export async function extractForApp(msg, projectDir) {
       if (block.type === 'tool_use' && msg.type === 'assistant') {
         const allowed = isToolAllowed(block.name, block.input, projectDir);
         return { ...block, needsPermission: !allowed };
+      }
+      // Normalize \r → \n in text blocks
+      if (block.type === 'text' && block.text && /\r/.test(block.text)) {
+        return { ...block, text: block.text.replace(/\r\n?/g, '\n') };
       }
       return block;
     });
