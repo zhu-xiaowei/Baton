@@ -198,11 +198,88 @@ static void agentpeek_install_kb_swizzle(void) {
     }
 }
 
+// WebKit bug (Bug 306465, 254868): viewport-fit=cover doesn't extend CSS viewport
+// past safe area on some iOS versions. Workaround: negate safeAreaInsets via
+// additionalSafeAreaInsets so WebKit calculates viewport = full screen. Then inject
+// real inset values as CSS custom properties (--sat/--sab) since env() becomes 0.
+// Only applies when WKContentView height < window height (bug is present).
+static void agentpeek_fix_viewport(void) {
+
+    UIWindow *kw = nil;
+    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                if (w.isKeyWindow) { kw = w; break; }
+            }
+        }
+        if (kw) break;
+    }
+    if (!kw || !kw.rootViewController) {
+        static int retries = 0;
+        if (retries++ < 60) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
+        }
+        return;
+    }
+
+    UIEdgeInsets sa = kw.safeAreaInsets;
+    if (sa.top <= 0 && sa.bottom <= 0) return;
+
+    // Check if bug is present: find WKWebView scrollView contentSize < window height.
+    WKWebView *checkWv = nil;
+    for (UIView *sub in kw.rootViewController.view.subviews) {
+        if ([sub isKindOfClass:[WKWebView class]]) { checkWv = (WKWebView *)sub; break; }
+    }
+    if (!checkWv) {
+        static int retries2 = 0;
+        if (retries2++ < 60) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
+        }
+        return;
+    }
+    CGFloat contentH = checkWv.scrollView.contentSize.height;
+    CGFloat windowH = kw.bounds.size.height;
+    // If contentSize already matches window (viewport-fit=cover works), skip fix.
+    if (contentH >= windowH - 1) return;
+
+    // Negate safe area so WebKit viewport covers full screen.
+    kw.rootViewController.additionalSafeAreaInsets =
+        UIEdgeInsetsMake(-sa.top, -sa.left, -sa.bottom, -sa.right);
+
+    // Inject real safe area values as CSS custom properties.
+    // Use WKUserScript for reliable early injection on every page load.
+    WKWebView *wv = nil;
+    for (UIView *sub in kw.rootViewController.view.subviews) {
+        if ([sub isKindOfClass:[WKWebView class]]) { wv = (WKWebView *)sub; break; }
+    }
+    if (wv) {
+        NSString *js = [NSString stringWithFormat:
+            @"(function(){"
+             "var s=document.documentElement.style;"
+             "s.setProperty('--sat','%.0fpx');"
+             "s.setProperty('--sab','%.0fpx');"
+             "s.setProperty('--sal','%.0fpx');"
+             "s.setProperty('--sar','%.0fpx');"
+             "})()",
+            sa.top, sa.bottom, sa.left, sa.right];
+        WKUserScript *script = [[WKUserScript alloc]
+            initWithSource:js
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+            forMainFrameOnly:YES];
+        [wv.configuration.userContentController addUserScript:script];
+        // Also evaluate immediately for the current page.
+        [wv evaluateJavaScript:js completionHandler:nil];
+    }
+}
+
 int main(int argc, char * argv[]) {
 	[WKWebView class]; // force-load WebKit framework
 	agentpeek_install_scan_close_swizzle();
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
 	ffi::start_app();
 	return 0;
 }

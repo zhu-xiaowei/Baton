@@ -22,8 +22,8 @@
     background: #0d1117; color: #e6edf3;
     display: flex; flex-direction: column;
   }
-  .setup-bar { display: flex; align-items: center; padding: 6px 8px; padding-top: calc(6px + env(safe-area-inset-top, 0px)); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
-  .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); display: flex; flex-direction: column; align-items: center; }
+  .setup-bar { display: flex; align-items: center; padding: 6px 8px; padding-top: calc(6px + var(--sat, env(safe-area-inset-top, 0px))); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+  .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; }
   .setup-bar .back { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s; flex-shrink: 0; }
   .setup-bar .back:hover { color: #e6edf3; background: #21262d; }
   .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: #e6edf3; }
