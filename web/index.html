@@ -75,20 +75,50 @@
       html += '<div class="section-title">Active Sessions (' + actives.length + ')</div>';
       html += '<div id="active-section" class="active-grid">';
       html += actives.map(function (s) {
-        return '<div class="active-card ' + esc(s.status) + '"'
+        var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
+        var statusLabel = s.isAgent ? (s.agentState === 'blocked' ? 'Needs input' : s.agentState === 'running' ? 'Working' : s.agentState === 'done' ? 'Completed' : 'Idle') : (s.status === 'running' ? 'Running' : 'Idle');
+        var statusClass = s.isAgent ? (s.agentState === 'blocked' ? 'idle' : s.agentState === 'running' ? 'running' : s.agentState === 'done' ? 'completed' : 'idle') : s.status;
+        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var detail = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? s.agentDetail : '';
+        return '<div class="active-card ' + esc(statusClass) + '"'
           + ' data-nav="active"'
           + ' data-sid="' + esc(s.sessionId) + '"'
           + ' data-preview="' + esc(s.preview || '') + '"'
           + ' data-status="' + esc(s.status) + '"'
           + ' data-device="' + esc(s.deviceName) + '"'
           + ' data-phash="' + esc(s.projectHash) + '"'
-          + ' data-pname="' + esc(s.projectName) + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="badge ' + esc(s.status) + '">' + (s.status === 'running' ? 'Running' : 'Idle') + '</span></div>'
-          + '<div class="card-title">' + esc(s.preview || 'No preview') + '</div>'
+          + ' data-pname="' + esc(s.projectName) + '"'
+          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
+          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
       }).join('');
       html += '</div>';
+    }
+    var recentAgents = (activeData && activeData.recentAgents) || [];
+    if (recentAgents.length) {
+      var raCollapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
+      var chevron = '<svg class="collapse-arrow" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
+      html += '<div id="recent-agents-section">';
+      html += '<div class="section-title collapsible' + (raCollapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">Completed Agents (' + recentAgents.length + ') ' + chevron + '</div>';
+      html += '<div class="active-grid" id="recent-agents-grid" style="' + (raCollapsed ? 'display:none' : '') + '">';
+      html += recentAgents.map(function (s) {
+        var title = s.agentName || s.preview || 'No preview';
+        return '<div class="active-card completed" data-nav="active"'
+          + ' data-sid="' + esc(s.sessionId) + '"'
+          + ' data-preview="' + esc(s.preview || '') + '"'
+          + ' data-status="' + esc(s.status) + '"'
+          + ' data-device="' + esc(s.deviceName) + '"'
+          + ' data-phash="' + esc(s.projectHash) + '"'
+          + ' data-pname="' + esc(s.projectName) + '"'
+          + ' data-isagent="true">'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges"><span class="badge agent">Agent</span><span class="badge completed">Completed</span></span></div>'
+          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
+          + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+          + '</div>';
+      }).join('');
+      html += '</div></div>';
     }
     var devs = (devData && devData.devices) || [];
     if (devs.length) {
@@ -200,6 +230,7 @@
     <div class="modal-title">New Project</div>
     <div class="modal-desc">Enter directory name (relative to home) or full path</div>
     <input id="newProjectInput" class="modal-input" type="text" placeholder="e.g. asset/demo" autocomplete="off" onkeydown="if(event.key==='Enter')submitNewProject();if(event.key==='Escape')closeNewProjectModal();" />
+    <label class="agent-toggle" style="margin-top:8px;justify-content:flex-start"><input type="checkbox" id="newProjectAsAgent" onchange="localStorage.setItem('apeek_newAsAgent',this.checked?'1':'0')"><span class="badge agent">Claude Agents</span> Run in background</label>
     <div class="modal-error" id="newProjectError"></div>
     <div class="modal-actions">
       <button class="modal-btn cancel" onclick="closeNewProjectModal()">Cancel</button>

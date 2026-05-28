@@ -42,6 +42,10 @@ class SessionItem(BaseModel):
     preview: str = ""
     model: str = ""
     status: str = "stopped"  # "running" | "idle" | "stopped"
+    isAgent: bool = False
+    agentName: str = ""
+    agentDetail: str = ""
+    agentState: str = ""
 
 
 class DeviceAggregate(BaseModel):
@@ -182,9 +186,17 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "size": s.size,
                 "updatedAt": now,
             }
-            # Sparse GSI: only running/idle sessions appear in accountId-activeStatus-index.
+            # Sparse GSI: running/idle + done agents appear in accountId-activeStatus-index.
             if s.status in ("running", "idle"):
                 item["activeStatus"] = s.status
+            elif s.isAgent and s.agentState == "done":
+                item["activeStatus"] = f"done#{s.lastActive}"
+            # Agent metadata (sparse — only written when isAgent=True)
+            if s.isAgent:
+                item["isAgent"] = True
+                item["agentName"] = s.agentName
+                item["agentDetail"] = s.agentDetail
+                item["agentState"] = s.agentState
             batch.put_item(Item=item)
 
     # 2a. Full-sync path: PutItem-overwrite DEV# + PROJ# aggregates (authoritative counters).

@@ -56,36 +56,46 @@ async def get_config():
 
 @read_router.get("/active-sessions")
 async def get_active_sessions(request: Request):
-    """Return all running/idle sessions across all devices.
-    Reads the sparse accountId-activeStatus-index GSI (only running/idle have activeStatus),
-    so we fetch only the active items, not all SESS# items."""
+    """Return active sessions + recent 10 completed agents.
+    Two GSI queries: running/idle (between) + done (begins_with, limit 10 desc)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
 
-    items = _query_all(
-        sessions_table,
-        IndexName="accountId-activeStatus-index",
-        KeyConditionExpression=Key("accountId").eq(account_id),
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    active_items, done_items = await asyncio.gather(
+        loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("idle", "running"))),
+        loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
+            ScanIndexForward=False, Limit=10).get("Items", [])),
     )
 
-    sessions = []
-    for item in items:
-        status = item.get("status", "stopped")
-        # Defensive: if for any reason a stopped item leaked into the GSI, skip.
-        if status not in ("running", "idle"):
-            continue
+    def _to_session(item):
         pn = item.get("projectName", "")
-        sessions.append({
+        s = {
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
-            "status": status,
+            "status": item.get("status", "stopped"),
             "deviceName": item.get("deviceName", ""),
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "lastActive": item.get("lastActive", ""),
-        })
+        }
+        if item.get("isAgent"):
+            s["isAgent"] = True
+            s["agentName"] = item.get("agentName", "")
+            s["agentDetail"] = item.get("agentDetail", "")
+            s["agentState"] = item.get("agentState", "")
+        return s
+
+    sessions = [_to_session(i) for i in active_items if i.get("status") in ("running", "idle")]
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
-    return {"sessions": sessions}
+
+    recent_agents = [_to_session(i) for i in done_items]
+
+    return {"sessions": sessions, "recentAgents": recent_agents}
 
 
 @read_router.get("/devices")
@@ -176,14 +186,20 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
 
     sessions = []
     for item in items:
-        sessions.append({
+        s = {
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
             "lastActive": item.get("lastActive", ""),
             "size": item.get("size", 0),
             "model": item.get("model", ""),
             "status": item.get("status", "stopped"),
-        })
+        }
+        if item.get("isAgent"):
+            s["isAgent"] = True
+            s["agentName"] = item.get("agentName", "")
+            s["agentDetail"] = item.get("agentDetail", "")
+            s["agentState"] = item.get("agentState", "")
+        sessions.append(s)
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 
     return {"sessions": sessions}
@@ -321,9 +337,13 @@ async def get_install(request: Request, name: str = Query(None)):
             '  EXISTING_NAME=$(python3 -c "import json; print(json.load(open(\'$DIR/config.json\')).get(\'deviceName\',\'\'))" 2>/dev/null || true)\n'
             'fi\n'
             'DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"\n'
-            'printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
-            'read -r NAME < /dev/tty\n'
-            'NAME="${NAME:-$DEFAULT_NAME}"'
+            'if [ -t 0 ] && [ -e /dev/tty ]; then\n'
+            '  printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
+            '  read -r NAME < /dev/tty\n'
+            '  NAME="${NAME:-$DEFAULT_NAME}"\n'
+            'else\n'
+            '  NAME="$DEFAULT_NAME"\n'
+            'fi'
         )
     script = (
         '#!/bin/bash\n'

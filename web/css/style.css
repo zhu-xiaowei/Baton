@@ -39,10 +39,10 @@ body {
 
 /* === Breadcrumb === */
 .breadcrumb { padding: 6px 12px 6px 8px; background: #0d1117; border-bottom: 1px solid #30363d; font-size: 12px; color: #484f58; display: none; flex-shrink: 0; position: relative; z-index: 10; }
-.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; max-height: 3.6em; overflow: hidden; cursor: pointer; }
+.breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; max-height: 4em; overflow: hidden; cursor: pointer; }
 .breadcrumb-nav.expanded { max-height: none; }
 .breadcrumb-nav > span:first-child { margin-left: -6px; }
-.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title),
+.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge),
 .breadcrumb-nav a {
   display: inline-block; cursor: pointer; color: #c9d1d9; background: #161b22; border: 1px solid #30363d;
   padding: 1px 5px; border-radius: 12px; font-size: 11px; white-space: nowrap;
@@ -50,7 +50,7 @@ body {
   transition: all 0.15s; text-decoration: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):hover,
+  .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):hover,
   .breadcrumb-nav a:hover { background: #21262d; border-color: #484f58; color: #e6edf3; }
 }
 .breadcrumb-sep { color: #8b949e; font-size: 13px; padding: 0 2px; vertical-align: middle; }
@@ -82,11 +82,18 @@ body {
 .item-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
 .item-status { font-size: 11px; color: #6e7681; white-space: nowrap; }
 .meta-left { font-size: 11px; color: #6e7681; }
-.item .meta { font-size: 11px; color: #6e7681; margin-top: 4px; }
+.item .meta { font-size: 12px; color: #6e7681; margin-top: 4px; display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11px; font-weight: 500; }
 .badge.running { background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.3); }
 .badge.idle { background: rgba(210, 153, 34, 0.12); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.25); }
 .badge.stopped { background: #30363d; color: #8b949e; }
+.badge.completed { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.3); }
+.badge.agent { background: rgba(136, 87, 229, 0.2); color: #b88aff; border: 1px solid rgba(136, 87, 229, 0.4); }
+.card-badges { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+.agent-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer; margin-top: 12px; }
+.agent-toggle input { accent-color: #a371f7; width: 16px; height: 16px; cursor: pointer; }
+.card-detail { flex: 1; min-width: 0; font-size: 12px; color: #d29922; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.item-detail { margin-left: auto; padding-left: 12px; font-size: 12px; color: #d29922; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
 
 /* === Messages container === */
 .messages { padding: 8px 12px; }
@@ -426,10 +433,12 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .card-time { font-size: 11px; color: #6e7681; white-space: nowrap; }
 
 .card-title {
+  display: flex; align-items: baseline; gap: 8px;
   font-size: 13px; color: #c9d1d9; line-height: 1.4;
   margin-bottom: 6px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; white-space: nowrap;
 }
+.card-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .card-bottom { display: flex; justify-content: space-between; align-items: center; }
 .card-device { font-size: 11px; color: #6e7681; }
@@ -447,6 +456,15 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
   .card-path { display: none; }
   .section-title { padding: 12px 12px 6px; }
 }
+
+@media (max-width: 400px) {
+  .meta-sid { display: none; }
+}
+
+/* Collapsible section title */
+.section-title.collapsible { cursor: pointer; user-select: none; }
+.collapse-arrow { display: inline-block; width: 12px; height: 12px; vertical-align: -2.5px; stroke: currentColor; stroke-width: 2; fill: none; transition: transform 0.2s ease; }
+.section-title.collapsible.expanded .collapse-arrow { transform: rotate(90deg); }
 
 /* === Skeleton === */
 @keyframes shimmer {

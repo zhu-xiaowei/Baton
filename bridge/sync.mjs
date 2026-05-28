@@ -5,7 +5,7 @@ import { post } from './http.mjs';
 import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
-  getSessionStatus, getRunningInfo,
+  getSessionStatus, getRunningInfo, getDaemonSessions,
 } from './session.mjs';
 import { projectHashToPath, cleanStaleSessions } from './tmux.mjs';
 
@@ -63,6 +63,19 @@ export async function syncSessions(config, opts = {}) {
 
       if (!projectSessions.has(project)) projectSessions.set(project, []);
       projectSessions.get(project).push({ sessionId, mtime: stat.mtimeMs, filePath });
+    }
+  }
+
+  const daemonMeta = getDaemonSessions();
+  for (const s of sessions) {
+    const dm = daemonMeta.get(s.id);
+    if (dm) {
+      s.isAgent = true;
+      s.agentName = dm.agentName;
+      s.agentDetail = dm.agentDetail;
+      s.agentState = dm.agentState;
+      if (dm.agentState === 'done') s.status = 'stopped';
+      else if (dm.agentState === 'blocked') s.status = 'idle';
     }
   }
 

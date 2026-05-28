@@ -90,12 +90,12 @@ export function cleanStaleSessions() {
 }
 
 /** Create a new detached tmux session and run a command. */
-export function newTmuxSession(name, cwd, command) {
-  // Stale cleanup runs from checkStopped's hourly tick — no need to trigger it here.
+export function newTmuxSession(name, cwd, command, opts) {
   if (!hasTmux()) throw new Error('tmux not installed');
   try { execSync(`tmux kill-session -t "${name}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
 
-  execSync(`tmux new-session -d -s "${name}" -c "${cwd}"`);
+  var sizeArgs = opts && opts.height ? ` -x 200 -y ${opts.height}` : '';
+  execSync(`tmux new-session -d -s "${name}"${sizeArgs} -c "${cwd}"`);
 
   if (command) {
     execSync(`tmux send-keys -t "${name}" "${command}" Enter`);
@@ -317,4 +317,105 @@ export function launchClaudeSession(sessionId, projectHash) {
 
   newTmuxSession(tmuxName, projectPath, `claude --resume ${sessionId}`);
   return tmuxName;
+}
+
+export async function launchAgentsSession(sessionId, agentCwd, agentName) {
+  if (!hasTmux()) throw new Error('tmux not installed');
+  if (!agentCwd || !fs.existsSync(agentCwd)) throw new Error('Agent cwd not found');
+
+  const tmuxName = `apeek_agents_${sessionId.slice(0, 8)}`;
+
+  newTmuxSession(tmuxName, agentCwd, `claude agents --cwd "${agentCwd}"`, { height: 1000 });
+
+  const ready = await waitForAgentsList(tmuxName);
+  if (!ready) {
+    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+    throw new Error('claude agents TUI did not load');
+  }
+
+  const navResult = await navigateToAgent(tmuxName, agentName);
+  if (!navResult.ok) {
+    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+    throw new Error(navResult.error);
+  }
+
+  spawnSync('tmux', ['send-keys', '-t', tmuxName, 'Right'], { stdio: 'ignore' });
+
+  const entered = await waitForAgentPrompt(tmuxName, agentName);
+  if (!entered) {
+    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+    throw new Error('Failed to enter agent session');
+  }
+
+  return tmuxName;
+}
+
+async function waitForAgentsList(tmuxTarget) {
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const content = execSync(
+        `tmux capture-pane -t "${tmuxTarget}" -p`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      if (content.includes('✻') || content.includes('∙') || content.includes('start a task')) return true;
+    } catch {}
+  }
+  return false;
+}
+
+async function navigateToAgent(tmuxTarget, agentName) {
+  try {
+    const content = execSync(
+      `tmux capture-pane -t "${tmuxTarget}" -p`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+    );
+    const lines = content.split('\n');
+
+    const navItems = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith('✻') || trimmed.startsWith('∙')) {
+        navItems.push({ type: 'session', text: trimmed });
+      } else if (/^(Needs input|Working|Completed)$/.test(trimmed)) {
+        navItems.push({ type: 'header', text: trimmed });
+      }
+    }
+
+    let targetIdx = -1;
+    for (let i = 0; i < navItems.length; i++) {
+      if (navItems[i].type === 'session' && navItems[i].text.includes(agentName)) {
+        targetIdx = i;
+        break;
+      }
+    }
+
+    if (targetIdx < 0) return { ok: false, error: `Session "${agentName}" not found in agents list` };
+
+    const firstSessionIdx = navItems.findIndex(n => n.type === 'session');
+    const downs = targetIdx - firstSessionIdx;
+
+    for (let i = 0; i < downs; i++) {
+      spawnSync('tmux', ['send-keys', '-t', tmuxTarget, 'Down'], { stdio: 'ignore' });
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function waitForAgentPrompt(tmuxTarget, agentName) {
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const content = execSync(
+        `tmux capture-pane -t "${tmuxTarget}" -p`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      if (content.includes('← for agents') && content.includes('❯')) return true;
+    } catch {}
+  }
+  return false;
 }

@@ -45,6 +45,13 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Tauri v2 wraps web/ as native app, zero web code changes
 - Android, iOS (TestFlight), macOS builds
 
+### Phase 2D: COMPLETE ✅ — Claude Agents Support
+- Bridge monitors daemon roster.json + jobs/state.json for agent session detection
+- Agent sessions display [Agent] badge + Working/Needs input/Completed status
+- Send messages to agent sessions via claude agents TUI navigation (tmux → Right arrow → sendKeys)
+- Create new agent sessions from web ("Run in background" toggle, localStorage persisted)
+- Bridge respects permissions.defaultMode: bypassPermissions (no false permission prompts)
+
 ### Phase 3: LATER — Production polish
 - Persist bridge sync state to disk, avoid re-uploading messages on restart
 
@@ -78,6 +85,14 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - `findTmuxTargetForSession`: exact match CC process args sessionId → find tmux pane
 - `projectHashToPath()`: reverse hash to real directory path (validates each segment exists)
 - Auto-launch: no tmux target → auto-create tmux + `claude --resume` + `waitForCCReady`
+- Claude Agents support:
+  - `getDaemonSessions()`: reads `~/.claude/jobs/*/state.json` → isAgent/agentName/agentDetail/agentState
+  - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds
+  - Status uses `tempo` field (active→running, blocked→idle, idle→done/stopped)
+  - Jobs watcher: `fs.watch(~/.claude/jobs/)` detects state.json changes → sync to DDB
+  - Send to agent: `launchAgentsSession()` → tmux + `claude agents --cwd` → navigate TUI → Right → sendKeys
+  - New agent session: `handleNewAgentSession()` → tmux + `claude agents` → type in bottom input → poll for .jsonl → kill tmux
+  - `permissions.mjs` respects `defaultMode: bypassPermissions` from global/project settings
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
 - Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)

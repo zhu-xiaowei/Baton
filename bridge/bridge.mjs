@@ -8,12 +8,13 @@
 
 import { spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped } from './sync.mjs';
-import { startWatcher } from './watcher.mjs';
+import { startWatcher, startJobsWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 import { hasTmux } from './tmux.mjs';
 
@@ -79,16 +80,31 @@ async function checkUpdate() {
       return;
     }
     if (version === CONFIG.version) return;
-    console.log(`[update] ${CONFIG.version} → ${version}, reinstalling...`);
-    // Update CONFIG.version BEFORE spawn so a failed install won't re-trigger every tick.
+    console.log(`[update] ${CONFIG.version} → ${version}, updating...`);
     CONFIG.version = version;
     saveConfig(CONFIG);
-    const baseUrl = CONFIG.server.replace(/\/v1\/?$/, '');
-    spawn('bash', ['-c', `curl -sL -H "x-api-key: $X_API_KEY" "${baseUrl}/api/install" | bash`],
-      { detached: true, stdio: 'ignore', env: { ...process.env, X_API_KEY: CONFIG.apiKey } }).unref();
+    const serverBase = CONFIG.server.replace(/\/$/, '');
+    const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
+    const url = `${serverBase}/api/install?name=${nameParam}`;
+    try {
+      const res = await fetch(url, { headers: { 'x-api-key': CONFIG.apiKey } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const script = await res.text();
+      const tarMatch = script.match(/curl -sL "([^"]+)"/);
+      if (!tarMatch) throw new Error('no tar URL in install script');
+      const tarUrl = tarMatch[1];
+      const { execSync: ex } = await import('child_process');
+      ex(`curl -sL "${tarUrl}" | tar xz`, { cwd: BRIDGE_HOME, stdio: 'ignore' });
+      ex('npm install --production --silent 2>/dev/null', { cwd: BRIDGE_HOME, stdio: 'ignore' });
+      console.log(`[update] files updated, restarting...`);
+      process.exit(1);
+    } catch (e) {
+      console.error(`[update] failed: ${e.message}`);
+    }
   } catch {}
 }
 checkUpdate();
 setInterval(checkUpdate, CHECK_STOPPED_INTERVAL);
 
 startWatcher(CONFIG);
+startJobsWatcher(CONFIG);

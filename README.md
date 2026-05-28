@@ -47,8 +47,9 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Session status** — running (green) / idle (yellow) / stopped (gray) indicators
 - **Send messages** — type prompts directly from phone or desktop, delivered via tmux
 - **Send images** — paste or pick photos, compressed & uploaded to S3, read by Claude Code
+- **Claude Agents support** — monitor and interact with `claude agents` background sessions
 - **Permission approval** — approve or deny tool calls (Bash, Edit, Write) remotely
-- **Start / stop sessions** — launch new Claude Code sessions or interrupt running ones
+- **Start / stop sessions** — launch new Claude Code or Agent sessions from anywhere
 - **Code diff rendering** — inline diffs with syntax highlighting for file changes
 - **Markdown support** — full GFM rendering for Claude's responses
 - **Execution nodes** — collapsible tool_use/tool_result blocks showing what Claude did

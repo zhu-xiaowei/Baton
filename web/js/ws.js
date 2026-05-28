@@ -149,6 +149,8 @@ function connectWs(_, projectHash) {
               } else {
                 status.innerHTML = msg.error || 'Send failed';
                 status.style.color = '#f85149';
+                state.wsRunning = false;
+                updateSpinner();
               }
             }
           }
@@ -510,6 +512,9 @@ function sendMessage() {
   if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
   if (!state.wsSessionId && state.appState.session !== '__new__') return;
+  // Agent sessions require at least 4 characters for the task description
+  var agentCb = document.getElementById('newAsAgent');
+  if (state.appState.session === '__new__' && agentCb && agentCb.checked && text.length < 4) return;
 
   // Images already uploaded — just assemble refs.
   // Keep image markdown refs on the SAME line as text (separated by spaces) — putting `!`
@@ -534,7 +539,10 @@ var _stopSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="4
 var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
 function updateSendBtn() {
   var btn = document.getElementById('send-btn');
-  var hasText = document.getElementById('msg-input').value.trim().length > 0;
+  var textLen = document.getElementById('msg-input').value.trim().length;
+  var agentCb = document.getElementById('newAsAgent');
+  var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
+  var hasText = textLen >= (isNewAgent ? 4 : 1);
   if (hasText) {
     btn.innerHTML = _sendSvg;
     btn.className = 'has-text';
@@ -612,7 +620,8 @@ function doSend(fullText, displayText, images) {
   updateSendBtn();
   var device = state.appState.device || '';
   if (state.appState.session === '__new__' && state.wsProjectHash) {
-    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, text: fullText, device: device });
+    var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
+    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, text: fullText, device: device, asAgent: asAgent });
   } else {
     wsSend({ action: 'send_message', sessionId: state.wsSessionId, text: fullText, device: device });
   }

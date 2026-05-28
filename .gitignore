@@ -48,3 +48,6 @@ tests/.env
 
 # Source code references
 claude-code-source-code/
+
+# Release binaries
+release/

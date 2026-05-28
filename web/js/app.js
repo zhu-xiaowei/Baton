@@ -29,6 +29,20 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
 }
 
+function agentStatusLabel(agentState) {
+  if (agentState === 'blocked') return 'Needs input';
+  if (agentState === 'running') return 'Working';
+  if (agentState === 'done') return 'Completed';
+  return agentState || 'Idle';
+}
+
+function agentStatusClass(agentState) {
+  if (agentState === 'blocked') return 'idle';
+  if (agentState === 'running') return 'running';
+  if (agentState === 'done') return 'completed';
+  return 'idle';
+}
+
 function showStats() {}  // no-op, stats bar removed
 
 function showWsBanner(status) {
@@ -86,7 +100,8 @@ function updateBreadcrumb() {
   if (state.appState.session) {
     parts.pop();
     var titleText = esc(state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...');
-    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
+    var agentMark = state.appState.isAgent ? ' <span class="badge agent">Agent</span>' : '';
+    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + agentMark + '</span>';
   }
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
@@ -116,6 +131,18 @@ function saveNav() {
   sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
 }
 
+var _chevron = '<svg class="collapse-arrow" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
+
+function toggleRecentAgents() {
+  var grid = document.getElementById('recent-agents-grid');
+  var title = grid && grid.previousElementSibling;
+  if (!grid) return;
+  var show = grid.style.display === 'none';
+  grid.style.display = show ? '' : 'none';
+  if (title) title.classList.toggle('expanded', show);
+  localStorage.setItem('apeek_raCollapsed', show ? '0' : '1');
+}
+
 // ---- Active session card click ----
 function openActiveSession(el) {
   var d = el.dataset;
@@ -123,9 +150,15 @@ function openActiveSession(el) {
     device: d.device,
     project: { hash: d.phash, name: d.pname },
     session: null,
-    sessionPreview: ''
+    sessionPreview: '',
+    isAgent: d.isagent === 'true'
   };
   loadMessages(d.sid, d.preview, d.status);
+}
+
+function openSession(el) {
+  state.appState.isAgent = el.dataset.isagent === 'true';
+  loadMessages(el.dataset.sid, el.dataset.preview, el.dataset.status);
 }
 
 function shortModel(m) {
@@ -151,6 +184,7 @@ async function loadDevices() {
   if (!reuseInline) {
     content.innerHTML = '<div class="section-title">Active Sessions</div>'
       + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
+      + '<div id="recent-agents-section"></div>'
       + '<div class="section-title">Devices</div>'
       + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
   }
@@ -178,19 +212,50 @@ async function loadDevices() {
     }
     if (titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
     el.innerHTML = activeData.sessions.map(function (s) {
-      return '<div class="active-card ' + esc(s.status) + '"'
+      var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
+      var statusLabel = s.isAgent ? agentStatusLabel(s.agentState) : (s.status === 'running' ? 'Running' : 'Idle');
+      var statusClass = s.isAgent ? agentStatusClass(s.agentState) : s.status;
+      var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+      var detail = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? s.agentDetail : '';
+      return '<div class="active-card ' + esc(statusClass) + '"'
         + ' data-sid="' + esc(s.sessionId) + '"'
         + ' data-preview="' + esc(s.preview || '') + '"'
         + ' data-status="' + esc(s.status) + '"'
         + ' data-device="' + esc(s.deviceName) + '"'
         + ' data-phash="' + esc(s.projectHash) + '"'
         + ' data-pname="' + esc(s.projectName) + '"'
+        + ' data-isagent="' + (s.isAgent ? 'true' : '') + '"'
         + ' onclick="openActiveSession(this)">'
-        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="badge ' + esc(s.status) + '">' + (s.status === 'running' ? 'Running' : 'Idle') + '</span></div>'
-        + '<div class="card-title">' + esc(s.preview || 'No preview') + '</div>'
+        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
+        + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
         + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '</div>';
     }).join('');
+
+    // Recent Agents section
+    var raSection = document.getElementById('recent-agents-section');
+    if (raSection && activeData.recentAgents && activeData.recentAgents.length > 0) {
+      var collapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
+      raSection.innerHTML = '<div class="section-title collapsible' + (collapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">'
+        + 'Completed Agents (' + activeData.recentAgents.length + ') ' + _chevron + '</div>'
+        + '<div class="active-grid" id="recent-agents-grid" style="' + (collapsed ? 'display:none' : '') + '">'
+        + activeData.recentAgents.map(function (s) {
+          var title = s.agentName || s.preview || 'No preview';
+          return '<div class="active-card completed"'
+            + ' data-sid="' + esc(s.sessionId) + '"'
+            + ' data-preview="' + esc(s.preview || '') + '"'
+            + ' data-status="' + esc(s.status) + '"'
+            + ' data-device="' + esc(s.deviceName) + '"'
+            + ' data-phash="' + esc(s.projectHash) + '"'
+            + ' data-pname="' + esc(s.projectName) + '"'
+            + ' data-isagent="true"'
+            + ' onclick="openActiveSession(this)">'
+            + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges"><span class="badge agent">Agent</span><span class="badge completed">Completed</span></span></div>'
+            + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
+            + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+            + '</div>';
+        }).join('') + '</div>';
+    }
   }).catch(function () {
     if (_navVersion !== myNav) return;
     var el = document.getElementById('active-section');
@@ -271,9 +336,15 @@ async function loadSessions(device, projectHash, projectName) {
     content.innerHTML = '<div class="list">'
       + data.sessions.map(function (s) {
       var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
-      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" onclick="if(window.getSelection().toString())return false;loadMessages(this.dataset.sid, this.dataset.preview, this.dataset.status);return false;">'
-        + '<div class="item-top"><span class="title"><span class="badge ' + (s.status || 'stopped') + '">' + (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped') + '</span> ' + esc(s.preview || 'No preview') + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
-        + '<div class="meta">' + esc(s.model || 'unknown model') + ' &middot; ' + s.sessionId.slice(0, 8) + '... &middot; ' + formatSize(s.size) + '</div>'
+      var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
+      var sLabel = s.isAgent ? agentStatusLabel(s.agentState) : (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped');
+      var sClass = s.isAgent ? agentStatusClass(s.agentState) : (s.status || 'stopped');
+      var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
+      var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+      var detailHtml = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
+      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="if(window.getSelection().toString())return false;openSession(this);return false;">'
+        + '<div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div>'
         + '</a>';
     }).join('') + '</div>';
     showStats(data.sessions.length + ' session(s)');
@@ -284,8 +355,10 @@ function createNewProject() {
   var modal = document.getElementById('newProjectModal');
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
+  var agentCb = document.getElementById('newProjectAsAgent');
   input.value = '';
   err.textContent = '';
+  if (agentCb) agentCb.checked = localStorage.getItem('apeek_newAsAgent') === '1';
   modal.style.display = 'flex';
   setTimeout(function () { input.focus(); }, 100);
 }
@@ -317,13 +390,15 @@ async function submitNewProject() {
   btn.dataset.origText = btn.textContent;
   btn.innerHTML = '<span class="spinner"></span>Creating';
   await window.loadViewerLibs();
-  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+  var asAgent = !!(document.getElementById('newProjectAsAgent') && document.getElementById('newProjectAsAgent').checked);
+  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '', asAgent: asAgent });
 }
 
 async function startNewSession(projectHash) {
   await window.loadViewerLibs();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
+  state.appState.isAgent = localStorage.getItem('apeek_newAsAgent') === '1';
   updateBreadcrumb();
   saveNav();
   // Reset WS message state for new session
@@ -339,10 +414,12 @@ async function startNewSession(projectHash) {
   state.pendingSentMessages = [];
   if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
+  var agentChecked = localStorage.getItem('apeek_newAsAgent') === '1' ? 'checked' : '';
   content.innerHTML =
     '<div class="new-session-hero">'
       + '<div class="hero-logo">🔭</div>'
       + '<div class="hero-title">AgentPeek</div>'
+      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" ' + agentChecked + ' onchange="localStorage.setItem(\'apeek_newAsAgent\',this.checked?\'1\':\'0\');updateBreadcrumb();if(typeof updateSendBtn===\'function\')updateSendBtn()"><span class="badge agent">Claude Agents</span> Run in background</label>'
     + '</div>'
     + '<div class="messages" hidden></div>';
   document.body.classList.add('new-session');
@@ -557,9 +634,9 @@ async function loadOlderAndPrepend() {
 Object.assign(window, {
   osName, timeAgo, formatSize, esc,
   showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
-  showInputBar, saveNav, openActiveSession, shortModel,
+  showInputBar, saveNav, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   createNewProject, closeNewProjectModal, submitNewProject,
-  startNewSession, loadMessages,
+  startNewSession, loadMessages, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });

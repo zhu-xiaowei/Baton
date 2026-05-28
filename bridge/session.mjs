@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import { CLAUDE_PROJECTS, IS_WSL } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL } from './config.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -259,6 +259,11 @@ export function getRunningInfo() {
       } catch {}
     }
   } catch {}
+
+  for (const sid of getDaemonRunningSessionIds()) {
+    sessions.add(sid);
+  }
+
   return { projects, sessions };
 }
 
@@ -270,4 +275,43 @@ export function findSessionFile(sessionId) {
     if (fs.existsSync(filePath)) return filePath;
   }
   return null;
+}
+
+export function getDaemonSessions() {
+  const result = new Map();
+  if (!fs.existsSync(CLAUDE_JOBS)) return result;
+  try {
+    for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
+      const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
+      if (!fs.existsSync(statePath)) continue;
+      try {
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        if (state.backend !== 'daemon' || !state.sessionId) continue;
+        const tempo = state.tempo || state.state || '';
+        result.set(state.sessionId, {
+          isAgent: true,
+          agentName: state.name || '',
+          agentDetail: state.detail || state.needs || '',
+          agentState: tempo === 'active' ? 'running' : tempo === 'blocked' ? 'blocked' : 'done',
+        });
+      } catch {}
+    }
+  } catch {}
+  return result;
+}
+
+export function getDaemonRunningSessionIds() {
+  const sessions = new Set();
+  try {
+    if (!fs.existsSync(CLAUDE_DAEMON_ROSTER)) return sessions;
+    const roster = JSON.parse(fs.readFileSync(CLAUDE_DAEMON_ROSTER, 'utf-8'));
+    if (!roster.workers) return sessions;
+    if (roster.supervisorPid) {
+      try { process.kill(roster.supervisorPid, 0); } catch { return sessions; }
+    }
+    for (const w of Object.values(roster.workers)) {
+      if (w.sessionId) sessions.add(w.sessionId);
+    }
+  } catch {}
+  return sessions;
 }

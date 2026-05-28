@@ -4,9 +4,9 @@ import os from 'os';
 
 const GLOBAL_SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
 
-// Cache: projectDir → allowRules[]
 const _cache = new Map();
 let _globalRules = null;
+let _globalMode = '';
 let _globalMtime = 0;
 
 const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode']);
@@ -25,38 +25,44 @@ function parseRuleString(rule) {
   return { toolName, content };
 }
 
-function loadAllowList(filePath) {
+function loadSettings(filePath) {
   try {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    return (data.permissions?.allow || []).map(parseRuleString);
-  } catch { return []; }
+    return {
+      rules: (data.permissions?.allow || []).map(parseRuleString),
+      mode: data.permissions?.defaultMode || '',
+    };
+  } catch { return { rules: [], mode: '' }; }
 }
 
-function getGlobalRules() {
+function loadGlobal() {
   try {
     const mtime = fs.statSync(GLOBAL_SETTINGS).mtimeMs;
     if (mtime !== _globalMtime) {
-      _globalRules = loadAllowList(GLOBAL_SETTINGS);
+      const s = loadSettings(GLOBAL_SETTINGS);
+      _globalRules = s.rules;
+      _globalMode = s.mode;
       _globalMtime = mtime;
     }
   } catch {
     _globalRules = [];
+    _globalMode = '';
   }
-  return _globalRules || [];
 }
 
-function getProjectRules(projectDir) {
-  if (!projectDir) return [];
+function getProjectSettings(projectDir) {
+  if (!projectDir) return { rules: [], mode: '' };
   const settingsPath = path.join(projectDir, '.claude', 'settings.local.json');
   try {
     const mtime = fs.statSync(settingsPath).mtimeMs;
     const cached = _cache.get(projectDir);
-    if (cached && cached.mtime === mtime) return cached.rules;
-    const rules = loadAllowList(settingsPath);
-    _cache.set(projectDir, { mtime, rules });
-    return rules;
+    if (cached && cached.mtime === mtime) return cached;
+    const s = loadSettings(settingsPath);
+    const entry = { mtime, rules: s.rules, mode: s.mode };
+    _cache.set(projectDir, entry);
+    return entry;
   } catch {
-    return [];
+    return { rules: [], mode: '' };
   }
 }
 
@@ -75,16 +81,18 @@ function commandMatchesRule(command, ruleContent) {
 }
 
 export function isToolAllowed(toolName, toolInput, projectDir) {
-  // Interactive tools always need permission (they await user response)
   if (INTERACTIVE_TOOLS.has(toolName)) return false;
 
-  const rules = [...getGlobalRules(), ...getProjectRules(projectDir)];
+  loadGlobal();
+  const project = getProjectSettings(projectDir);
+
+  if (project.mode === 'bypassPermissions' || _globalMode === 'bypassPermissions') return true;
+
+  const rules = [...(_globalRules || []), ...project.rules];
 
   for (const rule of rules) {
     if (rule.toolName !== toolName) continue;
-    // Tool-wide allow (no content restriction)
     if (!rule.content) return true;
-    // Content-specific match (Bash commands)
     if (toolName === 'Bash' || toolName === 'bash') {
       const cmd = toolInput?.command || toolInput?.cmd || '';
       if (commandMatchesRule(cmd, rule.content)) return true;

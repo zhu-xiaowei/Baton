@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, getDaemonSessions, findSessionFile } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
@@ -141,22 +141,114 @@ async function readAndSend(config, filename, sessionId) {
         projectName: readableProjectName(projectHash),
         lastActive: stat.mtime.toISOString(),
       } : null;
+      const sessionMeta = {
+        id: sessionId,
+        project: projectHash,
+        projectName: readableProjectName(projectHash),
+        lastActive: stat.mtime.toISOString(),
+        size: stat.size,
+        preview: getPreview(filePath) || 'New session',
+        model: getModel(filePath),
+        status: newStatus,
+      };
+      const dm = getDaemonSessions().get(sessionId);
+      if (dm) {
+        sessionMeta.isAgent = true;
+        sessionMeta.agentName = dm.agentName;
+        sessionMeta.agentDetail = dm.agentDetail;
+        sessionMeta.agentState = dm.agentState;
+      }
       await post('/api/bridge/sync-sessions', {
         deviceName: config.deviceName,
         os: process.platform,
-        sessions: [{
-          id: sessionId,
-          project: projectHash,
-          projectName: readableProjectName(projectHash),
-          lastActive: stat.mtime.toISOString(),
-          size: stat.size,
-          preview: getPreview(filePath) || 'New session',
-          model: getModel(filePath),
-          status: newStatus,
-        }],
+        sessions: [sessionMeta],
         ...(statusDelta ? { statusDelta } : {}),
       });
       recentSessions.add(sessionId);
     }
   }
+}
+
+const _jobsState = new Map();
+
+export function startJobsWatcher(config) {
+  if (!fs.existsSync(CLAUDE_JOBS)) return;
+
+  loadAllJobStates();
+
+  fs.watch(CLAUDE_JOBS, { recursive: true }, (_event, filename) => {
+    if (!filename?.endsWith('state.json')) return;
+    const short = path.dirname(filename);
+    if (short.includes(path.sep)) return;
+    handleJobStateChange(config, short);
+  });
+}
+
+function loadAllJobStates() {
+  try {
+    for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
+      const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
+      if (!fs.existsSync(statePath)) continue;
+      try {
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        if (state.backend !== 'daemon' || !state.sessionId) continue;
+        const tempo = state.tempo || state.state || '';
+        _jobsState.set(dir, {
+          sessionId: state.sessionId,
+          agentName: state.name || '',
+          agentDetail: state.detail || state.needs || '',
+          agentState: tempo === 'active' ? 'running' : tempo === 'blocked' ? 'blocked' : 'done',
+        });
+      } catch {}
+    }
+  } catch {}
+}
+
+async function handleJobStateChange(config, short) {
+  const statePath = path.join(CLAUDE_JOBS, short, 'state.json');
+  if (!fs.existsSync(statePath)) return;
+
+  let state;
+  try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')); } catch { return; }
+  if (state.backend !== 'daemon' || !state.sessionId) return;
+
+  const tempo = state.tempo || state.state || '';
+  const newEntry = {
+    sessionId: state.sessionId,
+    agentName: state.name || '',
+    agentDetail: state.detail || state.needs || '',
+    agentState: tempo === 'active' ? 'running' : tempo === 'blocked' ? 'blocked' : 'done',
+  };
+
+  const old = _jobsState.get(short);
+  if (old && old.agentName === newEntry.agentName
+    && old.agentDetail === newEntry.agentDetail
+    && old.agentState === newEntry.agentState) return;
+
+  _jobsState.set(short, newEntry);
+
+  const filePath = findSessionFile(state.sessionId);
+  if (!filePath) return;
+
+  const projectHash = path.basename(path.dirname(filePath));
+  const stat = fs.statSync(filePath);
+
+  await post('/api/bridge/sync-sessions', {
+    deviceName: config.deviceName,
+    os: process.platform,
+    sessions: [{
+      id: state.sessionId,
+      project: projectHash,
+      projectName: readableProjectName(projectHash),
+      lastActive: stat.mtime.toISOString(),
+      size: stat.size,
+      preview: getPreview(filePath) || newEntry.agentName || 'Agent session',
+      model: getModel(filePath),
+      status: newEntry.agentState === 'done' ? 'stopped' : newEntry.agentState === 'blocked' ? 'idle' : (lastKnownStatus.get(state.sessionId) || 'idle'),
+      isAgent: true,
+      agentName: newEntry.agentName,
+      agentDetail: newEntry.agentDetail,
+      agentState: newEntry.agentState,
+    }],
+  });
 }

@@ -1,12 +1,13 @@
 import WebSocket from 'ws';
+import dns from 'dns';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readAllMessages, uploadMessages } from './extract.mjs';
-import { findSessionFile } from './session.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
-import { CLAUDE_PROJECTS } from './config.mjs';
+import { findSessionFile, getDaemonSessions } from './session.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 
 let _ws = null;
 let _config = null;
@@ -73,7 +74,11 @@ function connect() {
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
-  _ws = new WebSocket(url);
+  _ws = new WebSocket(url, { lookup: (host, opts, cb) => dns.resolve4(host, (err, addrs) => {
+    if (err || !addrs.length) return dns.lookup(host, opts, cb);
+    if (opts.all) cb(null, addrs.map(a => ({ address: a, family: 4 })));
+    else cb(null, addrs[0], 4);
+  }) });
 
   _ws.on('open', () => {
     console.log('[ws] connected');
@@ -135,13 +140,13 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent);
       break;
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
       break;
     case 'create_project':
-      await handleCreateProject(msg.projectPath);
+      await handleCreateProject(msg.projectPath, msg.asAgent);
       break;
     case 'interrupt':
       sendKey(msg.sessionId, 'Escape');
@@ -179,7 +184,7 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId) {
+async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
 
@@ -212,7 +217,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
       return;
     }
 
-    const promise = handleNewSessionMessage(projectHash, resolved);
+    const promise = asAgent
+      ? handleNewAgentSession(projectHash, resolved)
+      : handleNewSessionMessage(projectHash, resolved);
     _launchLocks.set(lockKey, promise);
     const result = await promise;
     setTimeout(() => _launchLocks.delete(lockKey), 30_000);
@@ -222,9 +229,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
 
   let result = sendMessageToSession(sessionId, resolved);
 
-  // No running CC in tmux → auto-launch, then send-keys directly to the new tmux session
   if (!result.ok && result.error === 'no_tmux_target') {
-    // If already launching for this session, wait then send
     if (_launchLocks.has(sessionId)) {
       console.log(`[ws] waiting for in-flight launch (session ${sessionId.slice(0, 8)})...`);
       const prev = await _launchLocks.get(sessionId);
@@ -234,18 +239,13 @@ async function handleSendMessage(sessionId, text, projectHash, requestId) {
         result = { ok: false, error: 'Previous launch failed. Please try again.' };
       }
     } else {
-      console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching CC...`);
-      const promise = (async () => {
-        let tmuxName;
-        try { tmuxName = launchForSession(sessionId); } catch (err) { return { ok: false, error: err.message }; }
-        if (!tmuxName) return { ok: false, error: 'Failed to launch Claude. Session file may be missing.' };
-        const ready = await waitForCCReady(tmuxName);
-        if (!ready) {
-          try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-          return { ok: false, error: 'Claude did not become ready after 30s.' };
-        }
-        return { ok: true, tmuxName };
-      })();
+      const isAgent = getDaemonSessions().has(sessionId);
+      console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching ${isAgent ? 'agents' : 'CC'}...`);
+
+      const promise = isAgent
+        ? launchAgentForSession(sessionId)
+        : launchRegularForSession(sessionId);
+
       _launchLocks.set(sessionId, promise);
       const launchResult = await promise;
       setTimeout(() => _launchLocks.delete(sessionId), 30_000);
@@ -319,22 +319,74 @@ async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
   }
 }
 
-async function handleCreateProject(rawPath) {
+async function handleNewAgentSession(projectHash, text) {
+  try {
+    const projectPath = projectHashToPath(projectHash);
+    const projectDir = path.join(CLAUDE_PROJECTS, projectHash);
+    const tmuxName = 'apeek_newagent';
+
+    const before = new Set(fs.existsSync(projectDir)
+      ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'))
+      : []);
+
+    newTmuxSession(tmuxName, projectPath, `claude agents --cwd "${projectPath}"`);
+
+    const ready = await waitForAgentsTUI(tmuxName);
+    if (!ready) {
+      try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+      return { ok: false, error: 'claude agents TUI did not load' };
+    }
+
+    sendKeys(tmuxName, text);
+
+    let sessionId = null;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const after = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+        const fresh = after.find(f => !before.has(f));
+        if (fresh) { sessionId = fresh.replace('.jsonl', ''); break; }
+      } catch {}
+    }
+
+    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+    return { ok: true, sessionId };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function waitForAgentsTUI(tmuxTarget) {
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const content = execSync(
+        `tmux capture-pane -t "${tmuxTarget}" -p`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      if (content.includes('start a task')) return true;
+    } catch {}
+  }
+  return false;
+}
+
+async function handleCreateProject(rawPath, asAgent) {
   if (!rawPath) {
     wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
     return;
   }
   try {
-    // Resolve relative or non-home paths to home directory
     const home = os.homedir();
     let projectPath = rawPath;
     if (!projectPath.startsWith(home)) {
       projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
     }
-    console.log(`[ws] create_project: ${projectPath}`);
+    console.log(`[ws] create_project: ${projectPath} (agent=${!!asAgent})`);
     fs.mkdirSync(projectPath, { recursive: true });
     const projectHash = path.resolve(projectPath).replace(/[^a-zA-Z0-9-]/g, '-');
-    const result = await handleNewSessionMessage(projectHash, 'Hello', projectPath);
+    const result = asAgent
+      ? await handleNewAgentSession(projectHash, 'Hello')
+      : await handleNewSessionMessage(projectHash, 'Hello', projectPath);
     wsSend({ action: 'create_project_result', ...result, projectPath: rawPath });
   } catch (err) {
     wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
@@ -369,10 +421,6 @@ async function waitForCCReady(tmuxTarget) {
   return false;
 }
 
-/**
- * Launch CC in tmux for an existing session.
- * Returns tmux session name, or null on failure.
- */
 function launchForSession(sessionId) {
   const filePath = findSessionFile(sessionId);
   if (!filePath) return null;
@@ -388,6 +436,45 @@ function launchForSession(sessionId) {
     console.log(`[ws] launchForSession failed: ${err.message}`);
     throw err;
   }
+}
+
+async function launchRegularForSession(sessionId) {
+  let tmuxName;
+  try { tmuxName = launchForSession(sessionId); } catch (err) { return { ok: false, error: err.message }; }
+  if (!tmuxName) return { ok: false, error: 'Failed to launch Claude. Session file may be missing.' };
+  const ready = await waitForCCReady(tmuxName);
+  if (!ready) {
+    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
+    return { ok: false, error: 'Claude did not become ready after 30s.' };
+  }
+  return { ok: true, tmuxName };
+}
+
+async function launchAgentForSession(sessionId) {
+  const agentMeta = getAgentCwd(sessionId);
+  if (!agentMeta) return { ok: false, error: 'Agent session metadata not found' };
+
+  try {
+    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name);
+    return { ok: true, tmuxName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+function getAgentCwd(sessionId) {
+  if (!fs.existsSync(CLAUDE_JOBS)) return null;
+  for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
+    const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
+    if (!fs.existsSync(statePath)) continue;
+    try {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      if (state.sessionId === sessionId && state.backend === 'daemon') {
+        return { cwd: state.cwd || state.originCwd || '', name: state.name || '' };
+      }
+    } catch {}
+  }
+  return null;
 }
 
 async function downloadBridgeImage(key) {
