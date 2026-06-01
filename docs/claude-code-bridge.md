@@ -194,6 +194,16 @@ App subscribes to new sessionId, starts receiving messages
 (send_message also accepts asAgent:true → launch via `claude agents`)
 ```
 
+#### `sendKeys` injection (how text reaches Claude)
+
+`sendKeys` injects a message into the tmux pane in three steps:
+
+1. `send-keys C-u` — clear any partial input (reliable for Ink, unlike Escape which eats the first pasted char)
+2. `load-buffer` + `paste-buffer -p` — atomic paste, no size limit, CJK-safe. **`-p` (bracketed paste)** keeps newlines literal, so a multiline message stays one message instead of each `\n` being treated as a submit (which would split it into several sends).
+3. `send-keys C-m` — submit. **Must be `C-m`, not `Enter`**: Claude's Ink TUI swallows a plain `Enter` issued right after a bracketed paste (this is why `-p` was removed in commit ceb84e6 back when submit used `Enter`). `C-m` submits reliably.
+
+History: `-p` was added (4aa7eb0), removed because `-p`+`Enter` dropped the submit (ceb84e6), then re-added together with the `Enter`→`C-m` switch. The receive-side `\r`→`\n` normalization in `extract.mjs` (commit 41dc032) is now a no-op under `-p` but kept as a harmless fallback. Verified 30/30 on EC2 (CC v2.1.159): single/multiline, long text, CJK, special chars, markdown image. If Claude's Ink behavior changes, re-verify before editing. Same approach in `sendTypeInput` (AskUserQuestion "Type something" input).
+
 ### Create project
 
 ```
