@@ -180,6 +180,10 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId !== state.wsSessionId) return;
+      // not_found (bridge has no such session) or already re-fetched once → stop,
+      // otherwise an empty DDB re-triggers needSync → sync_complete → loop.
+      if (msg.status === 'not_found' || state._syncedOnce === msg.sessionId) return;
+      state._syncedOnce = msg.sessionId;
       // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
       // and re-triggers needSync, causing a render-loop with title flicker.
       bufferAndFetch(msg.sessionId, '').then(function () {
@@ -193,6 +197,8 @@ function connectWs(_, projectHash) {
         clampOverflow(content.querySelector('.messages'));
         content.scrollTop = content.scrollHeight;
       }).catch(function () {});
+    } else if (msg.action === 'file_ready') {
+      if (window.handleFileReady) window.handleFileReady(msg);
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -413,6 +419,7 @@ function updateLastTurn() {
 
 function startWs(sessionId) {
   state.wsSessionId = sessionId;
+  state._syncedOnce = null;
   if (!state.ws) connectWs();
   else subscribeSession(sessionId);
 }
@@ -426,6 +433,7 @@ async function bufferAndFetch(sessionId, after) {
   try {
     var params = { session: sessionId };
     if (after) params.after = after;
+    if (state.appState.device) params.device = state.appState.device;
     var data = await api('/api/bridge/messages', params);
     var all = (data.messages || []).concat(state._wsBuffer || []);
     state._wsBuffer = null;

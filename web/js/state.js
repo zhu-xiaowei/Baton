@@ -29,9 +29,15 @@ export const state = {
   wsOldestTimestamp: '',      // cursor for older-load
   wsLoadingOlder: false,
   _wsBuffer: null,            // null = normal mode, [] = buffering during initial load
+  _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],
 
   // ---- Image staging (image.js) ----
   stagedImages: [],
+
+  // ---- File viewer (fileviewer.js) ----
+  fileCache: new Map(),       // key → { text, path, truncated }
+  _pendingFileReq: null,      // { requestId, timer }
+  _fileReqSeq: 0,
 };

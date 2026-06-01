@@ -56,8 +56,8 @@ async def get_config():
 
 @read_router.get("/active-sessions")
 async def get_active_sessions(request: Request):
-    """Return active sessions + recent 10 completed agents.
-    Two GSI queries: running/idle (between) + done (begins_with, limit 10 desc)."""
+    """Return active sessions + recent 20 completed agents.
+    Two GSI queries: running/idle (between) + done (begins_with, limit 20 desc)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
 
@@ -69,7 +69,7 @@ async def get_active_sessions(request: Request):
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("idle", "running"))),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=10).get("Items", [])),
+            ScanIndexForward=False, Limit=20).get("Items", [])),
     )
 
     def _to_session(item):
@@ -253,6 +253,7 @@ async def get_messages(
     session: str = Query(...),
     after: str = Query(None),
     before: str = Query(None),
+    device: str = Query(None),
     limit: int = Query(None),
 ):
     _, messages_table = _tables()
@@ -302,7 +303,7 @@ async def get_messages(
             ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
             if ws_endpoint:
                 from bridge_ws import notify_bridge_sync
-                notify_bridge_sync(session, account_id, ws_endpoint)
+                notify_bridge_sync(session, account_id, ws_endpoint, device)
         except Exception as e:
             print(f"needSync trigger error: {e}")
 
@@ -495,6 +496,23 @@ async def get_image(key: str):
         obj = s3.get_object(Bucket=bucket, Key=f"images/{key}")
         body = obj["Body"].read()
         return Response(content=base64.b64encode(body).decode("ascii"), media_type="text/plain")
+    except s3.exceptions.NoSuchKey:
+        return Response(status_code=404, content="Not found")
+    except Exception as e:
+        return Response(status_code=404, content=f"Not found: {e}")
+
+
+@read_router.get("/file/{key}")
+async def get_file(key: str):
+    import boto3
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return Response(status_code=500, content="BRIDGE_IMAGES_BUCKET not configured")
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=f"files/{key}")
+        body = obj["Body"].read()
+        return Response(content=body, media_type="text/plain; charset=utf-8")
     except s3.exceptions.NoSuchKey:
         return Response(status_code=404, content="Not found")
     except Exception as e:

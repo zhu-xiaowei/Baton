@@ -107,6 +107,31 @@ Bridge uploads a compressed image to S3.
 
 ---
 
+### POST /api/bridge/upload-file
+
+Bridge uploads a project **text** file to S3, in response to an app `request_file` (see WS section). Used to let the app view the actual source of a file referenced by a Read/Edit/Write tool node. (Image files take a separate branch and reuse `POST /upload-image` instead — see `request_file`.)
+
+**Request**
+```json
+{
+  "key": "5f3a9c1b2d4e6f80.ts",
+  "data": "<base64 encoded file content>"
+}
+```
+
+**Response** `200`
+```json
+{ "key": "5f3a9c1b2d4e6f80.ts", "size": 18342 }
+```
+
+**S3 storage path**: `files/{key}`
+
+**Notes**:
+- `key` = `sha256(absPath + "#" + mtimeMs + "#" + size)[:16]` + original file extension, where `mtimeMs` is the file's modification time in milliseconds and `size` is the **full** file size (not the post-truncation size). An edited file (changed mtime/size) produces a fresh key, so the app's per-key cache and the bridge's uploaded-set never serve stale content. `truncated` is a `file_ready` field, not part of the key.
+- Content is base64-encoded (handles arbitrary bytes / UTF-8 uniformly), same as `upload-image`.
+
+---
+
 ## REST API — General
 
 ### GET /api/health
@@ -363,9 +388,32 @@ Get image (proxied from S3).
 
 **Logic**: Read from S3 `images/{key}` and return
 
-**Response** `200`: JPEG binary, `Content-Type: image/jpeg`
+**Response** `200`: **base64-encoded JPEG as `text/plain`** (NOT raw binary)
 
-**Notes**: App loads images via this endpoint to avoid exposing S3 directly
+**Notes**:
+- App loads images via this endpoint to avoid exposing S3 directly
+- Returns base64 text rather than binary to avoid API Gateway binary-encoding pitfalls and stay compatible with GZip middleware. Frontend (`loadOneImage`) reads `res.text()` and assembles a `data:image/jpeg;base64,...` URL
+- `404` if key not found
+
+---
+
+### GET /api/bridge/file/{key}
+
+Get a synced project file's content (proxied from S3).
+
+**Path params**:
+| Param | Description |
+|-------|-------------|
+| `key` | File key as returned by `request_file` → `file_ready`, e.g. `5f3a9c1b2d4e6f80.ts` |
+
+**Logic**: Read from S3 `files/{key}` and return.
+
+**Response** `200`: file content as `text/plain; charset=utf-8`
+
+**Notes**:
+- App fetches the file body via this endpoint (REST, gzip-compressed, no WebSocket 128KB frame limit), then renders it with highlight.js in the file viewer
+- The viewer caches by `key`; since the key embeds mtime+size, an edited file is re-fetched automatically
+- `404` if key not found
 
 ---
 
@@ -458,15 +506,21 @@ Send a message to Claude Code (via tmux). Supports two modes:
 
 **New session (no sessionId, with projectHash):**
 ```json
-{ "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "text": "hello", "device": "MacBook-Pro" }
+{ "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "text": "hello", "device": "MacBook-Pro", "requestId": "req_abc123", "asAgent": false }
 ```
+
+**Optional fields**:
+| Field | Description |
+|-------|-------------|
+| `requestId` | Client-generated id echoed back in `send_message_result`. Used as the launch lock key and to match the result to the originating new-session request |
+| `asAgent` | `true` → launch/route via `claude agents` TUI (Claude Agents background session) instead of a normal `claude --resume` session |
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
 1. Has sessionId → find corresponding tmux pane → sendKeys
 2. Has sessionId but no tmux target → auto-create tmux + `claude --resume` → wait ready → sendKeys
-3. No sessionId, has projectHash → create tmux + `claude` → wait ready → sendKeys → poll .jsonl for new sessionId
+3. No sessionId, has projectHash → create tmux + `claude` (or `claude agents` if `asAgent`) → wait ready → sendKeys → poll .jsonl for new sessionId
 
-**Return**: Bridge sends `send_message_result` (with sessionId) → Server broadcasts to all app connections.
+**Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
 
 ---
 
@@ -502,6 +556,71 @@ Interrupt the currently running Claude Code (equivalent to Ctrl+C).
 ```
 
 **Server handling**: Forward to matching bridge by `device`. Bridge sends interrupt signal to the matching tmux pane.
+
+---
+
+#### create_project
+
+Create a new project directory on the device and launch a Claude Code (or Claude Agents) session in it.
+
+```json
+{ "action": "create_project", "projectPath": "workspace/my-new-project", "device": "MacBook-Pro", "asAgent": false }
+```
+
+**Fields**:
+| Field | Required | Description |
+|-------|----------|-------------|
+| `projectPath` | Yes | Path relative to `$HOME` (absolute paths under `$HOME` also accepted) |
+| `device` | Yes | Target device |
+| `asAgent` | No | `true` → launch via `claude agents` instead of a normal session |
+
+**Server handling**: Forward to matching bridge by `device` (rejected with `400` if `projectPath` missing).
+
+**Bridge handling**: `mkdir -p` the path → derive `projectHash` → launch a new session (normal or agent) → reply `create_project_result`.
+
+---
+
+#### request_file
+
+Ask the bridge to read a project file from the device's local disk and upload it to S3, so the app can view its actual content (highlighted) when the user clicks a file reference in a Read/Edit/Write tool node or an inline file link.
+
+```json
+{
+  "action": "request_file",
+  "path": "bridge/ws.mjs",
+  "sessionId": "a1ca0870-xxxx",
+  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "device": "MacBook-Pro",
+  "requestId": "file_xyz789"
+}
+```
+
+**Fields**:
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | File path. Absolute, or relative to the session's project directory |
+| `projectHash` | No | Used to resolve relative `path` against the project's real directory (`projectHashToPath`) |
+| `sessionId` | Yes | Used to scope the `file_ready` reply to subscribers of this session |
+| `device` | Yes | Target device (routing) |
+| `requestId` | Yes | Client-generated id, echoed back in `file_ready` to match the open viewer |
+
+**Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
+
+**Bridge handling**:
+1. Resolve `path` (relative → join with `projectHashToPath(projectHash)`)
+2. `stat` the file (mtime + size only — **no read yet**); reject directories
+3. Decide image vs text by extension (`.png .jpg .jpeg .gif .webp .bmp .svg .ico .avif` → image)
+4. Compute `key` from the stat (see key formula under `POST /upload-file`)
+5. **Dedup**: if `key` is already in the bridge's in-memory uploaded-set → skip read + upload, reply `file_ready` immediately
+6. Read + upload:
+   - **Text**: read up to **5 MB** (larger → read first 5 MB, drop the partial last line, set `truncated: true`); reject if a NUL byte appears in the first 8 KB (`error: "binary file"`); `POST /api/bridge/upload-file`
+   - **Image**: reject if larger than **10 MB** (`error: "image too large"` — never truncate image bytes); otherwise read the **whole** file and `POST /api/bridge/upload-image` (reuses the image endpoint + `GET /image/{key}` retrieval)
+7. Add `key` to the uploaded-set, reply `file_ready` via WS (no path restriction beyond OS permissions — matches Claude Code's own Read scope)
+
+**Caching & dedup** (no separate mtime tracking needed — the key *is* the version):
+- Because `key` embeds `mtime + size`, an unchanged file always hashes to the same key and an edited file always hashes to a new one. "Already synced and unchanged" ≡ "this key is already known".
+- **Bridge** keeps a bounded **LRU set of uploaded keys** (cap 1000 keys ≈ ~25 KB; evict oldest on overflow). A hit skips both the disk read and the S3 upload. Memory stays capped; an evicted key just causes one harmless re-upload on next click (S3 PUT is idempotent — same key overwrites identical bytes). The set is in-memory only, so a bridge restart may re-upload each file at most once.
+- **App** keeps a `fileCache` keyed by `key`; a hit skips the `GET /file/{key}`. Since the key changes when the file changes, the cache never serves stale content.
 
 ---
 
@@ -574,10 +693,26 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
 Bridge returns the result after processing send_message.
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)", "requestId": "req_abc123" }
 ```
 
+**Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`), and `requestId` (echoed from the originating `send_message`, lets the app match the result to its new-session request).
+
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId (not limited to subscribers).
+
+---
+
+#### create_project_result
+
+Bridge returns the result after processing `create_project`.
+
+```json
+{ "action": "create_project_result", "ok": true, "sessionId": "new-session-id", "projectPath": "workspace/my-new-project" }
+```
+
+**Fields**: `ok`, `projectPath` (echoed, used by the app to match the pending create), optional `sessionId`, and `error` (when `ok=false`).
+
+**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId.
 
 ---
 
@@ -600,6 +735,41 @@ Bridge notifies server after completing an on-demand sync.
 ```
 
 **Server handling**: Forward to all apps subscribed to this session.
+
+---
+
+#### file_ready
+
+Bridge has uploaded a requested file to S3 and notifies the app. Sent in response to `request_file`.
+
+```json
+{
+  "action": "file_ready",
+  "requestId": "file_xyz789",
+  "sessionId": "a1ca0870-xxxx",
+  "key": "5f3a9c1b2d4e6f80.ts",
+  "path": "/Users/xiaoweii/workspace/rn/agentpeek/bridge/ws.mjs",
+  "size": 18342,
+  "truncated": false,
+  "image": false
+}
+```
+
+**Fields**:
+| Field | Description |
+|-------|-------------|
+| `requestId` | Echoed from `request_file`, matches the open viewer |
+| `sessionId` | Used by the server to scope forwarding to this session's subscribers |
+| `key` | S3 key. Fetch text via `GET /api/bridge/file/{key}`, images via `GET /api/bridge/image/{key}` |
+| `path` | Resolved absolute path (shown in the viewer header) |
+| `size` | Full byte size of the file (not the post-truncation size) |
+| `truncated` | Text only: `true` if the file exceeded 5 MB (first 5 MB synced, partial last line dropped). Always `false` for images |
+| `image` | `true` if the file is an image — the app fetches `GET /image/{key}` and opens the image viewer instead of the highlighted text viewer |
+| `error` | Present (instead of `key`) when the read failed — `not found`, `is a directory`, `binary file`, `image too large`, `upload failed` |
+
+**Note on syntax highlighting**: the bridge does *not* send a language hint. The app derives the highlight.js language from the file extension (`detectLang(path)`), falling back to `highlightAuto` for unknown extensions and to plain text for files larger than 256 KB (to avoid blocking the UI). Images skip highlighting entirely and reuse the image overlay (`viewImage`), with the `data:` MIME type derived from the key's extension.
+
+**Server handling**: `_handle_bridge_relay` — forward to all app connections subscribed to `sessionId` (excluding the bridge).
 
 ---
 
@@ -669,7 +839,17 @@ Server forwards bridge permission confirmation request (only pushed to app conne
 Server forwards bridge send result (broadcast to **all** app connections under this account).
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)", "requestId": "req_abc123" }
+```
+
+---
+
+#### create_project_result
+
+Server forwards bridge create-project result (broadcast to **all** app connections under this account).
+
+```json
+{ "action": "create_project_result", "ok": true, "sessionId": "new-session-id", "projectPath": "workspace/my-new-project" }
 ```
 
 ---
@@ -680,6 +860,25 @@ Notifies app that a session's historical messages have been synced to DDB, app c
 
 ```json
 { "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
+```
+
+---
+
+#### file_ready
+
+Server forwards bridge's file-ready notification (only pushed to app connections subscribed to this sessionId). Same payload as the Bridge → Server `file_ready` above. The app matches it by `requestId`, then fetches the content (`GET /file/{key}` for text → highlight.js, or `GET /image/{key}` for images → image viewer).
+
+```json
+{
+  "action": "file_ready",
+  "requestId": "file_xyz789",
+  "sessionId": "a1ca0870-xxxx",
+  "key": "5f3a9c1b2d4e6f80.ts",
+  "path": "/Users/xiaoweii/workspace/rn/agentpeek/bridge/ws.mjs",
+  "size": 18342,
+  "truncated": false,
+  "image": false
+}
 ```
 
 ---
@@ -732,10 +931,10 @@ Forwarding `send_message` / `permission_reply` / `interrupt` to bridge scans DDB
 
 `send_message_result` uses `_handle_bridge_broadcast` to broadcast to **all** app connections under the account, not just the requester. When multiple devices/tabs are open, all apps receive the new session's `sessionId`. Frontend handles this via `appState.session === '__new__'` check — no functional impact.
 
-### body.pop("device") in-place mutation
+### device routing strips `device` before forwarding
 
-`_handle_send_to_bridge` uses `body.pop("device")` to mutate the passed dict, stripping device before forwarding to bridge. All current callers (send_message / permission_reply / interrupt) return immediately after the call and don't reuse body, so no actual bug. But note if body is reused in the future.
+`_handle_send_to_bridge` rebuilds the payload with a dict comprehension (`{k: v for k, v in body.items() if k != "device"}`) rather than mutating the request body, then forwards only to bridge connections whose `deviceName` matches. Applies to `send_message` / `permission_reply` / `interrupt` / `create_project` / `request_file`.
 
-### Image endpoint has no account isolation
+### Image & file endpoints have no account isolation
 
-`GET /api/bridge/image/{key}` does not verify accountId — any valid API key can access any image. Relies on the key being a hash value that is not guessable. `POST /upload-image` similarly does not associate with an account.
+`GET /api/bridge/image/{key}` and `GET /api/bridge/file/{key}` do not verify accountId — any valid API key can access any image/file. Relies on the key being a hash value that is not guessable. `POST /upload-image` / `POST /upload-file` similarly do not associate with an account.

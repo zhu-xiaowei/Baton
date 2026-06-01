@@ -7,6 +7,11 @@
     "ImagesBucketName": {
       "Type": "String",
       "Description": "S3 bucket name for images (lowercase)"
+    },
+    "AppVersion": {
+      "Type": "String",
+      "Description": "App version (semantic-githash), drives bridge auto-update",
+      "Default": "dev"
     }
   },
   "Resources": {
@@ -86,7 +91,8 @@
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
-            "SYSTEM_TABLE": { "Ref": "SystemTable" }
+            "SYSTEM_TABLE": { "Ref": "SystemTable" },
+            "APP_VERSION": { "Ref": "AppVersion" }
           }
         },
         "MemorySize": 1024,

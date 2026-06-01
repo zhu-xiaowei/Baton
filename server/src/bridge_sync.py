@@ -302,3 +302,20 @@ async def upload_image(req: UploadImageRequest):
     body = base64.b64decode(req.data)
     s3.put_object(Bucket=bucket, Key=f"images/{req.key}", Body=body, ContentType="image/jpeg")
     return {"key": req.key, "size": len(body)}
+
+
+class UploadFileRequest(BaseModel):
+    key: str
+    data: str      # base64 encoded file content
+
+
+@bridge_router.post("/upload-file")
+async def upload_file(req: UploadFileRequest):
+    import base64
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
+    s3 = _s3_client()
+    body = base64.b64decode(req.data)
+    s3.put_object(Bucket=bucket, Key=f"files/{req.key}", Body=body)
+    return {"key": req.key, "size": len(body)}

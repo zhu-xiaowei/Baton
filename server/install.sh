@@ -393,6 +393,7 @@ if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
     --parameters \
       "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
       "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
+      "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
     --capabilities CAPABILITY_IAM >/dev/null
   wait_stack "CREATE_COMPLETE" || cfn_dump_failure
 else
@@ -402,6 +403,7 @@ else
        --parameters \
          "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
          "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
+         "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
        --capabilities CAPABILITY_IAM >/dev/null 2>&1; then
     wait_stack "UPDATE_COMPLETE" || cfn_dump_failure
   fi

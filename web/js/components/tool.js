@@ -23,14 +23,18 @@
   function renderRead(input, result) {
     const file = shortPath(input.file_path || '');
     let desc = file;
+    let line = '';
     if (input.offset || input.limit) {
       const from = (input.offset || 1);
       const to = input.limit ? from + input.limit - 1 : '';
       desc += ` (lines ${from}${to ? '-' + to : ''})`;
+      line = to ? `${from}-${to}` : String(from);
     }
     return {
       name: 'Read',
       desc,
+      fileLink: input.file_path || '',
+      fileLine: line,
       body: readResultBody(result),
     };
   }
@@ -140,7 +144,7 @@
 
     const status = resultText(result);
     const statusLabel = status.includes('successfully') ? 'Modified' : (status.includes('Created') ? 'Created' : '');
-    return { name: 'Edit', desc: file, status: statusLabel, body: diffHtml };
+    return { name: 'Edit', desc: file, fileLink: fullPath, status: statusLabel, body: diffHtml };
   }
 
   // Render Write tool
@@ -149,6 +153,7 @@
     return {
       name: 'Write',
       desc: file,
+      fileLink: input.file_path || '',
       body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(resultText(result), 500))}</div>` : '',
     };
   }
@@ -271,6 +276,8 @@
   }
 
   // Main: render a tool_use + tool_result pair (wrapping tl-item div is in render.js)
+  window.detectLang = detectLang;
+
   window.renderToolNode = function (toolUse, toolResult) {
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
@@ -289,6 +296,11 @@
     window._lastToolState = toolState(toolResult);
 
     const statusHtml = info._statsHtml || (info.status ? `<span class="tool-status">${esc(info.status)}</span>` : '');
+    const fileLine = info.fileLine || '';
+    const matchId = (!fileLine && info.fileLink && (name === 'Edit' || name === 'Write')) ? (toolUse.id || '') : '';
+    const descHtml = info.fileLink
+      ? `<span class="tool-desc file-link" onclick="event.stopPropagation();openFile('${esc(info.fileLink).replace(/'/g, "\\'")}','${esc(info.desc).replace(/'/g, "\\'")}','${fileLine}','${matchId}')">${esc(info.desc)}</span>`
+      : `<span class="tool-desc">${esc(info.desc)}</span>`;
     const id = 'tool-' + Math.random().toString(36).slice(2, 8);
 
     const noClamp = name === 'TodoWrite';
@@ -301,7 +313,7 @@
 
     return `<div class="tool-header">
         <span class="tool-name">${esc(info.name)}</span>
-        <span class="tool-desc">${esc(info.desc)}</span>
+        ${descHtml}
         ${statusHtml}
       </div>
       ${bodyHtml}`;

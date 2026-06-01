@@ -121,7 +121,14 @@ async function readAndSend(config, filename, sessionId) {
 
   // Sync metadata only when status changed, new session, or ai-title arrived
   if (lastParsedLine > lastLine && lastStatus) {
-    const newStatus = lastStatus;
+    // jsonl tail can't see daemon blocked/done (a pending AskUserQuestion looks
+    // like 'running') — reconcile before deriving delta/cache. Matches sync.mjs.
+    const dm = getDaemonSessions().get(sessionId);
+    let newStatus = lastStatus;
+    if (dm) {
+      if (dm.agentState === 'done') newStatus = 'stopped';
+      else if (dm.agentState === 'blocked') newStatus = 'idle';
+    }
     const oldStatus = lastKnownStatus.get(sessionId);
     const statusChanged = newStatus !== oldStatus;
     const isNew = !recentSessions.has(sessionId);
@@ -151,7 +158,6 @@ async function readAndSend(config, filename, sessionId) {
         model: getModel(filePath),
         status: newStatus,
       };
-      const dm = getDaemonSessions().get(sessionId);
       if (dm) {
         sessionMeta.isAgent = true;
         sessionMeta.agentName = dm.agentName;

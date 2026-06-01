@@ -37,7 +37,7 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
    - Active: for each running project, only the most recent session (the one being used)
    - Recent: sessions with mtime within 24h
    - Sessions synced in parallel (sliding window, concurrency=4)
-   - Images: compressed to 720p JPEG via sharp → uploaded to S3 via Lambda
+   - Images: compressed to 1280px JPEG (quality=90) via sharp → uploaded to S3 via Lambda
    - Messages batched by byte size (≤4MB per POST)
    - Line-number tracking: only reads new lines, no UUID set in memory
 5. Start `fs.watch` on all `.jsonl` files (no age filter)
@@ -186,10 +186,35 @@ Bridge: findTmuxTarget(sessionId) → sendKeys
   or: no target → auto tmux new-session + claude --resume → waitForCCReady → sendKeys
 
 New session:
-App → Server → Bridge:  { action: "send_message", projectHash: "xxx", text: "...", device: "MacBook-Pro" }
+App → Server → Bridge:  { action: "send_message", projectHash: "xxx", text: "...", device: "MacBook-Pro", requestId: "..." }
 Bridge: create tmux + claude → waitForCCReady → sendKeys → poll .jsonl → return sessionId
-Bridge → Server → App:  { action: "send_message_result", ok: true, sessionId: "new-uuid" }
+Bridge → Server → App:  { action: "send_message_result", ok: true, sessionId: "new-uuid", requestId: "..." }
 App subscribes to new sessionId, starts receiving messages
+
+(send_message also accepts asAgent:true → launch via `claude agents`)
+```
+
+### Create project
+
+```
+App → Server → Bridge:  { action: "create_project", projectPath: "workspace/x", device: "MacBook-Pro", asAgent?: bool }
+Bridge: mkdir -p → derive projectHash → launch session → return result
+Bridge → Server → App:  { action: "create_project_result", ok: true, sessionId: "new-uuid", projectPath: "workspace/x" }
+```
+
+### View a project file (click-to-sync)
+
+```
+App → Server → Bridge:  { action: "request_file", path: "bridge/ws.mjs", sessionId: "abc",
+                          projectHash: "xxx", device: "MacBook-Pro", requestId: "..." }
+Bridge: resolve path (relative → projectHashToPath), stat, dedup by key (LRU 1000), then by type:
+  text  → read ≤5MB (truncate + drop partial last line) → POST /upload-file  (S3 files/{key})
+  image → ≤10MB whole file (else "image too large")     → POST /upload-image (S3 images/{key})
+Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId: "abc",
+                          key: "<sha>.ext", path: "/abs/path", size: N, truncated: false, image: false }
+App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
+     image → GET /api/bridge/image/{key} → reuse the image overlay (viewImage)
+     (content travels via REST/S3, never over WS — avoids the 128KB frame limit)
 ```
 
 ## Entering a Session — Complete Flow
@@ -247,8 +272,8 @@ agentpeek/
 ├── server/
 │   ├── src/
 │   │   ├── main.py         # FastAPI entry
-│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image
-│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image
+│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image, upload-file
+│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image/file
 │   │   └── bridge_ws.py    # WS relay ($connect/$disconnect/$default)
 │   ├── template/AgentPeek.template
 │   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
@@ -273,6 +298,7 @@ agentpeek/
 │           ├── message.js      # User/system bubbles, file badges, document blocks
 │           ├── tool.js         # Tool nodes (Bash, Edit, Agent stats/timer, etc.)
 │           ├── image.js        # Image lazy-loading, upload, gallery
+│           ├── fileviewer.js   # Click-to-sync project file viewer (highlight.js)
 │           ├── permission.js   # Permission prompt UI (options, input, escape)
 │           ├── skeleton.js     # Loading skeleton placeholders
 │           └── typing-status.js # Typing/thinking status indicator
@@ -302,7 +328,7 @@ agentpeek/
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
 - Periodic check (1min) only detects disappeared CC processes
-- Deployed to us-west-2 (AgentPeekTest), verified
+- Deployed to ap-northeast-1 (AgentPeekTest), verified
 
 ### Phase 2A: Backend + API Validation ✅ Complete
 

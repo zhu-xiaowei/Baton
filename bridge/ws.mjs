@@ -1,22 +1,25 @@
 import WebSocket from 'ws';
-import dns from 'dns';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile, getDaemonSessions } from './session.mjs';
 import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
+import { post } from './http.mjs';
 
 let _ws = null;
 let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
+let _connectWatchdog = null;
 let _consecutiveFailures = 0;
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const RECONNECT_DELAY = 5_000;
 const SLOW_RECONNECT_DELAY = 5 * 60_000;
+const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
 
 // Launch locks: prevent concurrent tmux creation for same project/session
@@ -65,6 +68,7 @@ function connect() {
 
   // Clean up old connection
   if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+  if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
   if (_ws) {
     _ws.removeAllListeners();
     _ws.terminate();
@@ -74,13 +78,23 @@ function connect() {
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
-  _ws = new WebSocket(url, { lookup: (host, opts, cb) => dns.resolve4(host, (err, addrs) => {
-    if (err || !addrs.length) return dns.lookup(host, opts, cb);
-    if (opts.all) cb(null, addrs.map(a => ({ address: a, family: 4 })));
-    else cb(null, addrs[0], 4);
-  }) });
+  // Use the system resolver (default). A custom dns.resolve4 lookup was tried
+  // here but it bypasses split-horizon/VPN DNS config and returns unreachable
+  // public IPs (varying each call), causing WS handshake timeouts.
+  _ws = new WebSocket(url, { handshakeTimeout: CONNECT_TIMEOUT });
+
+  _connectWatchdog = setTimeout(() => {
+    if (_ws && _ws.readyState !== WebSocket.OPEN) {
+      console.log('[ws] connect timeout, forcing reconnect...');
+      _ws.removeAllListeners();
+      _ws.terminate();
+      _ws = null;
+      scheduleReconnect();
+    }
+  }, CONNECT_TIMEOUT);
 
   _ws.on('open', () => {
+    if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
     console.log('[ws] connected');
     _consecutiveFailures = 0;
     _heartbeatTimer = setInterval(() => {
@@ -151,6 +165,9 @@ async function handleMessage(msg) {
     case 'interrupt':
       sendKey(msg.sessionId, 'Escape');
       sendKey(msg.sessionId, 'C-u');
+      break;
+    case 'request_file':
+      await handleRequestFile(msg);
       break;
     case 'messages_ack': {
       const p = _pendingAcks.get(msg.sessionId);
@@ -364,7 +381,7 @@ async function waitForAgentsTUI(tmuxTarget) {
         `tmux capture-pane -t "${tmuxTarget}" -p`,
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
       );
-      if (content.includes('start a task')) return true;
+      if (content.includes('❯')) return true;
     } catch {}
   }
   return false;
@@ -455,7 +472,9 @@ async function launchAgentForSession(sessionId) {
   if (!agentMeta) return { ok: false, error: 'Agent session metadata not found' };
 
   try {
-    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name);
+    // The agents TUI labels a session by its name, falling back to the prompt text
+    // (`intent`) when unnamed. Pass both so navigation can match reliably.
+    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name || agentMeta.intent);
     return { ok: true, tmuxName };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -470,11 +489,75 @@ function getAgentCwd(sessionId) {
     try {
       const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       if (state.sessionId === sessionId && state.backend === 'daemon') {
-        return { cwd: state.cwd || state.originCwd || '', name: state.name || '' };
+        return {
+          cwd: state.cwd || state.originCwd || '',
+          name: state.name || '',
+          intent: state.intent || '',
+        };
       }
     } catch {}
   }
   return null;
+}
+
+const FILE_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif']);
+const _uploadedFileKeys = new Set();
+
+async function handleRequestFile(msg) {
+  const { path: rawPath, projectHash, sessionId, requestId } = msg;
+  const reply = (extra) => wsSend({ action: 'file_ready', requestId, sessionId, ...extra });
+  if (!rawPath) return reply({ error: 'no path provided' });
+
+  let absPath = rawPath;
+  if (!path.isAbsolute(absPath)) {
+    const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
+    if (!dir) return reply({ error: 'not found' });
+    absPath = path.join(dir, absPath);
+  }
+
+  let st;
+  try { st = fs.statSync(absPath); } catch { return reply({ error: 'not found', path: absPath }); }
+  if (st.isDirectory()) return reply({ error: 'is a directory', path: absPath });
+
+  const ext = path.extname(absPath).toLowerCase();
+  const isImage = IMAGE_EXT.has(ext);
+  if (isImage && st.size > IMAGE_MAX_BYTES) return reply({ error: 'image too large', path: absPath });
+
+  const truncated = !isImage && st.size > FILE_MAX_BYTES;
+  const hash = crypto.createHash('sha256').update(`${absPath}#${st.mtimeMs}#${st.size}`).digest('hex').slice(0, 16);
+  const key = hash + ext;
+  const done = (extra) => reply({ key, path: absPath, size: st.size, truncated, image: isImage, ...extra });
+
+  if (_uploadedFileKeys.has(key)) {
+    _uploadedFileKeys.delete(key);
+    _uploadedFileKeys.add(key);
+    return done();
+  }
+
+  let buf;
+  try {
+    const cap = isImage ? st.size : Math.min(st.size, FILE_MAX_BYTES);
+    const fd = fs.openSync(absPath, 'r');
+    buf = Buffer.alloc(cap);
+    fs.readSync(fd, buf, 0, cap, 0);
+    fs.closeSync(fd);
+  } catch { return reply({ error: 'not found' }); }
+
+  if (!isImage && buf.subarray(0, 8192).includes(0)) return reply({ error: 'binary file' });
+
+  // Drop a possibly-incomplete final line when truncated, so line matching stays clean.
+  if (truncated) { const nl = buf.lastIndexOf(0x0a); if (nl > 0) buf = buf.subarray(0, nl); }
+
+  const endpoint = isImage ? '/api/bridge/upload-image' : '/api/bridge/upload-file';
+  const res = await post(endpoint, { key, data: buf.toString('base64') });
+  if (!res || !res.ok) return reply({ error: 'upload failed' });
+
+  _uploadedFileKeys.add(key);
+  if (_uploadedFileKeys.size > 1000) _uploadedFileKeys.delete(_uploadedFileKeys.values().next().value);
+
+  done();
 }
 
 async function downloadBridgeImage(key) {

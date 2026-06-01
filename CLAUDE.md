@@ -26,7 +26,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 ### Phase 1: COMPLETE ✅
 - bridge.mjs syncs session metadata to DDB via HTTP POST
 - bridge.mjs watches .jsonl files, detects new messages in real-time
-- Deployed to us-west-2 (AgentPeekTest), verified 300+ sessions
+- Deployed to ap-northeast-1 (AgentPeekTest), verified 300+ sessions
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification
 - Server REST read endpoints (devices, projects, sessions, messages)
@@ -63,10 +63,10 @@ read that file** — do not hardcode them in committed code. Variables:
 template. S3 bucket / ECR repo / AWS account id are derived automatically by
 `server/install.sh` from the stack name + `aws sts get-caller-identity`.
 
-- **Region**: us-west-2 (or ap-southeast-1)
+- **Region**: ap-northeast-1
 - **Stack**: AgentPeekTest
 - **DDB Tables**: `AgentPeekTest-bridge-sessions`, `AgentPeekTest-bridge-messages`
-- **Deploy**: `cd server && ./install.sh --region us-west-2 --stack AgentPeekTest`
+- **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack AgentPeekTest`
 
 ## Key Technical Decisions
 
@@ -95,6 +95,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - `permissions.mjs` respects `defaultMode: bypassPermissions` from global/project settings
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
+- Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
+- Auto-update: every 5min `checkUpdate()` compares local `config.version` vs server `/api/version`; on change, downloads from `/api/install` (files baked into the Lambda image) + restarts. So deploying the server (`install.sh`) auto-updates ALL bridges within 5min — no manual touch.
+- `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
 - Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
 - Periodic check (5min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
@@ -241,17 +244,18 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
 
 ### Commands
 ```
-npx tauri android dev       — Android device/emulator dev
-npx tauri android build     — release APK/AAB
-npm run dev:ios             — iOS simulator dev (iPhone 17 Pro)
-npm run build:ios           — local iOS IPA build (no upload)
-npm run release:ios         — build + auto bump CFBundleVersion + upload TestFlight
-npx tauri dev               — desktop dev
+# Dev
+npm run dev:android / dev:ios / tauri:dev
+
+# Release (all four platforms have ready-made scripts in scripts/)
+npm run build:android       — release APK (aarch64)
+npm run release:ios         — build + bump CFBundleVersion + upload TestFlight
+npm run build:mac           — signed + notarized universal macOS DMG
+npm run build:windows       — cross-compiled Windows NSIS installer (.exe)
 ```
 
-`release:ios` requires `APPSTORE_KEY_ID` / `APPSTORE_ISSUER_ID` in `.env.local`,
-with .p8 key at `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
-Script: `scripts/release-ios.sh`.
+All release scripts read secrets from `.env.local` (gitignored). See each script's
+header comment for required env vars, one-time setup, and output paths.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`

@@ -30,6 +30,7 @@ async function loadViewerLibs() {
       import('./components/permission.js'),
       import('./components/typing-status.js'),
       import('./components/image.js'),
+      import('./components/fileviewer.js'),
       import('./render.js'),
       import('./ws.js'),
     ]);

@@ -51,6 +51,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Permission approval** — approve or deny tool calls (Bash, Edit, Write) remotely
 - **Start / stop sessions** — launch new Claude Code or Agent sessions from anywhere
 - **Code diff rendering** — inline diffs with syntax highlighting for file changes
+- **Project file viewer** — click a file to sync and view its source, with line highlight & jump; rendered preview for HTML and Markdown
 - **Markdown support** — full GFM rendering for Claude's responses
 - **Execution nodes** — collapsible tool_use/tool_result blocks showing what Claude did
 - **Dark theme UI** — clean, mobile-optimized interface that works on any screen size

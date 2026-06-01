@@ -34,14 +34,20 @@
       'go','rs','java','swift','kt','c','cpp','h','hpp','cs','php','sql','xml','toml','md'].includes(ext);
   }
 
-  // Render a file badge
-  function fileBadge(title, content) {
-    const id = 'doc-' + Math.random().toString(36).slice(2, 8);
+  // Render a file badge. With filePath → click opens the source file; otherwise → toggle inline content.
+  function fileBadge(title, content, filePath) {
     const icon = isCodeFile(title) ? '&lt;/&gt;' : '&#128196;';
     const iconClass = isCodeFile(title) ? 'file-badge-icon code' : 'file-badge-icon doc';
-    return `<div class="file-badge" onclick="var b=document.getElementById('${id}');b.style.display=b.style.display==='block'?'none':'block'">
+    const badge = (onclick) => `<div class="file-badge" onclick="${onclick}">
       <span class="${iconClass}">${icon}</span><span class="file-badge-name">${esc(title)}</span>
-    </div><pre class="file-badge-content" id="${id}">${esc(content)}</pre>`;
+    </div>`;
+    if (filePath) {
+      const safe = filePath.replace(/'/g, "\\'");
+      return badge(`openFile('${safe}','${esc(title).replace(/'/g, "\\'")}')`);
+    }
+    const id = 'doc-' + Math.random().toString(36).slice(2, 8);
+    return badge(`var b=document.getElementById('${id}');b.style.display=b.style.display==='block'?'none':'block'`)
+      + `<pre class="file-badge-content" id="${id}">${esc(content)}</pre>`;
   }
 
   // Render user text bubble
@@ -96,7 +102,7 @@
     const badges = [];
     ideFiles.forEach(p => {
       const name = p.split('/').pop();
-      badges.push(fileBadge(name, p));
+      badges.push(fileBadge(name, p, p));
     });
     docs.forEach(d => {
       const content = d.source?.data || '';

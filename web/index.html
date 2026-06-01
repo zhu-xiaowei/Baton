@@ -51,10 +51,16 @@
     devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
   };
 
-  // If user lands on a deep link (#/device/... ), let app.js handle routing.
-  // Only the empty-hash case gets inline-rendered (the common case).
+  // If user lands on a deep link (#/device/...) OR a saved nav points into a
+  // project/session, let app.js handle routing (it restores the deeper view).
+  // Only inline-render the home/device-list case (empty hash + top-level nav).
   var hash = (location.hash || '').replace(/^#\/?/, '');
-  var willRenderInline = !hash;
+  var navDeep = false;
+  try {
+    var _nav = JSON.parse(sessionStorage.getItem('agentpeek-nav') || '{}');
+    navDeep = !!(_nav && (_nav.session || _nav.project));
+  } catch (e) {}
+  var willRenderInline = !hash && !navDeep;
 
   function timeAgo(iso) {
     var d = Date.now() - new Date(iso).getTime();
@@ -242,6 +248,21 @@
 <!-- Image overlay -->
 <div id="imgOverlay" class="img-overlay" style="display:none" onclick="this.style.display='none'">
   <img id="imgOverlayImg" />
+</div>
+
+<!-- File overlay -->
+<div id="fileOverlay" class="file-overlay" style="display:none" onclick="if(event.target===this)closeFileViewer()">
+  <div class="file-modal">
+    <div class="file-modal-header">
+      <span id="fileOverlayTitle" class="file-modal-title"></span>
+      <span id="fileOverlayTabs" class="file-tabs" style="display:none">
+        <button class="file-tab active" data-mode="source" onclick="setFileViewMode('source')">Code</button>
+        <button class="file-tab" data-mode="preview" onclick="setFileViewMode('preview')">Preview</button>
+      </span>
+      <span class="file-modal-close" onclick="closeFileViewer()">×</span>
+    </div>
+    <div id="fileOverlayBody" class="file-modal-body"></div>
+  </div>
 </div>
 
 </body>

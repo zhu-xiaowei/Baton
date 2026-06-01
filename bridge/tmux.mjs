@@ -358,7 +358,7 @@ async function waitForAgentsList(tmuxTarget) {
         `tmux capture-pane -t "${tmuxTarget}" -p`,
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
       );
-      if (content.includes('✻') || content.includes('∙') || content.includes('start a task')) return true;
+      if (content.includes('❯')) return true;
     } catch {}
   }
   return false;
@@ -377,21 +377,34 @@ async function navigateToAgent(tmuxTarget, agentName) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       if (trimmed.startsWith('✻') || trimmed.startsWith('∙')) {
-        navItems.push({ type: 'session', text: trimmed });
+        // Row layout: "<marker> <label>  <detail>  <age>" — label is the first
+        // column, separated from detail by 2+ spaces. Long labels are truncated
+        // with a trailing '…'. Isolate the label for matching.
+        const afterMarker = trimmed.replace(/^[✻∙]\s*/, '');
+        const label = afterMarker.split(/\s{2,}/)[0].replace(/…+$/, '').trim();
+        navItems.push({ type: 'session', text: trimmed, label });
       } else if (/^(Needs input|Working|Completed)$/.test(trimmed)) {
         navItems.push({ type: 'header', text: trimmed });
       }
     }
 
     let targetIdx = -1;
-    for (let i = 0; i < navItems.length; i++) {
-      if (navItems[i].type === 'session' && navItems[i].text.includes(agentName)) {
-        targetIdx = i;
-        break;
+    const needle = (agentName || '').trim();
+    if (needle) {
+      for (let i = 0; i < navItems.length; i++) {
+        const item = navItems[i];
+        if (item.type !== 'session') continue;
+        // Match in either direction: the TUI label may be a truncated prefix of
+        // the full name/intent, or contain it.
+        if (item.label && (needle.startsWith(item.label) || item.label.startsWith(needle)
+          || item.text.includes(needle))) {
+          targetIdx = i;
+          break;
+        }
       }
     }
 
-    if (targetIdx < 0) return { ok: false, error: `Session "${agentName}" not found in agents list` };
+    if (targetIdx < 0) return { ok: false, error: `Session "${needle || '(unnamed)'}" not found in agents list` };
 
     const firstSessionIdx = navItems.findIndex(n => n.type === 'session');
     const downs = targetIdx - firstSessionIdx;
@@ -407,6 +420,7 @@ async function navigateToAgent(tmuxTarget, agentName) {
 }
 
 async function waitForAgentPrompt(tmuxTarget, agentName) {
+  let escaped = false;
   for (let i = 0; i < 10; i++) {
     await new Promise(r => setTimeout(r, 500));
     try {
@@ -415,6 +429,12 @@ async function waitForAgentPrompt(tmuxTarget, agentName) {
         { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
       );
       if (content.includes('← for agents') && content.includes('❯')) return true;
+      // Blocked on AskUserQuestion: Right opens the option picker, not the prompt.
+      // Decline it once so a free-text message can be typed.
+      if (!escaped && content.includes('Esc to cancel')) {
+        spawnSync('tmux', ['send-keys', '-t', tmuxTarget, 'Escape'], { stdio: 'ignore' });
+        escaped = true;
+      }
     } catch {}
   }
   return false;

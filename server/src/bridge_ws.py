@@ -191,6 +191,12 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "interrupt":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "interrupt")
+    elif action == "request_file":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
+    elif action == "file_ready":
+        if role == "bridge":
+            return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "create_project":
         if role == "app":
             if not body.get("projectPath"):
@@ -372,10 +378,13 @@ def _handle_send_to_bridge(body, account_id, endpoint, action):
     return {"statusCode": 200}
 
 
-def notify_bridge_sync(session_id, account_id, endpoint):
-    """Called by REST API to trigger bridge sync via WS. Finds bridge connection and sends sync_session."""
+def notify_bridge_sync(session_id, account_id, endpoint, device=None):
+    """Called by REST API to trigger bridge sync via WS. Sends sync_session only to
+    the matching device's bridge (if device given), else all bridges."""
     _init()
     for item in _query_connections(account_id, "bridge"):
+        if device and item.get("deviceName", "") != device:
+            continue
         _post_to_connection(endpoint, item["connectionId"], {
             "action": "sync_session",
             "sessionId": session_id,
