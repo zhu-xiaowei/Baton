@@ -66,6 +66,29 @@ function getProjectSettings(projectDir) {
   }
 }
 
+// Env vars safe to strip before matching. Excludes PATH/LD_*/PYTHONPATH —
+// stripping those could mask a hijacked binary.
+const SAFE_ENV_VARS = new Set([
+  'NODE_ENV', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'RUST_BACKTRACE',
+  'RUST_LOG', 'GOOS', 'GOARCH', 'CGO_ENABLED', 'LANG', 'LC_ALL', 'TZ', 'TERM',
+  'NO_COLOR', 'FORCE_COLOR', 'COLORTERM',
+]);
+
+// Strip leading safe env assignments (VAR=val) and wrapper commands
+// (timeout/nohup/time/nice) so `python3 *` matches `NODE_ENV=x timeout 5 python3 y`.
+function stripSafeWrappers(command) {
+  let s = command.trim();
+  let prev;
+  do {
+    prev = s;
+    const env = s.match(/^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./:-]+)\s+/);
+    if (env && SAFE_ENV_VARS.has(env[1])) { s = s.slice(env[0].length); continue; }
+    const w = s.match(/^(?:timeout\s+\d+(?:\.\d+)?[smhd]?|nohup|time|nice(?:\s+-n\s+-?\d+)?)\s+/);
+    if (w) { s = s.slice(w[0].length); continue; }
+  } while (s !== prev);
+  return s;
+}
+
 function commandMatchesRule(command, ruleContent) {
   if (!ruleContent || !command) return false;
   // prefix:* syntax
@@ -73,11 +96,33 @@ function commandMatchesRule(command, ruleContent) {
   if (prefixMatch) return command.startsWith(prefixMatch[1]);
   // wildcard (contains unescaped *)
   if (ruleContent.includes('*')) {
-    const escaped = ruleContent.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    let escaped = ruleContent.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    // Sole trailing ' *' is optional, so `pip list *` also matches bare `pip list`.
+    if (escaped.endsWith(' .*') && (ruleContent.match(/\*/g) || []).length === 1) {
+      escaped = escaped.slice(0, -3) + '( .*)?';
+    }
     return new RegExp(`^${escaped}$`, 's').test(command);
   }
   // exact match
   return command.trim() === ruleContent.trim();
+}
+
+// Split on shell control operators (&& || ; | newline), respecting quotes.
+// Every subcommand must match a rule, so `python3 *` can't allow `python3 x && rm -rf /`.
+function splitCommand(command) {
+  const parts = [];
+  let cur = '', q = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (q) { cur += c; if (c === q) q = null; continue; }
+    if (c === '"' || c === "'") { q = c; cur += c; continue; }
+    const two = command.slice(i, i + 2);
+    if (two === '&&' || two === '||') { parts.push(cur); cur = ''; i++; continue; }
+    if (c === ';' || c === '|' || c === '\n') { parts.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
 }
 
 export function isToolAllowed(toolName, toolInput, projectDir) {
@@ -90,14 +135,27 @@ export function isToolAllowed(toolName, toolInput, projectDir) {
 
   const rules = [...(_globalRules || []), ...project.rules];
 
+  // Tool-wide rule with no content ("Bash" / "Bash(*)") allows everything.
   for (const rule of rules) {
-    if (rule.toolName !== toolName) continue;
-    if (!rule.content) return true;
-    if (toolName === 'Bash' || toolName === 'bash') {
-      const cmd = toolInput?.command || toolInput?.cmd || '';
-      if (commandMatchesRule(cmd, rule.content)) return true;
-    }
+    if (rule.toolName === toolName && !rule.content) return true;
   }
+
+  if (toolName === 'Bash' || toolName === 'bash') {
+    const cmd = toolInput?.command || toolInput?.cmd || '';
+    const subs = splitCommand(cmd);
+    if (!subs.length) return false;
+    // Every subcommand must match a rule (raw or with safe prefixes stripped).
+    return subs.every((sub) => {
+      const stripped = stripSafeWrappers(sub);
+      return rules.some(
+        (r) =>
+          (r.toolName === 'Bash' || r.toolName === 'bash') &&
+          r.content &&
+          (commandMatchesRule(sub, r.content) || commandMatchesRule(stripped, r.content)),
+      );
+    });
+  }
+
   return false;
 }
 
