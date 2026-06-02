@@ -5,6 +5,16 @@
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // ANSI escape codes in terminal output → colored HTML (XSS-safe via anser).
+  // Fast path: no ESC byte or lib not loaded → plain esc().
+  function ansiHtml(str) {
+    if (!str) return '';
+    str = String(str);
+    if (str.indexOf('\x1b') === -1) return esc(str);
+    if (!window.Anser) return esc(str);
+    return window.Anser.ansiToHtml(window.Anser.escapeForHtml(str));
+  }
+
   // Render Bash tool
   function renderBash(input, result) {
     const cmd = input.command || input.cmd || JSON.stringify(input);
@@ -14,7 +24,7 @@
       desc: desc || truncate(cmd, 60),
       body: grid([
         ['IN', `<code>${esc(cmd)}</code>`],
-        result != null ? ['OUT', esc(truncate(resultText(result), 2000))] : null,
+        result != null ? ['OUT', ansiHtml(truncate(resultText(result), 2000))] : null,
       ]),
     };
   }
@@ -48,7 +58,7 @@
     else if (Array.isArray(c)) text = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
     text = text.trim();
     if (!text) return '';
-    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(text, 2000))}</div>`;
+    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(truncate(text, 2000))}</div>`;
   }
 
   // File extension → hljs language
@@ -166,7 +176,7 @@
     return {
       name,
       desc,
-      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(resultText(result), 2000))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(truncate(resultText(result), 2000))}</div>` : '',
     };
   }
 
@@ -228,7 +238,7 @@
       desc: truncate(JSON.stringify(input), 80),
       body: grid([
         ['IN', esc(truncate(JSON.stringify(input, null, 2), 1000))],
-        result != null ? ['OUT', esc(truncate(resultText(result), 2000))] : null,
+        result != null ? ['OUT', ansiHtml(truncate(resultText(result), 2000))] : null,
       ]),
     };
   }

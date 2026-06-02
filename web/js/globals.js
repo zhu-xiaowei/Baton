@@ -9,11 +9,12 @@ async function loadViewerLibs() {
   _libsPromise = (async function () {
     // Phase 1: vendor libs + their CSS. markdown.js's top-level marked.setOptions()
     // requires marked + hljs to be on window first, so phase 2 must run after this.
-    const [markedMod, hljsMod, diffMod, diff2htmlMod] = await Promise.all([
+    const [markedMod, hljsMod, diffMod, diff2htmlMod, anserMod] = await Promise.all([
       import('marked'),
       import('highlight.js'),
       import('diff'),
       import('diff2html/lib-esm/ui/js/diff2html-ui'),
+      import('anser'),
       import('highlight.js/styles/vs2015.css'),
       import('diff2html/bundles/css/diff2html.min.css'),
     ]);
@@ -21,6 +22,7 @@ async function loadViewerLibs() {
     window.hljs = hljsMod.default;
     window.Diff = diffMod;
     window.Diff2HtmlUI = diff2htmlMod.Diff2HtmlUI;
+    window.Anser = anserMod.default;
 
     // Phase 2: viewer modules (IIFEs that read window.marked/hljs at top level).
     await Promise.all([

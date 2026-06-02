@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
+    "anser": "^2.3.5",
     "diff": "^5.2.0",
     "diff2html": "^3.4.51",
     "highlight.js": "^11.9.0",
