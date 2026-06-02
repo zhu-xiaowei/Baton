@@ -167,7 +167,8 @@
             "ResponseParameters": {
               "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
               "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
-              "method.response.header.Access-Control-Allow-Origin": "'*'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'",
+              "method.response.header.Access-Control-Max-Age": "'7200'"
             }
           }]
         },
@@ -176,7 +177,8 @@
           "ResponseParameters": {
             "method.response.header.Access-Control-Allow-Headers": true,
             "method.response.header.Access-Control-Allow-Methods": true,
-            "method.response.header.Access-Control-Allow-Origin": true
+            "method.response.header.Access-Control-Allow-Origin": true,
+            "method.response.header.Access-Control-Max-Age": true
           }
         }]
       }
@@ -229,7 +231,8 @@
             "ResponseParameters": {
               "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
               "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
-              "method.response.header.Access-Control-Allow-Origin": "'*'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'",
+              "method.response.header.Access-Control-Max-Age": "'7200'"
             }
           }]
         },
@@ -238,7 +241,8 @@
           "ResponseParameters": {
             "method.response.header.Access-Control-Allow-Headers": true,
             "method.response.header.Access-Control-Allow-Methods": true,
-            "method.response.header.Access-Control-Allow-Origin": true
+            "method.response.header.Access-Control-Allow-Origin": true,
+            "method.response.header.Access-Control-Max-Age": true
           }
         }]
       }
@@ -259,7 +263,8 @@
             "ResponseParameters": {
               "method.response.header.Access-Control-Allow-Headers": "'Content-Type,x-api-key'",
               "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
-              "method.response.header.Access-Control-Allow-Origin": "'*'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'",
+              "method.response.header.Access-Control-Max-Age": "'7200'"
             }
           }]
         },
@@ -268,13 +273,17 @@
           "ResponseParameters": {
             "method.response.header.Access-Control-Allow-Headers": true,
             "method.response.header.Access-Control-Allow-Methods": true,
-            "method.response.header.Access-Control-Allow-Origin": true
+            "method.response.header.Access-Control-Allow-Origin": true,
+            "method.response.header.Access-Control-Max-Age": true
           }
         }]
       }
     },
-    "ApiDeploymentV2": {
+    "ApiDeploymentV3": {
       "Type": "AWS::ApiGateway::Deployment",
+      "Metadata": {
+        "Note": "Bump this id (V3 -> V4 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
+      },
       "Properties": {
         "RestApiId": { "Ref": "RestApi" }
       },
@@ -284,7 +293,7 @@
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeploymentV2" },
+        "DeploymentId": { "Ref": "ApiDeploymentV3" },
         "StageName": "v1"
       }
     },

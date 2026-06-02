@@ -10,7 +10,9 @@ import os
 app = FastAPI()
 # GZipMiddleware must come before CORS so it sees the final body before CORS adds headers
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# max_age caches the CORS preflight for cross-origin clients (Tauri webviews).
+# Engines clamp it: WebKit (iOS/macOS) 600s, Chromium (Android/Windows) 7200s.
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], max_age=7200)
 
 from bridge_sync import bridge_router
 from bridge_read import read_router, get_install
