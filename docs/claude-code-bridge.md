@@ -227,6 +227,41 @@ App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js
      (content travels via REST/S3, never over WS — avoids the 128KB frame limit)
 ```
 
+### Slash commands (autocomplete)
+
+Mirrors Claude Code's `/`-menu: typing `/` at the start of the input lists all
+available slash commands (names only, like CC); continuing to type (`/as`) filters
+by prefix; ↑↓ navigates, Enter/Tab/click selects and **sends immediately**
+(`/name\n` via the normal send path).
+
+```
+App → Server → Bridge:  { action: "list_commands", projectHash: "xxx", device: "MacBook-Pro", requestId: "cmds_..." }
+Bridge: scanSlashCommands(projectHashToPath(projectHash)) — live read, no cache/watch (~15ms):
+  user    → ~/.claude/commands/**/*.md  +  ~/.claude/skills/*/SKILL.md
+  project → <projectDir>/.claude/commands/**/*.md  +  /skills/*/SKILL.md
+  plugin  → settings.json enabledPlugins → resolve each plugin root → /commands + /skills
+            (root resolution: installed_plugins.json installPath → extraKnownMarketplaces
+             path → plugins/marketplaces/<mkt>/plugins/<name> → .../<name>)
+  builtin → BUILTIN_COMMANDS static list (bundled skills + builtin slash commands
+            compiled into CC, no file on disk). Mirrors EXACTLY the running CC's
+            "/" menu beyond disk-scannable commands (no padding, no hidden cmds) —
+            re-sync on CC upgrades. e.g. batch clear compact context debug
+            deep-research goal init loop run review verify usage update-config…
+  name = command file basename (sans .md, no file read); subdirs → ':' namespace.
+         skill name from SKILL.md frontmatter `name` (fallback dir name).
+  dedup by name (user>project>plugin>builtin — user recap.md beats bundled recap),
+  then sort all names alphabetically (localeCompare — char-by-char). Names only.
+Bridge → Server → App:  { action: "commands_list", requestId: "cmds_...", commands: [{name, source}] }
+  (~2.5KB for ~75 commands; server broadcasts to ALL app connections for the account —
+   like create_project_result — so it reaches the new-session view too, which has no
+   sessionId subscription)
+App: split reply by source → cache global (user/plugin/builtin) once per DEVICE
+     (apeek_cmds:g:<device>) + project cmds per PROJECT (apeek_cmds:p:<projectHash>).
+     Typing "/" shows the UNION (deduped, sorted). Prefetched on session open
+     (startWs / WS onopen) → cache shows instantly, WS refresh updates it. A brand-new
+     project dir gets all global commands from the device cache with no per-project wait.
+```
+
 ## Entering a Session — Complete Flow
 
 ```

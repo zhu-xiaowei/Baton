@@ -9,6 +9,7 @@ import { findSessionFile, getDaemonSessions } from './session.mjs';
 import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
+import { scanSlashCommands } from './commands.mjs';
 
 let _ws = null;
 let _config = null;
@@ -168,6 +169,9 @@ async function handleMessage(msg) {
       break;
     case 'request_file':
       await handleRequestFile(msg);
+      break;
+    case 'list_commands':
+      handleListCommands(msg);
       break;
     case 'messages_ack': {
       const p = _pendingAcks.get(msg.sessionId);
@@ -558,6 +562,18 @@ async function handleRequestFile(msg) {
   if (_uploadedFileKeys.size > 1000) _uploadedFileKeys.delete(_uploadedFileKeys.values().next().value);
 
   done();
+}
+
+function handleListCommands(msg) {
+  const { projectHash, requestId } = msg;
+  let commands = [];
+  try {
+    const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
+    commands = scanSlashCommands(dir);
+  } catch (err) {
+    console.error(`[ws] list_commands failed: ${err.message}`);
+  }
+  wsSend({ action: 'commands_list', requestId, commands });
 }
 
 async function downloadBridgeImage(key) {

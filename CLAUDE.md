@@ -94,6 +94,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - Send to agent: `launchAgentsSession()` → tmux + `claude agents --cwd` → navigate TUI → Right → sendKeys
   - New agent session: `handleNewAgentSession()` → tmux + `claude agents` → type in bottom input → poll for .jsonl → kill tmux
   - `permissions.mjs` respects `defaultMode: bypassPermissions` from global/project settings
+- Slash commands (`commands.mjs`): `/`-autocomplete like CC. Bridge `scanSlashCommands()` scans user/project/enabled-plugin commands+skills on disk, plus a static `BUILTIN_COMMANDS` list mirroring CC's compiled-in bundled skills (re-sync on CC upgrades). WS `list_commands` → `commands_list`; app caches per-device (global) + per-project in localStorage. Details: `docs/api.md` (protocol) + `docs/claude-code-bridge.md` (flow).
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
 - Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
@@ -159,7 +160,9 @@ App → Server:           { action: "unsubscribe", sessionId }
 App → Server → Bridge:  { action: "send_message", sessionId, text, device }
                         { action: "send_message", projectHash, text, device }  — new session
 App → Server → Bridge:  { action: "permission_reply", sessionId, approved, device }
+App → Server → Bridge:  { action: "list_commands", projectHash, device, requestId }  — slash-command scan
 Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
+Bridge → Server → App:  { action: "commands_list", requestId, commands }  — broadcast to all app conns
 Server → App:           { action: "messages", sessionId, messages }
 ```
 

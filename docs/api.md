@@ -622,6 +622,40 @@ Ask the bridge to read a project file from the device's local disk and upload it
 - **Bridge** keeps a bounded **LRU set of uploaded keys** (cap 1000 keys ≈ ~25 KB; evict oldest on overflow). A hit skips both the disk read and the S3 upload. Memory stays capped; an evicted key just causes one harmless re-upload on next click (S3 PUT is idempotent — same key overwrites identical bytes). The set is in-memory only, so a bridge restart may re-upload each file at most once.
 - **App** keeps a `fileCache` keyed by `key`; a hit skips the `GET /file/{key}`. Since the key changes when the file changes, the cache never serves stale content.
 
+#### list_commands
+
+Ask the bridge to scan all available slash commands (custom commands, skills, and enabled-plugin commands/skills) so the app can show a `/`-autocomplete menu like Claude Code's.
+
+```json
+{
+  "action": "list_commands",
+  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "device": "MacBook-Pro",
+  "requestId": "cmds_1717300000000"
+}
+```
+
+**Fields**:
+| Field | Required | Description |
+|-------|----------|-------------|
+| `projectHash` | No | Resolves the project dir for project-level `.claude/commands` + `/skills`. Omitted/empty → user + plugin commands only (e.g. new-session view) |
+| `device` | Yes | Target device (routing) |
+| `requestId` | Yes | Client-generated id, echoed back in `commands_list` |
+
+**Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
+
+**Bridge handling** (`scanSlashCommands`, live read — no cache/watch, ~15ms):
+1. **User**: `~/.claude/commands/**/*.md` + `~/.claude/skills/*/SKILL.md`
+2. **Project**: `<projectDir>/.claude/commands/**/*.md` + `/skills/*/SKILL.md`
+3. **Plugins**: read `settings.json` `enabledPlugins`; resolve each plugin root (`installed_plugins.json` `installPath` → `extraKnownMarketplaces` path → `plugins/marketplaces/<mkt>/plugins/<name>` → `.../<name>`); scan its `/commands` + `/skills`
+4. `name` = command file basename (sans `.md`) — directory entries only, no file read; subdirectories form a `:` namespace. Skill `name` is read from `SKILL.md` frontmatter `name` (falls back to dir name)
+5. Append `BUILTIN_COMMANDS` (`source: "builtin"`) — bundled skills + builtin slash commands CC compiles into its binary (no file on disk): `batch` `clear` `code-review` `compact` `context` `debug` `deep-research` `fewer-permission-prompts` `goal` `heapdump` `init` `insights` `loop` `reload-skills` `remote-control` `review` `run` `run-skill-generator` `security-review` `simplify` `team-onboarding` `update-config` `usage` `verify`
+6. Dedup by `name` (priority user > project > plugin > builtin — so a user's `commit.md`/`recap.md` wins over a same-named built-in), then sort all names alphabetically (`localeCompare`); reply `commands_list`
+
+Only command names are returned (no descriptions) — matches Claude Code's `/`-menu, which shows names only. Keeps the payload tiny (~2.5 KB for ~75 commands) and means command scanning needs no file reads.
+
+**Built-ins**: bundled skills and builtin slash commands live in the CC binary, not on disk, so the directory scan can't see them. `BUILTIN_COMMANDS` is a hand-maintained list that mirrors **exactly** what the running CC surfaces in its `/`-menu beyond the disk-scannable commands — so AgentPeek's list matches CC 1:1 (no padding with CC's full `COMMANDS()` set, none of CC's hidden/feature-gated commands). Re-check on CC upgrades, since CC may add/remove bundled skills between versions (e.g. `deep-research`, `run`, `goal`, `run-skill-generator`, `team-onboarding` are newer additions).
+
 ---
 
 ### Bridge → Server
@@ -773,6 +807,31 @@ Bridge has uploaded a requested file to S3 and notifies the app. Sent in respons
 
 ---
 
+#### commands_list
+
+Bridge replies with the scanned slash-command list (response to `list_commands`).
+
+```json
+{
+  "action": "commands_list",
+  "requestId": "cmds_1717300000000",
+  "commands": [
+    { "name": "commit", "source": "user" },
+    { "name": "pdf", "source": "plugin" }
+  ]
+}
+```
+
+**Fields**:
+| Field | Description |
+|-------|-------------|
+| `requestId` | Echoed from `list_commands` (the app currently ignores it — see broadcast note) |
+| `commands` | Array of `{name, source}`; `source` ∈ `user` / `project` / `plugin` / `builtin` |
+
+**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections for the account (not scoped by session). This is deliberate: the new-session view has no `sessionId` subscription, so a session-scoped relay (like `file_ready`) wouldn't reach it. Same pattern as `create_project_result`.
+
+---
+
 ### Server → Bridge (Push)
 
 #### messages_ack
@@ -883,6 +942,20 @@ Server forwards bridge's file-ready notification (only pushed to app connections
 
 ---
 
+#### commands_list
+
+Server forwards the bridge's slash-command list (broadcast to **all** app connections under this account). Same payload as the Bridge → Server `commands_list` above. The app **splits the reply by `source`** and caches it in `localStorage` in two buckets: global commands (`user`/`plugin`/`builtin`) under `apeek_cmds:g:<deviceName>` (shared by every project on that device, stored once) and project commands (`source: "project"`) under `apeek_cmds:p:<projectHash>`. The `/`-autocomplete popup shows the **union** of the two (deduped, sorted). This way a brand-new project directory immediately gets all global commands from the device cache without waiting for its own scan.
+
+```json
+{
+  "action": "commands_list",
+  "requestId": "cmds_1717300000000",
+  "commands": [{ "name": "commit", "source": "user" }]
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints use a unified error format:
@@ -933,7 +1006,7 @@ Forwarding `send_message` / `permission_reply` / `interrupt` to bridge scans DDB
 
 ### device routing strips `device` before forwarding
 
-`_handle_send_to_bridge` rebuilds the payload with a dict comprehension (`{k: v for k, v in body.items() if k != "device"}`) rather than mutating the request body, then forwards only to bridge connections whose `deviceName` matches. Applies to `send_message` / `permission_reply` / `interrupt` / `create_project` / `request_file`.
+`_handle_send_to_bridge` rebuilds the payload with a dict comprehension (`{k: v for k, v in body.items() if k != "device"}`) rather than mutating the request body, then forwards only to bridge connections whose `deviceName` matches. Applies to `send_message` / `permission_reply` / `interrupt` / `create_project` / `request_file` / `list_commands`.
 
 ### Image & file endpoints have no account isolation
 

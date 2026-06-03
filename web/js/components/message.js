@@ -63,7 +63,9 @@
 
     // Extract slash command from CC XML tags before stripping
     let slashCmd = '';
-    text = text.replace(/<command-name>\/?(\w+)<\/command-name>/g, (_, cmd) => { slashCmd = cmd; return ''; });
+    // Command names can include a plugin namespace + hyphens, e.g.
+    // "document-skills:pdf" — match [\w:-]+, not just \w+.
+    text = text.replace(/<command-name>\/?([\w:-]+)<\/command-name>/g, (_, cmd) => { slashCmd = cmd; return ''; });
     text = text.replace(/<command-message>.*?<\/command-message>\s*/gs, '');
     text = text.replace(/<command-args>.*?<\/command-args>\s*/gs, '');
     text = text.replace(/<local-command-caveat>.*?<\/local-command-caveat>\s*/gs, '');
@@ -71,8 +73,8 @@
     text = text.replace(/<system-reminder>.*?<\/system-reminder>\s*/gs, '');
     text = text.replace(/<task-notification>.*?<\/task-notification>\s*/gs, '');
 
-    // Also catch plain /command at start
-    if (!slashCmd) text = text.replace(/^\/(\w+)\s*/m, (_, cmd) => { slashCmd = cmd; return ''; });
+    // Also catch plain /command at start (optimistic render before CC rewrites it)
+    if (!slashCmd) text = text.replace(/^\/([\w:-]+)\s*/m, (_, cmd) => { slashCmd = cmd; return ''; });
 
     // Extract <ide_opened_file> references from text
     const ideFiles = [];

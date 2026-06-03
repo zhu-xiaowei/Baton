@@ -109,6 +109,7 @@ function connectWs(_, projectHash) {
       wsSend(_pendingWsSend);
       _pendingWsSend = null;
     }
+    if (window.prefetchCommands) window.prefetchCommands();
   };
 
   state.ws.onmessage = function (e) {
@@ -199,6 +200,8 @@ function connectWs(_, projectHash) {
       }).catch(function () {});
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);
+    } else if (msg.action === 'commands_list') {
+      if (window.handleCommandsList) window.handleCommandsList(msg);
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -422,6 +425,9 @@ function startWs(sessionId) {
   state._syncedOnce = null;
   if (!state.ws) connectWs();
   else subscribeSession(sessionId);
+  // Prefetch slash commands. When ws already exists this sends now; on a fresh
+  // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
+  if (window.prefetchCommands) window.prefetchCommands();
 }
 
 /**
@@ -692,14 +698,34 @@ function tryDedup(msg) {
   if (!text) return false;
 
   var stripped = stripImageRefs(text);
+  // CC rewrites a sent "/pdf" into "<command-name>/document-skills:pdf</command-name>".
+  // Extract the command name so it matches the optimistic "/pdf" we already show.
+  var cmdMatch = text.match(/<command-name>\/?([\w:-]+)<\/command-name>/);
+  var cmdName = cmdMatch ? cmdMatch[1] : null; // e.g. "document-skills:pdf"
+
   for (var i = 0; i < state.pendingSentMessages.length; i++) {
-    var pendingText = state.pendingSentMessages[i].text.trim();
-    if (pendingText === stripped || pendingText === text) {
-      var el = document.getElementById(state.pendingSentMessages[i].id);
-      if (el) el.remove(); // remove optimistic element; real one is inserted at correct ts
-      state.pendingSentMessages.splice(i, 1);
-      return false; // return false so caller inserts the real message
+    var pending = state.pendingSentMessages[i];
+    var pendingText = pending.text.trim();
+    var isTextMatch = pendingText === stripped || pendingText === text;
+    // Command match: pending "/pdf" vs CC's "/document-skills:pdf" (share the
+    // bare name after the optional plugin namespace).
+    var isCmdMatch = cmdName && pendingText.charAt(0) === '/' &&
+      (('/' + cmdName) === pendingText || cmdName.split(':').pop() === pendingText.slice(1));
+    if (!isTextMatch && !isCmdMatch) continue;
+    state.pendingSentMessages.splice(i, 1);
+    var el = document.getElementById(pending.id);
+    if (isCmdMatch && !isTextMatch) {
+      // Keep our "/pdf" bubble (drop CC's namespaced dup), but promote it to a
+      // real timestamped anchor so the assistant reply sorts below it, not above.
+      // (Time text is set separately by the send_message_result handler.)
+      if (el && msg.timestamp) {
+        el.dataset.ts = msg.timestamp;
+        el.removeAttribute('data-pending');
+      }
+      return true;
     }
+    if (el) el.remove(); // remove optimistic element; real one is inserted at correct ts
+    return false; // caller inserts the real message
   }
   return false;
 }

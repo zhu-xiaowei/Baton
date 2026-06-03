@@ -385,6 +385,20 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .new-session-hero { text-align: center; padding: 0 24px 20px; }
 .hero-logo { font-size: 40px; line-height: 1; }
 .hero-title { font-size: 18px; font-weight: 600; color: #e6edf3; margin-top: 8px; letter-spacing: 0.2px; }
+/* Slash-command autocomplete popup (sits above the input row) */
+#slash-popup { background: #161b22; border: 1px solid #30363d; border-radius: 12px; margin-bottom: 8px; overflow: hidden; }
+.slash-popup-title { padding: 10px 14px 6px; font-size: 12px; color: #6e7681; }
+/* max-height on the SCROLL container itself (not the wrapper) so overflow-y
+   reliably triggers — flex height-propagation was leaving the list uncapped. */
+#slash-list { max-height: min(40vh, 300px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#slash-list::-webkit-scrollbar { width: 8px; }
+#slash-list::-webkit-scrollbar-thumb { background: #3a4049; border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) { #slash-list::-webkit-scrollbar-thumb:hover { background: #4a5059; } }
+#slash-list { scrollbar-width: thin; scrollbar-color: #3a4049 transparent; }
+.slash-item { padding: 5px 14px; cursor: pointer; line-height: 1.5; }
+.slash-item.active { background: #1f6feb33; }
+@media (hover: hover) and (pointer: fine) { .slash-item:hover { background: #21262d; } }
+.slash-name { color: #e6edf3; font-size: 14px; }
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
 #img-preview-row .img-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; }

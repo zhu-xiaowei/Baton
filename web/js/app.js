@@ -118,6 +118,7 @@ function showInputBar(visible) {
   bar.style.display = visible ? 'flex' : 'none';
   if (!visible) {
     if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
+    if (typeof window.closeSlashPopup === 'function') window.closeSlashPopup();
     document.getElementById('scroll-bottom-btn').classList.remove('visible');
     document.body.classList.remove('new-session');
     // Restore input-bar to body if it was moved into #content
