@@ -84,6 +84,13 @@
         continue;
       }
 
+      // Local command stdout (e.g. /compact result) → render as command output
+      if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
+        flushTurn();
+        html.push(renderLocalCommandStdout(msg));
+        continue;
+      }
+
       // User text message → flush current turn, render as bubble
       if (msg.type === 'user') {
         flushTurn();

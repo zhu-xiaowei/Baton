@@ -2,33 +2,44 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-// Built-in commands that CC ships compiled into its binary (bundled skills +
-// builtin slash commands) — they have NO file on disk, so the directory scan
-// can't find them. This list mirrors exactly what THIS CC version shows in its
-// "/" menu beyond the disk-scannable commands. Keep it in sync with the actual
-// menu on CC upgrades (CC may add/remove bundled skills between versions).
-// NOTE: we intentionally do NOT pad this with the full COMMANDS() set — only
-// commands the running CC actually surfaces belong here, so our list matches
-// CC 1:1 (no extras the user never sees, none of CC's hidden/gated commands).
+// Built-in commands CC compiles into its binary (bundled skills + builtin slash
+// commands) — no file on disk, so the directory scan can't find them. Mirrors
+// exactly this CC version's "/" menu beyond disk-scannable commands; re-sync on
+// CC upgrades. /clear is excluded on purpose — it spawns a fresh empty session
+// each time (clutter, no output); users use the "+" button for a clean context.
 const BUILTIN_COMMANDS = [
-  'batch', 'clear', 'code-review', 'compact', 'context', 'debug',
+  'batch', 'code-review', 'compact', 'config', 'context', 'debug',
   'deep-research', 'fewer-permission-prompts', 'goal', 'heapdump', 'init',
-  'insights', 'loop', 'reload-skills', 'remote-control', 'review', 'run',
-  'run-skill-generator', 'security-review', 'simplify', 'team-onboarding',
-  'update-config', 'usage', 'verify',
+  'insights', 'loop', 'reload-skills', 'review', 'run',
+  'run-skill-generator', 'security-review', 'simplify', 'stats', 'status',
+  'team-onboarding', 'update-config', 'usage', 'verify',
 ];
 
+// AgentPeek-only commands: send realCmd, press nav keys to reach a CC sub-tab,
+// capture it, then Esc to dismiss. Re-check nav on CC upgrades.
+export const SYNTHETIC_COMMANDS = {
+  'stats-models': { realCmd: '/stats', nav: ['Down', 'Right'] },
+};
+
 // "local" commands run client-side in CC and render output only in the terminal
-// — they never write to the .jsonl, so the bridge/app can't receive their result
-// (the app would loading-spin forever). We flag them with `local: true`; the web
-// UI hides them for now. They DO execute in CC if sent — we just can't show their
-// output yet. TODO: surface them by grabbing terminal output via
-// `tmux capture-pane` after send and pushing it over WS (see the "tmux capture-pane
-// Live State" plan in CLAUDE.md). Source: CC command `type: local`/`local-jsx`;
-// re-check on CC upgrades.
-const LOCAL_COMMANDS = new Set([
-  'clear', 'compact', 'context', 'usage', 'heapdump', 'remote-control',
-  'goal', 'reload-skills',
+// — they never write to the .jsonl. The bridge grabs their terminal output via
+// `tmux capture-pane` after send and pushes a `command_output` message (see
+// captureCommandOutput in tmux.mjs). Full-screen dialog ones (status/config/
+// usage/stats/context) are dismissed with Esc afterwards so the input box is
+// freed. Source: CC command `type: local`/`local-jsx`; re-check on CC upgrades.
+// NOTE: /compact is intentionally excluded — it writes its result back to the
+// .jsonl as a <local-command-stdout> user message, so it flows via that path
+// (rendered by renderLocalCommandStdout), not capture-pane.
+export const LOCAL_COMMANDS = new Set([
+  'context', 'usage', 'heapdump',
+  'goal', 'reload-skills', 'status', 'config', 'stats',
+]);
+
+// Full-screen dialog commands (CC `type: local-jsx`): they hold the input box
+// open and need Esc to dismiss after capture. Footer text varies (e.g. /stats
+// has no "Esc to..."), so we dismiss by command name rather than matching text.
+export const DIALOG_COMMANDS = new Set([
+  'status', 'config', 'usage', 'stats', 'context',
 ]);
 
 const HOME = os.homedir();
@@ -139,6 +150,11 @@ export function scanSlashCommands(projectDir) {
     const c = { name, source: 'builtin' };
     if (LOCAL_COMMANDS.has(name)) c.local = true;
     list.push(c);
+  }
+
+  // Synthetic commands (always local, captured via tmux nav).
+  for (const name of Object.keys(SYNTHETIC_COMMANDS)) {
+    list.push({ name, source: 'builtin', local: true });
   }
 
   // Dedup by name, keeping first occurrence (user > project > plugin > builtin).

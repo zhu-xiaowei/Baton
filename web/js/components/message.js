@@ -27,6 +27,20 @@
     return msg.content.every(b => b.type === 'tool_result');
   };
 
+  // Plain text of a user message (content is a string from the bridge, but be safe).
+  function userText(msg) {
+    if (typeof msg.content === 'string') return msg.content;
+    if (Array.isArray(msg.content)) return msg.content.map(b => b.text || '').join('');
+    return '';
+  }
+
+  // CC writes a local command's stdout back as a user message wrapped in
+  // <local-command-stdout> (e.g. /compact's "Compacted" summary). It's command
+  // output, not a user turn — render it like captured command output, not a bubble.
+  window.isLocalCommandStdout = function (msg) {
+    return msg.type === 'user' && /<local-command-stdout>/.test(userText(msg));
+  };
+
   // Detect if filename is a code file
   function isCodeFile(name) {
     const ext = (name.split('.').pop() || '').toLowerCase();
@@ -160,6 +174,33 @@
     }
     return `<div class="msg-system">${esc(content)}</div>`;
   };
+  // Append a "local" slash-command's terminal output (captured via tmux, ANSI
+  // colours preserved). These never reach the .jsonl, so they're appended live
+  // and not re-rendered on reload.
+  window.appendCommandOutput = function (ansi) {
+    if (!ansi) return;
+    var container = document.querySelector('.messages');
+    if (!container) return;
+    var html = window.ansiHtml ? window.ansiHtml(ansi) : esc(ansi);
+    container.insertAdjacentHTML('beforeend',
+      '<div class="cmd-output"><pre>' + html + '</pre></div>');
+    var content = document.getElementById('content');
+    if (content) content.scrollTo({ top: 99999, behavior: 'smooth' });
+    if (typeof updateSpinner === 'function') updateSpinner();
+  };
+
+  // Render a <local-command-stdout> user message (e.g. /compact result) as command
+  // output: strip the wrapper tags + ANSI escape codes, show as a clean cmd-output.
+  window.renderLocalCommandStdout = function (msg) {
+    var text = userText(msg)
+      .replace(/<\/?local-command-stdout>/g, '')
+      .replace(/\x1b\[[0-9;]*m/g, '') // strip ANSI colour codes
+      .replace(/\[\d+m/g, '')         // strip bare [2m/[22m the terminal echoed
+      .trim();
+    if (!text) return '';
+    return `<div class="cmd-output"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><pre>${esc(text)}</pre></div>`;
+  };
+
   var BTN = '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.parentElement)">Show more</span>';
   var BTN_MSG = '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.closest(\'.msg-user\').querySelector(\'.msg-text\'))">Show more</span>';
 

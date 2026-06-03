@@ -246,6 +246,106 @@ export function sendMessageToSession(sessionId, text) {
   }
 }
 
+// CC's "busy" footer marker — present while CC runs the AI/a tool. Reliable
+// signal that output is still changing (a random spinner verb sits next to it).
+const BUSY_MARKER = 'esc to interrupt';
+
+/**
+ * Capture a "local" slash command's terminal output (it never hits the .jsonl).
+ * Polls the pane until CC is idle (no `esc to interrupt`) and the screen is
+ * stable across two reads, then slices the body between the last `❯ /cmd` line
+ * and the following divider, keeping ANSI colour codes (-e).
+ *
+ * Returns the ANSI body string, or null if nothing meaningful / timed out /
+ * the command triggered the AI (the .jsonl path shows that instead).
+ */
+export async function captureCommandOutput(sessionId, commandText, dismiss, opts = {}) {
+  const target = findTmuxTargetForSession(sessionId);
+  if (!target) return null;
+
+  const nav = opts.nav || [];          // keys to press once the dialog first renders
+  const escapes = dismiss ? (opts.escapes || 1) : 0; // Esc presses to dismiss after
+
+  const grab = () => {
+    try {
+      // Include scrollback (-S -500): long outputs like /context scroll the
+      // "❯ /cmd" prompt off-screen, and sliceCommandBody needs that prompt line
+      // to find the body start. sliceCommandBody uses the LAST match, so older
+      // history doesn't interfere.
+      return execSync(`tmux capture-pane -t "${target}" -e -p -S -500`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] });
+    } catch { return null; }
+  };
+  // Strip ANSI for control-flow checks (busy marker / stability hash).
+  const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+  let prev = null, stable = 0, navigated = nav.length === 0;
+  const deadline = Date.now() + 40_000; // /context recomputes token counts for ~20s
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
+    const raw = grab();
+    if (raw == null) continue;
+    const flat = plain(raw);
+    if (flat.includes(BUSY_MARKER)) { stable = 0; prev = null; continue; } // still running
+    if (flat === prev) { stable++; } else { stable = 0; prev = flat; }
+    if (stable < 1) continue; // need two consecutive identical idle reads
+    // Dialog has rendered: press nav keys to switch sub-tab, then re-wait for stable.
+    if (!navigated) {
+      for (const k of nav) {
+        try { execSync(`tmux send-keys -t "${target}" ${k}`, { stdio: 'ignore' }); } catch {}
+      }
+      navigated = true; stable = 0; prev = null;
+      continue;
+    }
+    const body = sliceCommandBody(raw, commandText);
+    // Full-screen dialog commands hold the input box open — Esc to dismiss so the
+    // next message isn't swallowed (deeper sub-tabs may need more than one Esc).
+    for (let i = 0; i < escapes; i++) {
+      try { execSync(`tmux send-keys -t "${target}" Escape`, { stdio: 'ignore' }); } catch {}
+    }
+    return body;
+  }
+  return null;
+}
+
+// Slice the ANSI body from a capture: everything after the last "❯ /cmd" prompt,
+// skipping the separator divider that may follow, up to the next divider (the
+// input box) or end of screen. Returns null if empty / trivial ("(no content)").
+function sliceCommandBody(ansi, commandText) {
+  const lines = ansi.split('\n');
+  const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, ''); // strip ANSI colour only
+  const isDivider = (s) => /^\s*[─━]{10,}\s*$/.test(plain(s));
+  const cmd = (commandText || '').trim();
+
+  // Find the last prompt line that echoes the command we sent.
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const p = plain(lines[i]).trim();
+    if ((p.indexOf('❯') !== -1 || p.startsWith('>')) && cmd && p.indexOf(cmd) !== -1) { start = i + 1; break; }
+  }
+  if (start === -1) return null;
+
+  const body = [];
+  let seenContent = false; // any non-blank, non-divider line yet?
+  for (let i = start; i < lines.length; i++) {
+    if (isDivider(lines[i])) {
+      // The separator divider(s) right after the prompt (possibly preceded by
+      // blank lines) are skipped; a divider AFTER content marks the input box.
+      if (!seenContent) continue;
+      break;
+    }
+    if (plain(lines[i]).trim()) seenContent = true;
+    if (seenContent) body.push(lines[i]);
+  }
+  // Trim blank lines at the end.
+  while (body.length && !plain(body[body.length - 1]).trim()) body.pop();
+
+  const text = body.join('\n');
+  const flat = plain(text).trim();
+  if (!flat || /^⎿?\s*\(no content\)$/.test(flat)) return null;
+  return text;
+}
+
 /**
  * Resolve projectHash back to an absolute directory path.
  * Hash rule: path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-')

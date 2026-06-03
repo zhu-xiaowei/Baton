@@ -6,10 +6,10 @@ import os from 'os';
 import crypto from 'crypto';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile, getDaemonSessions } from './session.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath } from './tmux.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
-import { scanSlashCommands } from './commands.mjs';
+import { scanSlashCommands, LOCAL_COMMANDS, DIALOG_COMMANDS, SYNTHETIC_COMMANDS } from './commands.mjs';
 
 let _ws = null;
 let _config = null;
@@ -221,6 +221,15 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     }
   }
 
+  // Synthetic commands (e.g. /stats-models): CC has no such command, so send its
+  // realCmd into tmux instead and remember the spec for nav-based capture below.
+  let synthetic = null;
+  const sm = /^\/([\w:-]+)\s*$/.exec(resolved.trim());
+  if (sm && SYNTHETIC_COMMANDS[sm[1]]) {
+    synthetic = SYNTHETIC_COMMANDS[sm[1]];
+    resolved = synthetic.realCmd;
+  }
+
   // New session: create tmux + claude, send message, detect sessionId
   if (!sessionId && projectHash) {
     const lockKey = requestId || projectHash;
@@ -283,6 +292,31 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     console.log(`[ws] send_message failed: ${result.error}`);
   }
   wsSend({ action: 'send_message_result', sessionId, ...result });
+
+  // "local" slash commands (e.g. /goal, /usage) render only in CC's terminal and
+  // never reach the .jsonl. If we just sent one, grab its terminal output and push
+  // it so the app shows the result instead of spinning forever.
+  if (result.ok && sessionId) maybeCaptureLocalCommand(sessionId, resolved, requestId, synthetic);
+}
+
+// If `text` is a bare local slash command, asynchronously capture its terminal
+// output and push it to the app. Fire-and-forget — never blocks the send.
+function maybeCaptureLocalCommand(sessionId, text, requestId, synthetic) {
+  const m = /^\/([\w:-]+)\s*$/.exec((text || '').trim()); // bare "/cmd", no args
+  if (!m) return; // args → triggers AI → shown via .jsonl, no capture needed
+  const name = m[1].split(':').pop(); // strip plugin namespace
+  // Synthetic commands always capture (realCmd's dialog + nav); else local-only.
+  const dismiss = synthetic ? true : DIALOG_COMMANDS.has(name);
+  if (!synthetic && !LOCAL_COMMANDS.has(name)) return;
+  captureCommandOutput(sessionId, text, dismiss, synthetic || {})
+    .then(ansi => {
+      // Always reply (ansi may be empty) so the app can stop its spinner.
+      wsSend({ action: 'command_output', sessionId, requestId, ansi: ansi || '' });
+    })
+    .catch(err => {
+      console.error(`[ws] capture local cmd failed: ${err.message}`);
+      wsSend({ action: 'command_output', sessionId, requestId, ansi: '' });
+    });
 }
 
 async function handleNewSessionMessage(projectHash, text, rawProjectPath) {

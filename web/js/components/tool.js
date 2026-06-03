@@ -14,6 +14,7 @@
     if (!window.Anser) return esc(str);
     return window.Anser.ansiToHtml(window.Anser.escapeForHtml(str));
   }
+  window.ansiHtml = ansiHtml; // reused by command_output rendering
 
   // Render Bash tool
   function renderBash(input, result) {

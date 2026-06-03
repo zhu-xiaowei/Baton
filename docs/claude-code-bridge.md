@@ -262,6 +262,31 @@ App: split reply by source → cache global (user/plugin/builtin) once per DEVIC
      project dir gets all global commands from the device cache with no per-project wait.
 ```
 
+### Local slash commands (terminal-only output)
+
+Some builtin commands (status/config/usage/stats/goal/compact/context/heapdump/
+reload-skills) run client-side in CC and render output ONLY in the terminal —
+nothing reaches the .jsonl. After sending a bare such command, the bridge
+captures the terminal output and pushes it so the app can show it. (`/clear` is
+NOT included — it spawns a fresh empty session each time; users use the "+"
+new-session button for a clean context instead.)
+
+```
+App → … → Bridge:  send_message text="/usage"  (handled like any send)
+Bridge: sendKeys → then maybeCaptureLocalCommand():
+  bare "/cmd" (no args) AND cmd ∈ LOCAL_COMMANDS?   (args → triggers AI → .jsonl)
+   → captureCommandOutput(): poll `tmux capture-pane -e -p` every 800ms (≤25s):
+       "esc to interrupt" present → CC busy (local calc or AI), keep waiting
+       idle + screen stable across 2 reads → slice body (❯/cmd → dividers), keep ANSI
+       if full-screen dialog ("Esc to cancel/dismiss/close/clear") → send Escape
+         afterwards so the input box is freed (else next message is swallowed)
+Bridge → Server → App:  { action: "command_output", sessionId, requestId, ansi }
+  (relayed to session subscribers; empty ansi → app just stops the spinner)
+App: render ansi as a .cmd-output terminal block (anser → coloured HTML), live-only
+     (not persisted, won't reappear on reload). NOTE: full-screen dialogs taller than
+     the pane (Settings/Config) are truncated — we capture the visible screen only.
+```
+
 ## Entering a Session — Complete Flow
 
 ```

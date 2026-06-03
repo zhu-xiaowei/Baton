@@ -203,6 +203,9 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "commands_list":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
+    elif action == "command_output":
+        if role == "bridge":
+            return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "create_project":
         if role == "app":
             if not body.get("projectPath"):

@@ -649,7 +649,7 @@ Ask the bridge to scan all available slash commands (custom commands, skills, an
 2. **Project**: `<projectDir>/.claude/commands/**/*.md` + `/skills/*/SKILL.md`
 3. **Plugins**: read `settings.json` `enabledPlugins`; resolve each plugin root (`installed_plugins.json` `installPath` → `extraKnownMarketplaces` path → `plugins/marketplaces/<mkt>/plugins/<name>` → `.../<name>`); scan its `/commands` + `/skills`
 4. `name` = command file basename (sans `.md`) — directory entries only, no file read; subdirectories form a `:` namespace. Skill `name` is read from `SKILL.md` frontmatter `name` (falls back to dir name)
-5. Append `BUILTIN_COMMANDS` (`source: "builtin"`) — bundled skills + builtin slash commands CC compiles into its binary (no file on disk): `batch` `clear` `code-review` `compact` `context` `debug` `deep-research` `fewer-permission-prompts` `goal` `heapdump` `init` `insights` `loop` `reload-skills` `remote-control` `review` `run` `run-skill-generator` `security-review` `simplify` `team-onboarding` `update-config` `usage` `verify`
+5. Append `BUILTIN_COMMANDS` (`source: "builtin"`) — bundled skills + builtin slash commands CC compiles into its binary (no file on disk): `batch` `code-review` `compact` `config` `context` `debug` `deep-research` `fewer-permission-prompts` `goal` `heapdump` `init` `insights` `loop` `reload-skills` `review` `run` `run-skill-generator` `security-review` `simplify` `stats` `status` `team-onboarding` `update-config` `usage` `verify` (`/clear` is excluded — it spawns a fresh empty session each time; use the "+" new-session button instead)
 6. Dedup by `name` (priority user > project > plugin > builtin — so a user's `commit.md`/`recap.md` wins over a same-named built-in), then sort all names alphabetically (`localeCompare`); reply `commands_list`
 
 Only command names are returned (no descriptions) — matches Claude Code's `/`-menu, which shows names only. Keeps the payload tiny (~2.5 KB for ~75 commands) and means command scanning needs no file reads.
@@ -832,6 +832,31 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 
 ---
 
+#### command_output
+
+A "local" slash command (e.g. `/goal`, `/usage`, `/status`) renders output only in CC's terminal and never writes to the `.jsonl`. After the bridge sends one (a bare `/cmd`, no args — args would trigger the AI and flow through the `.jsonl` instead), it grabs the terminal output via `tmux capture-pane -e -p` and pushes it here.
+
+```json
+{
+  "action": "command_output",
+  "sessionId": "a1ca0870-xxxx",
+  "requestId": "...",
+  "ansi": "[1m  ✔ Goal achieved[0m\n  ..."
+}
+```
+
+**Fields**:
+| Field | Description |
+|-------|-------------|
+| `sessionId` | Scopes the relay to subscribers of this session |
+| `ansi` | The captured terminal body, **ANSI colour codes preserved** (the app renders them with the same anser path as tool output). Empty string `""` when the capture found nothing meaningful — the app just stops its spinner. |
+
+**Bridge handling** (`captureCommandOutput`): poll the pane every 800 ms (≤25 s, since `/context`/`/stats` are slow). While `esc to interrupt` is present CC is busy (local calc or AI) → keep waiting. Once idle and the screen is identical across two reads → slice the body between the last `❯ /cmd` prompt and the surrounding dividers, keeping ANSI. If the screen is a full-screen dialog (`Esc to cancel/dismiss/close/clear` footer), **send `Escape`** afterwards so the input box is freed for the next message.
+
+**Server handling**: `_handle_bridge_relay` — forward to app connections subscribed to `sessionId`.
+
+---
+
 ### Server → Bridge (Push)
 
 #### messages_ack
@@ -953,6 +978,12 @@ Server forwards the bridge's slash-command list (broadcast to **all** app connec
   "commands": [{ "name": "commit", "source": "user" }]
 }
 ```
+
+---
+
+#### command_output
+
+Server forwards a local slash command's captured terminal output to app connections subscribed to the session. Same payload as the Bridge → Server `command_output`. The app renders `ansi` (ANSI colours preserved) as a `.cmd-output` terminal block and stops the send spinner; empty `ansi` just clears the spinner. These are live-only — not persisted, so they don't reappear on reload.
 
 ---
 

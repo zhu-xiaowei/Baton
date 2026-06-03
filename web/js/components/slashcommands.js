@@ -92,11 +92,7 @@ function applyFilter() {
   var prefix = currentPrefix();
   if (prefix === null) { closePopup(); return; }
   _filtered = _commands.filter(function (c) {
-    // Skip "local" commands (clear/compact/goal/…): their output renders only in
-    // CC's terminal and never reaches the app (would loading-spin forever), so we
-    // hide them for now. TODO: surface them once the bridge can grab terminal
-    // output via `tmux capture-pane` and push it over WS (see commands.mjs).
-    return !c.local && c.name.toLowerCase().indexOf(prefix) === 0;
+    return c.name.toLowerCase().indexOf(prefix) === 0;
   });
   if (_filtered.length === 0) { closePopup(); return; }
   _selected = 0;

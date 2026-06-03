@@ -202,6 +202,11 @@ function connectWs(_, projectHash) {
       if (window.handleFileReady) window.handleFileReady(msg);
     } else if (msg.action === 'commands_list') {
       if (window.handleCommandsList) window.handleCommandsList(msg);
+    } else if (msg.action === 'command_output') {
+      if (msg.sessionId === state.wsSessionId && window.appendCommandOutput) {
+        state.wsRunning = false; // local command done; stop the spinner
+        window.appendCommandOutput(msg.ansi);
+      }
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -347,6 +352,16 @@ function updateLastTurn() {
           node.className = 'tl-item tool-node' + (toolStateClass ? ' ' + toolStateClass : '');
         }
       }
+      continue;
+    }
+
+    // Local command stdout (e.g. /compact result): command output, not a user
+    // turn — render as cmd-output and stop the spinner (no assistant follows).
+    if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
+      if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) state.wsRunning = false;
+      if (tryDedup(msg)) continue;
+      var stdoutHtml = window.renderLocalCommandStdout(msg);
+      if (stdoutHtml) insertAtTimestamp(container, stdoutHtml, msg.timestamp);
       continue;
     }
 
