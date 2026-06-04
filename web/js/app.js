@@ -621,6 +621,18 @@ async function loadOlderAndPrepend() {
   }
 })();
 
+// In Tauri (WKWebView/WebView2) target=_blank can't open a tab, so external links
+// would navigate the webview itself. Intercept and hand off to the system browser
+// via plugin-opener (scoped to http/https in capabilities). Real browsers keep
+// target=_blank and open a tab natively.
+document.addEventListener('click', function (e) {
+  var a = e.target.closest && e.target.closest('a.ext-link');
+  if (!a || !a.href) return;
+  if (!(window.isTauri || window.__TAURI_INTERNALS__)) return;
+  e.preventDefault();
+  import('@tauri-apps/plugin-opener').then(function (m) { m.openUrl(a.href); }).catch(function () {});
+});
+
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
 // All shared state lives in state.js, not on window.
 Object.assign(window, {

@@ -19,7 +19,11 @@
 
   function rewriteFileLinks(html) {
     return html.replace(/<a\s+href="([^"]*)"[^>]*>(.*?)<\/a>/gi, function (m, href, label) {
-      if (/^(https?:|mailto:|#|\/\/|tel:|data:)/i.test(href)) return m;
+      // External link: new tab in browser; app.js intercepts .ext-link under Tauri.
+      if (/^https?:/i.test(href)) {
+        return '<a href="' + href + '" class="ext-link" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      }
+      if (/^(mailto:|#|\/\/|tel:|data:)/i.test(href)) return m;
       var hash = (href.match(/#L?(\d+(?:[-,]L?\d+)?)/) || [])[1] || '';
       var path = href.replace(/#.*$/, '');
       var colon = path.match(/^(.*?):(\d+(?:-\d+)?)$/);
