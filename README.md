@@ -46,6 +46,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Real-time session view** — ultra-fast sync via WebSocket as Claude Code works
 - **Session status** — running (green) / idle (yellow) / stopped (gray) indicators
 - **Send messages** — type prompts directly from phone or desktop, delivered via tmux
+- **Slash commands** — `/`-autocomplete just like the Claude Code terminal, listing your user, project, and plugin commands
 - **Send images** — paste or pick photos, compressed & uploaded to S3, read by Claude Code
 - **Claude Agents support** — monitor and interact with `claude agents` background sessions
 - **Permission approval** — approve or deny tool calls (Bash, Edit, Write) remotely
