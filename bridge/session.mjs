@@ -309,6 +309,22 @@ export function findSessionFile(sessionId) {
   return null;
 }
 
+/**
+ * Single source of truth: map a daemon job's state.json to our 3-state agentState.
+ * Mirrors `claude agents` TUI: Working / Needs input / Completed.
+ *
+ * `state` (lifecycle) is authoritative — `tempo` (cadence) lags and can stay
+ * 'active' after the job blocks/fails, so it's only a fallback when state is absent.
+ */
+export function mapAgentState(state) {
+  const st = state.state || '';
+  if (st === 'done' || st === 'completed') return 'done';      // Completed
+  if (st === 'blocked' || st === 'failed') return 'blocked';   // Needs input
+  if (st) return 'running';                                    // Working
+  const tempo = state.tempo || '';
+  return tempo === 'blocked' ? 'blocked' : tempo === 'active' ? 'running' : 'done';
+}
+
 export function getDaemonSessions() {
   const result = new Map();
   if (!fs.existsSync(CLAUDE_JOBS)) return result;
@@ -319,12 +335,11 @@ export function getDaemonSessions() {
       try {
         const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         if (state.backend !== 'daemon' || !state.sessionId) continue;
-        const tempo = state.tempo || state.state || '';
         result.set(state.sessionId, {
           isAgent: true,
           agentName: state.name || '',
           agentDetail: state.detail || state.needs || '',
-          agentState: tempo === 'active' ? 'running' : tempo === 'blocked' ? 'blocked' : 'done',
+          agentState: mapAgentState(state),
         });
       } catch {}
     }

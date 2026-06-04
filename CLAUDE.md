@@ -89,7 +89,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Claude Agents support:
   - `getDaemonSessions()`: reads `~/.claude/jobs/*/state.json` → isAgent/agentName/agentDetail/agentState
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds
-  - Status uses `tempo` field (active→running, blocked→idle, idle→done/stopped)
+  - Status via `mapAgentState()` (single source): `state` field authoritative (done/completed→done, blocked/failed→blocked, else→running), falls back to `tempo` only when `state` absent. `tempo` lags and stays 'active' after a job blocks/fails, so it can't lead.
   - Jobs watcher: `fs.watch(~/.claude/jobs/)` detects state.json changes → sync to DDB
   - Send to agent: `launchAgentsSession()` → tmux + `claude agents --cwd` → navigate TUI → Right → sendKeys
   - New agent session: `handleNewAgentSession()` → tmux + `claude agents` → type in bottom input → poll for .jsonl → kill tmux
