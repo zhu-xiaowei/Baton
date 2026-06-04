@@ -389,6 +389,46 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .cmd-output { margin: 6px 0; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; overflow-x: auto; }
 .cmd-output pre { margin: 0; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45; color: #c9d1d9; white-space: pre; }
 
+/* Dark-theme ANSI palette (Anser use_classes mode). CC's terminal output uses
+   dim + dark colours tuned for the terminal's own bg; remapped here so they stay
+   legible on our #0d1117 background. Scoped to ANSI-rendering surfaces. */
+.cmd-output, .tool-value {
+  --ansi-black: #8b949e; --ansi-red: #ff7b72; --ansi-green: #3fb950;
+  --ansi-yellow: #d29922; --ansi-blue: #58a6ff; --ansi-magenta: #bc8cff;
+  --ansi-cyan: #39c5cf; --ansi-white: #c9d1d9;
+}
+.cmd-output .ansi-dim, .tool-value .ansi-dim { opacity: 0.78; }
+.cmd-output .ansi-bold, .tool-value .ansi-bold { font-weight: 700; }
+.cmd-output .ansi-italic, .tool-value .ansi-italic { font-style: italic; }
+.cmd-output .ansi-underline, .tool-value .ansi-underline { text-decoration: underline; }
+.cmd-output .ansi-strikethrough, .tool-value .ansi-strikethrough { text-decoration: line-through; }
+.cmd-output .ansi-hidden, .tool-value .ansi-hidden { visibility: hidden; }
+.cmd-output .ansi-black-fg, .tool-value .ansi-black-fg,
+.cmd-output .ansi-bright-black-fg, .tool-value .ansi-bright-black-fg { color: var(--ansi-black); }
+.cmd-output .ansi-red-fg, .tool-value .ansi-red-fg,
+.cmd-output .ansi-bright-red-fg, .tool-value .ansi-bright-red-fg { color: var(--ansi-red); }
+.cmd-output .ansi-green-fg, .tool-value .ansi-green-fg,
+.cmd-output .ansi-bright-green-fg, .tool-value .ansi-bright-green-fg { color: var(--ansi-green); }
+.cmd-output .ansi-yellow-fg, .tool-value .ansi-yellow-fg,
+.cmd-output .ansi-bright-yellow-fg, .tool-value .ansi-bright-yellow-fg { color: var(--ansi-yellow); }
+.cmd-output .ansi-blue-fg, .tool-value .ansi-blue-fg,
+.cmd-output .ansi-bright-blue-fg, .tool-value .ansi-bright-blue-fg { color: var(--ansi-blue); }
+.cmd-output .ansi-magenta-fg, .tool-value .ansi-magenta-fg,
+.cmd-output .ansi-bright-magenta-fg, .tool-value .ansi-bright-magenta-fg { color: var(--ansi-magenta); }
+.cmd-output .ansi-cyan-fg, .tool-value .ansi-cyan-fg,
+.cmd-output .ansi-bright-cyan-fg, .tool-value .ansi-bright-cyan-fg { color: var(--ansi-cyan); }
+.cmd-output .ansi-white-fg, .tool-value .ansi-white-fg,
+.cmd-output .ansi-bright-white-fg, .tool-value .ansi-bright-white-fg { color: var(--ansi-white); }
+/* Background colours: keep legible text on top of CC's highlighted cells. */
+.cmd-output .ansi-black-bg, .tool-value .ansi-black-bg { background-color: #21262d; }
+.cmd-output .ansi-red-bg, .tool-value .ansi-red-bg { background-color: #ff7b72; color: #0d1117; }
+.cmd-output .ansi-green-bg, .tool-value .ansi-green-bg { background-color: #3fb950; color: #0d1117; }
+.cmd-output .ansi-yellow-bg, .tool-value .ansi-yellow-bg { background-color: #d29922; color: #0d1117; }
+.cmd-output .ansi-blue-bg, .tool-value .ansi-blue-bg { background-color: #58a6ff; color: #0d1117; }
+.cmd-output .ansi-magenta-bg, .tool-value .ansi-magenta-bg { background-color: #bc8cff; color: #0d1117; }
+.cmd-output .ansi-cyan-bg, .tool-value .ansi-cyan-bg { background-color: #39c5cf; color: #0d1117; }
+.cmd-output .ansi-white-bg, .tool-value .ansi-white-bg { background-color: #c9d1d9; color: #0d1117; }
+
 /* Slash-command autocomplete popup (sits above the input row) */
 #slash-popup { background: #161b22; border: 1px solid #30363d; border-radius: 12px; margin-bottom: 8px; overflow: hidden; }
 .slash-popup-title { padding: 10px 14px 6px; font-size: 12px; color: #6e7681; }
