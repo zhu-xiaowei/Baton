@@ -195,7 +195,7 @@ Approach: tmux send-keys (cross-platform, zero-intrusion)
 - New Session: Viewer "+ New Session" button → `send_message` with projectHash → Bridge creates tmux + claude → poll .jsonl for sessionId → return to Viewer for subscribe
 - Trust dialog auto-confirm (detects "Yes, I trust this folder" → Enter)
 - tmux naming: resume `apeek_{project}_{sessionId first 8 chars}`, new `apeek_{project}_{MMDDHHmmss}`
-- Old session cleanup: async cleanup `apeek_*` sessions inactive >1 day when creating new tmux
+- Old session cleanup: `cleanStaleSessions()` kills `apeek_*` tmux inactive >1 day; runs periodically (hourly-throttled) inside `checkStopped`, not on tmux creation. Only touches bridge-created `apeek_*` sessions — never user-opened terminals.
 - Duplicate session name: kill existing before creating
 
 ### Device Routing
