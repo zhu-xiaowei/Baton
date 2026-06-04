@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, mapAgentState } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, mapAgentState, agentDetailFor } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
@@ -228,7 +228,7 @@ function loadAllJobStates() {
         _jobsState.set(dir, {
           sessionId: state.sessionId,
           agentName: state.name || '',
-          agentDetail: state.detail || state.needs || '',
+          agentDetail: agentDetailFor(state),
           agentState: mapAgentState(state),
         });
       } catch {}
@@ -247,7 +247,7 @@ async function handleJobStateChange(config, short) {
   const newEntry = {
     sessionId: state.sessionId,
     agentName: state.name || '',
-    agentDetail: state.detail || state.needs || '',
+    agentDetail: agentDetailFor(state),
     agentState: mapAgentState(state),
   };
 

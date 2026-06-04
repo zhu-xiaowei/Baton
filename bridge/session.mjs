@@ -325,6 +325,14 @@ export function mapAgentState(state) {
   return tempo === 'blocked' ? 'blocked' : tempo === 'active' ? 'running' : 'done';
 }
 
+// Match `claude agents` display: blocked shows `needs` (the question awaiting
+// the user); other states show `detail` (work summary).
+export function agentDetailFor(state) {
+  return mapAgentState(state) === 'blocked'
+    ? (state.needs || state.detail || '')
+    : (state.detail || state.needs || '');
+}
+
 export function getDaemonSessions() {
   const result = new Map();
   if (!fs.existsSync(CLAUDE_JOBS)) return result;
@@ -338,7 +346,7 @@ export function getDaemonSessions() {
         result.set(state.sessionId, {
           isAgent: true,
           agentName: state.name || '',
-          agentDetail: state.detail || state.needs || '',
+          agentDetail: agentDetailFor(state),
           agentState: mapAgentState(state),
         });
       } catch {}
