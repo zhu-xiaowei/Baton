@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, getDaemonSessions, findSessionFile } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
@@ -121,58 +121,85 @@ async function readAndSend(config, filename, sessionId) {
 
   // Sync metadata only when status changed, new session, or ai-title arrived
   if (lastParsedLine > lastLine && lastStatus) {
-    // jsonl tail can't see daemon blocked/done (a pending AskUserQuestion looks
-    // like 'running') — reconcile before deriving delta/cache. Matches sync.mjs.
-    const dm = getDaemonSessions().get(sessionId);
-    let newStatus = lastStatus;
+    // A finished agent resumed as a regular CC session (live --resume process) is
+    // no longer an agent — ignore its stale daemon record. Matches sync.mjs.
+    let dm = getDaemonSessions().get(sessionId);
+    if (dm && dm.agentState === 'done' && getRunningInfo().sessions.has(sessionId)) dm = null;
+    // Debounce + terminal-truth before downgrading (don't flicker the badge to
+    // idle mid-task). Daemon sessions skip it — reconciled below.
+    let newStatus = dm
+      ? lastStatus
+      : resolveStatus(sessionId, lastStatus, () => getRunningInfo().sessions.has(sessionId));
     if (dm) {
       if (dm.agentState === 'done') newStatus = 'stopped';
       else if (dm.agentState === 'blocked') newStatus = 'idle';
     }
-    const oldStatus = lastKnownStatus.get(sessionId);
-    const statusChanged = newStatus !== oldStatus;
-    const isNew = !recentSessions.has(sessionId);
-
-    if (statusChanged || isNew || gotNewTitle) {
-
-      const stat = fs.statSync(filePath);
-      const projectHash = path.basename(path.dirname(filename));
-      lastKnownStatus.set(sessionId, newStatus);
-      // Counter delta — server uses this to ADD/SUBTRACT counters on DEV#/PROJ# items.
-      // 'new' means this session wasn't in our cache before (sessionCount += 1).
-      const statusDelta = (statusChanged || isNew) ? {
-        deviceName: config.deviceName,
-        projectHash,
-        from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'stopped'),
-        to: newStatus,
-        projectName: readableProjectName(projectHash),
-        lastActive: stat.mtime.toISOString(),
-      } : null;
-      const sessionMeta = {
-        id: sessionId,
-        project: projectHash,
-        projectName: readableProjectName(projectHash),
-        lastActive: stat.mtime.toISOString(),
-        size: stat.size,
-        preview: getPreview(filePath) || 'New session',
-        model: getModel(filePath),
-        status: newStatus,
-      };
-      if (dm) {
-        sessionMeta.isAgent = true;
-        sessionMeta.agentName = dm.agentName;
-        sessionMeta.agentDetail = dm.agentDetail;
-        sessionMeta.agentState = dm.agentState;
-      }
-      await post('/api/bridge/sync-sessions', {
-        deviceName: config.deviceName,
-        os: process.platform,
-        sessions: [sessionMeta],
-        ...(statusDelta ? { statusDelta } : {}),
-      });
-      recentSessions.add(sessionId);
-    }
+    await postSessionMeta(config, filePath, filename, sessionId, newStatus, dm, gotNewTitle);
+    // Trailing edge: content went idle but debounce held it 'running'. No more
+    // writes will fire fs.watch, so re-evaluate once after debounce expires.
+    if (!dm && lastStatus !== 'running' && newStatus === 'running') scheduleRecheck(config, filePath, filename, sessionId);
   }
+}
+
+// Post session metadata + counter delta when status changed, is new, or title arrived.
+async function postSessionMeta(config, filePath, filename, sessionId, newStatus, dm, gotNewTitle) {
+  const oldStatus = lastKnownStatus.get(sessionId);
+  const statusChanged = newStatus !== oldStatus;
+  const isNew = !recentSessions.has(sessionId);
+
+  // Skip empty-shell sessions (e.g. /clear: metadata only, no preview, not running).
+  const preview = getPreview(filePath);
+  if (!preview && newStatus !== 'running' && !dm) return;
+  if (!(statusChanged || isNew || gotNewTitle)) return;
+
+  const stat = fs.statSync(filePath);
+  const projectHash = path.basename(path.dirname(filename));
+  lastKnownStatus.set(sessionId, newStatus);
+  // Counter delta — server uses this to ADD/SUBTRACT counters; 'new' means += 1.
+  const statusDelta = (statusChanged || isNew) ? {
+    deviceName: config.deviceName,
+    projectHash,
+    from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'stopped'),
+    to: newStatus,
+    projectName: readableProjectName(projectHash),
+    lastActive: stat.mtime.toISOString(),
+  } : null;
+  const sessionMeta = {
+    id: sessionId,
+    project: projectHash,
+    projectName: readableProjectName(projectHash),
+    lastActive: stat.mtime.toISOString(),
+    size: stat.size,
+    preview: preview || 'New session',
+    model: getModel(filePath),
+    status: newStatus,
+  };
+  if (dm) {
+    sessionMeta.isAgent = true;
+    sessionMeta.agentName = dm.agentName;
+    sessionMeta.agentDetail = dm.agentDetail;
+    sessionMeta.agentState = dm.agentState;
+  }
+  await post('/api/bridge/sync-sessions', {
+    deviceName: config.deviceName,
+    os: process.platform,
+    sessions: [sessionMeta],
+    ...(statusDelta ? { statusDelta } : {}),
+  });
+  recentSessions.add(sessionId);
+}
+
+const _recheckTimers = new Map(); // sessionId → timeout, reset on new activity
+const RECHECK_DELAY_MS = 11_000;   // just past resolveStatus's 10s running debounce
+
+function scheduleRecheck(config, filePath, filename, sessionId) {
+  clearTimeout(_recheckTimers.get(sessionId));
+  _recheckTimers.set(sessionId, setTimeout(async () => {
+    _recheckTimers.delete(sessionId);
+    if (!fs.existsSync(filePath)) return;
+    const status = getSessionStatus(sessionId, filePath, getRunningInfo());
+    await postSessionMeta(config, filePath, filename, sessionId, status, null, false);
+  }, RECHECK_DELAY_MS));
 }
 
 const _jobsState = new Map();

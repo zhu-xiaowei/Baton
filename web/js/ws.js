@@ -79,6 +79,14 @@ function updateTitleFromMessages() {
   saveNav();
 }
 
+// Skeleton → empty state + stop spinner, when a synced session has no real messages.
+function showEmptyMessages() {
+  var content = document.getElementById('content');
+  if (content && !state.wsAllMessages.length) content.innerHTML = '<div class="empty">No messages</div>';
+  state.wsRunning = false;
+  updateSendBtn();
+}
+
 function connectWs(_, projectHash) {
   if (!state.WS_URL) {
     // First launch + no cached _wsurl: fetch config, then retry once
@@ -181,19 +189,20 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId !== state.wsSessionId) return;
-      // not_found (bridge has no such session) or already re-fetched once → stop,
-      // otherwise an empty DDB re-triggers needSync → sync_complete → loop.
-      if (msg.status === 'not_found' || state._syncedOnce === msg.sessionId) return;
+      // No real messages (not_found / synced 0) → clear skeleton, don't hang.
+      if (msg.status === 'not_found' || msg.count === 0) { showEmptyMessages(); return; }
+      if (state._syncedOnce === msg.sessionId) return;
       state._syncedOnce = msg.sessionId;
       // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
       // and re-triggers needSync, causing a render-loop with title flicker.
       bufferAndFetch(msg.sessionId, '').then(function () {
-        if (state.wsAllMessages.length === 0) return;
+        if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
         state.wsRenderedCount = state.wsAllMessages.length;
-        state.wsLoadCompleteTs = state.wsLastTimestamp || '';
+        state.wsRunning = deriveRunning(state.wsAllMessages);
         updateTitleFromMessages();
+        updateSendBtn();
         loadImages(content);
         clampOverflow(content.querySelector('.messages'));
         content.scrollTop = content.scrollHeight;
@@ -355,10 +364,8 @@ function updateLastTurn() {
       continue;
     }
 
-    // Local command stdout (e.g. /compact result): command output, not a user
-    // turn — render as cmd-output and stop the spinner (no assistant follows).
+    // Local command stdout (e.g. /compact result): render as cmd-output.
     if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
-      if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) state.wsRunning = false;
       if (tryDedup(msg)) continue;
       var stdoutHtml = window.renderLocalCommandStdout(msg);
       if (stdoutHtml) insertAtTimestamp(container, stdoutHtml, msg.timestamp);
@@ -367,7 +374,6 @@ function updateLastTurn() {
 
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
-      if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) state.wsRunning = true;
       if (tryDedup(msg)) continue;
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
@@ -382,10 +388,6 @@ function updateLastTurn() {
 
     // Assistant message
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
-
-    if (msg.timestamp && msg.timestamp > (state.wsLoadCompleteTs || '')) {
-      state.wsRunning = msg.type === 'assistant' && msg.stopReason !== 'end_turn';
-    }
 
     var html = renderSingleMessage(msg, state.wsAllMessages);
     if (!html) continue;
@@ -419,6 +421,7 @@ function updateLastTurn() {
     }
   }
 
+  state.wsRunning = deriveRunning(state.wsAllMessages);
   updateSendBtn();
 
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
@@ -523,6 +526,8 @@ async function recoverMissing() {
     if (container) {
       container.innerHTML = renderMessages(state.wsAllMessages);
       state.wsRenderedCount = state.wsAllMessages.length;
+      state.wsRunning = deriveRunning(state.wsAllMessages);
+      updateSendBtn();
       loadImages(container);
       clampOverflow(container);
       checkPendingPrompts(state.wsAllMessages);

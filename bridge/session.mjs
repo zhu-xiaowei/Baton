@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL } from './config.mjs';
+import { isTerminalBusy } from './tmux.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -129,7 +130,8 @@ export function readableProjectName(projectHash) {
 export function statusFromEntry(entry) {
   if (!entry) return null;
   const t = entry.type;
-  if (t === 'last-prompt') return 'idle';
+  // last-prompt is a metadata snapshot CC re-appends near EOF (not a state signal),
+  // so it's not turn-defining → keep scanning. (CC source: sessionStorage.ts.)
   if (t === 'assistant' && entry.message) {
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
@@ -137,6 +139,7 @@ export function statusFromEntry(entry) {
     if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'idle';
   }
   if (t === 'user') {
+    if (entry.isMeta || entry.isCompactSummary) return null; // meta, not a turn
     const c = entry.message?.content;
     if (Array.isArray(c)) {
       // [Request interrupted by user] or [Request interrupted by user for tool use]
@@ -145,9 +148,37 @@ export function statusFromEntry(entry) {
       // tool_result with is_error=true only (user interrupted during tool execution)
       if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'idle';
     }
+    if (typeof c === 'string') {
+      const cs = c.trim();
+      // Command finished → idle; noise & /clear (no reply) → skip; other
+      // <command-name> falls through to 'running' (awaiting a reply).
+      if (/^<local-command-stdout>/.test(cs)) return 'idle';
+      if (/^<(?:local-command-caveat|task-notification|system-reminder)/.test(cs)) return null;
+      if (/^<command-name>\/?clear<\/command-name>/.test(cs)) return null;
+    }
     return 'running';
   }
   return null; // file-history-snapshot, queue-operation, etc.
+}
+
+// Last time content judged each session 'running' — for the downgrade debounce.
+const lastRunningTs = new Map();
+const RUNNING_DEBOUNCE_MS = 10_000;
+
+// Resolve content status, holding 'running' across end_turn flicker before
+// downgrading: debounce → terminal truth (capture-pane) → process fallback.
+// procAliveFn is lazy — only the no-pane branch pays for `ps aux`.
+export function resolveStatus(sessionId, contentStatus, procAliveFn) {
+  if (contentStatus === 'running') {
+    lastRunningTs.set(sessionId, Date.now());
+    return 'running';
+  }
+  const last = lastRunningTs.get(sessionId);
+  if (last && Date.now() - last < RUNNING_DEBOUNCE_MS) return 'running';
+  const busy = isTerminalBusy(sessionId);
+  if (busy === true) { lastRunningTs.set(sessionId, Date.now()); return 'running'; }
+  if (busy === false) return contentStatus; // terminal confirms idle/stopped
+  return procAliveFn() ? 'idle' : 'stopped'; // no pane → process fallback
 }
 
 /**
@@ -219,7 +250,8 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
     } catch { return 'stopped'; }
   }
 
-  return contentStatus;
+  // 4. Debounce + terminal-truth before downgrading running→idle/stopped.
+  return resolveStatus(sessionId, contentStatus, () => runningInfo.sessions.has(sessionId));
 }
 
 /**

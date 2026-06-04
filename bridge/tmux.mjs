@@ -250,6 +250,18 @@ export function sendMessageToSession(sessionId, text) {
 // signal that output is still changing (a random spinner verb sits next to it).
 const BUSY_MARKER = 'esc to interrupt';
 
+// Terminal-truth check: true=CC busy, false=idle, null=no pane. Called only at a
+// downgrade boundary (low frequency), so no caching needed.
+export function isTerminalBusy(sessionId) {
+  const target = findTmuxTargetForSession(sessionId);
+  if (!target) return null;
+  try {
+    const pane = execSync(`tmux capture-pane -t "${target}" -p`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] });
+    return pane.includes(BUSY_MARKER);
+  } catch { return null; }
+}
+
 /**
  * Capture a "local" slash command's terminal output (it never hits the .jsonl).
  * Polls the pane until CC is idle (no `esc to interrupt`) and the screen is

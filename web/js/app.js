@@ -488,17 +488,8 @@ async function loadMessages(sessionId, preview, status) {
 
     updateTitleFromMessages();
 
-    // Infer running state from last assistant message (covers page refresh where status param is missing)
-    if (!status) {
-      for (var ri = state.wsAllMessages.length - 1; ri >= 0; ri--) {
-        if (state.wsAllMessages[ri].type === 'assistant') {
-          state.wsRunning = state.wsAllMessages[ri].stopReason !== 'end_turn';
-          break;
-        }
-      }
-    }
-    // Watermark: only WS messages newer than this can flip wsRunning.
-    state.wsLoadCompleteTs = state.wsLastTimestamp || '';
+    // Derive running from the tail (list `status` can be stale).
+    state.wsRunning = deriveRunning(state.wsAllMessages);
     updateSendBtn();
 
     content.scrollTop = content.scrollHeight;

@@ -10,7 +10,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
+import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped } from './sync.mjs';
@@ -64,7 +64,7 @@ await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
-// Self-update: every CHECK_STOPPED_INTERVAL, compare local vs server version.
+// Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.
 // First tick after boot is a calibration (records version, never upgrades) so
 // that re-installing doesn't loop. Subsequent ticks trigger reinstall on mismatch.
 let _firstUpdateTick = true;
@@ -104,7 +104,7 @@ async function checkUpdate() {
   } catch {}
 }
 checkUpdate();
-setInterval(checkUpdate, CHECK_STOPPED_INTERVAL);
+setInterval(checkUpdate, CHECK_UPDATE_INTERVAL);
 
 startWatcher(CONFIG);
 startJobsWatcher(CONFIG);

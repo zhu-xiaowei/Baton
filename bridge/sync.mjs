@@ -69,7 +69,9 @@ export async function syncSessions(config, opts = {}) {
   const daemonMeta = getDaemonSessions();
   for (const s of sessions) {
     const dm = daemonMeta.get(s.id);
-    if (dm) {
+    // A finished agent that's been resumed as a regular CC session (live --resume
+    // process) is no longer an agent — let it use the normal running/idle status.
+    if (dm && !(dm.agentState === 'done' && runningInfo.sessions.has(s.id))) {
       s.isAgent = true;
       s.agentName = dm.agentName;
       s.agentDetail = dm.agentDetail;

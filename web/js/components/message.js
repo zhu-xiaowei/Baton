@@ -41,6 +41,47 @@
     return msg.type === 'user' && /<local-command-stdout>/.test(userText(msg));
   };
 
+  // User messages that aren't a real turn awaiting a reply: system noise
+  // (caveat/notification/reminder) and /clear (resets context, no reply).
+  // Other <command-name> reads as running (user invoked a command).
+  window.isLocalCommandMarker = function (msg) {
+    if (msg.type !== 'user') return false;
+    var t = userText(msg);
+    if (/^\s*<(?:local-command-caveat|task-notification|system-reminder)/.test(t)) return true;
+    if (/^\s*<command-name>\/?clear<\/command-name>/.test(t)) return true;
+    return false;
+  };
+
+  // Spinner's single source of truth: walk the tail to the last real turn.
+  // Assistant pre-end_turn / user awaiting reply → running; else idle.
+  window.deriveRunning = function (messages) {
+    if (!Array.isArray(messages)) return false;
+    var atTail = true; // first status-relevant message seen = the tail (what bridge inspects)
+    for (var i = messages.length - 1; i >= 0; i--) {
+      var m = messages[i];
+      if (!m) continue;
+      if (m.type === 'ai-title' || m.type === 'custom-title' || m.type === 'last-prompt') continue;
+      if (window.isLocalCommandStdout(m)) return false;
+      // Match bridge statusFromEntry: only streaming (null) / tool_use are running;
+      // end_turn / max_tokens / stop_sequence are a finished turn → idle.
+      if (m.type === 'assistant') return m.stopReason == null || m.stopReason === 'tool_use';
+      if (m.type === 'user') {
+        if (window.isInterruptMsg(m)) return false;
+        if (window.isLocalCommandMarker(m)) return false;
+        if (window.isToolResultOnly(m)) {
+          // Only the tail error-only tool_result = interrupt → idle; deeper ones
+          // belong to a still-running assistant turn above, so keep scanning.
+          if (atTail && Array.isArray(m.content) && m.content.every(function (b) { return b.is_error; })) return false;
+          atTail = false;
+          continue;
+        }
+        return true; // real user turn awaiting a reply
+      }
+      atTail = false;
+    }
+    return false;
+  };
+
   // Detect if filename is a code file
   function isCodeFile(name) {
     const ext = (name.split('.').pop() || '').toLowerCase();

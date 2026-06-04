@@ -8,7 +8,8 @@ export const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 export const CLAUDE_JOBS = path.join(os.homedir(), '.claude', 'jobs');
 export const CLAUDE_DAEMON_ROSTER = path.join(os.homedir(), '.claude', 'daemon', 'roster.json');
 export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 'custom-title', 'last-prompt']);
-export const CHECK_STOPPED_INTERVAL = 300_000; // 5 min — detect disappeared CC processes
+export const CHECK_STOPPED_INTERVAL = 60_000; // 1 min — resync to catch disappeared CC processes
+export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 
 // WSL detection: fs.watch inotify doesn't work on /mnt/ (9P filesystem)
