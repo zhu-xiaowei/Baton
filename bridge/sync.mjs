@@ -5,7 +5,7 @@ import { post } from './http.mjs';
 import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
-  getSessionStatus, getRunningInfo, getDaemonSessions,
+  getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
 } from './session.mjs';
 import { projectHashToPath, cleanStaleSessions } from './tmux.mjs';
 
@@ -67,11 +67,14 @@ export async function syncSessions(config, opts = {}) {
   }
 
   const daemonMeta = getDaemonSessions();
+  const daemonRunningIds = getDaemonRunningSessionIds();
   for (const s of sessions) {
     const dm = daemonMeta.get(s.id);
     // A finished agent that's been resumed as a regular CC session (live --resume
     // process) is no longer an agent — let it use the normal running/idle status.
-    if (dm && !(dm.agentState === 'done' && runningInfo.sessions.has(s.id))) {
+    // But the daemon itself resumes done agents to keep them on standby (still in
+    // roster) — those stay agents.
+    if (dm && !(dm.agentState === 'done' && runningInfo.sessions.has(s.id) && !daemonRunningIds.has(s.id))) {
       s.isAgent = true;
       s.agentName = dm.agentName;
       s.agentDetail = dm.agentDetail;
