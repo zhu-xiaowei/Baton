@@ -2,11 +2,58 @@ import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
 import { post } from './http.mjs';
-import { VALID_TYPES, MAX_POST_BYTES } from './config.mjs';
+import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT } from './config.mjs';
 import { isToolAllowed } from './permissions.mjs';
 
 // Track sync position: sessionId → line number
 export const synced = new Map();
+
+const TRUNC_MARK = '\n…[truncated]';
+
+// Walk a message and collect every string field, with a setter to replace it.
+// Used to shrink oversized messages by trimming the longest strings first
+// (tool results, large text/diff blocks) while keeping JSON structure intact.
+function collectStrings(node, out) {
+  if (typeof node !== 'object' || node === null) return;
+  for (const k of Object.keys(node)) {
+    const v = node[k];
+    if (typeof v === 'string') {
+      out.push({ get: () => node[k], set: (s) => { node[k] = s; } });
+    } else if (typeof v === 'object' && v !== null) {
+      collectStrings(v, out);
+    }
+  }
+}
+
+// Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
+// preserving as much of each string's prefix as possible. Repeatedly trims the
+// currently-longest string field (keeping its head + a truncation marker) until
+// the whole message fits. Returns the message unchanged if already within limit.
+export function truncateToBytes(msg, maxBytes) {
+  if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
+  const clone = JSON.parse(JSON.stringify(msg));
+  const fields = [];
+  collectStrings(clone, fields);
+  // Trim longest-first; loop until it fits or no further reduction is possible.
+  // Guard scales with field count: a message with many large strings may need
+  // one pass per field to collapse them all.
+  const maxIters = fields.length + 16;
+  for (let guard = 0; guard < maxIters; guard++) {
+    const over = Buffer.byteLength(JSON.stringify(clone)) - maxBytes;
+    if (over <= 0) break;
+    fields.sort((a, b) => b.get().length - a.get().length);
+    const target = fields[0];
+    const cur = target.get();
+    if (!cur || cur.length <= TRUNC_MARK.length) break; // nothing left to trim
+    // `over` is in bytes; convert to a char count using this string's own
+    // bytes-per-char density so multibyte (CJK/emoji) text isn't over-trimmed.
+    const bpc = Buffer.byteLength(cur) / cur.length;
+    const dropChars = Math.ceil(over / bpc) + TRUNC_MARK.length + 16;
+    const keep = Math.max(0, cur.length - dropChars);
+    target.set(cur.slice(0, keep) + TRUNC_MARK);
+  }
+  return clone;
+}
 
 async function processImage(base64Data) {
   const buffer = Buffer.from(base64Data, 'base64');
@@ -118,7 +165,10 @@ export async function uploadMessages(sessionId, messages) {
   let batch = [];
   let batchSize = 0;
 
-  for (const msg of messages) {
+  for (const raw of messages) {
+    // Cap each message under the DDB single-item limit before it ever hits DDB
+    // (covers both the WS-oversize HTTP fallback and initial full sync).
+    const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
     const msgJson = JSON.stringify(msg);
     if (batchSize + msgJson.length > MAX_POST_BYTES && batch.length > 0) {
       await post('/api/bridge/sync-messages', { sessionId, messages: batch });

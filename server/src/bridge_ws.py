@@ -280,8 +280,11 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                 "messages": messages,
             })
 
-    # 2. Write to DDB (cache) with one retry
-    if _messages_table:
+    # 2. Write to DDB (cache) with one retry.
+    # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
+    # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
+    # caching the truncated version here would clobber it.
+    if _messages_table and not body.get("noCache"):
         for attempt in range(2):
             try:
                 from datetime import datetime

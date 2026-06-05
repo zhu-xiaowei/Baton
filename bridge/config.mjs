@@ -11,6 +11,12 @@ export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 
 export const CHECK_STOPPED_INTERVAL = 60_000; // 1 min — resync to catch disappeared CC processes
 export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
+// API Gateway WS single-frame cap is 32768 bytes; exceeding it drops the whole
+// connection with code 1009 → reconnect storm. Send truncated copies over WS,
+// full copies over HTTP to DDB. Leave headroom for the JSON envelope.
+export const WS_FRAME_LIMIT = 31_000;
+// DDB single-item cap is 400KB; keep full messages safely under it.
+export const DDB_ITEM_LIMIT = 360_000;
 
 // WSL detection: fs.watch inotify doesn't work on /mnt/ (9P filesystem)
 export const IS_WSL = !!process.env.WSL_DISTRO_NAME;

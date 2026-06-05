@@ -1,11 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT } from './config.mjs';
 import { post } from './http.mjs';
-import { synced, extractForApp, uploadMessages } from './extract.mjs';
+import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, mapAgentState, agentDetailFor } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
-import { wsSendWithAck } from './ws.mjs';
+import { wsSend, wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
@@ -113,8 +113,18 @@ async function readAndSend(config, filename, sessionId) {
     const msg = await extractForApp(raw, _projectDirs.get(projectHash));
     if (!msg.uuid) continue;
 
-    const acked = await wsSendWithAck({ action: 'messages', sessionId, messages: [msg] });
-    if (!acked) await uploadMessages(sessionId, [msg]);
+    // Messages over the API GW single-frame cap (32768B) would drop the whole WS
+    // connection with code 1009. Send a truncated copy over WS for real-time
+    // display (noCache → server skips DDB), and the full copy over HTTP to DDB.
+    if (Buffer.byteLength(JSON.stringify({ action: 'messages', sessionId, messages: [msg] })) > WS_FRAME_LIMIT) {
+      const wsMsg = truncateToBytes(msg, WS_FRAME_LIMIT - 512);
+      wsMsg.truncated = true;
+      wsSend({ action: 'messages', sessionId, messages: [wsMsg], noCache: true });
+      await uploadMessages(sessionId, [msg]);
+    } else {
+      const acked = await wsSendWithAck({ action: 'messages', sessionId, messages: [msg] });
+      if (!acked) await uploadMessages(sessionId, [msg]);
+    }
   }
 
   synced.set(sessionId, lastParsedLine);
