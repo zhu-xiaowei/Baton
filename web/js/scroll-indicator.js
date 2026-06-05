@@ -2,14 +2,13 @@
   // Only needed on iOS — Android (Chromium) renders ::-webkit-scrollbar correctly.
   if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
 
-  var TARGET_ID = 'content';
   var THUMB_MIN_HEIGHT = 24;
   var FADE_DELAY_MS = 800;
   var EDGE_INSET = 2;
 
-  function init() {
-    var target = document.getElementById(TARGET_ID);
-    if (!target) return;
+  function attach(target) {
+    if (!target || target._siAttached) return;
+    target._siAttached = true;
 
     var track = document.createElement('div');
     track.className = 'si-track';
@@ -68,6 +67,11 @@
     window.addEventListener('resize', update);
     update();
   }
+
+  // Expose so other views (e.g. the file preview overlay) can opt in.
+  window.attachScrollIndicator = attach;
+
+  function init() { attach(document.getElementById('content')); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

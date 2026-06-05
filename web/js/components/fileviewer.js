@@ -186,6 +186,7 @@ function openFile(absPath, displayName, lineHint, matchId) {
   showTabs(false);
   setBody('<div class="file-loading"><div class="spinner"></div><span>Loading file…</span></div>');
   o.style.display = 'flex';
+  if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
   sendFileRequest(absPath, lineHint || '', matchId ? snippetForTool(matchId) : '', 1);
 }
 
