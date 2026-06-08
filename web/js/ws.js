@@ -565,6 +565,7 @@ function sendMessage() {
   renderStagedImages();
   input.value = '';
   input.style.height = 'auto';
+  if (typeof stopDictation === 'function') stopDictation();  // sending ends dictation too
   if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
 }
 
@@ -591,6 +592,7 @@ function updateSendBtn() {
     btn.disabled = true;
   }
   if (typeof updateSpinner === 'function') updateSpinner();
+  if (typeof updateMicButton === 'function') updateMicButton();
 }
 function onSendBtnClick() {
   var input = document.getElementById('msg-input');

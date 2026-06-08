@@ -460,6 +460,10 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 }
 .img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 #msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 96px; overflow-y: auto; line-height: 1.4; font-family: inherit; }
+.mic-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #8b949e; cursor: pointer; flex-shrink: 0; border-radius: 50%; }
+@media (hover: hover) and (pointer: fine) { .mic-btn:hover { color: #c9d1d9; } }
+.mic-btn.recording { background: #da3633; color: #fff; animation: mic-pulse 1.4s ease-in-out infinite; }
+@keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(218,54,51,0.5); } 50% { box-shadow: 0 0 0 6px rgba(218,54,51,0); } }
 #send-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: #484f58; border: none; border-radius: 50%; color: #e6edf3; cursor: pointer; flex-shrink: 0; }
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 #send-btn.has-text { background: #e6edf3; color: #0d1117; }

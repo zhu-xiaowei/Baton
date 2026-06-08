@@ -22,6 +22,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>AgentPeek needs camera access to scan QR codes for setup.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AgentPeek uses the microphone for voice input.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AgentPeek uses speech recognition to convert your voice to text.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchStoryboardName</key>

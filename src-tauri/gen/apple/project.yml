@@ -52,7 +52,9 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.2.0
-        CFBundleVersion: "29"
+        CFBundleVersion: "38"
+        NSMicrophoneUsageDescription: AgentPeek uses the microphone for voice input.
+        NSSpeechRecognitionUsageDescription: AgentPeek uses speech recognition to convert your voice to text.
     entitlements:
       path: agentpeek_iOS/agentpeek_iOS.entitlements
     scheme:

@@ -116,6 +116,7 @@ function toggleBreadcrumbExpand(nav) {
 function showInputBar(visible) {
   var bar = document.getElementById('input-bar');
   bar.style.display = visible ? 'flex' : 'none';
+  if (visible && typeof initVoiceButton === 'function') initVoiceButton();
   if (!visible) {
     if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
     if (typeof window.closeSlashPopup === 'function') window.closeSlashPopup();
