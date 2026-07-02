@@ -421,7 +421,15 @@ function updateLastTurn() {
     }
   }
 
-  state.wsRunning = deriveRunning(state.wsAllMessages);
+  // Pure metadata frames (ai-title/last-prompt) arrive at a new turn's start before
+  // the first real reply; deriveRunning skips them and scans back to the prior
+  // end_turn → idle, flickering the spinner off. Only let real assistant/user frames
+  // downgrade a running spinner; metadata-only batches keep the current state.
+  var derived = deriveRunning(state.wsAllMessages);
+  var hasTurnFrame = newMessages.some(function (m) {
+    return m.type === 'assistant' || m.type === 'user';
+  });
+  if (derived || hasTurnFrame) state.wsRunning = derived;
   updateSendBtn();
 
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
