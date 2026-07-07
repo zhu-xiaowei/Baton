@@ -58,7 +58,11 @@ export function findTmuxPane(pid) {
  *  C-m not Enter: Ink swallows Enter after a bracketed paste. See docs/claude-code-bridge.md. */
 export function sendKeys(target, text) {
   if (!hasTmux()) throw new Error('tmux not installed');
-  spawnSync('tmux', ['send-keys', '-t', target, 'C-u'], { stdio: 'ignore' });
+  // Multi-line-safe clear (C-u kills a line, BSpace joins the one above): a single C-u only clears one line, so leftover from an interrupt-restored prompt would get the next message appended.
+  const clearArgs = ['send-keys', '-t', target];
+  for (let i = 0; i < 40; i++) clearArgs.push('C-u', 'BSpace');
+  clearArgs.push('C-u');
+  spawnSync('tmux', clearArgs, { stdio: 'ignore' });
   spawnSync('tmux', ['load-buffer', '-b', 'bridge_send', '-'], { input: text, stdio: ['pipe', 'pipe', 'pipe'] });
   spawnSync('tmux', ['paste-buffer', '-p', '-b', 'bridge_send', '-t', target, '-d'], { stdio: 'ignore' });
   spawnSync('tmux', ['send-keys', '-t', target, 'C-m'], { stdio: 'ignore' });
