@@ -70,7 +70,7 @@ let _stallCheckBusy = false;
 setInterval(async () => {
   if (_stallCheckBusy) return;
   _stallCheckBusy = true;
-  try { await checkStalledSessions(); } finally { _stallCheckBusy = false; }
+  try { await checkStalledSessions(CONFIG); } finally { _stallCheckBusy = false; }
 }, STALL_POLL_INTERVAL_MS);
 
 // Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.

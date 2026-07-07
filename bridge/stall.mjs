@@ -1,8 +1,9 @@
 import fs from 'fs';
+import path from 'path';
 import { STALL_JSONL_SILENCE_MS, STALL_CONFIRM_INTERVAL_MS, STALL_ARM_TIMEOUT_MS } from './config.mjs';
-import { lastKnownStatus } from './sync.mjs';
+import { lastKnownStatus, updateSessionStatus } from './sync.mjs';
 import { findSessionFile, hasNoDanglingTurn } from './session.mjs';
-import { findTmuxTargetForSession, capturePane, isAskUserQuestionWizard, interruptSession } from './tmux.mjs';
+import { findTmuxTargetForSession, interruptSession, paneRunState } from './tmux.mjs';
 
 /**
  * Detect sessions stuck showing "running" because an AskUserQuestion with a
@@ -30,8 +31,11 @@ import { findTmuxTargetForSession, capturePane, isAskUserQuestionWizard, interru
  * recognizes and hides that synthetic pair, and the app renders the real
  * questions from the flushed tool_use.
  */
-export async function checkStalledSessions() {
+export async function checkStalledSessions(config) {
   const now = Date.now();
+  // kind: 'wizard' (stuck AskUserQuestion → rescue) | 'idle' (quiescent pane,
+  // e.g. reverted prompt → mark idle). Both share the same silence pre-filter
+  // and trailing-lone-`user` gate; only the pane content differs.
   const candidates = [];
   for (const [sessionId, status] of lastKnownStatus) {
     if (status !== 'running') continue;
@@ -44,28 +48,33 @@ export async function checkStalledSessions() {
     if (!hasNoDanglingTurn(filePath)) continue; // a tool_use already flushed — normal live prompt, never touch it
 
     if (!findTmuxTargetForSession(sessionId)) continue; // not a tmux-backed session
-    const pane = capturePane(sessionId);
-    if (!isAskUserQuestionWizard(pane)) continue; // busy, or not this specific stuck-wizard shape
-
-    candidates.push(sessionId);
+    const run = paneRunState(sessionId);
+    if (run === 'wizard') candidates.push({ sessionId, filePath, kind: 'wizard' });
+    else if (run === 'idle') candidates.push({ sessionId, filePath, kind: 'idle' });
+    // 'busy' / 'no-pane' → genuinely running or can't tell, leave alone
   }
   if (!candidates.length) return;
 
-  // Confirm each candidate is still showing the wizard after a short delay —
-  // rules out a wizard that only just rendered (which would otherwise look
-  // identical to one that's been sitting there for 45 minutes).
+  // Confirm each candidate is still in the same state after a short delay — rules
+  // out a wizard/idle screen that only just rendered (which would otherwise look
+  // identical to one that's been sitting there for a while). A real 'running'
+  // session shows the busy marker on this second capture and drops out.
   await new Promise((r) => setTimeout(r, STALL_CONFIRM_INTERVAL_MS));
 
-  for (const sessionId of candidates) {
+  for (const { sessionId, filePath, kind } of candidates) {
     if (lastKnownStatus.get(sessionId) !== 'running') continue; // resolved on its own in the meantime
-    const filePath = findSessionFile(sessionId);
-    if (!filePath || !hasNoDanglingTurn(filePath)) continue; // flushed for real between the two captures
-    const pane = capturePane(sessionId);
-    if (!isAskUserQuestionWizard(pane)) continue;
+    const fp = findSessionFile(sessionId);
+    if (!fp || !hasNoDanglingTurn(fp)) continue; // flushed for real between the two captures
+    if (paneRunState(sessionId) !== kind) continue; // state changed → not stable
 
-    console.log(`[stall] rescuing ${sessionId.slice(0, 8)} (AskUserQuestion wizard confirmed stuck across 2 captures)`);
-    armStallRescue(sessionId);
-    interruptSession(sessionId);
+    if (kind === 'wizard') {
+      console.log(`[stall] rescuing ${sessionId.slice(0, 8)} (AskUserQuestion wizard confirmed stuck across 2 captures)`);
+      armStallRescue(sessionId);
+      interruptSession(sessionId);
+    } else {
+      console.log(`[stall] ${sessionId.slice(0, 8)} → idle (trailing user prompt reverted, pane quiescent across 2 captures)`);
+      await updateSessionStatus(config, sessionId, fp, path.basename(path.dirname(fp)), 'idle');
+    }
   }
 }
 

@@ -189,7 +189,7 @@ function connectWs(_, projectHash) {
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
         state.wsRenderedCount = state.wsAllMessages.length;
-        state.wsRunning = deriveRunning(state.wsAllMessages);
+        state.wsRunning = deriveRunning(state.wsAllMessages, state.wsOpenStatus);
         updateTitleFromMessages();
         updateSendBtn();
         loadImages(content);
@@ -418,6 +418,9 @@ function updateLastTurn() {
   var hasTurnFrame = newMessages.some(function (m) {
     return m.type === 'assistant' || m.type === 'user';
   });
+  // A real turn frame supersedes the open-time snapshot — from here the live
+  // stream is authoritative (per the "initial load only" trust decision).
+  if (hasTurnFrame) state.wsOpenStatus = null;
   if (derived || hasTurnFrame) state.wsRunning = derived;
   updateSendBtn();
 

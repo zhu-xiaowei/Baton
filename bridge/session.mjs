@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL } from './config.mjs';
-import { isTerminalBusy } from './tmux.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, STALL_JSONL_SILENCE_MS } from './config.mjs';
+import { isTerminalBusy, paneRunState } from './tmux.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -268,10 +268,21 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
 
   // 3. File stale > 5min → stopped regardless of content
   //    A truly running session always writes to jsonl, keeping mtime fresh
-  if (!runningInfo.sessions.has(sessionId)) {
-    try {
-      if (Date.now() - fs.statSync(filePath).mtimeMs > 300_000) return 'stopped';
-    } catch { return 'stopped'; }
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'stopped'; }
+  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'stopped';
+
+  // 3b. Ambiguous 'running': the verdict came from a trailing lone `user` entry,
+  //     which is indistinguishable in jsonl between "user just sent, CC about to
+  //     reply" (real) and "user sent then hit Esc — CC reverted the prompt and is
+  //     idle" (no field marks the revert). Only the pane can tell. Gate on jsonl
+  //     silence so a freshly-sent message (<silence window) stays 'running' on the
+  //     fast path; once quiet, a pane that isn't busy/wizard means it's idle.
+  if (contentStatus === 'running'
+      && Date.now() - mtimeMs >= STALL_JSONL_SILENCE_MS
+      && hasNoDanglingTurn(filePath)
+      && paneRunState(sessionId) === 'idle') {
+    return 'idle';
   }
 
   // 4. Debounce + terminal-truth before downgrading running→idle/stopped.

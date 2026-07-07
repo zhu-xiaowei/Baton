@@ -446,6 +446,10 @@ async function loadMessages(sessionId, preview, status) {
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = (status === 'running');
+  // Bridge's pane-checked verdict at open time — authoritative for the ambiguous
+  // trailing-user case (see deriveRunning). Used by the initial render here and
+  // the sync_complete re-render; cleared once real-time frames take over.
+  state.wsOpenStatus = status;
   updateBreadcrumb();
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
@@ -489,8 +493,10 @@ async function loadMessages(sessionId, preview, status) {
 
     updateTitleFromMessages();
 
-    // Derive running from the tail (list `status` can be stale).
-    state.wsRunning = deriveRunning(state.wsAllMessages);
+    // Derive running from the tail. The list `status` is the bridge's
+    // pane-checked verdict — authoritative for the ambiguous trailing-user case
+    // (a reverted prompt looks 'running' in the stream but the pane is idle).
+    state.wsRunning = deriveRunning(state.wsAllMessages, status);
     updateSendBtn();
 
     content.scrollTop = content.scrollHeight;

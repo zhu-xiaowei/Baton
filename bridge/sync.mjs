@@ -232,6 +232,41 @@ export async function syncSessions(config, opts = {}) {
  *     freshly-disappeared CC processes and flips their DDB status to stopped in the same tick.
  *  2. Detect CC processes that have disappeared and flip running/idle → stopped.
  */
+// Update a session to a new status and push metadata + counter delta to the
+// server. Used by the stall poller's idle fast-path (a reverted prompt looks
+// 'running' in jsonl but the pane is quiescent). No-op if status is unchanged.
+export async function updateSessionStatus(config, sessionId, filePath, project, newStatus) {
+  const prevStatus = lastKnownStatus.get(sessionId);
+  if (prevStatus === newStatus) return;
+  let stat;
+  try { stat = fs.statSync(filePath); } catch { return; }
+  lastKnownStatus.set(sessionId, newStatus);
+  const lastActive = stat.mtime.toISOString();
+  const projectName = readableProjectName(project);
+  await post('/api/bridge/sync-sessions', {
+    deviceName: config.deviceName,
+    os: process.platform,
+    sessions: [{
+      id: sessionId,
+      project,
+      projectName,
+      lastActive,
+      size: stat.size,
+      preview: getPreview(filePath) || '',
+      model: getModel(filePath),
+      status: newStatus,
+    }],
+    statusDeltas: [{
+      deviceName: config.deviceName,
+      projectHash: project,
+      projectName,
+      from: prevStatus || 'stopped',
+      to: newStatus,
+      lastActive,
+    }],
+  });
+}
+
 export async function checkStopped(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
 

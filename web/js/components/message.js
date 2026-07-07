@@ -54,7 +54,14 @@
 
   // Spinner's single source of truth: walk the tail to the last real turn.
   // Assistant pre-end_turn / user awaiting reply → running; else idle.
-  window.deriveRunning = function (messages) {
+  //
+  // authStatus (optional): the bridge's authoritative session status. A trailing
+  // lone `user` entry is ambiguous — indistinguishable in the message stream
+  // between "user just sent, CC about to reply" (running) and "user sent then hit
+  // Esc, CC reverted the prompt" (idle). Only the bridge can tell (it checks the
+  // tmux pane). When it says 'idle', trust it over the stream for that one case.
+  // Streaming/tool_use turns are unaffected — those are unambiguously running.
+  window.deriveRunning = function (messages, authStatus) {
     if (!Array.isArray(messages)) return false;
     var atTail = true; // first status-relevant message seen = the tail (what bridge inspects)
     for (var i = messages.length - 1; i >= 0; i--) {
@@ -75,7 +82,10 @@
           atTail = false;
           continue;
         }
-        return true; // real user turn awaiting a reply
+        // Real user turn awaiting a reply — the ambiguous case. Defer to the
+        // bridge's pane-checked verdict when it says idle (only at tail).
+        if (atTail && authStatus === 'idle') return false;
+        return true;
       }
       atTail = false;
     }

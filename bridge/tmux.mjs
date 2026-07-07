@@ -292,6 +292,21 @@ export function isTerminalBusy(sessionId) {
   return pane.includes(BUSY_MARKER);
 }
 
+// Classify what the pane actually shows for a session whose jsonl says 'running'
+// but whose verdict came from a trailing lone `user` entry (ambiguous — see
+// getSessionStatus / checkStalledSessions). Returns:
+//   'busy'   — CC is generating (esc-to-interrupt present) → genuinely running
+//   'wizard' — a stuck AskUserQuestion header-tab UI → left for stall rescue
+//   'idle'   — quiescent (e.g. user sent then hit Esc; CC reverted the prompt)
+//   'no-pane'— not a tmux-backed session, can't tell
+export function paneRunState(sessionId) {
+  const pane = capturePane(sessionId);
+  if (pane == null) return 'no-pane';
+  if (pane.includes(BUSY_MARKER)) return 'busy';
+  if (WIZARD_MARKER.test(pane)) return 'wizard';
+  return 'idle';
+}
+
 /**
  * Capture a "local" slash command's terminal output (it never hits the .jsonl).
  * Polls the pane until CC is idle (no `esc to interrupt`) and the screen is
