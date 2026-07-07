@@ -84,7 +84,8 @@ function submitPermissionWithInput(input, value) {
 // readable choice, used to build the rescued path's chat-text summary.
 function advanceWizard(replyValue, answerLabel) {
   if (_wizardRescued) {
-    _wizardAnswers.push({ question: _wizardQuestions ? _wizardQuestions[_wizardIndex].question : '', answer: answerLabel });
+    var rq = _rescuedQuestions[_wizardIndex];
+    _wizardAnswers.push({ question: rq ? (rq.question || rq.text || '') : '', answer: answerLabel });
   } else {
     wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: replyValue });
   }
@@ -146,7 +147,7 @@ function cancelPermissionPrompt() {
 function dismissPermissionPrompt() {
   _pendingToolUseId = null;
   _wizardQuestions = null; _wizardIndex = 0;
-  _wizardRescued = false; _wizardAnswers = []; _wizardSummary = '';
+  _wizardRescued = false; _wizardAnswers = []; _wizardSummary = ''; _rescuedQuestions = [];
   var el = document.getElementById('permission-prompt');
   if (el) el.remove();
   // Re-enable bottom input bar
@@ -260,6 +261,11 @@ var _pendingToolUseId = null;
 var _wizardRescued = false;
 var _wizardAnswers = [];
 var _wizardSummary = '';
+// The rescued tool_use's full questions array. Kept separate from
+// _wizardQuestions because buildClientPrompt() nulls that out for a single
+// question (the live path only needs it for multi-step nav) — but the rescued
+// path still needs each question's text to build the chat message.
+var _rescuedQuestions = [];
 
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
@@ -296,6 +302,7 @@ function checkPendingPrompts(messages) {
     _wizardRescued = true;
     _wizardAnswers = [];
     _wizardSummary = extractAssistantText(last);
+    _rescuedQuestions = toolUse.input.questions || [toolUse.input];
     var prompt = buildClientPrompt(toolUse.name, toolUse.input);
     if (!prompt) return;
     showPermissionPrompt(prompt);
