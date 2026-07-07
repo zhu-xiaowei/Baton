@@ -7,9 +7,51 @@ import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStat
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
+import { isArmed, getRescuedToolUseId, setRescuedToolUseId, disarmStallRescue } from './stall.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 const _projectDirs = new Map(); // projectHash → resolved project directory
+
+// Recognize the two synthetic jsonl entries a stall-rescue Escape produces
+// (see stall.mjs): a rejection tool_result for the flushed tool_use, and CC's
+// standard "[Request interrupted by user for tool use]" marker. Only checked
+// while armed, so this can't misfire on a user manually cancelling a normal
+// live prompt (that path never arms).
+function textOf(raw) {
+  const c = raw.message?.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c) && c.length === 1 && c[0].type === 'text') return c[0].text || '';
+  return '';
+}
+
+function isStallRescueArtifact(sessionId, raw) {
+  if (raw.type !== 'user') return false;
+  if (textOf(raw).startsWith('[Request interrupted by user')) return true;
+  const rescuedId = getRescuedToolUseId(sessionId);
+  const content = raw.message?.content;
+  if (!rescuedId || !Array.isArray(content)) return false;
+  return content.some((b) => b.type === 'tool_result' && b.tool_use_id === rescuedId);
+}
+
+// The interrupt marker is always the last of the two synthetic lines — once
+// seen, the rescue sequence is done. (The STALL_ARM_TIMEOUT_MS backstop in
+// stallState.mjs covers the case where it never arrives.)
+function disarmIfRescueComplete(sessionId, raw) {
+  if (textOf(raw).startsWith('[Request interrupted by user')) disarmStallRescue(sessionId);
+}
+
+// Mark the tool_use flushed by a rescue so the app renders it as a rescued
+// wizard (answer via a normal chat message) instead of the live arrow-key
+// navigation path — CC's AskUserQuestion state is already gone by the time
+// this lands, so permission_reply's tmux navigation would hit nothing.
+function tagStallRescue(sessionId, raw, msg) {
+  if (raw.type !== 'assistant' || !Array.isArray(msg.content)) return;
+  for (const block of msg.content) {
+    if (block.type !== 'tool_use') continue;
+    block.stallRescued = true;
+    setRescuedToolUseId(sessionId, block.id);
+  }
+}
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
@@ -100,8 +142,18 @@ async function readAndSend(config, filename, sessionId) {
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
 
-    // Track status from every parsed entry (statusFromEntry returns null for non-status types)
-    const s = statusFromEntry(raw);
+    // A stall rescue (see stall.mjs) sends Escape, which flushes the real question
+    // data we want — but also writes a synthetic rejection tool_result + interrupt
+    // marker that are bridge-internal noise, not real conversation. Hide those two
+    // from the app/DDB entirely (never mutate the actual .jsonl).
+    const armed = isArmed(sessionId);
+    const isStallArtifact = armed && isStallRescueArtifact(sessionId, raw);
+
+    // Track status from every parsed entry (statusFromEntry returns null for
+    // non-status types). Force idle for stall artifacts: a rejected tool_result
+    // may not carry is_error, which statusFromEntry relies on, but a rescue
+    // rejection always means the turn is over.
+    const s = isStallArtifact ? 'idle' : statusFromEntry(raw);
     if (s) lastStatus = s;
 
     if (!VALID_TYPES.has(raw.type)) continue;
@@ -110,8 +162,12 @@ async function readAndSend(config, filename, sessionId) {
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
 
+    if (isStallArtifact) { disarmIfRescueComplete(sessionId, raw); continue; }
+
     const msg = await extractForApp(raw, _projectDirs.get(projectHash));
     if (!msg.uuid) continue;
+
+    if (armed) tagStallRescue(sessionId, raw, msg);
 
     // Messages over the API GW single-frame cap (32768B) would drop the whole WS
     // connection with code 1009. Send a truncated copy over WS for real-time

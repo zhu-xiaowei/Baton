@@ -6,7 +6,7 @@ import os from 'os';
 import crypto from 'crypto';
 import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile, getDaemonSessions } from './session.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput } from './tmux.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, interruptSession, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands, LOCAL_COMMANDS, DIALOG_COMMANDS, SYNTHETIC_COMMANDS } from './commands.mjs';
@@ -164,8 +164,7 @@ async function handleMessage(msg) {
       await handleCreateProject(msg.projectPath, msg.asAgent);
       break;
     case 'interrupt':
-      sendKey(msg.sessionId, 'Escape');
-      sendKey(msg.sessionId, 'C-u');
+      interruptSession(msg.sessionId);
       break;
     case 'request_file':
       await handleRequestFile(msg);

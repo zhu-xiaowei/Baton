@@ -6,9 +6,11 @@ function showPermissionPrompt(msg) {
   var existing = document.getElementById('permission-prompt');
   if (existing) existing.remove();
 
-  // Disable bottom input bar while prompt is active
+  // Disable bottom input bar while prompt is active — except in rescued mode,
+  // where CC is idle (not actually blocked on this tool_use anymore) and the
+  // user may prefer to just type a normal message instead of the wizard.
   var inputBar = document.getElementById('input-bar');
-  if (inputBar) {
+  if (inputBar && !_wizardRescued) {
     inputBar.querySelector('#msg-input').disabled = true;
     inputBar.querySelectorAll('.input-row button').forEach(function(b) { b.disabled = true; });
     inputBar.querySelector('#msg-input').placeholder = 'Please respond to the prompt above...';
@@ -53,7 +55,6 @@ function showPermissionPrompt(msg) {
 }
 
 function handlePermissionOption(btn) {
-  var value = btn.getAttribute('data-value');
   var hasInput = btn.getAttribute('data-has-input') === '1';
 
   if (hasInput) {
@@ -67,40 +68,34 @@ function handlePermissionOption(btn) {
     }
   }
 
-  // Direct action — send value as keystroke
-  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: value });
-  if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
-    _wizardIndex++;
-    var nq = _wizardQuestions[_wizardIndex];
-    var stepPrefix = '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ';
-    var opts = (nq.options || []).map(function(o, i) { return { label: o.label, description: o.description || '', value: 'arrow:' + i, key: String(i+1) }; });
-    opts.push({ label: 'Type something...', value: 'type:' + (nq.options||[]).length, key: String((nq.options||[]).length+1), hasInput: true, placeholder: 'Type your response...' });
-    showPermissionPrompt({ type: 'ask_user', title: stepPrefix + (nq.header ? '[' + nq.header + '] ' : '') + (nq.question || ''), options: opts });
-    return;
-  }
-  if (_wizardQuestions && _wizardIndex === _wizardQuestions.length - 1) {
-    showPermissionPrompt({ type: 'ask_user', title: 'Submit answers?', options: [
-      { label: 'Submit answers', value: 'arrow:0', key: '1' },
-      { label: 'Cancel', value: 'arrow:1', key: '2' }
-    ]});
-    _wizardQuestions = null; _wizardIndex = 0;
-    return;
-  }
-  dismissPermissionPrompt();
+  var labelEl = btn.querySelector('.permission-label');
+  advanceWizard(btn.getAttribute('data-value'), labelEl ? labelEl.textContent : btn.getAttribute('data-value'));
 }
 
 function submitPermissionWithInput(input, value) {
   var text = input.value.trim();
   if (!text) return; // require input
   // Send as type:N:text — bridge navigates to option, types text, Enter
-  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: value + ':' + text });
+  advanceWizard(value + ':' + text, text);
+}
+
+// Advance to the next wizard step (or finish). replyValue is the raw
+// permission_reply payload for the live path; answerLabel is the human-
+// readable choice, used to build the rescued path's chat-text summary.
+function advanceWizard(replyValue, answerLabel) {
+  if (_wizardRescued) {
+    _wizardAnswers.push({ question: _wizardQuestions ? _wizardQuestions[_wizardIndex].question : '', answer: answerLabel });
+  } else {
+    wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: replyValue });
+  }
+
   if (_wizardQuestions && _wizardIndex < _wizardQuestions.length - 1) {
     _wizardIndex++;
-    var nq = _wizardQuestions[_wizardIndex];
-    var stepPrefix = '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ';
-    var opts = (nq.options || []).map(function(o, i) { return { label: o.label, description: o.description || '', value: 'arrow:' + i, key: String(i+1) }; });
-    opts.push({ label: 'Type something...', value: 'type:' + (nq.options||[]).length, key: String((nq.options||[]).length+1), hasInput: true, placeholder: 'Type your response...' });
-    showPermissionPrompt({ type: 'ask_user', title: stepPrefix + (nq.header ? '[' + nq.header + '] ' : '') + (nq.question || ''), options: opts });
+    showWizardStep();
+    return;
+  }
+  if (_wizardRescued) {
+    sendRescuedAnswers();
     return;
   }
   if (_wizardQuestions && _wizardIndex === _wizardQuestions.length - 1) {
@@ -114,15 +109,44 @@ function submitPermissionWithInput(input, value) {
   dismissPermissionPrompt();
 }
 
+/** Render the current step of a live multi-question wizard. */
+function showWizardStep() {
+  var nq = _wizardQuestions[_wizardIndex];
+  var stepPrefix = '[' + (_wizardIndex + 1) + '/' + _wizardQuestions.length + '] ';
+  var opts = (nq.options || []).map(function(o, i) { return { label: o.label, description: o.description || '', value: 'arrow:' + i, key: String(i+1) }; });
+  opts.push({ label: 'Type something...', value: 'type:' + (nq.options||[]).length, key: String((nq.options||[]).length+1), hasInput: true, placeholder: 'Type your response...' });
+  showPermissionPrompt({ type: 'ask_user', title: stepPrefix + (nq.header ? '[' + nq.header + '] ' : '') + (nq.question || ''), options: opts });
+}
+
+// Bridge force-flushed this wizard's tool_use from a stuck session (see
+// bridge/stall.mjs) — CC has already moved on, so there's no live wizard state
+// left to navigate via arrow keys. Answers are collected locally, then sent
+// back as one plain chat message instead of permission_reply.
+function sendRescuedAnswers() {
+  var lines = [];
+  if (_wizardSummary) lines.push(_wizardSummary, '');
+  for (var i = 0; i < _wizardAnswers.length; i++) {
+    var a = _wizardAnswers[i];
+    lines.push((a.question ? a.question + ' ' : '') + '→ ' + a.answer);
+  }
+  var text = lines.join('\n');
+  dismissPermissionPrompt();
+  if (typeof doSend === 'function') doSend(text, text, []);
+}
+
 function cancelPermissionPrompt() {
-  // Send Escape to Claude Code
-  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: 'escape' });
+  // Live mode: send Escape to Claude Code. Rescued mode: CC already moved on
+  // (nothing to cancel there) — just close the card, don't send anything.
+  if (!_wizardRescued) {
+    wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: 'escape' });
+  }
   dismissPermissionPrompt();
 }
 
 function dismissPermissionPrompt() {
   _pendingToolUseId = null;
   _wizardQuestions = null; _wizardIndex = 0;
+  _wizardRescued = false; _wizardAnswers = []; _wizardSummary = '';
   var el = document.getElementById('permission-prompt');
   if (el) el.remove();
   // Re-enable bottom input bar
@@ -231,6 +255,11 @@ function buildClientPrompt(toolName, toolInput) {
 var _wizardQuestions = null;
 var _wizardIndex = 0;
 var _pendingToolUseId = null;
+// Rescued mode (see bridge/stall.mjs): CC already moved on, so answers are
+// collected locally and sent as one chat message instead of permission_reply.
+var _wizardRescued = false;
+var _wizardAnswers = [];
+var _wizardSummary = '';
 
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
@@ -257,6 +286,22 @@ function checkPendingPrompts(messages) {
     return;
   }
 
+  // Bridge force-flushed this from a stuck multi-question wizard (see
+  // bridge/stall.mjs) — its tool_result was intentionally hidden, so it looks
+  // pending here, but CC has already moved on. Reuse the normal wizard UI in
+  // "rescued" mode: answers accumulate locally instead of going out via
+  // permission_reply (there's no live arrow-key state left to navigate).
+  if (toolUse.stallRescued && toolUse.name === 'AskUserQuestion') {
+    if (document.getElementById('permission-prompt')) return; // already showing
+    _wizardRescued = true;
+    _wizardAnswers = [];
+    _wizardSummary = extractAssistantText(last);
+    var prompt = buildClientPrompt(toolUse.name, toolUse.input);
+    if (!prompt) return;
+    showPermissionPrompt(prompt);
+    return;
+  }
+
   // Bridge marks each tool_use with needsPermission — trust it
   if (!toolUse.needsPermission) return;
 
@@ -265,6 +310,12 @@ function checkPendingPrompts(messages) {
 
   _pendingToolUseId = toolUse.id;
   showPermissionPrompt(prompt);
+}
+
+/** The plain-text portion of an assistant message (CC's summary before the tool_use). */
+function extractAssistantText(msg) {
+  if (!Array.isArray(msg.content)) return '';
+  return msg.content.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text || ''; }).join('\n').trim();
 }
 
 Object.assign(window, {

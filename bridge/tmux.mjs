@@ -228,6 +228,13 @@ export function sendKey(sessionId, key) {
   }
 }
 
+/** Escape + clear-line — cancels whatever CC is waiting on and flushes it to jsonl. */
+export function interruptSession(sessionId) {
+  const r1 = sendKey(sessionId, 'Escape');
+  const r2 = sendKey(sessionId, 'C-u');
+  return r1.ok ? r1 : r2;
+}
+
 /**
  * Send a message to a Claude Code session via tmux.
  * Returns { ok, error? }
@@ -250,16 +257,35 @@ export function sendMessageToSession(sessionId, text) {
 // signal that output is still changing (a random spinner verb sits next to it).
 const BUSY_MARKER = 'esc to interrupt';
 
-// Terminal-truth check: true=CC busy, false=idle, null=no pane. Called only at a
-// downgrade boundary (low frequency), so no caching needed.
-export function isTerminalBusy(sessionId) {
+/** Raw pane text for a session, or null if no tmux target / capture failed. */
+export function capturePane(sessionId) {
   const target = findTmuxTargetForSession(sessionId);
   if (!target) return null;
   try {
-    const pane = execSync(`tmux capture-pane -t "${target}" -p`,
+    return execSync(`tmux capture-pane -t "${target}" -p`,
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] });
-    return pane.includes(BUSY_MARKER);
   } catch { return null; }
+}
+
+// AskUserQuestion's header-tab UI — a "☐ <header>" tab row, rendered whenever
+// a question carries a `header` field (whether there's one question or many;
+// "✔ Submit" only appears once there's more than one). This tab-bar form is
+// the one CC holds in memory rather than flushing immediately; a plain
+// header-less question (just "1. label" lines, no tab row) flushes right away
+// and is handled by the live needsPermission path instead.
+const WIZARD_MARKER = /[☐☒]\s*\S/;
+
+/** True if the pane is showing a multi-question AskUserQuestion wizard, stuck at any step. */
+export function isAskUserQuestionWizard(paneText) {
+  return !!paneText && WIZARD_MARKER.test(paneText) && !paneText.includes(BUSY_MARKER);
+}
+
+// Terminal-truth check: true=CC busy, false=idle, null=no pane. Called only at a
+// downgrade boundary (low frequency), so no caching needed.
+export function isTerminalBusy(sessionId) {
+  const pane = capturePane(sessionId);
+  if (pane == null) return null;
+  return pane.includes(BUSY_MARKER);
 }
 
 /**

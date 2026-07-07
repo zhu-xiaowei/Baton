@@ -10,6 +10,21 @@ export const CLAUDE_DAEMON_ROSTER = path.join(os.homedir(), '.claude', 'daemon',
 export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 'custom-title', 'last-prompt']);
 export const CHECK_STOPPED_INTERVAL = 60_000; // 1 min — resync to catch disappeared CC processes
 export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
+
+// Stall rescue: a multi-question AskUserQuestion wizard holds its tool_use in
+// CC's memory until the user hits Submit, never writing to jsonl — so a session
+// can look permanently "running" with no way to see or answer the question.
+//
+// jsonl silence alone can't tell "CC is still thinking" (perfectly normal —
+// the file doesn't update while a turn is being generated) apart from "wizard
+// really is stuck". So detection is two gates: a cheap jsonl-mtime pre-filter,
+// then a terminal-content check for the wizard's own UI chrome, confirmed
+// stable across two polls before rescuing (a wizard that just rendered this
+// instant fails the stability check and is left alone).
+export const STALL_POLL_INTERVAL_MS = 5000;   // how often to scan for stuck sessions
+export const STALL_JSONL_SILENCE_MS = 5000;   // pre-filter: skip capture-pane unless jsonl has been quiet this long
+export const STALL_CONFIRM_INTERVAL_MS = 2000; // gap between the two confirming captures
+export const STALL_ARM_TIMEOUT_MS = 8000;     // give up waiting for the rescued tool_use/tool_result pair
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 // API Gateway WS single-frame cap is 32768 bytes; exceeding it drops the whole
 // connection with code 1009 → reconnect storm. Send truncated copies over WS,

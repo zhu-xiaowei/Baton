@@ -10,11 +10,12 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_HOME } from './config.mjs';
+import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, STALL_POLL_INTERVAL_MS, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped } from './sync.mjs';
 import { startWatcher, startJobsWatcher } from './watcher.mjs';
+import { checkStalledSessions } from './stall.mjs';
 import { initWs } from './ws.mjs';
 import { hasTmux } from './tmux.mjs';
 
@@ -63,6 +64,14 @@ if (CONFIG.wsUrl) {
 await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
+// checkStalledSessions is async (confirms over ~2s) — guard against overlapping
+// runs if a poll ever takes longer than the interval.
+let _stallCheckBusy = false;
+setInterval(async () => {
+  if (_stallCheckBusy) return;
+  _stallCheckBusy = true;
+  try { await checkStalledSessions(); } finally { _stallCheckBusy = false; }
+}, STALL_POLL_INTERVAL_MS);
 
 // Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.
 // First tick after boot is a calibration (records version, never upgrades) so
