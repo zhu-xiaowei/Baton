@@ -1,7 +1,7 @@
 import { execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
-import { readableProjectName } from './session.mjs';
+import { readableProjectName, matchRealSegment } from './session.mjs';
 import path from 'path';
 
 let _tmuxAvailable = null;
@@ -436,23 +436,15 @@ export function projectHashToPath(projectHash) {
   const parts = remaining.split('-');
   let i = 0;
   while (i < parts.length) {
-    let matched = false;
-    for (let len = parts.length - i; len >= 1; len--) {
-      const candidate = parts.slice(i, i + len).join('-');
-      const candidatePath = path.join(currentDir, candidate);
-      try {
-        if (fs.statSync(candidatePath).isDirectory()) {
-          currentDir = candidatePath;
-          i += len;
-          matched = true;
-          break;
-        }
-      } catch {}
-    }
-    if (!matched) {
+    // Recover the real dir name for this segment (handles `_`/`.`/space, which
+    // the hash collapses to `-`). See matchRealSegment in session.mjs.
+    const m = matchRealSegment(currentDir, parts, i);
+    if (!m) {
       currentDir = path.join(currentDir, parts.slice(i).join('-'));
       break;
     }
+    currentDir = path.join(currentDir, m.name);
+    i += m.len;
   }
   return currentDir;
 }

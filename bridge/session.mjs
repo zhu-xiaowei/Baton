@@ -65,6 +65,33 @@ export function getModel(filePath) {
   return '';
 }
 
+// Forward-hash a real path segment the way CC does when building a project hash:
+// every non-[a-zA-Z0-9-] char (`_`, `.`, space, …) collapses to `-`.
+const hashSegment = (name) => name.replace(/[^a-zA-Z0-9-]/g, '-');
+
+/**
+ * The hash is LOSSY: `demo_3`, `demo.3`, `demo-3` all hash to `demo-3`, so the
+ * inverse can't be computed — it has to be recovered against the real filesystem.
+ * Greedily match the longest run of `parts` (starting at index `i`) to a real
+ * directory under `currentDir`: try each candidate length, and for that length
+ * find a real child dir whose forward-hash equals the `-`-joined fragment. This
+ * recovers `_`/`.`/space names AND names that legitimately contain `-`.
+ * Returns { name, len } (name = the real on-disk directory) or null.
+ */
+export function matchRealSegment(currentDir, parts, i) {
+  let entries;
+  try { entries = fs.readdirSync(currentDir, { withFileTypes: true }); } catch { return null; }
+  const dirNames = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  for (let len = parts.length - i; len >= 1; len--) {
+    const fragment = parts.slice(i, i + len).join('-');
+    // Exact real dir wins first (fragment already correct / contains real `-`).
+    if (dirNames.includes(fragment)) return { name: fragment, len };
+    const hit = dirNames.find((n) => hashSegment(n) === fragment);
+    if (hit) return { name: hit, len };
+  }
+  return null;
+}
+
 export function readableProjectName(projectHash) {
   const homeHash = path.resolve(os.homedir()).replace(/[^a-zA-Z0-9-]/g, '-');
   let remaining = projectHash;
@@ -90,24 +117,15 @@ export function readableProjectName(projectHash) {
   const parts = remaining.split('-');
   let i = 0;
   while (i < parts.length) {
-    let matched = false;
-    for (let len = parts.length - i; len >= 1; len--) {
-      const candidate = parts.slice(i, i + len).join('-');
-      const candidatePath = path.join(currentDir, candidate);
-      try {
-        if (fs.statSync(candidatePath).isDirectory()) {
-          segments.push(candidate);
-          currentDir = candidatePath;
-          i += len;
-          matched = true;
-          break;
-        }
-      } catch {}
-    }
-    if (!matched) {
+    const m = matchRealSegment(currentDir, parts, i);
+    if (!m) {
+      // No real dir matched — emit the remaining fragment as-is (best effort).
       segments.push(parts.slice(i).join('-'));
       break;
     }
+    segments.push(m.name);
+    currentDir = path.join(currentDir, m.name);
+    i += m.len;
   }
   return segments.join('/');
 }
