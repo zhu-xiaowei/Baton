@@ -232,6 +232,38 @@ def _parse_messages(items):
     return messages
 
 
+# Lambda invoke-response hard limit is 6MB (measured on the base64-encoded body
+# the Lambda Web Adapter produces). base64 inflates ~33% and gzip barely helps
+# image-heavy pages, so we cap the *uncompressed* JSON well under that: 4MB of
+# JSON → ~5.3MB after base64, safely below 6MB even if gzip does nothing.
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def _trim_to_budget(messages):
+    """Trim a newest-first message list to fit MAX_RESPONSE_BYTES, keeping the
+    newest prefix and dropping older messages that overflow the budget.
+    Returns (kept, trimmed). Always keeps at least one message (single items are
+    capped at DDB_ITEM_LIMIT on the bridge side). Size is approximated from the
+    already-parsed content/toolUseResult string length (base64 image data
+    dominates, so this is accurate enough) to avoid re-serializing each message."""
+    total, kept = 0, []
+    for m in messages:
+        size = len(str(m.get("content", ""))) + len(str(m.get("toolUseResult", "")))
+        if kept and total + size > MAX_RESPONSE_BYTES:
+            # The `before` cursor is timestamp-only, so a dropped message sharing
+            # the oldest kept timestamp could never be re-fetched (`sk < ts`
+            # excludes both) — a gap. Never split a same-timestamp run across the
+            # page boundary: drop the whole trailing run so min(kept) is strictly
+            # newer than every dropped message.
+            boundary_ts = m.get("timestamp")
+            while len(kept) > 1 and kept[-1].get("timestamp") == boundary_ts:
+                kept.pop()
+            return kept, True
+        kept.append(m)
+        total += size
+    return kept, False
+
+
 def _query_page(table, limit, **kwargs):
     """Query DDB with a limit, returning (items, has_more)."""
     items = []
@@ -277,10 +309,13 @@ async def get_messages(
             KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").lt(f"{before}"),
             ScanIndexForward=False,
         )
-        items.reverse()
+        # items are newest-first; trim the older tail that overflows the 6MB
+        # response cap, keeping the newest messages closest to `before`.
         messages = _parse_messages(items)
+        messages, trimmed = _trim_to_budget(messages)
+        messages.reverse()
         oldest_ts = messages[0]["timestamp"] if messages else ""
-        return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_ts, "needSync": False}
+        return {"messages": messages, "hasMore": has_more or trimmed, "oldestTimestamp": oldest_ts, "needSync": False}
 
     # Default: fetch latest N messages (reverse scan, then flip).
     # ConsistentRead=True closes the eventual-consistency window after a bridge
@@ -293,8 +328,11 @@ async def get_messages(
         ScanIndexForward=False,
         ConsistentRead=True,
     )
-    items.reverse()
+    # items are newest-first; trim the older tail that overflows the 6MB cap.
     messages = _parse_messages(items)
+    messages, trimmed = _trim_to_budget(messages)
+    has_more = has_more or trimmed
+    messages.reverse()
 
     need_sync = len(messages) == 0
     if need_sync:
