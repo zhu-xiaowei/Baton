@@ -155,7 +155,7 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId);
       break;
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
@@ -204,7 +204,7 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent) {
+async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
 
@@ -239,9 +239,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
       const prev = await _launchLocks.get(lockKey);
       if (prev.ok && prev.tmuxName) {
         try { sendKeys(prev.tmuxName, resolved); } catch {}
-        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId, requestId });
+        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId, requestId, clientId });
       } else {
-        wsSend({ action: 'send_message_result', ok: false, error: 'Previous launch failed. Please try again.', requestId });
+        wsSend({ action: 'send_message_result', ok: false, error: 'Previous launch failed. Please try again.', requestId, clientId });
       }
       return;
     }
@@ -252,7 +252,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     _launchLocks.set(lockKey, promise);
     const result = await promise;
     setTimeout(() => _launchLocks.delete(lockKey), 30_000);
-    wsSend({ action: 'send_message_result', ...result, requestId });
+    wsSend({ action: 'send_message_result', ...result, requestId, clientId });
     return;
   }
 
@@ -290,7 +290,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   if (!result.ok) {
     console.log(`[ws] send_message failed: ${result.error}`);
   }
-  wsSend({ action: 'send_message_result', sessionId, ...result });
+  wsSend({ action: 'send_message_result', sessionId, ...result, clientId });
 
   // "local" slash commands (e.g. /goal, /usage) render only in CC's terminal and
   // never reach the .jsonl. If we just sent one, grab its terminal output and push

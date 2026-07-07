@@ -136,11 +136,17 @@ function sendRescuedAnswers() {
 }
 
 function cancelPermissionPrompt() {
-  // Live mode: send Escape to Claude Code. Rescued mode: CC already moved on
-  // (nothing to cancel there) — just close the card, don't send anything.
-  if (!_wizardRescued) {
-    wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: 'escape' });
+  if (_wizardRescued) {
+    // CC already moved on (the rescue Escape closed the tool_use) — nothing to
+    // cancel on its side. Dismissing the card leaves the session idle, so stop
+    // the running spinner instead of leaving it spinning forever.
+    state.wsRunning = false;
+    dismissPermissionPrompt();
+    if (typeof updateSendBtn === 'function') updateSendBtn();
+    return;
   }
+  // Live mode: send Escape to Claude Code to cancel the pending prompt.
+  wsSend({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '', approved: 'escape' });
   dismissPermissionPrompt();
 }
 
@@ -270,8 +276,18 @@ var _rescuedQuestions = [];
 /** Check if the last message has an unresolved tool_use that needs user approval. */
 function checkPendingPrompts(messages) {
   if (!messages.length) return;
-  var last = messages[messages.length - 1];
-  if (last.type !== 'assistant' || !Array.isArray(last.content)) return;
+  // Walk back past trailing metadata (ai-title / custom-title / last-prompt):
+  // CC often appends these snapshot rows right after flushing a turn, so the
+  // real last turn — including a stall-rescued AskUserQuestion — isn't
+  // necessarily the very last array entry.
+  var last = null;
+  for (var li = messages.length - 1; li >= 0; li--) {
+    var t = messages[li].type;
+    if (t === 'ai-title' || t === 'custom-title' || t === 'last-prompt') continue;
+    last = messages[li];
+    break;
+  }
+  if (!last || last.type !== 'assistant' || !Array.isArray(last.content)) return;
 
   // Find the last tool_use in the last assistant message
   var toolUse = null;

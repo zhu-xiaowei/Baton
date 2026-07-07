@@ -140,30 +140,19 @@ function connectWs(_, projectHash) {
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
-      // Mark first undelivered pending message as delivered (or failed)
+      // Match the ack to its exact bubble by clientId (round-tripped through the
+      // bridge). Fall back to "first undelivered" only for acks from an older
+      // bridge that doesn't echo clientId yet.
       if (state.pendingSentMessages.length) {
         var pending = null;
-        for (var pi = 0; pi < state.pendingSentMessages.length; pi++) {
-          if (!state.pendingSentMessages[pi].delivered) { pending = state.pendingSentMessages[pi]; break; }
-        }
-        if (pending) {
-          pending.delivered = true;
-          var el = document.getElementById(pending.id);
-          if (el) {
-            var status = el.querySelector('.sending-status');
-            if (status) {
-              if (msg.ok) {
-                status.innerHTML = new Date().toLocaleTimeString();
-                status.style.color = '#6e7681';
-              } else {
-                status.innerHTML = msg.error || 'Send failed';
-                status.style.color = '#f85149';
-                state.wsRunning = false;
-                updateSpinner();
-              }
-            }
+        if (msg.clientId) {
+          pending = findPending(msg.clientId);
+        } else {
+          for (var pi = 0; pi < state.pendingSentMessages.length; pi++) {
+            if (!state.pendingSentMessages[pi].delivered) { pending = state.pendingSentMessages[pi]; break; }
           }
         }
+        if (pending && !pending.delivered) resolvePending(pending, msg.ok, msg.error);
       }
       // New session: bridge created tmux + CC, returned sessionId
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
@@ -659,15 +648,21 @@ function interruptSession() {
   });
 })();
 
+var _clientIdSeq = 0;
+
 function doSend(fullText, displayText, images) {
   state.wsRunning = true;
   updateSendBtn();
   var device = state.appState.device || '';
+  // Unique per-send id, round-tripped through the bridge in send_message_result
+  // so the ack maps back to THIS exact bubble (not "the first pending", which
+  // mis-pairs when several sends are in flight). Doubles as the DOM element id.
+  var msgId = 'sent-' + Date.now() + '-' + (_clientIdSeq++);
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
-    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, text: fullText, device: device, asAgent: asAgent });
+    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
   } else {
-    wsSend({ action: 'send_message', sessionId: state.wsSessionId, text: fullText, device: device });
+    wsSend({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device });
   }
 
   // Remove placeholder text
@@ -686,8 +681,10 @@ function doSend(fullText, displayText, images) {
     if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
   }
 
-  var msgId = 'sent-' + Date.now();
-  state.pendingSentMessages.push({ id: msgId, text: displayText, isImage: images.length > 0 });
+  // Keep fullText (with image refs) so a retry re-sends the exact same payload;
+  // sessionId pins the message to its session so a timeout that fires after the
+  // user navigated away doesn't self-heal against the wrong conversation.
+  state.pendingSentMessages.push({ id: msgId, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -701,6 +698,103 @@ function doSend(fullText, displayText, images) {
     clampOverflow(container);
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
+  scheduleSendTimeout(msgId);
+}
+
+// If neither the send_message_result ack nor the echoed-message dedup clears a
+// pending bubble within this window, reconcile against the server: the message
+// may well have reached CC and only the ack/echo was lost.
+var SEND_TIMEOUT_MS = 12000;
+
+function scheduleSendTimeout(msgId) {
+  setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
+}
+
+function findPending(msgId) {
+  for (var i = 0; i < state.pendingSentMessages.length; i++) {
+    if (state.pendingSentMessages[i].id === msgId) return state.pendingSentMessages[i];
+  }
+  return null;
+}
+
+function removePending(pending) {
+  var idx = state.pendingSentMessages.indexOf(pending);
+  if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
+}
+
+// Single terminal state for an ack. Success: stamp the bubble with a time and
+// mark delivered — the bubble stays as the timestamped anchor; when the echoed
+// copy arrives, tryDedup finds this delivered pending and drops the duplicate
+// (see tryDedup). Failure: red "Not delivered · Retry" and stop the spinner.
+function resolvePending(pending, ok, error) {
+  pending.delivered = true;
+  if (ok) {
+    markPendingTime(pending);
+  } else {
+    markPendingFailed(pending, error);
+    state.wsRunning = false;
+    updateSendBtn();
+  }
+}
+
+// Loose match: the echoed user message may differ from what we typed (CC can
+// rewrite slash commands, tmux may normalize newlines), so accept containment
+// rather than strict equality. Compares against stripped text (no image refs).
+function messageEchoed(pending) {
+  var needle = stripImageRefs((pending.text || '').trim());
+  if (!needle) return false;
+  for (var i = 0; i < state.wsAllMessages.length; i++) {
+    var m = state.wsAllMessages[i];
+    if (m.type !== 'user') continue;
+    var hay = stripImageRefs(extractMsgText(m).trim());
+    if (hay && (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1)) return true;
+  }
+  return false;
+}
+
+function markPendingTime(pending) {
+  var el = document.getElementById(pending.id);
+  if (!el) return;
+  var status = el.querySelector('.sending-status');
+  if (status) { status.innerHTML = new Date().toLocaleTimeString(); status.style.color = '#6e7681'; }
+}
+
+function markPendingFailed(pending, error) {
+  var el = document.getElementById(pending.id);
+  if (!el) return;
+  var status = el.querySelector('.sending-status');
+  if (!status) return;
+  var label = error ? esc(error) : 'Not delivered';
+  status.innerHTML = label + ' · <span class="send-retry" onclick="retryPendingSend(\'' + pending.id + '\')">Retry</span>';
+  status.style.color = '#f85149';
+}
+
+// Timeout reconciliation: only acts if the bubble is still pending (ack/dedup
+// didn't already resolve it). Pulls latest messages from DDB, then either
+// self-heals (message arrived, ack/echo was just lost) or flags for retry.
+async function reconcilePendingSend(msgId) {
+  var pending = findPending(msgId);
+  if (!pending || pending.delivered) return;               // already resolved
+  if (pending.sessionId !== state.wsSessionId) return;     // user navigated away; leave it
+  try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
+  pending = findPending(msgId);
+  if (!pending || pending.delivered) return;               // ack/dedup fired during the fetch
+  // Message actually landed (ack/echo just lost) → success; else flag for retry.
+  resolvePending(pending, messageEchoed(pending), null);
+}
+
+// Manual retry: re-check the server first (avoid double-send if it actually
+// landed), then re-send the exact original payload as a fresh pending bubble.
+async function retryPendingSend(msgId) {
+  var pending = findPending(msgId);
+  if (!pending) return;
+  try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
+  if (messageEchoed(pending)) { resolvePending(pending, true, null); return; }
+  // Remove the failed bubble + its pending record, then re-send from scratch.
+  var el = document.getElementById(pending.id);
+  if (el) el.remove();
+  removePending(pending);
+  doSend(pending.fullText, pending.text, pending.images || []);
 }
 
 // ---- Message dedup utilities ----
@@ -736,7 +830,13 @@ function tryDedup(msg) {
   for (var i = 0; i < state.pendingSentMessages.length; i++) {
     var pending = state.pendingSentMessages[i];
     var pendingText = pending.text.trim();
-    var isTextMatch = pendingText === stripped || pendingText === text;
+    // Loose match (containment either way), matching reconcile's messageEchoed:
+    // tmux newline normalization or CC rewrites can make the echo differ from
+    // what we typed by a few chars, and strict equality there is exactly what
+    // orphaned the optimistic bubble (→ stuck "sending..." + a duplicate).
+    var isTextMatch = !!pendingText && (
+      pendingText === stripped || pendingText === text ||
+      stripped.indexOf(pendingText) !== -1 || pendingText.indexOf(stripped) !== -1);
     // Command match: pending "/pdf" vs CC's "/document-skills:pdf" (share the
     // bare name after the optional plugin namespace).
     var isCmdMatch = cmdName && pendingText.charAt(0) === '/' &&
@@ -768,5 +868,5 @@ Object.assign(window, {
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
-  extractMsgText, stripImageRefs, tryDedup,
+  extractMsgText, stripImageRefs, tryDedup, retryPendingSend,
 });

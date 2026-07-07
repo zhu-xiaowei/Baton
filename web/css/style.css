@@ -107,6 +107,7 @@ body {
 .msg-user .msg-text.expanded::after { display: none; }
 .msg-user .msg-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
 .msg-user .msg-meta .msg-time { font-size: 10px; color: #6e7681; }
+.send-retry { color: #58a6ff; cursor: pointer; text-decoration: underline; }
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
 .file-badge {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
