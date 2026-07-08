@@ -10,6 +10,9 @@ export const synced = new Map();
 
 const TRUNC_MARK = '\n…[truncated]';
 
+// Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
+const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
+
 // Walk a message and collect every string field, with a setter to replace it.
 // Used to shrink oversized messages by trimming the longest strings first
 // (tool results, large text/diff blocks) while keeping JSON structure intact.
@@ -73,7 +76,9 @@ async function processImage(base64Data) {
 export async function extractForApp(msg, projectDir) {
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
-    return { uuid: `${msg.type}_${Date.now()}`, type: msg.type, content, timestamp: msg.timestamp || new Date().toISOString() };
+    // Content-addressed uuid so re-syncing overwrites one DDB item instead of accumulating (was Date.now()).
+    const hash = crypto.createHash('sha1').update(`${msg.type}|${msg.sessionId || ''}|${content}`).digest('hex').slice(0, 16);
+    return { uuid: `${msg.type}_${hash}`, type: msg.type, content, timestamp: META_EPOCH_TS };
   }
 
   let content = msg.message?.content ?? '';
