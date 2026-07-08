@@ -323,17 +323,16 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
 
 
 def _handle_sync_complete(body, account_id, endpoint):
-    """Bridge completed on-demand sync — notify subscribed apps."""
+    """Bridge completed on-demand sync — broadcast to account apps.
+    Not subscription-based: the app's subscribe may not have landed in DDB yet
+    (sync_complete can return within the WS handshake window), which would drop
+    the message and leave the app on the skeleton forever."""
     session_id = body.get("sessionId", "")
     if not session_id:
         return {"statusCode": 400}
 
-    subs = _subscriptions_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-    ).get("Items", [])
-
-    for sub in subs:
-        _post_to_connection(endpoint, sub["connectionId"], {
+    for item in _query_connections(account_id, "app"):
+        _post_to_connection(endpoint, item["connectionId"], {
             "action": "sync_complete",
             "sessionId": session_id,
             "status": body.get("status", "ok"),

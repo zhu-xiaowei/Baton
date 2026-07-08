@@ -451,12 +451,13 @@ async function loadMessages(sessionId, preview, status) {
   // the sync_complete re-render; cleared once real-time frames take over.
   state.wsOpenStatus = status;
   updateBreadcrumb();
-  await window.loadViewerLibs();
-  if (_navVersion !== myNav) return;
-  updateSendBtn();
+  // Skeleton before any await — loadViewerLibs can take a while and the old page would linger.
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
   showInputBar(true);
+  await window.loadViewerLibs();
+  if (_navVersion !== myNav) return;
+  updateSendBtn();
 
   // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
   state.wsAllMessages = [];
@@ -525,9 +526,9 @@ function positionScrollBtn() {
   var bar = document.getElementById('input-bar');
   var btn = document.getElementById('scroll-bottom-btn');
   if (!bar || !btn) return;
-  var h = bar.offsetHeight;
-  if (h === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
-  btn.style.bottom = (h + 12) + 'px';
+  if (bar.offsetHeight === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
+  var barTop = bar.getBoundingClientRect().top;
+  btn.style.bottom = (document.documentElement.clientHeight - barTop + 12) + 'px';
 }
 (function () {
   var bar = document.getElementById('input-bar');

@@ -476,7 +476,8 @@ export async function launchAgentsSession(sessionId, agentCwd, agentName) {
 
   const tmuxName = `apeek_agents_${sessionId.slice(0, 8)}`;
 
-  newTmuxSession(tmuxName, agentCwd, `claude agents --cwd "${agentCwd}"`, { height: 1000 });
+  // --all so completed agent sessions stay in the list (else navigate can't find them)
+  newTmuxSession(tmuxName, agentCwd, `claude agents --cwd "${agentCwd}" --all`, { height: 1000 });
 
   const ready = await waitForAgentsList(tmuxName);
   if (!ready) {

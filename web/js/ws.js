@@ -20,13 +20,15 @@ if (window.visualViewport) {
       var bar = document.getElementById('input-bar');
       if (bar) bar.classList.toggle('kb-up', kbUp);
     }
+    if (window.positionScrollBtn) window.positionScrollBtn();
     if (kbUp !== _wasKbUp) {
       var c = document.getElementById('content');
-      if (c && state.appState.session) {
-        [50, 200, 400].forEach(function (d) {
-          setTimeout(function () { c.scrollTop = c.scrollHeight; }, d);
-        });
-      }
+      [50, 200, 400].forEach(function (d) {
+        setTimeout(function () {
+          if (window.positionScrollBtn) window.positionScrollBtn();
+          if (c && state.appState.session) c.scrollTop = c.scrollHeight;
+        }, d);
+      });
     }
     _wasKbUp = kbUp;
   });
@@ -461,6 +463,8 @@ async function bufferAndFetch(sessionId, after) {
     if (after) params.after = after;
     if (state.appState.device) params.device = state.appState.device;
     var data = await api('/api/bridge/messages', params);
+    // User navigated to another session while this was in flight — drop the stale response.
+    if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
     var all = (data.messages || []).concat(state._wsBuffer || []);
     state._wsBuffer = null;
     // Dedup against existing wsAllMessages
