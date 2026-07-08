@@ -40,7 +40,7 @@ function showPermissionPrompt(msg) {
     if (opt.hasInput) {
       html += '<div class="permission-input-wrap" id="perm-input-' + i + '" style="display:none">'
         + '<input class="permission-input" placeholder="' + esc(opt.placeholder || '') + '" '
-        + 'onkeydown="if(event.key===\'Enter\')submitPermissionWithInput(this,\'' + esc(opt.value) + '\')" />'
+        + 'onkeydown="if(event.key===\'Enter\'&&!event.isComposing&&event.keyCode!==229)submitPermissionWithInput(this,\'' + esc(opt.value) + '\')" />'
         + '<button class="permission-submit" onclick="submitPermissionWithInput(this.previousElementSibling,\'' + esc(opt.value) + '\')">Send</button>'
         + '</div>';
     }

@@ -183,6 +183,8 @@ function onKeydown(e) {
   // Capture phase + stopImmediatePropagation so popup navigation (Enter/Tab/arrows)
   // pre-empts the send-on-Enter handler registered on the same element.
   input.addEventListener('keydown', function (e) {
+    // Don't intercept during IME composition — Enter/arrows belong to the input method.
+    if (e.isComposing || e.keyCode === 229) return;
     if (onKeydown(e)) e.stopImmediatePropagation();
   }, true);
   var list = listEl();

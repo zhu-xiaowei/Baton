@@ -642,6 +642,9 @@ function interruptSession() {
 (function () {
   var el = document.getElementById('msg-input');
   el.addEventListener('keydown', function (e) {
+    // IME composition: Enter confirms the candidate, not a send. Sending here
+    // clears the input, then compositionend re-fills it → duplicate send + leftover text.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
   el.addEventListener('input', function () {
