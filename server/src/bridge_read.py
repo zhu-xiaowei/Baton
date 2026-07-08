@@ -555,3 +555,27 @@ async def get_file(key: str):
         return Response(status_code=404, content="Not found")
     except Exception as e:
         return Response(status_code=404, content=f"Not found: {e}")
+
+
+@read_router.get("/video-url/{key}")
+async def get_video_url(key: str):
+    """Return a short-lived presigned GET URL so the browser <video> element streams
+    videos/{key} directly from S3 (with Range/seek), bypassing the Lambda 6MB limit."""
+    import boto3
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return Response(status_code=500, content="BRIDGE_IMAGES_BUCKET not configured")
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    try:
+        s3.head_object(Bucket=bucket, Key=f"videos/{key}")
+    except Exception:
+        return Response(status_code=404, content="Not found")
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": f"videos/{key}"},
+        ExpiresIn=3600,
+    )
+    # Must NOT be cached by CloudFront — the presigned URL expires in 1h, but the
+    # CDN's default GET cache is 1 day, which would serve a stale/expired signature.
+    return Response(content=json.dumps({"url": url}), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})

@@ -539,8 +539,34 @@ function getAgentCwd(sessionId) {
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB — streamed to S3, never buffered
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif']);
+const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']);
 const _uploadedFileKeys = new Set();
+
+// Stream a large video straight to S3 via a presigned PUT (never through Lambda).
+// Returns true on success. Skips the upload if the content-hash key already exists.
+async function uploadVideo(absPath, key, size) {
+  const prep = await post('/api/bridge/video-prepare', { key });
+  if (!prep || !prep.ok) return false;
+  let info;
+  try { info = await prep.json(); } catch { return false; }
+  if (info.error) return false;
+  if (info.exists) return true; // already in S3 — reuse it
+  if (!info.url) return false;
+  try {
+    const res = await fetch(info.url, {
+      method: 'PUT',
+      headers: { 'Content-Type': info.contentType, 'Content-Length': String(size) },
+      body: fs.createReadStream(absPath),
+      duplex: 'half',
+    });
+    return res.ok;
+  } catch (err) {
+    console.error(`[ws] video upload failed: ${err.message}`);
+    return false;
+  }
+}
 
 async function handleRequestFile(msg) {
   const { path: rawPath, projectHash, sessionId, requestId } = msg;
@@ -559,12 +585,22 @@ async function handleRequestFile(msg) {
   if (st.isDirectory()) return reply({ error: 'is a directory', path: absPath });
 
   const ext = path.extname(absPath).toLowerCase();
+  const key = crypto.createHash('sha256').update(`${absPath}#${st.mtimeMs}#${st.size}`).digest('hex').slice(0, 16) + ext;
+
+  if (VIDEO_EXT.has(ext)) {
+    if (st.size > VIDEO_MAX_BYTES) return reply({ error: 'video too large', path: absPath });
+    // Streaming a large video to S3 can far exceed the app's request timeout — send
+    // an immediate ack so the app stops its timeout/retry and shows "uploading" instead.
+    wsSend({ action: 'file_progress', requestId, sessionId, video: true });
+    const ok = await uploadVideo(absPath, key, st.size);
+    if (!ok) return reply({ error: 'upload failed', path: absPath });
+    return reply({ key, path: absPath, size: st.size, video: true });
+  }
+
   const isImage = IMAGE_EXT.has(ext);
   if (isImage && st.size > IMAGE_MAX_BYTES) return reply({ error: 'image too large', path: absPath });
 
   const truncated = !isImage && st.size > FILE_MAX_BYTES;
-  const hash = crypto.createHash('sha256').update(`${absPath}#${st.mtimeMs}#${st.size}`).digest('hex').slice(0, 16);
-  const key = hash + ext;
   const done = (extra) => reply({ key, path: absPath, size: st.size, truncated, image: isImage, ...extra });
 
   if (_uploadedFileKeys.has(key)) {

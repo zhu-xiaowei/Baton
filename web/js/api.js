@@ -88,6 +88,17 @@ var imageObserver = new IntersectionObserver(function (entries) {
   });
 }, { rootMargin: '200px' });
 
+// Fetch an image as a data URL, reusing the shared in-memory imageCache.
+// mime lets non-JPEG previews (svg/png/etc.) build a correct data: prefix.
+async function getImageDataUrl(key, mime) {
+  if (imageCache.has(key)) return imageCache.get(key);
+  var b64 = await apiText('/api/bridge/image/' + key);
+  var dataUrl = 'data:' + (mime || 'image/jpeg') + ';base64,' + b64;
+  if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
+  imageCache.set(key, dataUrl);
+  return dataUrl;
+}
+
 async function loadOneImage(el) {
   var key = el.dataset.key;
   if (imageCache.has(key)) {
@@ -96,10 +107,7 @@ async function loadOneImage(el) {
     return;
   }
   try {
-    var b64 = await apiText('/api/bridge/image/' + key);
-    var dataUrl = 'data:image/jpeg;base64,' + b64;
-    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
-    imageCache.set(key, dataUrl);
+    var dataUrl = await getImageDataUrl(key);
     el.classList.add('loaded');
     el.innerHTML = '<img src="' + dataUrl + '" onclick="viewImage(this.src)" />';
   } catch(e) { el.textContent = '[Image error]'; }
@@ -124,5 +132,5 @@ function viewImage(src) {
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
   api, apiText, apiPost,
-  loadOneImage, loadImages, viewImage,
+  loadOneImage, loadImages, viewImage, getImageDataUrl,
 });

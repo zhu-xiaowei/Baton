@@ -274,6 +274,27 @@ function scrollToLine(line, total) {
   body.scrollTop = Math.max(0, y - body.clientHeight / 2);
 }
 
+// Presigned GET URLs expire in 1h; cache them ~50min (10min safety margin) so
+// re-opening the same video reuses the URL instead of round-tripping the bridge.
+var VIDEO_URL_TTL = 50 * 60 * 1000;
+
+function renderVideo(url) {
+  setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
+}
+
+function showVideo(key) {
+  var c = state.videoUrlCache.get(key);
+  if (c && c.exp > Date.now()) return renderVideo(c.url);
+  return window.api('/api/bridge/video-url/' + key).then(function (r) {
+    if (!r || !r.url) return setBody('<div class="file-error">Failed to load video.</div>');
+    if (state.videoUrlCache.size > 50) state.videoUrlCache.delete(state.videoUrlCache.keys().next().value);
+    state.videoUrlCache.set(key, { url: r.url, exp: Date.now() + VIDEO_URL_TTL });
+    renderVideo(r.url);
+  }).catch(function () {
+    setBody('<div class="file-error">Failed to load video.</div>');
+  });
+}
+
 function handleFileReady(msg) {
   var async = _asyncReqs.get(msg.requestId);
   if (async) { _asyncReqs.delete(msg.requestId); return async(msg); }
@@ -284,18 +305,20 @@ function handleFileReady(msg) {
   state._pendingFileReq = null;
 
   if (msg.error) {
-    var m = { 'binary file': 'Cannot preview a binary file.', 'is a directory': 'That path is a directory.', 'image too large': 'Image is too large to preview (over 10 MB).' };
+    var m = { 'binary file': 'Cannot preview a binary file.', 'is a directory': 'That path is a directory.', 'image too large': 'Image is too large to preview (over 10 MB).', 'video too large': 'Video is too large to preview (over 5 GB).' };
     var detail = msg.path || p.path || '';
     return setBody('<div class="file-error">' + esc(m[msg.error] || ('Failed to load file: ' + msg.error))
       + (detail ? '<div class="file-error-path">' + esc(detail) + '</div>' : '') + '</div>');
   }
 
+  if (msg.video) return showVideo(msg.key);
+
   if (msg.image) {
     var ext = (msg.key.split('.').pop() || '').toLowerCase();
     var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
-    return window.apiText('/api/bridge/image/' + msg.key).then(function (b64) {
+    return window.getImageDataUrl(msg.key, mime).then(function (dataUrl) {
       closeFileViewer();
-      if (window.viewImage) window.viewImage('data:' + mime + ';base64,' + b64);
+      if (window.viewImage) window.viewImage(dataUrl);
     }).catch(function () {
       setBody('<div class="file-error">Failed to download image.</div>');
     });
@@ -314,9 +337,20 @@ function handleFileReady(msg) {
   });
 }
 
+// Bridge acks a video request before its (potentially long) S3 upload finishes.
+// Clear the request timeout so it neither fires "timed out" nor retries (which would
+// re-upload); keep _pendingFileReq alive so the eventual file_ready still matches.
+function handleFileProgress(msg) {
+  var p = state._pendingFileReq;
+  if (!p || p.requestId !== msg.requestId) return;
+  clearTimeout(p.timer);
+  p.timer = null;
+  if (msg.video) setBody('<div class="file-loading"><div class="spinner"></div><span>Uploading video…</span></div>');
+}
+
 document.addEventListener('keydown', function (e) {
   var o = overlay();
   if (o && o.style.display === 'flex' && e.key === 'Escape') closeFileViewer();
 });
 
-Object.assign(window, { openFile: openFile, closeFileViewer: closeFileViewer, handleFileReady: handleFileReady, setFileViewMode: setFileViewMode });
+Object.assign(window, { openFile: openFile, closeFileViewer: closeFileViewer, handleFileReady: handleFileReady, handleFileProgress: handleFileProgress, setFileViewMode: setFileViewMode });

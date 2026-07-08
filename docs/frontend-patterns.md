@@ -191,6 +191,8 @@ interruptSession():
 
 Equivalent to Ctrl+C / Escape in the CC terminal. Bridge sends interrupt signal to the corresponding tmux pane.
 
+Besides clicking the stop button, pressing `Esc` anywhere (input focused or not) interrupts the running turn, mirroring CC — but yields to overlays that own Esc (slash popup, permission prompt, file/image viewer, new-project modal) and ignores IME composition.
+
 ## 8. WS Disconnect & Reconnect
 
 ```

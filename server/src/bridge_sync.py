@@ -319,3 +319,44 @@ async def upload_file(req: UploadFileRequest):
     body = base64.b64decode(req.data)
     s3.put_object(Bucket=bucket, Key=f"files/{req.key}", Body=body)
     return {"key": req.key, "size": len(body)}
+
+
+# Videos are too large to base64 through Lambda (API GW 6MB limit), so the bridge
+# streams them straight to S3 via a presigned PUT URL. Deterministic content-hash
+# keys mean an already-uploaded video is detected via HEAD and never re-sent.
+_VIDEO_CONTENT_TYPES = {
+    "mp4": "video/mp4", "m4v": "video/mp4", "mov": "video/quicktime",
+    "webm": "video/webm", "mkv": "video/x-matroska", "avi": "video/x-msvideo",
+}
+
+
+def _video_content_type(key: str) -> str:
+    ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    return _VIDEO_CONTENT_TYPES.get(ext, "video/mp4")
+
+
+class VideoPrepareRequest(BaseModel):
+    key: str       # content-hash key, e.g. "1a2b3c4d5e6f7a8b.mp4"
+
+
+@bridge_router.post("/video-prepare")
+async def video_prepare(req: VideoPrepareRequest):
+    """If videos/{key} already exists in S3, tell the bridge to skip the upload.
+    Otherwise return a short-lived presigned PUT URL for a direct S3 stream."""
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
+    s3 = _s3_client()
+    s3_key = f"videos/{req.key}"
+    try:
+        s3.head_object(Bucket=bucket, Key=s3_key)
+        return {"exists": True, "key": req.key}
+    except Exception:
+        pass  # not found (or transient) — issue a fresh upload URL
+    content_type = _video_content_type(req.key)
+    url = s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": bucket, "Key": s3_key, "ContentType": content_type},
+        ExpiresIn=900,
+    )
+    return {"exists": False, "key": req.key, "url": url, "contentType": content_type}

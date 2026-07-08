@@ -198,6 +198,8 @@ function connectWs(_, projectHash) {
       }).catch(function () {});
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);
+    } else if (msg.action === 'file_progress') {
+      if (window.handleFileProgress) window.handleFileProgress(msg);
     } else if (msg.action === 'commands_list') {
       if (window.handleCommandsList) window.handleCommandsList(msg);
     } else if (msg.action === 'command_output') {
@@ -653,6 +655,24 @@ function interruptSession() {
     updateSendBtn();
   });
 })();
+// Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
+// that own Esc (slash popup handles it in capture phase; file/image viewers
+// close first) keep priority — we only act when nothing else claimed the key.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (e.isComposing || e.keyCode === 229) return;
+  // Yield to open overlays/modals that give Esc its own meaning.
+  if (document.getElementById('permission-prompt')) return;
+  var fileO = document.getElementById('fileOverlay');
+  if (fileO && fileO.style.display === 'flex') return;
+  var imgO = document.getElementById('imgOverlay');
+  if (imgO && imgO.style.display === 'flex') return;
+  var newP = document.getElementById('newProjectModal');
+  if (newP && newP.style.display === 'flex') return;
+  if (!state.wsRunning) return;
+  e.preventDefault();
+  interruptSession();
+});
 
 var _clientIdSeq = 0;
 

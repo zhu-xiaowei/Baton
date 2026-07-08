@@ -150,6 +150,8 @@ GET  /api/bridge/devices                    — device list (includes online fie
 GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
 GET  /api/bridge/messages?session=X&after=ts — messages (incremental, ts=ISO timestamp)
+POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
+GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (auto-installs tmux, sets up service)
 ```
 
@@ -189,6 +191,11 @@ Approach: tmux send-keys (cross-platform, zero-intrusion)
 - S3 upload + `![](claude-bridge:key)` protocol
 - Bridge downloads → replaces with absolute path → CC Read tool reads it
 - Multi-image staging + gallery + paste support
+
+### File / Video Preview (click a file link in a message)
+- Click file link → `openFile()` → WS `request_file` → bridge `handleRequestFile` (`ws.mjs`) reads from disk.
+- Text/image: bridge base64s + POSTs to Lambda (`/upload-file` → `files/{key}`, `/upload-image` → `images/{key}`), replies `file_ready {key}`; frontend GETs `/api/bridge/file|image/{key}` (served base64-as-text from S3). Binary text files (NUL byte in first 8KB) → `binary file` error.
+- **Video** (`.mp4/.m4v/.mov/.webm/.mkv/.avi`, ≤5GB): base64-through-Lambda is impossible (API GW 6MB limit), so the bridge **streams the file straight to S3** via a presigned PUT. `POST /video-prepare {key}` → server HEADs `videos/{key}`: exists → `{exists:true}` (skip upload, dedup by content-hash key so it survives bridge restarts), else returns presigned PUT URL → bridge `fs.createReadStream` piped to `fetch(PUT, {duplex:'half'})` (flat memory regardless of size). Bridge replies `file_ready {video:true, key}`; frontend calls `GET /api/bridge/video-url/{key}` for a short-lived presigned GET URL and plays it in a `<video>` element streaming directly from S3 (Range/seek supported). No CloudFront/IAM change — Lambda already has S3 Get/Put; presigning uses those creds.
 
 ### Auto-create tmux Session
 - Existing session with no CC process → Bridge auto `tmux new-session` + `claude --resume <id>` + wait ready + sendKeys

@@ -220,11 +220,15 @@ App → Server → Bridge:  { action: "request_file", path: "bridge/ws.mjs", ses
 Bridge: resolve path (relative → projectHashToPath), stat, dedup by key (LRU 1000), then by type:
   text  → read ≤5MB (truncate + drop partial last line) → POST /upload-file  (S3 files/{key})
   image → ≤10MB whole file (else "image too large")     → POST /upload-image (S3 images/{key})
+  video → ≤5GB; ack file_progress, then POST /video-prepare (HEAD dedup) →
+          stream file to presigned PUT URL, direct to S3 (never through Lambda) (S3 videos/{key})
 Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId: "abc",
                           key: "<sha>.ext", path: "/abs/path", size: N, truncated: false, image: false }
 App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
      image → GET /api/bridge/image/{key} → reuse the image overlay (viewImage)
-     (content travels via REST/S3, never over WS — avoids the 128KB frame limit)
+     video → GET /api/bridge/video-url/{key} (presigned, no-store, ~50min app cache) → <video> streams from S3
+     (text/image content travels via REST/S3, never over WS — avoids the 128KB frame limit;
+      video bytes stream browser↔S3 directly, bypassing the Lambda 6MB payload limit)
 ```
 
 ### Slash commands (autocomplete)
@@ -342,8 +346,8 @@ agentpeek/
 ├── server/
 │   ├── src/
 │   │   ├── main.py         # FastAPI entry
-│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image, upload-file
-│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image/file
+│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image, upload-file, video-prepare
+│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image/file/video-url
 │   │   └── bridge_ws.py    # WS relay ($connect/$disconnect/$default)
 │   ├── template/AgentPeek.template
 │   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
