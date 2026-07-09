@@ -1,14 +1,16 @@
-#[cfg(desktop)]
+// Multi-window is macOS-only. Windows/Linux are intentionally left single-window
+// (title_bar_style/hidden_title below are macOS-only builder methods anyway).
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(desktop)]
+#[cfg(target_os = "macos")]
 static WINDOW_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 // Open a fresh viewer window. Each window is its own WebView (isolated DOM/JS,
 // own WS connection + sessionStorage nav), so different windows can browse
 // different projects/sessions without interfering. Cascade-offset so it
 // doesn't land exactly on top of the window that spawned it.
-#[cfg(desktop)]
+#[cfg(target_os = "macos")]
 fn spawn_peek_window(app: &tauri::AppHandle) {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -49,34 +51,30 @@ pub fn run() {
       #[cfg(target_os = "ios")]
       app.handle().plugin(tauri_plugin_speech::init())?;
 
-      // Desktop menu: add ⌘N (New Window) alongside the system defaults
-      // (Edit copy/paste, Window cycling). Mobile has no menu bar.
-      #[cfg(desktop)]
+      // macOS menu: start from the standard system menu (Menu::default wires up
+      // the Edit submenu, so ⌘X/⌘C/⌘V reach the WebView), then inject ⌘N
+      // (New Window) at the top of the File submenu. Building the menu by hand
+      // would drop those predefined Edit items and break paste.
+      #[cfg(target_os = "macos")]
       {
-        use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+        use tauri::menu::{Menu, MenuItemBuilder};
+
+        let menu = Menu::default(app.handle())?;
 
         let new_window = MenuItemBuilder::new("New Window")
           .id("new_window")
-          .accelerator("CmdOrCtrl+N")
+          .accelerator("Cmd+N")
           .build(app)?;
 
-        let file_menu = SubmenuBuilder::new(app, "File")
-          .item(&new_window)
-          .separator()
-          .close_window()
-          .build()?;
-
-        let menu = MenuBuilder::new(app)
-          .item(&file_menu)
-          .copy()
-          .cut()
-          .paste()
-          .select_all()
-          .undo()
-          .redo()
-          .minimize()
-          .fullscreen()
-          .build()?;
+        // File is the submenu right after the app-name submenu.
+        if let Some(file) = menu
+          .items()?
+          .iter()
+          .filter_map(|i| i.as_submenu())
+          .find(|s| s.text().map(|t| t == "File").unwrap_or(false))
+        {
+          file.prepend(&new_window)?;
+        }
 
         app.set_menu(menu)?;
         app.on_menu_event(|app, event| {
