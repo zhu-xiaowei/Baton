@@ -184,6 +184,7 @@ function connectWs(_, projectHash) {
             container.innerHTML = renderMessages(state.wsAllMessages);
             state.wsRenderedCount = state.wsAllMessages.length;
             state.pendingSentMessages = [];
+            state.lastDeliveredSeq = -1;
             loadImages(container);
             clampOverflow(container);
             container.parentElement.scrollTop = container.parentElement.scrollHeight;
@@ -709,7 +710,8 @@ function doSend(fullText, displayText, images) {
   // Unique per-send id, round-tripped through the bridge in send_message_result
   // so the ack maps back to THIS exact bubble (not "the first pending", which
   // mis-pairs when several sends are in flight). Doubles as the DOM element id.
-  var msgId = 'sent-' + Date.now() + '-' + (_clientIdSeq++);
+  var seq = _clientIdSeq++;
+  var msgId = 'sent-' + Date.now() + '-' + seq;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
     wsSendReliable({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
@@ -736,7 +738,7 @@ function doSend(fullText, displayText, images) {
   // Keep fullText (with image refs) so a retry re-sends the exact same payload;
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
-  state.pendingSentMessages.push({ id: msgId, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId });
+  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -781,6 +783,7 @@ function removePending(pending) {
 function resolvePending(pending, ok, error) {
   pending.delivered = true;
   if (ok) {
+    bumpDeliveredSeq(pending.seq);
     markPendingTime(pending);
   } else {
     markPendingFailed(pending, error);
@@ -804,12 +807,29 @@ function messageEchoed(pending) {
   return false;
 }
 
-// Retire orphaned optimistic bubbles tryDedup missed (echo now in wsAllMessages). See CLAUDE.md.
+// Raise the delivered-seq watermark when a send is confirmed reached CC (echo
+// matched, or ack ok). Persists across pending removal, so orphan detection works
+// even after the confirmed pending itself is gone.
+function bumpDeliveredSeq(seq) {
+  if (typeof seq === 'number' && seq > state.lastDeliveredSeq) state.lastDeliveredSeq = seq;
+}
+
+// Retire orphaned optimistic bubbles. Two rules: (1) drop any pending whose echo is
+// present (tryDedup missed it — e.g. echo arrived via bufferAndFetch); (2) drop any
+// pending sent BEFORE a confirmed-delivered one (seq < watermark) that still has no
+// echo — CC processes FIFO, so an earlier message a later one overtook was skipped
+// (busy-send swallowed it, never reached jsonl, echo never comes). Images kept.
 function reconcileEchoedPending() {
+  for (var j = 0; j < state.pendingSentMessages.length; j++) {
+    var p = state.pendingSentMessages[j];
+    if (!p.isImage && messageEchoed(p)) bumpDeliveredSeq(p.seq);
+  }
   for (var i = state.pendingSentMessages.length - 1; i >= 0; i--) {
     var pending = state.pendingSentMessages[i];
     if (pending.isImage) continue; // image bubbles carry no matchable text
-    if (!messageEchoed(pending)) continue;
+    var echoed = messageEchoed(pending);
+    var orphaned = pending.seq < state.lastDeliveredSeq; // a later send was confirmed first
+    if (!echoed && !orphaned) continue;
     var el = document.getElementById(pending.id);
     if (el) el.remove();
     state.pendingSentMessages.splice(i, 1);
@@ -906,6 +926,7 @@ function tryDedup(msg) {
     var isCmdMatch = cmdName && pendingText.charAt(0) === '/' &&
       (('/' + cmdName) === pendingText || cmdName.split(':').pop() === pendingText.slice(1));
     if (!isTextMatch && !isCmdMatch) continue;
+    bumpDeliveredSeq(pending.seq); // this send's echo just landed → confirms delivery
     state.pendingSentMessages.splice(i, 1);
     var el = document.getElementById(pending.id);
     if (isCmdMatch && !isTextMatch) {

@@ -414,6 +414,7 @@ async function startNewSession(projectHash) {
   state.wsSessionId = null;
   state.wsRunning = false;
   state.pendingSentMessages = [];
+  state.lastDeliveredSeq = -1;
   if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
   var agentChecked = localStorage.getItem('apeek_newAsAgent') === '1' ? 'checked' : '';
@@ -466,6 +467,10 @@ async function loadMessages(sessionId, preview, status) {
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
+  // Switching sessions: drop the prior session's optimistic bubbles + orphan
+  // watermark so they can't match or orphan against this session's messages.
+  state.pendingSentMessages = [];
+  state.lastDeliveredSeq = -1;
   startWs(sessionId);
 
   try {
