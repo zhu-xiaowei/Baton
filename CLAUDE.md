@@ -178,6 +178,10 @@ Approach: tmux send-keys (cross-platform, zero-intrusion)
 - Viewer → WS → Server → Bridge → tmux send-keys → CC
 - Optimistic rendering + dedup + timestamp update
 
+### Reliable WS Delivery (app side, `web/js/ws.js`)
+- **Sends must survive a dead socket.** User actions (`send_message`/`interrupt`/`create_project`) use `wsSendReliable`, not bare `wsSend` (which drops frames when not OPEN): queues to `_wsSendQueue` (array, ordered) + reconnects, flushed on `onopen` after re-subscribe. iOS suspends the socket in background into a zombie (reads OPEN, frames vanish, no `close`) — `handleForegroundResume` (`visibilitychange`/`pageshow`/`focus`) forces reconnect + `recoverMissing()` when a real session is active. This kills the "agent 2nd message fails / Retry dead until re-enter" bug.
+- **No duplicate/stuck bubbles.** `reconcileEchoedPending()` (end of `updateLastTurn`) retires optimistic bubbles whose echo landed via `bufferAndFetch` (so `tryDedup` never ran) — else they orphan with no `data-ts` and stick to the bottom; skips `isImage` so failed sends keep Retry. New-session banner: `body.new-session #content` is flex-centered, so `.ws-banner` is pinned `position:absolute; top:0` instead of being pulled to the middle.
+
 ### Permission Detection + User Interaction
 - Viewer detects AskUserQuestion / ExitPlanMode / Bash / Edit / Write from tool_use
 - AskUserQuestion / ExitPlanMode: show prompt immediately (CC is waiting for user)

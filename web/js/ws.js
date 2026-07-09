@@ -6,7 +6,7 @@ import { state } from './state.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-var _pendingWsSend = null; // queued message to send on WS open
+var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
 
 if (window.visualViewport) {
   var _wasKbUp = false;
@@ -33,6 +33,18 @@ if (window.visualViewport) {
     _wasKbUp = kbUp;
   });
 }
+
+// iOS foreground: force reconnect (resumed socket may be a dead zombie). See CLAUDE.md.
+function handleForegroundResume() {
+  if (document.visibilityState !== 'visible') return;
+  if (!state.appState.session || state.appState.session === '__new__') return;
+  if (!state.WS_URL) return;
+  if (state.ws && state.ws.readyState === WebSocket.CONNECTING) return;
+  connectWs();
+}
+document.addEventListener('visibilitychange', handleForegroundResume);
+window.addEventListener('pageshow', handleForegroundResume);
+window.addEventListener('focus', handleForegroundResume);
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
 var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -115,9 +127,10 @@ function connectWs(_, projectHash) {
       subscribeSession(state.wsSessionId);
       if (state.wsLastTimestamp) recoverMissing();
     }
-    if (_pendingWsSend) {
-      wsSend(_pendingWsSend);
-      _pendingWsSend = null;
+    if (_wsSendQueue.length) {
+      var queued = _wsSendQueue;
+      _wsSendQueue = [];
+      for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
     }
     if (window.prefetchCommands) window.prefetchCommands();
   };
@@ -252,6 +265,18 @@ function wsSend(data) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(data));
 }
 
+// Non-OPEN → queue + reconnect (onopen flushes); use for user actions that must not drop.
+function wsSendReliable(data) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(data));
+    return;
+  }
+  _wsSendQueue.push(data);
+  if (!state.ws || state.ws.readyState === WebSocket.CLOSING || state.ws.readyState === WebSocket.CLOSED) {
+    connectWs();
+  }
+}
+
 function setWsStatus(status) {
   state.wsStatusText = status;
   showWsBanner(status);
@@ -270,12 +295,7 @@ function disconnectWs() {
 }
 
 function ensureWsAndSend(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    wsSend(data);
-  } else {
-    _pendingWsSend = data;
-    connectWs();
-  }
+  wsSendReliable(data);
 }
 
 /**
@@ -433,6 +453,8 @@ function updateLastTurn() {
     dismissPermissionPrompt();
   }
   checkPendingPrompts(state.wsAllMessages);
+
+  reconcileEchoedPending();
 
   if (wasNearBottom) {
     el.scrollTop = el.scrollHeight;
@@ -641,7 +663,7 @@ function onSendBtnClick() {
 }
 function interruptSession() {
   if (!state.wsSessionId) return;
-  wsSend({ action: 'interrupt', sessionId: state.wsSessionId, device: state.appState.device || '' });
+  wsSendReliable({ action: 'interrupt', sessionId: state.wsSessionId, device: state.appState.device || '' });
   state.wsRunning = false;
   updateSendBtn();
 }
@@ -690,9 +712,9 @@ function doSend(fullText, displayText, images) {
   var msgId = 'sent-' + Date.now() + '-' + (_clientIdSeq++);
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
-    wsSend({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
+    wsSendReliable({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
   } else {
-    wsSend({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device });
+    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device });
   }
 
   // Remove placeholder text
@@ -780,6 +802,18 @@ function messageEchoed(pending) {
     if (hay && (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1)) return true;
   }
   return false;
+}
+
+// Retire orphaned optimistic bubbles tryDedup missed (echo now in wsAllMessages). See CLAUDE.md.
+function reconcileEchoedPending() {
+  for (var i = state.pendingSentMessages.length - 1; i >= 0; i--) {
+    var pending = state.pendingSentMessages[i];
+    if (pending.isImage) continue; // image bubbles carry no matchable text
+    if (!messageEchoed(pending)) continue;
+    var el = document.getElementById(pending.id);
+    if (el) el.remove();
+    state.pendingSentMessages.splice(i, 1);
+  }
 }
 
 function markPendingTime(pending) {
