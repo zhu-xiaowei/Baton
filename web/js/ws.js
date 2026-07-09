@@ -454,6 +454,7 @@ function updateLastTurn() {
     dismissPermissionPrompt();
   }
   checkPendingPrompts(state.wsAllMessages);
+  if (typeof maybeRevealStuckAgent === 'function') maybeRevealStuckAgent(state.wsSessionId);
 
   reconcileEchoedPending();
 

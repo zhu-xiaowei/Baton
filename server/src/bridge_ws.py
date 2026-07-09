@@ -191,6 +191,9 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "interrupt":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "interrupt")
+    elif action == "reveal_agent":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "reveal_agent")
     elif action == "request_file":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "request_file")

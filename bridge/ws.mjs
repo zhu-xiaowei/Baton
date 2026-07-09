@@ -5,8 +5,9 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { readAllMessages, uploadMessages } from './extract.mjs';
-import { findSessionFile, getDaemonSessions } from './session.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, interruptSession, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput } from './tmux.mjs';
+import { findSessionFile, getDaemonSessions, hasNoDanglingTurn } from './session.mjs';
+import { armStallRescue } from './stall.mjs';
+import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, interruptSession, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput, findTmuxTargetForSession } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands, LOCAL_COMMANDS, DIALOG_COMMANDS, SYNTHETIC_COMMANDS } from './commands.mjs';
@@ -165,6 +166,9 @@ async function handleMessage(msg) {
       break;
     case 'interrupt':
       interruptSession(msg.sessionId);
+      break;
+    case 'reveal_agent':
+      await handleRevealAgent(msg.sessionId);
       break;
     case 'request_file':
       await handleRequestFile(msg);
@@ -504,18 +508,39 @@ async function launchRegularForSession(sessionId) {
   return { ok: true, tmuxName };
 }
 
-async function launchAgentForSession(sessionId) {
+async function launchAgentForSession(sessionId, onRescueEscape) {
   const agentMeta = getAgentCwd(sessionId);
   if (!agentMeta) return { ok: false, error: 'Agent session metadata not found' };
 
   try {
     // The agents TUI labels a session by its name, falling back to the prompt text
     // (`intent`) when unnamed. Pass both so navigation can match reliably.
-    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name || agentMeta.intent);
+    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name || agentMeta.intent, onRescueEscape);
     return { ok: true, tmuxName };
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+// App opened an agent whose AskUserQuestion is stuck in daemon memory (never
+// flushed to jsonl — the daemon's state can even read 'done' while the question
+// waits). Gate on hasNoDanglingTurn, not agentState: open the agents TUI,
+// navigate in — waitForAgentPrompt sends Escape, arming the stall rescue so
+// watcher.mjs hides the synthetic pair and tags the flushed tool_use for the
+// app's rescued-wizard path.
+async function handleRevealAgent(sessionId) {
+  const dm = getDaemonSessions().get(sessionId);
+  if (!dm) return;
+  if (findTmuxTargetForSession(sessionId)) return;
+  const fp = findSessionFile(sessionId);
+  if (!fp || !hasNoDanglingTurn(fp)) return;
+  if (_launchLocks.has(sessionId)) return;
+
+  console.log(`[ws] reveal_agent: ${sessionId.slice(0, 8)}`);
+  const promise = launchAgentForSession(sessionId, () => armStallRescue(sessionId));
+  _launchLocks.set(sessionId, promise);
+  await promise;
+  setTimeout(() => _launchLocks.delete(sessionId), 30_000);
 }
 
 function getAgentCwd(sessionId) {

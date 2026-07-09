@@ -163,6 +163,15 @@ function openSession(el) {
   loadMessages(el.dataset.sid, el.dataset.preview, el.dataset.status);
 }
 
+var _revealedSessions = new Set();
+function maybeRevealStuckAgent(sessionId) {
+  if (!state.appState.isAgent) return;
+  if (document.getElementById('permission-prompt')) return;
+  if (_revealedSessions.has(sessionId)) return;
+  _revealedSessions.add(sessionId);
+  ensureWsAndSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
+}
+
 function shortModel(m) {
   return (m || 'unknown').replace(/^claude-/, '');
 }
@@ -444,6 +453,7 @@ async function loadMessages(sessionId, preview, status) {
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';
+  _revealedSessions.delete(sessionId);
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = (status === 'running');
@@ -510,6 +520,7 @@ async function loadMessages(sessionId, preview, status) {
     loadImages(content);
     clampOverflow(content.querySelector('.messages'));
     checkPendingPrompts(state.wsAllMessages);
+    maybeRevealStuckAgent(sessionId);
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {

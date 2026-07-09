@@ -470,7 +470,7 @@ export function launchClaudeSession(sessionId, projectHash) {
   return tmuxName;
 }
 
-export async function launchAgentsSession(sessionId, agentCwd, agentName) {
+export async function launchAgentsSession(sessionId, agentCwd, agentName, onRescueEscape) {
   if (!hasTmux()) throw new Error('tmux not installed');
   if (!agentCwd || !fs.existsSync(agentCwd)) throw new Error('Agent cwd not found');
 
@@ -493,7 +493,7 @@ export async function launchAgentsSession(sessionId, agentCwd, agentName) {
 
   spawnSync('tmux', ['send-keys', '-t', tmuxName, 'Right'], { stdio: 'ignore' });
 
-  const entered = await waitForAgentPrompt(tmuxName, agentName);
+  const entered = await waitForAgentPrompt(tmuxName, agentName, onRescueEscape);
   if (!entered) {
     try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
     throw new Error('Failed to enter agent session');
@@ -571,7 +571,7 @@ async function navigateToAgent(tmuxTarget, agentName) {
   }
 }
 
-async function waitForAgentPrompt(tmuxTarget, agentName) {
+async function waitForAgentPrompt(tmuxTarget, agentName, onRescueEscape) {
   let escaped = false;
   for (let i = 0; i < 10; i++) {
     await new Promise(r => setTimeout(r, 500));
@@ -584,6 +584,7 @@ async function waitForAgentPrompt(tmuxTarget, agentName) {
       // Blocked on AskUserQuestion: Right opens the option picker, not the prompt.
       // Decline it once so a free-text message can be typed.
       if (!escaped && content.includes('Esc to cancel')) {
+        if (onRescueEscape) onRescueEscape();
         spawnSync('tmux', ['send-keys', '-t', tmuxTarget, 'Escape'], { stdio: 'ignore' });
         escaped = true;
       }
