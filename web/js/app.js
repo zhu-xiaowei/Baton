@@ -515,10 +515,16 @@ async function loadMessages(sessionId, preview, status) {
     state.wsRunning = deriveRunning(state.wsAllMessages, status);
     updateSendBtn();
 
-    content.scrollTop = content.scrollHeight;
-    setTimeout(function () { content.scrollTop = content.scrollHeight; }, 500);
+    // Clamp before scrolling: clamp shrinks long messages, so scrolling first
+    // would leave the viewport above the bottom. rAF re-scroll absorbs any
+    // post-clamp reflow before paint (replaces the old visible 500ms jump).
     loadImages(content);
     clampOverflow(content.querySelector('.messages'));
+    content.scrollTop = content.scrollHeight;
+    requestAnimationFrame(function () {
+      if (_navVersion !== myNav) return;
+      content.scrollTop = content.scrollHeight;
+    });
     checkPendingPrompts(state.wsAllMessages);
     maybeRevealStuckAgent(sessionId);
     state.wsRenderedCount = state.wsAllMessages.length;

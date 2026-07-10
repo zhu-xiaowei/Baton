@@ -83,7 +83,14 @@
     let diffHtml = '';
     if (oldStr || newStr) {
       const diffId = 'diff-' + Math.random().toString(36).slice(2, 8);
-      diffHtml = `<div id="${diffId}" class="diff-container"></div>`;
+      // diff2html draws async (setTimeout below), so its height is 0 at scroll
+      // time and the initial scroll-to-bottom lands short. Reserve an estimated
+      // min-height (~18px/row, capped at the 240px collapse threshold); cleared
+      // after draw, residual absorbed by the browser's overflow-anchor.
+      const _oldLines = oldStr ? oldStr.split('\n').length : 0;
+      const _newLines = newStr ? newStr.split('\n').length : 0;
+      const _estH = Math.min((_oldLines + _newLines) * 18 + 12, 240);
+      diffHtml = `<div id="${diffId}" class="diff-container" style="min-height:${_estH}px"></div>`;
 
       setTimeout(() => {
         const el = document.getElementById(diffId);
@@ -143,6 +150,9 @@
             + (newStr ? newStr.split('\n').map(l => '<span style="color:#3fb950">+ ' + esc(l) + '</span>').join('\n') : '')
             + '</pre>';
         }
+        // Drop the reserved estimate before the scrollHeight check below, or an
+        // over-estimate would falsely trigger the collapse.
+        el.style.minHeight = '';
         // Collapse if rendered height exceeds 240px
         if (el.scrollHeight > 240) {
           const bodyContent = el.closest('.tool-body-content');

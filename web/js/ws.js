@@ -458,11 +458,12 @@ function updateLastTurn() {
 
   reconcileEchoedPending();
 
+  // Clamp before scrolling so scrollTop uses the collapsed final height.
+  loadImages(container);
+  clampOverflow(container);
   if (wasNearBottom) {
     el.scrollTop = el.scrollHeight;
   }
-  loadImages(container);
-  clampOverflow(container);
   showStats(state.wsMessageCount + ' messages (live)');
 }
 
