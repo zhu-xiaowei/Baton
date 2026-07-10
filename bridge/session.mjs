@@ -372,10 +372,17 @@ export function mapAgentState(a) {
   return 'running';
 }
 
-// blocked agents carry `waitingFor` (what the daemon is waiting on, e.g.
-// "permission prompt"); other states have no per-agent detail in --json.
+// The blocked-agent detail (the question awaiting the user) lives in the job's
+// state.json `needs` field, NOT in --json (whose `waitingFor` is usually null).
+// jobs dir name == sessionId[:8], so read it directly. Only blocked agents show
+// a detail; others have none.
 export function agentDetailFor(a) {
-  return mapAgentState(a) === 'blocked' ? (a.waitingFor || '') : '';
+  if (mapAgentState(a) !== 'blocked') return '';
+  try {
+    const statePath = path.join(CLAUDE_JOBS, (a.id || a.sessionId || '').slice(0, 8), 'state.json');
+    const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    return st.needs || st.detail || a.waitingFor || '';
+  } catch { return a.waitingFor || ''; }
 }
 
 // Resolve the claude binary once. systemd user services run with a bare PATH

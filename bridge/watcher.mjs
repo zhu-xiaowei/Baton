@@ -288,16 +288,20 @@ async function pollAgentStates(config) {
   let agents;
   try { agents = getAgentsJson(true); } catch { return; }
   for (const [sid, e] of agents) {
+    const filePath = findSessionFile(sid);
+    if (!filePath) continue;
+    // Title: --json name first, then the jsonl's first user message. At launch
+    // both can be empty for a poll or two (name not inferred yet, jsonl not
+    // written), so preview is part of the diff — a title arriving later re-pushes.
+    const preview = e.agentName || getPreview(filePath) || 'Agent session';
     const old = _jobsState.get(sid);
-    if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.agentState === e.agentState) continue;
-    _jobsState.set(sid, e);
-    await pushAgentMeta(config, sid, e);
+    if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.agentState === e.agentState && old.preview === preview) continue;
+    _jobsState.set(sid, { ...e, preview });
+    await pushAgentMeta(config, sid, e, filePath, preview);
   }
 }
 
-async function pushAgentMeta(config, sessionId, e) {
-  const filePath = findSessionFile(sessionId);
-  if (!filePath) return;
+async function pushAgentMeta(config, sessionId, e, filePath, preview) {
   const projectHash = path.basename(path.dirname(filePath));
   const stat = fs.statSync(filePath);
   const status = e.agentState === 'done' ? 'stopped' : e.agentState === 'blocked' ? 'idle' : 'running';
@@ -311,7 +315,7 @@ async function pushAgentMeta(config, sessionId, e) {
       projectName: readableProjectName(projectHash),
       lastActive: stat.mtime.toISOString(),
       size: stat.size,
-      preview: getPreview(filePath) || e.agentName || 'Agent session',
+      preview,
       model: getModel(filePath),
       status,
       isAgent: true,
