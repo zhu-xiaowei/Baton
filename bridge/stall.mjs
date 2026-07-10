@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { STALL_JSONL_SILENCE_MS, STALL_CONFIRM_INTERVAL_MS, STALL_ARM_TIMEOUT_MS } from './config.mjs';
 import { lastKnownStatus, updateSessionStatus } from './sync.mjs';
-import { findSessionFile, hasNoDanglingTurn } from './session.mjs';
+import { findSessionFile, hasNoDanglingTurn, getDaemonSessions } from './session.mjs';
 import { findTmuxTargetForSession, interruptSession, paneRunState } from './tmux.mjs';
 
 /**
@@ -49,8 +49,12 @@ export async function checkStalledSessions(config) {
 
     if (!findTmuxTargetForSession(sessionId)) continue; // not a tmux-backed session
     const run = paneRunState(sessionId);
+    // Agent status is owned by the `claude agents --json` poller — never let the
+    // pane heuristic downgrade an agent to idle (it would also strip the agent
+    // metadata from DDB). The wizard rescue still applies to agents.
+    const isAgent = getDaemonSessions().has(sessionId);
     if (run === 'wizard') candidates.push({ sessionId, filePath, kind: 'wizard' });
-    else if (run === 'idle') candidates.push({ sessionId, filePath, kind: 'idle' });
+    else if (run === 'idle' && !isAgent) candidates.push({ sessionId, filePath, kind: 'idle' });
     // 'busy' / 'no-pane' → genuinely running or can't tell, leave alone
   }
   if (!candidates.length) return;

@@ -25,6 +25,11 @@ export const STALL_POLL_INTERVAL_MS = 5000;   // how often to scan for stuck ses
 export const STALL_JSONL_SILENCE_MS = 5000;   // pre-filter: skip capture-pane unless jsonl has been quiet this long
 export const STALL_CONFIRM_INTERVAL_MS = 2000; // gap between the two confirming captures
 export const STALL_ARM_TIMEOUT_MS = 8000;     // give up waiting for the rescued tool_use/tool_result pair
+// Agent state comes from `claude agents --json --all` (daemon-live, unlike the
+// stale jobs/*/state.json files). Cache the CLI output briefly (high-frequency
+// callers) and poll for changes to push status updates.
+export const AGENTS_JSON_TTL_MS = 3000;       // reuse a --json result this long
+export const AGENTS_POLL_INTERVAL_MS = 8000;  // scan for agent state changes → sync DDB
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 // API Gateway WS single-frame cap is 32768 bytes; exceeding it drops the whole
 // connection with code 1009 → reconnect storm. Send truncated copies over WS,

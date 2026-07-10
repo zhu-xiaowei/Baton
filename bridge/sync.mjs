@@ -81,6 +81,7 @@ export async function syncSessions(config, opts = {}) {
       s.agentState = dm.agentState;
       if (dm.agentState === 'done') s.status = 'stopped';
       else if (dm.agentState === 'blocked') s.status = 'idle';
+      else s.status = 'running'; // working
     }
   }
 

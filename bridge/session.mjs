@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, STALL_JSONL_SILENCE_MS } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, STALL_JSONL_SILENCE_MS, AGENTS_JSON_TTL_MS } from './config.mjs';
 import { isTerminalBusy, paneRunState } from './tmux.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
@@ -362,50 +362,74 @@ export function findSessionFile(sessionId) {
   return null;
 }
 
-/**
- * Single source of truth: map a daemon job's state.json to our 3-state agentState.
- * Mirrors `claude agents` TUI: Working / Needs input / Completed.
- *
- * `state` (lifecycle) is authoritative — `tempo` (cadence) lags and can stay
- * 'active' after the job blocks/fails, so it's only a fallback when state is absent.
- */
-export function mapAgentState(state) {
-  const st = state.state || '';
-  if (st === 'done' || st === 'completed') return 'done';      // Completed
-  if (st === 'blocked' || st === 'failed') return 'blocked';   // Needs input
-  if (st) return 'running';                                    // Working
-  const tempo = state.tempo || '';
-  return tempo === 'blocked' ? 'blocked' : tempo === 'active' ? 'running' : 'done';
+// Map `claude agents --json` state → our 3-state agentState (Working / Needs
+// input / Completed). The CLI emits exactly working/blocked/done, so this is a
+// straight rename — no lifecycle/tempo ambiguity like the stale state.json had.
+export function mapAgentState(a) {
+  const st = a.state || '';
+  if (st === 'done') return 'done';
+  if (st === 'blocked') return 'blocked';
+  return 'running';
 }
 
-// Match `claude agents` display: blocked shows `needs` (the question awaiting
-// the user); other states show `detail` (work summary).
-export function agentDetailFor(state) {
-  return mapAgentState(state) === 'blocked'
-    ? (state.needs || state.detail || '')
-    : (state.detail || state.needs || '');
+// blocked agents carry `waitingFor` (what the daemon is waiting on, e.g.
+// "permission prompt"); other states have no per-agent detail in --json.
+export function agentDetailFor(a) {
+  return mapAgentState(a) === 'blocked' ? (a.waitingFor || '') : '';
+}
+
+// Resolve the claude binary once. systemd user services run with a bare PATH
+// where `claude` isn't found, so try known install paths, then a login shell.
+let _claudeBin;
+function resolveClaudeBin() {
+  if (_claudeBin !== undefined) return _claudeBin;
+  const candidates = [
+    path.join(os.homedir(), '.local/bin/claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    '/usr/bin/claude',
+  ];
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) { _claudeBin = c; return c; } } catch {}
+  }
+  _claudeBin = null; // fall back to `bash -lc` in getAgentsJson
+  return null;
+}
+
+let _agentsCache = { at: 0, map: new Map() };
+// `claude agents --json --all` → Map<sessionId, {isAgent, agentName, agentDetail,
+// agentState}>. Daemon-live source of truth, cached briefly (AGENTS_JSON_TTL_MS)
+// since sync/watcher call this per session. On any failure, returns the last
+// good cache (never an empty map that would flap every agent to stopped).
+export function getAgentsJson(force) {
+  const now = Date.now();
+  if (!force && now - _agentsCache.at < AGENTS_JSON_TTL_MS) return _agentsCache.map;
+  const bin = resolveClaudeBin();
+  let out;
+  try {
+    out = bin
+      ? execSync(`"${bin}" agents --json --all`, { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] })
+      : execSync(`bash -lc 'claude agents --json --all'`, { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return _agentsCache.map; }
+  let arr;
+  try { arr = JSON.parse(out); } catch { return _agentsCache.map; }
+  if (!Array.isArray(arr)) return _agentsCache.map;
+  const map = new Map();
+  for (const a of arr) {
+    if (!a || !a.sessionId) continue;
+    map.set(a.sessionId, {
+      isAgent: true,
+      agentName: a.name || '',
+      agentDetail: agentDetailFor(a),
+      agentState: mapAgentState(a),
+    });
+  }
+  _agentsCache = { at: now, map };
+  return map;
 }
 
 export function getDaemonSessions() {
-  const result = new Map();
-  if (!fs.existsSync(CLAUDE_JOBS)) return result;
-  try {
-    for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
-      const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
-      if (!fs.existsSync(statePath)) continue;
-      try {
-        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-        if (state.backend !== 'daemon' || !state.sessionId) continue;
-        result.set(state.sessionId, {
-          isAgent: true,
-          agentName: state.name || '',
-          agentDetail: agentDetailFor(state),
-          agentState: mapAgentState(state),
-        });
-      } catch {}
-    }
-  } catch {}
-  return result;
+  return getAgentsJson();
 }
 
 export function getDaemonRunningSessionIds() {

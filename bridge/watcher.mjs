@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, mapAgentState, agentDetailFor } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
@@ -270,84 +270,54 @@ function scheduleRecheck(config, filePath, filename, sessionId) {
   }, RECHECK_DELAY_MS));
 }
 
-const _jobsState = new Map();
+const _jobsState = new Map(); // sessionId → { agentName, agentDetail, agentState }
 
+// state.json is stale (the daemon computes state live but doesn't flush it
+// promptly), so fs.watch on it misses transitions. Poll `claude agents --json`
+// instead — the daemon-live source — and push any agent whose state changed.
 export function startJobsWatcher(config) {
   if (!fs.existsSync(CLAUDE_JOBS)) return;
-
-  loadAllJobStates();
-
-  fs.watch(CLAUDE_JOBS, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith('state.json')) return;
-    const short = path.dirname(filename);
-    if (short.includes(path.sep)) return;
-    handleJobStateChange(config, short);
-  });
+  // No seed: the first poll pushes every agent once, so DDB gets correct agent
+  // flags/state even for sessions the initial full sync didn't cover (it only
+  // syncs running/idle + recent 24h, missing older blocked/working agents).
+  pollAgentStates(config);
+  setInterval(() => pollAgentStates(config), AGENTS_POLL_INTERVAL_MS);
 }
 
-function loadAllJobStates() {
-  try {
-    for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
-      const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
-      if (!fs.existsSync(statePath)) continue;
-      try {
-        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-        if (state.backend !== 'daemon' || !state.sessionId) continue;
-        _jobsState.set(dir, {
-          sessionId: state.sessionId,
-          agentName: state.name || '',
-          agentDetail: agentDetailFor(state),
-          agentState: mapAgentState(state),
-        });
-      } catch {}
-    }
-  } catch {}
+async function pollAgentStates(config) {
+  let agents;
+  try { agents = getAgentsJson(true); } catch { return; }
+  for (const [sid, e] of agents) {
+    const old = _jobsState.get(sid);
+    if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.agentState === e.agentState) continue;
+    _jobsState.set(sid, e);
+    await pushAgentMeta(config, sid, e);
+  }
 }
 
-async function handleJobStateChange(config, short) {
-  const statePath = path.join(CLAUDE_JOBS, short, 'state.json');
-  if (!fs.existsSync(statePath)) return;
-
-  let state;
-  try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')); } catch { return; }
-  if (state.backend !== 'daemon' || !state.sessionId) return;
-
-  const newEntry = {
-    sessionId: state.sessionId,
-    agentName: state.name || '',
-    agentDetail: agentDetailFor(state),
-    agentState: mapAgentState(state),
-  };
-
-  const old = _jobsState.get(short);
-  if (old && old.agentName === newEntry.agentName
-    && old.agentDetail === newEntry.agentDetail
-    && old.agentState === newEntry.agentState) return;
-
-  _jobsState.set(short, newEntry);
-
-  const filePath = findSessionFile(state.sessionId);
+async function pushAgentMeta(config, sessionId, e) {
+  const filePath = findSessionFile(sessionId);
   if (!filePath) return;
-
   const projectHash = path.basename(path.dirname(filePath));
   const stat = fs.statSync(filePath);
-
+  const status = e.agentState === 'done' ? 'stopped' : e.agentState === 'blocked' ? 'idle' : 'running';
+  lastKnownStatus.set(sessionId, status);
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
     sessions: [{
-      id: state.sessionId,
+      id: sessionId,
       project: projectHash,
       projectName: readableProjectName(projectHash),
       lastActive: stat.mtime.toISOString(),
       size: stat.size,
-      preview: getPreview(filePath) || newEntry.agentName || 'Agent session',
+      preview: getPreview(filePath) || e.agentName || 'Agent session',
       model: getModel(filePath),
-      status: newEntry.agentState === 'done' ? 'stopped' : newEntry.agentState === 'blocked' ? 'idle' : (lastKnownStatus.get(state.sessionId) || 'idle'),
+      status,
       isAgent: true,
-      agentName: newEntry.agentName,
-      agentDetail: newEntry.agentDetail,
-      agentState: newEntry.agentState,
+      agentName: e.agentName,
+      agentDetail: e.agentDetail,
+      agentState: e.agentState,
     }],
   });
 }
