@@ -279,11 +279,16 @@ export async function checkStopped(config) {
   }
 
   const runningInfo = getRunningInfo();
+  const daemonMeta = getDaemonSessions();
   const updates = [];
   const statusDeltas = [];
 
   for (const [sessionId, prevStatus] of lastKnownStatus) {
     if (prevStatus === 'stopped') continue;
+    // Daemon agents have no live --resume process, so getSessionStatus would
+    // wrongly read them as stopped (dropping agent metadata). Their status is
+    // owned by the `claude agents --json` poller — skip them here.
+    if (daemonMeta.has(sessionId)) continue;
 
     // Find the session's project hash
     for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
