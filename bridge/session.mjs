@@ -417,6 +417,10 @@ export function getAgentsJson(force) {
   const map = new Map();
   for (const a of arr) {
     if (!a || !a.sessionId) continue;
+    // --json also lists plain interactive CC sessions (kind:"interactive", no
+    // `state` field). Only kind:"background" are real daemon agents; the rest
+    // must not be tagged isAgent (they'd show as bogus "Working" agents).
+    if (a.kind !== 'background') continue;
     map.set(a.sessionId, {
       isAgent: true,
       agentName: a.name || '',
