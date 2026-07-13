@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
@@ -221,7 +221,7 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
   if (!(statusChanged || isNew || gotNewTitle)) return;
 
   const stat = fs.statSync(filePath);
-  const projectHash = path.basename(path.dirname(filename));
+  const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
   lastKnownStatus.set(sessionId, newStatus);
   // Counter delta — server uses this to ADD/SUBTRACT counters; 'new' means += 1.
   const statusDelta = (statusChanged || isNew) ? {
@@ -302,7 +302,7 @@ async function pollAgentStates(config) {
 }
 
 async function pushAgentMeta(config, sessionId, e, filePath, preview) {
-  const projectHash = path.basename(path.dirname(filePath));
+  const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
   const status = e.agentState === 'done' ? 'stopped' : e.agentState === 'blocked' ? 'idle' : 'running';
   lastKnownStatus.set(sessionId, status);

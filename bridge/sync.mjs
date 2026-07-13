@@ -6,6 +6,7 @@ import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
   getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
+  normalizeProjectHash,
 } from './session.mjs';
 import { projectHashToPath, cleanStaleSessions } from './tmux.mjs';
 
@@ -48,11 +49,15 @@ export async function syncSessions(config, opts = {}) {
       if (!isInitialSync && !recentSessions.has(sessionId)) continue;
 
       const status = getSessionStatus(sessionId, filePath, runningInfo);
+      // Collapse worktree project dirs to the parent so a session that cd'd into
+      // a worktree stays one row (see normalizeProjectHash). _filePath keeps the
+      // real path for reading the jsonl.
+      const proj = normalizeProjectHash(project);
 
       sessions.push({
         id: sessionId,
-        project,
-        projectName: readableProjectName(project),
+        project: proj,
+        projectName: readableProjectName(proj),
         lastActive: stat.mtime.toISOString(),
         size: stat.size,
         preview,
@@ -61,8 +66,8 @@ export async function syncSessions(config, opts = {}) {
         _filePath: filePath,
       });
 
-      if (!projectSessions.has(project)) projectSessions.set(project, []);
-      projectSessions.get(project).push({ sessionId, mtime: stat.mtimeMs, filePath });
+      if (!projectSessions.has(proj)) projectSessions.set(proj, []);
+      projectSessions.get(proj).push({ sessionId, mtime: stat.mtimeMs, filePath });
     }
   }
 
@@ -237,6 +242,7 @@ export async function syncSessions(config, opts = {}) {
 // server. Used by the stall poller's idle fast-path (a reverted prompt looks
 // 'running' in jsonl but the pane is quiescent). No-op if status is unchanged.
 export async function updateSessionStatus(config, sessionId, filePath, project, newStatus) {
+  project = normalizeProjectHash(project);
   const prevStatus = lastKnownStatus.get(sessionId);
   if (prevStatus === newStatus) return;
   let stat;
@@ -300,10 +306,11 @@ export async function checkStopped(config) {
         lastKnownStatus.set(sessionId, newStatus);
         const stat = fs.statSync(filePath);
         const lastActive = stat.mtime.toISOString();
+        const proj = normalizeProjectHash(project);
         updates.push({
           id: sessionId,
-          project,
-          projectName: readableProjectName(project),
+          project: proj,
+          projectName: readableProjectName(proj),
           lastActive,
           size: stat.size,
           preview: getPreview(filePath) || '',
@@ -312,8 +319,8 @@ export async function checkStopped(config) {
         });
         statusDeltas.push({
           deviceName: config.deviceName,
-          projectHash: project,
-          projectName: readableProjectName(project),
+          projectHash: proj,
+          projectName: readableProjectName(proj),
           from: prevStatus,
           to: newStatus,
           lastActive,

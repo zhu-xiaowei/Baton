@@ -352,6 +352,15 @@ export function getRunningInfo() {
   return { projects, sessions };
 }
 
+// A session that cd's into a git worktree gets its jsonl moved to a separate
+// project dir (parentHash + "--claude-worktrees-<name>"), producing a second
+// DDB row for the same sessionId. Collapse worktree hashes to the parent so one
+// session stays one row. Applied only to the projectHash POSTed to the server —
+// on-disk reads (findSessionFile/getPreview/projectHashToPath) keep the real hash.
+export function normalizeProjectHash(hash) {
+  return hash.replace(/--claude-worktrees-.*$/, '');
+}
+
 // Find .jsonl file path for a sessionId
 export function findSessionFile(sessionId) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return null;
