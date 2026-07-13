@@ -110,6 +110,46 @@ BridgeMessages
   TTL: 30 days
 ```
 
+### Worktree project-hash normalization (one session = one row)
+
+The session row's SK is `deviceName#projectHash#sessionId`, so a session's
+identity in DDB is `(projectHash, sessionId)` — **not sessionId alone**. That
+breaks when a session moves between project dirs.
+
+When a Claude session `cd`s into a **git worktree** (e.g. an agent working under
+`<project>/.claude/worktrees/<name>`), CC re-homes that session's `.jsonl`:
+it *moves* the file (same inode, birth time preserved — verified, not a copy)
+from the parent project dir to a new project dir whose hash is
+`<parentHash>--claude-worktrees-<name>`. There is still only **one** jsonl and
+**one** sessionId.
+
+The bridge derives `projectHash` from the file's directory
+(`path.basename(path.dirname(...))`), so after the move it starts POSTing under
+the new worktree hash while the old parent-project row is left frozen (the
+bridge never deletes rows). Result, before the fix:
+
+- The same sessionId has **two** rows (two SKs) → the app shows two cards for
+  one session; opening either shows identical messages (messages are keyed by
+  sessionId over WS, so both cards read the same jsonl).
+- The worktree project often never appears in the project list, because the
+  agent poll (`pushAgentMeta`) writes the `SESS#` row but not the `PROJ#`
+  aggregate the projects list reads.
+
+**Fix — `normalizeProjectHash(hash)` (`session.mjs`)**: strips the
+`--claude-worktrees-*` suffix, collapsing a worktree hash back to its parent.
+It is applied **only to the projectHash POSTed to the server** — every write
+site: full sync (`syncSessions`), `watcher.postSessionMeta`,
+`watcher.pushAgentMeta`, `updateSessionStatus`, and `checkStopped`. On-disk
+reads (`findSessionFile`, `getPreview`, `projectHashToPath`, the `_projectDirs`
+cache) keep the **real** worktree hash, so the jsonl is still read from the
+worktree dir.
+
+Net effect: a session that enters a worktree keeps the same SK (parent hash),
+stays a single row under the parent project, and its worktree is treated as an
+implementation detail rather than a separate project. Pre-existing duplicate
+`--claude-worktrees-*` rows from before the fix are stale and must be deleted
+once (they no longer receive updates).
+
 ## REST API
 
 All require `x-api-key` header.
