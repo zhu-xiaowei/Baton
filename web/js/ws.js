@@ -456,7 +456,8 @@ function updateLastTurn() {
   checkPendingPrompts(state.wsAllMessages);
   if (typeof maybeRevealStuckAgent === 'function') maybeRevealStuckAgent(state.wsSessionId);
 
-  reconcileEchoedPending();
+  // turnEnded (real frame brought CC to idle) → clean queued msgs that never echoed.
+  reconcileEchoedPending(hasTurnFrame && !derived);
 
   // Clamp before scrolling so scrollTop uses the collapsed final height.
   loadImages(container);
@@ -740,7 +741,7 @@ function doSend(fullText, displayText, images) {
   // Keep fullText (with image refs) so a retry re-sends the exact same payload;
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
-  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId });
+  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now() });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -816,12 +817,11 @@ function bumpDeliveredSeq(seq) {
   if (typeof seq === 'number' && seq > state.lastDeliveredSeq) state.lastDeliveredSeq = seq;
 }
 
-// Retire orphaned optimistic bubbles. Two rules: (1) drop any pending whose echo is
-// present (tryDedup missed it — e.g. echo arrived via bufferAndFetch); (2) drop any
-// pending sent BEFORE a confirmed-delivered one (seq < watermark) that still has no
-// echo — CC processes FIFO, so an earlier message a later one overtook was skipped
-// (busy-send swallowed it, never reached jsonl, echo never comes). Images kept.
-function reconcileEchoedPending() {
+// Retire orphaned optimistic bubbles. Drop a pending when: echo present; OR a later
+// send was confirmed first (seq < watermark); OR turnEnded — CC came to rest yet it
+// never echoed, i.e. a running-time queued msg logged as queue-operation not a user
+// entry (docs/headless-streaming.md §12), covering the tail case seq can't. Images kept.
+function reconcileEchoedPending(turnEnded) {
   for (var j = 0; j < state.pendingSentMessages.length; j++) {
     var p = state.pendingSentMessages[j];
     if (!p.isImage && messageEchoed(p)) bumpDeliveredSeq(p.seq);
@@ -831,7 +831,9 @@ function reconcileEchoedPending() {
     if (pending.isImage) continue; // image bubbles carry no matchable text
     var echoed = messageEchoed(pending);
     var orphaned = pending.seq < state.lastDeliveredSeq; // a later send was confirmed first
-    if (!echoed && !orphaned) continue;
+    // 3s grace: a normal idle-send's echo can lag an unrelated idle frame — don't clean too early.
+    var idleStale = turnEnded && (Date.now() - (pending.sentAt || 0) > 3000);
+    if (!echoed && !orphaned && !idleStale) continue;
     var el = document.getElementById(pending.id);
     if (el) el.remove();
     state.pendingSentMessages.splice(i, 1);
