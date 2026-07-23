@@ -4,9 +4,10 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { readAllMessages, uploadMessages } from './extract.mjs';
+import { readAllMessages, uploadMessages, extractForApp } from './extract.mjs';
 import { findSessionFile, getDaemonSessions, hasNoDanglingTurn } from './session.mjs';
 import { armStallRescue } from './stall.mjs';
+import { ClaudePool } from './headless.mjs';
 import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, interruptSession, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput, findTmuxTargetForSession } from './tmux.mjs';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
@@ -27,6 +28,17 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 // Launch locks: prevent concurrent tmux creation for same project/session
 // Key: projectHash or sessionId, Value: Promise<{ok, sessionId?, tmuxName?}>
 const _launchLocks = new Map();
+
+// Headless stream-json process pool (Step 1: existing sessions only).
+const _pool = new ClaudePool();
+
+// Resolve a session's project cwd from its on-disk jsonl location.
+function cwdForSession(sessionId) {
+  const filePath = findSessionFile(sessionId);
+  if (!filePath) return null;
+  const projectHash = path.basename(path.dirname(filePath));
+  return projectHashToPath(projectHash);
+}
 
 export function initWs(config) {
   _config = config;
@@ -156,7 +168,7 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId, msg.streamMode);
       break;
     case 'permission_reply':
       handlePermissionReply(msg.sessionId, msg.approved);
@@ -208,7 +220,7 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId) {
+async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId, streamMode) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
 
@@ -231,6 +243,17 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   if (sm && SYNTHETIC_COMMANDS[sm[1]]) {
     synthetic = SYNTHETIC_COMMANDS[sm[1]];
     resolved = synthetic.realCmd;
+  }
+
+  // Headless streaming path (Step 1: existing sessions only). Optimistic —
+  // spawn/reuse a per-session claude process, stream deltas over WS. On failure
+  // (CC EXIT=1 / crash) fall back to read-only + notify (no tmux). New-session
+  // headless is a later step; new sessions still take the tmux path below.
+  if (streamMode && sessionId) {
+    const handled = await handleHeadlessSend(sessionId, resolved, clientId);
+    if (handled) return;
+    // handleHeadlessSend returns false only if it can't even attempt (no cwd);
+    // fall through to the legacy tmux path in that rare case.
   }
 
   // New session: create tmux + claude, send message, detect sessionId
@@ -300,6 +323,72 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   // never reach the .jsonl. If we just sent one, grab its terminal output and push
   // it so the app shows the result instead of spinning forever.
   if (result.ok && sessionId) maybeCaptureLocalCommand(sessionId, resolved, requestId, synthetic);
+}
+
+// Send a message to an existing session via the headless pool, streaming
+// text deltas over WS. Returns true if the send was attempted (success or a
+// clean read-only failure). Returns false only when we can't attempt at all
+// (no cwd) so the caller can fall back to the legacy tmux path.
+async function handleHeadlessSend(sessionId, text, clientId) {
+  const cwd = cwdForSession(sessionId);
+  if (!cwd) return false; // unknown session on disk — let legacy path try
+
+  // Per-turn preview stream id. Only the text_delta typewriter is a "preview";
+  // the complete assistant/user lines the stream also emits ARE authoritative
+  // (uuid + timestamp + full content incl. tool_result — verified identical to
+  // jsonl), so they're forwarded as normal `messages` frames. jsonl arriving
+  // later dedups by uuid (existing bufferAndFetch logic) → no re-render, no flash.
+  const streamId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : 'sd-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+
+  let acked = false;
+  const ack = (ok, error) => {
+    if (acked) return;
+    acked = true;
+    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId });
+  };
+
+  await _pool.send(sessionId, text, {
+    cwd,
+    resumeId: sessionId,
+    streamId,
+    onDelta: (sid, delta) => {
+      wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: delta });
+    },
+    onMessage: async (sid, line) => {
+      // Complete assistant/user line → same shape as jsonl. Normalize the
+      // snake_case wire field to what extractForApp expects, then forward as a
+      // `messages` frame (authoritative; app dedups vs jsonl by uuid).
+      if (line.tool_use_result && !line.toolUseResult) line.toolUseResult = line.tool_use_result;
+      const msg = await extractForApp(line, cwd);
+      if (!msg.uuid) return;
+      // noCache: the jsonl watcher is the sole DDB writer for this same message
+      // (identical uuid). Server still relays to apps; we just skip the double write.
+      wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, noCache: true });
+    },
+    onResult: (sid, result) => {
+      wsSend({ action: 'stream_end', sessionId, streamId: sid, error: result.is_error ? (result.subtype || 'error') : undefined });
+    },
+    onControlRequest: (req) => {
+      // Step 2 will bridge permissions. For now, auto-allow non-interactive tools
+      // (the session's own allow rules already apply upstream) so a bypass/allow
+      // session isn't blocked; interactive tools are left to Step 2.
+      const r = req.request || {};
+      if (r.requires_user_interaction) return; // handled in Step 2
+      _pool.replyControl(sessionId, req.request_id, { behavior: 'allow', updatedInput: r.input });
+    },
+    onError: (sid, err) => {
+      console.log(`[ws] headless error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
+      wsSend({ action: 'stream_end', sessionId, streamId: sid, error: 'unavailable' });
+      ack(false, 'Session unavailable (busy elsewhere). Read-only.');
+    },
+  });
+
+  // Ack the send so the app's optimistic bubble settles (unless onError already
+  // did). Authoritative content already streamed via `messages` above.
+  ack(true);
+  return true;
 }
 
 // If `text` is a bare local slash command, asynchronously capture its terminal

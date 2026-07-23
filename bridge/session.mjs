@@ -397,7 +397,7 @@ export function agentDetailFor(a) {
 // Resolve the claude binary once. systemd user services run with a bare PATH
 // where `claude` isn't found, so try known install paths, then a login shell.
 let _claudeBin;
-function resolveClaudeBin() {
+export function resolveClaudeBin() {
   if (_claudeBin !== undefined) return _claudeBin;
   const candidates = [
     path.join(os.homedir(), '.local/bin/claude'),

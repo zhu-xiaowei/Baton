@@ -209,6 +209,11 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "command_output":
         if role == "bridge":
             return _handle_bridge_relay(body, connection_id, endpoint)
+    elif action in ("stream_delta", "stream_end"):
+        # Headless streaming preview — relay to subscribed apps, never write DDB
+        # (authoritative message still lands via the `messages` action).
+        if role == "bridge":
+            return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "create_project":
         if role == "app":
             if not body.get("projectPath"):

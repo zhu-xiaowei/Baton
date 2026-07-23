@@ -17,11 +17,16 @@
    实测四条消息 uuid `6a9902ba/b9962950/5fc7bf11/d42ab640` 两边一一对应。→ 落地复用现有
    `extract.mjs` 解析逻辑没问题。
 
-2. **stream-json 的 `assistant`/`user` 行没有 `parentUuid`,也没有 `timestamp`。**
-   顶层 keys 只有 `type / message / parent_tool_use_id / session_id / uuid`。而 jsonl 里
-   parentUuid 链是完整的(`b9962950→6a9902ba→…`)。
-   → **"完整版"(直接解析 stream-json 落地)不可行/不推荐**:要自己伪造 parentUuid + timestamp,
-   风险大、无收益。**MVP 只做省事版:delta 仅预览,落地 100% 靠 jsonl watcher。**
+2. **⭐(已更正)stream-json 的 `assistant`/`user` 完整行有 `uuid` + `timestamp` + 完整
+   `content`(含 tool_use / tool_result),与 jsonl 同条消息 uuid 一致。**
+   顶层 keys:`type / message / parent_tool_use_id / session_id / uuid / timestamp`(user 行多
+   `tool_use_result`)。实测 stream 的 uuid **全部**能在 jsonl 里找到(4/4 匹配)→ **stream 完整行
+   就是权威消息**,和 jsonl 是同一条消息的两次到达,靠 **uuid 去重**(现有 `bufferAndFetch`
+   的 `existing[uuid]` 逻辑)天然合并、不重不漏。
+   缺的只有 `parentUuid`(有 `parent_tool_use_id`,语义是"属于哪个子 agent/工具",不是父消息链)。
+   → **架构:stream 完整行当权威消息渲染(工具卡/tool_result 免费);`text_delta` 仅作"完整行到达前"
+   的打字机预览;jsonl 后到 uuid 命中即跳过 → 零闪烁。**
+   （早期本条曾误记为"stream 无 uuid/timestamp";实测 CC 2.1.204+ 均有,已更正。）
 
 3. **headless 会写 jsonl(新建写新文件,resume/多轮追加同一文件)。**
    新建会话产生 `~/.claude/projects/<hash>/<sessionId>.jsonl`;`--resume` 或持久管道的后续回合
@@ -45,7 +50,25 @@
    - 文本走 `content_block_start(text)` → 多个 `content_block_delta(text_delta)` → `content_block_stop`,
      `text_delta` 是半截文本(如 `"The file says a simple greeting from the"`)。
    - 工具走 `content_block_start(tool_use)` → 多个 `content_block_delta(input_json_delta)`(入参 JSON 分片)。
-   - `tool_result` 不在 stream_event 里,作为后续 `user` 行出现。
+   - `tool_result` 作为后续**完整 `user` 行**出现(带 uuid,携带 `content` + 顶层 `tool_use_result`
+     `{stdout,stderr,interrupted,...}` — 与 jsonl 完全同构)。
+
+7. **⭐ 子 agent(Task 工具)中间过程:stream 有,主 jsonl 没有。** 实测发一个 Task 子 agent:
+   stream 里出现 5 条带 `parent_tool_use_id` 的行(子 agent 的 Bash/Read/tool_result 全过程),
+   而主 jsonl **完全没有**这些(watcher 本就 `if (filename.includes('subagents')) return` 跳过,
+   且内联 Task 连 `subagents/` 文件都不落)。→ **streaming 在"子 agent 过程"上比 jsonl 更完整**,
+   但这是 streaming 独有的实时价值,**不写 DDB**(见架构决策)——刷新/历史看不到子 agent 过程,已接受此取舍。
+
+8. **各有独有,谁都不是超集**(实测汇总):
+   | 内容 | stream | 主 jsonl |
+   |---|---|---|
+   | assistant 文本/thinking/tool_use/tool_result | ✅ | ✅ |
+   | 子 agent 中间步骤(parent_tool_use_id) | ✅ 独有 | ❌ |
+   | `ai-title` / `last-prompt`(会话标题元数据) | ❌ | ✅ 独有(CC 异步写盘,不走 stream stdout) |
+   | 用户输入回显 / `file-history-snapshot` | ❌ | ✅ |
+   - **标题不受影响**:沿用现有多级 fallback(ai-title → last-prompt → **第一条 user 消息**),与 CC 本身
+     逻辑一致。ai-title 仍随 jsonl 落 DDB;实时期前端有 user 消息即可出标题。litter 同思路
+     (`claude_session_scan.rs` 直接取首条 user 消息文本作 preview)。
 
 ## 二、核心架构:per-session 常驻进程池(ClaudePool)
 
@@ -79,7 +102,7 @@ HeadlessProc = {
 | streamMode 开关 | **默认 true**;过渡期可切回 tmux 旧路径,旧路径删除后开关移除 |
 | 分流判据 | **乐观 headless**:一律尝试,CC 拒绝(EXIT=1)/异常 → 只读+提示(见第四、十三节)|
 | 权限 | **默认 `--permission-prompt-tool stdio` 不加 bypass** — 用户配什么权限就什么权限(零侵入)。见第六·五节 |
-| 落地策略 | delta 仅预览,jsonl 权威(实测确认唯一可行,见结论 2) |
+| 显示/落地 | stream 完整行=权威(渲染),`text_delta`=打字机预览,jsonl 后到 uuid 去重;DDB 只由 jsonl 写(见结论 2/8) |
 | 预览渲染 | 完整 markdown 容错重渲(见第五节) |
 | 按需启动 | **不预启动**;新消息到达且无进程时才 spawn(spawn→init 就绪约 ≤30s,之后同会话复用) |
 | idle 回收 | 周期 `reap`:`lastActiveAt` 超 **idleTTL(默认 10min)** 且非 busy → 关 stdin,进程干净退出(jsonl 保留) |
@@ -102,26 +125,31 @@ Bridge handleSendMessage → pool.send(sessionId|新建, cwd, text, callbacks):
   └─ 进程不存在 → spawn 常驻进程(新建不带 --resume;已有带 --resume <id>),stdin 保持打开
   逐行解析 stdout(见第六节):
     system/init                → 拿/校验 session_id + cwd(新建会话据此回报 id)
-    content_block_delta/text   → onDelta(streamId, text) → WS stream_delta
-    assistant / user 行         → 忽略(落地靠 jsonl)
+    content_block_delta/text   → onDelta(streamId, text) → WS stream_delta(打字机预览)
+    assistant / user 完整行     → onMessage → extractForApp(归一 tool_use_result)
+                                  → WS messages {noCache:true}(权威消息,含工具卡/tool_result)
     result                     → 本回合结束:busy=false,喂 queue 下一条;WS stream_end
-    进程 exit/error            → 从池移除;WS stream_end {error?};下条消息重新 spawn
+    进程 exit/error            → 从池移除;WS stream_end {error?};只读回退
   回合受理后回 send_message_result {ok, sessionId, clientId}
 ```
+**关键**:stream 完整行(有 uuid+ts+content)当**权威消息**,走和 jsonl 相同的 `messages`→`updateLastTurn`
+渲染路径(工具卡/tool_result 免费复用)。`noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由
+jsonl watcher 独占写,避免同 uuid 双写)。
 
-### 回显(CC → App),落地走现有管线(零改动)
+### 双路 messages,uuid 去重(实时走 stream,持久走 jsonl)
 ```
-claude -p 写 jsonl(新建→新文件;resume→追加同文件)
-  ─► fs.watch(递归监听整个 CLAUDE_PROJECTS,不管落在哪个 hash)
-  ─► watcher.mjs readAndSend → extractForApp → WS messages
-  ─► Server _handle_bridge_messages(转发订阅 App + 写 DDB)
-  ─► App onmessage 'messages' → updateLastTurn 全量渲染(权威消息)
+实时:stream 完整行 → WS messages{noCache} → App(先到,先渲染)
+持久:CC 写 jsonl → watcher → WS messages(+DDB 写) → App(后到,uuid 命中 → 跳过,不重渲)
 ```
+- 两路是**同一条消息**(uuid 相同),现有 `bufferAndFetch`/`onmessage` 的 `existing[uuid]` 去重天然合并。
+- **stream 先到**:实时显示(含子 agent 过程);**jsonl 后到**:只补 DDB 持久化 + app 侧 uuid 命中跳过 → **零闪烁**。
+- **DDB 只由 jsonl 写**(决策:streaming 只做实时显示,不写 DDB)→ 刷新/历史/reconnect 读 DDB(jsonl 内容)。
 
-### 预览 ↔ 落地衔接
-- `stream_delta` → App 按 `streamId` 累积全文 → 用 marked 重渲整个预览气泡(容错,见第五节)。
-- 真实 assistant 消息经 `messages` 落地 → App 移除同 streamId 预览气泡,真实消息按 timestamp 插入。
-- headless 异常:预览停在当前文本;jsonl 若落地则替换,否则走现有错误路径。最终一致性永远靠 jsonl。
+### 预览 ↔ 权威衔接
+- `stream_delta` → App 按 `streamId` 累积全文 → marked 重渲打字机预览气泡(容错,见第五节)。
+- **完整 assistant 行经 `messages` 到达 → `updateLastTurn` 渲染真实消息 + 移除同 streamId 预览气泡**
+  (`clearStreamPreviews`)。因内容一致(实测),替换视觉无缝。
+- headless 异常:`stream_end{error}` → 只读回退;reconnect 后走初始化(`bufferAndFetch` 从 DDB 重建)。
 
 ## 三·五、进程生命周期(按需启动 + idle 回收,实证自 litter ClaudePool)
 
@@ -204,11 +232,12 @@ CC 的 EXIT=1 就是最可靠的信号(比预查 roster 更准,roster 有时序�
 - **每次都用「累积到目前的完整文本」整体调 marked 重渲预览气泡**(不是逐 delta 增量拼接)。
   marked 对未闭合语法是容错的(半个代码块/表格当普通文本处理),下一片补齐后重渲即自动纠正。
 - 预览气泡复用现有 markdown 渲染(`web/js/components/markdown.js`),但**只渲文本**;
-  工具卡/diff/图片/权限等**不在预览做**,一律等 jsonl 落地由 `renderSingleMessage` 全量渲染。
-- 代码块语法高亮在流式下可能闪一下——可接受(落地后即定稿);若明显,预览阶段关高亮、落地再上。
+  工具卡/diff/图片等**不在预览做**,一律等**stream 完整行**(经 `messages`)由 `renderSingleMessage`
+  全量渲染(工具卡/tool_result 都在完整行里,无需等 jsonl)。
+- 代码块语法高亮在流式下可能闪一下——可接受(完整行到达即定稿);若明显,预览阶段关高亮、之后再上。
 
-> 当前 UI 的全部内容正确性(markdown/diff/工具卡/图片/权限)由 **jsonl 落地路径**保证,
-> 与现网完全一致、无需额外验证;需要验证的只是"打字机预览 → 落地替换"的无缝、无重复、无闪烁。
+> UI 全部内容(markdown/diff/工具卡/图片)由 **stream 完整行**实时渲染(与 jsonl 同构);jsonl 只负责
+> DDB 持久化 + reconnect 重建。需验证的是"打字机预览 → 完整行替换"的无缝、无重复、无闪烁。
 
 ## 六、headless.mjs stream-json 行分派表(实测)
 
@@ -218,12 +247,12 @@ CC 的 EXIT=1 就是最可靠的信号(比预查 roster 更准,roster 有时序�
 | `system` | `status` | 忽略 |
 | `stream_event` | `message_start` | 忽略(回合开始) |
 | `stream_event` | `content_block_start` + `content_block.type==='text'` | 开一个文本预览块 |
-| `stream_event` | `content_block_start` + `content_block.type==='tool_use'` | 忽略(工具靠落地渲染) |
-| `stream_event` | `content_block_delta` + `delta.type==='text_delta'` | **`onDelta(streamId, delta.text)`** |
+| `stream_event` | `content_block_start` + `content_block.type==='tool_use'` | 忽略(完整 assistant 行会带 tool_use) |
+| `stream_event` | `content_block_delta` + `delta.type==='text_delta'` | **`onDelta(streamId, delta.text)`**(打字机预览) |
 | `stream_event` | `content_block_delta` + `delta.type==='input_json_delta'` | 忽略(工具入参分片) |
 | `stream_event` | `content_block_stop` | 忽略 |
 | `stream_event` | `message_delta` / `message_stop` | 忽略(回合结束标记) |
-| `assistant` / `user` | — | **忽略**(靠 jsonl 落地;且无 parentUuid/timestamp) |
+| `assistant` / `user` 完整行 | — | **`onMessage`** → extractForApp → WS `messages{noCache}`(权威消息,有 uuid+ts+content) |
 | `result` | — | **本回合结束**:标 `busy=false`,若 queue 非空喂下一条;发 `stream_end`。**进程不退出**(持久管道) |
 
 spawn 参数(常驻进程,每会话一次):
@@ -323,17 +352,19 @@ bridge 回**出站 `control_response`**(wire-quirk:`request_id` 嵌在 `response
 | `result` | 每回合一条 | **判回合结束 + 成功/失败**;busy→false |
 | `control_request{can_use_tool}` | 每工具调用 | 普通工具→弹窗 allow/deny;requires_user_interaction→deny+答案走普通消息 |
 | `control_response` | bridge 回 | allow(原样 input)/ deny |
-| `assistant`/`user` 行 | 每消息 | 忽略(落地靠 jsonl;无 parentUuid/timestamp) |
+| `assistant`/`user` 完整行 | 每消息 | **权威消息**(uuid+ts+content):`onMessage`→`messages{noCache}`→app 渲染;jsonl 后到 uuid 去重 |
 
 ## 七、WS 协议新增
 
 ```
-Bridge → Server → App:  { action: "stream_delta", sessionId, streamId, text }
-Bridge → Server → App:  { action: "stream_end",   sessionId, streamId, error? }
+Bridge → Server → App:  { action: "stream_delta", sessionId, streamId, text }   // 打字机增量
+Bridge → Server → App:  { action: "stream_end",   sessionId, streamId, error? } // 回合结束
+Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], streamId, noCache:true } // stream 完整行(权威)
 ```
-- `streamId`:本回合唯一 id(bridge 生成),用于前端累积 + 落地替换。
-- 两者均**不写 DDB**(纯实时预览);服务端加 `stream_delta`/`stream_end` → `_handle_bridge_relay` 订阅式转发。
-- 权威消息仍走 `messages` → DDB。
+- `stream_delta`/`stream_end`:纯实时预览,`_handle_bridge_relay` 订阅式转发,**不写 DDB**。
+- headless 的 `messages` 帧:带 `noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由 jsonl watcher 独占写);
+  app 侧靠 uuid 去重与 jsonl 后到的同 uuid 帧合并。
+- `streamId` 让 app 把打字机预览气泡关联到本回合,完整行到达时移除预览。
 
 ## 八、涉及文件与改动
 
@@ -527,7 +558,7 @@ idle 时仍无 echo"的队列消息。额外用 3s grace(`sentAt`)兜底一个�
 
 | 机制 | 组成 | 与 tmux 关系 | 结论 |
 |---|---|---|---|
-| ① **jsonl 监听 → 提取 → WS/DDB 同步** | `watcher.mjs` / `extract.mjs` / `sync.mjs` | **无关** | **永远保留**。所有会话内容的唯一权威来源;也是 headless 落地的依赖(delta 仅预览,权威消息靠它) |
+| ① **jsonl 监听 → 提取 → WS/DDB 同步** | `watcher.mjs` / `extract.mjs` / `sync.mjs` | **无关** | **永远保留**。DDB 持久化的唯一写者;历史/刷新/reconnect 数据源;补 ai-title 等元数据。实时显示走 stream,jsonl 后到 uuid 去重 |
 | ② **状态检测** | `session.mjs` `getRunningInfo`(ps aux)/ `checkStopped` / capture-pane 判 busy | 部分依赖 | **保留**(观测用户自己开的会话);bridge 自己的 headless 会话状态由进程 `busy` 标志直接给,更准 |
 | ③ **发送消息** | tmux send-keys / launch / TUI 导航 / Stall Rescue | 全依赖 tmux | **headless 替代主路径**,大幅退役(见下) |
 
