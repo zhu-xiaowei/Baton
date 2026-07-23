@@ -38,6 +38,7 @@ class HeadlessProc {
     this._cb = null;
     this._deltaAcc = '';
     this._deltaSeq = 0;
+    this._blockId = -1;
   }
 
   spawn() {
@@ -82,8 +83,9 @@ class HeadlessProc {
       const ev = o.event || {};
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
         this._deltaAcc += ev.delta.text || '';
-        this._cb?.onDelta?.(this.streamId, this._deltaAcc, ++this._deltaSeq);
+        this._cb?.onDelta?.(this.streamId, this._deltaAcc, ++this._deltaSeq, this._blockId);
       } else if (ev.type === 'content_block_start') {
+        this._blockId++;
         this._deltaAcc = '';
       }
       return;
@@ -114,7 +116,7 @@ class HeadlessProc {
     // uuids. So they ARE the authoritative message, delivered early; the caller
     // forwards them as a normal message frame. jsonl arriving later dedups by uuid.
     if (t === 'assistant' || t === 'user') {
-      this._cb?.onMessage?.(this.streamId, o);
+      this._cb?.onMessage?.(this.streamId, o, this._blockId);
       return;
     }
   }
@@ -147,6 +149,7 @@ class HeadlessProc {
     this.busy = true;
     this.streamId = streamId;
     this._cb = cb;
+    this._blockId = -1;
     this.pool._touch(this);
     const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
     try { this.stdin.write(JSON.stringify(msg) + '\n'); }
@@ -192,8 +195,8 @@ export class ClaudePool {
   // Send a message to sessionId's process (spawn/reuse/queue). Returns the
   // resolved sessionId (from system/init for new sessions), or null on failure.
   // opts: { cwd, resumeId, streamId, onDelta, onMessage, onResult, onControlRequest, onError }
-  //   onDelta(streamId, fullText, seq): cumulative preview text so far + monotonic seq.
-  //   onMessage(streamId, line): complete assistant/user line (uuid+ts+content) —
+  //   onDelta(streamId, fullText, seq, blockId): cumulative text + monotonic seq + per-turn block id.
+  //   onMessage(streamId, line, blockId): complete assistant/user line (uuid+ts+content) —
   //     authoritative message delivered early; forward as a normal message frame.
   async send(key, text, opts = {}) {
     const streamId = opts.streamId || null;

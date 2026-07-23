@@ -338,14 +338,14 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     cwd,
     resumeId: sessionId,
     streamId,
-    onDelta: (sid, fullText, seq) => {
-      wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq });
+    onDelta: (sid, fullText, seq, blockId) => {
+      wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq, blockId });
     },
-    onMessage: async (sid, line) => {
+    onMessage: async (sid, line, blockId) => {
       if (line.tool_use_result && !line.toolUseResult) line.toolUseResult = line.tool_use_result;
       const msg = await extractForApp(line, cwd);
       if (!msg.uuid) return;
-      wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, noCache: true });
+      wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, blockId, noCache: true });
     },
     onResult: (sid, result) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: result.is_error ? (result.subtype || 'error') : undefined });
