@@ -224,7 +224,7 @@ function connectWs(_, projectHash) {
         window.appendCommandOutput(msg.ansi);
       }
     } else if (msg.action === 'stream_delta') {
-      if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text);
+      if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text, msg.seq);
     } else if (msg.action === 'stream_end') {
       if (msg.sessionId === state.wsSessionId) handleStreamEnd(msg.streamId, msg.error);
     } else if (msg.action === 'create_project_result') {
@@ -336,55 +336,70 @@ function insertAtTimestamp(container, html, timestamp) {
   }
 }
 
-// ---- Headless streaming preview (delta typewriter) ----
-// Deltas from the headless pool arrive before the authoritative jsonl message.
-// We accumulate per streamId and render a transient preview bubble; the real
-// message (via `messages` → updateLastTurn) supersedes and removes it.
-var _streamAcc = {}; // streamId → accumulated text
+var _streamSeq = {};
+var _streamEnded = {};
+var _streamTarget = {};
+var _streamShown = {};
+var _streamRaf = null;
 
-function handleStreamDelta(streamId, text) {
-  if (!streamId) return;
+function handleStreamDelta(streamId, fullText, seq) {
+  if (!streamId || _streamEnded[streamId]) return;
+  if (seq != null && _streamSeq[streamId] != null && seq <= _streamSeq[streamId]) return;
+  _streamSeq[streamId] = seq != null ? seq : (_streamSeq[streamId] || 0) + 1;
+  _streamTarget[streamId] = Array.from(fullText || '');
+  if (_streamShown[streamId] == null) _streamShown[streamId] = 0;
   state.wsRunning = true;
   updateSendBtn();
-  _streamAcc[streamId] = (_streamAcc[streamId] || '') + (text || '');
+  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+}
+
+function tickStreams() {
+  _streamRaf = null;
   var container = document.querySelector('.messages');
-  if (!container) return;
-  var id = 'stream-' + streamId;
-  var el = document.getElementById(id);
-  if (!el) {
-    // Append at the end (after the optimistic user bubble) as the assistant reply
-    // preview. Same structure as a real rendered assistant text turn so the swap
-    // to the authoritative message is visually seamless.
-    container.insertAdjacentHTML('beforeend',
-      '<div class="assistant-turn stream-preview" id="' + id + '"><div class="tl-item assistant-text"></div></div>');
-    el = document.getElementById(id);
-  }
-  var md = el.querySelector('.assistant-text');
-  if (md && window.renderMd) md.innerHTML = window.renderMd(_streamAcc[streamId]);
+  var active = false;
   var content = document.getElementById('content');
-  if (content && content.scrollHeight - content.scrollTop - content.clientHeight < 300) {
-    content.scrollTop = content.scrollHeight;
+  var nearBottom = content && content.scrollHeight - content.scrollTop - content.clientHeight < 300;
+  for (var streamId in _streamTarget) {
+    var target = _streamTarget[streamId];
+    var shown = _streamShown[streamId] || 0;
+    if (shown >= target.length) continue;
+    var remaining = target.length - shown;
+    shown += Math.max(2, Math.ceil(remaining / 6));
+    if (shown > target.length) shown = target.length;
+    _streamShown[streamId] = shown;
+    if (shown < target.length) active = true;
+    if (!container) continue;
+    var id = 'stream-' + streamId;
+    var el = document.getElementById(id);
+    if (!el) {
+      container.insertAdjacentHTML('beforeend',
+        '<div class="assistant-turn stream-preview" id="' + id + '"><div class="tl-item assistant-text"></div></div>');
+      el = document.getElementById(id);
+    }
+    var md = el.querySelector('.assistant-text');
+    if (md && window.renderMd) md.innerHTML = window.renderMd(target.slice(0, shown).join(''));
   }
+  if (nearBottom && content) content.scrollTop = content.scrollHeight;
+  if (active) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
 function handleStreamEnd(streamId, error) {
   if (!streamId) return;
-  delete _streamAcc[streamId];
+  _streamEnded[streamId] = true;
   if (error) {
-    // Mark the preview as errored; leave it so the user sees where it stopped.
     var el = document.getElementById('stream-' + streamId);
     if (el) el.classList.add('stream-error');
     state.wsRunning = false;
     updateSendBtn();
   }
-  // Success: keep the preview until the authoritative message lands (removed in
-  // updateLastTurn). If jsonl never lands, the preview remains as the reply.
 }
 
-// Remove all streaming preview bubbles — called when authoritative assistant
-// content lands, so the real (fully-rendered) message supersedes the typewriter.
 function clearStreamPreviews() {
-  _streamAcc = {};
+  for (var sid in _streamSeq) _streamEnded[sid] = true;
+  if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
+  _streamSeq = {};
+  _streamTarget = {};
+  _streamShown = {};
   var previews = document.querySelectorAll('.stream-preview');
   for (var i = 0; i < previews.length; i++) previews[i].remove();
 }

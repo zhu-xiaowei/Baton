@@ -15,7 +15,7 @@ import { resolveClaudeBin } from './session.mjs';
 export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this long
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
-export const HEADLESS_REAP_INTERVAL_MS = 60_000; // how often to sweep idle procs
+export const HEADLESS_REAP_INTERVAL_MS = 60_000;
 
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
@@ -35,8 +35,9 @@ class HeadlessProc {
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
     this._buf = '';
-    // Per-turn callbacks, set by send(): { onDelta, onResult, onControlRequest, onError }
     this._cb = null;
+    this._deltaAcc = '';
+    this._deltaSeq = 0;
   }
 
   spawn() {
@@ -77,11 +78,13 @@ class HeadlessProc {
       return;
     }
 
-    // Streaming text delta → preview
     if (t === 'stream_event') {
       const ev = o.event || {};
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-        this._cb?.onDelta?.(this.streamId, ev.delta.text || '');
+        this._deltaAcc += ev.delta.text || '';
+        this._cb?.onDelta?.(this.streamId, this._deltaAcc, ++this._deltaSeq);
+      } else if (ev.type === 'content_block_start') {
+        this._deltaAcc = '';
       }
       return;
     }
@@ -100,6 +103,7 @@ class HeadlessProc {
       this._cb = null;
       const sid = this.streamId;
       this.streamId = null;
+      this._deltaAcc = '';
       cb?.onResult?.(sid, o);
       this._drainQueue();
       return;
@@ -188,6 +192,7 @@ export class ClaudePool {
   // Send a message to sessionId's process (spawn/reuse/queue). Returns the
   // resolved sessionId (from system/init for new sessions), or null on failure.
   // opts: { cwd, resumeId, streamId, onDelta, onMessage, onResult, onControlRequest, onError }
+  //   onDelta(streamId, fullText, seq): cumulative preview text so far + monotonic seq.
   //   onMessage(streamId, line): complete assistant/user line (uuid+ts+content) —
   //     authoritative message delivered early; forward as a normal message frame.
   async send(key, text, opts = {}) {
