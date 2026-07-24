@@ -172,10 +172,12 @@ async function readAndSend(config, filename, sessionId) {
     // Headless already pushed this message live to the app (same uuid). Persist to
     // DDB here but skip the duplicate WS push. Consume the uuid so the set stays small.
     if (headlessPushedUuids.has(msg.uuid)) {
+      console.log(`[watcher] skip WS push (headless already pushed) uuid=${msg.uuid.slice(0,8)}`);
       headlessPushedUuids.delete(msg.uuid);
       await uploadMessages(sessionId, [msg]);
       continue;
     }
+    if (msg.type === 'assistant') console.log(`[watcher] WS push assistant uuid=${msg.uuid.slice(0,8)} (not in headless set, size=${headlessPushedUuids.size})`);
 
     // Messages over the API GW single-frame cap (32768B) would drop the whole WS
     // connection with code 1009. Send a truncated copy over WS for real-time

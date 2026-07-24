@@ -244,6 +244,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   }
 
   // Headless streaming path for existing sessions; falls through to tmux if it can't attempt.
+  console.log(`[ws] send_message sid=${sessionId?.slice(0,8)} streamMode=${streamMode}`);
   if (streamMode && sessionId) {
     const handled = await handleHeadlessSend(sessionId, resolved, clientId);
     if (handled) return;
@@ -345,6 +346,7 @@ async function handleHeadlessSend(sessionId, text, clientId) {
       if (line.tool_use_result && !line.toolUseResult) line.toolUseResult = line.tool_use_result;
       const msg = await extractForApp(line, cwd);
       if (!msg.uuid) return;
+      console.log(`[hl] onMessage push uuid=${msg.uuid.slice(0,8)} type=${msg.type} blk=${blockId} sid=${String(sid).slice(0,6)}`);
       headlessPushedUuids.add(msg.uuid);
       if (headlessPushedUuids.size > 500) headlessPushedUuids.delete(headlessPushedUuids.values().next().value);
       wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, blockId, noCache: true });
