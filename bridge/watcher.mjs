@@ -169,9 +169,10 @@ async function readAndSend(config, filename, sessionId) {
 
     if (armed) tagStallRescue(sessionId, raw, msg);
 
-    // A headless-driven session streams messages live to the app itself; the
-    // watcher only persists them to DDB (skip the duplicate WS push).
-    if (headlessBusy(sessionId)) {
+    // A headless-driven session streams assistant content live to the app; the
+    // watcher only persists those to DDB (skip the duplicate WS push). User
+    // messages still go over WS so other windows viewing the session stay in sync.
+    if (headlessBusy(sessionId) && msg.type !== 'user') {
       await uploadMessages(sessionId, [msg]);
       continue;
     }

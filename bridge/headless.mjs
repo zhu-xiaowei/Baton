@@ -88,6 +88,7 @@ class HeadlessProc {
       } else if (ev.type === 'content_block_start') {
         this._blockId++;
         this._deltaAcc = '';
+        this._cb?.onBlockStart?.(this.streamId, this._blockId, ev.content_block?.type || 'text');
       } else if (ev.type === 'content_block_stop') {
         this._cb?.onBlockStop?.(this.streamId, this._blockId);
       }
@@ -194,6 +195,7 @@ export class ClaudePool {
     const streamId = opts.streamId || null;
     const cb = {
       onDelta: opts.onDelta,
+      onBlockStart: opts.onBlockStart,
       onBlockStop: opts.onBlockStop,
       onResult: opts.onResult,
       onControlRequest: opts.onControlRequest,

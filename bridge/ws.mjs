@@ -343,6 +343,9 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     onDelta: (sid, fullText, seq, blockId) => {
       wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq, blockId });
     },
+    onBlockStart: (sid, blockId, kind) => {
+      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind });
+    },
     onBlockStop: (sid, blockId) => {
       wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId });
     },

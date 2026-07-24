@@ -225,6 +225,8 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'stream_delta') {
       if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text, msg.seq, msg.blockId);
+    } else if (msg.action === 'stream_block_start') {
+      if (msg.sessionId === state.wsSessionId) handleStreamBlockStart(msg.streamId, msg.blockId, msg.kind);
     } else if (msg.action === 'stream_block_stop') {
       if (msg.sessionId === state.wsSessionId) handleStreamBlockStop(msg.streamId, msg.blockId);
     } else if (msg.action === 'stream_end') {
@@ -340,29 +342,52 @@ function insertAtTimestamp(container, html, timestamp) {
 }
 
 var _blk = {};
+var _streamEnded = {};
 var _streamRaf = null;
 var _streamLastTick = 0;
 
 function blockKey(streamId, blockId) { return streamId + ':' + (blockId == null ? 0 : blockId); }
 
+function newStreamBlock(sid, bid) {
+  return { sid: sid, bid: (bid == null ? 0 : bid), target: [], shown: 0, seq: -1, stopped: false, finalized: false, kind: 'text', thinkStart: 0, thinkMs: null, labelDone: false };
+}
+
 function handleStreamDelta(streamId, fullText, seq, blockId) {
   if (!streamId) return;
   var k = blockKey(streamId, blockId);
-  var b = _blk[k];
-  if (b && b.stopped) return;
-  if (!b) { b = _blk[k] = { target: [], shown: 0, seq: -1, stopped: false }; }
+  var b = _blk[k] || (_blk[k] = newStreamBlock(streamId, blockId));
   if (seq != null && seq <= b.seq) return;
   b.seq = seq != null ? seq : b.seq + 1;
   b.target = Array.from(fullText || '');
-  state.wsRunning = true;
-  updateSendBtn();
+  b.finalized = false;
+  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
+  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+}
+
+function handleStreamBlockStart(streamId, blockId, kind) {
+  if (!streamId) return;
+  var b = _blk[blockKey(streamId, blockId)] || (_blk[blockKey(streamId, blockId)] = newStreamBlock(streamId, blockId));
+  b.kind = kind || 'text';
+  if (b.kind === 'thinking' && !b.stopped && !b.thinkStart) b.thinkStart = performance.now();
+  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
 function handleStreamBlockStop(streamId, blockId) {
-  var b = _blk[blockKey(streamId, blockId)];
-  if (b) b.stopped = true;
+  if (!streamId) return;
+  var b = _blk[blockKey(streamId, blockId)] || (_blk[blockKey(streamId, blockId)] = newStreamBlock(streamId, blockId));
+  b.stopped = true;
+  if (b.kind === 'thinking' && b.thinkMs == null) b.thinkMs = b.thinkStart ? (performance.now() - b.thinkStart) : null;
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+}
+
+function insertOrdered(turn, el, bid) {
+  var kids = turn.children, ref = null;
+  for (var i = 0; i < kids.length; i++) {
+    var kb = parseInt(kids[i].dataset.bid, 10);
+    if (!isNaN(kb) && kb > bid) { ref = kids[i]; break; }
+  }
+  turn.insertBefore(el, ref);
 }
 
 function tickStreams(now) {
@@ -373,42 +398,84 @@ function tickStreams(now) {
   var content = document.getElementById('content');
   var nearBottom = content && content.scrollHeight - content.scrollTop - content.clientHeight < 300;
   var active = false;
-  for (var k in _blk) {
-    var b = _blk[k];
-    if (b.done) continue;
-    b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
-    if (b.shown > b.target.length) b.shown = b.target.length;
-    var caughtUp = b.shown >= b.target.length;
-    if (!caughtUp) active = true;
-    if (container) {
-      var id = 'stream-' + k;
-      var el = document.getElementById(id);
-      if (!el) {
-        insertStreamBubble(container, '<div class="assistant-turn stream-preview" id="' + id + '"><div class="tl-item assistant-text"></div></div>');
-        el = document.getElementById(id);
+
+  // Group blocks by streamId → one .assistant-turn per turn (matches jsonl structure).
+  var groups = {};
+  for (var k in _blk) { var gb = _blk[k]; (groups[gb.sid] || (groups[gb.sid] = [])).push(gb); }
+
+  for (var sid in groups) {
+    var blocks = groups[sid].sort(function (a, c) { return a.bid - c.bid; });
+    var turnId = 'stream-turn-' + sid;
+    var turn = document.getElementById(turnId);
+    if (container && !turn) {
+      turn = document.createElement('div');
+      turn.className = 'assistant-turn stream-preview';
+      turn.id = turnId;
+      container.appendChild(turn);
+    }
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var wantKind = b.kind === 'thinking' ? 'thinking' : 'text';
+      // Empty text block (start/stop, no delta) has nothing to show — skip it.
+      if (wantKind === 'text' && b.target.length === 0) continue;
+      var elId = 'sb-' + sid + '-' + b.bid;
+      var el = document.getElementById(elId);
+      if (turn && (!el || el.dataset.kind !== wantKind)) {
+        if (el) el.remove();
+        el = document.createElement('div');
+        el.id = elId; el.dataset.kind = wantKind; el.dataset.bid = String(b.bid);
+        if (wantKind === 'thinking') {
+          el.className = 'tl-item thinking-tl';
+          var bodyId = 'tb-' + sid + '-' + b.bid;
+          el.innerHTML = '<div class="thinking-block"><div class="thinking-toggle" onclick="this.classList.toggle(\'open\');var x=document.getElementById(\'' + bodyId + '\');x.style.display=x.style.display===\'block\'?\'none\':\'block\'"><span class="think-label">Thinking</span> <span class="thinking-chevron">&#8250;</span></div><div class="thinking-body" id="' + bodyId + '"></div></div>';
+        } else {
+          el.className = 'tl-item assistant-text';
+        }
+        insertOrdered(turn, el, b.bid);
       }
-      var md = el.querySelector('.assistant-text');
-      if (md && window.renderMd) md.innerHTML = window.renderMd(b.target.slice(0, b.shown).join(''));
-      if (caughtUp && b.stopped) { el.classList.remove('stream-preview'); b.done = true; }
+      if (!el) continue;
+
+      if (wantKind === 'thinking') {
+        var lbl = el.querySelector('.think-label');
+        if (!b.stopped && b.thinkStart) {
+          if (lbl) lbl.textContent = 'Thinking ' + Math.max(1, Math.round((now - b.thinkStart) / 1000)) + 's';
+          active = true;
+        } else if (b.stopped) {
+          if (!b.labelDone && lbl) {
+            var s = b.thinkMs != null ? Math.round(b.thinkMs / 1000) : 0;
+            lbl.textContent = s > 0 ? ('Thought for ' + s + 's') : 'Thinking';
+            b.labelDone = true;
+          }
+        } else if (lbl) {
+          lbl.textContent = 'Thinking';
+        }
+        if (b.target.length) {
+          b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
+          if (b.shown > b.target.length) b.shown = b.target.length;
+          var bd = el.querySelector('.thinking-body');
+          if (bd) bd.textContent = b.target.slice(0, b.shown).join('');
+          if (b.shown < b.target.length) active = true;
+        }
+      } else if (!b.finalized) {
+        b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
+        if (b.shown > b.target.length) b.shown = b.target.length;
+        var caughtUp = b.shown >= b.target.length;
+        if (window.renderMd) el.innerHTML = window.renderMd(b.target.slice(0, b.shown).join(''));
+        if (!caughtUp || (b.stopped && !b.finalized)) active = true;
+        if (caughtUp && b.stopped) b.finalized = true;
+      }
     }
   }
   if (nearBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
-function insertStreamBubble(container, html) {
-  var firstPending = container.querySelector('[data-pending]');
-  if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
-  else container.insertAdjacentHTML('beforeend', html);
-}
-
 function handleStreamEnd(streamId, error) {
   if (!streamId) return;
+  _streamEnded[streamId] = true;
   if (error) {
-    for (var k in _blk) if (k.indexOf(streamId + ':') === 0) {
-      var el = document.getElementById('stream-' + k);
-      if (el) el.classList.add('stream-error');
-    }
+    var t = document.getElementById('stream-turn-' + streamId);
+    if (t) t.classList.add('stream-error');
   }
   state.wsRunning = false;
   updateSendBtn();
@@ -417,7 +484,8 @@ function handleStreamEnd(streamId, error) {
 function clearStreamPreviews() {
   if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
   _blk = {};
-  var previews = document.querySelectorAll('[id^="stream-"]');
+  _streamEnded = {};
+  var previews = document.querySelectorAll('[id^="stream-turn-"]');
   for (var i = 0; i < previews.length; i++) previews[i].remove();
 }
 
