@@ -242,7 +242,7 @@ phases:
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPO_URI
   build:
     commands:
-      - docker build --build-arg APP_VERSION=$APP_VERSION -t $REPO_NAME:$TAG -f Dockerfile .
+      - docker build --no-cache --build-arg APP_VERSION=$APP_VERSION -t $REPO_NAME:$TAG -f Dockerfile .
       - docker tag $REPO_NAME:$TAG $REPO_URI:$TAG
   post_build:
     commands:
