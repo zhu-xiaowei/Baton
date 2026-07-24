@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { readAllMessages, uploadMessages, extractForApp, headlessPushedUuids } from './extract.mjs';
+import { readAllMessages, uploadMessages } from './extract.mjs';
 import { findSessionFile, getDaemonSessions, hasNoDanglingTurn } from './session.mjs';
 import { armStallRescue } from './stall.mjs';
 import { ClaudePool } from './headless.mjs';
@@ -30,6 +30,8 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 const _launchLocks = new Map();
 
 const _pool = new ClaudePool();
+
+export function headlessBusy(sessionId) { return _pool.isBusy(sessionId); }
 
 function cwdForSession(sessionId) {
   const filePath = findSessionFile(sessionId);
@@ -244,7 +246,6 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   }
 
   // Headless streaming path for existing sessions; falls through to tmux if it can't attempt.
-  console.log(`[ws] send_message sid=${sessionId?.slice(0,8)} streamMode=${streamMode}`);
   if (streamMode && sessionId) {
     const handled = await handleHeadlessSend(sessionId, resolved, clientId);
     if (handled) return;
@@ -342,14 +343,8 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     onDelta: (sid, fullText, seq, blockId) => {
       wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq, blockId });
     },
-    onMessage: async (sid, line, blockId) => {
-      if (line.tool_use_result && !line.toolUseResult) line.toolUseResult = line.tool_use_result;
-      const msg = await extractForApp(line, cwd);
-      if (!msg.uuid) return;
-      console.log(`[hl] onMessage push uuid=${msg.uuid.slice(0,8)} type=${msg.type} blk=${blockId} sid=${String(sid).slice(0,6)}`);
-      headlessPushedUuids.add(msg.uuid);
-      if (headlessPushedUuids.size > 500) headlessPushedUuids.delete(headlessPushedUuids.values().next().value);
-      wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, blockId, noCache: true });
+    onBlockStop: (sid, blockId) => {
+      wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId });
     },
     onResult: (sid, result) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: result.is_error ? (result.subtype || 'error') : undefined });

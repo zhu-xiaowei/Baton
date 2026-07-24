@@ -146,7 +146,6 @@ function connectWs(_, projectHash) {
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
         if (m.uuid && state.wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
-        if (msg.streamId != null) { m._streamId = msg.streamId; m._blockId = msg.blockId; }
         state.wsAllMessages.push(m);
         state.wsMessageCount++;
         if (m.timestamp) state.wsLastTimestamp = m.timestamp;
@@ -226,6 +225,8 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'stream_delta') {
       if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text, msg.seq, msg.blockId);
+    } else if (msg.action === 'stream_block_stop') {
+      if (msg.sessionId === state.wsSessionId) handleStreamBlockStop(msg.streamId, msg.blockId);
     } else if (msg.action === 'stream_end') {
       if (msg.sessionId === state.wsSessionId) handleStreamEnd(msg.streamId, msg.error);
     } else if (msg.action === 'create_project_result') {
@@ -344,17 +345,12 @@ var _streamLastTick = 0;
 
 function blockKey(streamId, blockId) { return streamId + ':' + (blockId == null ? 0 : blockId); }
 
-function isPlainTextMsg(msg) {
-  return Array.isArray(msg.content) && msg.content.length > 0
-    && msg.content.every(function (b) { return b.type === 'text' || b.type === 'thinking'; });
-}
-
 function handleStreamDelta(streamId, fullText, seq, blockId) {
   if (!streamId) return;
   var k = blockKey(streamId, blockId);
   var b = _blk[k];
-  if (b && b.done) return;
-  if (!b) { b = _blk[k] = { target: [], shown: 0, seq: -1, done: false, uuid: null, ts: '' }; }
+  if (b && b.stopped) return;
+  if (!b) { b = _blk[k] = { target: [], shown: 0, seq: -1, stopped: false }; }
   if (seq != null && seq <= b.seq) return;
   b.seq = seq != null ? seq : b.seq + 1;
   b.target = Array.from(fullText || '');
@@ -363,18 +359,9 @@ function handleStreamDelta(streamId, fullText, seq, blockId) {
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
-function claimStreamBlock(streamId, blockId, msg) {
-  var k = blockKey(streamId, blockId);
-  var b = _blk[k];
-  var full = '';
-  for (var i = 0; i < msg.content.length; i++) if (msg.content[i].type === 'text') full += msg.content[i].text || '';
-  if (!b) b = _blk[k] = { target: [], shown: 0, seq: Infinity, done: false, uuid: null, ts: '' };
-  b.target = Array.from(full);
-  b.uuid = msg.uuid || '';
-  b.ts = msg.timestamp || '';
-  b.claimed = true;
-  state.wsRunning = true;
-  updateSendBtn();
+function handleStreamBlockStop(streamId, blockId) {
+  var b = _blk[blockKey(streamId, blockId)];
+  if (b) b.stopped = true;
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
@@ -389,37 +376,27 @@ function tickStreams(now) {
   for (var k in _blk) {
     var b = _blk[k];
     if (b.done) continue;
-    var finished = b.shown >= b.target.length;
-    if (!finished) {
-      b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
-      if (b.shown > b.target.length) b.shown = b.target.length;
-      finished = b.shown >= b.target.length;
-      if (!finished) active = true;
+    b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
+    if (b.shown > b.target.length) b.shown = b.target.length;
+    var caughtUp = b.shown >= b.target.length;
+    if (!caughtUp) active = true;
+    if (container) {
+      var id = 'stream-' + k;
+      var el = document.getElementById(id);
+      if (!el) {
+        insertStreamBubble(container, '<div class="assistant-turn stream-preview" id="' + id + '"><div class="tl-item assistant-text"></div></div>');
+        el = document.getElementById(id);
+      }
+      var md = el.querySelector('.assistant-text');
+      if (md && window.renderMd) md.innerHTML = window.renderMd(b.target.slice(0, b.shown).join(''));
+      if (caughtUp && b.stopped) { el.classList.remove('stream-preview'); b.done = true; }
     }
-    if (!container) continue;
-    var id = 'stream-' + k;
-    var el = document.getElementById(id);
-    if (!el) {
-      var html = '<div class="assistant-turn stream-preview" id="' + id + '"><div class="tl-item assistant-text"></div></div>';
-      insertStreamBubble(container, html, b.ts);
-      el = document.getElementById(id);
-    }
-    if (b.ts) el.dataset.ts = b.ts;
-    if (b.uuid) el.dataset.uuid = b.uuid;
-    var md = el.querySelector('.assistant-text');
-    if (md && window.renderMd) md.innerHTML = window.renderMd(b.target.slice(0, b.shown).join(''));
-    if (finished && b.claimed) { el.classList.remove('stream-preview'); b.done = true; }
   }
   if (nearBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
-function insertStreamBubble(container, html, ts) {
-  if (ts) {
-    var items = container.querySelectorAll('[data-ts]'), before = null;
-    for (var j = items.length - 1; j >= 0; j--) { if (items[j].dataset.ts > ts) before = items[j]; else break; }
-    if (before) { before.insertAdjacentHTML('beforebegin', html); return; }
-  }
+function insertStreamBubble(container, html) {
   var firstPending = container.querySelector('[data-pending]');
   if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
   else container.insertAdjacentHTML('beforeend', html);
@@ -440,7 +417,7 @@ function handleStreamEnd(streamId, error) {
 function clearStreamPreviews() {
   if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
   _blk = {};
-  var previews = document.querySelectorAll('.stream-preview');
+  var previews = document.querySelectorAll('[id^="stream-"]');
   for (var i = 0; i < previews.length; i++) previews[i].remove();
 }
 
@@ -460,6 +437,7 @@ function updateLastTurn() {
     newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
   }
 
+  if (newMessages.some(function (m) { return m.type === 'assistant'; })) clearStreamPreviews();
 
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
@@ -516,11 +494,6 @@ function updateLastTurn() {
     // Assistant message
     if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
 
-    if (msg.type === 'assistant' && msg._streamId != null && isPlainTextMsg(msg)) {
-      claimStreamBlock(msg._streamId, msg._blockId, msg);
-      continue;
-    }
-
     var html = renderSingleMessage(msg, state.wsAllMessages);
     if (!html) continue;
 
@@ -564,10 +537,7 @@ function updateLastTurn() {
   // A real turn frame supersedes the open-time snapshot — from here the live
   // stream is authoritative (per the "initial load only" trust decision).
   if (hasTurnFrame) state.wsOpenStatus = null;
-  // headless stream messages carry stop_reason=null (deriveRunning would misread
-  // as running); running is owned by stream_delta/stream_end for those.
-  var fromStream = newMessages.some(function (m) { return m._streamId != null; });
-  if (!fromStream && (derived || hasTurnFrame)) state.wsRunning = derived;
+  if (derived || hasTurnFrame) state.wsRunning = derived;
   updateSendBtn();
 
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed

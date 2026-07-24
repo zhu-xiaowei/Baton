@@ -2,10 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
-import { synced, extractForApp, uploadMessages, truncateToBytes, headlessPushedUuids } from './extract.mjs';
+import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
-import { wsSend, wsSendWithAck } from './ws.mjs';
+import { wsSend, wsSendWithAck, headlessBusy } from './ws.mjs';
 import { projectHashToPath } from './tmux.mjs';
 import { isArmed, getRescuedToolUseId, setRescuedToolUseId, disarmStallRescue } from './stall.mjs';
 
@@ -169,15 +169,12 @@ async function readAndSend(config, filename, sessionId) {
 
     if (armed) tagStallRescue(sessionId, raw, msg);
 
-    // Headless already pushed this message live to the app (same uuid). Persist to
-    // DDB here but skip the duplicate WS push. Consume the uuid so the set stays small.
-    if (headlessPushedUuids.has(msg.uuid)) {
-      console.log(`[watcher] skip WS push (headless already pushed) uuid=${msg.uuid.slice(0,8)}`);
-      headlessPushedUuids.delete(msg.uuid);
+    // A headless-driven session streams messages live to the app itself; the
+    // watcher only persists them to DDB (skip the duplicate WS push).
+    if (headlessBusy(sessionId)) {
       await uploadMessages(sessionId, [msg]);
       continue;
     }
-    if (msg.type === 'assistant') console.log(`[watcher] WS push assistant uuid=${msg.uuid.slice(0,8)} (not in headless set, size=${headlessPushedUuids.size})`);
 
     // Messages over the API GW single-frame cap (32768B) would drop the whole WS
     // connection with code 1009. Send a truncated copy over WS for real-time

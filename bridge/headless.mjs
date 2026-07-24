@@ -16,6 +16,7 @@ export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this lon
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
+const RESULT_GRACE_MS = 2000;
 
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
@@ -34,11 +35,11 @@ class HeadlessProc {
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
-    this._buf = '';
     this._cb = null;
     this._deltaAcc = '';
     this._deltaSeq = 0;
     this._blockId = -1;
+    this._graceUntil = 0;
   }
 
   spawn() {
@@ -87,6 +88,8 @@ class HeadlessProc {
       } else if (ev.type === 'content_block_start') {
         this._blockId++;
         this._deltaAcc = '';
+      } else if (ev.type === 'content_block_stop') {
+        this._cb?.onBlockStop?.(this.streamId, this._blockId);
       }
       return;
     }
@@ -100,6 +103,7 @@ class HeadlessProc {
     // Turn finished
     if (t === 'result') {
       this.busy = false;
+      this._graceUntil = Date.now() + RESULT_GRACE_MS;
       this.pool._touch(this);
       const cb = this._cb;
       this._cb = null;
@@ -111,14 +115,6 @@ class HeadlessProc {
       return;
     }
 
-    // Complete assistant/user lines. These carry uuid + timestamp + full content
-    // (incl. tool_use / tool_result) — same shape as jsonl, verified identical
-    // uuids. So they ARE the authoritative message, delivered early; the caller
-    // forwards them as a normal message frame. jsonl arriving later dedups by uuid.
-    if (t === 'assistant' || t === 'user') {
-      this._cb?.onMessage?.(this.streamId, o, this._blockId);
-      return;
-    }
   }
 
   _onClose(code, detail) {
@@ -194,15 +190,11 @@ export class ClaudePool {
 
   // Send a message to sessionId's process (spawn/reuse/queue). Returns the
   // resolved sessionId (from system/init for new sessions), or null on failure.
-  // opts: { cwd, resumeId, streamId, onDelta, onMessage, onResult, onControlRequest, onError }
-  //   onDelta(streamId, fullText, seq, blockId): cumulative text + monotonic seq + per-turn block id.
-  //   onMessage(streamId, line, blockId): complete assistant/user line (uuid+ts+content) —
-  //     authoritative message delivered early; forward as a normal message frame.
   async send(key, text, opts = {}) {
     const streamId = opts.streamId || null;
     const cb = {
       onDelta: opts.onDelta,
-      onMessage: opts.onMessage,
+      onBlockStop: opts.onBlockStop,
       onResult: opts.onResult,
       onControlRequest: opts.onControlRequest,
       onError: opts.onError,
@@ -247,6 +239,8 @@ export class ClaudePool {
   }
 
   interrupt(key) { this.procs.get(key)?.interrupt(); }
+
+  isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && (p.busy || Date.now() < (p._graceUntil || 0)); }
 
   reapIdle() {
     const now = Date.now();

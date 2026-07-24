@@ -8,10 +8,6 @@ import { isToolAllowed } from './permissions.mjs';
 // Track sync position: sessionId → line number
 export const synced = new Map();
 
-// uuids already pushed live to the app by the headless stream. The jsonl watcher
-// still persists them to DDB but skips the duplicate WS push (headless owns live).
-export const headlessPushedUuids = new Set();
-
 const TRUNC_MARK = '\n…[truncated]';
 
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
