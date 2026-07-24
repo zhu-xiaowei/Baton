@@ -3,10 +3,9 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash, projectHashToPath } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck, headlessBusy } from './ws.mjs';
-import { projectHashToPath } from './tmux.mjs';
 import { isArmed, getRescuedToolUseId, setRescuedToolUseId, disarmStallRescue } from './stall.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies

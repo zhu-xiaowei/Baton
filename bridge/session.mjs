@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, STALL_JSONL_SILENCE_MS, AGENTS_JSON_TTL_MS } from './config.mjs';
-import { isTerminalBusy, paneRunState } from './tmux.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -90,6 +89,52 @@ export function matchRealSegment(currentDir, parts, i) {
     if (hit) return { name: hit, len };
   }
   return null;
+}
+
+/**
+ * Resolve projectHash back to an absolute directory path.
+ * Hash rule: path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-')
+ * e.g. "-Users-xiaoweii-workspace-rn-agentpeek" → "/Users/xiaoweii/workspace/rn/agentpeek"
+ *
+ * Windows CC generates hashes like "C-Users-Admin-workspace-project" (drive letter prefix).
+ * On WSL, we map these to /mnt/c/Users/Admin/workspace/project.
+ */
+export function projectHashToPath(projectHash) {
+  const homeDir = os.homedir();
+  const homeHash = path.resolve(homeDir).replace(/[^a-zA-Z0-9-]/g, '-');
+  let remaining = projectHash;
+  let currentDir = '/';
+
+  // Windows hash detection: starts with single uppercase letter (drive letter)
+  // e.g. "C-Users-Admin-workspace" → /mnt/c/Users/Admin/workspace (on WSL)
+  const winDriveMatch = projectHash.match(/^([A-Z])-/);
+  if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
+    const drive = winDriveMatch[1].toLowerCase();
+    currentDir = `/mnt/${drive}`;
+    remaining = projectHash.slice(2); // remove "C-"
+  } else if (remaining.startsWith(homeHash)) {
+    remaining = remaining.slice(homeHash.length).replace(/^-/, '');
+    currentDir = homeDir;
+  } else {
+    remaining = remaining.replace(/^-/, '');
+  }
+
+  if (!remaining) return currentDir;
+
+  const parts = remaining.split('-');
+  let i = 0;
+  while (i < parts.length) {
+    // Recover the real dir name for this segment (handles `_`/`.`/space, which
+    // the hash collapses to `-`). See matchRealSegment.
+    const m = matchRealSegment(currentDir, parts, i);
+    if (!m) {
+      currentDir = path.join(currentDir, parts.slice(i).join('-'));
+      break;
+    }
+    currentDir = path.join(currentDir, m.name);
+    i += m.len;
+  }
+  return currentDir;
 }
 
 export function readableProjectName(projectHash) {
@@ -184,8 +229,8 @@ const lastRunningTs = new Map();
 const RUNNING_DEBOUNCE_MS = 10_000;
 
 // Resolve content status, holding 'running' across end_turn flicker before
-// downgrading: debounce → terminal truth (capture-pane) → process fallback.
-// procAliveFn is lazy — only the no-pane branch pays for `ps aux`.
+// downgrading: debounce → process fallback. (Terminal-truth capture-pane was
+// removed with tmux; headless-owned sessions report busy via the pool.)
 export function resolveStatus(sessionId, contentStatus, procAliveFn) {
   if (contentStatus === 'running') {
     lastRunningTs.set(sessionId, Date.now());
@@ -193,10 +238,7 @@ export function resolveStatus(sessionId, contentStatus, procAliveFn) {
   }
   const last = lastRunningTs.get(sessionId);
   if (last && Date.now() - last < RUNNING_DEBOUNCE_MS) return 'running';
-  const busy = isTerminalBusy(sessionId);
-  if (busy === true) { lastRunningTs.set(sessionId, Date.now()); return 'running'; }
-  if (busy === false) return contentStatus; // terminal confirms idle/stopped
-  return procAliveFn() ? 'idle' : 'stopped'; // no pane → process fallback
+  return procAliveFn() ? 'idle' : 'stopped'; // process fallback
 }
 
 /**
@@ -290,20 +332,7 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'stopped'; }
   if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'stopped';
 
-  // 3b. Ambiguous 'running': the verdict came from a trailing lone `user` entry,
-  //     which is indistinguishable in jsonl between "user just sent, CC about to
-  //     reply" (real) and "user sent then hit Esc — CC reverted the prompt and is
-  //     idle" (no field marks the revert). Only the pane can tell. Gate on jsonl
-  //     silence so a freshly-sent message (<silence window) stays 'running' on the
-  //     fast path; once quiet, a pane that isn't busy/wizard means it's idle.
-  if (contentStatus === 'running'
-      && Date.now() - mtimeMs >= STALL_JSONL_SILENCE_MS
-      && hasNoDanglingTurn(filePath)
-      && paneRunState(sessionId) === 'idle') {
-    return 'idle';
-  }
-
-  // 4. Debounce + terminal-truth before downgrading running→idle/stopped.
+  // 4. Debounce before downgrading running→idle/stopped.
   return resolveStatus(sessionId, contentStatus, () => runningInfo.sessions.has(sessionId));
 }
 

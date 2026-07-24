@@ -1,17 +1,13 @@
 import WebSocket from 'ws';
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { readAllMessages, uploadMessages } from './extract.mjs';
-import { findSessionFile, getDaemonSessions, hasNoDanglingTurn } from './session.mjs';
-import { armStallRescue } from './stall.mjs';
+import { findSessionFile, projectHashToPath } from './session.mjs';
 import { ClaudePool } from './headless.mjs';
-import { sendMessageToSession, sendArrowSelect, sendTypeInput, sendKey, sendKeys, interruptSession, launchClaudeSession, launchAgentsSession, newTmuxSession, projectHashToPath, captureCommandOutput, findTmuxTargetForSession } from './tmux.mjs';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS } from './config.mjs';
 import { post } from './http.mjs';
-import { scanSlashCommands, LOCAL_COMMANDS, DIALOG_COMMANDS, SYNTHETIC_COMMANDS } from './commands.mjs';
+import { scanSlashCommands } from './commands.mjs';
 
 let _ws = null;
 let _config = null;
@@ -24,10 +20,6 @@ const RECONNECT_DELAY = 5_000;
 const SLOW_RECONNECT_DELAY = 5 * 60_000;
 const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
-
-// Launch locks: prevent concurrent tmux creation for same project/session
-// Key: projectHash or sessionId, Value: Promise<{ok, sessionId?, tmuxName?}>
-const _launchLocks = new Map();
 
 const _pool = new ClaudePool();
 
@@ -177,7 +169,7 @@ async function handleMessage(msg) {
       await handleCreateProject(msg.projectPath, msg.asAgent);
       break;
     case 'interrupt':
-      interruptSession(msg.sessionId);
+      _pool.interrupt(msg.sessionId);
       break;
     case 'reveal_agent':
       await handleRevealAgent(msg.sessionId);
@@ -236,88 +228,17 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     }
   }
 
-  // Synthetic commands (e.g. /stats-models): CC has no such command, so send its
-  // realCmd into tmux instead and remember the spec for nav-based capture below.
-  let synthetic = null;
-  const sm = /^\/([\w:-]+)\s*$/.exec(resolved.trim());
-  if (sm && SYNTHETIC_COMMANDS[sm[1]]) {
-    synthetic = SYNTHETIC_COMMANDS[sm[1]];
-    resolved = synthetic.realCmd;
-  }
-
-  // Headless streaming path for existing sessions; falls through to tmux if it can't attempt.
-  if (streamMode && sessionId) {
+  // Headless streaming path for existing sessions.
+  if (sessionId) {
     const handled = await handleHeadlessSend(sessionId, resolved, clientId);
     if (handled) return;
-  }
-
-  // New session: create tmux + claude, send message, detect sessionId
-  if (!sessionId && projectHash) {
-    const lockKey = requestId || projectHash;
-
-    // If already launching for this requestId, wait then send to existing session
-    if (_launchLocks.has(lockKey)) {
-      console.log(`[ws] waiting for in-flight launch (${lockKey.slice(0, 8)})...`);
-      const prev = await _launchLocks.get(lockKey);
-      if (prev.ok && prev.tmuxName) {
-        try { sendKeys(prev.tmuxName, resolved); } catch {}
-        wsSend({ action: 'send_message_result', ok: true, sessionId: prev.sessionId, requestId, clientId });
-      } else {
-        wsSend({ action: 'send_message_result', ok: false, error: 'Previous launch failed. Please try again.', requestId, clientId });
-      }
-      return;
-    }
-
-    const promise = asAgent
-      ? handleNewAgentSession(projectHash, resolved)
-      : handleNewSessionMessage(projectHash, resolved);
-    _launchLocks.set(lockKey, promise);
-    const result = await promise;
-    setTimeout(() => _launchLocks.delete(lockKey), 30_000);
-    wsSend({ action: 'send_message_result', ...result, requestId, clientId });
+    wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', clientId });
     return;
   }
 
-  let result = sendMessageToSession(sessionId, resolved);
-
-  if (!result.ok && result.error === 'no_tmux_target') {
-    if (_launchLocks.has(sessionId)) {
-      console.log(`[ws] waiting for in-flight launch (session ${sessionId.slice(0, 8)})...`);
-      const prev = await _launchLocks.get(sessionId);
-      if (prev.ok && prev.tmuxName) {
-        try { sendKeys(prev.tmuxName, resolved); result = { ok: true }; } catch (err) { result = { ok: false, error: err.message }; }
-      } else {
-        result = { ok: false, error: 'Previous launch failed. Please try again.' };
-      }
-    } else {
-      const isAgent = getDaemonSessions().has(sessionId);
-      console.log(`[ws] no tmux target for ${sessionId.slice(0, 8)}, launching ${isAgent ? 'agents' : 'CC'}...`);
-
-      const promise = isAgent
-        ? launchAgentForSession(sessionId)
-        : launchRegularForSession(sessionId);
-
-      _launchLocks.set(sessionId, promise);
-      const launchResult = await promise;
-      setTimeout(() => _launchLocks.delete(sessionId), 30_000);
-
-      if (launchResult.ok) {
-        try { sendKeys(launchResult.tmuxName, resolved); result = { ok: true }; } catch (err) { result = { ok: false, error: err.message }; }
-      } else {
-        result = launchResult;
-      }
-    }
-  }
-
-  if (!result.ok) {
-    console.log(`[ws] send_message failed: ${result.error}`);
-  }
-  wsSend({ action: 'send_message_result', sessionId, ...result, clientId });
-
-  // "local" slash commands (e.g. /goal, /usage) render only in CC's terminal and
-  // never reach the .jsonl. If we just sent one, grab its terminal output and push
-  // it so the app shows the result instead of spinning forever.
-  if (result.ok && sessionId) maybeCaptureLocalCommand(sessionId, resolved, requestId, synthetic);
+  // New session (projectHash only): tmux-based creation removed. Headless
+  // new-session (spawn without --resume, sessionId from system/init) not wired yet.
+  wsSend({ action: 'send_message_result', ok: false, error: 'New session creation is not available yet.', requestId, clientId });
 }
 
 // Headless streaming send for an existing session. Returns false only when no cwd (caller falls back).
@@ -368,264 +289,18 @@ async function handleHeadlessSend(sessionId, text, clientId) {
   return true;
 }
 
-// If `text` is a bare local slash command, asynchronously capture its terminal
-// output and push it to the app. Fire-and-forget — never blocks the send.
-function maybeCaptureLocalCommand(sessionId, text, requestId, synthetic) {
-  const m = /^\/([\w:-]+)\s*$/.exec((text || '').trim()); // bare "/cmd", no args
-  if (!m) return; // args → triggers AI → shown via .jsonl, no capture needed
-  const name = m[1].split(':').pop(); // strip plugin namespace
-  // Synthetic commands always capture (realCmd's dialog + nav); else local-only.
-  const dismiss = synthetic ? true : DIALOG_COMMANDS.has(name);
-  if (!synthetic && !LOCAL_COMMANDS.has(name)) return;
-  captureCommandOutput(sessionId, text, dismiss, synthetic || {})
-    .then(ansi => {
-      // Always reply (ansi may be empty) so the app can stop its spinner.
-      wsSend({ action: 'command_output', sessionId, requestId, ansi: ansi || '' });
-    })
-    .catch(err => {
-      console.error(`[ws] capture local cmd failed: ${err.message}`);
-      wsSend({ action: 'command_output', sessionId, requestId, ansi: '' });
-    });
+// New-session creation (regular + agent) and create_project were tmux-based and
+// removed with tmux.mjs. Headless new-session (spawn without --resume, sessionId
+// from system/init) is not wired yet.
+async function handleCreateProject(rawPath) {
+  wsSend({ action: 'create_project_result', ok: false, error: 'Project creation is not available yet.', projectPath: rawPath });
 }
 
-async function handleNewSessionMessage(projectHash, text, rawProjectPath) {
-  try {
-    const projectPath = rawProjectPath || projectHashToPath(projectHash);
-    const projectDir = path.join(CLAUDE_PROJECTS, projectHash);
-
-    // Snapshot existing .jsonl files
-    const before = new Set(fs.existsSync(projectDir)
-      ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'))
-      : []);
-
-    const now = new Date();
-    const ts = String(now.getMonth() + 1).padStart(2, '0')
-      + String(now.getDate()).padStart(2, '0')
-      + String(now.getHours()).padStart(2, '0')
-      + String(now.getMinutes()).padStart(2, '0')
-      + String(now.getSeconds()).padStart(2, '0');
-    const projName = projectPath.split(path.sep).pop().replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const tmuxName = `apeek_${projName}_${ts}`;
-    newTmuxSession(tmuxName, projectPath, 'claude');
-
-    const ready = await waitForCCReady(tmuxName);
-    if (!ready) {
-      try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-      return { ok: false, error: 'Claude did not become ready after 30s.' };
-    }
-
-    sendKeys(tmuxName, text);
-
-    // Poll for new .jsonl (CC creates it after receiving first message)
-    let sessionId = null;
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const after = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
-        const fresh = after.find(f => !before.has(f));
-        if (fresh) { sessionId = fresh.replace('.jsonl', ''); break; }
-      } catch {}
-    }
-
-    // Rename tmux session to include sessionId, matching launchClaudeSession convention
-    // so findTmuxTargetForSession can find it by name suffix
-    let finalTmuxName = tmuxName;
-    if (sessionId) {
-      finalTmuxName = `apeek_${projName}_${sessionId.slice(0, 8)}`;
-      try {
-        execSync(`tmux rename-session -t "${tmuxName}" "${finalTmuxName}"`, { stdio: 'ignore' });
-      } catch {}
-    }
-
-    return { ok: true, sessionId, tmuxName: finalTmuxName };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-async function handleNewAgentSession(projectHash, text) {
-  try {
-    const projectPath = projectHashToPath(projectHash);
-    const projectDir = path.join(CLAUDE_PROJECTS, projectHash);
-    const tmuxName = 'apeek_newagent';
-
-    const before = new Set(fs.existsSync(projectDir)
-      ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'))
-      : []);
-
-    newTmuxSession(tmuxName, projectPath, `claude agents --cwd "${projectPath}"`);
-
-    const ready = await waitForAgentsTUI(tmuxName);
-    if (!ready) {
-      try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-      return { ok: false, error: 'claude agents TUI did not load' };
-    }
-
-    sendKeys(tmuxName, text);
-
-    let sessionId = null;
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const after = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
-        const fresh = after.find(f => !before.has(f));
-        if (fresh) { sessionId = fresh.replace('.jsonl', ''); break; }
-      } catch {}
-    }
-
-    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-    return { ok: true, sessionId };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-async function waitForAgentsTUI(tmuxTarget) {
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    try {
-      const content = execSync(
-        `tmux capture-pane -t "${tmuxTarget}" -p`,
-        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
-      );
-      if (content.includes('❯')) return true;
-    } catch {}
-  }
-  return false;
-}
-
-async function handleCreateProject(rawPath, asAgent) {
-  if (!rawPath) {
-    wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
-    return;
-  }
-  try {
-    const home = os.homedir();
-    let projectPath = rawPath;
-    if (!projectPath.startsWith(home)) {
-      projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
-    }
-    console.log(`[ws] create_project: ${projectPath} (agent=${!!asAgent})`);
-    fs.mkdirSync(projectPath, { recursive: true });
-    const projectHash = path.resolve(projectPath).replace(/[^a-zA-Z0-9-]/g, '-');
-    const result = asAgent
-      ? await handleNewAgentSession(projectHash, 'Hello')
-      : await handleNewSessionMessage(projectHash, 'Hello', projectPath);
-    wsSend({ action: 'create_project_result', ...result, projectPath: rawPath });
-  } catch (err) {
-    wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
-  }
-}
-
-/**
- * Wait for Claude Code to be ready in a tmux pane.
- * Checks pane content for the '>' prompt. Polls every 500ms, up to 30s.
- */
-async function waitForCCReady(tmuxTarget) {
-  let trustAccepted = false;
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    try {
-      const content = execSync(
-        `tmux capture-pane -t "${tmuxTarget}" -p`,
-        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
-      );
-      // Trust dialog: auto-accept "Yes, I trust this folder" (once only — text lingers in pane buffer)
-      if (!trustAccepted && /Yes, I trust this folder/m.test(content)) {
-        execSync(`tmux send-keys -t "${tmuxTarget}" Enter`, { stdio: 'ignore' });
-        console.log(`[ws] auto-accepted trust dialog for ${tmuxTarget}`);
-        trustAccepted = true;
-        continue;
-      }
-      // CC shows '>' or '❯' prompt when ready for input
-      if (/^[>❯]\s*$/m.test(content)) return true;
-    } catch {}
-  }
-  console.log(`[ws] CC did not become ready within 30s`);
-  return false;
-}
-
-function launchForSession(sessionId) {
-  const filePath = findSessionFile(sessionId);
-  if (!filePath) return null;
-
-  const parts = filePath.split(path.sep);
-  const projIdx = parts.indexOf('projects');
-  if (projIdx < 0 || projIdx + 1 >= parts.length) return null;
-  const projectHash = parts[projIdx + 1];
-
-  try {
-    return launchClaudeSession(sessionId, projectHash);
-  } catch (err) {
-    console.log(`[ws] launchForSession failed: ${err.message}`);
-    throw err;
-  }
-}
-
-async function launchRegularForSession(sessionId) {
-  let tmuxName;
-  try { tmuxName = launchForSession(sessionId); } catch (err) { return { ok: false, error: err.message }; }
-  if (!tmuxName) return { ok: false, error: 'Failed to launch Claude. Session file may be missing.' };
-  const ready = await waitForCCReady(tmuxName);
-  if (!ready) {
-    try { execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`, { stdio: 'ignore' }); } catch {}
-    return { ok: false, error: 'Claude did not become ready after 30s.' };
-  }
-  return { ok: true, tmuxName };
-}
-
-async function launchAgentForSession(sessionId, onRescueEscape) {
-  const agentMeta = getAgentCwd(sessionId);
-  if (!agentMeta) return { ok: false, error: 'Agent session metadata not found' };
-
-  try {
-    // The agents TUI labels a session by its name, falling back to the prompt text
-    // (`intent`) when unnamed. Pass both so navigation can match reliably.
-    const tmuxName = await launchAgentsSession(sessionId, agentMeta.cwd, agentMeta.name || agentMeta.intent, onRescueEscape);
-    return { ok: true, tmuxName };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-}
-
-// App opened an agent whose AskUserQuestion is stuck in daemon memory (never
-// flushed to jsonl — the daemon's state can even read 'done' while the question
-// waits). Gate on hasNoDanglingTurn, not agentState: open the agents TUI,
-// navigate in — waitForAgentPrompt sends Escape, arming the stall rescue so
-// watcher.mjs hides the synthetic pair and tags the flushed tool_use for the
-// app's rescued-wizard path.
-async function handleRevealAgent(sessionId) {
-  const dm = getDaemonSessions().get(sessionId);
-  if (!dm) return;
-  if (findTmuxTargetForSession(sessionId)) return;
-  const fp = findSessionFile(sessionId);
-  if (!fp || !hasNoDanglingTurn(fp)) return;
-  if (_launchLocks.has(sessionId)) return;
-
-  console.log(`[ws] reveal_agent: ${sessionId.slice(0, 8)}`);
-  const promise = launchAgentForSession(sessionId, () => armStallRescue(sessionId));
-  _launchLocks.set(sessionId, promise);
-  await promise;
-  setTimeout(() => _launchLocks.delete(sessionId), 30_000);
-}
-
-function getAgentCwd(sessionId) {
-  if (!fs.existsSync(CLAUDE_JOBS)) return null;
-  for (const dir of fs.readdirSync(CLAUDE_JOBS)) {
-    const statePath = path.join(CLAUDE_JOBS, dir, 'state.json');
-    if (!fs.existsSync(statePath)) continue;
-    try {
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      if (state.sessionId === sessionId && state.backend === 'daemon') {
-        return {
-          cwd: state.cwd || state.originCwd || '',
-          name: state.name || '',
-          intent: state.intent || '',
-        };
-      }
-    } catch {}
-  }
-  return null;
+// App opened an agent whose AskUserQuestion was stuck in daemon memory. The old
+// rescue drove the agents TUI over tmux (Escape to flush) — removed with tmux.
+// Headless surfaces the question via control_request instead (not wired yet).
+async function handleRevealAgent(_sessionId) {
+  // no-op until the headless permission path lands
 }
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
@@ -758,39 +433,10 @@ async function downloadBridgeImage(key) {
   } catch { return null; }
 }
 
-function handlePermissionReply(sessionId, approved) {
-  if (!sessionId) return;
-  const keys = typeof approved === 'string' ? approved : (approved ? 'y' : 'n');
-
-  // escape = send Escape key (cancel prompt)
-  if (keys === 'escape') {
-    const result = sendKey(sessionId, 'Escape');
-    if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
-    return;
-  }
-
-  // arrow:N = send N down-arrows then Enter (for AskUserQuestion navigation)
-  if (keys.startsWith('arrow:')) {
-    const n = parseInt(keys.slice(6), 10);
-    const result = sendArrowSelect(sessionId, n);
-    if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
-    return;
-  }
-
-  // type:N:text = navigate to "Type something" option N, type text, Enter
-  if (keys.startsWith('type:')) {
-    const parts = keys.split(':');
-    const n = parseInt(parts[1], 10);
-    const text = parts.slice(2).join(':'); // rejoin in case text contains ':'
-    if (text) {
-      const result = sendTypeInput(sessionId, n, text);
-      if (!result.ok) console.log(`[ws] permission_reply failed: ${result.error}`);
-    }
-    return;
-  }
-
-  const result = sendMessageToSession(sessionId, keys);
-  if (!result.ok) {
-    console.log(`[ws] permission_reply failed: ${result.error}`);
-  }
+// Permission replies were driven over tmux (arrow-nav / type / Escape into CC's
+// TUI) and removed with tmux.mjs. Under headless, permissions arrive as
+// control_requests and are answered via _pool.replyControl — not wired to the
+// app's reply protocol yet.
+function handlePermissionReply(_sessionId, _approved) {
+  // no-op until the headless permission path lands
 }

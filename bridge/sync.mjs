@@ -6,18 +6,12 @@ import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
   getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
-  normalizeProjectHash,
+  normalizeProjectHash, projectHashToPath,
 } from './session.mjs';
-import { projectHashToPath, cleanStaleSessions } from './tmux.mjs';
 
 // Sessions seen in last 24h — only these get metadata synced by watcher
 export const recentSessions = new Set();
 let isInitialSync = true;
-
-// Stale tmux cleanup throttle: piggybacks on checkStopped's 5-min tick but only
-// actually runs every hour (24h staleness threshold doesn't need higher cadence).
-const STALE_CLEAN_INTERVAL_MS = 60 * 60 * 1000;
-let _lastStaleCleanMs = 0;
 
 // Cache of last-known status per sessionId for periodic stopped detection
 export const lastKnownStatus = new Map();
@@ -232,11 +226,8 @@ export async function syncSessions(config, opts = {}) {
 }
 
 /**
- * Periodic check (every 5 min). Two jobs:
- *  1. Kill stale apeek_ tmux sessions (idle > 24h) — runs at most once/hour via throttle.
- *     Order matters: kill stale tmux FIRST so the running-process scan below sees the
- *     freshly-disappeared CC processes and flips their DDB status to stopped in the same tick.
- *  2. Detect CC processes that have disappeared and flip running/idle → stopped.
+ * Periodic check (every 5 min): detect CC processes that have disappeared and
+ * flip running/idle → stopped.
  */
 // Update a session to a new status and push metadata + counter delta to the
 // server. Used by the stall poller's idle fast-path (a reverted prompt looks
@@ -276,13 +267,6 @@ export async function updateSessionStatus(config, sessionId, filePath, project, 
 
 export async function checkStopped(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
-
-  // 1. Stale tmux cleanup — throttled to once per hour.
-  const now = Date.now();
-  if (now - _lastStaleCleanMs >= STALE_CLEAN_INTERVAL_MS) {
-    _lastStaleCleanMs = now;
-    try { cleanStaleSessions(); } catch {}
-  }
 
   const runningInfo = getRunningInfo();
   const daemonMeta = getDaemonSessions();
