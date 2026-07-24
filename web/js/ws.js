@@ -427,11 +427,11 @@ function insertStreamBubble(container, html, ts) {
 
 function handleStreamEnd(streamId, error) {
   if (!streamId) return;
-  if (error) {
-    for (var k in _blk) if (k.indexOf(streamId + ':') === 0) {
-      var el = document.getElementById('stream-' + k);
-      if (el) el.classList.add('stream-error');
-    }
+  for (var k in _blk) {
+    if (k.indexOf(streamId + ':') !== 0) continue;
+    var b = _blk[k], el = document.getElementById('stream-' + k);
+    if (error) { if (el) el.classList.add('stream-error'); continue; }
+    if (!b.claimed) { if (el) el.remove(); delete _blk[k]; }
   }
   state.wsRunning = false;
   updateSendBtn();

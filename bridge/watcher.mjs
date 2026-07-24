@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
-import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
+import { synced, extractForApp, uploadMessages, truncateToBytes, headlessPushedUuids } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck } from './ws.mjs';
@@ -168,6 +168,14 @@ async function readAndSend(config, filename, sessionId) {
     if (!msg.uuid) continue;
 
     if (armed) tagStallRescue(sessionId, raw, msg);
+
+    // Headless already pushed this message live to the app (same uuid). Persist to
+    // DDB here but skip the duplicate WS push. Consume the uuid so the set stays small.
+    if (headlessPushedUuids.has(msg.uuid)) {
+      headlessPushedUuids.delete(msg.uuid);
+      await uploadMessages(sessionId, [msg]);
+      continue;
+    }
 
     // Messages over the API GW single-frame cap (32768B) would drop the whole WS
     // connection with code 1009. Send a truncated copy over WS for real-time

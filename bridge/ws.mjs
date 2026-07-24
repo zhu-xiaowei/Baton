@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { readAllMessages, uploadMessages, extractForApp } from './extract.mjs';
+import { readAllMessages, uploadMessages, extractForApp, headlessPushedUuids } from './extract.mjs';
 import { findSessionFile, getDaemonSessions, hasNoDanglingTurn } from './session.mjs';
 import { armStallRescue } from './stall.mjs';
 import { ClaudePool } from './headless.mjs';
@@ -345,6 +345,8 @@ async function handleHeadlessSend(sessionId, text, clientId) {
       if (line.tool_use_result && !line.toolUseResult) line.toolUseResult = line.tool_use_result;
       const msg = await extractForApp(line, cwd);
       if (!msg.uuid) return;
+      headlessPushedUuids.add(msg.uuid);
+      if (headlessPushedUuids.size > 500) headlessPushedUuids.delete(headlessPushedUuids.values().next().value);
       wsSend({ action: 'messages', sessionId, messages: [msg], streamId: sid, blockId, noCache: true });
     },
     onResult: (sid, result) => {
