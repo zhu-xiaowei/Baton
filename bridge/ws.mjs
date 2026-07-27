@@ -3,8 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { readAllMessages, uploadMessages } from './extract.mjs';
+import { readAllMessages, uploadMessages, extractForApp, truncateToBytes } from './extract.mjs';
 import { findSessionFile, projectHashToPath } from './session.mjs';
+import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -264,11 +265,29 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     onDelta: (sid, fullText, seq, blockId) => {
       wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq, blockId });
     },
-    onBlockStart: (sid, blockId, kind) => {
-      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind });
+    onInputDelta: (sid, fullJson, seq, blockId) => {
+      wsSend({ action: 'stream_tool_input', sessionId, streamId: sid, json: fullJson, seq, blockId });
+    },
+    onBlockStart: (sid, blockId, kind, name) => {
+      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind, name });
     },
     onBlockStop: (sid, blockId) => {
       wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId });
+    },
+    // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
+    onMessage: async (sid, raw) => {
+      try {
+        const msg = await extractForApp(raw, cwd);
+        if (!msg.uuid) return;
+        let out = msg;
+        if (Buffer.byteLength(JSON.stringify({ action: 'messages', sessionId, messages: [msg] })) > WS_FRAME_LIMIT) {
+          out = truncateToBytes(msg, WS_FRAME_LIMIT - 512);
+          out.truncated = true;
+        }
+        wsSend({ action: 'messages', sessionId, messages: [out], noCache: true });
+      } catch (e) {
+        console.log(`[ws] headless onMessage extract failed: ${e.message}`);
+      }
     },
     onResult: (sid, result) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: result.is_error ? (result.subtype || 'error') : undefined });

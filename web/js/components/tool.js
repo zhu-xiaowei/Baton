@@ -218,7 +218,10 @@
     if (meta) {
       const secs = Math.round((meta.totalDurationMs || 0) / 1000);
       const calls = meta.totalToolUseCount || 0;
-      statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
+      // Background agent launches with 0/0 stats (meaningless) — only show real counts.
+      if (calls > 0 || secs > 0) {
+        statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
+      }
     } else if (!result) {
       // No result yet — show running timer with tool_use id for later update
       const timerId = 'timer-' + Math.random().toString(36).slice(2, 8);

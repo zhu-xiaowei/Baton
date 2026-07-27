@@ -34,7 +34,7 @@ if (window.visualViewport) {
   });
 }
 
-// iOS foreground: force reconnect (resumed socket may be a dead zombie). See CLAUDE.md.
+// Foreground resume: reconnect on hidden→visible only (not focus — desktop fires it on every click-back). See CLAUDE.md.
 function handleForegroundResume() {
   if (document.visibilityState !== 'visible') return;
   if (!state.appState.session || state.appState.session === '__new__') return;
@@ -44,7 +44,6 @@ function handleForegroundResume() {
 }
 document.addEventListener('visibilitychange', handleForegroundResume);
 window.addEventListener('pageshow', handleForegroundResume);
-window.addEventListener('focus', handleForegroundResume);
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
 var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -225,8 +224,10 @@ function connectWs(_, projectHash) {
       }
     } else if (msg.action === 'stream_delta') {
       if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text, msg.seq, msg.blockId);
+    } else if (msg.action === 'stream_tool_input') {
+      if (msg.sessionId === state.wsSessionId) handleStreamToolInput(msg.streamId, msg.json, msg.seq, msg.blockId);
     } else if (msg.action === 'stream_block_start') {
-      if (msg.sessionId === state.wsSessionId) handleStreamBlockStart(msg.streamId, msg.blockId, msg.kind);
+      if (msg.sessionId === state.wsSessionId) handleStreamBlockStart(msg.streamId, msg.blockId, msg.kind, msg.name);
     } else if (msg.action === 'stream_block_stop') {
       if (msg.sessionId === state.wsSessionId) handleStreamBlockStop(msg.streamId, msg.blockId);
     } else if (msg.action === 'stream_end') {
@@ -266,6 +267,7 @@ function subscribeSession(sessionId) {
   if (state.wsSessionId && state.wsSessionId !== sessionId) {
     wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
     clearStreamPreviews();
+    _lastStreamEndAt = 0;
   }
   state.wsSessionId = sessionId;
   wsSend({ action: 'subscribe', sessionId: sessionId });
@@ -345,17 +347,31 @@ var _blk = {};
 var _streamEnded = {};
 var _streamRaf = null;
 var _streamLastTick = 0;
+// Last headless stream_end time; while fresh, trust it over deriveRunning (trailing rows are stop=null).
+var _lastStreamEndAt = 0;
 
 function blockKey(streamId, blockId) { return streamId + ':' + (blockId == null ? 0 : blockId); }
 
-function newStreamBlock(sid, bid) {
-  return { sid: sid, bid: (bid == null ? 0 : bid), target: [], shown: 0, seq: -1, stopped: false, finalized: false, kind: 'text', thinkStart: 0, thinkMs: null, labelDone: false };
+// One-line preview of a tool's input (best-effort; input may be partial JSON).
+function summarizeToolInput(input) {
+  if (!input || typeof input !== 'object') return '';
+  if (input.command) return String(input.command);                 // Bash
+  if (input.file_path || input.path) return String(input.file_path || input.path); // Read/Write/Edit
+  if (input.pattern) return String(input.pattern);                 // Grep/Glob
+  if (input.url) return String(input.url);                         // WebFetch
+  if (input.prompt) return String(input.prompt).slice(0, 200);     // Task/agent
+  try { return JSON.stringify(input).slice(0, 200); } catch (e) { return ''; }
 }
 
+function newStreamBlock(sid, bid) {
+  return { sid: sid, bid: (bid == null ? 0 : bid), target: [], shown: 0, seq: -1, stopped: false, finalized: false, kind: 'text', name: null, inputJson: '', thinkStart: 0, thinkMs: null, labelDone: false };
+}
+
+// block_start is a block's only creator; delta/input/stop only update (a late event after clearStreamPreviews would else orphan a wiped block).
 function handleStreamDelta(streamId, fullText, seq, blockId) {
   if (!streamId) return;
-  var k = blockKey(streamId, blockId);
-  var b = _blk[k] || (_blk[k] = newStreamBlock(streamId, blockId));
+  var b = _blk[blockKey(streamId, blockId)];
+  if (!b) return;
   if (seq != null && seq <= b.seq) return;
   b.seq = seq != null ? seq : b.seq + 1;
   b.target = Array.from(fullText || '');
@@ -364,18 +380,34 @@ function handleStreamDelta(streamId, fullText, seq, blockId) {
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
-function handleStreamBlockStart(streamId, blockId, kind) {
+// Tool-use input accreting char-by-char (partial JSON) until the full row replaces it.
+function handleStreamToolInput(streamId, fullJson, seq, blockId) {
   if (!streamId) return;
+  var b = _blk[blockKey(streamId, blockId)];
+  if (!b) return;
+  if (seq != null && seq <= b.seq) return;
+  b.seq = seq != null ? seq : b.seq + 1;
+  b.kind = 'tool_use';
+  b.inputJson = fullJson || '';
+  b.finalized = false;
+  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
+  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+}
+
+function handleStreamBlockStart(streamId, blockId, kind, name) {
+  if (!streamId || _streamEnded[streamId]) return; // no new blocks after turn end
   var b = _blk[blockKey(streamId, blockId)] || (_blk[blockKey(streamId, blockId)] = newStreamBlock(streamId, blockId));
   b.kind = kind || 'text';
+  if (name) b.name = name;
   if (b.kind === 'thinking' && !b.stopped && !b.thinkStart) b.thinkStart = performance.now();
-  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
+  state.wsRunning = true; updateSendBtn();
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
 function handleStreamBlockStop(streamId, blockId) {
   if (!streamId) return;
-  var b = _blk[blockKey(streamId, blockId)] || (_blk[blockKey(streamId, blockId)] = newStreamBlock(streamId, blockId));
+  var b = _blk[blockKey(streamId, blockId)];
+  if (!b) return;
   b.stopped = true;
   if (b.kind === 'thinking' && b.thinkMs == null) b.thinkMs = b.thinkStart ? (performance.now() - b.thinkStart) : null;
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
@@ -415,7 +447,7 @@ function tickStreams(now) {
     }
     for (var i = 0; i < blocks.length; i++) {
       var b = blocks[i];
-      var wantKind = b.kind === 'thinking' ? 'thinking' : 'text';
+      var wantKind = b.kind === 'thinking' ? 'thinking' : (b.kind === 'tool_use' ? 'tool' : 'text');
       // Empty text block (start/stop, no delta) has nothing to show — skip it.
       if (wantKind === 'text' && b.target.length === 0) continue;
       var elId = 'sb-' + sid + '-' + b.bid;
@@ -428,6 +460,8 @@ function tickStreams(now) {
           el.className = 'tl-item thinking-tl';
           var bodyId = 'tb-' + sid + '-' + b.bid;
           el.innerHTML = '<div class="thinking-block"><div class="thinking-toggle" onclick="this.classList.toggle(\'open\');var x=document.getElementById(\'' + bodyId + '\');x.style.display=x.style.display===\'block\'?\'none\':\'block\'"><span class="think-label">Thinking</span> <span class="thinking-chevron">&#8250;</span></div><div class="thinking-body" id="' + bodyId + '"></div></div>';
+        } else if (wantKind === 'tool') {
+          el.className = 'tl-item tool-node tool-running';
         } else {
           el.className = 'tl-item assistant-text';
         }
@@ -435,7 +469,19 @@ function tickStreams(now) {
       }
       if (!el) continue;
 
-      if (wantKind === 'thinking') {
+      if (wantKind === 'tool') {
+        // Live tool-use preview (name + accreting input), replaced by the full card later.
+        var label = b.name || 'Tool';
+        var argStr = '';
+        if (b.inputJson) {
+          try { argStr = summarizeToolInput(JSON.parse(b.inputJson)); }
+          catch (e) { argStr = b.inputJson; } // partial JSON — show raw so far
+        }
+        el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
+          + '<span class="tool-desc">' + esc(argStr) + '</span>'
+          + '<span class="tool-status">running</span></div>';
+        if (!b.stopped) active = true;
+      } else if (wantKind === 'thinking') {
         var lbl = el.querySelector('.think-label');
         if (!b.stopped && b.thinkStart) {
           if (lbl) lbl.textContent = 'Thinking ' + Math.max(1, Math.round((now - b.thinkStart) / 1000)) + 's';
@@ -473,6 +519,7 @@ function tickStreams(now) {
 function handleStreamEnd(streamId, error) {
   if (!streamId) return;
   _streamEnded[streamId] = true;
+  _lastStreamEndAt = Date.now();
   if (error) {
     var t = document.getElementById('stream-turn-' + streamId);
     if (t) t.classList.add('stream-error');
@@ -605,7 +652,9 @@ function updateLastTurn() {
   // A real turn frame supersedes the open-time snapshot — from here the live
   // stream is authoritative (per the "initial load only" trust decision).
   if (hasTurnFrame) state.wsOpenStatus = null;
-  if (derived || hasTurnFrame) state.wsRunning = derived;
+  // A fresh stream_end means the turn is over; don't let stop=null trailing rows re-light the spinner.
+  var streamEndFresh = _lastStreamEndAt && (Date.now() - _lastStreamEndAt < 4000);
+  if (!streamEndFresh && (derived || hasTurnFrame)) state.wsRunning = derived;
   updateSendBtn();
 
   // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
@@ -868,6 +917,7 @@ var _clientIdSeq = 0;
 
 function doSend(fullText, displayText, images) {
   state.wsRunning = true;
+  _lastStreamEndAt = 0; // new turn starting — drop any stale stream_end freshness
   updateSendBtn();
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result

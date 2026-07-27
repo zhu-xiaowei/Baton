@@ -36,7 +36,8 @@ class HeadlessProc {
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
     this._cb = null;
-    this._deltaAcc = '';
+    this._deltaAcc = '';        // accumulated text/thinking for the current block
+    this._inputAcc = '';        // accumulated tool_use input JSON (input_json_delta)
     this._deltaSeq = 0;
     this._blockId = -1;
     this._graceUntil = 0;
@@ -80,18 +81,31 @@ class HeadlessProc {
       return;
     }
 
+    // Partial stream: forward text/thinking/input deltas at CC's own granularity.
     if (t === 'stream_event') {
       const ev = o.event || {};
-      if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-        this._deltaAcc += ev.delta.text || '';
+      const d = ev.delta || {};
+      if (ev.type === 'content_block_delta' && (d.type === 'text_delta' || d.type === 'thinking_delta')) {
+        this._deltaAcc += (d.text ?? d.thinking) || '';
         this._cb?.onDelta?.(this.streamId, this._deltaAcc, ++this._deltaSeq, this._blockId);
+      } else if (ev.type === 'content_block_delta' && d.type === 'input_json_delta') {
+        this._inputAcc += d.partial_json || '';
+        this._cb?.onInputDelta?.(this.streamId, this._inputAcc, ++this._deltaSeq, this._blockId);
       } else if (ev.type === 'content_block_start') {
         this._blockId++;
         this._deltaAcc = '';
-        this._cb?.onBlockStart?.(this.streamId, this._blockId, ev.content_block?.type || 'text');
+        this._inputAcc = '';
+        const cb = ev.content_block || {};
+        this._cb?.onBlockStart?.(this.streamId, this._blockId, cb.type || 'text', cb.name || null);
       } else if (ev.type === 'content_block_stop') {
         this._cb?.onBlockStop?.(this.streamId, this._blockId);
       }
+      return;
+    }
+
+    // Full authoritative rows (same uuid as jsonl → app dedupes; renders in/out cards).
+    if ((t === 'assistant' || t === 'user') && o.uuid) {
+      this._cb?.onMessage?.(this.streamId, o);
       return;
     }
 
@@ -195,8 +209,10 @@ export class ClaudePool {
     const streamId = opts.streamId || null;
     const cb = {
       onDelta: opts.onDelta,
+      onInputDelta: opts.onInputDelta,
       onBlockStart: opts.onBlockStart,
       onBlockStop: opts.onBlockStop,
+      onMessage: opts.onMessage,
       onResult: opts.onResult,
       onControlRequest: opts.onControlRequest,
       onError: opts.onError,

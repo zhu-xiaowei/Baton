@@ -125,7 +125,9 @@ export async function extractForApp(msg, projectDir) {
     content,
     timestamp: msg.timestamp || '',
   };
-  if (msg.toolUseResult) extracted.toolUseResult = msg.toolUseResult;
+  // jsonl uses camelCase toolUseResult; headless stream uses snake_case — accept either.
+  const tur = msg.toolUseResult ?? msg.tool_use_result;
+  if (tur) extracted.toolUseResult = tur;
   if (msg.message?.stop_reason) extracted.stopReason = msg.message.stop_reason;
   return extracted;
 }
