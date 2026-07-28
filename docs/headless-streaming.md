@@ -357,10 +357,31 @@ bridge 回**出站 `control_response`**(wire-quirk:`request_id` 嵌在 `response
 ## 七、WS 协议新增
 
 ```
-Bridge → Server → App:  { action: "stream_delta", sessionId, streamId, text }   // 打字机增量
-Bridge → Server → App:  { action: "stream_end",   sessionId, streamId, error? } // 回合结束
-Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], streamId, noCache:true } // stream 完整行(权威)
+Bridge → Server → App:  { action: "stream_block_start", sessionId, streamId, blockId, kind, name?, seq } // 块开始
+Bridge → Server → App:  { action: "stream_delta",       sessionId, streamId, blockId, chunk, seq }        // 文本/思考增量
+Bridge → Server → App:  { action: "stream_tool_input",  sessionId, streamId, blockId, chunk, seq }        // 工具入参增量
+Bridge → Server → App:  { action: "stream_block_stop",  sessionId, streamId, blockId, seq }                // 块结束
+Bridge → Server → App:  { action: "stream_end",         sessionId, streamId, finalSeq, error? }            // 回合结束(finalSeq=总帧数)
+Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], noCache:true }                     // stream 完整行(权威)
 ```
+
+### ⭐ 乱序保序:回合级 seq + 客户端 reorder buffer(web/js/reorder.js)
+链路 bridge→Lambda→API GW→app 中,**每个 WS 帧是一次独立、时长不定的 Lambda 调用**,
+`post_to_connection` 落地顺序 ≠ 发送顺序。litter 是单条有序 TCP,天然无此问题;我们必须让接收端
+不依赖到达顺序。做法(实测 2800 随机投递 + 33 条真实 CC prompt 全通过):
+- **发送端**:bridge 对一个回合内**每一帧**(start/delta/input/stop)打**回合级单调 `seq`**(post-increment,
+  `_writeTurn` 每回合归零);delta/input 只带**增量 chunk**(不再是累积全文 → 流量 O(n²)→O(n));
+  `stream_end` 带 `finalSeq`(= 总帧数)。
+- **接收端(reorder buffer)**:`nextSeq` 有序区 + `pending: Map<seq,frame>` 空档缓存。
+  `seq < nextSeq` 丢弃(幂等,重复/迟到);`seq > nextSeq` 进 pending;`seq === nextSeq` 应用并把
+  pending 里连续的一并排空(头部满足即出队)。`end(finalSeq)`:只有 `nextSeq >= finalSeq` 才 `ended`
+  (有空洞则继续等缺帧)。消费侧(`tickStreams` 打字机)只读有序区的 `committed`/`inputJson`,逻辑不变;
+  `hasGap()` 为真时不让块提前 finalize(观感=还在打字,而非打完又续)。
+- **最终权威**:jsonl → watcher → 完整 assistant 行(带 uuid)按 uuid 去重替换预览(`clearStreamPreviews`)。
+  即使某帧被彻底吞掉、pending 永远补不上,权威行一到即整块覆盖成正确内容 → 空洞最坏"预览短暂缺一截",
+  永不脏最终态。
+- **straggler 复活防护**:`_streamEnded[streamId]` 跨 `clearStreamPreviews` 保留(streamId 每回合唯一),
+  仅在切会话时清空 → Lambda 迟到帧无法复活已结束的预览。
 - `stream_delta`/`stream_end`:纯实时预览,`_handle_bridge_relay` 订阅式转发,**不写 DDB**。
 - headless 的 `messages` 帧:带 `noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由 jsonl watcher 独占写);
   app 侧靠 uuid 去重与 jsonl 后到的同 uuid 帧合并。
