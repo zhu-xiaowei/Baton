@@ -24,7 +24,21 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 
 const _pool = new ClaudePool();
 
-export function headlessBusy(sessionId) { return _pool.isBusy(sessionId); }
+// uuids headless already broadcast live (stdout always beats jsonl landing, measured
+// 100ms~several s). watcher checks this so the later jsonl copy only writes DDB, not WS.
+// Cap holds many turns' worth (one heavy multi-tool turn ≈ 25 rows) so no uuid is
+// evicted before its lagging jsonl copy arrives; a stale miss only costs a harmless
+// re-push (still app-side uuid-deduped).
+const _headlessPushed = new Set();
+const _headlessOrder = [];        // FIFO, caps the set at recent messages
+const HEADLESS_PUSHED_CAP = 256;
+export function markHeadlessPushed(uuid) {
+  if (!uuid || _headlessPushed.has(uuid)) return;
+  _headlessPushed.add(uuid);
+  _headlessOrder.push(uuid);
+  if (_headlessOrder.length > HEADLESS_PUSHED_CAP) _headlessPushed.delete(_headlessOrder.shift());
+}
+export function headlessPushed(uuid) { return _headlessPushed.has(uuid); }
 
 function cwdForSession(sessionId) {
   const filePath = findSessionFile(sessionId);
@@ -262,17 +276,18 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     cwd,
     resumeId: sessionId,
     streamId,
-    onDelta: (sid, fullText, seq, blockId) => {
-      wsSend({ action: 'stream_delta', sessionId, streamId: sid, text: fullText, seq, blockId });
+    // Increment-only chunks + turn-level seq → app reorders by seq (see web/js/reorder.js).
+    onDelta: (sid, chunk, seq, blockId) => {
+      wsSend({ action: 'stream_delta', sessionId, streamId: sid, chunk, seq, blockId });
     },
-    onInputDelta: (sid, fullJson, seq, blockId) => {
-      wsSend({ action: 'stream_tool_input', sessionId, streamId: sid, json: fullJson, seq, blockId });
+    onInputDelta: (sid, chunk, seq, blockId) => {
+      wsSend({ action: 'stream_tool_input', sessionId, streamId: sid, chunk, seq, blockId });
     },
-    onBlockStart: (sid, blockId, kind, name) => {
-      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind, name });
+    onBlockStart: (sid, blockId, kind, name, seq) => {
+      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind, name, seq });
     },
-    onBlockStop: (sid, blockId) => {
-      wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId });
+    onBlockStop: (sid, blockId, seq) => {
+      wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId, seq });
     },
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
     onMessage: async (sid, raw) => {
@@ -285,12 +300,13 @@ async function handleHeadlessSend(sessionId, text, clientId) {
           out.truncated = true;
         }
         wsSend({ action: 'messages', sessionId, messages: [out], noCache: true });
+        markHeadlessPushed(msg.uuid); // watcher skips WS for this uuid's jsonl copy
       } catch (e) {
         console.log(`[ws] headless onMessage extract failed: ${e.message}`);
       }
     },
-    onResult: (sid, result) => {
-      wsSend({ action: 'stream_end', sessionId, streamId: sid, error: result.is_error ? (result.subtype || 'error') : undefined });
+    onResult: (sid, result, finalSeq) => {
+      wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
     },
     onControlRequest: (req) => {
       const r = req.request || {};

@@ -5,7 +5,7 @@ import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash, projectHashToPath } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
-import { wsSend, wsSendWithAck } from './ws.mjs';
+import { wsSend, wsSendWithAck, headlessPushed } from './ws.mjs';
 import { isArmed, getRescuedToolUseId, setRescuedToolUseId, disarmStallRescue } from './stall.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
@@ -167,6 +167,10 @@ async function readAndSend(config, filename, sessionId) {
     if (!msg.uuid) continue;
 
     if (armed) tagStallRescue(sessionId, raw, msg);
+
+    // headless already broadcast this uuid live (stdout beats jsonl) → only persist to
+    // DDB, don't re-push WS. user prompts + terminal/VSCode-driven rows aren't in the set → still push.
+    if (headlessPushed(msg.uuid)) { await uploadMessages(sessionId, [msg]); continue; }
 
     // Push authoritative rows over WS (uuid-deduped) so replies persist in the app, not just DDB.
 
