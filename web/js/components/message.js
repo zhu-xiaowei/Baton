@@ -61,6 +61,25 @@
   // Esc, CC reverted the prompt" (idle). Only the bridge can tell (it checks the
   // tmux pane). When it says 'idle', trust it over the stream for that one case.
   // Streaming/tool_use turns are unaffected — those are unambiguously running.
+  // True if this tool_result answers an AskUserQuestion/ExitPlanMode (is_error but not an interrupt — CC resumes).
+  window.isInteractiveToolResult = function (msg, messages) {
+    if (!Array.isArray(msg.content)) return false;
+    var ids = {};
+    for (var i = 0; i < messages.length; i++) {
+      var c = messages[i] && messages[i].content;
+      if (!Array.isArray(c)) continue;
+      for (var j = 0; j < c.length; j++) {
+        if (c[j].type === 'tool_use' && (c[j].name === 'AskUserQuestion' || c[j].name === 'ExitPlanMode' || c[j].name === 'exit_plan_mode')) ids[c[j].id] = true;
+      }
+    }
+    // An answered ask/plan keeps CC running (summary follows); a cancelled one (rejection text) does not.
+    return msg.content.some(function (b) {
+      if (b.type !== 'tool_result' || !ids[b.tool_use_id]) return false;
+      var t = typeof b.content === 'string' ? b.content : (Array.isArray(b.content) ? b.content.map(function (x) { return x.text || ''; }).join('') : '');
+      return t.indexOf('tool use was rejected') === -1;
+    });
+  };
+
   window.deriveRunning = function (messages, authStatus) {
     if (!Array.isArray(messages)) return false;
     var atTail = true; // first status-relevant message seen = the tail (what bridge inspects)
@@ -76,9 +95,9 @@
         if (window.isInterruptMsg(m)) return false;
         if (window.isLocalCommandMarker(m)) return false;
         if (window.isToolResultOnly(m)) {
-          // Only the tail error-only tool_result = interrupt → idle; deeper ones
-          // belong to a still-running assistant turn above, so keep scanning.
-          if (atTail && Array.isArray(m.content) && m.content.every(function (b) { return b.is_error; })) return false;
+          // Tail error-only tool_result = interrupt → idle (but an answered ask/plan OUT is running, not idle).
+          if (atTail && Array.isArray(m.content) && m.content.every(function (b) { return b.is_error; })
+            && !window.isInteractiveToolResult(m, messages)) return false;
           atTail = false;
           continue;
         }

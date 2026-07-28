@@ -54,7 +54,9 @@ import { state } from '../state.js';
 
   window.updateSpinner = function () {
     var el = document.getElementById('cc-spinner');
-    var shouldShow = state.wsRunning;
+    // Hide the spinner while a permission prompt is up — the user is answering, not waiting.
+    var promptUp = typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt();
+    var shouldShow = state.wsRunning && !promptUp;
 
     if (!shouldShow) {
       if (el) el.style.display = 'none';

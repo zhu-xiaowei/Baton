@@ -23,6 +23,7 @@ function textOf(raw) {
   return '';
 }
 
+
 function isStallRescueArtifact(sessionId, raw) {
   if (raw.type !== 'user') return false;
   if (textOf(raw).startsWith('[Request interrupted by user')) return true;

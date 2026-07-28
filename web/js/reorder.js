@@ -77,14 +77,16 @@ export class ReorderBuffer {
     }
   }
 
-  // An authoritative row superseded every block seen so far. Keep seq bookkeeping
-  // (so a NEW block continuing this streamId isn't stranded), drop rendered blocks,
-  // and mark existing blockIds superseded so their late stragglers don't re-render.
-  softReset() {
-    var maxBid = this.supersededThrough;
-    for (var bid of this.blocks.keys()) if (bid > maxBid) maxBid = bid;
-    this.supersededThrough = maxBid;
-    this.blocks = new Map();
+  // Supersede the first `coverCount` blocks (those the authoritative row covers); keep the rest streaming. Omitted = supersede all.
+  softReset(coverCount) {
+    // Advance the supersede watermark to cover blockIds < coverCount even if some haven't arrived yet (reordered).
+    var cut;
+    if (typeof coverCount === 'number') cut = coverCount;
+    else { cut = this.supersededThrough + 1; for (var bid of this.blocks.keys()) if (bid + 1 > cut) cut = bid + 1; }
+    if (cut - 1 > this.supersededThrough) this.supersededThrough = cut - 1;
+    var kept = new Map();
+    for (var b of this.blocks.values()) if (b.blockId >= cut) kept.set(b.blockId, b);
+    this.blocks = kept;
   }
 
   // Ordered blocks, ascending by blockId — the render order for the turn.

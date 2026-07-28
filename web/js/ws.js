@@ -273,6 +273,8 @@ function subscribeSession(sessionId) {
   }
   state.wsSessionId = sessionId;
   wsSend({ action: 'subscribe', sessionId: sessionId });
+  // Ask the bridge to re-push any control_request still awaiting an answer (refresh/reconnect re-shows the prompt).
+  wsSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
 }
 
 function wsSend(data) {
@@ -367,6 +369,17 @@ function summarizeToolInput(input) {
   try { return JSON.stringify(input).slice(0, 200); } catch (e) { return ''; }
 }
 
+// Decode \uXXXX / \n etc. from a (possibly incomplete) JSON fragment for readable streaming preview.
+function decodeJsonEscapes(s) {
+  return String(s).replace(/\\u([0-9a-fA-F]{4})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/\\n/g, ' ').replace(/\\t/g, ' ').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+}
+
+// One-line header desc from partial JSON: decoded fragment, matching the final card's truncated-JSON desc.
+function previewPartialInput(partial) {
+  return decodeJsonEscapes(partial).slice(0, 200);
+}
+
 function uiState(sid, bid) {
   var k = blockKey(sid, bid);
   return _ui[k] || (_ui[k] = { shown: 0, thinkStart: 0, thinkMs: null, labelDone: false });
@@ -442,19 +455,20 @@ function tickStreams(now) {
       if (!el) continue;
 
       if (wantKind === 'tool') {
-        // Live tool-use preview (name + accreting input), replaced by the full card later.
+        // Live tool-use preview: header (name + one-line desc) + IN block, decoded live — mirrors the final card so there's no jump on arrival.
         var label = b.name || 'Tool';
-        var argStr = '';
+        var desc = '', inRaw = '';
         if (b.inputJson) {
-          try { argStr = summarizeToolInput(JSON.parse(b.inputJson)); }
-          catch (e) { argStr = b.inputJson; } // partial JSON — show raw so far
+          try { var parsed = JSON.parse(b.inputJson); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1000); }
+          catch (e) { desc = previewPartialInput(b.inputJson).slice(0, 80); inRaw = decodeJsonEscapes(b.inputJson).slice(0, 1000); } // partial — decode \uXXXX live
         }
         el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
-          + '<span class="tool-desc">' + esc(argStr) + '</span>'
-          + '<span class="tool-status">running</span></div>';
+          + '<span class="tool-desc">' + esc(desc) + '</span>'
+          + '<span class="tool-status">running</span></div>'
+          + (inRaw ? '<div class="tool-body"><div class="tool-body-content no-clamp"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value">' + esc(inRaw) + '</div></div></div></div></div>' : '');
         if (!b.stopped || gap) active = true;
       } else if (wantKind === 'thinking') {
-        if (!u.thinkStart) u.thinkStart = now; // first render of this block starts its timer
+        if (!u.thinkStart) u.thinkStart = now;
         var lbl = el.querySelector('.think-label');
         var chars = Array.from(b.committed);
         if (chars.length) {
@@ -464,15 +478,15 @@ function tickStreams(now) {
           if (bd) bd.textContent = chars.slice(0, u.shown).join('');
           if (u.shown < chars.length) active = true;
         }
+        var elapsed = Math.max(1, Math.round((now - u.thinkStart) / 1000));
+        _lastThinkSecs = elapsed; // update every tick so an authoritative row landing any time keeps the measured seconds
         var thinkDone = b.stopped && !gap && u.shown >= chars.length;
         if (!thinkDone) {
-          if (lbl) lbl.textContent = 'Thinking ' + Math.max(1, Math.round((now - u.thinkStart) / 1000)) + 's';
+          if (lbl) lbl.textContent = 'Thinking ' + elapsed + 's';
           active = true;
         } else if (!u.labelDone && lbl) {
-          var s = Math.round((now - u.thinkStart) / 1000);
-          lbl.textContent = s > 0 ? ('Thought for ' + s + 's') : 'Thinking';
+          lbl.textContent = 'Thought for ' + elapsed + 's';
           u.labelDone = true;
-          _lastThinkSecs = s; // carry to the authoritative row's empty thinking node
         }
       } else {
         var tchars = Array.from(b.committed);
@@ -503,16 +517,16 @@ function handleStreamEnd(streamId, finalSeq, error) {
   updateSendBtn();
 }
 
-function clearStreamPreviews() {
+function clearStreamPreviews(coverCount) {
   if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
   _ui = {};
   // A turn can flush an authoritative row mid-stream yet keep emitting later blocks under
   // the SAME streamId. Wiping the buffer would restart nextSeq at 0 and strand continuing
-  // frames. So: fully drop ended streams; soft-reset live ones (keep seq progress).
+  // frames. So: fully drop ended streams; soft-reset live ones (supersede only covered blocks).
   var kept = {};
   for (var sid in _rb) {
     if (_streamEnded[sid]) continue; // ended → discard
-    _rb[sid].softReset();
+    _rb[sid].softReset(coverCount);
     kept[sid] = _rb[sid];
   }
   _rb = kept;
@@ -542,7 +556,14 @@ function updateLastTurn() {
     newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
   }
 
-  if (newMessages.some(function (m) { return m.type === 'assistant'; })) clearStreamPreviews();
+  // Authoritative row covers its own blocks (its content-block count); later streaming blocks (higher blockId) survive.
+  var cover = 0;
+  for (var ai = 0; ai < newMessages.length; ai++) {
+    if (newMessages[ai].type === 'assistant' && Array.isArray(newMessages[ai].content)) {
+      cover = Math.max(cover, newMessages[ai].content.length);
+    }
+  }
+  if (cover > 0) clearStreamPreviews(cover);
 
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
@@ -648,11 +669,13 @@ function updateLastTurn() {
   if (!streamEndFresh && (derived || hasTurnFrame)) state.wsRunning = derived;
   updateSendBtn();
 
-  // New messages arrived — dismiss stale permission prompt; checkPendingPrompts will re-show if needed
-  if (document.getElementById('permission-prompt')) {
+  // Don't dismiss a prompt still awaiting the user's answer (prompts are bridge-driven).
+  var promptEl = document.getElementById('permission-prompt');
+  if (promptEl && !(typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt())) {
     dismissPermissionPrompt();
+  } else if (promptEl && promptEl !== container.lastElementChild) {
+    container.appendChild(promptEl); // keep the prompt pinned below the AskUserQuestion card that just landed
   }
-  checkPendingPrompts(state.wsAllMessages);
   if (typeof maybeRevealStuckAgent === 'function') maybeRevealStuckAgent(state.wsSessionId);
 
   // turnEnded (real frame brought CC to idle) → clean queued msgs that never echoed.
@@ -867,6 +890,11 @@ function onSendBtnClick() {
 }
 function interruptSession() {
   if (!state.wsSessionId) return;
+  // A permission prompt owns the interrupt: cancelling it denies+interrupts CC, so don't also send a bare interrupt.
+  if (typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt()) {
+    cancelPermissionPrompt();
+    return;
+  }
   wsSendReliable({ action: 'interrupt', sessionId: state.wsSessionId, device: state.appState.device || '' });
   state.wsRunning = false;
   updateSendBtn();
@@ -1160,7 +1188,7 @@ function tryDedup(msg) {
 // All shared state lives in state.js, not on window.
 Object.assign(window, {
   updateTitleFromMessages,
-  connectWs, subscribeSession, wsSend, setWsStatus, disconnectWs, ensureWsAndSend,
+  connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,

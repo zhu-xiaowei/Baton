@@ -1,5 +1,7 @@
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
+  // On cancel, the bridge denies the ask/plan with interrupt:true; CC overwrites the tool_result with this rejection text.
+  var CANCEL_MARK = 'tool use was rejected';
   function esc(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -249,12 +251,15 @@
 
   // Generic fallback
   function renderGeneric(name, input, result) {
+    // Cancelled ask/plan: show a clean [Interrupted] instead of CC's long rejection text.
+    var out = result != null ? resultText(result) : null;
+    if (out != null && out.indexOf(CANCEL_MARK) !== -1) out = '[Interrupted]';
     return {
       name,
       desc: truncate(JSON.stringify(input), 80),
       body: grid([
         ['IN', esc(truncate(JSON.stringify(input, null, 2), 1000))],
-        result != null ? ['OUT', ansiHtml(truncate(resultText(result), 2000))] : null,
+        out != null ? ['OUT', ansiHtml(truncate(out, 2000))] : null,
       ]),
     };
   }
@@ -289,8 +294,12 @@
   }
 
   // Determine error state from result
-  function toolState(result) {
+  function toolState(result, name) {
     if (!result) return '';
+    // AskUserQuestion/ExitPlanMode reply via deny carries is_error:true: an answer isn't an error; a cancel is 'warning'.
+    if (name === 'AskUserQuestion' || name === 'ExitPlanMode' || name === 'exit_plan_mode') {
+      return resultText(result).indexOf(CANCEL_MARK) !== -1 ? 'warning' : '';
+    }
     if (result.is_error) return 'error';
     // Only check short results (tool stderr/error messages), not long agent outputs
     const t = resultText(result);
@@ -319,7 +328,7 @@
     };
     const info = (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
-    window._lastToolState = toolState(toolResult);
+    window._lastToolState = toolState(toolResult, name);
 
     const statusHtml = info._statsHtml || (info.status ? `<span class="tool-status">${esc(info.status)}</span>` : '');
     const fileLine = info.fileLine || '';

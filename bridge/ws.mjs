@@ -40,6 +40,9 @@ export function markHeadlessPushed(uuid) {
 }
 export function headlessPushed(uuid) { return _headlessPushed.has(uuid); }
 
+// Pending control_request per session (CC blocks one tool call at a time).
+const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
+
 function cwdForSession(sessionId) {
   const filePath = findSessionFile(sessionId);
   if (!filePath) return null;
@@ -178,7 +181,7 @@ async function handleMessage(msg) {
       await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId, msg.streamMode);
       break;
     case 'permission_reply':
-      handlePermissionReply(msg.sessionId, msg.approved);
+      handlePermissionReply(msg);
       break;
     case 'create_project':
       await handleCreateProject(msg.projectPath, msg.asAgent);
@@ -310,8 +313,21 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     },
     onControlRequest: (req) => {
       const r = req.request || {};
-      if (r.requires_user_interaction) return;
-      _pool.replyControl(sessionId, req.request_id, { behavior: 'allow', updatedInput: r.input });
+      const input = r.input || {};
+      // Surface to the app → permission_reply → handlePermissionReply (bypass mode never gets here).
+      _pendingControl.set(sessionId, {
+        requestId: req.request_id, toolName: r.tool_name,
+        input, requiresInteraction: !!r.requires_user_interaction,
+      });
+      let kind = 'tool';
+      if (r.requires_user_interaction) {
+        kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';
+      }
+      wsSend({
+        action: 'permission_request', sessionId, kind,
+        requestId: req.request_id, toolName: r.tool_name,
+        questions: input.questions, plan: input.plan, input,
+      });
     },
     onError: (sid, err) => {
       console.log(`[ws] headless error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
@@ -331,11 +347,16 @@ async function handleCreateProject(rawPath) {
   wsSend({ action: 'create_project_result', ok: false, error: 'Project creation is not available yet.', projectPath: rawPath });
 }
 
-// App opened an agent whose AskUserQuestion was stuck in daemon memory. The old
-// rescue drove the agents TUI over tmux (Escape to flush) — removed with tmux.
-// Headless surfaces the question via control_request instead (not wired yet).
-async function handleRevealAgent(_sessionId) {
-  // no-op until the headless permission path lands
+// App (re)subscribed: re-push any control_request still awaiting an answer so a refresh/reconnect re-shows the prompt.
+async function handleRevealAgent(sessionId) {
+  const p = _pendingControl.get(sessionId);
+  if (!p) return;
+  const kind = p.requiresInteraction ? (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode' ? 'plan' : 'ask') : 'tool';
+  wsSend({
+    action: 'permission_request', sessionId, kind,
+    requestId: p.requestId, toolName: p.toolName,
+    questions: p.input.questions, plan: p.input.plan, input: p.input,
+  });
 }
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
@@ -468,10 +489,26 @@ async function downloadBridgeImage(key) {
   } catch { return null; }
 }
 
-// Permission replies were driven over tmux (arrow-nav / type / Escape into CC's
-// TUI) and removed with tmux.mjs. Under headless, permissions arrive as
-// control_requests and are answered via _pool.replyControl — not wired to the
-// app's reply protocol yet.
-function handlePermissionReply(_sessionId, _approved) {
-  // no-op until the headless permission path lands
+// App answered permission_request: tools → allow/deny; ask/plan → deny with answerText in message (CC's only answer channel, verified CC 2.1.211).
+function handlePermissionReply(msg) {
+  const { sessionId, requestId, decision, answerText } = msg;
+  const pending = _pendingControl.get(sessionId);
+  if (!pending || (requestId && pending.requestId !== requestId)) return;
+  _pendingControl.delete(sessionId);
+
+  if (pending.requiresInteraction) {
+    // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
+    if (decision === 'answer' && answerText) {
+      _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });
+    } else {
+      _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'The user did not answer.', interrupt: true });
+    }
+    return;
+  }
+  // Ordinary tool: allow (input unchanged) or deny.
+  if (decision === 'allow') {
+    _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input });
+  } else {
+    _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'User denied this tool call.' });
+  }
 }
