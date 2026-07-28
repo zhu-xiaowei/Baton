@@ -17,6 +17,8 @@ export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
 const RESULT_GRACE_MS = 2000;
+// Coalesce a block's bursty deltas over this window into ONE frame (~4.5x fewer WS frames); boundary events flush it first.
+const DELTA_BATCH_MS = 50;
 
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
@@ -36,11 +38,11 @@ class HeadlessProc {
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
     this._cb = null;
-    this._deltaAcc = '';        // accumulated text/thinking for the current block
-    this._inputAcc = '';        // accumulated tool_use input JSON (input_json_delta)
-    this._deltaSeq = 0;
+    this._seq = 0;              // turn-level monotonic frame counter (app's reorder key)
     this._blockId = -1;
     this._graceUntil = 0;
+    this._batch = null;         // pending coalesced delta { blockId, kind, text }
+    this._batchTimer = null;    // flush timer for _batch
   }
 
   spawn() {
@@ -81,24 +83,22 @@ class HeadlessProc {
       return;
     }
 
-    // Partial stream: forward text/thinking/input deltas at CC's own granularity.
+    // Partial stream: coalesce deltas (see _accumulate); boundary events flush first.
     if (t === 'stream_event') {
       const ev = o.event || {};
       const d = ev.delta || {};
       if (ev.type === 'content_block_delta' && (d.type === 'text_delta' || d.type === 'thinking_delta')) {
-        this._deltaAcc += (d.text ?? d.thinking) || '';
-        this._cb?.onDelta?.(this.streamId, this._deltaAcc, ++this._deltaSeq, this._blockId);
+        this._accumulate('delta', this._blockId, (d.text ?? d.thinking) || '');
       } else if (ev.type === 'content_block_delta' && d.type === 'input_json_delta') {
-        this._inputAcc += d.partial_json || '';
-        this._cb?.onInputDelta?.(this.streamId, this._inputAcc, ++this._deltaSeq, this._blockId);
+        this._accumulate('input', this._blockId, d.partial_json || '');
       } else if (ev.type === 'content_block_start') {
+        this._flushBatch();
         this._blockId++;
-        this._deltaAcc = '';
-        this._inputAcc = '';
         const cb = ev.content_block || {};
-        this._cb?.onBlockStart?.(this.streamId, this._blockId, cb.type || 'text', cb.name || null);
+        this._cb?.onBlockStart?.(this.streamId, this._blockId, cb.type || 'text', cb.name || null, this._seq++);
       } else if (ev.type === 'content_block_stop') {
-        this._cb?.onBlockStop?.(this.streamId, this._blockId);
+        this._flushBatch();
+        this._cb?.onBlockStop?.(this.streamId, this._blockId, this._seq++);
       }
       return;
     }
@@ -117,6 +117,7 @@ class HeadlessProc {
 
     // Turn finished
     if (t === 'result') {
+      this._flushBatch();
       this.busy = false;
       this._graceUntil = Date.now() + RESULT_GRACE_MS;
       this.pool._touch(this);
@@ -124,16 +125,35 @@ class HeadlessProc {
       this._cb = null;
       const sid = this.streamId;
       this.streamId = null;
-      this._deltaAcc = '';
-      cb?.onResult?.(sid, o);
+      cb?.onResult?.(sid, o, this._seq); // finalSeq = total frames sent this turn
       this._drainQueue();
       return;
     }
 
   }
 
+  // Append a chunk to the pending same-block batch; arm a timer to flush it.
+  _accumulate(t, blockId, chunk) {
+    if (this._batch && (this._batch.t !== t || this._batch.blockId !== blockId)) this._flushBatch();
+    if (!this._batch) this._batch = { t, blockId, text: '' };
+    this._batch.text += chunk;
+    if (!this._batchTimer) this._batchTimer = setTimeout(() => this._flushBatch(), DELTA_BATCH_MS);
+  }
+
+  // Emit the pending batch as one seq-stamped frame.
+  _flushBatch() {
+    if (this._batchTimer) { clearTimeout(this._batchTimer); this._batchTimer = null; }
+    const b = this._batch;
+    if (!b) return;
+    this._batch = null;
+    if (b.t === 'delta') this._cb?.onDelta?.(this.streamId, b.text, this._seq++, b.blockId);
+    else this._cb?.onInputDelta?.(this.streamId, b.text, this._seq++, b.blockId);
+  }
+
   _onClose(code, detail) {
     this.dead = true;
+    if (this._batchTimer) { clearTimeout(this._batchTimer); this._batchTimer = null; }
+    this._batch = null;
     this.pool._remove(this.key);
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
@@ -161,6 +181,7 @@ class HeadlessProc {
     this.streamId = streamId;
     this._cb = cb;
     this._blockId = -1;
+    this._seq = 0; // reset per turn — seq is scoped to one streamId
     this.pool._touch(this);
     const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
     try { this.stdin.write(JSON.stringify(msg) + '\n'); }
