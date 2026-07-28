@@ -3,6 +3,7 @@
 // padding when keyboard covers home indicator. Both: re-pin #content to
 // bottom across the keyboard animation.
 import { state } from './state.js';
+import { ReorderBuffer } from './reorder.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -223,15 +224,15 @@ function connectWs(_, projectHash) {
         window.appendCommandOutput(msg.ansi);
       }
     } else if (msg.action === 'stream_delta') {
-      if (msg.sessionId === state.wsSessionId) handleStreamDelta(msg.streamId, msg.text, msg.seq, msg.blockId);
+      if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'delta', seq: msg.seq, blockId: msg.blockId, chunk: msg.chunk });
     } else if (msg.action === 'stream_tool_input') {
-      if (msg.sessionId === state.wsSessionId) handleStreamToolInput(msg.streamId, msg.json, msg.seq, msg.blockId);
+      if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'input', seq: msg.seq, blockId: msg.blockId, chunk: msg.chunk });
     } else if (msg.action === 'stream_block_start') {
-      if (msg.sessionId === state.wsSessionId) handleStreamBlockStart(msg.streamId, msg.blockId, msg.kind, msg.name);
+      if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'start', seq: msg.seq, blockId: msg.blockId, kind: msg.kind, name: msg.name });
     } else if (msg.action === 'stream_block_stop') {
-      if (msg.sessionId === state.wsSessionId) handleStreamBlockStop(msg.streamId, msg.blockId);
+      if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'stop', seq: msg.seq, blockId: msg.blockId });
     } else if (msg.action === 'stream_end') {
-      if (msg.sessionId === state.wsSessionId) handleStreamEnd(msg.streamId, msg.error);
+      if (msg.sessionId === state.wsSessionId) handleStreamEnd(msg.streamId, msg.finalSeq, msg.error);
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -267,6 +268,7 @@ function subscribeSession(sessionId) {
   if (state.wsSessionId && state.wsSessionId !== sessionId) {
     wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
     clearStreamPreviews();
+    _streamEnded = {}; // switching sessions: drop ended-turn guards from the old one
     _lastStreamEndAt = 0;
   }
   state.wsSessionId = sessionId;
@@ -343,8 +345,10 @@ function insertAtTimestamp(container, html, timestamp) {
   }
 }
 
-var _blk = {};
+var _rb = {};          // streamId → ReorderBuffer (seq-ordered committed content)
+var _ui = {};          // "streamId:blockId" → display-local reveal/animation state
 var _streamEnded = {};
+var _lastThinkSecs = 0; // seconds the live preview measured for the latest thinking block
 var _streamRaf = null;
 var _streamLastTick = 0;
 // Last headless stream_end time; while fresh, trust it over deriveRunning (trailing rows are stop=null).
@@ -363,53 +367,18 @@ function summarizeToolInput(input) {
   try { return JSON.stringify(input).slice(0, 200); } catch (e) { return ''; }
 }
 
-function newStreamBlock(sid, bid) {
-  return { sid: sid, bid: (bid == null ? 0 : bid), target: [], shown: 0, seq: -1, stopped: false, finalized: false, kind: 'text', name: null, inputJson: '', thinkStart: 0, thinkMs: null, labelDone: false };
+function uiState(sid, bid) {
+  var k = blockKey(sid, bid);
+  return _ui[k] || (_ui[k] = { shown: 0, thinkStart: 0, thinkMs: null, labelDone: false });
 }
 
-// block_start is a block's only creator; delta/input/stop only update (a late event after clearStreamPreviews would else orphan a wiped block).
-function handleStreamDelta(streamId, fullText, seq, blockId) {
-  if (!streamId) return;
-  var b = _blk[blockKey(streamId, blockId)];
-  if (!b) return;
-  if (seq != null && seq <= b.seq) return;
-  b.seq = seq != null ? seq : b.seq + 1;
-  b.target = Array.from(fullText || '');
-  b.finalized = false;
-  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
-  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
-}
-
-// Tool-use input accreting char-by-char (partial JSON) until the full row replaces it.
-function handleStreamToolInput(streamId, fullJson, seq, blockId) {
-  if (!streamId) return;
-  var b = _blk[blockKey(streamId, blockId)];
-  if (!b) return;
-  if (seq != null && seq <= b.seq) return;
-  b.seq = seq != null ? seq : b.seq + 1;
-  b.kind = 'tool_use';
-  b.inputJson = fullJson || '';
-  b.finalized = false;
-  if (!_streamEnded[streamId]) { state.wsRunning = true; updateSendBtn(); }
-  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
-}
-
-function handleStreamBlockStart(streamId, blockId, kind, name) {
-  if (!streamId || _streamEnded[streamId]) return; // no new blocks after turn end
-  var b = _blk[blockKey(streamId, blockId)] || (_blk[blockKey(streamId, blockId)] = newStreamBlock(streamId, blockId));
-  b.kind = kind || 'text';
-  if (name) b.name = name;
-  if (b.kind === 'thinking' && !b.stopped && !b.thinkStart) b.thinkStart = performance.now();
+// All preview frames funnel through here: reorder by seq, then animate the
+// ordered result. Ordering lives in ReorderBuffer; the UI only reads its output.
+function pushStreamFrame(streamId, frame) {
+  if (!streamId || _streamEnded[streamId]) return; // ignore late frames after turn end
+  var rb = _rb[streamId] || (_rb[streamId] = new ReorderBuffer());
+  rb.push(frame);
   state.wsRunning = true; updateSendBtn();
-  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
-}
-
-function handleStreamBlockStop(streamId, blockId) {
-  if (!streamId) return;
-  var b = _blk[blockKey(streamId, blockId)];
-  if (!b) return;
-  b.stopped = true;
-  if (b.kind === 'thinking' && b.thinkMs == null) b.thinkMs = b.thinkStart ? (performance.now() - b.thinkStart) : null;
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
@@ -431,41 +400,44 @@ function tickStreams(now) {
   var nearBottom = content && content.scrollHeight - content.scrollTop - content.clientHeight < 300;
   var active = false;
 
-  // Group blocks by streamId → one .assistant-turn per turn (matches jsonl structure).
-  var groups = {};
-  for (var k in _blk) { var gb = _blk[k]; (groups[gb.sid] || (groups[gb.sid] = [])).push(gb); }
-
-  for (var sid in groups) {
-    var blocks = groups[sid].sort(function (a, c) { return a.bid - c.bid; });
+  // One .assistant-turn per streamId; blocks come pre-ordered from the reorder buffer.
+  for (var sid in _rb) {
+    var rb = _rb[sid];
+    var blocks = rb.orderedBlocks();
+    // A gap holding back arrived frames → keep animating, don't let a block finalize early.
+    var gap = rb.hasGap();
     var turnId = 'stream-turn-' + sid;
     var turn = document.getElementById(turnId);
-    if (container && !turn) {
-      turn = document.createElement('div');
-      turn.className = 'assistant-turn stream-preview';
-      turn.id = turnId;
-      container.appendChild(turn);
-    }
     for (var i = 0; i < blocks.length; i++) {
       var b = blocks[i];
+      var u = uiState(sid, b.blockId);
       var wantKind = b.kind === 'thinking' ? 'thinking' : (b.kind === 'tool_use' ? 'tool' : 'text');
       // Empty text block (start/stop, no delta) has nothing to show — skip it.
-      if (wantKind === 'text' && b.target.length === 0) continue;
-      var elId = 'sb-' + sid + '-' + b.bid;
+      if (wantKind === 'text' && b.committed.length === 0) continue;
+      // Lazily create the turn only when there's a real block to show — a lone
+      // start/stop frame must NOT leave an empty .assistant-turn (spurious connector line).
+      if (container && !turn) {
+        turn = document.createElement('div');
+        turn.className = 'assistant-turn stream-preview';
+        turn.id = turnId;
+        container.appendChild(turn);
+      }
+      var elId = 'sb-' + sid + '-' + b.blockId;
       var el = document.getElementById(elId);
       if (turn && (!el || el.dataset.kind !== wantKind)) {
         if (el) el.remove();
         el = document.createElement('div');
-        el.id = elId; el.dataset.kind = wantKind; el.dataset.bid = String(b.bid);
+        el.id = elId; el.dataset.kind = wantKind; el.dataset.bid = String(b.blockId);
         if (wantKind === 'thinking') {
           el.className = 'tl-item thinking-tl';
-          var bodyId = 'tb-' + sid + '-' + b.bid;
+          var bodyId = 'tb-' + sid + '-' + b.blockId;
           el.innerHTML = '<div class="thinking-block"><div class="thinking-toggle" onclick="this.classList.toggle(\'open\');var x=document.getElementById(\'' + bodyId + '\');x.style.display=x.style.display===\'block\'?\'none\':\'block\'"><span class="think-label">Thinking</span> <span class="thinking-chevron">&#8250;</span></div><div class="thinking-body" id="' + bodyId + '"></div></div>';
         } else if (wantKind === 'tool') {
           el.className = 'tl-item tool-node tool-running';
         } else {
           el.className = 'tl-item assistant-text';
         }
-        insertOrdered(turn, el, b.bid);
+        insertOrdered(turn, el, b.blockId);
       }
       if (!el) continue;
 
@@ -480,35 +452,36 @@ function tickStreams(now) {
         el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
           + '<span class="tool-desc">' + esc(argStr) + '</span>'
           + '<span class="tool-status">running</span></div>';
-        if (!b.stopped) active = true;
+        if (!b.stopped || gap) active = true;
       } else if (wantKind === 'thinking') {
+        if (!u.thinkStart) u.thinkStart = now; // first render of this block starts its timer
         var lbl = el.querySelector('.think-label');
-        if (!b.stopped && b.thinkStart) {
-          if (lbl) lbl.textContent = 'Thinking ' + Math.max(1, Math.round((now - b.thinkStart) / 1000)) + 's';
-          active = true;
-        } else if (b.stopped) {
-          if (!b.labelDone && lbl) {
-            var s = b.thinkMs != null ? Math.round(b.thinkMs / 1000) : 0;
-            lbl.textContent = s > 0 ? ('Thought for ' + s + 's') : 'Thinking';
-            b.labelDone = true;
-          }
-        } else if (lbl) {
-          lbl.textContent = 'Thinking';
-        }
-        if (b.target.length) {
-          b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
-          if (b.shown > b.target.length) b.shown = b.target.length;
+        var chars = Array.from(b.committed);
+        if (chars.length) {
+          u.shown += Math.max(3, Math.ceil((chars.length - u.shown) / 4));
+          if (u.shown > chars.length) u.shown = chars.length;
           var bd = el.querySelector('.thinking-body');
-          if (bd) bd.textContent = b.target.slice(0, b.shown).join('');
-          if (b.shown < b.target.length) active = true;
+          if (bd) bd.textContent = chars.slice(0, u.shown).join('');
+          if (u.shown < chars.length) active = true;
         }
-      } else if (!b.finalized) {
-        b.shown += Math.max(3, Math.ceil((b.target.length - b.shown) / 4));
-        if (b.shown > b.target.length) b.shown = b.target.length;
-        var caughtUp = b.shown >= b.target.length;
-        if (window.renderMd) el.innerHTML = window.renderMd(b.target.slice(0, b.shown).join(''));
-        if (!caughtUp || (b.stopped && !b.finalized)) active = true;
-        if (caughtUp && b.stopped) b.finalized = true;
+        var thinkDone = b.stopped && !gap && u.shown >= chars.length;
+        if (!thinkDone) {
+          if (lbl) lbl.textContent = 'Thinking ' + Math.max(1, Math.round((now - u.thinkStart) / 1000)) + 's';
+          active = true;
+        } else if (!u.labelDone && lbl) {
+          var s = Math.round((now - u.thinkStart) / 1000);
+          lbl.textContent = s > 0 ? ('Thought for ' + s + 's') : 'Thinking';
+          u.labelDone = true;
+          _lastThinkSecs = s; // carry to the authoritative row's empty thinking node
+        }
+      } else {
+        var tchars = Array.from(b.committed);
+        u.shown += Math.max(3, Math.ceil((tchars.length - u.shown) / 4));
+        if (u.shown > tchars.length) u.shown = tchars.length;
+        var caughtUp = u.shown >= tchars.length;
+        if (window.renderMd) el.innerHTML = window.renderMd(tchars.slice(0, u.shown).join(''));
+        // Keep animating until caught up AND the block is truly done (stopped, no gap).
+        if (!caughtUp || !b.stopped || gap) active = true;
       }
     }
   }
@@ -516,8 +489,10 @@ function tickStreams(now) {
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
-function handleStreamEnd(streamId, error) {
+function handleStreamEnd(streamId, finalSeq, error) {
   if (!streamId) return;
+  var rb = _rb[streamId];
+  if (rb) rb.end(finalSeq); // reconcile: turn ends only once ordered region reaches finalSeq
   _streamEnded[streamId] = true;
   _lastStreamEndAt = Date.now();
   if (error) {
@@ -530,10 +505,25 @@ function handleStreamEnd(streamId, error) {
 
 function clearStreamPreviews() {
   if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
-  _blk = {};
-  _streamEnded = {};
+  _ui = {};
+  // A turn can flush an authoritative row mid-stream yet keep emitting later blocks under
+  // the SAME streamId. Wiping the buffer would restart nextSeq at 0 and strand continuing
+  // frames. So: fully drop ended streams; soft-reset live ones (keep seq progress).
+  var kept = {};
+  for (var sid in _rb) {
+    if (_streamEnded[sid]) continue; // ended → discard
+    _rb[sid].softReset();
+    kept[sid] = _rb[sid];
+  }
+  _rb = kept;
   var previews = document.querySelectorAll('[id^="stream-turn-"]');
   for (var i = 0; i < previews.length; i++) previews[i].remove();
+}
+
+// Authoritative thinking has no duration; use the seconds the live preview measured.
+function applyThinkSecs(html) {
+  if (!_lastThinkSecs || html.indexOf('thinking-toggle') === -1) return html;
+  return html.replace(/(<div class="thinking-toggle"[^>]*>)Thinking( <span)/, '$1Thought for ' + _lastThinkSecs + 's$2');
 }
 
 function updateLastTurn() {
@@ -611,6 +601,7 @@ function updateLastTurn() {
 
     var html = renderSingleMessage(msg, state.wsAllMessages);
     if (!html) continue;
+    html = applyThinkSecs(html); // carry live-measured thinking seconds into the empty authoritative node
 
     // Scan all elements with data-ts to find insertion position
     var allItems = container.querySelectorAll('[data-ts]');
@@ -934,9 +925,13 @@ function doSend(fullText, displayText, images) {
     wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device, streamMode: streamMode });
   }
 
-  // Remove placeholder text
+  // Empty session has no .messages yet; create one or the bubble + preview have nowhere to render.
   var empty = document.querySelector('.empty');
   if (empty) empty.remove();
+  var contentEl = document.getElementById('content');
+  if (contentEl && !contentEl.querySelector('.messages')) {
+    contentEl.insertAdjacentHTML('beforeend', '<div class="messages"></div>');
+  }
 
   // Exit new-session centered layout once the user sends the first message
   if (document.body.classList.contains('new-session')) {
