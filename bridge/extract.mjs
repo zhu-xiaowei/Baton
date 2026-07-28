@@ -73,6 +73,22 @@ async function processImage(base64Data) {
   return key;
 }
 
+// Drop image base64 from a tool_result block's nested content (app renders via S3 key).
+function stripToolResultBase64(block) {
+  if (!Array.isArray(block.content)) return block;
+  const content = block.content.map((c) =>
+    c.type === 'image' && c.source?.data ? { ...c, source: { ...c.source, data: '' } } : c);
+  return { ...block, content };
+}
+
+// Drop the big base64 payload from a toolUseResult (image/file), keep metadata.
+function stripToolUseResultBase64(tur) {
+  if (tur && tur.file && tur.file.base64) {
+    return { ...tur, file: { ...tur.file, base64: '' } };
+  }
+  return tur;
+}
+
 export async function extractForApp(msg, projectDir) {
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
@@ -111,6 +127,8 @@ export async function extractForApp(msg, projectDir) {
         const allowed = isToolAllowed(block.name, block.input, projectDir);
         return { ...block, needsPermission: !allowed };
       }
+      // tool_result image base64 is unused by the app (it renders via S3 key) — strip it.
+      if (block.type === 'tool_result') return stripToolResultBase64(block);
       // Normalize \r → \n in text blocks
       if (block.type === 'text' && block.text && /\r/.test(block.text)) {
         return { ...block, text: block.text.replace(/\r\n?/g, '\n') };
@@ -127,7 +145,7 @@ export async function extractForApp(msg, projectDir) {
   };
   // jsonl uses camelCase toolUseResult; headless stream uses snake_case — accept either.
   const tur = msg.toolUseResult ?? msg.tool_use_result;
-  if (tur) extracted.toolUseResult = tur;
+  if (tur) extracted.toolUseResult = stripToolUseResultBase64(tur);
   if (msg.message?.stop_reason) extracted.stopReason = msg.message.stop_reason;
   return extracted;
 }
