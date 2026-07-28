@@ -132,12 +132,18 @@ class HeadlessProc {
 
   }
 
-  // Append a chunk to the pending same-block batch; arm a timer to flush it.
+  // Leading edge: a block's first chunk flushes immediately (low first-token latency); the armed timer's cooldown coalesces the rest over DELTA_BATCH_MS.
   _accumulate(t, blockId, chunk) {
     if (this._batch && (this._batch.t !== t || this._batch.blockId !== blockId)) this._flushBatch();
+    if (!this._batch && !this._batchTimer) {
+      this._batch = { t, blockId, text: chunk };
+      this._flushBatch();
+      this._batchTimer = setTimeout(() => { this._batchTimer = null; this._flushBatch(); }, DELTA_BATCH_MS);
+      return;
+    }
     if (!this._batch) this._batch = { t, blockId, text: '' };
     this._batch.text += chunk;
-    if (!this._batchTimer) this._batchTimer = setTimeout(() => this._flushBatch(), DELTA_BATCH_MS);
+    if (!this._batchTimer) this._batchTimer = setTimeout(() => { this._batchTimer = null; this._flushBatch(); }, DELTA_BATCH_MS);
   }
 
   // Emit the pending batch as one seq-stamped frame.
