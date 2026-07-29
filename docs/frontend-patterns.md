@@ -189,7 +189,7 @@ interruptSession():
   updateSendBtn()
 ```
 
-Equivalent to Ctrl+C / Escape in the CC terminal. Bridge sends interrupt signal to the corresponding tmux pane.
+Equivalent to Ctrl+C / Escape in the CC terminal. Bridge SIGINTs the session's headless Claude Code process.
 
 Besides clicking the stop button, pressing `Esc` anywhere (input focused or not) interrupts the running turn, mirroring CC — but yields to overlays that own Esc (slash popup, permission prompt, file/image viewer, new-project modal) and ignores IME composition.
 
@@ -227,7 +227,7 @@ User sends message:
   2. Optimistically render user message
 
 Bridge handling:
-  → Create tmux + claude --resume → wait for CC ready → sendKeys
+  → Spawn headless `claude -p` (no --resume) → sessionId from system/init
   → Return send_message_result { ok: true, sessionId: newId }
 
 On receiving sessionId:

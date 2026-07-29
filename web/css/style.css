@@ -389,7 +389,7 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .new-session-hero { text-align: center; padding: 0 24px 20px; }
 .hero-logo { font-size: 40px; line-height: 1; }
 .hero-title { font-size: 18px; font-weight: 600; color: #e6edf3; margin-top: 8px; letter-spacing: 0.2px; }
-/* Local slash-command terminal output (captured via tmux capture-pane) */
+/* Local slash-command stdout (e.g. /compact), rendered from a <local-command-stdout> jsonl row */
 .cmd-output { margin: 6px 0; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; overflow-x: auto; }
 .cmd-output pre { margin: 0; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45; color: #c9d1d9; white-space: pre; }
 

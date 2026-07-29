@@ -54,13 +54,8 @@
 
   // Spinner's single source of truth: walk the tail to the last real turn.
   // Assistant pre-end_turn / user awaiting reply → running; else idle.
-  //
-  // authStatus (optional): the bridge's authoritative session status. A trailing
-  // lone `user` entry is ambiguous — indistinguishable in the message stream
-  // between "user just sent, CC about to reply" (running) and "user sent then hit
-  // Esc, CC reverted the prompt" (idle). Only the bridge can tell (it checks the
-  // tmux pane). When it says 'idle', trust it over the stream for that one case.
-  // Streaming/tool_use turns are unaffected — those are unambiguously running.
+  // authStatus (optional): bridge's session status; for a trailing lone `user` entry
+  // (ambiguous in the stream), trust authStatus==='idle' over the stream.
   // True if this tool_result answers an AskUserQuestion/ExitPlanMode (is_error but not an interrupt — CC resumes).
   window.isInteractiveToolResult = function (msg, messages) {
     if (!Array.isArray(msg.content)) return false;
@@ -244,21 +239,6 @@
     }
     return `<div class="msg-system">${esc(content)}</div>`;
   };
-  // Append a "local" slash-command's terminal output (captured via tmux, ANSI
-  // colours preserved). These never reach the .jsonl, so they're appended live
-  // and not re-rendered on reload.
-  window.appendCommandOutput = function (ansi) {
-    if (!ansi) return;
-    var container = document.querySelector('.messages');
-    if (!container) return;
-    var html = window.ansiHtml ? window.ansiHtml(ansi) : esc(ansi);
-    container.insertAdjacentHTML('beforeend',
-      '<div class="cmd-output"><pre>' + html + '</pre></div>');
-    var content = document.getElementById('content');
-    if (content) content.scrollTo({ top: 99999, behavior: 'smooth' });
-    if (typeof updateSpinner === 'function') updateSpinner();
-  };
-
   // Render a <local-command-stdout> user message (e.g. /compact result) as command
   // output: strip the wrapper tags + ANSI escape codes, show as a clean cmd-output.
   window.renderLocalCommandStdout = function (msg) {

@@ -50,7 +50,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 ### Phase 2D: COMPLETE ✅ — Claude Agents Support
 - Bridge monitors daemon roster.json + jobs/state.json for agent session detection
 - Agent sessions display [Agent] badge + Working/Needs input/Completed status
-- Send messages to agent sessions: was `claude agents` TUI navigation over tmux; **superseded by Phase 2E** — headless `claude -p --resume <agentSessionId>` handles agent sessions like any other (TODO: not yet wired, see 2E)
+- Send messages to agent sessions: was `claude agents` TUI navigation over tmux; **now headless** `claude -p --resume <agentSessionId>` handles agent sessions like any other (works via `_pool.send`)
 - Create new agent sessions from web ("Run in background" toggle, localStorage persisted) — TODO under headless
 - Bridge respects permissions.defaultMode: bypassPermissions (no false permission prompts)
 
@@ -65,17 +65,14 @@ Done:
 - `projectHashToPath` moved into `session.mjs` (pure path util, not tmux). `getClaudeProcesses` was tmux-only and dropped — `getRunningInfo` in `session.mjs` has its own `ps aux` parser.
 - Server bridge-install script (`/api/install`) no longer auto-installs tmux.
 - Existing-session send → headless streaming (`handleHeadlessSend` → `_pool.send`), the primary happy path. Works today.
-- **Stream ordering** — bridge stamps every preview frame of a turn with a **turn-level monotonic `seq`** (`headless.mjs` `_seq`, reset per turn) and sends **increment-only** chunks (not accumulated full text → traffic O(n²)→O(n)); `stream_end` carries `finalSeq`. The app reorders by `seq` in a client-side reorder buffer (`web/js/reorder.js` `ReorderBuffer`) because bridge→Lambda→API GW delivers each frame via an independent, variable-duration Lambda invocation → arrival order ≠ send order. Buffer = ordered region (`nextSeq`) + `pending` gap cache; head drains when contiguous; `ended` only at `finalSeq`. **Lost-frame recovery**: a head-gap unfilled for `STREAM_GAP_TIMEOUT_MS` (400ms) with frames waiting behind it is a permanent Lambda drop (not slow reorder) → `skipStaleGap` advances past the missing seq so the preview keeps flowing; the hole is fixed when the authoritative full assistant row (by uuid) overrides. `clearStreamPreviews` marks live streamIds ended so a straggler frame arriving AFTER the authoritative row can't rebuild an empty preview turn (spurious connector line). Validated: 2800 randomized deliveries + 33 real-CC prompts + gap-skip/end-after-skip suites. See `docs/headless-streaming.md` §七.
+- **Stream ordering** — bridge stamps every preview frame of a turn with a **turn-level monotonic `seq`** (`headless.mjs` `_seq`, reset per turn) and sends **increment-only** chunks (not accumulated full text → traffic O(n²)→O(n)); `stream_end` carries `finalSeq`. The app reorders by `seq` in a client-side reorder buffer (`web/js/reorder.js` `ReorderBuffer`) because bridge→Lambda→API GW delivers each frame via an independent, variable-duration Lambda invocation → arrival order ≠ send order. Buffer = ordered region (`nextSeq`) + `pending` gap cache; head drains when contiguous (a dropped seq is fixed when the authoritative full assistant row overrides by uuid); `ended` only at `finalSeq`. **Authoritative-row handoff**: `clearStreamPreviews(coverCount)` → `ReorderBuffer.softReset(coverCount)` supersedes only the blocks the authoritative row covers (advancing the watermark even for reordered not-yet-arrived blocks), so a still-streaming text block after a thinking-only flush survives and a late `stop` can't rebuild a duplicate. Validated: 1000 randomized-delivery turns + multi-block/double-flush. See `docs/headless-streaming.md` §七.
 - `interrupt` routed to `_pool.interrupt` (SIGINT the headless proc).
-- Stall Rescue detector (`stall.mjs` `checkStalledSessions`) removed; arm/rescue state kept as an inert stub so `watcher.mjs`/`ws.mjs` imports still resolve (fully removable once headless permission path lands).
+- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_agent`). Frontend `permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
+- **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
-TODO (each currently returns a "not available yet" reply or is a no-op so the bridge boots; ref `docs/headless-streaming.md` §十三 Step 2–5):
-- [ ] **Permission bridge** — `handlePermissionReply` is a no-op; `onControlRequest` only auto-allows non-interactive tools. Wire: control_request → app prompt → `_pool.replyControl` (allow/deny); `requires_user_interaction` (AskUserQuestion/ExitPlanMode) → deny + send answer as a plain user message. Frontend `permission.js` `arrow:`/`type:`/`escape` protocol must change to carry the actual answer text.
+TODO (each currently returns a "not available yet" reply so the bridge boots; ref `docs/headless-streaming.md` §十三):
 - [ ] **New session / new agent / create_project** — `handleSendMessage` projectHash branch + `handleCreateProject` return "not available yet". Wire: headless spawn without `--resume`, take sessionId + cwd from `system/init` (watch the symlink-cwd trap).
-- [ ] **AskUserQuestion stall** — no longer needs pane sampling; headless surfaces the full `questions[]` via control_request. `handleRevealAgent` is a no-op until the permission bridge lands.
-- [ ] **Local slash-command output** (`/context`, `/usage`, …) — capture removed. Under headless, `/cmd` is sent as plain text and its output streams back normally; the pure-TUI ones just won't be exposed. `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/`SYNTHETIC_COMMANDS` in `commands.mjs` are now dead exports, removable.
 - [ ] **External-session status precision** — lost capture-pane truth; `resolveStatus`/`getSessionStatus` fall back to `ps aux` only. Headless-owned sessions report `busy` via the pool.
-- [ ] Remove the `streamMode` flag entirely (headless is unconditional now; frontend `web/js/ws.js` still sends it).
 
 ### Phase 3: LATER — Production polish
 - Persist bridge sync state to disk, avoid re-uploading messages on restart
@@ -117,8 +114,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - Status paths that key off live CC processes (`checkStopped`, stall idle-downgrade) must **skip daemon agents** — they have no `--resume` process, so they'd be misread as stopped and stripped of agent metadata. Agent status is owned by the poll.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal stuck agent: were tmux `claude agents` TUI navigation — **removed in Phase 2E**, TODO to re-wire via headless `claude -p --resume <agentSessionId>` (agent sessions resume like any normal CC session; the daemon-live `--json` status source is untouched).
-  - `permissions.mjs` respects `defaultMode: bypassPermissions` from global/project settings
-- Slash commands (`commands.mjs`): `/`-autocomplete like CC. Bridge `scanSlashCommands()` scans user/project/enabled-plugin commands+skills on disk, plus a static `BUILTIN_COMMANDS` list mirroring CC's compiled-in bundled skills (re-sync on CC upgrades). WS `list_commands` → `commands_list`; app caches per-device (global) + per-project in localStorage. NOTE: "local" command output was captured via `tmux capture-pane` — **removed in Phase 2E**. Under headless a `/cmd` is sent as plain text and its output streams back normally; `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/`SYNTHETIC_COMMANDS` in `commands.mjs` are now dead exports. Details: `docs/api.md` (protocol) + `docs/claude-code-bridge.md` (flow).
+  - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
+- Slash commands (`commands.mjs`): `/`-autocomplete like CC. Bridge `scanSlashCommands()` scans user/project/enabled-plugin commands+skills on disk, plus a static `BUILTIN_COMMANDS` list mirroring CC's compiled-in bundled skills (re-sync on CC upgrades). WS `list_commands` → `commands_list`; app caches per-device (global) + per-project in localStorage. NOTE: "local" command output capture (`tmux capture-pane`) was **removed in Phase 2E**; under headless a `/cmd` is sent as plain text and streams back normally. `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/`SYNTHETIC_COMMANDS` in `commands.mjs` now only tag the command list. Details: `docs/api.md` + `docs/claude-code-bridge.md`.
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS) / systemd user service + `loginctl enable-linger` (Linux)
 - Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
@@ -216,15 +213,12 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - **diff2html height is async & unknowable at render time.** `tool.js` `renderEdit` injects the diff via `setTimeout` (Diff2HtmlUI draws line-by-line later), so `scrollHeight` at scroll time doesn't include it → scroll lands short ("差一截"). Do NOT try to read the rendered height. Fix (方案 B): the `.diff-container` ships with an **estimated `min-height`** (`(oldLines+newLines)*18 + 12`, capped at 240 because taller diffs get collapsed) so the initial scroll lands near the true bottom; the estimate is **cleared after `ui.draw()`, and that clear must happen BEFORE the `scrollHeight > 240` collapse check** or an over-estimate falsely triggers collapse. Small residual (estimate vs real) is absorbed by the browser's default `overflow-anchor` — never set `overflow-anchor: none` on `#content`/`.messages`.
 - **Watch-outs (observing):** estimate over-counts for large replace-diffs (diff2html shows changed+context, not old+new summed) → brief shrink after draw, hidden by anchor; iOS/WKWebView `overflow-anchor` support is weaker than Chrome — if residual reappears on iOS it's this. Both degrade to "barely visible", not back to the original bug, because min-height already killed the large reflow.
 
-### Permission Detection + User Interaction
-> ⚠️ This is the **old tmux-era client-side heuristic**. Bridge-side reply (`handlePermissionReply`) is a no-op after Phase 2E — TODO to re-wire via headless `control_request`/`replyControl` (see Phase 2E). The frontend detection below still runs but its replies currently go nowhere.
-- Viewer detects AskUserQuestion / ExitPlanMode / Bash / Edit / Write from tool_use
-- AskUserQuestion / ExitPlanMode: show prompt immediately (CC is waiting for user)
-- Bash / Edit / Write: 5s wait for tool_result; if received → mark auto; if not → mark manual and show prompt
-- Mode cached in memory (not localStorage), re-detected on page refresh
-- tool_result arrival unconditionally closes prompt dialog
-- Option card UI (arrow:N, type:N:text, escape) — the `arrow:`/`type:` protocol was tmux-nav; under headless it must carry the actual answer text (TODO)
-- Real-time tool_result (OUT) appended (tool-grid structure + collapsible)
+### Permission Detection + User Interaction (headless, bridge-driven)
+- Bridge `onControlRequest` (CC's `control_request`, precise — no client-side heuristic) → app `permission_request {kind, requestId, questions?/plan?/input}`. App replies `permission_reply {requestId, decision:allow|deny|answer, answerText?}`.
+- Ordinary tools (Bash/Edit/Write/MCP): allow → `control_response{allow, updatedInput}`; deny → `{deny, message}`. (`defaultMode:bypassPermissions` → CC never asks, no prompt.)
+- AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`** — CC's only answer channel on `--permission-prompt-tool stdio` (a structured `control_response` answer is force-converted to deny, verified CC 2.1.211). Multi-question wizard sends `question → answer` per line. Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
+- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (`reveal_agent` → bridge re-push).
+- `permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 
 ### Image Sending
 - S3 upload + `![](claude-bridge:key)` protocol
@@ -314,9 +308,9 @@ header comment for required env vars, one-time setup, and output paths.
 CC has many intermediate states not written to jsonl (thinking animation/content, permission
 waiting, tool progress). The old plan was to scrape them with `tmux capture-pane`. **Headless
 delivers them natively** as stream events (`content_block_delta` text/thinking, `control_request`
-for permissions, `result` for turn end) — no pane scraping needed. What's already wired: typewriter
-text preview (`stream_delta`), turn-end (`stream_end`). What's TODO: surfacing permission
-`control_request` to the app (see Phase 2E), optional thinking-block streaming.
+for permissions, `result` for turn end) — no pane scraping needed. All wired: typewriter text +
+thinking preview (`stream_delta`, per-tick thinking timer), permission `control_request` → app
+prompt, turn-end (`stream_end`).
 
 ## Stall Rescue — REMOVED in Phase 2E (headless makes it unnecessary)
 
@@ -327,11 +321,8 @@ saw nothing and the session looked permanently `running`. The tmux workaround (`
 synthetic rejection pair in `watcher.mjs`) is **deleted**.
 
 Under headless this can't happen: CC pushes the full `questions[]` up front via a `control_request`
-(`requires_user_interaction`), so the bridge has the complete question immediately — no pane
-sampling, no force-flush. **TODO:** wire that control_request to the app prompt (part of the
-Phase 2E permission bridge). `stall.mjs` currently keeps only inert arm/rescue-state stubs so
-`watcher.mjs`'s synthetic-pair filter still imports cleanly; both are removable once the permission
-bridge lands. `watcher.mjs` still tags a `stallRescued` tool_use, but nothing arms it anymore.
+(`requires_user_interaction`), wired to the app prompt (permission bridge, DONE). `stall.mjs` and
+`watcher.mjs`'s synthetic-pair filter / `stallRescued` tagging are **fully deleted**.
 
 ## Known Issues / TODO
 

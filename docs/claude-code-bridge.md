@@ -60,7 +60,7 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
   - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → idle, `tool_use`/`null` → running, `user` last → running
   - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
-  - terminal/tmux CC: `--resume` flag → exact session match → precise status
+  - terminal CC (launched with `--resume`): exact session match → precise status
   - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
@@ -222,27 +222,18 @@ Bridge → Server:  { action: "heartbeat" }
 ```
 Existing session:
 App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "...", device: "MacBook-Pro" }
-Bridge: findTmuxTarget(sessionId) → sendKeys
-  or: no target → auto tmux new-session + claude --resume → waitForCCReady → sendKeys
+Bridge: _pool.send(sessionId) → headless `claude -p --resume <id>` over kept-open stdin (spawns if none)
+        → stream_delta/stream_end (preview) + authoritative `messages` rows
 
-New session:
-App → Server → Bridge:  { action: "send_message", projectHash: "xxx", text: "...", device: "MacBook-Pro", requestId: "..." }
-Bridge: create tmux + claude → waitForCCReady → sendKeys → poll .jsonl → return sessionId
-Bridge → Server → App:  { action: "send_message_result", ok: true, sessionId: "new-uuid", requestId: "..." }
-App subscribes to new sessionId, starts receiving messages
+New session (TODO): projectHash-only send → headless spawn without --resume, sessionId from system/init.
 
-(send_message also accepts asAgent:true → launch via `claude agents`)
+(send_message also accepts asAgent:true → the new session runs as a Claude Agents background session)
 ```
 
-#### `sendKeys` injection (how text reaches Claude)
+#### How text reaches Claude (headless stdin)
 
-`sendKeys` injects a message into the tmux pane in three steps:
-
-1. `send-keys C-u` — clear any partial input (reliable for Ink, unlike Escape which eats the first pasted char)
-2. `load-buffer` + `paste-buffer -p` — atomic paste, no size limit, CJK-safe. **`-p` (bracketed paste)** keeps newlines literal, so a multiline message stays one message instead of each `\n` being treated as a submit (which would split it into several sends).
-3. `send-keys C-m` — submit. **Must be `C-m`, not `Enter`**: Claude's Ink TUI swallows a plain `Enter` issued right after a bracketed paste (this is why `-p` was removed in commit ceb84e6 back when submit used `Enter`). `C-m` submits reliably.
-
-History: `-p` was added (4aa7eb0), removed because `-p`+`Enter` dropped the submit (ceb84e6), then re-added together with the `Enter`→`C-m` switch. The receive-side `\r`→`\n` normalization in `extract.mjs` (commit 41dc032) is now a no-op under `-p` but kept as a harmless fallback. Verified 30/30 on EC2 (CC v2.1.159): single/multiline, long text, CJK, special chars, markdown image. If Claude's Ink behavior changes, re-verify before editing. Same approach in `sendTypeInput` (AskUserQuestion "Type something" input).
+The bridge writes one JSON line per message to the session's headless process stdin:
+`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<msg>"}]}}`. Single-writer per session (one pooled process) → no jsonl double-write. Output is parsed line-by-line: `content_block_delta` → `stream_delta` preview, full `assistant`/`user` rows → authoritative `messages` (uuid-deduped against the jsonl copy), `result` → `stream_end`. See `docs/headless-streaming.md`.
 
 ### Create project
 
@@ -306,30 +297,14 @@ App: split reply by source → cache global (user/plugin/builtin) once per DEVIC
      project dir gets all global commands from the device cache with no per-project wait.
 ```
 
-### Local slash commands (terminal-only output)
+### Local slash commands
 
-Some builtin commands (status/config/usage/stats/goal/compact/context/heapdump/
-reload-skills) run client-side in CC and render output ONLY in the terminal —
-nothing reaches the .jsonl. After sending a bare such command, the bridge
-captures the terminal output and pushes it so the app can show it. (`/clear` is
-NOT included — it spawns a fresh empty session each time; users use the "+"
-new-session button for a clean context instead.)
-
-```
-App → … → Bridge:  send_message text="/usage"  (handled like any send)
-Bridge: sendKeys → then maybeCaptureLocalCommand():
-  bare "/cmd" (no args) AND cmd ∈ LOCAL_COMMANDS?   (args → triggers AI → .jsonl)
-   → captureCommandOutput(): poll `tmux capture-pane -e -p` every 800ms (≤25s):
-       "esc to interrupt" present → CC busy (local calc or AI), keep waiting
-       idle + screen stable across 2 reads → slice body (❯/cmd → dividers), keep ANSI
-       if full-screen dialog ("Esc to cancel/dismiss/close/clear") → send Escape
-         afterwards so the input box is freed (else next message is swallowed)
-Bridge → Server → App:  { action: "command_output", sessionId, requestId, ansi }
-  (relayed to session subscribers; empty ansi → app just stops the spinner)
-App: render ansi as a .cmd-output terminal block (anser → coloured HTML), live-only
-     (not persisted, won't reappear on reload). NOTE: full-screen dialogs taller than
-     the pane (Settings/Config) are truncated — we capture the visible screen only.
-```
+The tmux `capture-pane` capture for terminal-only commands (`command_output`) was
+removed with tmux (Phase 2E). Under headless a `/cmd` is sent as plain text and its
+output streams back normally; pure-TUI commands (`/usage`, `/context`, …) just
+aren't exposed. `/compact` still surfaces via its `<local-command-stdout>` jsonl row
+(rendered by `renderLocalCommandStdout`). `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/
+`SYNTHETIC_COMMANDS` in `commands.mjs` now only tag the command list.
 
 ## Entering a Session — Complete Flow
 
@@ -378,11 +353,11 @@ agentpeek/
 │   ├── http.mjs            # HTTP POST helper
 │   ├── extract.mjs         # Message extraction, image compression, DDB upload
 │   ├── session.mjs         # Preview, model, project name, session status detection
-│   ├── permissions.mjs     # Permission prompt detection via tmux capture-pane
-│   ├── tmux.mjs            # tmux target discovery, sendKeys, auto-launch
+│   ├── headless.mjs        # ClaudePool — persistent `claude -p` stream-json process per session
+│   ├── commands.mjs        # Slash-command scan (user/project/plugin/builtin)
 │   ├── sync.mjs            # Initial + periodic session sync
 │   ├── watcher.mjs         # fs.watch → read → WS push
-│   └── ws.mjs              # WebSocket client, auto-reconnect, sync_session handler
+│   └── ws.mjs              # WebSocket client, send/permission/interrupt, sync_session handler
 ├── server/
 │   ├── src/
 │   │   ├── main.py         # FastAPI entry
@@ -453,13 +428,14 @@ agentpeek/
 
 ### Phase 2B: Send Messages + Images ✅ Complete
 
-- tmux send-keys (cross-platform, zero-intrusion approach)
+> ⚠️ Originally tmux send-keys; **superseded by Phase 2E (headless stream-json pool)**. tmux is deleted. The image/reconnect/device pieces still stand.
+
 - Server WS relay: send_message, permission_reply, interrupt
-- Bridge: findTmuxTarget → sendKeys, auto-launch tmux + claude --resume
+- Bridge: `_pool.send` → headless `claude -p --resume` (was tmux findTarget/sendKeys/auto-launch)
 - Viewer: message sending + optimistic rendering + dedup, permission prompt + user interaction, image sending via S3
 - WS reconnect recovery: track wsLastTimestamp → recoverMissing() on reconnect
-- Auto-create tmux session when no existing target + device routing
-- Permission detection: client-side tool_use scanning + server-side capture-pane
+- Device routing
+- Permission: bridge relays CC's `control_request` → app prompt → `permission_reply` (was client-side scan + capture-pane)
 
 ### Phase 2C: Native App (Tauri v2) ✅ Complete
 

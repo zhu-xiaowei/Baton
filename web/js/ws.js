@@ -169,7 +169,7 @@ function connectWs(_, projectHash) {
         }
         if (pending && !pending.delivered) resolvePending(pending, msg.ok, msg.error);
       }
-      // New session: bridge created tmux + CC, returned sessionId
+      // New session: bridge spawned CC (headless), returned sessionId
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
         state.appState.session = msg.sessionId;
         state.appState.sessionPreview = 'New Session';
@@ -218,11 +218,6 @@ function connectWs(_, projectHash) {
       if (window.handleFileProgress) window.handleFileProgress(msg);
     } else if (msg.action === 'commands_list') {
       if (window.handleCommandsList) window.handleCommandsList(msg);
-    } else if (msg.action === 'command_output') {
-      if (msg.sessionId === state.wsSessionId && window.appendCommandOutput) {
-        state.wsRunning = false; // local command done; stop the spinner
-        window.appendCommandOutput(msg.ansi);
-      }
     } else if (msg.action === 'stream_delta') {
       if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'delta', seq: msg.seq, blockId: msg.blockId, chunk: msg.chunk });
     } else if (msg.action === 'stream_tool_input') {
@@ -947,9 +942,7 @@ function doSend(fullText, displayText, images) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
     wsSendReliable({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
   } else {
-    // streamMode (headless streaming) — default on; can be disabled via localStorage._streammode='0'.
-    var streamMode = localStorage.getItem('_streammode') !== '0';
-    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device, streamMode: streamMode });
+    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device });
   }
 
   // Empty session has no .messages yet; create one or the bubble + preview have nowhere to render.
@@ -1030,8 +1023,8 @@ function resolvePending(pending, ok, error) {
 }
 
 // Loose match: the echoed user message may differ from what we typed (CC can
-// rewrite slash commands, tmux may normalize newlines), so accept containment
-// rather than strict equality. Compares against stripped text (no image refs).
+// rewrite slash commands), so accept containment rather than strict equality.
+// Compares against stripped text (no image refs).
 function messageEchoed(pending) {
   var needle = stripImageRefs((pending.text || '').trim());
   if (!needle) return false;
@@ -1153,9 +1146,8 @@ function tryDedup(msg) {
     var pending = state.pendingSentMessages[i];
     var pendingText = pending.text.trim();
     // Loose match (containment either way), matching reconcile's messageEchoed:
-    // tmux newline normalization or CC rewrites can make the echo differ from
-    // what we typed by a few chars, and strict equality there is exactly what
-    // orphaned the optimistic bubble (→ stuck "sending..." + a duplicate).
+    // CC rewrites can make the echo differ from what we typed by a few chars, and
+    // strict equality there is exactly what orphaned the optimistic bubble.
     var isTextMatch = !!pendingText && (
       pendingText === stripped || pendingText === text ||
       stripped.indexOf(pendingText) !== -1 || pendingText.indexOf(stripped) !== -1);

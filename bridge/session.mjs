@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, STALL_JSONL_SILENCE_MS, AGENTS_JSON_TTL_MS } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, AGENTS_JSON_TTL_MS } from './config.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -228,9 +228,7 @@ export function statusFromEntry(entry) {
 const lastRunningTs = new Map();
 const RUNNING_DEBOUNCE_MS = 10_000;
 
-// Resolve content status, holding 'running' across end_turn flicker before
-// downgrading: debounce → process fallback. (Terminal-truth capture-pane was
-// removed with tmux; headless-owned sessions report busy via the pool.)
+// Hold 'running' across end_turn flicker (debounce → process fallback); headless-owned sessions report busy via the pool.
 export function resolveStatus(sessionId, contentStatus, procAliveFn) {
   if (contentStatus === 'running') {
     lastRunningTs.set(sessionId, Date.now());

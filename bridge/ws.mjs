@@ -178,7 +178,7 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId, msg.streamMode);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId);
       break;
     case 'permission_reply':
       handlePermissionReply(msg);
@@ -228,7 +228,7 @@ async function handleSyncSession(sessionId) {
   wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId, streamMode) {
+async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
 

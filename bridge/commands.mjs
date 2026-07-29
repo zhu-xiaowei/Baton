@@ -15,29 +15,22 @@ const BUILTIN_COMMANDS = [
   'team-onboarding', 'update-config', 'usage', 'verify',
 ];
 
-// AgentPeek-only commands: send realCmd, press nav keys to reach a CC sub-tab,
-// capture it, then Esc to dismiss. Re-check nav on CC upgrades.
+// AgentPeek-only commands. The nav/capture flow was tmux; dead under headless, kept for the command-list tag.
 export const SYNTHETIC_COMMANDS = {
   'stats-models': { realCmd: '/stats', nav: ['Down', 'Right'] },
 };
 
-// "local" commands run client-side in CC and render output only in the terminal
-// — they never write to the .jsonl. The bridge grabs their terminal output via
-// `tmux capture-pane` after send and pushes a `command_output` message (see
-// captureCommandOutput in tmux.mjs). Full-screen dialog ones (status/config/
-// usage/stats/context) are dismissed with Esc afterwards so the input box is
-// freed. Source: CC command `type: local`/`local-jsx`; re-check on CC upgrades.
-// NOTE: /compact is intentionally excluded — it writes its result back to the
-// .jsonl as a <local-command-stdout> user message, so it flows via that path
-// (rendered by renderLocalCommandStdout), not capture-pane.
+// "local" commands (CC `type: local`/`local-jsx`) render only in the terminal and
+// never write .jsonl. Under headless their output capture is gone — a /cmd is sent
+// as plain text and streams back normally; this set just tags them `local` in the
+// command list. (/compact is excluded — it writes a <local-command-stdout> row.)
 export const LOCAL_COMMANDS = new Set([
   'context', 'usage', 'heapdump',
   'goal', 'reload-skills', 'status', 'config', 'stats',
 ]);
 
-// Full-screen dialog commands (CC `type: local-jsx`): they hold the input box
-// open and need Esc to dismiss after capture. Footer text varies (e.g. /stats
-// has no "Esc to..."), so we dismiss by command name rather than matching text.
+// Full-screen dialog commands (CC `type: local-jsx`). Dead under headless (was
+// tmux Esc-dismiss); kept only so stale imports resolve.
 export const DIALOG_COMMANDS = new Set([
   'status', 'config', 'usage', 'stats', 'context',
 ]);
@@ -152,7 +145,7 @@ export function scanSlashCommands(projectDir) {
     list.push(c);
   }
 
-  // Synthetic commands (always local, captured via tmux nav).
+  // Synthetic commands (always local).
   for (const name of Object.keys(SYNTHETIC_COMMANDS)) {
     list.push({ name, source: 'builtin', local: true });
   }

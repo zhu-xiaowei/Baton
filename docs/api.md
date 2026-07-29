@@ -535,7 +535,7 @@ Keep connection alive.
 
 #### send_message
 
-Send a message to Claude Code (via tmux). Supports two modes:
+Send a message to Claude Code (via the headless stream-json process pool). Supports two modes:
 
 **Existing session:**
 ```json
@@ -551,12 +551,11 @@ Send a message to Claude Code (via tmux). Supports two modes:
 | Field | Description |
 |-------|-------------|
 | `requestId` | Client-generated id echoed back in `send_message_result`. Used as the launch lock key and to match the result to the originating new-session request |
-| `asAgent` | `true` → launch/route via `claude agents` TUI (Claude Agents background session) instead of a normal `claude --resume` session |
+| `asAgent` | `true` → new session runs as a Claude Agents background session |
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
-1. Has sessionId → find corresponding tmux pane → sendKeys
-2. Has sessionId but no tmux target → auto-create tmux + `claude --resume` → wait ready → sendKeys
-3. No sessionId, has projectHash → create tmux + `claude` (or `claude agents` if `asAgent`) → wait ready → sendKeys → poll .jsonl for new sessionId
+1. Has sessionId → `_pool.send` to the session's headless `claude -p --resume <id>` process (spawns it if none)
+2. No sessionId, has projectHash → headless spawn without `--resume`, take sessionId from `system/init` (new-session path — TODO)
 
 **Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
 
@@ -593,7 +592,7 @@ Interrupt the currently running Claude Code (equivalent to Ctrl+C).
 { "action": "interrupt", "sessionId": "a1ca0870-xxxx", "device": "MacBook-Pro" }
 ```
 
-**Server handling**: Forward to matching bridge by `device`. Bridge sends interrupt signal to the matching tmux pane.
+**Server handling**: Forward to matching bridge by `device`. Bridge SIGINTs the session's headless Claude Code process (`_pool.interrupt`).
 
 ---
 
@@ -882,9 +881,9 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 
 ---
 
-#### command_output
+#### command_output — removed (Phase 2E)
 
-A "local" slash command (e.g. `/goal`, `/usage`, `/status`) renders output only in CC's terminal and never writes to the `.jsonl`. After the bridge sends one (a bare `/cmd`, no args — args would trigger the AI and flow through the `.jsonl` instead), it grabs the terminal output via `tmux capture-pane -e -p` and pushes it here.
+Was the tmux `capture-pane` push for "local" slash-command terminal output. Removed with tmux: under headless a `/cmd` is sent as plain text and its output streams back normally; pure-TUI commands just aren't exposed. Original spec below, for reference only:
 
 ```json
 {

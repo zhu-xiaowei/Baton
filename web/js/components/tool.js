@@ -18,7 +18,7 @@
     // theme controls the palette (CC's default colours/dim are invisible on #0d1117).
     return window.Anser.ansiToHtml(window.Anser.escapeForHtml(str), { use_classes: true });
   }
-  window.ansiHtml = ansiHtml; // reused by command_output rendering
+  window.ansiHtml = ansiHtml;
 
   // Render Bash tool
   function renderBash(input, result) {

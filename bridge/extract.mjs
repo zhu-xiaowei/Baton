@@ -97,7 +97,7 @@ export async function extractForApp(msg) {
   }
 
   let content = msg.message?.content ?? '';
-  // Normalize \r → \n (tmux paste-buffer converts \n to \r in terminal input)
+  // Normalize \r → \n defensively (some inputs carry CR line endings)
   if (typeof content === 'string') {
     content = content.replace(/\r\n?/g, '\n');
   }
