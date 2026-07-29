@@ -87,15 +87,15 @@ def main():
         sess_writes.append(new_item)
         old_deletes.append({"accountId": account_id, "sk": sk})
 
-        status = it.get("status", "stopped")
+        status = it.get("status", "completed")
         last_active = it.get("lastActive", "")
 
-        # Device aggregate
+        # Device aggregate (idleCount now tracks needs_input; legacy idle counted too).
         d = device_agg[(account_id, device)]
         d["os"] = it.get("os", d["os"])
         d["sessionCount"] += 1
         if status == "running": d["runningCount"] += 1
-        elif status == "idle": d["idleCount"] += 1
+        elif status in ("needs_input", "idle"): d["idleCount"] += 1
         if last_active > d["lastActive"]: d["lastActive"] = last_active
         d["projects"].add(project)
 
@@ -104,7 +104,7 @@ def main():
         p["projectName"] = it.get("projectName", project)
         p["sessionCount"] += 1
         if status == "running": p["runningCount"] += 1
-        elif status == "idle": p["idleCount"] += 1
+        elif status in ("needs_input", "idle"): p["idleCount"] += 1
         if last_active > p["lastActive"]: p["lastActive"] = last_active
 
     print()

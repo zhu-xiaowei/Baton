@@ -9,6 +9,7 @@ import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
+import { updateSessionStatus } from './sync.mjs';
 
 let _ws = null;
 let _config = null;
@@ -23,6 +24,10 @@ const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
 
 const _pool = new ClaudePool();
+
+// True while the pool has a live process for this session — its status is owned
+// by pool lifecycle events, so the jsonl watcher must not also write it.
+export function poolOwns(sessionId) { return _pool.owns(sessionId); }
 
 // uuids headless already broadcast live (stdout always beats jsonl landing, measured
 // 100ms~several s). watcher checks this so the later jsonl copy only writes DDB, not WS.
@@ -48,6 +53,14 @@ function cwdForSession(sessionId) {
   if (!filePath) return null;
   const projectHash = path.basename(path.dirname(filePath));
   return projectHashToPath(projectHash);
+}
+
+// Push a pool-owned session's status to DDB (dedup + counter delta live in updateSessionStatus).
+async function syncPoolStatus(sessionId, status) {
+  const filePath = findSessionFile(sessionId);
+  if (!filePath || !_config) return;
+  const projectHash = path.basename(path.dirname(filePath));
+  try { await updateSessionStatus(_config, sessionId, filePath, projectHash, status); } catch {}
 }
 
 export function initWs(config) {
@@ -273,6 +286,8 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     wsSend({ action: 'send_message_result', sessionId, ok, error, clientId });
   };
 
+  syncPoolStatus(sessionId, 'running');
+
   await _pool.send(sessionId, text, {
     cwd,
     resumeId: sessionId,
@@ -308,6 +323,8 @@ async function handleHeadlessSend(sessionId, text, clientId) {
     },
     onResult: (sid, result, finalSeq) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
+      // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
+      syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed');
     },
     onControlRequest: (req) => {
       const r = req.request || {};
@@ -317,6 +334,7 @@ async function handleHeadlessSend(sessionId, text, clientId) {
         requestId: req.request_id, toolName: r.tool_name,
         input, requiresInteraction: !!r.requires_user_interaction,
       });
+      syncPoolStatus(sessionId, 'needs_input');
       let kind = 'tool';
       if (r.requires_user_interaction) {
         kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';
@@ -501,6 +519,7 @@ function handlePermissionReply(msg) {
     } else {
       _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'The user did not answer.', interrupt: true });
     }
+    syncPoolStatus(sessionId, 'running'); // turn resumes; onResult settles to completed
     return;
   }
   // Ordinary tool: allow (input unchanged) or deny.
@@ -509,4 +528,5 @@ function handlePermissionReply(msg) {
   } else {
     _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'User denied this tool call.' });
   }
+  syncPoolStatus(sessionId, 'running'); // turn resumes; onResult settles to completed
 }

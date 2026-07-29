@@ -53,9 +53,9 @@
   };
 
   // Spinner's single source of truth: walk the tail to the last real turn.
-  // Assistant pre-end_turn / user awaiting reply → running; else idle.
+  // Assistant pre-end_turn / user awaiting reply → running; else not running.
   // authStatus (optional): bridge's session status; for a trailing lone `user` entry
-  // (ambiguous in the stream), trust authStatus==='idle' over the stream.
+  // (ambiguous in the stream), trust authStatus==='completed' over the stream.
   // True if this tool_result answers an AskUserQuestion/ExitPlanMode (is_error but not an interrupt — CC resumes).
   window.isInteractiveToolResult = function (msg, messages) {
     if (!Array.isArray(msg.content)) return false;
@@ -84,7 +84,7 @@
       if (m.type === 'ai-title' || m.type === 'custom-title' || m.type === 'last-prompt') continue;
       if (window.isLocalCommandStdout(m)) return false;
       // Match bridge statusFromEntry: only streaming (null) / tool_use are running;
-      // end_turn / max_tokens / stop_sequence are a finished turn → idle.
+      // end_turn / max_tokens / stop_sequence are a finished turn → not running.
       if (m.type === 'assistant') return m.stopReason == null || m.stopReason === 'tool_use';
       if (m.type === 'user') {
         if (window.isInterruptMsg(m)) return false;
@@ -97,8 +97,8 @@
           continue;
         }
         // Real user turn awaiting a reply — the ambiguous case. Defer to the
-        // bridge's pane-checked verdict when it says idle (only at tail).
-        if (atTail && authStatus === 'idle') return false;
+        // bridge's verdict when it says the turn is done (only at tail).
+        if (atTail && authStatus === 'completed') return false;
         return true;
       }
       atTail = false;

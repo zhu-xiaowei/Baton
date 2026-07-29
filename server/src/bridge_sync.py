@@ -6,6 +6,7 @@ Usage: app.include_router(bridge_router) in main.py
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import List, Optional
+from boto3.dynamodb.conditions import Key
 import boto3
 import os
 import json
@@ -41,11 +42,10 @@ class SessionItem(BaseModel):
     size: int = 0
     preview: str = ""
     model: str = ""
-    status: str = "stopped"  # "running" | "idle" | "stopped"
+    status: str = "completed"  # "running" | "needs_input" | "completed"
     isAgent: bool = False
     agentName: str = ""
     agentDetail: str = ""
-    agentState: str = ""
 
 
 class DeviceAggregate(BaseModel):
@@ -70,8 +70,8 @@ class StatusDelta(BaseModel):
     projectHash: str
     projectName: str = ""
     # 'from' is reserved in Python, use alias
-    from_: str = "stopped"   # populated via Field alias below
-    to: str = "stopped"
+    from_: str = "completed"   # populated via Field alias below
+    to: str = "completed"
     lastActive: str = ""
 
     class Config:
@@ -104,9 +104,11 @@ class SyncMessagesRequest(BaseModel):
 
 def _counter_delta(from_: str, to: str):
     """Map a status transition to (running_delta, idle_delta, session_delta).
-    'new' from-state means this is a brand-new session (sessionCount += 1)."""
+    'new' from-state means this is a brand-new session (sessionCount += 1).
+    idleCount now tracks needs_input; legacy 'idle' still counts inbound so old
+    counters drain correctly on a migrating session's next transition."""
     def w(s):
-        return (1 if s == "running" else 0, 1 if s == "idle" else 0)
+        return (1 if s == "running" else 0, 1 if s in ("needs_input", "idle") else 0)
     f_run, f_idle = (0, 0) if from_ == "new" else w(from_)
     t_run, t_idle = w(to)
     return (t_run - f_run, t_idle - f_idle, 1 if from_ == "new" else 0)
@@ -186,17 +188,18 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "size": s.size,
                 "updatedAt": now,
             }
-            # Sparse GSI: running/idle + done agents appear in accountId-activeStatus-index.
-            if s.status in ("running", "idle"):
+            # GSI accountId-activeStatus-index: active (running/needs_input) as bare
+            # status; every completed session as done#<lastActive> (any type, for the
+            # recent-completed list + live device/project count groupby).
+            if s.status in ("running", "needs_input"):
                 item["activeStatus"] = s.status
-            elif s.isAgent and s.agentState == "done":
+            elif s.status == "completed":
                 item["activeStatus"] = f"done#{s.lastActive}"
             # Agent metadata (sparse — only written when isAgent=True)
             if s.isAgent:
                 item["isAgent"] = True
                 item["agentName"] = s.agentName
                 item["agentDetail"] = s.agentDetail
-                item["agentState"] = s.agentState
             batch.put_item(Item=item)
 
     # 2a. Full-sync path: PutItem-overwrite DEV# + PROJ# aggregates (authoritative counters).
@@ -245,6 +248,76 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             print(f"statusDelta apply failed: {e}")
 
     return {"synced": len(req.sessions)}
+
+
+class ReconcileRequest(BaseModel):
+    deviceName: str
+    os: str = ""
+
+
+@bridge_router.post("/reconcile")
+async def reconcile(req: ReconcileRequest, raw: Request):
+    """Recount a device's DEV#/PROJ# aggregates from its own SESS# rows so the stored
+    projectCount/sessionCount stay accurate & DDB-self-consistent (device row ==
+    projects-list length). Called by the bridge on first boot, after a version
+    upgrade, and when a new project appears. Counts DDB, not disk — ghost rows count
+    too (deletion is a later feature). running/needs_input stay live at read time."""
+    sessions_table, _ = _tables()
+    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    now = datetime.utcnow().isoformat()
+
+    resp = sessions_table.query(KeyConditionExpression=Key("accountId").eq(key_hash)
+                                & Key("sk").begins_with(f"SESS#{req.deviceName}#"))
+    sess = resp.get("Items", [])
+    while "LastEvaluatedKey" in resp:
+        resp = sessions_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"],
+                                    KeyConditionExpression=Key("accountId").eq(key_hash)
+                                    & Key("sk").begins_with(f"SESS#{req.deviceName}#"))
+        sess.extend(resp.get("Items", []))
+
+    proj = {}  # projectHash -> {count, name, lastActive}
+    device_last = ""
+    for s in sess:
+        ph = s.get("projectHash", "")
+        if not ph:
+            continue
+        p = proj.setdefault(ph, {"count": 0, "name": s.get("projectName", ph), "lastActive": ""})
+        p["count"] += 1
+        la = s.get("lastActive", "")
+        if la > p["lastActive"]:
+            p["lastActive"] = la
+        if la > device_last:
+            device_last = la
+
+    # Existing PROJ# rows → prune orphans (a PROJ# with no matching SESS#, e.g. stale
+    # worktree hashes) so the projects list == projectCount. Counts DDB, not disk.
+    existing = sessions_table.query(
+        KeyConditionExpression=Key("accountId").eq(key_hash)
+        & Key("sk").begins_with(f"PROJ#{req.deviceName}#"),
+        ProjectionExpression="sk")
+    orphans = [i["sk"] for i in existing.get("Items", [])
+               if i["sk"].split("#", 2)[-1] not in proj]
+
+    with sessions_table.batch_writer() as batch:
+        for ph, p in proj.items():
+            batch.put_item(Item={
+                "accountId": key_hash, "sk": f"PROJ#{req.deviceName}#{ph}",
+                "entityType": "project", "deviceName": req.deviceName,
+                "projectHash": ph, "projectName": p["name"],
+                "sessionCount": p["count"], "lastActive": p["lastActive"], "updatedAt": now,
+            })
+        for sk in orphans:
+            batch.delete_item(Key={"accountId": key_hash, "sk": sk})
+    sessions_table.update_item(
+        Key={"accountId": key_hash, "sk": f"DEV#{req.deviceName}"},
+        UpdateExpression=("SET sessionCount = :sc, projectCount = :pc, entityType = :et, "
+                          "deviceName = :dn, os = if_not_exists(os, :os), lastActive = :la"),
+        ExpressionAttributeValues={
+            ":sc": len(sess), ":pc": len(proj), ":et": "device",
+            ":dn": req.deviceName, ":os": req.os, ":la": device_last,
+        },
+    )
+    return {"sessionCount": len(sess), "projectCount": len(proj)}
 
 
 @bridge_router.post("/sync-messages")

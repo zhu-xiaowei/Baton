@@ -56,8 +56,8 @@ async def get_config():
 
 @read_router.get("/active-sessions")
 async def get_active_sessions(request: Request):
-    """Return active sessions + recent 20 completed agents.
-    Two GSI queries: running/idle (between) + done (begins_with, limit 20 desc)."""
+    """Return active sessions + the 20 most recently completed sessions (any type).
+    Two GSI queries: running/needs_input (between) + done# (begins_with, limit 20 desc)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
 
@@ -66,7 +66,7 @@ async def get_active_sessions(request: Request):
     loop = asyncio.get_running_loop()
     active_items, done_items = await asyncio.gather(
         loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("idle", "running"))),
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
             ScanIndexForward=False, Limit=20).get("Items", [])),
@@ -77,7 +77,7 @@ async def get_active_sessions(request: Request):
         s = {
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
-            "status": item.get("status", "stopped"),
+            "status": item.get("status", "completed"),
             "deviceName": item.get("deviceName", ""),
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
@@ -87,22 +87,39 @@ async def get_active_sessions(request: Request):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
             s["agentDetail"] = item.get("agentDetail", "")
-            s["agentState"] = item.get("agentState", "")
         return s
 
-    sessions = [_to_session(i) for i in active_items if i.get("status") in ("running", "idle")]
+    sessions = [_to_session(i) for i in active_items if i.get("status") in ("running", "needs_input")]
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 
-    recent_agents = [_to_session(i) for i in done_items]
+    recent_sessions = [_to_session(i) for i in done_items]
 
-    return {"sessions": sessions, "recentAgents": recent_agents}
+    return {"sessions": sessions, "recentSessions": recent_sessions}
+
+
+def _live_active_counts(sessions_table, account_id):
+    """Live count of running/needs_input per device and per device#project, from the
+    sparse active GSI (a few rows). Avoids drift-prone stored counters."""
+    rows = _query_all(sessions_table, IndexName="accountId-activeStatus-index",
+        KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))
+    dev = {}   # deviceName -> {running, needs_input}
+    proj = {}  # (deviceName, projectHash) -> {running, needs_input}
+    for r in rows:
+        st = r.get("status", "")
+        if st not in ("running", "needs_input"):
+            continue
+        dn, ph = r.get("deviceName", ""), r.get("projectHash", "")
+        d = dev.setdefault(dn, {"running": 0, "needs_input": 0}); d[st] += 1
+        p = proj.setdefault((dn, ph), {"running": 0, "needs_input": 0}); p[st] += 1
+    return dev, proj
 
 
 @read_router.get("/devices")
 async def get_devices(request: Request):
-    """Read pre-aggregated DEV# items (one per device). O(K) where K = device count."""
+    """DEV# items for sessionCount/projectCount (reconciled); running/needs_input live."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
+    live_dev, _ = _live_active_counts(sessions_table, account_id)
 
     items = _query_all(
         sessions_table,
@@ -130,13 +147,14 @@ async def get_devices(request: Request):
         name = item.get("deviceName", "")
         if not name:
             continue
+        lc = live_dev.get(name, {})
         devices.append({
             "deviceName": name,
             "os": item.get("os", ""),
             "projectCount": int(item.get("projectCount", 0)),
             "sessionCount": int(item.get("sessionCount", 0)),
-            "runningCount": int(item.get("runningCount", 0)),
-            "idleCount": int(item.get("idleCount", 0)),
+            "runningCount": lc.get("running", 0),
+            "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
             "online": name in online_devices,
         })
@@ -146,9 +164,10 @@ async def get_devices(request: Request):
 
 @read_router.get("/projects")
 async def get_projects(request: Request, device: str = Query(...)):
-    """Read pre-aggregated PROJ# items for the device. O(K) where K = project count."""
+    """PROJ# items for sessionCount; running/needs_input counted live."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
+    _, live_proj = _live_active_counts(sessions_table, account_id)
 
     items = _query_all(
         sessions_table,
@@ -161,13 +180,14 @@ async def get_projects(request: Request, device: str = Query(...)):
         if not ph:
             continue
         pn = item.get("projectName", ph)
+        lc = live_proj.get((device, ph), {})
         projects.append({
             "projectHash": ph,
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "projectPath": pn,
             "sessionCount": int(item.get("sessionCount", 0)),
-            "runningCount": int(item.get("runningCount", 0)),
-            "idleCount": int(item.get("idleCount", 0)),
+            "runningCount": lc.get("running", 0),
+            "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
         })
     projects.sort(key=lambda x: x["lastActive"], reverse=True)
@@ -192,13 +212,12 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
             "lastActive": item.get("lastActive", ""),
             "size": item.get("size", 0),
             "model": item.get("model", ""),
-            "status": item.get("status", "stopped"),
+            "status": item.get("status", "completed"),
         }
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
             s["agentDetail"] = item.get("agentDetail", "")
-            s["agentState"] = item.get("agentState", "")
         sessions.append(s)
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 

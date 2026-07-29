@@ -29,18 +29,18 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
 }
 
-function agentStatusLabel(agentState) {
-  if (agentState === 'blocked') return 'Needs input';
-  if (agentState === 'running') return 'Working';
-  if (agentState === 'done') return 'Completed';
-  return agentState || 'Idle';
+// Unified 3-state (running / needs_input / completed); legacy idle/stopped/unknown → Done.
+function statusLabel(status) {
+  if (status === 'running') return 'Running';
+  if (status === 'needs_input') return 'Needs input';
+  return 'Done';
 }
 
-function agentStatusClass(agentState) {
-  if (agentState === 'blocked') return 'idle';
-  if (agentState === 'running') return 'running';
-  if (agentState === 'done') return 'completed';
-  return 'idle';
+// needs_input reuses the amber .badge.idle style; Done reuses the grey .badge.stopped (quiet terminal state).
+function statusClass(status) {
+  if (status === 'running') return 'running';
+  if (status === 'needs_input') return 'idle';
+  return 'stopped';
 }
 
 function showStats() {}  // no-op, stats bar removed
@@ -216,19 +216,19 @@ async function loadDevices() {
     var el = document.getElementById('active-section');
     var titleEl = el && el.previousElementSibling;
     if (!el) return;
-    if (!activeData.sessions || activeData.sessions.length === 0) {
+    var hasActive = activeData.sessions && activeData.sessions.length > 0;
+    if (!hasActive) {
       el.remove();
       if (titleEl) titleEl.remove();
-      return;
     }
-    if (titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
-    el.innerHTML = activeData.sessions.map(function (s) {
+    if (hasActive && titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
+    if (hasActive) el.innerHTML = (activeData.sessions).map(function (s) {
       var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
-      var statusLabel = s.isAgent ? agentStatusLabel(s.agentState) : (s.status === 'running' ? 'Running' : 'Idle');
-      var statusClass = s.isAgent ? agentStatusClass(s.agentState) : s.status;
+      var sLabel = statusLabel(s.status);
+      var sClass = statusClass(s.status);
       var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-      var detail = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? s.agentDetail : '';
-      return '<div class="active-card ' + esc(statusClass) + '"'
+      var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
+      return '<div class="active-card ' + esc(sClass) + '"'
         + ' data-sid="' + esc(s.sessionId) + '"'
         + ' data-preview="' + esc(s.preview || '') + '"'
         + ' data-status="' + esc(s.status) + '"'
@@ -237,31 +237,32 @@ async function loadDevices() {
         + ' data-pname="' + esc(s.projectName) + '"'
         + ' data-isagent="' + (s.isAgent ? 'true' : '') + '"'
         + ' onclick="openActiveSession(this)">'
-        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
+        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(sClass) + '">' + sLabel + '</span></span></div>'
         + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
         + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '</div>';
     }).join('');
 
-    // Recent Agents section
+    // Completed Sessions section — the 20 most recently finished sessions (any type).
     var raSection = document.getElementById('recent-agents-section');
-    if (raSection && activeData.recentAgents && activeData.recentAgents.length > 0) {
+    if (raSection && activeData.recentSessions && activeData.recentSessions.length > 0) {
       var collapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
       raSection.innerHTML = '<div class="section-title collapsible' + (collapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">'
-        + 'Completed Agents (' + activeData.recentAgents.length + ') ' + _chevron + '</div>'
+        + 'Completed Sessions (' + activeData.recentSessions.length + ') ' + _chevron + '</div>'
         + '<div class="active-grid" id="recent-agents-grid" style="' + (collapsed ? 'display:none' : '') + '">'
-        + activeData.recentAgents.map(function (s) {
-          var title = s.agentName || s.preview || 'No preview';
-          return '<div class="active-card completed"'
+        + activeData.recentSessions.map(function (s) {
+          var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+          var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
+          return '<div class="active-card stopped"'
             + ' data-sid="' + esc(s.sessionId) + '"'
             + ' data-preview="' + esc(s.preview || '') + '"'
             + ' data-status="' + esc(s.status) + '"'
             + ' data-device="' + esc(s.deviceName) + '"'
             + ' data-phash="' + esc(s.projectHash) + '"'
             + ' data-pname="' + esc(s.projectName) + '"'
-            + ' data-isagent="true"'
+            + ' data-isagent="' + (s.isAgent ? 'true' : '') + '"'
             + ' onclick="openActiveSession(this)">'
-            + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges"><span class="badge agent">Agent</span><span class="badge completed">Completed</span></span></div>'
+            + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge stopped">Done</span></span></div>'
             + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
             + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
             + '</div>';
@@ -288,11 +289,11 @@ async function loadDevices() {
     if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
     devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
     el.innerHTML = devData.devices.map(function (d) {
-      var rc = d.runningCount || 0, ic = d.idleCount || 0;
+      var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
       var dotClass = d.online ? 'online' : 'offline';
       return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
         + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-        + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+        + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
         + '</div>';
     }).join('');
     showStats(devData.devices.length + ' device(s)');
@@ -318,12 +319,12 @@ async function loadProjects(device) {
     var data = await api('/api/bridge/projects', { device: device });
     if (_navVersion !== myNav) return;
     content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
-      var rc = p.runningCount || 0, ic = p.idleCount || 0;
+      var rc = p.runningCount || 0, ic = p.needsInputCount || 0;
       var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
       return '<a class="item" href="' + projHref + '" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;">'
         + '<div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
         + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
-        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
         + '</a>';
     }).join('') + '</div>';
     showStats(data.projects.length + ' project(s)');
@@ -348,11 +349,11 @@ async function loadSessions(device, projectHash, projectName) {
       + data.sessions.map(function (s) {
       var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
       var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
-      var sLabel = s.isAgent ? agentStatusLabel(s.agentState) : (s.status === 'running' ? 'Running' : s.status === 'idle' ? 'Idle' : 'Stopped');
-      var sClass = s.isAgent ? agentStatusClass(s.agentState) : (s.status || 'stopped');
+      var sLabel = statusLabel(s.status);
+      var sClass = statusClass(s.status);
       var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
       var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-      var detailHtml = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
+      var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
       return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="if(window.getSelection().toString())return false;openSession(this);return false;">'
         + '<div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
         + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div>'

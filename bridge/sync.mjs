@@ -8,6 +8,7 @@ import {
   getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
   normalizeProjectHash,
 } from './session.mjs';
+import { poolOwns } from './ws.mjs';
 
 // Sessions seen in last 24h — only these get metadata synced by watcher
 export const recentSessions = new Set();
@@ -15,6 +16,10 @@ let isInitialSync = true;
 
 // Cache of last-known status per sessionId for periodic stopped detection
 export const lastKnownStatus = new Map();
+
+// Projects seen so far (normalized hash). Seeded by syncSessions on startup so the
+// watcher only triggers a reconcile when a genuinely new project appears post-boot.
+export const knownProjects = new Set();
 
 export async function syncSessions(config, opts = {}) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) {
@@ -73,20 +78,18 @@ export async function syncSessions(config, opts = {}) {
     // process) is no longer an agent — let it use the normal running/idle status.
     // But the daemon itself resumes done agents to keep them on standby (still in
     // roster) — those stay agents.
-    if (dm && !(dm.agentState === 'done' && runningInfo.sessions.has(s.id) && !daemonRunningIds.has(s.id))) {
+    if (dm && !(dm.status === 'completed' && runningInfo.sessions.has(s.id) && !daemonRunningIds.has(s.id))) {
       s.isAgent = true;
       s.agentName = dm.agentName;
       s.agentDetail = dm.agentDetail;
-      s.agentState = dm.agentState;
-      if (dm.agentState === 'done') s.status = 'stopped';
-      else if (dm.agentState === 'blocked') s.status = 'idle';
-      else s.status = 'running'; // working
+      s.status = dm.status;
     }
   }
 
-  // Update status cache
+  // Update status cache + seed knownProjects (so watcher only reconciles on truly new projects).
   for (const s of sessions) {
     lastKnownStatus.set(s.id, s.status);
+    knownProjects.add(s.project);
     delete s._filePath;
   }
 
@@ -107,8 +110,9 @@ export async function syncSessions(config, opts = {}) {
       projects.set(s.project, p);
     }
     p.sessionCount++;
+    // idleCount field now carries the needs_input count (the device row's 2nd number).
     if (s.status === 'running') p.runningCount++;
-    else if (s.status === 'idle') p.idleCount++;
+    else if (s.status === 'needs_input') p.idleCount++;
     if (s.lastActive > p.lastActive) p.lastActive = s.lastActive;
   }
   const projectAggregates = Array.from(projects.values());
@@ -116,7 +120,7 @@ export async function syncSessions(config, opts = {}) {
     sessionCount: sessions.length,
     projectCount: projectAggregates.length,
     runningCount: sessions.filter(s => s.status === 'running').length,
-    idleCount: sessions.filter(s => s.status === 'idle').length,
+    idleCount: sessions.filter(s => s.status === 'needs_input').length,
     lastActive: deviceLastActive,
   };
 
@@ -147,11 +151,11 @@ export async function syncSessions(config, opts = {}) {
   }
 
   const runningCount = sessions.filter(s => s.status === 'running').length;
-  const idleCount = sessions.filter(s => s.status === 'idle').length;
+  const needsInputCount = sessions.filter(s => s.status === 'needs_input').length;
   if (isInitialSync) {
-    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
-  } else if (runningCount > 0 || idleCount > 0) {
-    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${idleCount} idle`);
+    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${needsInputCount} needs input`);
+  } else if (runningCount > 0 || needsInputCount > 0) {
+    console.log(`[sync] ${sessions.length} sessions, ${runningCount} running, ${needsInputCount} needs input`);
   }
 
   // skipMessages: caller wants metadata-only sync (e.g. --skip-init mode).
@@ -182,8 +186,8 @@ export async function syncSessions(config, opts = {}) {
   for (const [, items] of projectSessions) {
     for (const s of items) {
       if (synced.has(s.sessionId) || syncedSessionIds.has(s.sessionId)) continue;
-      const status = lastKnownStatus.get(s.sessionId) || 'stopped';
-      const isLive = status !== 'stopped';
+      const status = lastKnownStatus.get(s.sessionId) || 'completed';
+      const isLive = status !== 'completed';
       const isRecent = s.mtime > recentCutoffMs;
       if (!isLive && !isRecent) continue;
       syncedSessionIds.add(s.sessionId);
@@ -224,6 +228,13 @@ export async function syncSessions(config, opts = {}) {
   isInitialSync = false;
 }
 
+// Recount this device's DEV#/PROJ# aggregates server-side (scans DDB SESS# rows).
+// Called on startup (first boot + post-upgrade restart) to keep totals accurate.
+export async function reconcile(config) {
+  try { await post('/api/bridge/reconcile', { deviceName: config.deviceName, os: process.platform }); }
+  catch {}
+}
+
 /**
  * Periodic check (every 5 min): detect CC processes that have disappeared and
  * flip running/idle → stopped.
@@ -257,7 +268,7 @@ export async function updateSessionStatus(config, sessionId, filePath, project, 
       deviceName: config.deviceName,
       projectHash: project,
       projectName,
-      from: prevStatus || 'stopped',
+      from: prevStatus || 'completed',
       to: newStatus,
       lastActive,
     }],
@@ -273,11 +284,13 @@ export async function checkStopped(config) {
   const statusDeltas = [];
 
   for (const [sessionId, prevStatus] of lastKnownStatus) {
-    if (prevStatus === 'stopped') continue;
+    if (prevStatus === 'completed') continue;
     // Daemon agents have no live --resume process, so getSessionStatus would
-    // wrongly read them as stopped (dropping agent metadata). Their status is
+    // wrongly read them as completed (dropping agent metadata). Their status is
     // owned by the `claude agents --json` poller — skip them here.
     if (daemonMeta.has(sessionId)) continue;
+    // Pool-owned sessions get status from headless lifecycle events — skip here.
+    if (poolOwns(sessionId)) continue;
 
     // Find the session's project hash
     for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {

@@ -177,11 +177,10 @@ export function readableProjectName(projectHash) {
 
 /**
  * Determine session status from CC process state + jsonl content.
- * Returns "running" | "idle" | "stopped"
+ * Returns "running" | "completed" (external sessions can't observe needs_input).
  *
- * - stopped: no CC process for this session
  * - running: CC process on this session + jsonl shows active work
- * - idle: CC process on this session + jsonl shows waiting for user
+ * - completed: finished turn, no process, or stale file
  *
  * @param {string} sessionId - the session UUID
  * @param {string} filePath - path to .jsonl file
@@ -199,7 +198,7 @@ export function statusFromEntry(entry) {
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
     if (sr === 'tool_use') return 'running';
-    if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'idle';
+    if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'completed';
   }
   if (t === 'user') {
     if (entry.isMeta || entry.isCompactSummary) return null; // meta, not a turn
@@ -207,15 +206,15 @@ export function statusFromEntry(entry) {
     if (Array.isArray(c)) {
       // [Request interrupted by user] or [Request interrupted by user for tool use]
       if (c.length === 1 && c[0].type === 'text'
-        && c[0].text.startsWith('[Request interrupted by user')) return 'idle';
+        && c[0].text.startsWith('[Request interrupted by user')) return 'completed';
       // tool_result with is_error=true only (user interrupted during tool execution)
-      if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'idle';
+      if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'completed';
     }
     if (typeof c === 'string') {
       const cs = c.trim();
-      // Command finished → idle; noise & /clear (no reply) → skip; other
+      // Command finished → completed; noise & /clear (no reply) → skip; other
       // <command-name> falls through to 'running' (awaiting a reply).
-      if (/^<local-command-stdout>/.test(cs)) return 'idle';
+      if (/^<local-command-stdout>/.test(cs)) return 'completed';
       if (/^<(?:local-command-caveat|task-notification|system-reminder)/.test(cs)) return null;
       if (/^<command-name>\/?clear<\/command-name>/.test(cs)) return null;
     }
@@ -228,15 +227,15 @@ export function statusFromEntry(entry) {
 const lastRunningTs = new Map();
 const RUNNING_DEBOUNCE_MS = 10_000;
 
-// Hold 'running' across end_turn flicker (debounce → process fallback); headless-owned sessions report busy via the pool.
-export function resolveStatus(sessionId, contentStatus, procAliveFn) {
+// Hold 'running' across end_turn flicker before downgrading to the terminal 'completed'.
+export function resolveStatus(sessionId, contentStatus) {
   if (contentStatus === 'running') {
     lastRunningTs.set(sessionId, Date.now());
     return 'running';
   }
   const last = lastRunningTs.get(sessionId);
   if (last && Date.now() - last < RUNNING_DEBOUNCE_MS) return 'running';
-  return procAliveFn() ? 'idle' : 'stopped'; // process fallback
+  return 'completed';
 }
 
 /**
@@ -247,7 +246,7 @@ function readStatusFromFile(filePath) {
     const fd = fs.openSync(filePath, 'r');
     const stat = fs.fstatSync(fd);
     const fileSize = stat.size;
-    if (fileSize === 0) { fs.closeSync(fd); return 'idle'; }
+    if (fileSize === 0) { fs.closeSync(fd); return 'completed'; }
 
     // Find last 6 newlines via reverse scan
     const newlines = [];
@@ -279,7 +278,7 @@ function readStatusFromFile(filePath) {
       if (s) return s;
     }
   } catch {}
-  return 'idle';
+  return 'completed';
 }
 
 /**
@@ -290,24 +289,24 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   // WSL monitoring Windows CC: can't detect processes, use mtime + content only
   const wslMode = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
-  // 1. No CC process for this project → stopped (skip on WSL)
+  // 1. No CC process for this project → completed (skip on WSL)
   if (!wslMode && !runningInfo.sessions.has(sessionId)) {
     const projectHash = path.basename(path.dirname(filePath));
-    if (!runningInfo.projects.has(projectHash)) return 'stopped';
-    if (runningInfo.sessions.size > 0) return 'stopped';
+    if (!runningInfo.projects.has(projectHash)) return 'completed';
+    if (runningInfo.sessions.size > 0) return 'completed';
   }
 
   // 2. Read jsonl content to determine status
   const contentStatus = readStatusFromFile(filePath);
 
-  // 3. File stale > 5min → stopped regardless of content
+  // 3. File stale > 5min → completed regardless of content
   //    A truly running session always writes to jsonl, keeping mtime fresh
   let mtimeMs = 0;
-  try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'stopped'; }
-  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'stopped';
+  try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'completed'; }
+  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'completed';
 
-  // 4. Debounce before downgrading running→idle/stopped.
-  return resolveStatus(sessionId, contentStatus, () => runningInfo.sessions.has(sessionId));
+  // 4. Debounce before downgrading running→completed.
+  return resolveStatus(sessionId, contentStatus);
 }
 
 /**
@@ -374,13 +373,13 @@ export function findSessionFile(sessionId) {
   return null;
 }
 
-// Map `claude agents --json` state → our 3-state agentState (Working / Needs
-// input / Completed). The CLI emits exactly working/blocked/done, so this is a
-// straight rename — no lifecycle/tempo ambiguity like the stale state.json had.
+// Map `claude agents --json` state → the unified session status (running /
+// needs_input / completed). The CLI emits working/blocked/done plus occasional
+// other values, all funneled into the same 3-state vocabulary.
 export function mapAgentState(a) {
   const st = a.state || '';
-  if (st === 'done') return 'done';
-  if (st === 'blocked') return 'blocked';
+  if (st === 'done') return 'completed';
+  if (st === 'blocked') return 'needs_input';
   return 'running';
 }
 
@@ -389,7 +388,7 @@ export function mapAgentState(a) {
 // jobs dir name == sessionId[:8], so read it directly. Only blocked agents show
 // a detail; others have none.
 export function agentDetailFor(a) {
-  if (mapAgentState(a) !== 'blocked') return '';
+  if (mapAgentState(a) !== 'needs_input') return '';
   try {
     const statePath = path.join(CLAUDE_JOBS, (a.id || a.sessionId || '').slice(0, 8), 'state.json');
     const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -417,7 +416,7 @@ export function resolveClaudeBin() {
 
 let _agentsCache = { at: 0, map: new Map() };
 // `claude agents --json --all` → Map<sessionId, {isAgent, agentName, agentDetail,
-// agentState}>. Daemon-live source of truth, cached briefly (AGENTS_JSON_TTL_MS)
+// status}>. Daemon-live source of truth, cached briefly (AGENTS_JSON_TTL_MS)
 // since sync/watcher call this per session. On any failure, returns the last
 // good cache (never an empty map that would flap every agent to stopped).
 export function getAgentsJson(force) {
@@ -444,7 +443,7 @@ export function getAgentsJson(force) {
       isAgent: true,
       agentName: a.name || '',
       agentDetail: agentDetailFor(a),
-      agentState: mapAgentState(a),
+      status: mapAgentState(a),
     });
   }
   _agentsCache = { at: now, map };

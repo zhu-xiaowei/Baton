@@ -4,8 +4,8 @@ import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMI
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
 import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
-import { recentSessions, lastKnownStatus } from './sync.mjs';
-import { wsSend, wsSendWithAck, headlessPushed } from './ws.mjs';
+import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
+import { wsSend, wsSendWithAck, headlessPushed, poolOwns } from './ws.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 
@@ -135,18 +135,15 @@ async function readAndSend(config, filename, sessionId) {
     // Exception: the daemon itself resumes done agents to keep them on standby
     // (still listed in roster) — those remain agents.
     let dm = getDaemonSessions().get(sessionId);
-    if (dm && dm.agentState === 'done' && getRunningInfo().sessions.has(sessionId) && !getDaemonRunningSessionIds().has(sessionId)) dm = null;
-    // Debounce + terminal-truth before downgrading (don't flicker the badge to
-    // idle mid-task). Daemon sessions skip it — reconciled below.
-    let newStatus = dm
-      ? lastStatus
-      : resolveStatus(sessionId, lastStatus, () => getRunningInfo().sessions.has(sessionId));
-    if (dm) {
-      if (dm.agentState === 'done') newStatus = 'stopped';
-      else if (dm.agentState === 'blocked') newStatus = 'idle';
-    }
+    if (dm && dm.status === 'completed' && getRunningInfo().sessions.has(sessionId) && !getDaemonRunningSessionIds().has(sessionId)) dm = null;
+    // Pool-owned sessions get their status from headless lifecycle events, not the
+    // jsonl tail — skip the status write here (message content still synced above).
+    if (!dm && poolOwns(sessionId)) return;
+    // Daemon agents use the daemon-live status directly; others debounce the
+    // running→completed downgrade so the badge doesn't flicker mid-task.
+    const newStatus = dm ? dm.status : resolveStatus(sessionId, lastStatus);
     await postSessionMeta(config, filePath, filename, sessionId, newStatus, dm, gotNewTitle);
-    // Trailing edge: content went idle but debounce held it 'running'. No more
+    // Trailing edge: content settled but debounce held it 'running'. No more
     // writes will fire fs.watch, so re-evaluate once after debounce expires.
     if (!dm && lastStatus !== 'running' && newStatus === 'running') scheduleRecheck(config, filePath, filename, sessionId);
   }
@@ -170,7 +167,7 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
   const statusDelta = (statusChanged || isNew) ? {
     deviceName: config.deviceName,
     projectHash,
-    from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'stopped'),
+    from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'completed'),
     to: newStatus,
     projectName: readableProjectName(projectHash),
     lastActive: stat.mtime.toISOString(),
@@ -189,7 +186,6 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
     sessionMeta.isAgent = true;
     sessionMeta.agentName = dm.agentName;
     sessionMeta.agentDetail = dm.agentDetail;
-    sessionMeta.agentState = dm.agentState;
   }
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
@@ -198,6 +194,11 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
     ...(statusDelta ? { statusDelta } : {}),
   });
   recentSessions.add(sessionId);
+  // First session of a brand-new project → recount totals so projectCount stays accurate.
+  if (!knownProjects.has(projectHash)) {
+    knownProjects.add(projectHash);
+    reconcile(config);
+  }
 }
 
 const _recheckTimers = new Map(); // sessionId → timeout, reset on new activity
@@ -213,7 +214,7 @@ function scheduleRecheck(config, filePath, filename, sessionId) {
   }, RECHECK_DELAY_MS));
 }
 
-const _jobsState = new Map(); // sessionId → { agentName, agentDetail, agentState }
+const _jobsState = new Map(); // sessionId → { agentName, agentDetail, status }
 
 // state.json is stale (the daemon computes state live but doesn't flush it
 // promptly), so fs.watch on it misses transitions. Poll `claude agents --json`
@@ -238,7 +239,7 @@ async function pollAgentStates(config) {
     // written), so preview is part of the diff — a title arriving later re-pushes.
     const preview = e.agentName || getPreview(filePath) || 'Agent session';
     const old = _jobsState.get(sid);
-    if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.agentState === e.agentState && old.preview === preview) continue;
+    if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.status === e.status && old.preview === preview) continue;
     _jobsState.set(sid, { ...e, preview });
     await pushAgentMeta(config, sid, e, filePath, preview);
   }
@@ -247,8 +248,7 @@ async function pollAgentStates(config) {
 async function pushAgentMeta(config, sessionId, e, filePath, preview) {
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
-  const status = e.agentState === 'done' ? 'stopped' : e.agentState === 'blocked' ? 'idle' : 'running';
-  lastKnownStatus.set(sessionId, status);
+  lastKnownStatus.set(sessionId, e.status);
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
@@ -260,11 +260,10 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview) {
       size: stat.size,
       preview,
       model: getModel(filePath),
-      status,
+      status: e.status,
       isAgent: true,
       agentName: e.agentName,
       agentDetail: e.agentDetail,
-      agentState: e.agentState,
     }],
   });
 }

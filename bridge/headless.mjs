@@ -285,6 +285,9 @@ export class ClaudePool {
 
   interrupt(key) { this.procs.get(key)?.interrupt(); }
 
+  // True while a live process exists for this session (pool owns its status).
+  owns(key) { const p = this.procs.get(key); return !!p && !p.dead; }
+
   isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && (p.busy || Date.now() < (p._graceUntil || 0)); }
 
   reapIdle() {

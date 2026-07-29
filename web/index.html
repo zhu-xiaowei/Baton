@@ -82,10 +82,10 @@
       html += '<div id="active-section" class="active-grid">';
       html += actives.map(function (s) {
         var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
-        var statusLabel = s.isAgent ? (s.agentState === 'blocked' ? 'Needs input' : s.agentState === 'running' ? 'Working' : s.agentState === 'done' ? 'Completed' : 'Idle') : (s.status === 'running' ? 'Running' : 'Idle');
-        var statusClass = s.isAgent ? (s.agentState === 'blocked' ? 'idle' : s.agentState === 'running' ? 'running' : s.agentState === 'done' ? 'completed' : 'idle') : s.status;
+        var statusLabel = s.status === 'running' ? 'Running' : s.status === 'needs_input' ? 'Needs input' : 'Done';
+        var statusClass = s.status === 'running' ? 'running' : s.status === 'needs_input' ? 'idle' : 'stopped';
         var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-        var detail = s.isAgent && s.agentState === 'blocked' && s.agentDetail ? s.agentDetail : '';
+        var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
         return '<div class="active-card ' + esc(statusClass) + '"'
           + ' data-nav="active"'
           + ' data-sid="' + esc(s.sessionId) + '"'
@@ -102,24 +102,25 @@
       }).join('');
       html += '</div>';
     }
-    var recentAgents = (activeData && activeData.recentAgents) || [];
-    if (recentAgents.length) {
+    var recentSessions = (activeData && activeData.recentSessions) || [];
+    if (recentSessions.length) {
       var raCollapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
       var chevron = '<svg class="collapse-arrow" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
       html += '<div id="recent-agents-section">';
-      html += '<div class="section-title collapsible' + (raCollapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">Completed Agents (' + recentAgents.length + ') ' + chevron + '</div>';
+      html += '<div class="section-title collapsible' + (raCollapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">Completed Sessions (' + recentSessions.length + ') ' + chevron + '</div>';
       html += '<div class="active-grid" id="recent-agents-grid" style="' + (raCollapsed ? 'display:none' : '') + '">';
-      html += recentAgents.map(function (s) {
-        var title = s.agentName || s.preview || 'No preview';
-        return '<div class="active-card completed" data-nav="active"'
+      html += recentSessions.map(function (s) {
+        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
+        return '<div class="active-card stopped" data-nav="active"'
           + ' data-sid="' + esc(s.sessionId) + '"'
           + ' data-preview="' + esc(s.preview || '') + '"'
           + ' data-status="' + esc(s.status) + '"'
           + ' data-device="' + esc(s.deviceName) + '"'
           + ' data-phash="' + esc(s.projectHash) + '"'
           + ' data-pname="' + esc(s.projectName) + '"'
-          + ' data-isagent="true">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges"><span class="badge agent">Agent</span><span class="badge completed">Completed</span></span></div>'
+          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge stopped">Done</span></span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
@@ -131,11 +132,11 @@
       html += '<div class="section-title">Devices (' + devs.length + ')</div>';
       html += '<div id="devices-section" class="list">';
       html += devs.map(function (d) {
-        var rc = d.runningCount || 0, ic = d.idleCount || 0;
+        var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
         return '<div class="item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
           + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' idle</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</div>';
       }).join('');
       html += '</div>';

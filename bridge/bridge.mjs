@@ -13,7 +13,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
-import { syncSessions, checkStopped } from './sync.mjs';
+import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startWatcher, startJobsWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 
@@ -60,6 +60,9 @@ if (CONFIG.wsUrl) {
 // for the periodic checkStopped() to detect disappeared CC processes.
 await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
+// syncSessions has awaited every SESS# write, so DDB is complete — recount now
+// (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
+await reconcile(CONFIG);
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
 // Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.
