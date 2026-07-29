@@ -72,7 +72,7 @@ Done:
 
 TODO (each currently returns a "not available yet" reply so the bridge boots; ref `docs/headless-streaming.md` §十三):
 - [ ] **New session / new agent / create_project** — `handleSendMessage` projectHash branch + `handleCreateProject` return "not available yet". Wire: headless spawn without `--resume`, take sessionId + cwd from `system/init` (watch the symlink-cwd trap).
-- [ ] **External-session status precision** — lost capture-pane truth; `resolveStatus`/`getSessionStatus` fall back to `ps aux` only. Headless-owned sessions report `busy` via the pool.
+- [ ] **External-session status precision** — lost capture-pane truth; `resolveStatus`/`getSessionStatus` fall back to `ps aux` + jsonl only, and can only produce `running`/`completed` (never `needs_input`). Pool-owned sessions report the full 3-state via pool events. See §DynamoDB Schema for the count/reconcile model.
 
 ### Phase 3: LATER — Production polish
 - Persist bridge sync state to disk, avoid re-uploading messages on restart
@@ -97,21 +97,30 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - `readableProjectName()` resolves hash back to real path by walking filesystem
 - `preview` uses `ai-title` from .jsonl, falls back to first user message
 - Filters: skips empty/no-preview files, subagent sessions
-- Session `status`: three-state (`running`/`idle`/`stopped`), determined by:
+- Session `status`: **three-state** (`running`/`needs_input`/`completed`), one field, no
+  parallel `agentState`. Displayed as Running (green) / Needs input (amber) / Done (grey).
+  Three sources map into this single enum:
+  - **pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
+    path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
+    `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
+  - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()`/`statusFromEntry()`
+    read jsonl tail `stop_reason` (`tool_use`/null → running; `end_turn`/interrupt/no-process →
+    `completed`). `resolveStatus()` holds `running` across a 10s debounce before downgrading.
+    External sessions can't observe `needs_input` (inherent precision loss — headless-only).
+  - **daemon agent**: `mapAgentState()` maps `--json` working/blocked/done → running/needs_input/completed.
+  - Precedence when a session matches more than one source: **daemon agent > pool-owned > external**.
+    watcher/`checkStopped` skip status writes for pool-owned (`poolOwns()`) and daemon-agent sessions.
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
-  - `getSessionStatus()`: reads jsonl tail `stop_reason` (`end_turn` → idle, `tool_use`/null → running, `user` last → running)
-  - Process detection: `ps aux | grep claude` (not `pgrep`, which fails from Node.js on macOS)
-  - terminal CC launched with `--resume` → exact session match → precise status
-  - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
-  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
-  - NOTE: capture-pane terminal-truth (`isTerminalBusy`/`paneRunState`) was removed with tmux (Phase 2E); external-session status now falls back to `ps aux` only. Headless-owned sessions report `busy` via the pool.
+    (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
+  - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the
+    frontend's `statusLabel`/`statusClass` fallback (no migration script; re-derived on next sync).
 - `projectHashToPath()` (in `session.mjs`): reverse hash to real directory path (validates each segment exists)
 - Claude Agents support:
-  - Agent status source is **`claude agents --json --all`** (daemon-live, matches the TUI), NOT `jobs/*/state.json` (the daemon computes state live but flushes state.json lazily, so it reads stale — often `done` while the agent is really blocked/working). `getAgentsJson()` runs the CLI (3s TTL cache; returns last-good cache on failure so agents never flap to stopped), resolving the `claude` binary by absolute path since systemd's bare PATH can't find it. `mapAgentState()` maps the CLI's clean working/blocked/done → running/blocked/done. Filter to `kind === 'background'` — `--json` also lists plain `kind:"interactive"` sessions (no `state`) which must NOT be tagged isAgent.
+  - Agent status source is **`claude agents --json --all`** (daemon-live, matches the TUI), NOT `jobs/*/state.json` (the daemon computes state live but flushes state.json lazily, so it reads stale — often `done` while the agent is really blocked/working). `getAgentsJson()` runs the CLI (3s TTL cache; returns last-good cache on failure so agents never flap to stopped), resolving the `claude` binary by absolute path since systemd's bare PATH can't find it. `mapAgentState()` maps the CLI's clean working/blocked/done → running/needs_input/completed (the unified status enum; the daemon map's field is `status`, not the old `agentState`). Filter to `kind === 'background'` — `--json` also lists plain `kind:"interactive"` sessions (no `state`) which must NOT be tagged isAgent.
   - `agentDetail` (the blocked question shown on the card) is the ONE field still read from `jobs/<sid[:8]>/state.json`'s `needs` — `--json`'s `waitingFor` is almost always null.
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds (still used to detect a done-agent resumed as a normal CC session).
   - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll full-pushes every agent (heals DDB + covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
-  - Status paths that key off live CC processes (`checkStopped`, stall idle-downgrade) must **skip daemon agents** — they have no `--resume` process, so they'd be misread as stopped and stripped of agent metadata. Agent status is owned by the poll.
+  - Status paths that key off live CC processes (`checkStopped`) must **skip daemon agents AND pool-owned sessions** — daemon agents have no `--resume` process (would be misread as completed + stripped of agent metadata); pool-owned sessions get their status from pool events. Precedence: daemon agent > pool-owned > external.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal stuck agent: were tmux `claude agents` TUI navigation — **removed in Phase 2E**, TODO to re-wire via headless `claude -p --resume <agentSessionId>` (agent sessions resume like any normal CC session; the daemon-live `--json` status source is untouched).
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
@@ -121,8 +130,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
 - Auto-update: every 5min `checkUpdate()` compares local `config.version` vs server `/api/version`; on change, downloads from `/api/install` (files baked into the Lambda image) + restarts. So deploying the server (`install.sh`) auto-updates ALL bridges within 5min — no manual touch.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
-- Initial sync: full session metadata + messages for running/idle + recent 24h sessions, parallel (concurrency=4)
-- Periodic check (5min): `checkStopped()` — only detects disappeared CC processes via `ps aux`
+- Initial sync: full session metadata (all SESS#) + messages for active + recent 24h sessions, parallel (concurrency=4). `await syncSessions()` then `await reconcile()` (recount aggregates at that definite completion point).
+- Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips daemon-agent + pool-owned)
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
 - Debounce: busy Map per session dedup fs.watch duplicate events
@@ -149,17 +158,39 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 
 ## DynamoDB Schema
 
-```
-BridgeSessions
-  PK: accountId (SHA256(apiKey)[:16])
-  SK: deviceName#projectHash#sessionId
-  Attributes: deviceName, projectHash, projectName, sessionId, lastActive, preview, model, status (running/idle/stopped), size, os
+**Single-table design** — `BridgeSessions` holds three entity types keyed by SK prefix:
 
-BridgeMessages
-  PK: sessionId    SK: timestamp#uuid
-  Attributes: uuid, type, content (JSON), timestamp
-  TTL: 30 days
 ```
+BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
+  SK: DEV#<device>                          entityType=device   — one row per device
+      → sessionCount, projectCount, os, lastActive   (aggregates)
+  SK: PROJ#<device>#<projectHash>           entityType=project  — one row per project
+      → sessionCount, projectName, lastActive         (aggregates)
+  SK: SESS#<device>#<projectHash>#<sid>     entityType=session  — the real session row
+      → status (running/needs_input/completed), preview, model, size, lastActive,
+        isAgent, agentName, agentDetail
+  GSI accountId-activeStatus-index (sparse, ProjectionType ALL):
+      activeStatus = "running" | "needs_input"      (active sessions)
+                   | "done#<lastActive>"            (every completed session)
+      → homepage Active Sessions = between("needs_input","running"); c<n<r so
+        completed/done# are excluded. Completed Sessions = begins_with("done#") desc limit 20.
+
+BridgeMessages   PK: sessionId    SK: timestamp#uuid
+  Attributes: uuid, type, content (JSON), timestamp    TTL: 30 days
+```
+
+**Count consistency (aggregates drift; DDB-self-consistent, not disk-truth):**
+- Read endpoints serve `sessionCount`/`projectCount` from DEV#/PROJ# aggregates (O(1)).
+  `running`/`needsInputCount` are counted **live** from the sparse active GSI (a few rows).
+- `POST /api/bridge/reconcile` recounts a device's DEV#/PROJ# straight from its SESS# rows
+  and **prunes orphan PROJ# rows** (e.g. stale worktree hashes with no matching SESS#) so the
+  device-row `projectCount` always equals the projects-list length. It counts DDB rows, not
+  disk — ghost rows count until deletion (a later feature).
+- Bridge calls reconcile right after `await syncSessions()` (a definite completion point — all
+  SESS# writes are awaited-done; no timer guessing) and again when a brand-new project first
+  appears in the watcher. NOT periodic.
+- The incremental `statusDelta` ADD path still maintains `sessionCount` (+1 on `from:'new'`);
+  its running/idle deltas are now unread (reconcile owns those numbers).
 
 ## API Summary
 
@@ -167,9 +198,11 @@ BridgeMessages
 ```
 POST /api/bridge/sync-sessions              — bridge uploads session metadata
 POST /api/bridge/sync-messages              — bridge bulk sync on startup (runtime uses WS)
-GET  /api/bridge/devices                    — device list (includes online field from connections table)
+POST /api/bridge/reconcile                  — recount DEV#/PROJ# from SESS# + prune orphan PROJ# (device row == list length)
+GET  /api/bridge/devices                    — device list (projectCount/sessionCount from aggregates; running/needsInput live)
 GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
+GET  /api/bridge/active-sessions            — homepage: active (running+needs_input) + 20 most-recent completed (recentSessions)
 GET  /api/bridge/messages?session=X&after=ts — messages (incremental, ts=ISO timestamp)
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
@@ -261,11 +294,16 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Deploy output: single setup URL with embedded token (12h TTL)
 
 ### Three-State Session Status
-- `running`: CC process alive + jsonl `stop_reason: "tool_use"` or `null`
-- `idle`: CC process alive + jsonl `stop_reason: "end_turn"` or `last-prompt`
-- `stopped`: no CC process for this session
-- Badge colors: running (green), idle (yellow), stopped (gray)
-- Device/Project lists show `runningCount` + `idleCount`
+- `running` → **Running** (green): a turn is generating (jsonl `stop_reason: tool_use`/`null`,
+  or pool turn in flight, or agent `working`)
+- `needs_input` → **Needs input** (amber, reuses `.badge.idle`): the ball is in the user's court
+  (pool `control_request` — permission/AskUserQuestion — or agent `blocked`). External sessions
+  can't detect this.
+- `completed` → **Done** (grey, reuses `.badge.stopped`): turn finished / no process / stale.
+  Also the fallback for legacy `idle`/`stopped`/unknown values.
+- Homepage: Active Sessions = running + needs_input (regular + agent); Completed Sessions =
+  20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
+  (`needsInputCount`). `completed` is not shown on the device rows.
 
 ## Native App (Tauri v2)
 
@@ -327,4 +365,4 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 ## Known Issues / TODO
 
 - **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (not 128KB — exceeding it drops the whole connection with close code 1009 → reconnect storm + hundreds of stale ConnectionsTable entries). Fixed: `watcher.mjs` checks the WS envelope size; oversized messages send a **truncated copy** over WS (`truncateToBytes()` in `extract.mjs`, byte-aware so CJK/emoji keep a real prefix; carries `truncated: true` + `noCache: true`) for real-time display, and the **full copy** over HTTP to DDB. `bridge_ws.py` skips the DDB cache write when `noCache` is set so the truncated WS copy never clobbers the full HTTP copy. `uploadMessages()` also caps every message to `DDB_ITEM_LIMIT` (360KB) so the 400KB DDB item limit can't be exceeded. Limits: `WS_FRAME_LIMIT`/`DDB_ITEM_LIMIT` in `config.mjs`.
-- **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → stopped). terminal-launched CC (with `--resume`) unaffected.
+- **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → completed). terminal-launched CC (with `--resume`) unaffected.
