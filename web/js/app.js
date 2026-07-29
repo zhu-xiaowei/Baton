@@ -525,7 +525,6 @@ async function loadMessages(sessionId, preview, status) {
       if (_navVersion !== myNav) return;
       content.scrollTop = content.scrollHeight;
     });
-    checkPendingPrompts(state.wsAllMessages);
     maybeRevealStuckAgent(sessionId);
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');

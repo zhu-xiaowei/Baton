@@ -3,13 +3,12 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash, projectHashToPath } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { wsSend, wsSendWithAck, headlessPushed } from './ws.mjs';
 import { isArmed, getRescuedToolUseId, setRescuedToolUseId, disarmStallRescue } from './stall.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
-const _projectDirs = new Map(); // projectHash → resolved project directory
 
 // Recognize the two synthetic jsonl entries a stall-rescue Escape produces
 // (see stall.mjs): a rejection tool_result for the flushed tool_use, and CC's
@@ -121,11 +120,6 @@ async function readAndSend(config, filename, sessionId) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
 
-  const projectHash = path.basename(path.dirname(filename));
-  if (!_projectDirs.has(projectHash)) {
-    _projectDirs.set(projectHash, projectHashToPath(projectHash));
-  }
-
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
@@ -164,7 +158,7 @@ async function readAndSend(config, filename, sessionId) {
 
     if (isStallArtifact) { disarmIfRescueComplete(sessionId, raw); continue; }
 
-    const msg = await extractForApp(raw, _projectDirs.get(projectHash));
+    const msg = await extractForApp(raw);
     if (!msg.uuid) continue;
 
     if (armed) tagStallRescue(sessionId, raw, msg);

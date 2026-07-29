@@ -785,7 +785,6 @@ async function recoverMissing() {
       updateSendBtn();
       loadImages(container);
       clampOverflow(container);
-      checkPendingPrompts(state.wsAllMessages);
       container.parentElement.scrollTop = container.parentElement.scrollHeight;
     }
     showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');

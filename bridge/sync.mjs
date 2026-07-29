@@ -6,7 +6,7 @@ import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
   getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
-  normalizeProjectHash, projectHashToPath,
+  normalizeProjectHash,
 } from './session.mjs';
 
 // Sessions seen in last 24h — only these get metadata synced by watcher
@@ -187,9 +187,8 @@ export async function syncSessions(config, opts = {}) {
       const isRecent = s.mtime > recentCutoffMs;
       if (!isLive && !isRecent) continue;
       syncedSessionIds.add(s.sessionId);
-      const projectDir = projectHashToPath(path.basename(path.dirname(s.filePath)));
       syncJobs.push(async () => {
-        const msgs = await readNewMessages(s.filePath, s.sessionId, projectDir);
+        const msgs = await readNewMessages(s.filePath, s.sessionId);
         if (msgs.length > 0) {
           await uploadMessages(s.sessionId, msgs);
           console.log(`[init] ${s.sessionId.slice(0, 8)}: ${msgs.length} messages (${isLive ? status : 'recent'})`);

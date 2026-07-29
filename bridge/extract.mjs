@@ -3,7 +3,6 @@ import crypto from 'crypto';
 import sharp from 'sharp';
 import { post } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT } from './config.mjs';
-import { isToolAllowed } from './permissions.mjs';
 
 // Track sync position: sessionId → line number
 export const synced = new Map();
@@ -89,7 +88,7 @@ function stripToolUseResultBase64(tur) {
   return tur;
 }
 
-export async function extractForApp(msg, projectDir) {
+export async function extractForApp(msg) {
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
     // Content-addressed uuid so re-syncing overwrites one DDB item instead of accumulating (was Date.now()).
@@ -122,11 +121,6 @@ export async function extractForApp(msg, projectDir) {
         }
         return { type: 'image', placeholder: true };
       }
-      // Mark tool_use blocks with needsPermission
-      if (block.type === 'tool_use' && msg.type === 'assistant') {
-        const allowed = isToolAllowed(block.name, block.input, projectDir);
-        return { ...block, needsPermission: !allowed };
-      }
       // tool_result image base64 is unused by the app (it renders via S3 key) — strip it.
       if (block.type === 'tool_result') return stripToolResultBase64(block);
       // Normalize \r → \n in text blocks
@@ -150,7 +144,7 @@ export async function extractForApp(msg, projectDir) {
   return extracted;
 }
 
-export async function readNewMessages(filePath, sessionId, projectDir) {
+export async function readNewMessages(filePath, sessionId) {
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   const lastLine = synced.get(sessionId) ?? 0;
@@ -165,7 +159,7 @@ export async function readNewMessages(filePath, sessionId, projectDir) {
     if (!VALID_TYPES.has(msg.type)) continue;
     if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
-    const extracted = await extractForApp(msg, projectDir);
+    const extracted = await extractForApp(msg);
     if (!extracted.uuid) continue;
     if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
       if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
@@ -180,9 +174,9 @@ export async function readNewMessages(filePath, sessionId, projectDir) {
 }
 
 // Read ALL messages from a session file (for on-demand sync)
-export async function readAllMessages(filePath, sessionId, projectDir) {
+export async function readAllMessages(filePath, sessionId) {
   synced.delete(sessionId); // Reset position to read from beginning
-  return readNewMessages(filePath, sessionId, projectDir);
+  return readNewMessages(filePath, sessionId);
 }
 
 export async function uploadMessages(sessionId, messages) {

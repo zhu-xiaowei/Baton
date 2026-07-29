@@ -211,14 +211,11 @@ function buildToolPrompt(toolName, input) {
   };
 }
 
-// No-op: prompts are bridge-driven now; kept so existing callers don't break.
-function checkPendingPrompts() {}
-
 // True while a prompt awaits the user (ws.js checks this before auto-dismissing).
 function hasActivePermissionPrompt() { return !!_req; }
 
 Object.assign(window, {
   showPermissionPrompt, handlePermissionOption, submitPermissionWithInput,
   cancelPermissionPrompt, dismissPermissionPrompt,
-  checkPendingPrompts, hasActivePermissionPrompt,
+  hasActivePermissionPrompt,
 });

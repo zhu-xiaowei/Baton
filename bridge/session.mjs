@@ -285,30 +285,6 @@ function readStatusFromFile(filePath) {
 }
 
 /**
- * True if the last status-relevant jsonl entry is an `assistant` turn (i.e. the
- * file's last word is a tool_use, resolved or not — resolved ones are a closed
- * turn awaiting the next user message; unresolved ones are the normal
- * needsPermission wait). Either way there's nothing dangling in CC's memory
- * for stall.mjs to rescue: only a trailing `user` entry (a fully-closed prior
- * turn, with the *next* turn's tool_use never having reached jsonl at all) can
- * mean a stuck-in-memory wizard. Used as a safety gate — pane content alone
- * can't tell "flushed tool_use the user is normally answering" apart from
- * "wizard stuck in memory", since both render identically on screen.
- */
-export function hasNoDanglingTurn(filePath) {
-  try {
-    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (!lines[i].trim()) continue;
-      let entry;
-      try { entry = JSON.parse(lines[i]); } catch { continue; }
-      if (statusFromEntry(entry)) return entry.type === 'user';
-    }
-  } catch {}
-  return false;
-}
-
-/**
  * Determine session status. Used by syncSessions() and checkStopped().
  * Watcher uses statusFromEntry() directly with already-parsed data.
  */
