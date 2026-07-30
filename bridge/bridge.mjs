@@ -86,8 +86,6 @@ async function checkUpdate() {
     }
     if (version === CONFIG.version) return;
     console.log(`[update] ${CONFIG.version} → ${version}, updating...`);
-    CONFIG.version = version;
-    saveConfig(CONFIG);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
     const url = `${serverBase}/api/install?name=${nameParam}`;
@@ -99,8 +97,12 @@ async function checkUpdate() {
       if (!tarMatch) throw new Error('no tar URL in install script');
       const tarUrl = tarMatch[1];
       const { execSync: ex } = await import('child_process');
-      ex(`curl -sL "${tarUrl}" | tar xz`, { cwd: BRIDGE_HOME, stdio: 'ignore' });
+      const tgz = path.join(BRIDGE_HOME, '.update.tgz');
+      ex(`curl -fsSL "${tarUrl}" -o "${tgz}" && tar xzf "${tgz}" -C "${BRIDGE_HOME}" && rm -f "${tgz}"`, { stdio: 'ignore' });
+      ex(`node --check "${path.join(BRIDGE_HOME, 'bridge.mjs')}"`, { stdio: 'ignore' });
       ex('npm install --production --silent 2>/dev/null', { cwd: BRIDGE_HOME, stdio: 'ignore' });
+      CONFIG.version = version;
+      saveConfig(CONFIG);
       console.log(`[update] files updated, restarting...`);
       process.exit(1);
     } catch (e) {
