@@ -238,6 +238,9 @@ function handleWsMessage(msg) {
       if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'stop', seq: msg.seq, blockId: msg.blockId });
     } else if (msg.action === 'stream_end') {
       if (msg.sessionId === state.wsSessionId) handleStreamEnd(msg.streamId, msg.finalSeq, msg.error);
+    } else if (msg.action === 'delete_files_result') {
+      var r = window._deleteFilesResolvers && window._deleteFilesResolvers[msg.requestId];
+      if (r) { delete window._deleteFilesResolvers[msg.requestId]; r(msg); }
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -951,7 +954,9 @@ function doSend(fullText, displayText, images) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
     wsSendReliable({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
   } else {
-    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, clientId: msgId, text: fullText, device: device });
+    // projectHash lets the bridge resolve cwd even if the jsonl is gone (deleted session).
+    var ph = state.appState.project && state.appState.project.hash;
+    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, clientId: msgId, text: fullText, device: device });
   }
 
   // Empty session has no .messages yet; create one or the bubble + preview have nowhere to render.

@@ -29,7 +29,7 @@ body {
 }
 
 /* === Top bar === */
-.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; padding-top: max(var(--sat, env(safe-area-inset-top)), 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+.top-bar { display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; min-height: 44px; padding: 6px 8px 6px 12px; padding-top: max(var(--sat, env(safe-area-inset-top)), 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .top-title { font-weight: 600; color: #e6edf3; }
 .top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; transition: all 0.15s; }
@@ -289,7 +289,13 @@ body {
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
 .modal-box { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px; width: 90%; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .modal-title { font-size: 18px; font-weight: 600; color: #e6edf3; margin-bottom: 6px; }
-.modal-desc { font-size: 13px; color: #8b949e; margin-bottom: 16px; }
+.modal-desc { font-size: 13px; color: #8b949e; margin-bottom: 16px; line-height: 1.5; }
+.delete-toggle { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; cursor: pointer; transition: all 0.15s; }
+.delete-toggle span { font-size: 13px; color: #c9d1d9; }
+.delete-toggle input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: #da3633; cursor: pointer; }
+.delete-toggle:has(input:checked) { border-color: rgba(248,81,73,0.5); background: rgba(248,81,73,0.06); }
+.delete-hint { font-size: 12px; color: #8b949e; margin-top: 8px; line-height: 1.45; }
+.delete-toggle:has(input:checked) ~ .delete-hint { color: #f0776f; }
 .modal-input { width: 100%; padding: 10px 12px; background: #0d1117; border: 1px solid #484f58; border-radius: 8px; color: #e6edf3; font-size: 14px; outline: none; box-sizing: border-box; }
 .modal-input:focus { border-color: #58a6ff; }
 .modal-error { color: #f85149; font-size: 12px; min-height: 18px; margin-top: 6px; }
@@ -302,6 +308,23 @@ body {
   .modal-btn.confirm:hover { background: #2ea043; }
 }
 .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.modal-btn.confirm.danger { background: #da3633; }
+@media (hover: hover) and (pointer: fine) { .modal-btn.confirm.danger:hover { background: #f85149; } }
+
+/* ---- Batch-delete selection ---- */
+.text-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; background: #161b22; border: 1.5px solid #30363d; border-radius: 8px; color: #539bf5; font-size: 13px; font-weight: 500; cursor: pointer; padding: 0 12px; transition: all 0.15s; }
+.text-btn.danger { color: #e5534b; border-color: rgba(229, 83, 75, 0.5); }
+.text-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.text-btn .sel-count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e5534b; color: #fff; font-size: 10px; font-weight: 600; line-height: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .text-btn:hover { background: #1f2630; border-color: #539bf5; }
+  .text-btn.danger:hover { background: rgba(229, 83, 75, 0.12); border-color: #e5534b; }
+}
+#top-right { display: flex; align-items: center; gap: 8px; }
+.list.select-mode .item { display: flex; align-items: center; gap: 10px; }
+.list.select-mode .item-main { flex: 1; min-width: 0; }
+.sel-box { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #6e7681; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.sel-box.on { background: #539bf5; border-color: #539bf5; }
 .modal-btn .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

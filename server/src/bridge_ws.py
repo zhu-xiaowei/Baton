@@ -197,6 +197,12 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "request_file":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
+    elif action == "delete_files":
+        if role == "app":
+            return _handle_send_to_bridge(body, account_id, endpoint, "delete_files")
+    elif action == "delete_files_result":
+        if role == "bridge":
+            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action in ("file_ready", "file_progress"):
         if role == "bridge":
             return _handle_bridge_relay(body, connection_id, endpoint)
@@ -306,6 +312,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                             "type": msg.get("type", ""),
                             "content": json.dumps(msg.get("content", ""), ensure_ascii=False),
                             "timestamp": timestamp,
+                            "ttl": int(time.time()) + 90 * 86400,  # 90-day expiry (matches sync_messages)
                         }
                         if msg.get("stopReason"):
                             item["stopReason"] = msg["stopReason"]

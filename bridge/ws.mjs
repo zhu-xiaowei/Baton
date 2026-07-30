@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { readAllMessages, uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
 import { findSessionFile, projectHashToPath, getDaemonRunningSessionIds, getAgentsJson, resolveClaudeBin } from './session.mjs';
-import { WS_FRAME_LIMIT } from './config.mjs';
+import { WS_FRAME_LIMIT, CLAUDE_PROJECTS } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -210,6 +210,9 @@ async function handleMessage(msg) {
     case 'request_file':
       await handleRequestFile(msg);
       break;
+    case 'delete_files':
+      handleDeleteFiles(msg);
+      break;
     case 'list_commands':
       handleListCommands(msg);
       break;
@@ -256,7 +259,7 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
 
   // Existing session (regular or agent): headless streaming with daemon takeover.
   if (sessionId) {
-    const handled = await handleHeadlessSend(sessionId, resolved, clientId);
+    const handled = await handleHeadlessSend(sessionId, resolved, clientId, projectHash);
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', clientId });
     return;
@@ -268,6 +271,8 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     wsSend({ action: 'send_message_result', ok: false, error: 'Project path not found.', requestId, clientId });
     return;
   }
+  // Project dir deleted/never-existed → recreate so CC can spawn there.
+  try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
   if (asAgent) {
     const r = await newAgentSession(cwd, resolved);
     wsSend({ action: 'send_message_result', ok: r.ok, sessionId: r.sessionId, error: r.error, requestId, clientId });
@@ -357,9 +362,13 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
 }
 
 // Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
-async function handleHeadlessSend(sessionId, text, clientId) {
-  const cwd = cwdForSession(sessionId);
+async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
+  // cwd from projectHash (works even if jsonl was deleted); fall back to jsonl reverse-lookup.
+  let cwd = projectHash ? projectHashToPath(projectHash) : null;
+  if (!cwd) cwd = cwdForSession(sessionId);
   if (!cwd) return false;
+  // Deleted/never-existed project dir → recreate so headless can spawn there (cheap: microseconds).
+  try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
 
   // Baseline synced to the current jsonl length before this turn appends — else an old session with no synced entry gets its whole history re-pushed by the watcher (flicker). App already has history via REST.
   if (!synced.has(sessionId)) {
@@ -482,6 +491,26 @@ async function handleRevealAgent(sessionId) {
     requestId: p.requestId, toolName: p.toolName,
     questions: p.input.questions, plan: p.input.plan, input: p.input,
   });
+}
+
+// Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
+// Only touches paths inside CLAUDE_PROJECTS — never the user's real project/code dir.
+function handleDeleteFiles(msg) {
+  const root = path.resolve(CLAUDE_PROJECTS);
+  const inRoot = (p) => { const r = path.resolve(p); return r === root || r.startsWith(root + path.sep); };
+  const rmSafe = (p) => { try { if (inRoot(p)) fs.rmSync(p, { recursive: true, force: true }); } catch (e) { console.log(`[ws] delete failed ${p}: ${e.message}`); } };
+
+  for (const sid of msg.sessionIds || []) {
+    const fp = findSessionFile(sid);
+    if (fp) rmSafe(fp);
+    synced.delete(sid);
+  }
+  for (const ph of msg.projectHashes || []) {
+    if (!ph || ph.includes('/') || ph.includes('..')) continue; // hash is a flat dir name
+    rmSafe(path.join(root, ph)); // the CLAUDE_PROJECTS/<hash> dir holds the jsonl, NOT the real cwd
+  }
+  console.log(`[ws] deleted files: ${(msg.sessionIds || []).length} sessions, ${(msg.projectHashes || []).length} projects`);
+  wsSend({ action: 'delete_files_result', requestId: msg.requestId, ok: true });
 }
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;

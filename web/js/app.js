@@ -29,6 +29,91 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
 }
 
+// ---- Batch-delete selection ----
+// Checkbox markup prepended to each item in select mode (CSS slides it in from the left).
+function selectBox(id) {
+  var on = state.selected.has(id);
+  return '<span class="sel-box' + (on ? ' on' : '') + '" data-selid="' + esc(id) + '">'
+    + (on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '')
+    + '</span>';
+}
+
+// Toggle select mode by mutating the live DOM (add/remove the checkbox column) —
+// no list re-fetch/re-render, so entering/leaving doesn't flash.
+function applySelectModeDom() {
+  var list = document.querySelector('.list');
+  if (!list) return;
+  list.classList.toggle('select-mode', state.selectMode);
+  list.querySelectorAll('.item[data-id]').forEach(function (item) {
+    var existing = item.querySelector(':scope > .sel-box');
+    if (state.selectMode) {
+      if (!existing) item.insertAdjacentHTML('afterbegin', selectBox(item.getAttribute('data-id')));
+    } else if (existing) {
+      existing.remove();
+    }
+  });
+}
+
+function enterSelectMode(type, firstId) {
+  state.selectMode = true;
+  state.selectType = type;
+  state.selected = new Set(firstId ? [firstId] : []);
+  applySelectModeDom();
+  updateBreadcrumb();
+}
+
+function exitSelectMode() {
+  state.selectMode = false;
+  state.selectType = null;
+  state.selected = new Set();
+  applySelectModeDom();
+  updateBreadcrumb();
+}
+
+// Toggle one item's selection by mutating just its checkbox — no list re-fetch/re-render.
+function toggleSelected(id) {
+  var on = !state.selected.has(id);
+  if (on) state.selected.add(id); else state.selected.delete(id);
+  var box = document.querySelector('.list.select-mode .item[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"] .sel-box');
+  if (box) {
+    box.classList.toggle('on', on);
+    box.innerHTML = on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
+  }
+  updateBreadcrumb(); // refresh the Delete count only
+}
+
+// Long-press vs text-selection: a press that stays put ~500ms → select mode; any
+// move >10px cancels the timer so the browser's native text selection takes over.
+// In select mode a click toggles the item (capture handler beats the baked nav onclick).
+function attachLongPress(container, type) {
+  var timer = null, sx = 0, sy = 0, targetId = null, justLongPressed = false;
+  var clear = function () { if (timer) { clearTimeout(timer); timer = null; } targetId = null; };
+  container.addEventListener('pointerdown', function (e) {
+    if (state.selectMode) return;
+    var item = e.target.closest && e.target.closest('.item[data-id]');
+    if (!item) return;
+    sx = e.clientX; sy = e.clientY; targetId = item.getAttribute('data-id');
+    timer = setTimeout(function () {
+      timer = null;
+      if (targetId) { e.preventDefault && e.preventDefault(); justLongPressed = true; enterSelectMode(type, targetId); }
+    }, 500);
+  });
+  container.addEventListener('pointermove', function (e) {
+    if (!timer) return;
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) clear();
+  });
+  container.addEventListener('pointerup', clear);
+  container.addEventListener('pointercancel', clear);
+  container.addEventListener('click', function (e) {
+    if (!state.selectMode) return;
+    e.preventDefault(); e.stopPropagation(); // beat the item's baked navigation onclick
+    // The pointerup after a long-press fires a click; swallow it (selection already made).
+    if (justLongPressed) { justLongPressed = false; return; }
+    var item = e.target.closest && e.target.closest('.item[data-id]');
+    if (item) toggleSelected(item.getAttribute('data-id'));
+  }, true);
+}
+
 // Unified 3-state (running / needs_input / completed); legacy idle/stopped/unknown → Done.
 function statusLabel(status) {
   if (status === 'running') return 'Running';
@@ -89,7 +174,11 @@ function updateBreadcrumb() {
   var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
   var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
   var topRight = document.getElementById('top-right');
-  if (state.appState.project) {
+  if (state.selectMode) {
+    var n = state.selected.size;
+    topRight.innerHTML = '<button class="text-btn" onclick="exitSelectMode()">Cancel</button>'
+      + '<button class="text-btn danger" ' + (n ? '' : 'disabled') + ' onclick="openDeleteModal()">Delete' + (n ? '<span class="sel-count">' + n + '</span>' : '') + '</button>';
+  } else if (state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -179,6 +268,7 @@ function shortModel(m) {
 // ---- Devices ----
 async function loadDevices() {
   var myNav = ++_navVersion;
+  if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
@@ -307,6 +397,7 @@ async function loadDevices() {
 // ---- Projects ----
 async function loadProjects(device) {
   var myNav = ++_navVersion;
+  if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: device, project: null, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
@@ -318,15 +409,20 @@ async function loadProjects(device) {
   try {
     var data = await api('/api/bridge/projects', { device: device });
     if (_navVersion !== myNav) return;
-    content.innerHTML = '<div class="list">' + data.projects.map(function (p) {
+    var sel = state.selectMode && state.selectType === 'project';
+    content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">' + data.projects.map(function (p) {
       var rc = p.runningCount || 0, ic = p.needsInputCount || 0;
       var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
-      return '<a class="item" href="' + projHref + '" onclick="loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;">'
-        + '<div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
+      // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
+      var onclick = 'loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;';
+      return '<a class="item" data-id="' + esc(p.projectHash) + '" href="' + projHref + '" onclick="' + onclick + '">'
+        + (sel ? selectBox(p.projectHash) : '')
+        + '<div class="item-main"><div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
         + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
-        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div></div>'
         + '</a>';
     }).join('') + '</div>';
+    attachLongPress(content.querySelector('.list'), 'project');
     showStats(data.projects.length + ' project(s)');
   } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 }
@@ -334,6 +430,7 @@ async function loadProjects(device) {
 // ---- Sessions ----
 async function loadSessions(device, projectHash, projectName) {
   var myNav = ++_navVersion;
+  if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
   disconnectWs();
   showInputBar(false);
@@ -345,7 +442,8 @@ async function loadSessions(device, projectHash, projectName) {
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
     if (_navVersion !== myNav) return;
-    content.innerHTML = '<div class="list">'
+    var sel = state.selectMode && state.selectType === 'session';
+    content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">'
       + data.sessions.map(function (s) {
       var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
       var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
@@ -354,11 +452,15 @@ async function loadSessions(device, projectHash, projectName) {
       var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
       var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
       var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
-      return '<a class="item" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="if(window.getSelection().toString())return false;openSession(this);return false;">'
-        + '<div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
-        + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div>'
+      // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
+      var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
+      return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
+        + (sel ? selectBox(s.sessionId) : '')
+        + '<div class="item-main"><div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
+        + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div></div>'
         + '</a>';
     }).join('') + '</div>';
+    attachLongPress(content.querySelector('.list'), 'session');
     showStats(data.sessions.length + ' session(s)');
   } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 }
@@ -404,6 +506,98 @@ async function submitNewProject() {
   await window.loadViewerLibs();
   var asAgent = !!(document.getElementById('newProjectAsAgent') && document.getElementById('newProjectAsAgent').checked);
   ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '', asAgent: asAgent });
+}
+
+var _deleteCountdownTimer = null;
+
+function openDeleteModal() {
+  if (!state.selected.size) return;
+  var modal = document.getElementById('deleteModal');
+  var n = state.selected.size;
+  var isProject = state.selectType === 'project';
+  var noun = (isProject ? 'project' : 'session') + (n > 1 ? 's' : '');
+  document.getElementById('deleteModalTitle').textContent = 'Delete ' + n + ' ' + noun + '?';
+  document.getElementById('deleteModalDesc').textContent = isProject
+    ? 'This removes ' + (n > 1 ? 'these projects' : 'this project') + ' and all their session records from the list. Data on the device is kept unless you check below.'
+    : 'This removes ' + (n > 1 ? 'these sessions' : 'this session') + ' from the list. Data on the device is kept unless you check below.';
+  document.getElementById('deleteFilesCb').checked = false;
+  var err = document.getElementById('deleteError'); if (err) err.textContent = '';
+  resetDeleteBtn();
+  modal.style.display = 'flex';
+}
+
+function resetDeleteBtn() {
+  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
+  var btn = document.getElementById('deleteConfirmBtn');
+  btn.disabled = false; btn.textContent = 'Delete';
+}
+
+// Checking "delete original data" arms a 5s countdown before Delete is clickable (guards misfires).
+function onDeleteFilesToggle() {
+  var btn = document.getElementById('deleteConfirmBtn');
+  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
+  if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
+  var left = 5;
+  btn.disabled = true; btn.textContent = 'Delete (' + left + ')';
+  _deleteCountdownTimer = setInterval(function () {
+    left--;
+    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = 'Delete'; }
+    else btn.textContent = 'Delete (' + left + ')';
+  }, 1000);
+}
+
+function closeDeleteModal() {
+  resetDeleteBtn();
+  document.getElementById('deleteModal').style.display = 'none';
+}
+
+// Single delete entry point: ① delete DDB rows (REST, authoritative) then, if opted
+// in, ② ask the bridge to delete on-disk jsonl and await its result. Returns the
+// combined { ddb, files } outcome so the caller has the final status in one place.
+async function performDelete(device, isProject, ids, deleteFiles) {
+  var body = { deviceName: device };
+  if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
+  await apiPost('/api/bridge/delete', body);
+  var filesResult = null;
+  if (deleteFiles) {
+    await window.loadViewerLibs(); // ensure WS is connected before relying on it
+    filesResult = await new Promise(function (resolve) {
+      var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      window._deleteFilesResolvers = window._deleteFilesResolvers || {};
+      var done = false;
+      var finish = function (r) { if (done) return; done = true; delete window._deleteFilesResolvers[reqId]; resolve(r); };
+      window._deleteFilesResolvers[reqId] = finish;
+      ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
+      setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
+    });
+  }
+  return { ddb: true, files: filesResult };
+}
+
+async function submitDelete() {
+  var ids = Array.from(state.selected);
+  if (!ids.length) return;
+  var device = state.appState.device || '';
+  var deleteFiles = !!document.getElementById('deleteFilesCb').checked;
+  var isProject = state.selectType === 'project';
+  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
+  var btn = document.getElementById('deleteConfirmBtn');
+  btn.disabled = true; btn.dataset.origText = 'Delete'; btn.innerHTML = '<span class="spinner"></span>Deleting';
+  var result;
+  try {
+    result = await performDelete(device, isProject, ids, deleteFiles);
+  } catch (e) {
+    var err = document.getElementById('deleteError'); if (err) err.textContent = 'Delete failed: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Delete';
+    return;
+  }
+  closeDeleteModal();
+  if (isProject) loadProjects(device);
+  else loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
+  // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
+  if (deleteFiles && result.files && result.files.timeout) {
+    showStats('Removed from list; device did not confirm file deletion (bridge offline?)');
+  }
 }
 
 // New-session hero agent checkbox toggled — reflect in breadcrumb + send button.
@@ -682,6 +876,7 @@ Object.assign(window, {
   showInputBar, saveNav, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   createNewProject, closeNewProjectModal, submitNewProject,
+  exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
   startNewSession, onNewAsAgentToggle, loadMessages, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });

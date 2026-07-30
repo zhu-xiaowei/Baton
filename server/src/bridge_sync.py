@@ -12,6 +12,13 @@ import os
 import json
 import hashlib
 from datetime import datetime
+import time
+
+MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
+
+
+def _msg_ttl():
+    return int(time.time()) + MESSAGE_TTL_DAYS * 86400
 
 bridge_router = APIRouter(prefix="/api/bridge")
 
@@ -255,26 +262,23 @@ class ReconcileRequest(BaseModel):
     os: str = ""
 
 
-@bridge_router.post("/reconcile")
-async def reconcile(req: ReconcileRequest, raw: Request):
-    """Recount a device's DEV#/PROJ# aggregates from its own SESS# rows so the stored
-    projectCount/sessionCount stay accurate & DDB-self-consistent (device row ==
-    projects-list length). Called by the bridge on first boot, after a version
-    upgrade, and when a new project appears. Counts DDB, not disk — ghost rows count
-    too (deletion is a later feature). running/needs_input stay live at read time."""
-    sessions_table, _ = _tables()
-    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
-    now = datetime.utcnow().isoformat()
-
-    resp = sessions_table.query(KeyConditionExpression=Key("accountId").eq(key_hash)
-                                & Key("sk").begins_with(f"SESS#{req.deviceName}#"))
-    sess = resp.get("Items", [])
+def _query_all(sessions_table, **kw):
+    resp = sessions_table.query(**kw)
+    items = resp.get("Items", [])
     while "LastEvaluatedKey" in resp:
-        resp = sessions_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"],
-                                    KeyConditionExpression=Key("accountId").eq(key_hash)
-                                    & Key("sk").begins_with(f"SESS#{req.deviceName}#"))
-        sess.extend(resp.get("Items", []))
+        resp = sessions_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kw)
+        items.extend(resp.get("Items", []))
+    return items
 
+
+def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
+    """Recount DEV#/PROJ# aggregates from the device's SESS# rows.
+    prune=True (boot/new-project): delete orphan PROJ# rows (stale worktree hashes gone
+    from disk). prune=False (session delete): keep an emptied PROJ# so the project stays
+    in the list (user can still open it / add sessions); it just shows 0 sessions."""
+    now = datetime.utcnow().isoformat()
+    sess = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+                      & Key("sk").begins_with(f"SESS#{device}#"))
     proj = {}  # projectHash -> {count, name, lastActive}
     device_last = ""
     for s in sess:
@@ -289,35 +293,91 @@ async def reconcile(req: ReconcileRequest, raw: Request):
         if la > device_last:
             device_last = la
 
-    # Existing PROJ# rows → prune orphans (a PROJ# with no matching SESS#, e.g. stale
-    # worktree hashes) so the projects list == projectCount. Counts DDB, not disk.
     existing = sessions_table.query(
-        KeyConditionExpression=Key("accountId").eq(key_hash)
-        & Key("sk").begins_with(f"PROJ#{req.deviceName}#"),
-        ProjectionExpression="sk")
-    orphans = [i["sk"] for i in existing.get("Items", [])
-               if i["sk"].split("#", 2)[-1] not in proj]
+        KeyConditionExpression=Key("accountId").eq(key_hash) & Key("sk").begins_with(f"PROJ#{device}#"))
+    empty = [it for it in existing.get("Items", []) if it["sk"].split("#", 2)[-1] not in proj]
 
     with sessions_table.batch_writer() as batch:
         for ph, p in proj.items():
             batch.put_item(Item={
-                "accountId": key_hash, "sk": f"PROJ#{req.deviceName}#{ph}",
-                "entityType": "project", "deviceName": req.deviceName,
+                "accountId": key_hash, "sk": f"PROJ#{device}#{ph}",
+                "entityType": "project", "deviceName": device,
                 "projectHash": ph, "projectName": p["name"],
                 "sessionCount": p["count"], "lastActive": p["lastActive"], "updatedAt": now,
             })
-        for sk in orphans:
-            batch.delete_item(Key={"accountId": key_hash, "sk": sk})
+        for it in empty:
+            if prune:
+                batch.delete_item(Key={"accountId": key_hash, "sk": it["sk"]})
+            else:
+                it["sessionCount"] = 0  # keep the project in the list, now empty
+                it["updatedAt"] = now
+                batch.put_item(Item=it)
+
+    # projectCount must equal the projects-list length: with prune off, kept-empty PROJ# rows still show.
+    project_count = len(proj) if prune else len(proj) + len(empty)
     sessions_table.update_item(
-        Key={"accountId": key_hash, "sk": f"DEV#{req.deviceName}"},
+        Key={"accountId": key_hash, "sk": f"DEV#{device}"},
         UpdateExpression=("SET sessionCount = :sc, projectCount = :pc, entityType = :et, "
                           "deviceName = :dn, os = if_not_exists(os, :os), lastActive = :la"),
         ExpressionAttributeValues={
-            ":sc": len(sess), ":pc": len(proj), ":et": "device",
-            ":dn": req.deviceName, ":os": req.os, ":la": device_last,
+            ":sc": len(sess), ":pc": project_count, ":et": "device",
+            ":dn": device, ":os": os_, ":la": device_last,
         },
     )
-    return {"sessionCount": len(sess), "projectCount": len(proj)}
+    return {"sessionCount": len(sess), "projectCount": project_count}
+
+
+@bridge_router.post("/reconcile")
+async def reconcile(req: ReconcileRequest, raw: Request):
+    """Recount a device's DEV#/PROJ# aggregates so stored counts stay DDB-self-consistent.
+    Called by the bridge on first boot, after a version upgrade, and on a new project."""
+    sessions_table, _ = _tables()
+    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    return _reconcile_device(sessions_table, key_hash, req.deviceName, req.os)
+
+
+class DeleteRequest(BaseModel):
+    deviceName: str
+    sessionIds: List[str] = []
+    projectHashes: List[str] = []  # delete a project = its PROJ# + all its SESS# rows
+
+
+@bridge_router.post("/delete")
+async def delete_sessions(req: DeleteRequest, raw: Request):
+    """Delete sessions/projects from DDB (SESS#/PROJ# rows only), then reconcile the
+    device aggregates. Message rows are left to expire via their TTL — deleting them
+    inline would loop per-session and risk the API GW 29s timeout on big projects, and
+    they're unreachable once the SESS# row is gone. Disk jsonl is deleted separately by
+    the bridge (WS delete_files) only when the user opts in."""
+    sessions_table, _ = _tables()
+    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    dev = req.deviceName
+
+    sess_sks = set()   # SESS# sks to delete
+
+    # Expand each project → all its SESS# rows.
+    for ph in req.projectHashes:
+        for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+                             & Key("sk").begins_with(f"SESS#{dev}#{ph}#"), ProjectionExpression="sk"):
+            sess_sks.add(it["sk"])
+
+    # Resolve explicit sessionIds to their SESS# sk (query by device; filter by id).
+    if req.sessionIds:
+        want = set(req.sessionIds)
+        for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+                             & Key("sk").begins_with(f"SESS#{dev}#"), ProjectionExpression="sk, sessionId"):
+            if it.get("sessionId") in want:
+                sess_sks.add(it["sk"])
+
+    with sessions_table.batch_writer() as batch:
+        for sk in sess_sks:
+            batch.delete_item(Key={"accountId": key_hash, "sk": sk})
+        for ph in req.projectHashes:
+            batch.delete_item(Key={"accountId": key_hash, "sk": f"PROJ#{dev}#{ph}"})
+
+    # prune=False: keep a project that just lost its last session (user can still open it).
+    counts = _reconcile_device(sessions_table, key_hash, dev, "", prune=False)
+    return {"deletedSessions": len(sess_sks), "deletedProjects": len(req.projectHashes), **counts}
 
 
 @bridge_router.post("/sync-messages")
@@ -339,6 +399,7 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
                 "type": msg.get("type", ""),
                 "content": content,
                 "timestamp": timestamp,
+                "ttl": _msg_ttl(),
             }
             if msg.get("stopReason"):
                 item["stopReason"] = msg["stopReason"]

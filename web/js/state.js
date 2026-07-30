@@ -12,6 +12,11 @@ export const state = {
   appState: { device: null, project: null, session: null, sessionPreview: '' },
   deviceOnlineMap: {},
 
+  // ---- Batch-delete selection (app.js) ----
+  selectMode: false,
+  selectType: null,           // 'project' | 'session' — the two lists never mix-select
+  selected: new Set(),        // selected ids (projectHash or sessionId)
+
   // ---- WebSocket connection + message state (ws.js) ----
   ws: null,
   wsSessionId: null,
