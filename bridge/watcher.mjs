@@ -234,6 +234,8 @@ async function pollAgentStates(config) {
   for (const [sid, e] of agents) {
     const filePath = findSessionFile(sid);
     if (!filePath) continue;
+    // Pool-owned = driven live by headless; skip so the daemon's stale 'done' doesn't override its running.
+    if (poolOwns(sid)) continue;
     // Title: --json name first, then the jsonl's first user message. At launch
     // both can be empty for a poll or two (name not inferred yet, jsonl not
     // written), so preview is part of the diff — a title arriving later re-pushes.
