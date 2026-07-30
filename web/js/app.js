@@ -442,6 +442,13 @@ async function loadSessions(device, projectHash, projectName) {
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
     if (_navVersion !== myNav) return;
+    if (!data.sessions.length) {
+      // Empty project (e.g. just created) — guide the user to start the first session.
+      content.innerHTML = '<div class="empty">No sessions yet<br><br>'
+        + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
+      showStats('0 session(s)');
+      return;
+    }
     var sel = state.selectMode && state.selectType === 'session';
     content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">'
       + data.sessions.map(function (s) {
@@ -470,11 +477,12 @@ function createNewProject() {
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
   var agentCb = document.getElementById('newProjectAsAgent');
-  input.value = '';
+  // Prefill last-used parent prefix so the user only types the new project name (still editable).
+  input.value = localStorage.getItem('_np_prefix') || '';
   err.textContent = '';
   if (agentCb) agentCb.checked = false; // always default OFF; not persisted
   modal.style.display = 'flex';
-  setTimeout(function () { input.focus(); }, 100);
+  setTimeout(function () { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 100);
 }
 
 function closeNewProjectModal() {
@@ -497,6 +505,9 @@ async function submitNewProject() {
   var projectPath = input.value.trim();
   if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
   err.textContent = '';
+  // Remember the parent prefix (everything up to the last '/') to prefill next time.
+  var slash = projectPath.lastIndexOf('/');
+  localStorage.setItem('_np_prefix', slash >= 0 ? projectPath.slice(0, slash + 1) : '');
   state._pendingCreatePath = projectPath;
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
@@ -607,14 +618,14 @@ function onNewAsAgentToggle(checked) {
   if (typeof updateSendBtn === 'function') updateSendBtn();
 }
 
-async function startNewSession(projectHash) {
+async function startNewSession(projectHash, asAgent) {
   await window.loadViewerLibs();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
-  // Default OFF every time (not remembered) — a regular session is already long-run under the pool.
-  state.appState.isAgent = false;
+  // Default OFF unless the New Project dialog opted into agent mode.
+  state.appState.isAgent = !!asAgent;
   updateBreadcrumb();
   saveNav();
   // Reset WS message state for new session
@@ -636,7 +647,7 @@ async function startNewSession(projectHash) {
     '<div class="new-session-hero">'
       + '<div class="hero-logo">🔭</div>'
       + '<div class="hero-title">AgentPeek</div>'
-      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
+      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent"' + (asAgent ? ' checked' : '') + ' onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages" hidden></div>';
   document.body.classList.add('new-session');

@@ -244,11 +244,17 @@ function handleWsMessage(msg) {
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
-        disconnectWs();
         if (msg.ok) {
           closeNewProjectModal();
-          loadProjects(state.appState.device);
+          // Empty project isn't in the list yet (no session) — go straight to its
+          // new-session input; the first message creates the session + PROJ#/SESS#.
+          // Set project so the breadcrumb shows its name (we arrive from device level, not the list).
+          // Fallback to the hash's trailing segment (…-test3 → test3) if projectName is absent.
+          var pname = msg.projectName || (msg.projectHash || '').split('-').filter(Boolean).pop() || msg.projectHash;
+          state.appState.project = { hash: msg.projectHash, name: pname };
+          startNewSession(msg.projectHash, msg.asAgent);
         } else {
+          disconnectWs();
           // Show error in modal, reset button
           var err = document.getElementById('newProjectError');
           var input = document.getElementById('newProjectInput');

@@ -296,6 +296,10 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
     existing = sessions_table.query(
         KeyConditionExpression=Key("accountId").eq(key_hash) & Key("sk").begins_with(f"PROJ#{device}#"))
     empty = [it for it in existing.get("Items", []) if it["sk"].split("#", 2)[-1] not in proj]
+    # prune deletes orphan PROJ# rows (stale worktree hashes with no SESS#), but a
+    # user-created empty project (userCreated) must survive — it's intentional, not an orphan.
+    to_delete = [it for it in empty if prune and not it.get("userCreated")]
+    to_keep = [it for it in empty if not (prune and not it.get("userCreated"))]
 
     with sessions_table.batch_writer() as batch:
         for ph, p in proj.items():
@@ -305,16 +309,15 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
                 "projectHash": ph, "projectName": p["name"],
                 "sessionCount": p["count"], "lastActive": p["lastActive"], "updatedAt": now,
             })
-        for it in empty:
-            if prune:
-                batch.delete_item(Key={"accountId": key_hash, "sk": it["sk"]})
-            else:
-                it["sessionCount"] = 0  # keep the project in the list, now empty
-                it["updatedAt"] = now
-                batch.put_item(Item=it)
+        for it in to_delete:
+            batch.delete_item(Key={"accountId": key_hash, "sk": it["sk"]})
+        for it in to_keep:
+            it["sessionCount"] = 0  # keep the project in the list, now empty
+            it["updatedAt"] = now
+            batch.put_item(Item=it)
 
-    # projectCount must equal the projects-list length: with prune off, kept-empty PROJ# rows still show.
-    project_count = len(proj) if prune else len(proj) + len(empty)
+    # projectCount must equal the projects-list length: kept-empty PROJ# rows still show.
+    project_count = len(proj) + len(to_keep)
     sessions_table.update_item(
         Key={"accountId": key_hash, "sk": f"DEV#{device}"},
         UpdateExpression=("SET sessionCount = :sc, projectCount = :pc, entityType = :et, "
@@ -333,6 +336,37 @@ async def reconcile(req: ReconcileRequest, raw: Request):
     Called by the bridge on first boot, after a version upgrade, and on a new project."""
     sessions_table, _ = _tables()
     key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    return _reconcile_device(sessions_table, key_hash, req.deviceName, req.os)
+
+
+class CreateProjectRequest(BaseModel):
+    deviceName: str
+    projectHash: str
+    projectName: str = ""
+    os: str = ""
+
+
+@bridge_router.post("/create-project")
+async def create_project(req: CreateProjectRequest, raw: Request):
+    """Seed an empty PROJ# row so a just-created project shows in the list immediately,
+    before its first session exists. userCreated=True marks it intentional so reconcile's
+    prune never treats it as a stale orphan. Idempotent — never clobbers an existing row."""
+    sessions_table, _ = _tables()
+    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    now = datetime.utcnow().isoformat()
+    try:
+        sessions_table.put_item(
+            Item={
+                "accountId": key_hash, "sk": f"PROJ#{req.deviceName}#{req.projectHash}",
+                "entityType": "project", "deviceName": req.deviceName,
+                "projectHash": req.projectHash, "projectName": req.projectName or req.projectHash,
+                "sessionCount": 0, "userCreated": True, "lastActive": now, "updatedAt": now,
+            },
+            ConditionExpression="attribute_not_exists(sk)",
+        )
+    except sessions_table.meta.client.exceptions.ConditionalCheckFailedException:
+        pass  # already exists (real sessions or a prior create) — leave it
+    # Recount so DEV#.projectCount includes this row (prune keeps userCreated rows).
     return _reconcile_device(sessions_table, key_hash, req.deviceName, req.os)
 
 

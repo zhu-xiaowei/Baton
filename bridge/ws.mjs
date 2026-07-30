@@ -10,7 +10,7 @@ import { WS_FRAME_LIMIT, CLAUDE_PROJECTS } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
-import { updateSessionStatus } from './sync.mjs';
+import { updateSessionStatus, knownProjects } from './sync.mjs';
 
 let _ws = null;
 let _config = null;
@@ -453,7 +453,10 @@ async function newAgentSession(cwd, text) {
   return { ok: false, error: 'Agent launched but its session id could not be resolved yet.' };
 }
 
-// Create a new project directory, then start a session in it (regular or agent).
+// Create a new project directory and return its projectHash. No session is
+// spawned — the app enters its new-session input and the user's first real
+// message creates the session (SESS#/PROJ# land then). An empty project has no
+// SESS# row, so it can't appear in the list until that first message anyway.
 async function handleCreateProject(rawPath, asAgent) {
   if (!rawPath) {
     wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
@@ -465,17 +468,17 @@ async function handleCreateProject(rawPath, asAgent) {
     if (!path.isAbsolute(projectPath)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
     else if (!projectPath.startsWith(home)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
     fs.mkdirSync(projectPath, { recursive: true });
-
-    if (asAgent) {
-      const r = await newAgentSession(projectPath, 'Hello');
-      wsSend({ action: 'create_project_result', ok: r.ok, sessionId: r.sessionId, error: r.error, projectPath: rawPath });
-    } else {
-      // Regular: mint sessionId + spawn a headless proc so the session exists on disk.
-      const sessionId = crypto.randomUUID();
-      const cb = buildStreamCallbacks(sessionId, projectPath, () => {});
-      const res = await _pool.send(sessionId, 'Hello', { cwd: projectPath, createId: sessionId, streamId: newStreamId(), ...cb });
-      wsSend({ action: 'create_project_result', ok: !!(res && res.sessionId), sessionId, projectPath: rawPath });
-    }
+    // Hash rule mirrors session.mjs — the dir now exists so projectHashToPath reverses it on first send.
+    const projectHash = path.resolve(projectPath).replace(/[^a-zA-Z0-9-]/g, '-');
+    const projectName = path.basename(projectPath); // breadcrumb label (matches the list's trailing-segment name)
+    // Seed an empty PROJ# row so the project shows in the list right away (before its first session).
+    try {
+      await post('/api/bridge/create-project', {
+        deviceName: _config.deviceName, projectHash, projectName, os: process.platform,
+      });
+      knownProjects.add(projectHash); // watcher won't re-reconcile it as a brand-new project
+    } catch {}
+    wsSend({ action: 'create_project_result', ok: true, projectHash, projectName, projectPath: rawPath, asAgent: !!asAgent });
   } catch (err) {
     wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
   }
