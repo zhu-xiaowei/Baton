@@ -378,9 +378,9 @@ export function findSessionFile(sessionId) {
 // other values, all funneled into the same 3-state vocabulary.
 export function mapAgentState(a) {
   const st = a.state || '';
-  if (st === 'done') return 'completed';
   if (st === 'blocked') return 'needs_input';
-  return 'running';
+  if (st === 'working' || st === 'running') return 'running';
+  return 'completed'; // done/failed/stopped/cancelled/unknown → terminal (never falsely running)
 }
 
 // The blocked-agent detail (the question awaiting the user) lives in the job's

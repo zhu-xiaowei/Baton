@@ -1,12 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS } from './config.mjs';
-import { post } from './http.mjs';
+import { post, get } from './http.mjs';
 import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
   getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
-  normalizeProjectHash,
+  normalizeProjectHash, findSessionFile,
 } from './session.mjs';
 import { poolOwns } from './ws.mjs';
 
@@ -275,63 +275,48 @@ export async function updateSessionStatus(config, sessionId, filePath, project, 
   });
 }
 
+// Settle stale active rows to completed. Reads DDB's active set (survives restart +
+// reaches jsonl-deleted orphans that lastKnownStatus can't), then per session:
+// pool-owned/daemon-agent → skip; jsonl gone → completed; else getSessionStatus.
 export async function checkStopped(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
+  const active = await get('/api/bridge/active-sessions');
+  if (!active || !Array.isArray(active.sessions)) return;
 
   const runningInfo = getRunningInfo();
   const daemonMeta = getDaemonSessions();
   const updates = [];
   const statusDeltas = [];
 
-  for (const [sessionId, prevStatus] of lastKnownStatus) {
-    if (prevStatus === 'completed') continue;
-    // Daemon agents have no live --resume process, so getSessionStatus would
-    // wrongly read them as completed (dropping agent metadata). Their status is
-    // owned by the `claude agents --json` poller — skip them here.
-    if (daemonMeta.has(sessionId)) continue;
-    // Pool-owned sessions get status from headless lifecycle events — skip here.
-    if (poolOwns(sessionId)) continue;
+  for (const s of active.sessions) {
+    const sessionId = s.sessionId;
+    if (s.deviceName !== config.deviceName || !sessionId) continue;
 
-    // Find the session's project hash
-    for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
-      const filePath = path.join(CLAUDE_PROJECTS, project, `${sessionId}.jsonl`);
-      if (!fs.existsSync(filePath)) continue;
+    const filePath = findSessionFile(sessionId);
+    const gone = !filePath || !fs.existsSync(filePath);
+    // jsonl present → owner (pool / daemon-agent poll) manages it; gone → settle here (they'd skip it).
+    if (!gone && (daemonMeta.has(sessionId) || poolOwns(sessionId))) continue;
+    const newStatus = gone ? 'completed' : getSessionStatus(sessionId, filePath, runningInfo);
+    if (newStatus === s.status) continue;
 
-      const newStatus = getSessionStatus(sessionId, filePath, runningInfo);
-      if (newStatus !== prevStatus) {
-        lastKnownStatus.set(sessionId, newStatus);
-        const stat = fs.statSync(filePath);
-        const lastActive = stat.mtime.toISOString();
-        const proj = normalizeProjectHash(project);
-        updates.push({
-          id: sessionId,
-          project: proj,
-          projectName: readableProjectName(proj),
-          lastActive,
-          size: stat.size,
-          preview: getPreview(filePath) || '',
-          model: getModel(filePath),
-          status: newStatus,
-        });
-        statusDeltas.push({
-          deviceName: config.deviceName,
-          projectHash: proj,
-          projectName: readableProjectName(proj),
-          from: prevStatus,
-          to: newStatus,
-          lastActive,
-        });
-      }
-      break;
-    }
+    const proj = normalizeProjectHash(s.projectHash || '');
+    const lastActive = gone ? s.lastActive : fs.statSync(filePath).mtime.toISOString();
+    lastKnownStatus.set(sessionId, newStatus);
+    updates.push({
+      id: sessionId, project: proj, projectName: readableProjectName(proj),
+      lastActive, size: gone ? 0 : fs.statSync(filePath).size,
+      preview: (gone ? s.preview : getPreview(filePath)) || s.preview || '',
+      model: gone ? '' : getModel(filePath), status: newStatus,
+    });
+    statusDeltas.push({
+      deviceName: config.deviceName, projectHash: proj, projectName: readableProjectName(proj),
+      from: s.status, to: newStatus, lastActive,
+    });
   }
 
   if (updates.length > 0) {
     await post('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: updates,
-      statusDeltas,
+      deviceName: config.deviceName, os: process.platform, sessions: updates, statusDeltas,
     });
   }
 }

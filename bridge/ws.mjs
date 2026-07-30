@@ -24,7 +24,8 @@ const SLOW_RECONNECT_DELAY = 5 * 60_000;
 const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
 
-const _pool = new ClaudePool();
+// onExit: a proc left the pool (reap/LRU/crash) without a turn result → settle to completed.
+const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
 
 // True while the pool has a live process for this session — its status is owned
 // by pool lifecycle events, so the jsonl watcher must not also write it.

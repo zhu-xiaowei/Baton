@@ -4,6 +4,14 @@ export function initHttp(config) {
   _config = config;
 }
 
+export async function get(endpoint) {
+  try {
+    const res = await fetch(`${_config.server}${endpoint}`, { headers: { 'x-api-key': _config.apiKey } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
 export async function post(endpoint, data) {
   try {
     const res = await fetch(`${_config.server}${endpoint}`, {

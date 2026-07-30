@@ -66,6 +66,7 @@ if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historic
 // syncSessions has awaited every SESS# write, so DDB is complete — recount now
 // (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
 await reconcile(CONFIG);
+checkStopped(CONFIG); // run once on boot — pool is empty after restart, so settle just-orphaned running rows now
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
 // Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.

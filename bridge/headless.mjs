@@ -170,6 +170,8 @@ class HeadlessProc {
     if (this._batchTimer) { clearTimeout(this._batchTimer); this._batchTimer = null; }
     this._batch = null;
     this.pool._remove(this.key);
+    // Process left the pool (reap/LRU/crash) — its turn can't finish, so settle to completed.
+    if (this.sessionId) this.pool._onExit?.(this.sessionId);
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
     // Fail any queued sends
@@ -231,6 +233,7 @@ export class ClaudePool {
     this.idleTtl = opts.idleTtl ?? HEADLESS_IDLE_TTL_MS;
     this.maxProcs = opts.maxProcs ?? HEADLESS_MAX_PROCS;
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
+    this._onExit = opts.onExit || null;  // (sessionId) => void, fired when a proc leaves the pool
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
     if (this._reaper.unref) this._reaper.unref();
   }
