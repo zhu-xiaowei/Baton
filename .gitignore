@@ -54,3 +54,6 @@ claude-code-source-code/
 
 # Release binaries
 release/
+
+# Local-only stream-render test harness (jsdom, not packaged, not committed)
+/test/

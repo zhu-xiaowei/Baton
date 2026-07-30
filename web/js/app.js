@@ -370,7 +370,7 @@ function createNewProject() {
   var agentCb = document.getElementById('newProjectAsAgent');
   input.value = '';
   err.textContent = '';
-  if (agentCb) agentCb.checked = localStorage.getItem('apeek_newAsAgent') === '1';
+  if (agentCb) agentCb.checked = false; // always default OFF; not persisted
   modal.style.display = 'flex';
   setTimeout(function () { input.focus(); }, 100);
 }
@@ -406,11 +406,21 @@ async function submitNewProject() {
   ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '', asAgent: asAgent });
 }
 
+// New-session hero agent checkbox toggled — reflect in breadcrumb + send button.
+function onNewAsAgentToggle(checked) {
+  state.appState.isAgent = checked;
+  updateBreadcrumb();
+  if (typeof updateSendBtn === 'function') updateSendBtn();
+}
+
 async function startNewSession(projectHash) {
   await window.loadViewerLibs();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
-  state.appState.isAgent = localStorage.getItem('apeek_newAsAgent') === '1';
+  // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
+  state._titleTier = 0;
+  // Default OFF every time (not remembered) — a regular session is already long-run under the pool.
+  state.appState.isAgent = false;
   updateBreadcrumb();
   saveNav();
   // Reset WS message state for new session
@@ -427,12 +437,12 @@ async function startNewSession(projectHash) {
   state.lastDeliveredSeq = -1;
   if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
-  var agentChecked = localStorage.getItem('apeek_newAsAgent') === '1' ? 'checked' : '';
+  // Agent mode: always starts unchecked; choice is not persisted across sessions.
   content.innerHTML =
     '<div class="new-session-hero">'
       + '<div class="hero-logo">🔭</div>'
       + '<div class="hero-title">AgentPeek</div>'
-      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" ' + agentChecked + ' onchange="localStorage.setItem(\'apeek_newAsAgent\',this.checked?\'1\':\'0\');updateBreadcrumb();if(typeof updateSendBtn===\'function\')updateSendBtn()"><span class="badge agent">Claude Agents</span> Run in background</label>'
+      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages" hidden></div>';
   document.body.classList.add('new-session');
@@ -672,6 +682,6 @@ Object.assign(window, {
   showInputBar, saveNav, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   createNewProject, closeNewProjectModal, submitNewProject,
-  startNewSession, loadMessages, toggleRecentAgents,
+  startNewSession, onNewAsAgentToggle, loadMessages, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });

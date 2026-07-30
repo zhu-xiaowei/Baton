@@ -3,8 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { readAllMessages, uploadMessages, extractForApp, truncateToBytes } from './extract.mjs';
-import { findSessionFile, projectHashToPath } from './session.mjs';
+import { spawn } from 'child_process';
+import { readAllMessages, uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
+import { findSessionFile, projectHashToPath, getDaemonRunningSessionIds, getAgentsJson, resolveClaudeBin } from './session.mjs';
 import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
@@ -228,6 +229,11 @@ async function handleSyncSession(sessionId) {
   console.log(`[ws] sync_session: ${sessionId.slice(0, 8)}`);
   const filePath = findSessionFile(sessionId);
   if (!filePath) {
+    // Fresh pool session whose jsonl hasn't landed yet → ok/empty, not not_found (which wipes the live view).
+    if (_pool.owns(sessionId)) {
+      wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: 0 });
+      return;
+    }
     console.log(`[ws] session ${sessionId.slice(0, 8)} not found locally`);
     wsSend({ action: 'sync_complete', sessionId, status: 'not_found' });
     return;
@@ -245,19 +251,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
   if (!text) return;
   if (!sessionId && !projectHash) return;
 
-  // Detect claude-bridge: image references and download to local
-  const imgPattern = /!\[.*?\]\(claude-bridge:(.+?)\)/g;
-  let resolved = text;
-  let match;
-  while ((match = imgPattern.exec(text)) !== null) {
-    const key = match[1];
-    const localPath = await downloadBridgeImage(key);
-    if (localPath) {
-      resolved = resolved.replace(match[0], `![](${localPath})`);
-    }
-  }
+  const resolved = await resolveBridgeImages(text);
 
-  // Headless streaming path for existing sessions.
+  // Existing session (regular or agent): headless streaming with daemon takeover.
   if (sessionId) {
     const handled = await handleHeadlessSend(sessionId, resolved, clientId);
     if (handled) return;
@@ -265,33 +261,39 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
     return;
   }
 
-  // New session (projectHash only): tmux-based creation removed. Headless
-  // new-session (spawn without --resume, sessionId from system/init) not wired yet.
-  wsSend({ action: 'send_message_result', ok: false, error: 'New session creation is not available yet.', requestId, clientId });
+  // New session (projectHash only): agent → detached `claude --bg`; regular → headless stream.
+  const cwd = projectHashToPath(projectHash);
+  if (!cwd) {
+    wsSend({ action: 'send_message_result', ok: false, error: 'Project path not found.', requestId, clientId });
+    return;
+  }
+  if (asAgent) {
+    const r = await newAgentSession(cwd, resolved);
+    wsSend({ action: 'send_message_result', ok: r.ok, sessionId: r.sessionId, error: r.error, requestId, clientId });
+  } else {
+    await newRegularSession(cwd, resolved, requestId, clientId);
+  }
 }
 
-// Headless streaming send for an existing session. Returns false only when no cwd (caller falls back).
-async function handleHeadlessSend(sessionId, text, clientId) {
-  const cwd = cwdForSession(sessionId);
-  if (!cwd) return false;
+// Replace claude-bridge: image refs with downloaded local paths CC's Read can open.
+async function resolveBridgeImages(text) {
+  const imgPattern = /!\[.*?\]\(claude-bridge:(.+?)\)/g;
+  let resolved = text;
+  let match;
+  while ((match = imgPattern.exec(text)) !== null) {
+    const localPath = await downloadBridgeImage(match[1]);
+    if (localPath) resolved = resolved.replace(match[0], `![](${localPath})`);
+  }
+  return resolved;
+}
 
-  const streamId = crypto.randomUUID
-    ? crypto.randomUUID()
-    : 'sd-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+const newStreamId = () => (crypto.randomUUID
+  ? crypto.randomUUID()
+  : 'sd-' + Date.now() + '-' + Math.random().toString(36).slice(2));
 
-  let acked = false;
-  const ack = (ok, error) => {
-    if (acked) return;
-    acked = true;
-    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId });
-  };
-
-  syncPoolStatus(sessionId, 'running');
-
-  await _pool.send(sessionId, text, {
-    cwd,
-    resumeId: sessionId,
-    streamId,
+// Per-turn streaming callbacks shared by resume + new-regular sends (frames key off sessionId; streamId comes from each callback's `sid` arg).
+function buildStreamCallbacks(sessionId, cwd, ack) {
+  return {
     // Increment-only chunks + turn-level seq → app reorders by seq (see web/js/reorder.js).
     onDelta: (sid, chunk, seq, blockId) => {
       wsSend({ action: 'stream_delta', sessionId, streamId: sid, chunk, seq, blockId });
@@ -350,17 +352,123 @@ async function handleHeadlessSend(sessionId, text, clientId) {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: 'unavailable' });
       ack(false, 'Session unavailable (busy elsewhere). Read-only.');
     },
-  });
+  };
+}
+
+// Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
+async function handleHeadlessSend(sessionId, text, clientId) {
+  const cwd = cwdForSession(sessionId);
+  if (!cwd) return false;
+
+  // Baseline synced to the current jsonl length before this turn appends — else an old session with no synced entry gets its whole history re-pushed by the watcher (flicker). App already has history via REST.
+  if (!synced.has(sessionId)) {
+    const fp = findSessionFile(sessionId);
+    if (fp) { try { synced.set(sessionId, countJsonlLines(fp)); } catch {} }
+  }
+
+  const streamId = newStreamId();
+  let acked = false;
+  const ack = (ok, error) => {
+    if (acked) return;
+    acked = true;
+    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId });
+  };
+
+  // Not in pool but daemon holds it → release so --resume can take over.
+  if (!_pool.owns(sessionId) && getDaemonRunningSessionIds().has(sessionId)) {
+    _pool.stopDaemon(sessionId);
+  }
+
+  syncPoolStatus(sessionId, 'running');
+
+  const cb = buildStreamCallbacks(sessionId, cwd, ack);
+  let res = await _pool.send(sessionId, text, { cwd, resumeId: sessionId, streamId, ...cb });
+  // Roster read was stale (raced a still-active daemon agent) → stop + retry once.
+  if (res && res.bgLocked) {
+    _pool.stopDaemon(sessionId);
+    res = await _pool.send(sessionId, text, { cwd, resumeId: sessionId, streamId, ...cb });
+  }
 
   ack(true);
   return true;
 }
 
-// New-session creation (regular + agent) and create_project were tmux-based and
-// removed with tmux.mjs. Headless new-session (spawn without --resume, sessionId
-// from system/init) is not wired yet.
-async function handleCreateProject(rawPath) {
-  wsSend({ action: 'create_project_result', ok: false, error: 'Project creation is not available yet.', projectPath: rawPath });
+// New regular session: mint sessionId upfront (--session-id), ack it FIRST so the app subscribes before deltas flow, then stream the first turn.
+async function newRegularSession(cwd, text, requestId, clientId) {
+  const sessionId = crypto.randomUUID();
+  const streamId = newStreamId();
+  // Ack sid before spawn → app subscribes; any pre-subscribe delta is corrected by the authoritative row + bufferAndFetch.
+  wsSend({ action: 'send_message_result', sessionId, ok: true, requestId, clientId });
+  syncPoolStatus(sessionId, 'running');
+  const cb = buildStreamCallbacks(sessionId, cwd, () => {});
+  await _pool.send(sessionId, text, { cwd, createId: sessionId, streamId, ...cb });
+}
+
+// New agent: launch detached `claude --bg` (can't pool — conflicts with -p), parse its `backgrounded · <shortid>`, resolve full sid via `claude agents --json`. First task shows via agent poll + watcher; next message takes it over (handleHeadlessSend).
+async function newAgentSession(cwd, text) {
+  const bin = resolveClaudeBin() || 'claude';
+  let out = '';
+  try {
+    out = await new Promise((resolve, reject) => {
+      const p = spawn(bin, ['--bg', text], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let buf = '';
+      p.stdout.on('data', (d) => { buf += d.toString(); });
+      p.stderr.on('data', (d) => { buf += d.toString(); });
+      p.on('close', () => resolve(buf));
+      p.on('error', reject);
+    });
+  } catch (e) {
+    return { ok: false, error: `Failed to launch agent: ${e.message}` };
+  }
+
+  const m = out.match(/backgrounded[^\n]*?\b([0-9a-f]{8})\b/i);
+  if (!m) return { ok: false, error: 'Agent launch did not report a session id.' };
+  const shortId = m[1];
+
+  // Resolve full sessionId (daemon writes it lazily → retry a few times).
+  for (let i = 0; i < 6; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    for (const sid of getAgentsJson(true).keys()) {
+      if (sid.startsWith(shortId)) return { ok: true, sessionId: sid };
+    }
+  }
+  // Fallback: scan the project dir for a fresh jsonl matching the short id.
+  const dir = path.join(os.homedir(), '.claude', 'projects');
+  try {
+    for (const proj of fs.readdirSync(dir)) {
+      const f = fs.readdirSync(path.join(dir, proj)).find((n) => n.startsWith(shortId) && n.endsWith('.jsonl'));
+      if (f) return { ok: true, sessionId: f.replace('.jsonl', '') };
+    }
+  } catch {}
+  return { ok: false, error: 'Agent launched but its session id could not be resolved yet.' };
+}
+
+// Create a new project directory, then start a session in it (regular or agent).
+async function handleCreateProject(rawPath, asAgent) {
+  if (!rawPath) {
+    wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
+    return;
+  }
+  try {
+    const home = os.homedir();
+    let projectPath = rawPath;
+    if (!path.isAbsolute(projectPath)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
+    else if (!projectPath.startsWith(home)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    if (asAgent) {
+      const r = await newAgentSession(projectPath, 'Hello');
+      wsSend({ action: 'create_project_result', ok: r.ok, sessionId: r.sessionId, error: r.error, projectPath: rawPath });
+    } else {
+      // Regular: mint sessionId + spawn a headless proc so the session exists on disk.
+      const sessionId = crypto.randomUUID();
+      const cb = buildStreamCallbacks(sessionId, projectPath, () => {});
+      const res = await _pool.send(sessionId, 'Hello', { cwd: projectPath, createId: sessionId, streamId: newStreamId(), ...cb });
+      wsSend({ action: 'create_project_result', ok: !!(res && res.sessionId), sessionId, projectPath: rawPath });
+    }
+  } catch (err) {
+    wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
+  }
 }
 
 // App (re)subscribed: re-push any control_request still awaiting an answer so a refresh/reconnect re-shows the prompt.

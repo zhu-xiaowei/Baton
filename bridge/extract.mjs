@@ -1,11 +1,35 @@
 import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
 import { post } from './http.mjs';
-import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT } from './config.mjs';
+import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
 
-// Track sync position: sessionId → line number
+// Track sync position: sessionId → line number (the watcher's per-session read watermark).
 export const synced = new Map();
+
+// Persist `synced` to disk so a restart resumes each session's watermark instead of
+// reading from line 0 (which re-pushes whole histories). Runtime keeps the Map hot; we
+// only flush on exit + a low-frequency interval (crash fallback), never per-set.
+const SYNCED_PATH = path.join(BRIDGE_HOME, 'synced.json');
+export function loadSynced() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8'));
+    for (const k in obj) if (typeof obj[k] === 'number') synced.set(k, obj[k]);
+    console.log(`[synced] restored ${synced.size} session watermarks`);
+  } catch {} // missing/corrupt → start empty (handleHeadlessSend baselines on demand)
+}
+export function saveSynced() {
+  try {
+    fs.writeFileSync(SYNCED_PATH, JSON.stringify(Object.fromEntries(synced)));
+  } catch {}
+}
+// jsonl line count matching the watcher's convention (drop a single trailing empty line).
+export function countJsonlLines(filePath) {
+  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+}
 
 const TRUNC_MARK = '\n…[truncated]';
 

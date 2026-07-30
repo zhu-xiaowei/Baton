@@ -8,7 +8,7 @@
 // Lifecycle (litter ClaudePool model): on-demand spawn, idle reap, LRU cap.
 // Reap = close stdin (CC exits cleanly, jsonl persists), never kill.
 
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { resolveClaudeBin } from './session.mjs';
 
@@ -23,11 +23,14 @@ const DELTA_BATCH_MS = 50;
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
-  constructor(pool, key, cwd, resumeId) {
+  constructor(pool, key, cwd, resumeId, createId) {
     this.pool = pool;
     this.key = key;             // pool map key (sessionId, or a temp id for new sessions)
     this.cwd = cwd;
-    this.sessionId = resumeId || null; // known upfront for resume; else from system/init
+    this.createId = createId || null;  // new session: mint this sid via --session-id
+    // sid known upfront for both resume (--resume) and create (--session-id); else from system/init
+    this.sessionId = resumeId || createId || null;
+    this.bgLocked = false;      // resume hit CC's active-bg-agent guard (EXIT with "background agent (bg)")
     this.proc = null;
     this.stdin = null;
     this.ready = false;         // system/init seen
@@ -55,7 +58,9 @@ class HeadlessProc {
       '--verbose',
       '--permission-prompt-tool', 'stdio',
     ];
-    if (this.sessionId) args.push('--resume', this.sessionId);
+    // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
+    if (this.createId) args.push('--session-id', this.createId);
+    else if (this.sessionId) args.push('--resume', this.sessionId);
     this.proc = spawn(bin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     this.stdin = this.proc.stdin;
 
@@ -63,7 +68,11 @@ class HeadlessProc {
     rl.on('line', (line) => this._onLine(line));
 
     let stderr = '';
-    this.proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    this.proc.stderr.on('data', (d) => {
+      stderr += d.toString();
+      // Resume of a session still held by the daemon → CC rejects with EXIT + this msg.
+      if (stderr.includes('background agent (bg)')) this.bgLocked = true;
+    });
     this.proc.on('close', (code) => this._onClose(code, stderr));
     this.proc.on('error', (err) => this._onClose(-1, err.message));
   }
@@ -230,8 +239,11 @@ export class ClaudePool {
 
   _remove(key) { this.procs.delete(key); }
 
-  // Send a message to sessionId's process (spawn/reuse/queue). Returns the
-  // resolved sessionId (from system/init for new sessions), or null on failure.
+  // Send a message to sessionId's process (spawn/reuse/queue). Returns
+  // { sessionId, bgLocked }: sessionId resolved from system/init (or upfront for
+  // resume/create); bgLocked=true when a resume was rejected by CC's active-bg-agent
+  // guard (caller then stopDaemon + retries). resumeId → --resume; createId → new
+  // session via --session-id (sessionId known upfront, no init wait needed to return it).
   async send(key, text, opts = {}) {
     const streamId = opts.streamId || null;
     const cb = {
@@ -251,18 +263,27 @@ export class ClaudePool {
       // message is written — not on spawn. So write the turn immediately, then
       // await init just to resolve the sessionId for the return value.
       if (this.procs.size >= this.maxProcs) this._evictLru();
-      proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId);
+      proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId, opts.createId);
       this.procs.set(key, proc);
       proc.spawn();
       proc._writeTurn(text, streamId, cb);
       const ok = await proc.waitInit(this.initTimeout);
-      if (!ok) return proc.sessionId; // died/timeout: onError already fired via _onClose
-      return proc.sessionId;
+      if (!ok) return { sessionId: proc.sessionId, bgLocked: proc.bgLocked }; // died/timeout: onError already fired via _onClose
+      return { sessionId: proc.sessionId, bgLocked: false };
     }
 
     if (proc.busy) proc.enqueue(text, streamId, cb);
     else proc._writeTurn(text, streamId, cb);
-    return proc.sessionId;
+    return { sessionId: proc.sessionId, bgLocked: false };
+  }
+
+  // Release a daemon-held (bg-agent) session so --resume can take it over. `claude stop` blocks until released (~200ms) — no polling needed.
+  stopDaemon(sessionId) {
+    const bin = resolveClaudeBin() || 'claude';
+    try {
+      execFileSync(bin, ['stop', sessionId.slice(0, 8)], { stdio: 'ignore', timeout: 10000 });
+      return true;
+    } catch { return false; }
   }
 
   // Reply to a control_request (permission). payload is the `response` object.

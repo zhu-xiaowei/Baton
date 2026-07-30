@@ -16,6 +16,7 @@ import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startWatcher, startJobsWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
+import { loadSynced, saveSynced } from './extract.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
 const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
@@ -29,12 +30,14 @@ try {
   }
   fs.writeFileSync(LOCK_FILE, String(process.pid));
 } catch {}
-process.on('exit', () => { try { fs.unlinkSync(LOCK_FILE); } catch {} });
+process.on('exit', () => { saveSynced(); try { fs.unlinkSync(LOCK_FILE); } catch {} });
 process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
 const CONFIG = loadConfig();
 initHttp(CONFIG);
+loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
+setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
 
 // Auto-discover WS URL from server (retry every 5 min if network unavailable at boot)
 const serverConfig = await fetchServerConfig(CONFIG);

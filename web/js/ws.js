@@ -93,8 +93,9 @@ function updateTitleFromMessages() {
   saveNav();
 }
 
-// Skeleton → empty state + stop spinner, when a synced session has no real messages.
+// Skeleton → empty state + stop spinner, when a synced session has no real messages. Never wipe mid-send/stream: a fresh session has 0 DDB rows but a live bubble on screen.
 function showEmptyMessages() {
+  if (state.pendingSentMessages.length || state.wsRunning) return;
   var content = document.getElementById('content');
   if (content && !state.wsAllMessages.length) content.innerHTML = '<div class="empty">No messages</div>';
   state.wsRunning = false;
@@ -135,8 +136,21 @@ function connectWs(_, projectHash) {
     if (window.prefetchCommands) window.prefetchCommands();
   };
 
-  state.ws.onmessage = function (e) {
-    var msg = JSON.parse(e.data);
+  state.ws.onmessage = function (e) { handleWsMessage(JSON.parse(e.data)); };
+
+  state.ws.onclose = function () {
+    setWsStatus('disconnected');
+    if (state.appState.session) {
+      setWsStatus('reconnecting');
+      setTimeout(function () { if (state.appState.session) connectWs(); }, 3000);
+    }
+  };
+
+  state.ws.onerror = function () {};
+}
+
+// WS message dispatch — extracted from onmessage so the jsdom test harness can replay a captured WS sequence through the exact same handling (test/README.md).
+function handleWsMessage(msg) {
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
       if (state._wsBuffer !== null) {
         // Buffering during initial load — collect, don't render yet
@@ -177,19 +191,15 @@ function connectWs(_, projectHash) {
         saveNav();
         state.wsRequestId = null;
         subscribeSession(msg.sessionId);
-        // Fetch missed messages, then replace pending bubbles with real data
+        // Fold fetched rows in incrementally (updateLastTurn), never innerHTML-rebuild — a rebuild renders only wsAllMessages and wipes other in-flight optimistic bubbles.
         bufferAndFetch(msg.sessionId, '').then(function () {
           var container = document.querySelector('.messages');
-          if (container && state.wsAllMessages.length) {
-            container.innerHTML = renderMessages(state.wsAllMessages);
-            state.wsRenderedCount = state.wsAllMessages.length;
-            state.pendingSentMessages = [];
-            state.lastDeliveredSeq = -1;
-            loadImages(container);
-            clampOverflow(container);
-            container.parentElement.scrollTop = container.parentElement.scrollHeight;
-            updateTitleFromMessages();
-          }
+          if (!container || !state.wsAllMessages.length) return;
+          updateLastTurn();
+          loadImages(container);
+          clampOverflow(container);
+          container.parentElement.scrollTop = container.parentElement.scrollHeight;
+          updateTitleFromMessages();
         }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
@@ -246,17 +256,6 @@ function connectWs(_, projectHash) {
         }
       }
     }
-  };
-
-  state.ws.onclose = function () {
-    setWsStatus('disconnected');
-    if (state.appState.session) {
-      setWsStatus('reconnecting');
-      setTimeout(function () { if (state.appState.session) connectWs(); }, 3000);
-    }
-  };
-
-  state.ws.onerror = function () {};
 }
 
 function subscribeSession(sessionId) {
@@ -350,6 +349,8 @@ var _streamRaf = null;
 var _streamLastTick = 0;
 // Last headless stream_end time; while fresh, trust it over deriveRunning (trailing rows are stop=null).
 var _lastStreamEndAt = 0;
+// Cumulative authoritative assistant block count for the in-flight turn = its preview supersede watermark. Accumulates across batches; reset per turn.
+var _turnAuthBlocks = 0;
 
 function blockKey(streamId, blockId) { return streamId + ':' + (blockId == null ? 0 : blockId); }
 
@@ -508,6 +509,7 @@ function handleStreamEnd(streamId, finalSeq, error) {
     var t = document.getElementById('stream-turn-' + streamId);
     if (t) t.classList.add('stream-error');
   }
+  _turnAuthBlocks = 0; // turn boundary — next turn's supersede count starts fresh
   state.wsRunning = false;
   updateSendBtn();
 }
@@ -551,14 +553,13 @@ function updateLastTurn() {
     newMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
   }
 
-  // Authoritative row covers its own blocks (its content-block count); later streaming blocks (higher blockId) survive.
-  var cover = 0;
+  // Supersede preview blocks the authoritative rows cover. Headless splits one turn's thinking/text into separate rows (each len 1), so a per-batch count strands later blocks → a trailing tick revives them (duplicate); accumulate across batches instead. Reset on stream_end.
   for (var ai = 0; ai < newMessages.length; ai++) {
     if (newMessages[ai].type === 'assistant' && Array.isArray(newMessages[ai].content)) {
-      cover = Math.max(cover, newMessages[ai].content.length);
+      _turnAuthBlocks += newMessages[ai].content.length;
     }
   }
-  if (cover > 0) clearStreamPreviews(cover);
+  if (_turnAuthBlocks > 0) clearStreamPreviews(_turnAuthBlocks);
 
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
@@ -600,9 +601,11 @@ function updateLastTurn() {
 
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
-      if (tryDedup(msg)) continue;
+      if (tryDedup(msg)) { updateTitleFromMessages(); continue; }
       var userHtml = renderUserBubble(msg);
       if (userHtml) insertAtTimestamp(container, userHtml, msg.timestamp);
+      // Trivial-first-message sessions get no ai-title (last-prompt lands only on shutdown) → fall title back to first user prompt (idempotent; tier won't downgrade).
+      updateTitleFromMessages();
       continue;
     }
 
@@ -634,16 +637,22 @@ function updateLastTurn() {
       // Insert before target, inside its parent turn
       target.insertAdjacentHTML('beforebegin', html);
     } else {
-      // Latest message — append to last turn or create new one
+      // Latest message → this turn's assistant content. The reply belongs AFTER the
+      // pending question bubble, not merged into whatever precedes it (that preceding
+      // turn may be a HISTORY turn when answering the first message of an opened
+      // session — merging there moved the reply up into history). Reuse the current
+      // turn's own assistant-turn only when it sits at/after the pending bubble.
       var firstPending = container.querySelector('[data-pending]');
-      var lastReal = firstPending ? firstPending.previousElementSibling : container.lastElementChild;
-      if (lastReal && lastReal.classList.contains('assistant-turn')) {
+      var lastReal = firstPending
+        ? (firstPending.nextElementSibling && firstPending.nextElementSibling.classList.contains('assistant-turn') ? firstPending.nextElementSibling : null)
+        : (container.lastElementChild && container.lastElementChild.classList.contains('assistant-turn') ? container.lastElementChild : null);
+      if (lastReal) {
         lastReal.insertAdjacentHTML('beforeend', html);
         if (msg.timestamp) lastReal.dataset.ts = msg.timestamp;
         continue;
       }
       var turnHtml = '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>';
-      if (firstPending) firstPending.insertAdjacentHTML('beforebegin', turnHtml);
+      if (firstPending) firstPending.insertAdjacentHTML('afterend', turnHtml); // reply after the question bubble
       else container.insertAdjacentHTML('beforeend', turnHtml);
     }
   }
@@ -968,7 +977,8 @@ function doSend(fullText, displayText, images) {
   // Keep fullText (with image refs) so a retry re-sends the exact same payload;
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
-  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now() });
+  // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
+  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now(), echoScanFrom: state.wsAllMessages.length });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -1028,7 +1038,9 @@ function resolvePending(pending, ok, error) {
 function messageEchoed(pending) {
   var needle = stripImageRefs((pending.text || '').trim());
   if (!needle) return false;
-  for (var i = 0; i < state.wsAllMessages.length; i++) {
+  // Scan only rows after this send (echoScanFrom); a historical same-text row isn't its echo.
+  var from = pending.echoScanFrom || 0;
+  for (var i = from; i < state.wsAllMessages.length; i++) {
     var m = state.wsAllMessages[i];
     if (m.type !== 'user') continue;
     var hay = stripImageRefs(extractMsgText(m).trim());
@@ -1057,9 +1069,10 @@ function reconcileEchoedPending(turnEnded) {
     var pending = state.pendingSentMessages[i];
     if (pending.isImage) continue; // image bubbles carry no matchable text
     var echoed = messageEchoed(pending);
-    var orphaned = pending.seq < state.lastDeliveredSeq; // a later send was confirmed first
+    // Orphan = an unacked earlier send whose echo never comes (a later one confirmed first). Exclude delivered bubbles — those just have a lagging jsonl echo, clearing them makes them flash out.
+    var orphaned = !pending.delivered && pending.seq < state.lastDeliveredSeq;
     // 3s grace: a normal idle-send's echo can lag an unrelated idle frame — don't clean too early.
-    var idleStale = turnEnded && (Date.now() - (pending.sentAt || 0) > 3000);
+    var idleStale = turnEnded && !pending.delivered && (Date.now() - (pending.sentAt || 0) > 3000);
     if (!echoed && !orphaned && !idleStale) continue;
     var el = document.getElementById(pending.id);
     if (el) el.remove();
@@ -1185,3 +1198,21 @@ Object.assign(window, {
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   extractMsgText, stripImageRefs, tryDedup, retryPendingSend,
 });
+
+// Test-only hooks for the jsdom stream-render harness (test/). Gated on __APEEK_TEST__
+// so production never sees them. Exposes the internal stream fns + reorder-buffer state
+// so tests can replay a WS event sequence through the REAL render code. See test/README.md.
+if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
+  window.__wsTest = {
+    handleWsMessage: handleWsMessage,
+    pushStreamFrame: pushStreamFrame,
+    handleStreamEnd: handleStreamEnd,
+    clearStreamPreviews: clearStreamPreviews,
+    updateLastTurn: updateLastTurn,
+    rbState: function () {
+      return Object.keys(_rb).map(function (k) {
+        return { sid: k, blocks: _rb[k].blocks.size, nextSeq: _rb[k].nextSeq, superseded: _rb[k].supersededThrough, ended: !!_streamEnded[k] };
+      });
+    },
+  };
+}
