@@ -56,7 +56,9 @@ import { state } from '../state.js';
     var el = document.getElementById('cc-spinner');
     // Hide the spinner while a permission prompt is up — the user is answering, not waiting.
     var promptUp = typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt();
-    var shouldShow = state.wsRunning && !promptUp;
+    // Hold the spinner until the skeleton clears — else it shows under the loading placeholder.
+    var skeleton = !!document.querySelector('#content .skeleton-messages');
+    var shouldShow = state.wsRunning && !promptUp && !skeleton;
 
     if (!shouldShow) {
       if (el) el.style.display = 'none';
