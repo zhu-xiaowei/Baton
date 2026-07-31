@@ -27,6 +27,7 @@ export const state = {
   wsProjectHash: null,        // for new session creation
   wsRequestId: null,          // unique ID per new-session creation flow
   wsRunning: false,           // active session still running (derived via deriveRunning)
+  stickBottom: true,          // auto-scroll intent: true = follow new content; user up-scroll clears it, reaching bottom / tapping the button restores it
   wsOpenStatus: null,         // bridge's pane-checked status at session open; authoritative for ambiguous trailing-user case, cleared once live frames arrive
   _titleTier: 0,              // 4=customTitle 3=ai-title 2=lastPrompt 1=firstUser; never downgrade
   wsRenderedCount: 0,
@@ -37,6 +38,7 @@ export const state = {
   _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],
+  streamAnchors: {},          // streamId → clientId (from send_message_result); places a reply's live preview under its own question bubble
   lastDeliveredSeq: -1,       // highest send-seq confirmed delivered; earlier still-pending = CC-skipped orphan
 
   // ---- Image staging (image.js) ----

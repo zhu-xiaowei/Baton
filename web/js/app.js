@@ -669,6 +669,7 @@ async function loadMessages(sessionId, preview, status) {
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';
+  state.stickBottom = true; // open a session pinned to the latest message
   _revealedSessions.delete(sessionId);
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
@@ -721,6 +722,7 @@ async function loadMessages(sessionId, preview, status) {
 
     // Render
     content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
+    if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
 
     updateTitleFromMessages();
@@ -755,6 +757,7 @@ async function loadMessages(sessionId, preview, status) {
 // ---- Scroll-to-bottom ----
 function scrollToBottom() {
   var el = document.getElementById('content');
+  state.stickBottom = true; // tapping the button re-enables follow-new-content
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 }
 
@@ -785,6 +788,8 @@ function positionScrollBtn() {
     if (!state.appState.session) return;
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
     btn.classList.toggle('visible', !atBottom);
+    // Position drives auto-scroll intent (programmatic scrollTo(bottom) lands here too, atBottom=true, so never clears it).
+    state.stickBottom = atBottom;
 
     // Load older messages when scrolling near top
     if (content.scrollTop < 800 && state.wsHasMore && !state.wsLoadingOlder) {
@@ -821,6 +826,7 @@ async function loadOlderAndPrepend() {
   // Render older messages and prepend
   var html = renderMessages(msgs);
   container.insertAdjacentHTML('afterbegin', html);
+  if (window.markTurnAdjacency) markTurnAdjacency(container); // reconnect the pagination seam
   loadImages(container);
   clampOverflow(container);
 

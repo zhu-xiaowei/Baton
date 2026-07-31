@@ -323,7 +323,8 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
           out = truncateToBytes(msg, WS_FRAME_LIMIT - 512);
           out.truncated = true;
         }
-        wsSend({ action: 'messages', sessionId, messages: [out], noCache: true });
+        // streamId ties this row (user echo + assistant) to its send → app places/dedupes by identity.
+        wsSend({ action: 'messages', sessionId, streamId: sid, messages: [out], noCache: true });
         markHeadlessPushed(msg.uuid); // watcher skips WS for this uuid's jsonl copy
       } catch (e) {
         console.log(`[ws] headless onMessage extract failed: ${e.message}`);
@@ -381,7 +382,8 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
   const ack = (ok, error) => {
     if (acked) return;
     acked = true;
-    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId });
+    // streamId lets the app bind this clientId to the turn's stream frames (which carry only streamId).
+    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId, streamId });
   };
 
   // Not in pool but daemon holds it → release so --resume can take over.
@@ -408,7 +410,7 @@ async function newRegularSession(cwd, text, requestId, clientId) {
   const sessionId = crypto.randomUUID();
   const streamId = newStreamId();
   // Ack sid before spawn → app subscribes; any pre-subscribe delta is corrected by the authoritative row + bufferAndFetch.
-  wsSend({ action: 'send_message_result', sessionId, ok: true, requestId, clientId });
+  wsSend({ action: 'send_message_result', sessionId, ok: true, requestId, clientId, streamId });
   syncPoolStatus(sessionId, 'running');
   const cb = buildStreamCallbacks(sessionId, cwd, () => {});
   await _pool.send(sessionId, text, { cwd, createId: sessionId, streamId, ...cb });

@@ -160,6 +160,7 @@ function handleWsMessage(msg) {
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
         if (m.uuid && state.wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
+        if (msg.streamId) m._streamId = msg.streamId; // ties row to its send (placement/dedup by identity)
         state.wsAllMessages.push(m);
         state.wsMessageCount++;
         if (m.timestamp) state.wsLastTimestamp = m.timestamp;
@@ -183,6 +184,8 @@ function handleWsMessage(msg) {
         }
         if (pending && !pending.delivered) resolvePending(pending, msg.ok, msg.error);
       }
+      // Bind this turn's streamId to the sending bubble → live preview places under it.
+      if (msg.streamId && msg.clientId) state.streamAnchors[msg.streamId] = msg.clientId;
       // New session: bridge spawned CC (headless), returned sessionId
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
         state.appState.session = msg.sessionId;
@@ -272,6 +275,7 @@ function subscribeSession(sessionId) {
     wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
     clearStreamPreviews();
     _streamEnded = {}; // switching sessions: drop ended-turn guards from the old one
+    state.streamAnchors = {}; // anchors are per-session (old bubbles are gone)
     _lastStreamEndAt = 0;
   }
   state.wsSessionId = sessionId;
@@ -335,6 +339,16 @@ function findInsertBefore(container, timestamp) {
     }
   }
   return result;
+}
+
+// streamId → clientId → the question bubble that started this turn: returns the node to place the reply after (bubble, or its reply turn); null if no anchor (external/terminal send).
+function anchorForStream(container, streamId) {
+  var clientId = state.streamAnchors[streamId];
+  if (!clientId) return null;
+  var bubble = container.querySelector('[data-anchor="' + clientId + '"]');
+  if (!bubble) return null;
+  var sib = bubble.nextElementSibling;
+  return (sib && sib.classList.contains('assistant-turn')) ? sib : bubble;
 }
 
 /** Insert html at correct timestamp position, before any pending messages. */
@@ -415,7 +429,6 @@ function tickStreams(now) {
   _streamLastTick = now;
   var container = document.querySelector('.messages');
   var content = document.getElementById('content');
-  var nearBottom = content && content.scrollHeight - content.scrollTop - content.clientHeight < 300;
   var active = false;
 
   // One .assistant-turn per streamId; blocks come pre-ordered from the reorder buffer.
@@ -438,7 +451,11 @@ function tickStreams(now) {
         turn = document.createElement('div');
         turn.className = 'assistant-turn stream-preview';
         turn.id = turnId;
-        container.appendChild(turn);
+        // streamId → clientId → the exact question bubble; no anchor (external reply) → append at end.
+        var anchorNode = anchorForStream(container, sid);
+        if (anchorNode) anchorNode.insertAdjacentElement('afterend', turn);
+        else container.appendChild(turn);
+        markTurnAdjacency(container); // only on turn creation, not per frame
       }
       var elId = 'sb-' + sid + '-' + b.blockId;
       var el = document.getElementById(elId);
@@ -504,7 +521,7 @@ function tickStreams(now) {
       }
     }
   }
-  if (nearBottom && content) content.scrollTop = content.scrollHeight;
+  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
@@ -518,6 +535,7 @@ function handleStreamEnd(streamId, finalSeq, error) {
     var t = document.getElementById('stream-turn-' + streamId);
     if (t) t.classList.add('stream-error');
   }
+  // Keep streamAnchors[streamId]: the authoritative row arrives AFTER stream_end and still needs the anchor (deleting here stranded it → reply fell to bottom). Cleared on session switch.
   _turnAuthBlocks = 0; // turn boundary — next turn's supersede count starts fresh
   state.wsRunning = false;
   updateSendBtn();
@@ -537,8 +555,28 @@ function clearStreamPreviews(coverCount) {
   }
   _rb = kept;
   var previews = document.querySelectorAll('[id^="stream-turn-"]');
-  for (var i = 0; i < previews.length; i++) previews[i].remove();
+  var container = null;
+  for (var i = 0; i < previews.length; i++) {
+    if (!container) container = previews[i].parentNode;
+    previews[i].remove();
+  }
+  markTurnAdjacency(container || document.querySelector('.messages'));
 }
+
+// Cross-turn connector adjacency via explicit classes — replaces :has(+)/+ which WebKit (Safari) won't re-invalidate on live inserts. Call only when a turn is added/removed, never per frame.
+function markTurnAdjacency(container) {
+  if (!container) return;
+  var kids = container.children;
+  for (var i = 0; i < kids.length; i++) {
+    var el = kids[i];
+    if (!el.classList || !el.classList.contains('assistant-turn')) continue;
+    var next = el.nextElementSibling;
+    el.classList.toggle('has-next-turn', !!(next && next.classList.contains('assistant-turn')));
+    var prev = el.previousElementSibling;
+    el.classList.toggle('follows-turn', !!(prev && prev.classList.contains('assistant-turn')));
+  }
+}
+window.markTurnAdjacency = markTurnAdjacency;
 
 // Authoritative thinking has no duration; use the seconds the live preview measured.
 function applyThinkSecs(html) {
@@ -555,7 +593,6 @@ function updateLastTurn() {
   if (!newMessages.length) return;
 
   var el = document.getElementById('content');
-  var wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
 
   // Sort batch by timestamp
   if (newMessages.length > 1) {
@@ -631,41 +668,29 @@ function updateLastTurn() {
     if (!html) continue;
     html = applyThinkSecs(html); // carry live-measured thinking seconds into the empty authoritative node
 
-    // Scan all elements with data-ts to find insertion position
+    // Primary: place under the exact question via streamId→clientId→[data-anchor] (identity, not timestamp).
+    var anchor = msg._streamId ? anchorForStream(container, msg._streamId) : null;
+    if (anchor) {
+      if (anchor.classList.contains('assistant-turn')) {
+        anchor.insertAdjacentHTML('beforeend', html); // reply turn already growing under the question
+        if (msg.timestamp) anchor.dataset.ts = msg.timestamp;
+      } else {
+        anchor.insertAdjacentHTML('afterend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
+      }
+      continue;
+    }
+
+    // Fallback (external/historical rows, no streamId): insert before the first later-timestamped node, else append.
     var allItems = container.querySelectorAll('[data-ts]');
     var target = null;
     for (var j = allItems.length - 1; j >= 0; j--) {
-      if (allItems[j].dataset.ts > msg.timestamp) {
-        target = allItems[j];
-      } else {
-        break;
-      }
+      if (allItems[j].dataset.ts > msg.timestamp) target = allItems[j];
+      else break;
     }
-
-    if (target) {
-      // Insert before target, inside its parent turn
-      target.insertAdjacentHTML('beforebegin', html);
-    } else {
-      // Latest message → this turn's assistant content. The reply belongs AFTER the
-      // pending question bubble, not merged into whatever precedes it (that preceding
-      // turn may be a HISTORY turn when answering the first message of an opened
-      // session — merging there moved the reply up into history). Reuse the current
-      // turn's own assistant-turn only when it sits at/after the pending bubble.
-      var firstPending = container.querySelector('[data-pending]');
-      var lastReal = firstPending
-        ? (firstPending.nextElementSibling && firstPending.nextElementSibling.classList.contains('assistant-turn') ? firstPending.nextElementSibling : null)
-        : (container.lastElementChild && container.lastElementChild.classList.contains('assistant-turn') ? container.lastElementChild : null);
-      if (lastReal) {
-        lastReal.insertAdjacentHTML('beforeend', html);
-        if (msg.timestamp) lastReal.dataset.ts = msg.timestamp;
-        continue;
-      }
-      var turnHtml = '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>';
-      if (firstPending) firstPending.insertAdjacentHTML('afterend', turnHtml); // reply after the question bubble
-      else container.insertAdjacentHTML('beforeend', turnHtml);
-    }
+    if (target) target.insertAdjacentHTML('beforebegin', html);
+    else container.insertAdjacentHTML('beforeend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
   }
-
+  markTurnAdjacency(container); // turns may have been added this batch
   // Pure metadata frames (ai-title/last-prompt) arrive at a new turn's start before
   // the first real reply; deriveRunning skips them and scans back to the prior
   // end_turn → idle, flickering the spinner off. Only let real assistant/user frames
@@ -697,7 +722,7 @@ function updateLastTurn() {
   // Clamp before scrolling so scrollTop uses the collapsed final height.
   loadImages(container);
   clampOverflow(container);
-  if (wasNearBottom) {
+  if (state.stickBottom) {
     el.scrollTop = el.scrollHeight;
   }
   showStats(state.wsMessageCount + ' messages (live)');
@@ -996,11 +1021,13 @@ function doSend(fullText, displayText, images) {
       return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" onclick="viewImage(this.src)" /></div>';
     }).join('');
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
+    // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" id="' + msgId + '" data-pending="1">' + attachHtml
+      '<div class="msg-user" id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
+    state.stickBottom = true; // sending a message = follow the incoming reply
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
   scheduleSendTimeout(msgId);
@@ -1154,49 +1181,49 @@ function stripImageRefs(text) {
   return text.replace(/!\[.*?\]\([^)]+\)/g, '').trim();
 }
 
-/** Match incoming user message against pending. Remove pending DOM element; real message is inserted by timestamp. */
+/** Match a user echo to its pending bubble and promote in place. Returns true when handled (caller skips insert). */
 function tryDedup(msg) {
   if (msg.type !== 'user') return false;
+
+  // Primary: identity match — echo's streamId → clientId → the exact pending bubble (no text guessing).
+  if (msg._streamId) {
+    var clientId = state.streamAnchors[msg._streamId];
+    var byId = clientId ? findPending(clientId) : null;
+    if (byId) { promoteEchoedBubble(byId, msg); return true; }
+  }
+
+  // Fallback: no streamId (external echo) → loose text containment + slash-command rewrite match.
   var text = extractMsgText(msg).trim();
   if (!text) return false;
-
   var stripped = stripImageRefs(text);
-  // CC rewrites a sent "/pdf" into "<command-name>/document-skills:pdf</command-name>".
-  // Extract the command name so it matches the optimistic "/pdf" we already show.
   var cmdMatch = text.match(/<command-name>\/?([\w:-]+)<\/command-name>/);
   var cmdName = cmdMatch ? cmdMatch[1] : null; // e.g. "document-skills:pdf"
 
   for (var i = 0; i < state.pendingSentMessages.length; i++) {
     var pending = state.pendingSentMessages[i];
     var pendingText = pending.text.trim();
-    // Loose match (containment either way), matching reconcile's messageEchoed:
-    // CC rewrites can make the echo differ from what we typed by a few chars, and
-    // strict equality there is exactly what orphaned the optimistic bubble.
     var isTextMatch = !!pendingText && (
       pendingText === stripped || pendingText === text ||
       stripped.indexOf(pendingText) !== -1 || pendingText.indexOf(stripped) !== -1);
-    // Command match: pending "/pdf" vs CC's "/document-skills:pdf" (share the
-    // bare name after the optional plugin namespace).
     var isCmdMatch = cmdName && pendingText.charAt(0) === '/' &&
       (('/' + cmdName) === pendingText || cmdName.split(':').pop() === pendingText.slice(1));
     if (!isTextMatch && !isCmdMatch) continue;
-    bumpDeliveredSeq(pending.seq); // this send's echo just landed → confirms delivery
-    state.pendingSentMessages.splice(i, 1);
-    var el = document.getElementById(pending.id);
-    if (isCmdMatch && !isTextMatch) {
-      // Keep our "/pdf" bubble (drop CC's namespaced dup), but promote it to a
-      // real timestamped anchor so the assistant reply sorts below it, not above.
-      // (Time text is set separately by the send_message_result handler.)
-      if (el && msg.timestamp) {
-        el.dataset.ts = msg.timestamp;
-        el.removeAttribute('data-pending');
-      }
-      return true;
-    }
-    if (el) el.remove(); // remove optimistic element; real one is inserted at correct ts
-    return false; // caller inserts the real message
+    promoteEchoedBubble(pending, msg);
+    return true;
   }
   return false;
+}
+
+// Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
+function promoteEchoedBubble(pending, msg) {
+  bumpDeliveredSeq(pending.seq); // echo landed → confirms delivery
+  var idx = state.pendingSentMessages.indexOf(pending);
+  if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
+  var el = document.getElementById(pending.id);
+  if (el) {
+    if (msg.timestamp) el.dataset.ts = msg.timestamp;
+    el.removeAttribute('data-pending');
+  }
 }
 
 // Function bridges for inline HTML handlers + IIFE consumers.

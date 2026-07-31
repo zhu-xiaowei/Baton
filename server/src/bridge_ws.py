@@ -282,14 +282,18 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
         KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
     ).get("Items", [])
 
+    stream_id = body.get("streamId")  # ties the row to its send → app places by identity
     for sub in subs:
         cid = sub.get("connectionId", "")
         if cid and cid != bridge_connection_id:
-            _post_to_connection(endpoint, cid, {
+            payload = {
                 "action": "messages",
                 "sessionId": session_id,
                 "messages": messages,
-            })
+            }
+            if stream_id:
+                payload["streamId"] = stream_id
+            _post_to_connection(endpoint, cid, payload)
 
     # 2. Write to DDB (cache) with one retry.
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit

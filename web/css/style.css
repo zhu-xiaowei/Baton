@@ -152,12 +152,12 @@ body {
 .tl-item:only-child::after { display: none; }
 /* Bare tl-item outside assistant-turn (WS incremental insert): no connector */
 .messages > .tl-item::after { display: none; }
-/* Adjacent assistant-turns (pagination seam): connect lines */
-.assistant-turn:has(+ .assistant-turn) { margin-bottom: 0; }
-.assistant-turn + .assistant-turn > .tl-item:first-child::after { top: -2px; }
-.assistant-turn + .assistant-turn > .tl-item:only-child::after { display: block; top: -2px; }
-.assistant-turn:has(+ .assistant-turn) > .tl-item:last-child::after { bottom: -2px; }
-.assistant-turn:has(+ .assistant-turn) > .tl-item:only-child::after { display: block; bottom: -2px; }
+/* Adjacent assistant-turns: connect lines. Adjacency set by markTurnAdjacency() in JS, not :has(+)/+ (WebKit won't re-invalidate those on live inserts). */
+.assistant-turn.has-next-turn { margin-bottom: 0; }
+.assistant-turn.has-next-turn > .tl-item:last-child::after { bottom: -2px; }
+.assistant-turn.has-next-turn > .tl-item:only-child::after { display: block; bottom: -2px; }
+.assistant-turn.follows-turn > .tl-item:first-child::after { top: -2px; }
+.assistant-turn.follows-turn > .tl-item:only-child::after { display: block; top: -2px; }
 
 /* Assistant text (as timeline item) */
 .assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
