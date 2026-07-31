@@ -288,6 +288,7 @@ async function loadDevices() {
       + '<div id="recent-agents-section"></div>'
       + '<div class="section-title">Devices</div>'
       + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
+    content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
   }
 
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
@@ -405,6 +406,7 @@ async function loadProjects(device) {
   saveNav();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="list">' + skeletonItems(4) + '</div>';
+  content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
 
   try {
     var data = await api('/api/bridge/projects', { device: device });
@@ -438,6 +440,7 @@ async function loadSessions(device, projectHash, projectName) {
   saveNav();
   var content = document.getElementById('content');
   content.innerHTML = '<div class="list">' + skeletonItems(5) + '</div>';
+  content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
 
   try {
     var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
