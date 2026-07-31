@@ -15,9 +15,9 @@ const BUILTIN_COMMANDS = [
   'team-onboarding', 'update-config', 'usage', 'verify',
 ];
 
-// AgentPeek-only commands. The nav/capture flow was tmux; dead under headless, kept for the command-list tag.
+// AgentPeek-only synthetic commands — surfaced in the "/" list, tagged local below.
 export const SYNTHETIC_COMMANDS = {
-  'stats-models': { realCmd: '/stats', nav: ['Down', 'Right'] },
+  'stats-models': {},
 };
 
 // "local" commands (CC `type: local`/`local-jsx`) render only in the terminal and
@@ -27,12 +27,6 @@ export const SYNTHETIC_COMMANDS = {
 export const LOCAL_COMMANDS = new Set([
   'context', 'usage', 'heapdump',
   'goal', 'reload-skills', 'status', 'config', 'stats',
-]);
-
-// Full-screen dialog commands (CC `type: local-jsx`). Dead under headless (was
-// tmux Esc-dismiss); kept only so stale imports resolve.
-export const DIALOG_COMMANDS = new Set([
-  'status', 'config', 'usage', 'stats', 'context',
 ]);
 
 const HOME = os.homedir();

@@ -235,13 +235,9 @@ export async function reconcile(config) {
   catch {}
 }
 
-/**
- * Periodic check (every 5 min): detect CC processes that have disappeared and
- * flip running/idle → stopped.
- */
 // Update a session to a new status and push metadata + counter delta to the
-// server. Used by the stall poller's idle fast-path (a reverted prompt looks
-// 'running' in jsonl but the pane is quiescent). No-op if status is unchanged.
+// server. Used by the pool's status sync (syncPoolStatus in ws.mjs). No-op if
+// status is unchanged.
 export async function updateSessionStatus(config, sessionId, filePath, project, newStatus) {
   project = normalizeProjectHash(project);
   const prevStatus = lastKnownStatus.get(sessionId);

@@ -16,7 +16,6 @@ export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this lon
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
-const RESULT_GRACE_MS = 2000;
 // Coalesce a block's bursty deltas over this window into ONE frame (~4.5x fewer WS frames); boundary events flush it first.
 const DELTA_BATCH_MS = 50;
 
@@ -43,7 +42,6 @@ class HeadlessProc {
     this._cb = null;
     this._seq = 0;              // turn-level monotonic frame counter (app's reorder key)
     this._blockId = -1;
-    this._graceUntil = 0;
     this._batch = null;         // pending coalesced delta { blockId, kind, text }
     this._batchTimer = null;    // flush timer for _batch
   }
@@ -128,7 +126,6 @@ class HeadlessProc {
     if (t === 'result') {
       this._flushBatch();
       this.busy = false;
-      this._graceUntil = Date.now() + RESULT_GRACE_MS;
       this.pool._touch(this);
       const cb = this._cb;
       this._cb = null;
@@ -298,21 +295,10 @@ export class ClaudePool {
     catch { return false; }
   }
 
-  // Send a plain user text message (used for AskUserQuestion answer after deny).
-  sendRaw(key, text) {
-    const proc = this.procs.get(key);
-    if (!proc || proc.dead) return false;
-    const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
-    try { proc.stdin.write(JSON.stringify(msg) + '\n'); return true; }
-    catch { return false; }
-  }
-
   interrupt(key) { this.procs.get(key)?.interrupt(); }
 
   // True while a live process exists for this session (pool owns its status).
   owns(key) { const p = this.procs.get(key); return !!p && !p.dead; }
-
-  isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && (p.busy || Date.now() < (p._graceUntil || 0)); }
 
   reapIdle() {
     const now = Date.now();
