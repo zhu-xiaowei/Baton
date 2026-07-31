@@ -487,7 +487,8 @@ function tickStreams(now) {
         el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
           + '<span class="tool-desc">' + esc(desc) + '</span>'
           + '<span class="tool-status">running</span></div>'
-          + (inRaw ? '<div class="tool-body"><div class="tool-body-content no-clamp"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value">' + esc(inRaw) + '</div></div></div></div></div>' : '');
+          // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
+          + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
         if (!b.stopped || gap) active = true;
       } else if (wantKind === 'thinking') {
         if (!u.thinkStart) u.thinkStart = now;
