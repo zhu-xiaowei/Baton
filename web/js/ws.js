@@ -342,13 +342,14 @@ function findInsertBefore(container, timestamp) {
 }
 
 // streamId → clientId → the question bubble that started this turn: returns the node to place the reply after (bubble, or its reply turn); null if no anchor (external/terminal send).
+// Skip the transient stream-preview container — authoritative rows appended there get wiped by clearStreamPreviews.
 function anchorForStream(container, streamId) {
   var clientId = state.streamAnchors[streamId];
   if (!clientId) return null;
   var bubble = container.querySelector('[data-anchor="' + clientId + '"]');
   if (!bubble) return null;
   var sib = bubble.nextElementSibling;
-  return (sib && sib.classList.contains('assistant-turn')) ? sib : bubble;
+  return (sib && sib.classList.contains('assistant-turn') && !sib.classList.contains('stream-preview')) ? sib : bubble;
 }
 
 /** Insert html at correct timestamp position, before any pending messages. */
@@ -401,7 +402,7 @@ function previewPartialInput(partial) {
 
 function uiState(sid, bid) {
   var k = blockKey(sid, bid);
-  return _ui[k] || (_ui[k] = { shown: 0, thinkStart: 0, thinkMs: null, labelDone: false });
+  return _ui[k] || (_ui[k] = { shown: 0, rendered: -1, thinkStart: 0, thinkMs: null, labelDone: false, inHash: '' });
 }
 
 // All preview frames funnel through here: reorder by seq, then animate the
@@ -430,6 +431,7 @@ function tickStreams(now) {
   var container = document.querySelector('.messages');
   var content = document.getElementById('content');
   var active = false;
+  var dirty = false; // any DOM mutation this frame → only then re-pin scroll (avoids a per-frame reflow)
 
   // One .assistant-turn per streamId; blocks come pre-ordered from the reorder buffer.
   for (var sid in _rb) {
@@ -475,22 +477,29 @@ function tickStreams(now) {
           el.className = 'tl-item assistant-text';
         }
         insertOrdered(turn, el, b.blockId);
+        dirty = true;
       }
       if (!el) continue;
 
       if (wantKind === 'tool') {
-        // Live tool-use preview: header (name + one-line desc) + IN block, decoded live — mirrors the final card so there's no jump on arrival.
-        var label = b.name || 'Tool';
-        var desc = '', inRaw = '';
-        if (b.inputJson) {
-          try { var parsed = JSON.parse(b.inputJson); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1000); }
-          catch (e) { desc = previewPartialInput(b.inputJson).slice(0, 80); inRaw = decodeJsonEscapes(b.inputJson).slice(0, 1000); } // partial — decode \uXXXX live
+        // Rebuild the live tool card only when its input JSON changed — parse/stringify/esc +
+        // full innerHTML rewrite every frame on an unchanging input is pure waste.
+        var raw = b.inputJson || '';
+        if (raw !== u.inHash) {
+          u.inHash = raw;
+          var label = b.name || 'Tool';
+          var desc = '', inRaw = '';
+          if (raw) {
+            try { var parsed = JSON.parse(raw); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1000); }
+            catch (e) { desc = previewPartialInput(raw).slice(0, 80); inRaw = decodeJsonEscapes(raw).slice(0, 1000); } // partial — decode \uXXXX live
+          }
+          el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
+            + '<span class="tool-desc">' + esc(desc) + '</span>'
+            + '<span class="tool-status">running</span></div>'
+            // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
+            + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
+          dirty = true;
         }
-        el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
-          + '<span class="tool-desc">' + esc(desc) + '</span>'
-          + '<span class="tool-status">running</span></div>'
-          // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
-          + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
         if (!ended && (!b.stopped || gap)) active = true;
       } else if (wantKind === 'thinking') {
         if (!u.thinkStart) u.thinkStart = now;
@@ -499,8 +508,11 @@ function tickStreams(now) {
         if (chars.length) {
           u.shown += Math.max(3, Math.ceil((chars.length - u.shown) / 4));
           if (u.shown > chars.length) u.shown = chars.length;
-          var bd = el.querySelector('.thinking-body');
-          if (bd) bd.textContent = chars.slice(0, u.shown).join('');
+          if (u.shown !== u.rendered) {
+            var bd = el.querySelector('.thinking-body');
+            if (bd) bd.textContent = chars.slice(0, u.shown).join('');
+            u.rendered = u.shown; dirty = true;
+          }
           if (u.shown < chars.length) active = true;
         }
         var elapsed = Math.max(1, Math.round((now - u.thinkStart) / 1000));
@@ -518,14 +530,19 @@ function tickStreams(now) {
         u.shown += Math.max(3, Math.ceil((tchars.length - u.shown) / 4));
         if (u.shown > tchars.length) u.shown = tchars.length;
         var caughtUp = u.shown >= tchars.length;
-        if (window.renderMd) el.innerHTML = window.renderMd(tchars.slice(0, u.shown).join(''));
+        // Only re-render markdown when the revealed length changed — renderMd (marked + hljs
+        // + regex) is the frame's heaviest op; re-running it on an unchanged string is waste.
+        if (u.shown !== u.rendered && window.renderMd) {
+          el.innerHTML = window.renderMd(tchars.slice(0, u.shown).join(''));
+          u.rendered = u.shown; dirty = true;
+        }
         // Keep animating until caught up AND the block is truly done (stopped, no gap).
         // A stream that ended (interrupt) may never send stop → don't wait past caught-up.
         if (!caughtUp || (!ended && (!b.stopped || gap))) active = true;
       }
     }
   }
-  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
+  if (dirty && state.stickBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
@@ -678,8 +695,14 @@ function updateLastTurn() {
     var anchor = msg._streamId ? anchorForStream(container, msg._streamId) : null;
     if (anchor) {
       if (anchor.classList.contains('assistant-turn')) {
-        anchor.insertAdjacentHTML('beforeend', html); // reply turn already growing under the question
-        if (msg.timestamp) anchor.dataset.ts = msg.timestamp;
+        // Order within the turn by data-ts — rows can arrive out of order (an interrupt row
+        // reaches the app before the turn's authoritative full-text row it precedes visually).
+        var before = null, kids = anchor.children;
+        for (var ci = 0; ci < kids.length; ci++) {
+          if (kids[ci].dataset && kids[ci].dataset.ts && kids[ci].dataset.ts > msg.timestamp) { before = kids[ci]; break; }
+        }
+        if (before) before.insertAdjacentHTML('beforebegin', html);
+        else { anchor.insertAdjacentHTML('beforeend', html); if (msg.timestamp) anchor.dataset.ts = msg.timestamp; }
       } else {
         anchor.insertAdjacentHTML('afterend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
       }
@@ -878,19 +901,13 @@ function updateSendBtn() {
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
   var hasText = textLen >= (isNewAgent ? 4 : 1);
-  if (hasText) {
-    btn.innerHTML = _sendSvg;
-    btn.className = 'has-text';
-    btn.disabled = false;
-  } else if (state.wsRunning) {
-    btn.innerHTML = _stopSvg;
-    btn.className = 'is-stop';
-    btn.disabled = false;
-  } else {
-    btn.innerHTML = _sendSvg;
-    btn.className = '';
-    btn.disabled = true;
-  }
+  var cls = hasText ? 'has-text' : (state.wsRunning ? 'is-stop' : '');
+  var icon = cls === 'is-stop' ? 'stop' : 'send';
+  // Only rewrite innerHTML when the icon actually changes. Rewriting it every stream frame
+  // detaches the SVG mid-tap, dropping a click that landed on it (had to tap 2-3×).
+  if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
+  if (btn.className !== cls) btn.className = cls;
+  btn.disabled = !hasText && !state.wsRunning;
   if (typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }

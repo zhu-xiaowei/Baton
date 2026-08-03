@@ -44,6 +44,7 @@ class HeadlessProc {
     this._blockId = -1;
     this._batch = null;         // pending coalesced delta { blockId, kind, text }
     this._batchTimer = null;    // flush timer for _batch
+    this._pendingCtl = new Map(); // outbound control_request id → resolver (interrupt ack)
   }
 
   spawn() {
@@ -113,6 +114,14 @@ class HeadlessProc {
     // Full authoritative rows (same uuid as jsonl → app dedupes; renders in/out cards).
     if ((t === 'assistant' || t === 'user') && o.uuid) {
       this._cb?.onMessage?.(this.streamId, o);
+      return;
+    }
+
+    // CC's reply to our outbound control_request (interrupt) — resolve the waiter.
+    if (t === 'control_response') {
+      const rid = o.response?.request_id;
+      const w = rid && this._pendingCtl.get(rid);
+      if (w) { this._pendingCtl.delete(rid); w(o.response); }
       return;
     }
 
@@ -212,10 +221,19 @@ class HeadlessProc {
     this._writeTurn(item.text, item.streamId, item.cb);
   }
 
-  // Interrupt the current turn: SIGINT the process (headless has no Esc).
-  interrupt() {
-    if (this.dead || !this.proc) return;
-    try { this.proc.kill('SIGINT'); } catch {}
+  // Interrupt the current turn via stdin control_request — CC gracefully aborts and flushes
+  // the partial content + [Request interrupted by user] to jsonl (verified CC 2.1.220). SIGINT
+  // is the fallback (hard kill, no jsonl) when CC doesn't ack in 5s. Mirrors alleycat.
+  async interrupt() {
+    if (this.dead || !this.proc || !this.busy) return;
+    const rid = 'int-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    const acked = new Promise((resolve) => {
+      this._pendingCtl.set(rid, resolve);
+      setTimeout(() => { if (this._pendingCtl.delete(rid)) resolve(null); }, 5000);
+    });
+    try { this.stdin.write(JSON.stringify({ type: 'control_request', request_id: rid, request: { subtype: 'interrupt' } }) + '\n'); }
+    catch { this._pendingCtl.delete(rid); try { this.proc.kill('SIGINT'); } catch {} return; }
+    if (!(await acked)) { try { this.proc.kill('SIGINT'); } catch {} } // no ack → hard fallback
   }
 
   shutdown() {
