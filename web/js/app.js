@@ -725,8 +725,8 @@ async function loadMessages(sessionId, preview, status) {
       return;
     }
 
-    // Render
-    content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
+    content.innerHTML = '<div class="messages"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
+      + '">Loading...</div>' + renderMessages(state.wsAllMessages) + '</div>';
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
 
@@ -796,18 +796,33 @@ function positionScrollBtn() {
     // Position drives auto-scroll intent (programmatic scrollTo(bottom) lands here too, atBottom=true, so never clears it).
     state.stickBottom = atBottom;
 
+    if (_scrollingToTop) { settleSoon(120); return; }
+
     // Load older messages when scrolling near top
-    if (content.scrollTop < 800 && state.wsHasMore && !state.wsLoadingOlder) {
-      loadOlderAndPrepend();
-    }
+    if (content.scrollTop < 1200 && state.wsHasMore && !state.wsLoadingOlder) loadOlderAndPrepend();
   });
+
+  function settleSoon(ms) {
+    clearTimeout(_scrollToTopTimer);
+    _scrollToTopTimer = setTimeout(function () {
+      _scrollingToTop = false;
+      if (content.scrollTop < 1200 && state.wsHasMore && !state.wsLoadingOlder) loadOlderAndPrepend();
+    }, ms);
+  }
 
   // Tap top bar to scroll to top (skip Setup/Logout links)
   document.querySelector('.top-bar').addEventListener('click', function (e) {
     if (e.target.closest('.top-action')) return;
-    if (state.appState.session) content.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!state.appState.session) return;
+    _scrollingToTop = true;
+    settleSoon(400);
+    content.scrollTo({ top: 0, behavior: 'smooth' });
   });
 })();
+
+var _scrollingToTop = false, _scrollToTopTimer = null, _pinRo = null, _pinRoTimer = null;
+
+var _hasScrollAnchoring = window.CSS && CSS.supports && CSS.supports('overflow-anchor', 'auto');
 
 async function loadOlderAndPrepend() {
   if (!state.appState.session || state.appState.session === '__new__') return;
@@ -815,29 +830,43 @@ async function loadOlderAndPrepend() {
   var container = content.querySelector('.messages');
   if (!container) return;
 
-  // Show loading indicator at top
-  var loader = document.createElement('div');
-  loader.className = 'loading-older';
-  loader.textContent = 'Loading...';
-  container.insertBefore(loader, container.firstChild);
-
-  var prevHeight = content.scrollHeight;
-
+  if (state.wsLoadingOlder) return;
   var msgs = await loadOlderMessages(state.appState.session);
-  // Remove loader
-  if (loader.parentNode) loader.remove();
+
+  var loader = container.querySelector(':scope > .loading-older');
+  if (loader && !state.wsHasMore) loader.classList.add('exhausted'); // no more history: reclaim its space
   if (!msgs || !msgs.length) return;
 
-  // Render older messages and prepend
+  var anchor = loader ? loader.nextElementSibling : container.firstElementChild;
+  var prevTop = anchor ? anchor.getBoundingClientRect().top : 0;
+
+  // Prepend after the loader so it stays the first child.
   var html = renderMessages(msgs);
-  container.insertAdjacentHTML('afterbegin', html);
+  if (loader) loader.insertAdjacentHTML('afterend', html);
+  else container.insertAdjacentHTML('afterbegin', html);
   if (window.markTurnAdjacency) markTurnAdjacency(container); // reconnect the pagination seam
   loadImages(container);
   clampOverflow(container);
 
-  // Restore scroll position so content doesn't jump
-  var newHeight = content.scrollHeight;
-  content.scrollTop += (newHeight - prevHeight);
+  if (anchor) content.scrollTop += Math.round(anchor.getBoundingClientRect().top - prevTop);
+
+  if (_pinRo) { _pinRo.disconnect(); _pinRo = null; }
+  clearTimeout(_pinRoTimer);
+  if (anchor && window.ResizeObserver && !_hasScrollAnchoring) {
+    var pinTop = anchor.getBoundingClientRect().top;
+    var lastSet = content.scrollTop;
+    _pinRo = new ResizeObserver(function () {
+      if (Math.abs(content.scrollTop - lastSet) > 2) { _pinRo.disconnect(); _pinRo = null; return; }
+      var delta = Math.round(anchor.getBoundingClientRect().top - pinTop);
+      if (delta) {
+        content.scrollTop += delta;
+        lastSet = content.scrollTop;
+        pinTop = anchor.getBoundingClientRect().top;
+      }
+    });
+    _pinRo.observe(container);
+    _pinRoTimer = setTimeout(function () { if (_pinRo) { _pinRo.disconnect(); _pinRo = null; } }, 800);
+  }
 }
 
 // Auto-connect + restore last session
