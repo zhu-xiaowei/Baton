@@ -89,6 +89,7 @@ function attachLongPress(container, type) {
   var timer = null, sx = 0, sy = 0, targetId = null, justLongPressed = false;
   var clear = function () { if (timer) { clearTimeout(timer); timer = null; } targetId = null; };
   container.addEventListener('pointerdown', function (e) {
+    justLongPressed = false; // new gesture: a stale flag must not swallow this tap
     if (state.selectMode) return;
     var item = e.target.closest && e.target.closest('.item[data-id]');
     if (!item) return;
