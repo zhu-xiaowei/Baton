@@ -1137,6 +1137,11 @@ function reconcileEchoedPending(turnEnded) {
     // 3s grace: a normal idle-send's echo can lag an unrelated idle frame — don't clean too early.
     var idleStale = turnEnded && !pending.delivered && (Date.now() - (pending.sentAt || 0) > 3000);
     if (!echoed && !orphaned && !idleStale) continue;
+    // idleStale + no echo/orphan = synthetic slash cmd (/status, /usage…): reached CC, replied, but writes no user echo → no jsonl bubble to dedup. Settle in place (don't remove — that's the "question vanishes" bug).
+    if (idleStale && !echoed && !orphaned) {
+      resolvePending(pending, true, null);
+      continue;
+    }
     var el = document.getElementById(pending.id);
     if (el) el.remove();
     state.pendingSentMessages.splice(i, 1);
