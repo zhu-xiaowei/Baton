@@ -437,6 +437,8 @@ function tickStreams(now) {
     var blocks = rb.orderedBlocks();
     // A gap holding back arrived frames → keep animating, don't let a block finalize early.
     var gap = rb.hasGap();
+    // Stream ended (turn done or interrupted) → freeze timers; blocks may never get a stop frame.
+    var ended = !!_streamEnded[sid];
     var turnId = 'stream-turn-' + sid;
     var turn = document.getElementById(turnId);
     for (var i = 0; i < blocks.length; i++) {
@@ -489,7 +491,7 @@ function tickStreams(now) {
           + '<span class="tool-status">running</span></div>'
           // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
           + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
-        if (!b.stopped || gap) active = true;
+        if (!ended && (!b.stopped || gap)) active = true;
       } else if (wantKind === 'thinking') {
         if (!u.thinkStart) u.thinkStart = now;
         var lbl = el.querySelector('.think-label');
@@ -503,7 +505,7 @@ function tickStreams(now) {
         }
         var elapsed = Math.max(1, Math.round((now - u.thinkStart) / 1000));
         _lastThinkSecs = elapsed; // update every tick so an authoritative row landing any time keeps the measured seconds
-        var thinkDone = b.stopped && !gap && u.shown >= chars.length;
+        var thinkDone = ended || (b.stopped && !gap && u.shown >= chars.length);
         if (!thinkDone) {
           if (lbl) lbl.textContent = 'Thinking ' + elapsed + 's';
           active = true;
@@ -518,7 +520,8 @@ function tickStreams(now) {
         var caughtUp = u.shown >= tchars.length;
         if (window.renderMd) el.innerHTML = window.renderMd(tchars.slice(0, u.shown).join(''));
         // Keep animating until caught up AND the block is truly done (stopped, no gap).
-        if (!caughtUp || !b.stopped || gap) active = true;
+        // A stream that ended (interrupt) may never send stop → don't wait past caught-up.
+        if (!caughtUp || (!ended && (!b.stopped || gap))) active = true;
       }
     }
   }
@@ -608,10 +611,12 @@ function updateLastTurn() {
   }
   if (_turnAuthBlocks > 0) clearStreamPreviews(_turnAuthBlocks);
 
+  var sawToolResult = false;
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
     // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
+      sawToolResult = true;
       if (Array.isArray(msg.content)) {
         for (var ri = 0; ri < msg.content.length; ri++) {
           var rb = msg.content[ri];
@@ -712,6 +717,8 @@ function updateLastTurn() {
   var promptEl = document.getElementById('permission-prompt');
   if (promptEl && !(typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt())) {
     dismissPermissionPrompt();
+  } else if (promptEl && sawToolResult) {
+    dismissPermissionPrompt(); // OUT arrived → another device (or this turn) answered; drop our stale prompt
   } else if (promptEl && promptEl !== container.lastElementChild) {
     container.appendChild(promptEl); // keep the prompt pinned below the AskUserQuestion card that just landed
   }

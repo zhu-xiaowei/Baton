@@ -58,11 +58,19 @@ function cwdForSession(sessionId) {
 }
 
 // Push a pool-owned session's status to DDB (dedup + counter delta live in updateSessionStatus).
-async function syncPoolStatus(sessionId, status) {
+async function syncPoolStatus(sessionId, status, detail) {
   const filePath = findSessionFile(sessionId);
   if (!filePath || !_config) return;
   const projectHash = path.basename(path.dirname(filePath));
-  try { await updateSessionStatus(_config, sessionId, filePath, projectHash, status); } catch {}
+  try { await updateSessionStatus(_config, sessionId, filePath, projectHash, status, detail); } catch {}
+}
+
+function controlDetail(p) {
+  if (!p) return '';
+  const input = p.input || {};
+  if (Array.isArray(input.questions) && input.questions.length) return input.questions[0].question || '';
+  if (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode') return 'Review plan';
+  return input.command || input.file_path || input.path || p.toolName || '';
 }
 
 export function initWs(config) {
@@ -333,7 +341,7 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
     onResult: (sid, result, finalSeq) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
       // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
-      syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed');
+      syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.get(sessionId)));
     },
     onControlRequest: (req) => {
       const r = req.request || {};
@@ -343,7 +351,7 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
         requestId: req.request_id, toolName: r.tool_name,
         input, requiresInteraction: !!r.requires_user_interaction,
       });
-      syncPoolStatus(sessionId, 'needs_input');
+      syncPoolStatus(sessionId, 'needs_input', controlDetail(_pendingControl.get(sessionId)));
       let kind = 'tool';
       if (r.requires_user_interaction) {
         kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';

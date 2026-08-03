@@ -5,7 +5,7 @@ import { post, get } from './http.mjs';
 import { synced, readNewMessages, uploadMessages } from './extract.mjs';
 import {
   getPreview, getModel, readableProjectName,
-  getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds,
+  getSessionStatus, getRunningInfo, getDaemonSessions,
   normalizeProjectHash, findSessionFile,
 } from './session.mjs';
 import { poolOwns } from './ws.mjs';
@@ -71,14 +71,10 @@ export async function syncSessions(config, opts = {}) {
   }
 
   const daemonMeta = getDaemonSessions();
-  const daemonRunningIds = getDaemonRunningSessionIds();
   for (const s of sessions) {
     const dm = daemonMeta.get(s.id);
-    // A finished agent that's been resumed as a regular CC session (live --resume
-    // process) is no longer an agent — let it use the normal running/idle status.
-    // But the daemon itself resumes done agents to keep them on standby (still in
-    // roster) — those stay agents.
-    if (dm && !(dm.status === 'completed' && runningInfo.sessions.has(s.id) && !daemonRunningIds.has(s.id))) {
+    // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
+    if (dm) {
       s.isAgent = true;
       s.agentName = dm.agentName;
       s.agentDetail = dm.agentDetail;
@@ -238,7 +234,7 @@ export async function reconcile(config) {
 // Update a session to a new status and push metadata + counter delta to the
 // server. Used by the pool's status sync (syncPoolStatus in ws.mjs). No-op if
 // status is unchanged.
-export async function updateSessionStatus(config, sessionId, filePath, project, newStatus) {
+export async function updateSessionStatus(config, sessionId, filePath, project, newStatus, detail) {
   project = normalizeProjectHash(project);
   const prevStatus = lastKnownStatus.get(sessionId);
   if (prevStatus === newStatus) return;
@@ -247,19 +243,23 @@ export async function updateSessionStatus(config, sessionId, filePath, project, 
   lastKnownStatus.set(sessionId, newStatus);
   const lastActive = stat.mtime.toISOString();
   const projectName = readableProjectName(project);
+  // Carry agent identity — put-overwrite would otherwise erase the DDB isAgent flag.
+  const dm = getDaemonSessions().get(sessionId);
+  const session = {
+    id: sessionId,
+    project,
+    projectName,
+    lastActive,
+    size: stat.size,
+    preview: getPreview(filePath) || '',
+    model: getModel(filePath),
+    status: newStatus,
+  };
+  if (dm) { session.isAgent = true; session.agentName = dm.agentName; session.agentDetail = detail || dm.agentDetail || ''; }
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
-    sessions: [{
-      id: sessionId,
-      project,
-      projectName,
-      lastActive,
-      size: stat.size,
-      preview: getPreview(filePath) || '',
-      model: getModel(filePath),
-      status: newStatus,
-    }],
+    sessions: [session],
     statusDeltas: [{
       deviceName: config.deviceName,
       projectHash: project,

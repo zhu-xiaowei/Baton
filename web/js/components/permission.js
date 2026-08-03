@@ -47,7 +47,6 @@ function renderPrompt(p) {
   if (inputBar) {
     inputBar.querySelector('#msg-input').disabled = true;
     inputBar.querySelectorAll('.input-row button').forEach(function (b) { b.disabled = true; });
-    inputBar.querySelector('#msg-input').placeholder = 'Please respond to the prompt above...';
   }
 
   var container = document.querySelector('.messages');
@@ -182,7 +181,6 @@ function dismissPermissionPrompt() {
   if (inputBar) {
     inputBar.querySelector('#msg-input').disabled = false;
     inputBar.querySelectorAll('.input-row button').forEach(function (b) { b.disabled = false; });
-    inputBar.querySelector('#msg-input').placeholder = 'Send a message...';
   }
   if (typeof updateSpinner === 'function') updateSpinner();
 }

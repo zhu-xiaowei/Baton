@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { wsSend, wsSendWithAck, headlessPushed, poolOwns } from './ws.mjs';
 
@@ -130,15 +130,12 @@ async function readAndSend(config, filename, sessionId) {
 
   // Sync metadata only when status changed, new session, or ai-title arrived
   if (lastParsedLine > lastLine && lastStatus) {
-    // A finished agent resumed as a regular CC session (live --resume process) is
-    // no longer an agent — ignore its stale daemon record. Matches sync.mjs.
-    // Exception: the daemon itself resumes done agents to keep them on standby
-    // (still listed in roster) — those remain agents.
-    let dm = getDaemonSessions().get(sessionId);
-    if (dm && dm.status === 'completed' && getRunningInfo().sessions.has(sessionId) && !getDaemonRunningSessionIds().has(sessionId)) dm = null;
-    // Pool-owned sessions get their status from headless lifecycle events, not the
-    // jsonl tail — skip the status write here (message content still synced above).
-    if (!dm && poolOwns(sessionId)) return;
+    // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
+    // isAgent), not jsonl/daemon. Once headless takes over (stopDaemon + --resume), the daemon
+    // --json status is a stale ghost, so pool wins even for agents.
+    if (poolOwns(sessionId)) return;
+    // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
+    const dm = getDaemonSessions().get(sessionId);
     // Daemon agents use the daemon-live status directly; others debounce the
     // running→completed downgrade so the badge doesn't flicker mid-task.
     const newStatus = dm ? dm.status : resolveStatus(sessionId, lastStatus);

@@ -623,6 +623,8 @@ function onNewAsAgentToggle(checked) {
 
 async function startNewSession(projectHash, asAgent) {
   await window.loadViewerLibs();
+  // Clear a prior session's permission prompt so its disabled input doesn't carry over.
+  if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
