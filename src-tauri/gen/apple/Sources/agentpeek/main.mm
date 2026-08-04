@@ -274,9 +274,92 @@ static void agentpeek_fix_viewport(void) {
     }
 }
 
+// Native skeleton overlay: instantiate the LaunchScreen view over the key window to cover the ~400ms gap between LaunchScreen removal and the web skeleton paint (else the bare WKWebView bg flashes); poll window.__skelReady, then fade out. See docs/headless-streaming.md or CLAUDE.md.
+static void agentpeek_find_webview(UIWindow *kw, void (^cb)(WKWebView *)) {
+    WKWebView *wv = nil;
+    if (kw.rootViewController) {
+        for (UIView *sub in kw.rootViewController.view.subviews) {
+            if ([sub isKindOfClass:[WKWebView class]]) { wv = (WKWebView *)sub; break; }
+        }
+    }
+    cb(wv);
+}
+
+static void agentpeek_install_skeleton_overlay(void) {
+    UIWindow *kw = nil;
+    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+        if ([s isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                if (w.isKeyWindow) { kw = w; break; }
+            }
+        }
+        if (kw) break;
+    }
+    if (!kw || !kw.rootViewController) {
+        static int retries = 0;
+        if (retries++ < 100) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
+        }
+        return;
+    }
+
+    // Instantiate the LaunchScreen storyboard's root view — identical skeleton.
+    UIView *skel = nil;
+    @try {
+        UIStoryboard *sb = [UIStoryboard storyboardWithName:@"LaunchScreen" bundle:nil];
+        UIViewController *vc = [sb instantiateInitialViewController];
+        if (vc && vc.view) {
+            skel = vc.view;
+            skel.frame = kw.bounds;
+            skel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        }
+    } @catch (__unused NSException *e) {}
+    if (!skel) return;
+
+    skel.tag = 0x5EE1;
+    [kw addSubview:skel];
+    [kw bringSubviewToFront:skel];
+    // Card borders use nested views (outer=#30363d, inner inset 1px) in the storyboard, so they render in the system LaunchScreen phase — no code needed.
+
+    // Poll window.__skelReady; fade out on paint. Hard cap so the overlay can't stick if the web layer never signals.
+    __weak UIView *weakSkel = skel;
+    __weak UIWindow *weakKw = kw;
+    __block int ticks = 0;
+    __block void (^poll)(void) = nil;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-retain-cycles"
+    poll = ^{
+        UIView *sv = weakSkel;
+        if (!sv || sv.superview == nil) { poll = nil; return; }
+        ticks++;
+        BOOL timedOut = ticks > 250; // ~5s hard cap (20ms * 250)
+        agentpeek_find_webview(weakKw, ^(WKWebView *wv) {
+            void (^fadeOut)(void) = ^{
+                [UIView animateWithDuration:0.18 animations:^{ sv.alpha = 0.0; }
+                                 completion:^(__unused BOOL done){ [sv removeFromSuperview]; }];
+                poll = nil;
+            };
+            if (timedOut || !wv) { fadeOut(); return; }
+            [wv evaluateJavaScript:@"window.__skelReady?1:0" completionHandler:^(id result, __unused NSError *err) {
+                if ([result respondsToSelector:@selector(intValue)] && [result intValue] == 1) {
+                    fadeOut();
+                } else {
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
+                                   dispatch_get_main_queue(), ^{ if (poll) poll(); });
+                }
+            }];
+        });
+    };
+#pragma clang diagnostic pop
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), poll);
+}
+
 int main(int argc, char * argv[]) {
 	[WKWebView class]; // force-load WebKit framework
 	agentpeek_install_scan_close_swizzle();
+	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });

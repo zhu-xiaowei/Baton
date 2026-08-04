@@ -13,6 +13,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.6.1", features = [] }
 
+# Shrink the release binary → faster dyld load → faster iOS cold start (pre-main).
+[profile.release]
+opt-level = "s"    # optimize for size
+lto = true         # link-time optimization, meaningfully smaller
+codegen-units = 1  # better cross-unit optimization (slower build)
+strip = true       # drop symbol table
+panic = "abort"    # drop unwind tables
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

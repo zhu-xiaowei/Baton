@@ -162,6 +162,35 @@
     else window.__preheatViewer = true;
 
     window.__inlineRendered = true;
+    window.__skelReady = 1; // also lift the native overlay once real content is in (skeleton may have been skipped)
+  }
+
+  // First-frame skeleton, painted before the network resolves so the native LaunchScreen hands off to an identical web skeleton (no flash/jump). Mirrors skeletonCards(4)+skeletonItems(2); replaced by renderInline.
+  function skelCard() {
+    return '<div class="active-card skeleton-card">'
+      + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="skel skel-w80 skel-h14"></div>'
+      + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
+      + '</div>';
+  }
+  function skelItem() {
+    return '<div class="item skeleton-item">'
+      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="skel skel-w60 skel-mt4"></div>'
+      + '</div>';
+  }
+  function renderSkeleton() {
+    var content = document.getElementById('content');
+    if (!content || window.__inlineRendered) return;
+    content.innerHTML = '<div class="section-title">Active Sessions</div>'
+      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + skelCard() + skelCard() + '</div>'
+      + '<div id="recent-agents-section"></div>'
+      + '<div class="section-title">Devices</div>'
+      + '<div id="devices-section" class="list">' + skelItem() + skelItem() + '</div>';
+    // Reveal now — the skeleton matches the native LaunchScreen pixel-for-pixel, so no jump to hide; waiting for the 150ms timer would leave a bare-webview color flash.
+    if (document.body) document.body.classList.add('ready');
+    // Signal the native overlay (main.mm polls this) that the web skeleton is painted + pixel-aligned, so it can fade out and stop covering the bare-webview flash.
+    window.__skelReady = 1;
   }
 
   // Wait for #content to be parsed, not DOMContentLoaded — avoids waiting for module chunks.
@@ -173,10 +202,17 @@
   }
 
   if (willRenderInline) {
+    // Paint the skeleton the instant #content exists — don't wait for the network.
+    whenContentReady(renderSkeleton);
     Promise.all([window.__preload.active, window.__preload.devices]).then(function (results) {
       whenContentReady(function () { renderInline(results[0], results[1]); });
     });
   } else {
+    // Deep link / restored deep nav: no home skeleton — reveal + lift the native overlay now (app.js routes to the target view's own skeleton), else the overlay sticks.
+    whenContentReady(function () {
+      if (document.body) document.body.classList.add('ready');
+      window.__skelReady = 1;
+    });
     // Deep link: preheat immediately, user is heading to a message view.
     Promise.all([window.__preload.active, window.__preload.devices]).then(function () {
       if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
