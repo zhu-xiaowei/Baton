@@ -28,6 +28,7 @@ async function loadViewerLibs() {
     await Promise.all([
       import('./components/markdown.js'),
       import('./components/mermaid.js'),
+      import('./components/katex.js'),
       import('./components/tool.js'),
       import('./components/message.js'),
       import('./components/permission.js'),

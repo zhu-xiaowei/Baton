@@ -204,6 +204,7 @@ function handleWsMessage(msg) {
           loadImages(container);
           clampOverflow(container);
           if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+          if (window.renderKatexBlocks) renderKatexBlocks(container);
           container.parentElement.scrollTop = container.parentElement.scrollHeight;
           updateTitleFromMessages();
         }).catch(function () {});
@@ -227,6 +228,7 @@ function handleWsMessage(msg) {
         loadImages(content);
         clampOverflow(content.querySelector('.messages'));
         if (window.renderMermaidBlocks) renderMermaidBlocks(content);
+        if (window.renderKatexBlocks) renderKatexBlocks(content);
         content.scrollTop = content.scrollHeight;
       }).catch(function () {});
     } else if (msg.action === 'file_ready') {
@@ -541,6 +543,7 @@ function tickStreams(now) {
           window.renderStreamMd(el, tchars.slice(0, u.shown).join(''));
           u.rendered = u.shown; dirty = true;
           if (window.renderMermaidBlocks && el.querySelector('.mermaid-block')) renderMermaidBlocks(el);
+          if (window.renderKatexBlocks) renderKatexBlocks(el);
         }
         // Keep animating until caught up AND the block is truly done (stopped, no gap).
         // A stream that ended (interrupt) may never send stop → don't wait past caught-up.
@@ -760,6 +763,7 @@ function updateLastTurn() {
   loadImages(container);
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+  if (window.renderKatexBlocks) renderKatexBlocks(container);
   if (state.stickBottom) {
     el.scrollTop = el.scrollHeight;
   }
@@ -862,6 +866,7 @@ async function recoverMissing() {
       loadImages(container);
       clampOverflow(container);
       if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+      if (window.renderKatexBlocks) renderKatexBlocks(container);
       container.parentElement.scrollTop = container.parentElement.scrollHeight;
     }
     showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');

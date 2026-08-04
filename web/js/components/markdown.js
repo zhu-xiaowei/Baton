@@ -54,6 +54,37 @@
     },
   });
 
+  // LaTeX math via katex.js. Tokenized (not post-DOM) so $$…$$ content keeps its & and \\ —
+  // marked would otherwise escape & → &amp; and (breaks:true) split the block with <br>.
+  var mathBlock = {
+    name: 'mathBlock', level: 'block',
+    start: function (src) { var m = /(?:^|\n)[ \t]*(?:\$\$|\\\[)/.exec(src); return m ? m.index : undefined; },
+    tokenizer: function (src) {
+      var m = /^[ \t]*\$\$[ \t]*\r?\n([\s\S]+?)\r?\n[ \t]*\$\$[ \t]*(?:\n|$)/.exec(src)   // $$ on its own lines
+           || /^[ \t]*\$\$([^\n]+?)\$\$/.exec(src)                                        // single-line $$…$$
+           || /^[ \t]*\\\[[ \t]*\r?\n([\s\S]+?)\r?\n[ \t]*\\\][ \t]*(?:\n|$)/.exec(src)   // \[ on its own lines
+           || /^[ \t]*\\\[([\s\S]+?)\\\]/.exec(src);                                      // single-line \[…\]
+      if (m) return { type: 'mathBlock', raw: m[0], text: m[1].trim() };
+    },
+    renderer: function (t) { return window.katexHtml ? window.katexHtml(t.text, true) : t.raw; },
+  };
+  var mathInline = {
+    name: 'mathInline', level: 'inline',
+    start: function (src) { var m = src.match(/\$|\\\(/); return m ? m.index : undefined; },
+    tokenizer: function (src) {
+      var m = /^\$([^\$\n]+?)\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
+      if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim() };
+    },
+    renderer: function (t) { return window.katexHtml ? window.katexHtml(t.text, false) : t.raw; },
+  };
+  // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
+  marked.use({
+    tokenizer: {
+      lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
+    },
+    extensions: [mathBlock, mathInline],
+  });
+
   function rewriteFileLinks(html) {
     return html.replace(/<a\s+href="([^"]*)"[^>]*>(.*?)<\/a>/gi, function (m, href, label) {
       // External link: new tab in browser; app.js intercepts .ext-link under Tauri.

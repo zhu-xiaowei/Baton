@@ -752,6 +752,7 @@ async function loadMessages(sessionId, preview, status) {
     loadImages(content);
     clampOverflow(content.querySelector('.messages'));
     if (window.renderMermaidBlocks) renderMermaidBlocks(content);
+    if (window.renderKatexBlocks) renderKatexBlocks(content);
     content.scrollTop = content.scrollHeight;
     requestAnimationFrame(function () {
       if (_navVersion !== myNav) return;
@@ -857,6 +858,7 @@ async function loadOlderAndPrepend() {
   loadImages(container);
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+  if (window.renderKatexBlocks) renderKatexBlocks(container);
 
   if (anchor) content.scrollTop += Math.round(anchor.getBoundingClientRect().top - prevTop);
 
