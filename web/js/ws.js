@@ -713,7 +713,11 @@ function updateLastTurn() {
         if (before) before.insertAdjacentHTML('beforebegin', html);
         else { anchor.insertAdjacentHTML('beforeend', html); if (msg.timestamp) anchor.dataset.ts = msg.timestamp; }
       } else {
-        anchor.insertAdjacentHTML('afterend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
+        // Anchor is the question bubble (no real reply turn yet). If a live stream preview for this turn is still on screen (thinking-only interrupt → no authoritative row ever cleared it), the row belongs AFTER the preview, not between bubble and preview.
+        var after = anchor;
+        var preview = document.getElementById('stream-turn-' + msg._streamId);
+        if (preview && preview.previousElementSibling === anchor) after = preview;
+        after.insertAdjacentHTML('afterend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
       }
       continue;
     }
