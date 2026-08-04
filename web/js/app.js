@@ -302,6 +302,13 @@ async function loadDevices() {
     return;
   }
 
+  // Keep the SWR home cache fresh on the logo-refresh path too (inline shell owns the key).
+  if (window.__writeHomeCache) {
+    Promise.all([Promise.resolve(activePromise), Promise.resolve(devicesPromise)])
+      .then(function (r) { if (_navVersion === myNav && r[0] && r[1]) window.__writeHomeCache(r[0], r[1]); })
+      .catch(function () {});
+  }
+
   // Fire both independently
   Promise.resolve(activePromise).then(function (activeData) {
     if (_navVersion !== myNav) return;

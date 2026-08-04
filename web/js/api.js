@@ -22,6 +22,8 @@ state.KEY = (function () {
 state.WS_URL = localStorage.getItem('_wsurl') || '';
 
 function setCredentials(key, server) {
+  var prev = ''; try { prev = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
+  if (prev && prev !== key) localStorage.removeItem('apeek_home_cache'); // account switch — drop the other account's home
   state.KEY = key;
   if (server) state.SERVER = server.replace(/\/+$/, '');
   localStorage.setItem('_ak', btoa(key));
@@ -35,6 +37,7 @@ function clearCredentials() {
   localStorage.removeItem('_as');
   localStorage.removeItem('_wsurl');
   localStorage.removeItem('agentpeek-nav');
+  localStorage.removeItem('apeek_home_cache'); // don't flash the old account's home on next login
 }
 
 function logout() {

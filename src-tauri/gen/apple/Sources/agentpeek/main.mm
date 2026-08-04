@@ -335,8 +335,9 @@ static void agentpeek_install_skeleton_overlay(void) {
         ticks++;
         BOOL timedOut = ticks > 250; // ~5s hard cap (20ms * 250)
         agentpeek_find_webview(weakKw, ^(WKWebView *wv) {
+            // 150ms fade out — soft handoff to the web layer (skeleton or SWR-cached content underneath).
             void (^fadeOut)(void) = ^{
-                [UIView animateWithDuration:0.18 animations:^{ sv.alpha = 0.0; }
+                [UIView animateWithDuration:0.15 animations:^{ sv.alpha = 0.0; }
                                  completion:^(__unused BOOL done){ [sv removeFromSuperview]; }];
                 poll = nil;
             };

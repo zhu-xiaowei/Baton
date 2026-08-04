@@ -24,6 +24,9 @@
   .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
   .top-title{font-weight:600;color:#e6edf3}
   a.top-gear,a.top-gear:link,a.top-gear:visited{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;color:#6e7681;text-decoration:none}
+  /* Gear spins clockwise while home data (re)loads — rotate the <a> block (svg transform is unreliable in WKWebView); transition:none so it can't fight the animation. */
+  @keyframes apk-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  a.top-gear.syncing{animation:apk-spin 1.8s linear infinite;transition:none}
   .breadcrumb{display:none;flex-shrink:0}
   #content{flex:1;overflow-y:auto}
 </style>
@@ -50,6 +53,21 @@
     active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
     devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
   };
+
+  // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
+  var CACHE_KEY = 'apeek_home_cache';
+  function readCache() {
+    try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function writeCache(active, devices) {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ active: active, devices: devices, cachedAt: Date.now() })); } catch (e) {}
+  }
+  window.__writeHomeCache = writeCache; // app.js loadDevices (logo-refresh path) keeps the cache fresh
+  // Gear spins while loading, stops when the response arrives — invisible on fast networks, visible on slow ones.
+  function stopSync() {
+    var g = document.querySelector('.top-gear.syncing');
+    if (g) g.classList.remove('syncing');
+  }
 
   // If user lands on a deep link (#/device/...) OR a saved nav points into a
   // project/session, let app.js handle routing (it restores the deeper view).
@@ -202,10 +220,26 @@
   }
 
   if (willRenderInline) {
-    // Paint the skeleton the instant #content exists — don't wait for the network.
-    whenContentReady(renderSkeleton);
+    // SWR: show last-seen data instantly if cached, else the skeleton; gear keeps spinning until the network responds.
+    var cached = readCache();
+    whenContentReady(function () {
+      if (cached && cached.active && cached.devices) renderInline(cached.active, cached.devices);
+      else renderSkeleton();
+    });
     Promise.all([window.__preload.active, window.__preload.devices]).then(function (results) {
-      whenContentReady(function () { renderInline(results[0], results[1]); });
+      whenContentReady(function () {
+        var fresh = { active: results[0], devices: results[1] };
+        var cachedRaw = cached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+        // Compare-skip: render only if skeleton still showing (cache miss) or data changed — identical data over a cache hit does nothing (zero flicker).
+        if (!window.__inlineRendered || JSON.stringify(fresh) !== cachedRaw) {
+          var content = document.getElementById('content');
+          var keepScroll = content ? content.scrollTop : 0;
+          renderInline(results[0], results[1]);
+          if (content) content.scrollTop = keepScroll;
+        }
+        writeCache(results[0], results[1]);
+        stopSync();
+      });
     });
   } else {
     // Deep link / restored deep nav: no home skeleton — reveal + lift the native overlay now (app.js routes to the target view's own skeleton), else the overlay sticks.
@@ -218,6 +252,7 @@
       if (typeof window.loadViewerLibs === 'function') window.loadViewerLibs();
       else window.__preheatViewer = true;
     });
+    stopSync(); // no home render here, but the gear was spinning from HTML — stop it
   }
 })();
 </script>
@@ -240,7 +275,7 @@
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">
   <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer">🔭 <span class="top-title">AgentPeek</span></div>
-  <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
+  <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear syncing" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
 </div>
 
 <!-- Breadcrumb -->
