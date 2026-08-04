@@ -66,7 +66,8 @@ body {
 }
 
 /* === Content === */
-#content { flex: 1; overflow-y: auto; overflow-x: hidden; }
+/* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
+#content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 /* === List items === */
 .list { padding: 4px 0 var(--sab, env(safe-area-inset-bottom, 0px)); }
@@ -673,3 +674,38 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 
 /* === Timestamp (shared) === */
 .msg-time { font-size: 10px; color: #6e7681; margin-top: 4px; }
+
+/* === Mermaid diagrams (streaming) === */
+.mermaid-block { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin: 8px 0; overflow: hidden; contain: layout paint; }
+.mermaid-head { display: flex; align-items: center; gap: 2px; padding: 4px; background: #0d1117; border-bottom: 1px solid #30363d; }
+.mermaid-tab { font: inherit; font-size: 12px; color: #8b949e; background: none; border: none; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
+.mermaid-tab.active { color: #c9d1d9; background: #21262d; }
+.mermaid-zoom { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; color: #8b949e; background: none; border: none; border-radius: 5px; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .mermaid-zoom:hover { color: #c9d1d9; background: #21262d; } }
+/* Fixed-height box + contain:strict (size+layout+paint) isolates it: per-frame SVG swaps during streaming stay inside, scrollHeight is constant, no page-wide repaint/flicker. */
+.mermaid-svg { height: 300px; box-sizing: border-box; padding: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; contain: strict; }
+.mermaid-svg svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+/* .mermaid-code is a <pre>: match `.assistant-text pre` specificity to strip its double frame/margin. min/max-height = diagram height so tab switches never change block height. */
+.assistant-text pre.mermaid-code,
+.mermaid-block .mermaid-code { display: none; margin: 0; padding: 10px 12px; min-height: 300px; max-height: 300px; box-sizing: border-box; overflow: auto; font-size: 12px; background: none; border: none; border-radius: 0; }
+/* hljs sets code.hljs to its own overflow:auto scroller (h-scrollbar floats mid-box); force overflow:visible so long lines overflow to the <pre>, making the <pre> the single scroller (scrollbar at bottom). */
+.mermaid-block .mermaid-code code.hljs { padding: 0; background: none; overflow: visible; display: inline-block; min-width: 100%; white-space: pre; }
+/* Desktop/browser: taller diagram (more room than a phone). */
+@media (min-width: 768px) {
+  .mermaid-svg { height: 460px; }
+  .mermaid-block .mermaid-code { min-height: 460px; max-height: 460px; }
+}
+.mermaid-block.show-code .mermaid-svg { display: none; }
+.mermaid-block.show-code .mermaid-code { display: block; }
+/* Centered status text in the empty diagram box: before render → "Loading…"; after a failure (flipped back to diagram) → error. Success adds .rendered and clears both. */
+.mermaid-block:not(.rendered):not(.mermaid-failed):not(.show-code) .mermaid-svg::after { content: 'Loading…'; }
+.mermaid-block.mermaid-failed:not(.show-code) .mermaid-svg::after { content: 'Diagram failed to render'; }
+.mermaid-block .mermaid-svg::after { color: #8b949e; font-size: 12px; }
+
+/* Fullscreen diagram viewer (zoom + pan). Reuses the rendered SVG; no re-render. */
+.mermaid-fs-overlay { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.92); overflow: hidden; touch-action: none; }
+.mermaid-fs-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: grab; transform-origin: center center; will-change: transform; }
+.mermaid-fs-stage:active { cursor: grabbing; }
+.mermaid-fs-stage svg { max-width: 92vw; max-height: 88vh; width: auto; height: auto; }
+.mermaid-fs-close { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .mermaid-fs-close:hover { background: rgba(48,54,61,0.95); color: #fff; } }

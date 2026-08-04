@@ -27,6 +27,7 @@ async function loadViewerLibs() {
     // Phase 2: viewer modules (IIFEs that read window.marked/hljs at top level).
     await Promise.all([
       import('./components/markdown.js'),
+      import('./components/mermaid.js'),
       import('./components/tool.js'),
       import('./components/message.js'),
       import('./components/permission.js'),

@@ -7,9 +7,11 @@ import { ReorderBuffer } from './reorder.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+// Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
+var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
 var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
 
-if (window.visualViewport) {
+if (window.visualViewport && _isMobile) {
   var _wasKbUp = false;
   window.visualViewport.addEventListener('resize', function () {
     var vv = window.visualViewport;
@@ -201,6 +203,7 @@ function handleWsMessage(msg) {
           updateLastTurn();
           loadImages(container);
           clampOverflow(container);
+          if (window.renderMermaidBlocks) renderMermaidBlocks(container);
           container.parentElement.scrollTop = container.parentElement.scrollHeight;
           updateTitleFromMessages();
         }).catch(function () {});
@@ -223,6 +226,7 @@ function handleWsMessage(msg) {
         updateSendBtn();
         loadImages(content);
         clampOverflow(content.querySelector('.messages'));
+        if (window.renderMermaidBlocks) renderMermaidBlocks(content);
         content.scrollTop = content.scrollHeight;
       }).catch(function () {});
     } else if (msg.action === 'file_ready') {
@@ -533,8 +537,10 @@ function tickStreams(now) {
         // Only re-render markdown when the revealed length changed — renderMd (marked + hljs
         // + regex) is the frame's heaviest op; re-running it on an unchanged string is waste.
         if (u.shown !== u.rendered && window.renderMd) {
-          el.innerHTML = window.renderMd(tchars.slice(0, u.shown).join(''));
+          // renderStreamMd reconciles in place: mermaid blocks are persistent nodes (no flicker), text rebuilds each frame.
+          window.renderStreamMd(el, tchars.slice(0, u.shown).join(''));
           u.rendered = u.shown; dirty = true;
+          if (window.renderMermaidBlocks && el.querySelector('.mermaid-block')) renderMermaidBlocks(el);
         }
         // Keep animating until caught up AND the block is truly done (stopped, no gap).
         // A stream that ended (interrupt) may never send stop → don't wait past caught-up.
@@ -753,6 +759,7 @@ function updateLastTurn() {
   // Clamp before scrolling so scrollTop uses the collapsed final height.
   loadImages(container);
   clampOverflow(container);
+  if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (state.stickBottom) {
     el.scrollTop = el.scrollHeight;
   }
@@ -854,6 +861,7 @@ async function recoverMissing() {
       updateSendBtn();
       loadImages(container);
       clampOverflow(container);
+      if (window.renderMermaidBlocks) renderMermaidBlocks(container);
       container.parentElement.scrollTop = container.parentElement.scrollHeight;
     }
     showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');

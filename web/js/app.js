@@ -744,6 +744,7 @@ async function loadMessages(sessionId, preview, status) {
     // post-clamp reflow before paint (replaces the old visible 500ms jump).
     loadImages(content);
     clampOverflow(content.querySelector('.messages'));
+    if (window.renderMermaidBlocks) renderMermaidBlocks(content);
     content.scrollTop = content.scrollHeight;
     requestAnimationFrame(function () {
       if (_navVersion !== myNav) return;
@@ -848,6 +849,7 @@ async function loadOlderAndPrepend() {
   if (window.markTurnAdjacency) markTurnAdjacency(container); // reconnect the pagination seam
   loadImages(container);
   clampOverflow(container);
+  if (window.renderMermaidBlocks) renderMermaidBlocks(container);
 
   if (anchor) content.scrollTop += Math.round(anchor.getBoundingClientRect().top - prevTop);
 
