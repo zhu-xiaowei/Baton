@@ -685,6 +685,8 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 /* Fixed-height box + contain:strict (size+layout+paint) isolates it: per-frame SVG swaps during streaming stay inside, scrollHeight is constant, no page-wide repaint/flicker. */
 .mermaid-svg { height: 300px; box-sizing: border-box; padding: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; contain: strict; }
 .mermaid-svg svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+/* Wide charts (gantt): stretch to the container width (width:100% beats the SVG's intrinsic size) instead of sitting small + centered. */
+.mermaid-wide .mermaid-svg svg { width: 100%; max-width: 100%; height: auto; max-height: 100%; }
 /* .mermaid-code is a <pre>: match `.assistant-text pre` specificity to strip its double frame/margin. min/max-height = diagram height so tab switches never change block height. */
 .assistant-text pre.mermaid-code,
 .mermaid-block .mermaid-code { display: none; margin: 0; padding: 10px 12px; min-height: 300px; max-height: 300px; box-sizing: border-box; overflow: auto; font-size: 12px; background: none; border: none; border-radius: 0; }
@@ -703,7 +705,7 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .mermaid-block .mermaid-svg::after { color: #8b949e; font-size: 12px; }
 
 /* Fullscreen diagram viewer (zoom + pan). Reuses the rendered SVG; no re-render. */
-.mermaid-fs-overlay { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.92); overflow: hidden; touch-action: none; }
+.mermaid-fs-overlay { position: fixed; inset: 0; z-index: 2000; background: #0d1117; overflow: hidden; touch-action: none; }
 .mermaid-fs-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: grab; transform-origin: center center; will-change: transform; }
 .mermaid-fs-stage:active { cursor: grabbing; }
 .mermaid-fs-stage svg { max-width: 92vw; max-height: 88vh; width: auto; height: auto; }

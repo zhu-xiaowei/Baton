@@ -1,7 +1,7 @@
 // Streaming Mermaid: renderMd/renderStreamMd emit a .mermaid-block placeholder; renderMermaidBlocks fills the SVG async, only when the source changed (tagged via data-mcode), swapping just that block's SVG.
 (function () {
-  // Single knob: swap version/CDN here. Browser/WebView HTTP cache handles disk caching.
-  var MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  // Single knob: swap version/CDN here (pinned exact so the cache key is stable). Browser/WebView HTTP cache handles disk caching.
+  var MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs';
 
   var _mermaidPromise = null;
   var _renderSeq = 0;                  // unique id per render() — mermaid needs distinct ids
@@ -13,13 +13,13 @@
     _svgCache[code] = svg;
   }
 
-  // Offscreen container for render(id,code,container) so mermaid's temp measuring/error nodes never land in <body> (where they'd push the input bar up).
+  // Offscreen render container (keeps mermaid's temp measuring nodes out of <body>). MUST keep a real width — gantt measures it to size the axis, so a 0-width sandbox renders blank (mermaid #1846); left:-99999px hides it without collapsing width.
   var _sandbox = null;
   function sandbox() {
     if (_sandbox && document.body.contains(_sandbox)) return _sandbox;
     _sandbox = document.createElement('div');
     _sandbox.id = 'mermaid-sandbox';
-    _sandbox.style.cssText = 'position:absolute;left:-99999px;top:0;width:0;height:0;overflow:hidden;visibility:hidden';
+    _sandbox.style.cssText = 'position:absolute;left:-99999px;top:0;width:900px;overflow:hidden';
     document.body.appendChild(_sandbox);
     return _sandbox;
   }
@@ -48,6 +48,24 @@
   // mermaid renders a "Syntax error" graph (not a throw) for some parseable sources; detect it to discard and keep the last good diagram.
   function isErrorSvg(svg) {
     return /aria-roledescription="error"|class="error-icon"|>Syntax error/i.test(svg);
+  }
+
+  // Gantt streams badly: a half-written task line parses OK but render() throws — so try full source, and on failure drop the last non-empty line and retry a few times.
+  function renderResilient(mermaid, id, code) {
+    var attempt = code, tries = 0;
+    function step() {
+      return mermaid.render(id + '-' + tries, attempt, sandbox()).then(function (res) {
+        if (res && res.svg && !isErrorSvg(res.svg)) return res;
+        throw new Error('error-svg');
+      }).catch(function (e) {
+        var lines = attempt.split('\n');
+        while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+        if (tries >= 3 || lines.length <= 1) throw e;
+        lines.pop(); attempt = lines.join('\n'); tries++;
+        return step();
+      });
+    }
+    return step();
   }
 
   // Debounce failure: mid-stream failures are normal (code unfinished), so only act if the SAME source still fails after 600ms; a newer attempt or success cancels it. On failure: switch to code + tag mermaid-failed.
@@ -79,6 +97,8 @@
       var srcEl = block.querySelector('.mermaid-src');
       var code = (srcEl ? srcEl.textContent : '').trim();
       if (!code) continue;
+      // gantt is a wide horizontal chart — flag it so CSS stretches it to the container width instead of shrinking it small + centered.
+      block.classList.toggle('mermaid-wide', /^gantt\b/.test(code));
       var svgBox = block.querySelector('.mermaid-svg');
       var cur = svgBox && svgBox.firstElementChild;         // SVG already in this box (persistent node or prior render)
       if (cur && cur.getAttribute('data-mcode') === code) { // already showing this exact source → no-op
@@ -102,11 +122,10 @@
     loadMermaid().then(function (mermaid) {
       todo.forEach(function (t) {
         var renderId = 'mmd-' + (++_renderSeq);
-        // parse() gates render() (mid-stream/invalid → skip); also reject render's own error graph (a bare `graph TD` parses OK but renders as one).
+        // parse() gates render() (mid-stream/invalid → skip); renderResilient handles gantt's half-written trailing line.
         mermaid.parse(t.code, { suppressErrors: true }).then(function (ok) {
           if (!ok) { markFailed(t.block, t.code); return; } // parse failed — if final code, mark failed
-          return mermaid.render(renderId, t.code, sandbox()).then(function (res) {
-            if (!res || !res.svg || isErrorSvg(res.svg)) { markFailed(t.block, t.code); return; } // error graph
+          return renderResilient(mermaid, renderId, t.code).then(function (res) {
             cacheSvg(t.code, res.svg); // remember by source so a later node swap restores it sync
             var srcEl = t.block.querySelector('.mermaid-src');
             var box = t.block.querySelector('.mermaid-svg');
