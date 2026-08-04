@@ -2,6 +2,7 @@
 // Credentials default to localStorage; can be overridden per-call via opts.{key,server} (used by landing.html before login)
 
 import { state } from './state.js';
+import { clearListCaches } from './list-cache.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -21,11 +22,19 @@ state.KEY = (function () {
 })();
 state.WS_URL = localStorage.getItem('_wsurl') || '';
 
+function clearCachedAccountData() {
+  localStorage.removeItem('apeek_home_cache');
+  localStorage.removeItem('agentpeek-nav'); // legacy location
+  sessionStorage.removeItem('agentpeek-nav');
+  clearListCaches();
+}
+
 function setCredentials(key, server) {
   var prev = ''; try { prev = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
-  if (prev && prev !== key) localStorage.removeItem('apeek_home_cache'); // account switch — drop the other account's home
+  var nextServer = server ? server.replace(/\/+$/, '') : state.SERVER;
+  if (prev !== key || state.SERVER !== nextServer) clearCachedAccountData();
   state.KEY = key;
-  if (server) state.SERVER = server.replace(/\/+$/, '');
+  state.SERVER = nextServer;
   localStorage.setItem('_ak', btoa(key));
   if (server) localStorage.setItem('_as', state.SERVER);
 }
@@ -36,8 +45,7 @@ function clearCredentials() {
   localStorage.removeItem('_ak');
   localStorage.removeItem('_as');
   localStorage.removeItem('_wsurl');
-  localStorage.removeItem('agentpeek-nav');
-  localStorage.removeItem('apeek_home_cache'); // don't flash the old account's home on next login
+  clearCachedAccountData();
 }
 
 function logout() {

@@ -709,5 +709,5 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .mermaid-fs-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: grab; transform-origin: center center; will-change: transform; }
 .mermaid-fs-stage:active { cursor: grabbing; }
 .mermaid-fs-stage svg { max-width: 92vw; max-height: 88vh; width: auto; height: auto; }
-.mermaid-fs-close { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
+.mermaid-fs-close { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mermaid-fs-close:hover { background: rgba(48,54,61,0.95); color: #fff; } }

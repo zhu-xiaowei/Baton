@@ -1,5 +1,11 @@
 // App state, routing, page loading
 import { state } from './state.js';
+import {
+  invalidateListCache,
+  migrateLegacyListCache,
+  readListCache,
+  writeListCache,
+} from './list-cache.js';
 
 var _navVersion = 0;
 
@@ -175,6 +181,7 @@ function updateBreadcrumb() {
   var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
   var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
   var topRight = document.getElementById('top-right');
+  topRight.classList.remove('syncing');
   if (state.selectMode) {
     var n = state.selected.size;
     topRight.innerHTML = '<button class="text-btn" onclick="exitSelectMode()">Cancel</button>'
@@ -183,7 +190,7 @@ function updateBreadcrumb() {
     topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
-  } else {
+  } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
   }
   var titleHtml = '';
@@ -223,7 +230,32 @@ function saveNav() {
   sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
 }
 
-var _chevron = '<svg class="collapse-arrow" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
+migrateLegacyListCache();
+
+async function loadCachedList(options) {
+  var content = document.getElementById('content');
+  var cached = readListCache(options.cacheKey);
+  if (window.__setTopSync) window.__setTopSync(true);
+  if (cached) options.render(cached);
+  else content.innerHTML = options.skeleton;
+  content.scrollTop = 0;
+
+  try {
+    var fresh = await options.fetch();
+    if (!options.isCurrent()) return;
+    var changed = !cached || JSON.stringify(fresh) !== JSON.stringify(cached);
+    if (changed) {
+      var keepScroll = content.scrollTop;
+      options.render(fresh);
+      content.scrollTop = keepScroll;
+    }
+    writeListCache(options.cacheKey, fresh);
+  } catch (e) {
+    if (options.isCurrent() && !cached) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  } finally {
+    if (options.isCurrent() && window.__setTopSync) window.__setTopSync(false);
+  }
+}
 
 function toggleRecentAgents() {
   var grid = document.getElementById('recent-agents-grid');
@@ -274,136 +306,53 @@ async function loadDevices() {
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
+  if (window.__homeLoadPromise) document.getElementById('top-right').classList.add('syncing');
   saveNav();
-  var content = document.getElementById('content');
 
-  // Reuse inline shell render only on the first call — the one right after inline shell paints.
-  // __preload is consumed (set to null) after first call, so subsequent logo clicks always re-render.
-  var preload = window.__preload;
-  var reuseInline = !!preload && !!(document.getElementById('devices-section') || document.getElementById('active-section'));
-  if (preload) window.__preload = null;
-
-  if (!reuseInline) {
-    content.innerHTML = '<div class="section-title">Active Sessions</div>'
-      + '<div id="active-section" class="active-grid">' + skeletonCards(4) + '</div>'
-      + '<div id="recent-agents-section"></div>'
-      + '<div class="section-title">Devices</div>'
-      + '<div id="devices-section" class="list">' + skeletonItems(2) + '</div>';
-    content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
-  }
-
-  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
-  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
-
-  if (reuseInline) {
-    Promise.resolve(devicesPromise).then(function (devData) {
-      if (devData && devData.devices) devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
-    }).catch(function () {});
+  // The inline shell starts the cold-load run before app.js arrives. Reuse it
+  // instead of launching a second request/render pipeline.
+  if (window.__homeLoadPromise) {
+    window.__preload = null;
+    window.__homeLoadPromise.then(function (fresh) {
+      if (_navVersion !== myNav || !fresh || !fresh[1]) return;
+      fresh[1].devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+    });
     return;
   }
 
-  // Keep the SWR home cache fresh on the logo-refresh path too (inline shell owns the key).
-  if (window.__writeHomeCache) {
-    Promise.all([Promise.resolve(activePromise), Promise.resolve(devicesPromise)])
-      .then(function (r) { if (_navVersion === myNav && r[0] && r[1]) window.__writeHomeCache(r[0], r[1]); })
-      .catch(function () {});
-  }
-
-  // Fire both independently
-  Promise.resolve(activePromise).then(function (activeData) {
-    if (_navVersion !== myNav) return;
-    var el = document.getElementById('active-section');
-    var titleEl = el && el.previousElementSibling;
-    if (!el) return;
-    var hasActive = activeData.sessions && activeData.sessions.length > 0;
-    if (!hasActive) {
-      el.remove();
-      if (titleEl) titleEl.remove();
+  var preload = window.__preload;
+  if (preload) window.__preload = null;
+  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
+  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
+  window.__loadHome(activePromise, devicesPromise, {
+    resetScroll: true,
+    onFresh: function (_activeData, devData) {
+      devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+      showStats(devData.devices.length + ' device(s)');
     }
-    if (hasActive && titleEl) titleEl.textContent = 'Active Sessions (' + activeData.sessions.length + ')';
-    if (hasActive) el.innerHTML = (activeData.sessions).map(function (s) {
-      var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
-      var sLabel = statusLabel(s.status);
-      var sClass = statusClass(s.status);
-      var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-      var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
-      return '<div class="active-card ' + esc(sClass) + '"'
-        + ' data-sid="' + esc(s.sessionId) + '"'
-        + ' data-preview="' + esc(s.preview || '') + '"'
-        + ' data-status="' + esc(s.status) + '"'
-        + ' data-device="' + esc(s.deviceName) + '"'
-        + ' data-phash="' + esc(s.projectHash) + '"'
-        + ' data-pname="' + esc(s.projectName) + '"'
-        + ' data-isagent="' + (s.isAgent ? 'true' : '') + '"'
-        + ' onclick="openActiveSession(this)">'
-        + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(sClass) + '">' + sLabel + '</span></span></div>'
-        + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
-        + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
-        + '</div>';
-    }).join('');
-
-    // Completed Sessions section — the 20 most recently finished sessions (any type).
-    var raSection = document.getElementById('recent-agents-section');
-    if (raSection && activeData.recentSessions && activeData.recentSessions.length > 0) {
-      var collapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
-      raSection.innerHTML = '<div class="section-title collapsible' + (collapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">'
-        + 'Completed Sessions (' + activeData.recentSessions.length + ') ' + _chevron + '</div>'
-        + '<div class="active-grid" id="recent-agents-grid" style="' + (collapsed ? 'display:none' : '') + '">'
-        + activeData.recentSessions.map(function (s) {
-          var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-          var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
-          return '<div class="active-card stopped"'
-            + ' data-sid="' + esc(s.sessionId) + '"'
-            + ' data-preview="' + esc(s.preview || '') + '"'
-            + ' data-status="' + esc(s.status) + '"'
-            + ' data-device="' + esc(s.deviceName) + '"'
-            + ' data-phash="' + esc(s.projectHash) + '"'
-            + ' data-pname="' + esc(s.projectName) + '"'
-            + ' data-isagent="' + (s.isAgent ? 'true' : '') + '"'
-            + ' onclick="openActiveSession(this)">'
-            + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge stopped">Done</span></span></div>'
-            + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
-            + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
-            + '</div>';
-        }).join('') + '</div>';
-    }
-  }).catch(function () {
-    if (_navVersion !== myNav) return;
-    var el = document.getElementById('active-section');
-    var titleEl = el && el.previousElementSibling;
-    if (el) el.remove();
-    if (titleEl) titleEl.remove();
-  });
-
-  Promise.resolve(devicesPromise).then(function (devData) {
-    if (_navVersion !== myNav) return;
-    var el = document.getElementById('devices-section');
-    var titleEl = el && el.previousElementSibling;
-    if (!el) return;
-    if (devData.devices.length === 0) {
-      el.remove();
-      if (titleEl) titleEl.remove();
-      return;
-    }
-    if (titleEl) titleEl.textContent = 'Devices (' + devData.devices.length + ')';
-    devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
-    el.innerHTML = devData.devices.map(function (d) {
-      var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
-      var dotClass = d.online ? 'online' : 'offline';
-      return '<div class="item" onclick="loadProjects(\'' + esc(d.deviceName) + '\')">'
-        + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-        + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
-        + '</div>';
-    }).join('');
-    showStats(devData.devices.length + ' device(s)');
-  }).catch(function (e) {
-    if (_navVersion !== myNav) return;
-    var el = document.getElementById('devices-section');
-    if (el) el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   });
 }
 
 // ---- Projects ----
+function renderProjects(device, data) {
+  var content = document.getElementById('content');
+  var sel = state.selectMode && state.selectType === 'project';
+  content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">' + data.projects.map(function (p) {
+    var rc = p.runningCount || 0, ic = p.needsInputCount || 0;
+    var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
+    // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
+    var onclick = 'loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;';
+    return '<a class="item" data-id="' + esc(p.projectHash) + '" href="' + projHref + '" onclick="' + onclick + '">'
+      + (sel ? selectBox(p.projectHash) : '')
+      + '<div class="item-main"><div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
+      + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
+      + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div></div>'
+      + '</a>';
+  }).join('') + '</div>';
+  attachLongPress(content.querySelector('.list'), 'project');
+  showStats(data.projects.length + ' project(s)');
+}
+
 async function loadProjects(device) {
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
@@ -412,32 +361,47 @@ async function loadProjects(device) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
-  var content = document.getElementById('content');
-  content.innerHTML = '<div class="list">' + skeletonItems(4) + '</div>';
-  content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
-
-  try {
-    var data = await api('/api/bridge/projects', { device: device });
-    if (_navVersion !== myNav) return;
-    var sel = state.selectMode && state.selectType === 'project';
-    content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">' + data.projects.map(function (p) {
-      var rc = p.runningCount || 0, ic = p.needsInputCount || 0;
-      var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
-      // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
-      var onclick = 'loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;';
-      return '<a class="item" data-id="' + esc(p.projectHash) + '" href="' + projHref + '" onclick="' + onclick + '">'
-        + (sel ? selectBox(p.projectHash) : '')
-        + '<div class="item-main"><div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
-        + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
-        + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div></div>'
-        + '</a>';
-    }).join('') + '</div>';
-    attachLongPress(content.querySelector('.list'), 'project');
-    showStats(data.projects.length + ' project(s)');
-  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  return loadCachedList({
+    cacheKey: 'projects:' + device,
+    skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
+    fetch: function () { return api('/api/bridge/projects', { device: device }); },
+    isCurrent: function () { return _navVersion === myNav; },
+    render: function (data) { renderProjects(device, data); }
+  });
 }
 
 // ---- Sessions ----
+function renderSessions(device, projectHash, data) {
+  var content = document.getElementById('content');
+  if (!data.sessions.length) {
+    // Empty project (e.g. just created) — guide the user to start the first session.
+    content.innerHTML = '<div class="empty">No sessions yet<br><br>'
+      + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
+    showStats('0 session(s)');
+    return;
+  }
+  var sel = state.selectMode && state.selectType === 'session';
+  content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">'
+    + data.sessions.map(function (s) {
+    var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
+    var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
+    var sLabel = statusLabel(s.status);
+    var sClass = statusClass(s.status);
+    var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
+    var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+    var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
+    // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
+    var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
+    return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
+      + (sel ? selectBox(s.sessionId) : '')
+      + '<div class="item-main"><div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
+      + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div></div>'
+      + '</a>';
+  }).join('') + '</div>';
+  attachLongPress(content.querySelector('.list'), 'session');
+  showStats(data.sessions.length + ' session(s)');
+}
+
 async function loadSessions(device, projectHash, projectName) {
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
@@ -446,41 +410,13 @@ async function loadSessions(device, projectHash, projectName) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
-  var content = document.getElementById('content');
-  content.innerHTML = '<div class="list">' + skeletonItems(5) + '</div>';
-  content.scrollTop = 0; // detail page left scrollTop deep; reset so the skeleton is in view
-
-  try {
-    var data = await api('/api/bridge/sessions', { device: device, project: projectHash });
-    if (_navVersion !== myNav) return;
-    if (!data.sessions.length) {
-      // Empty project (e.g. just created) — guide the user to start the first session.
-      content.innerHTML = '<div class="empty">No sessions yet<br><br>'
-        + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
-      showStats('0 session(s)');
-      return;
-    }
-    var sel = state.selectMode && state.selectType === 'session';
-    content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">'
-      + data.sessions.map(function (s) {
-      var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
-      var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
-      var sLabel = statusLabel(s.status);
-      var sClass = statusClass(s.status);
-      var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
-      var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-      var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
-      // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
-      var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
-      return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
-        + (sel ? selectBox(s.sessionId) : '')
-        + '<div class="item-main"><div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
-        + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div></div>'
-        + '</a>';
-    }).join('') + '</div>';
-    attachLongPress(content.querySelector('.list'), 'session');
-    showStats(data.sessions.length + ' session(s)');
-  } catch (e) { if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+  return loadCachedList({
+    cacheKey: 'sessions:' + device + ':' + projectHash,
+    skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
+    fetch: function () { return api('/api/bridge/sessions', { device: device, project: projectHash }); },
+    isCurrent: function () { return _navVersion === myNav; },
+    render: function (data) { renderSessions(device, projectHash, data); }
+  });
 }
 
 function createNewProject() {
@@ -614,8 +550,16 @@ async function submitDelete() {
     return;
   }
   closeDeleteModal();
-  if (isProject) loadProjects(device);
-  else loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
+  if (isProject) {
+    invalidateListCache('projects:' + device);
+    ids.forEach(function (projectHash) {
+      invalidateListCache('sessions:' + device + ':' + projectHash);
+    });
+    loadProjects(device);
+  } else {
+    invalidateListCache('sessions:' + state.appState.device + ':' + state.appState.project.hash);
+    loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
+  }
   // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
   if (deleteFiles && result.files && result.files.timeout) {
     showStats('Removed from list; device did not confirm file deletion (bridge offline?)');
