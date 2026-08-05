@@ -230,6 +230,93 @@ function saveNav() {
   sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
 }
 
+function navigateUp() {
+  if (state.selectMode) { exitSelectMode(); return true; }
+
+  var active = document.activeElement;
+  if (active && typeof active.blur === 'function') active.blur();
+
+  var device = state.appState.device;
+  var project = state.appState.project;
+  if (state.appState.session && device && project) {
+    loadSessions(device, project.hash, project.name);
+    return true;
+  }
+  if (project && device) {
+    loadProjects(device);
+    return true;
+  }
+  if (device) {
+    loadDevices();
+    return true;
+  }
+  return false;
+}
+
+(function attachEdgeBackGesture() {
+  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!isIOS) return;
+
+  var tracking = false;
+  var claimed = false;
+  var startX = 0;
+  var startY = 0;
+  var suppressClickUntil = 0;
+
+  function hasOpenOverlay() {
+    var overlays = document.querySelectorAll('.modal-overlay, .mermaid-fs-overlay');
+    for (var i = 0; i < overlays.length; i++) {
+      if (getComputedStyle(overlays[i]).display !== 'none') return true;
+    }
+    return false;
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' || e.clientX > 24 || hasOpenOverlay()) return;
+    if (!state.selectMode && !state.appState.device) return;
+    tracking = true;
+    claimed = false;
+    startX = e.clientX;
+    startY = e.clientY;
+  }, true);
+
+  document.addEventListener('pointermove', function (e) {
+    if (!tracking) return;
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    if (dx < 0 || (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10)) {
+      tracking = false;
+      return;
+    }
+    if (dx > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      claimed = true;
+      e.preventDefault();
+    }
+  }, { capture: true, passive: false });
+
+  document.addEventListener('pointerup', function (e) {
+    if (!tracking) return;
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    tracking = false;
+    if (!claimed || dx < 72 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    e.preventDefault();
+    suppressClickUntil = performance.now() + 400;
+    navigateUp();
+  }, true);
+
+  document.addEventListener('pointercancel', function () {
+    tracking = false;
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    if (performance.now() >= suppressClickUntil) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+})();
+
 migrateLegacyListCache();
 
 async function loadCachedList(options) {
@@ -878,7 +965,7 @@ document.addEventListener('click', function (e) {
 Object.assign(window, {
   osName, timeAgo, formatSize, esc,
   showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
-  showInputBar, saveNav, openActiveSession, openSession, shortModel,
+  showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
