@@ -62,5 +62,17 @@ import qrcode from 'qrcode-generator';
   if (verEl && typeof __APP_VERSION__ !== 'undefined') {
     verEl.textContent = 'v' + __APP_VERSION__;
     verEl.style.display = 'block';
+
+    // On iOS, use the build number from the installed app bundle so the
+    // display always matches the archive that produced this app.
+    if (window.__TAURI_INTERNALS__) {
+      import('@tauri-apps/api/core').then(function (core) {
+        return core.invoke('ios_build_number');
+      }).then(function (buildNumber) {
+        if (buildNumber) {
+          verEl.textContent = 'v' + __APP_VERSION__ + ' (' + buildNumber + ')';
+        }
+      }).catch(function () {});
+    }
   }
 })();

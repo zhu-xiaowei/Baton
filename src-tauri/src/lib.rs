@@ -6,6 +6,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "macos")]
 static WINDOW_SEQ: AtomicUsize = AtomicUsize::new(0);
 
+#[tauri::command]
+fn ios_build_number() -> Option<String> {
+  #[cfg(target_os = "ios")]
+  {
+    use objc2_foundation::{ns_string, NSBundle, NSString};
+
+    let build_number = NSBundle::mainBundle()
+      .objectForInfoDictionaryKey(ns_string!("CFBundleVersion"))?
+      .downcast::<NSString>()
+      .ok()?;
+
+    Some(build_number.to_string())
+  }
+
+  #[cfg(not(target_os = "ios"))]
+  {
+    None
+  }
+}
+
 // Open a fresh viewer window. Each window is its own WebView (isolated DOM/JS,
 // own WS connection + sessionStorage nav), so different windows can browse
 // different projects/sessions without interfering. Cascade-offset so it
@@ -38,6 +58,7 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .invoke_handler(tauri::generate_handler![ios_build_number])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

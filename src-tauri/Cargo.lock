@@ -13,6 +13,7 @@ name = "agentpeek"
 version = "0.2.0"
 dependencies = [
  "log",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",
