@@ -239,6 +239,11 @@ static void agentpeek_fix_viewport(void) {
         }
         return;
     }
+    // Keep the WKWebView root fixed; scrolling belongs to CSS overflow containers.
+    checkWv.scrollView.scrollEnabled = NO;
+    checkWv.scrollView.bounces = NO;
+    checkWv.scrollView.alwaysBounceVertical = NO;
+
     CGFloat contentH = checkWv.scrollView.contentSize.height;
     CGFloat windowH = kw.bounds.size.height;
     // If contentSize already matches window (viewport-fit=cover works), skip fix.

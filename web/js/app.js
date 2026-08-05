@@ -726,9 +726,7 @@ function positionScrollBtn() {
   var btn = document.getElementById('scroll-bottom-btn');
   if (!bar || !btn) return;
   if (bar.offsetHeight === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
-  var barTop = bar.getBoundingClientRect().top;
-  var offTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
-  btn.style.bottom = (document.documentElement.clientHeight - offTop - barTop + 12) + 'px';
+  btn.style.bottom = (bar.offsetHeight + 12) + 'px';
 }
 (function () {
   var bar = document.getElementById('input-bar');

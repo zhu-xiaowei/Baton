@@ -1,7 +1,4 @@
-// Keyboard handling. Android: shrink body so flex matches visible area
-// (prevents input-bar drag). iOS: toggle kb-up to drop redundant safe-area
-// padding when keyboard covers home indicator. Both: re-pin #content to
-// bottom across the keyboard animation.
+// Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
 import { ReorderBuffer } from './reorder.js';
 
@@ -13,13 +10,24 @@ var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in orde
 
 if (window.visualViewport && _isMobile) {
   var _wasKbUp = false;
-  window.visualViewport.addEventListener('resize', function () {
+  var syncMobileViewport = function () {
     var vv = window.visualViewport;
+    _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
     var kbUp = vv.height < _vpBaseHeight * 0.75;
-    if (!_isIOS) {
-      document.body.style.bottom = 'auto';
-      document.body.style.height = vv.height + 'px';
-    } else {
+    var chromeHeight = 0;
+    if (_isIOS && kbUp) {
+      var topBar = document.querySelector('.top-bar');
+      var breadcrumb = document.getElementById('breadcrumb');
+      if (topBar) chromeHeight += topBar.offsetHeight;
+      if (breadcrumb && getComputedStyle(breadcrumb).display !== 'none') {
+        chromeHeight += breadcrumb.offsetHeight;
+      }
+    }
+    document.body.style.bottom = 'auto';
+    document.body.style.top = (_isIOS ? vv.offsetTop : 0) + 'px';
+    document.body.style.height = (vv.height + chromeHeight) + 'px';
+    document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
+    if (_isIOS) {
       var bar = document.getElementById('input-bar');
       if (bar) bar.classList.toggle('kb-up', kbUp);
     }
@@ -34,7 +42,10 @@ if (window.visualViewport && _isMobile) {
       });
     }
     _wasKbUp = kbUp;
-  });
+  };
+  window.visualViewport.addEventListener('resize', syncMobileViewport);
+  if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
+  syncMobileViewport();
 }
 
 // Foreground resume: reconnect on hidden→visible only (not focus — desktop fires it on every click-back). See CLAUDE.md.
