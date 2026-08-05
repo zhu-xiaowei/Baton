@@ -7,7 +7,10 @@
   ::-webkit-scrollbar-thumb:hover { background: #4a5059; }
 }
 
-/* === Custom scroll indicator (iOS WKWebView fix) === */
+/* Modern WebKit keeps native scrollbar geometry/overscroll while applying color. */
+#content, .file-modal-body { scrollbar-color: #3a4049 transparent; }
+
+/* Fallback for iOS versions without scrollbar-color. */
 .si-track {
   position: absolute; right: 0; width: 8px;
   pointer-events: none; z-index: 200;

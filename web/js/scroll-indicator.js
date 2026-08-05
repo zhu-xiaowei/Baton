@@ -1,6 +1,7 @@
 (function () {
-  // Only needed on iOS — Android (Chromium) renders ::-webkit-scrollbar correctly.
+  // Modern iOS can color the native indicator without replacing its behavior.
   if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
+  if (window.CSS && CSS.supports('scrollbar-color', '#3a4049 transparent')) return;
 
   var THUMB_MIN_HEIGHT = 24;
   var FADE_DELAY_MS = 800;
