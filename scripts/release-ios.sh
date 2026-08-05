@@ -44,7 +44,7 @@ sed -i '' -E "s/CFBundleVersion: \"${CURRENT_BUILD}\"/CFBundleVersion: \"${NEXT_
 echo "==> Bumped CFBundleVersion: ${CURRENT_BUILD} -> ${NEXT_BUILD}"
 
 echo "==> Building iOS release IPA (this can take a few minutes)..."
-npx tauri ios build --export-method app-store-connect
+npx tauri ios build --build-number "${NEXT_BUILD}" --export-method app-store-connect
 
 # Locate the generated IPA — Tauri stores it under:
 # src-tauri/gen/apple/build/arm64/AgentPeek.ipa  (path may vary by version)
