@@ -171,6 +171,7 @@ body {
 .assistant-text code { background: rgba(215, 186, 125, 0.15); color: #D7BA7D; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
 .assistant-text pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; }
 .assistant-text pre code { background: none; padding: 0; font-size: 12px; }
+.assistant-text .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
 .assistant-text ul, .assistant-text ol { padding-left: 20px; margin: 4px 0; }
 .assistant-text > ul:first-child, .assistant-text > ol:first-child { margin-top: -2px; }
 .assistant-text li { margin: 2px 0; }
