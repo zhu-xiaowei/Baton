@@ -432,6 +432,7 @@ function shortModel(m) {
 
 // ---- Devices ----
 async function loadDevices() {
+  var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
   prepareNavigation({ device: null, project: null, session: null });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
@@ -445,7 +446,7 @@ async function loadDevices() {
 
   // The inline shell starts the cold-load run before app.js arrives. Reuse it
   // instead of launching a second request/render pipeline.
-  if (window.__homeLoadPromise) {
+  if (window.__homeLoadPromise && wasHome) {
     window.__preload = null;
     window.__homeLoadPromise.then(function (fresh) {
       if (_navVersion !== myNav || !fresh || !fresh[1]) return;
