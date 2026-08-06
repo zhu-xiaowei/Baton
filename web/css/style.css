@@ -8,7 +8,7 @@
 }
 
 /* Modern WebKit keeps native scrollbar geometry/overscroll while applying color. */
-#content, .file-modal-body { scrollbar-color: #3a4049 transparent; }
+html { scrollbar-color: #3a4049 transparent; }
 
 /* Fallback for iOS versions without scrollbar-color. */
 .si-track {
