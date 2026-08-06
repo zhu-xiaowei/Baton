@@ -14,6 +14,7 @@ import {
 } from './edge-back.js';
 
 var _navVersion = 0;
+var _listPrefetches = {};
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -274,7 +275,89 @@ function navigateUp() {
   return false;
 }
 
-attachEdgeBackGesture(navigateUp);
+function listTarget(targetState) {
+  if (!targetState) {
+    if (state.appState.session && state.appState.project) {
+      targetState = {
+        device: state.appState.device,
+        project: state.appState.project,
+        session: null
+      };
+    } else if (state.appState.project) {
+      targetState = { device: state.appState.device, project: null, session: null };
+    }
+  }
+  if (!targetState || !targetState.device) return null;
+  if (!targetState.project) {
+    return {
+      state: targetState,
+      cacheKey: 'projects:' + targetState.device,
+      skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
+      html: function (data) { return projectsHtml(targetState.device, data, false); },
+      fetch: function () { return api('/api/bridge/projects', { device: targetState.device }); }
+    };
+  }
+  if (!targetState.session) {
+    return {
+      state: targetState,
+      cacheKey: 'sessions:' + targetState.device + ':' + targetState.project.hash,
+      skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
+      html: function (data) {
+        return sessionsHtml(targetState.device, targetState.project.hash, data, false);
+      },
+      fetch: function () {
+        return api('/api/bridge/sessions', {
+          device: targetState.device,
+          project: targetState.project.hash
+        });
+      }
+    };
+  }
+  return null;
+}
+
+function preloadListTarget(target) {
+  if (!target || readListCache(target.cacheKey) || _listPrefetches[target.cacheKey]) return;
+  _listPrefetches[target.cacheKey] = target.fetch().then(function (data) {
+    writeListCache(target.cacheKey, data);
+    return data;
+  }).catch(function () {
+    return null;
+  });
+}
+
+function previewBreadcrumb(targetState) {
+  var parts = [];
+  if (targetState.device) {
+    parts.push('<a>' + esc(targetState.device) + '</a>');
+  }
+  if (targetState.project) {
+    parts.push('<a>' + esc(targetState.project.name) + '</a>');
+  }
+  return '<div class="breadcrumb-nav">'
+    + parts.join('<span class="breadcrumb-sep">/</span>')
+    + '</div>';
+}
+
+function prepareNavigationPreview(targetState) {
+  var target = listTarget(targetState);
+  if (!target) return null;
+
+  var cached = readListCache(target.cacheKey);
+  preloadListTarget(target);
+  var topBar = document.querySelector('body > .top-bar');
+  if (!topBar) return null;
+
+  return {
+    topBarHtml: topBar.innerHTML,
+    breadcrumbHtml: previewBreadcrumb(target.state),
+    breadcrumbDisplay: 'flex',
+    contentHtml: cached ? target.html(cached) : target.skeleton,
+    scrollTop: 0
+  };
+}
+
+attachEdgeBackGesture(navigateUp, prepareNavigationPreview);
 
 migrateLegacyListCache();
 
@@ -287,7 +370,10 @@ async function loadCachedList(options) {
   content.scrollTop = 0;
 
   try {
-    var fresh = await options.fetch();
+    var prefetched = _listPrefetches[options.cacheKey];
+    delete _listPrefetches[options.cacheKey];
+    var fresh = prefetched ? await prefetched : await options.fetch();
+    if (!fresh) fresh = await options.fetch();
     if (!options.isCurrent()) return;
     var changed = !cached || JSON.stringify(fresh) !== JSON.stringify(cached);
     if (changed) {
@@ -382,10 +468,8 @@ async function loadDevices() {
 }
 
 // ---- Projects ----
-function renderProjects(device, data) {
-  var content = document.getElementById('content');
-  var sel = state.selectMode && state.selectType === 'project';
-  content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">' + data.projects.map(function (p) {
+function projectsHtml(device, data, sel) {
+  return '<div class="list' + (sel ? ' select-mode' : '') + '">' + data.projects.map(function (p) {
     var rc = p.runningCount || 0, ic = p.needsInputCount || 0;
     var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
@@ -397,6 +481,12 @@ function renderProjects(device, data) {
       + '<div class="item-bottom"><span class="meta-left">' + p.sessionCount + ' sessions</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div></div>'
       + '</a>';
   }).join('') + '</div>';
+}
+
+function renderProjects(device, data) {
+  var content = document.getElementById('content');
+  var sel = state.selectMode && state.selectType === 'project';
+  content.innerHTML = projectsHtml(device, data, sel);
   attachLongPress(content.querySelector('.list'), 'project');
   showStats(data.projects.length + ' project(s)');
 }
@@ -421,17 +511,12 @@ async function loadProjects(device) {
 }
 
 // ---- Sessions ----
-function renderSessions(device, projectHash, data) {
-  var content = document.getElementById('content');
+function sessionsHtml(device, projectHash, data, sel) {
   if (!data.sessions.length) {
-    // Empty project (e.g. just created) — guide the user to start the first session.
-    content.innerHTML = '<div class="empty">No sessions yet<br><br>'
+    return '<div class="empty">No sessions yet<br><br>'
       + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
-    showStats('0 session(s)');
-    return;
   }
-  var sel = state.selectMode && state.selectType === 'session';
-  content.innerHTML = '<div class="list' + (sel ? ' select-mode' : '') + '">'
+  return '<div class="list' + (sel ? ' select-mode' : '') + '">'
     + data.sessions.map(function (s) {
     var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
     var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
@@ -448,6 +533,16 @@ function renderSessions(device, projectHash, data) {
       + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div></div>'
       + '</a>';
   }).join('') + '</div>';
+}
+
+function renderSessions(device, projectHash, data) {
+  var content = document.getElementById('content');
+  var sel = state.selectMode && state.selectType === 'session';
+  content.innerHTML = sessionsHtml(device, projectHash, data, sel);
+  if (!data.sessions.length) {
+    showStats('0 session(s)');
+    return;
+  }
   attachLongPress(content.querySelector('.list'), 'session');
   showStats(data.sessions.length + ' session(s)');
 }

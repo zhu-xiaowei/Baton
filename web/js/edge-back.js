@@ -53,6 +53,37 @@ function navigationDepth(appState) {
   return 0;
 }
 
+function ancestorStates(appState) {
+  var ancestors = [];
+  var depth = navigationDepth(appState);
+  if (depth > 0) {
+    ancestors.push({ device: null, project: null, session: null, sessionPreview: '' });
+  }
+  if (depth > 1) {
+    ancestors.push({ device: appState.device, project: null, session: null, sessionPreview: '' });
+  }
+  if (depth > 2) {
+    ancestors.push({
+      device: appState.device,
+      project: { hash: appState.project.hash, name: appState.project.name },
+      session: null,
+      sessionPreview: ''
+    });
+  }
+  return ancestors;
+}
+
+function rebuildAncestorStack(targetState) {
+  var existing = {};
+  for (var i = 0; i < navigationStack.length; i++) {
+    existing[navigationStack[i].key] = navigationStack[i];
+  }
+  navigationStack = ancestorStates(targetState).map(function (ancestor) {
+    var key = routeKey(ancestor);
+    return existing[key] || { key: key, state: cloneNavState(ancestor), snapshot: null };
+  });
+}
+
 export function prepareNavigation(targetState) {
   if (restoringNavigation) {
     restoringNavigation = false;
@@ -83,7 +114,8 @@ export function prepareNavigation(targetState) {
       break;
     }
   }
-  navigationStack.length = targetIndex >= 0 ? targetIndex : 0;
+  if (targetIndex >= 0) navigationStack.length = targetIndex;
+  else rebuildAncestorStack(targetState);
 }
 
 export function markCurrentRoute(appState) {
@@ -96,7 +128,7 @@ export function takePreviousNavigation() {
   return cloneNavState(navigationStack.pop().state);
 }
 
-export function attachEdgeBackGesture(navigateUp) {
+export function attachEdgeBackGesture(navigateUp, preparePrevious) {
   var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (!isIOS) return;
@@ -105,6 +137,7 @@ export function attachEdgeBackGesture(navigateUp) {
   var claimed = false;
   var settling = false;
   var selectionOnly = false;
+  var hierarchyOnly = false;
   var startX = 0;
   var startY = 0;
   var lastX = 0;
@@ -218,6 +251,7 @@ export function attachEdgeBackGesture(navigateUp) {
     tracking = true;
     claimed = false;
     selectionOnly = state.selectMode;
+    hierarchyOnly = false;
     startX = e.clientX;
     startY = e.clientY;
     lastX = e.clientX;
@@ -237,8 +271,10 @@ export function attachEdgeBackGesture(navigateUp) {
       var previous = navigationStack[navigationStack.length - 1];
       var snapshot = !selectionOnly && previous && previous.snapshot;
       if (!selectionOnly && !snapshot) {
-        tracking = false;
-        return;
+        if (typeof preparePrevious === 'function') {
+          snapshot = preparePrevious(previous ? cloneNavState(previous.state) : null);
+        }
+        hierarchyOnly = !snapshot;
       }
       claimed = true;
       if (snapshot) beginSwipe(snapshot, dx);
@@ -253,7 +289,9 @@ export function attachEdgeBackGesture(navigateUp) {
     }
     lastX = e.clientX;
     lastTime = e.timeStamp;
-    if (!selectionOnly) setOffset(Math.min(window.innerWidth, Math.max(0, dx)));
+    if (!selectionOnly && !hierarchyOnly) {
+      setOffset(Math.min(window.innerWidth, Math.max(0, dx)));
+    }
   }, { capture: true, passive: false });
 
   document.addEventListener('pointerup', function (e) {
@@ -264,7 +302,7 @@ export function attachEdgeBackGesture(navigateUp) {
     if (!claimed) return;
     e.preventDefault();
     suppressClickUntil = performance.now() + 400;
-    if (selectionOnly) {
+    if (selectionOnly || hierarchyOnly) {
       if (dx >= 72 && Math.abs(dx) >= Math.abs(dy) * 1.4) navigateUp();
       return;
     }
@@ -275,7 +313,7 @@ export function attachEdgeBackGesture(navigateUp) {
   document.addEventListener('pointercancel', function () {
     var wasTracking = tracking;
     tracking = false;
-    if (wasTracking && claimed && !selectionOnly) settleSwipe(false);
+    if (wasTracking && claimed && !selectionOnly && !hierarchyOnly) settleSwipe(false);
   }, true);
 
   document.addEventListener('click', function (e) {
