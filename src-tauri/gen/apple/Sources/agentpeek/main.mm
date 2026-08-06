@@ -240,6 +240,7 @@ static void agentpeek_fix_viewport(void) {
         return;
     }
     // Keep the WKWebView root fixed; scrolling belongs to CSS overflow containers.
+    checkWv.allowsBackForwardNavigationGestures = NO;
     checkWv.scrollView.scrollEnabled = NO;
     checkWv.scrollView.bounces = NO;
     checkWv.scrollView.alwaysBounceVertical = NO;

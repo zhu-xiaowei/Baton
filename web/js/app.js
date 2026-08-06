@@ -6,6 +6,12 @@ import {
   readListCache,
   writeListCache,
 } from './list-cache.js';
+import {
+  attachEdgeBackGesture,
+  markCurrentRoute,
+  prepareNavigation,
+  takePreviousNavigation,
+} from './edge-back.js';
 
 var _navVersion = 0;
 
@@ -236,6 +242,21 @@ function navigateUp() {
   var active = document.activeElement;
   if (active && typeof active.blur === 'function') active.blur();
 
+  var previous = takePreviousNavigation();
+  if (previous) {
+    if (previous.session && previous.device && previous.project) {
+      state.appState = previous;
+      loadMessages(previous.session, previous.sessionPreview);
+    } else if (previous.project && previous.device) {
+      loadSessions(previous.device, previous.project.hash, previous.project.name);
+    } else if (previous.device) {
+      loadProjects(previous.device);
+    } else {
+      loadDevices();
+    }
+    return true;
+  }
+
   var device = state.appState.device;
   var project = state.appState.project;
   if (state.appState.session && device && project) {
@@ -253,69 +274,7 @@ function navigateUp() {
   return false;
 }
 
-(function attachEdgeBackGesture() {
-  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
-    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!isIOS) return;
-
-  var tracking = false;
-  var claimed = false;
-  var startX = 0;
-  var startY = 0;
-  var suppressClickUntil = 0;
-
-  function hasOpenOverlay() {
-    var overlays = document.querySelectorAll('.modal-overlay, .mermaid-fs-overlay');
-    for (var i = 0; i < overlays.length; i++) {
-      if (getComputedStyle(overlays[i]).display !== 'none') return true;
-    }
-    return false;
-  }
-
-  document.addEventListener('pointerdown', function (e) {
-    if (e.pointerType === 'mouse' || e.clientX > 24 || hasOpenOverlay()) return;
-    if (!state.selectMode && !state.appState.device) return;
-    tracking = true;
-    claimed = false;
-    startX = e.clientX;
-    startY = e.clientY;
-  }, true);
-
-  document.addEventListener('pointermove', function (e) {
-    if (!tracking) return;
-    var dx = e.clientX - startX;
-    var dy = e.clientY - startY;
-    if (dx < 0 || (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10)) {
-      tracking = false;
-      return;
-    }
-    if (dx > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-      claimed = true;
-      e.preventDefault();
-    }
-  }, { capture: true, passive: false });
-
-  document.addEventListener('pointerup', function (e) {
-    if (!tracking) return;
-    var dx = e.clientX - startX;
-    var dy = e.clientY - startY;
-    tracking = false;
-    if (!claimed || dx < 72 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
-    e.preventDefault();
-    suppressClickUntil = performance.now() + 400;
-    navigateUp();
-  }, true);
-
-  document.addEventListener('pointercancel', function () {
-    tracking = false;
-  }, true);
-
-  document.addEventListener('click', function (e) {
-    if (performance.now() >= suppressClickUntil) return;
-    e.preventDefault();
-    e.stopPropagation();
-  }, true);
-})();
+attachEdgeBackGesture(navigateUp);
 
 migrateLegacyListCache();
 
@@ -387,9 +346,11 @@ function shortModel(m) {
 
 // ---- Devices ----
 async function loadDevices() {
+  prepareNavigation({ device: null, project: null, session: null });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
+  markCurrentRoute(state.appState);
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
@@ -441,9 +402,11 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
+  prepareNavigation({ device: device, project: null, session: null });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: device, project: null, session: null, sessionPreview: '' };
+  markCurrentRoute(state.appState);
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
@@ -490,9 +453,15 @@ function renderSessions(device, projectHash, data) {
 }
 
 async function loadSessions(device, projectHash, projectName) {
+  prepareNavigation({
+    device: device,
+    project: { hash: projectHash, name: projectName || projectHash },
+    session: null
+  });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
+  markCurrentRoute(state.appState);
   disconnectWs();
   showInputBar(false);
   updateBreadcrumb();
@@ -661,11 +630,17 @@ function onNewAsAgentToggle(checked) {
 }
 
 async function startNewSession(projectHash, asAgent) {
+  prepareNavigation({
+    device: state.appState.device,
+    project: state.appState.project,
+    session: '__new__'
+  });
   await window.loadViewerLibs();
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
+  markCurrentRoute(state.appState);
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
   // Default OFF unless the New Project dialog opted into agent mode.
@@ -707,12 +682,18 @@ async function startNewSession(projectHash, asAgent) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
+  prepareNavigation({
+    device: state.appState.device,
+    project: state.appState.project,
+    session: sessionId
+  });
   // Update state + breadcrumb before any await — a fast follow-up nav must not be
   // overwritten when this call resumes.
   document.body.classList.remove('new-session');
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';
+  markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
   _revealedSessions.delete(sessionId);
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
