@@ -42,6 +42,7 @@ function metadataId(payload) {
 export function getCodexRunningInfo() {
   const projects = new Set();
   const sessions = new Set();
+  if (process.platform === 'win32') return { projects, sessions };
   try {
     const lines = execSync('ps -axo pid=,command= 2>/dev/null', { encoding: 'utf-8' }).split('\n');
     for (const line of lines) {

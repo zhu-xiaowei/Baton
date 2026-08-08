@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { DEFAULT_CODEX_HOME, IS_WSL } from './config.mjs';
+import { findExecutable, runExecutable } from './platform.mjs';
 
 function windowsToWsl(value) {
   const match = String(value || '').trim().match(/^([a-zA-Z]):[\\/](.*)$/);
@@ -40,27 +41,12 @@ export function resolveCodexHomes(env = process.env) {
   });
 }
 
-function resolveFromPath(name, candidates) {
-  for (const candidate of candidates) {
-    try { if (fs.existsSync(candidate)) return candidate; } catch {}
-  }
-  try {
-    const found = execFileSync('/bin/sh', ['-lc', `command -v ${name}`], {
-      encoding: 'utf-8',
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return found || null;
-  } catch {
-    return null;
-  }
-}
-
 export function resolveCodexBin() {
   const home = os.homedir();
-  return resolveFromPath('codex', [
+  return findExecutable('codex', [
     path.join(home, '.local/bin/codex'),
     path.join(home, '.npm-global/bin/codex'),
+    path.join(home, 'AppData/Roaming/npm/codex'),
     '/usr/local/bin/codex',
     '/opt/homebrew/bin/codex',
     '/usr/bin/codex',
@@ -69,8 +55,9 @@ export function resolveCodexBin() {
 
 export function resolveClaudeBinForCapability() {
   const home = os.homedir();
-  return resolveFromPath('claude', [
+  return findExecutable('claude', [
     path.join(home, '.local/bin/claude'),
+    path.join(home, 'AppData/Roaming/npm/claude'),
     '/usr/local/bin/claude',
     '/opt/homebrew/bin/claude',
     '/usr/bin/claude',
@@ -80,7 +67,7 @@ export function resolveClaudeBinForCapability() {
 export function binaryVersion(binary) {
   if (!binary) return '';
   try {
-    return execFileSync(binary, ['--version'], {
+    return runExecutable(binary, ['--version'], {
       encoding: 'utf-8',
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],

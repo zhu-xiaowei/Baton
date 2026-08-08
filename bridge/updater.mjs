@@ -5,6 +5,17 @@ function removable(target) {
   try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
 }
 
+export function cleanupStagedBridge(bridgeHome) {
+  let entries;
+  try { entries = fs.readdirSync(bridgeHome); } catch { return; }
+  const prefixes = ['.update-stage-', '.update-backup-', '.node_modules-next-', '.node_modules-old-'];
+  for (const entry of entries) {
+    if (prefixes.some((prefix) => entry.startsWith(prefix))) {
+      removable(path.join(bridgeHome, entry));
+    }
+  }
+}
+
 export function installStagedBridge(stage, bridgeHome) {
   const token = `${process.pid}-${Date.now()}`;
   const backupDir = path.join(bridgeHome, `.update-backup-${token}`);

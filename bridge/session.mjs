@@ -4,6 +4,8 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, AGENTS_JSON_TTL_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
+import { resolveClaudeBinForCapability } from './runtime-capabilities.mjs';
+import { runExecutable } from './platform.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -95,18 +97,19 @@ export function projectHashToPath(projectHash) {
   const homeDir = os.homedir();
   const homeHash = path.resolve(homeDir).replace(/[^a-zA-Z0-9-]/g, '-');
   let remaining = projectHash;
-  let currentDir = '/';
+  let currentDir = path.parse(homeDir).root;
 
-  // Windows hash detection: starts with single uppercase letter (drive letter)
-  // e.g. "C-Users-Admin-workspace" → /mnt/c/Users/Admin/workspace (on WSL)
-  const winDriveMatch = projectHash.match(/^([A-Z])-/);
-  if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
-    const drive = winDriveMatch[1].toLowerCase();
-    currentDir = `/mnt/${drive}`;
-    remaining = projectHash.slice(2); // remove "C-"
-  } else if (remaining.startsWith(homeHash)) {
+  const winDriveMatch = projectHash.match(/^([A-Z])--?/);
+  if (remaining.startsWith(homeHash)) {
     remaining = remaining.slice(homeHash.length).replace(/^-/, '');
     currentDir = homeDir;
+  } else if (winDriveMatch && process.platform === 'win32') {
+    currentDir = `${winDriveMatch[1]}:\\`;
+    remaining = projectHash.slice(winDriveMatch[0].length);
+  } else if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
+    const drive = winDriveMatch[1].toLowerCase();
+    currentDir = `/mnt/${drive}`;
+    remaining = projectHash.slice(winDriveMatch[0].length);
   } else {
     remaining = remaining.replace(/^-/, '');
   }
@@ -135,16 +138,17 @@ export function readableProjectName(projectHash) {
   let currentDir = os.homedir();
   const segments = [];
 
-  // Windows hash on WSL: "C-Users-Admin-workspace" → resolve via /mnt/c/
-  const winDriveMatch = projectHash.match(/^([A-Z])-/);
-  if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
+  const winDriveMatch = projectHash.match(/^([A-Z])--?/);
+  if (remaining.startsWith(homeHash)) {
+    remaining = remaining.slice(homeHash.length).replace(/^-/, '');
+    if (!remaining) return '~';
+  } else if (winDriveMatch && process.platform === 'win32') {
+    currentDir = `${winDriveMatch[1]}:\\`;
+    remaining = projectHash.slice(winDriveMatch[0].length);
+  } else if (winDriveMatch && process.env.WSL_DISTRO_NAME) {
     const drive = winDriveMatch[1].toLowerCase();
     currentDir = `/mnt/${drive}`;
-    remaining = projectHash.slice(2);
-  } else if (remaining.startsWith(homeHash)) {
-    remaining = remaining.slice(homeHash.length);
-    remaining = remaining.replace(/^-/, '');
-    if (!remaining) return '~';
+    remaining = projectHash.slice(winDriveMatch[0].length);
   } else {
     remaining = remaining.replace(/^-/, '');
   }
@@ -278,11 +282,11 @@ function readStatusFromFile(filePath) {
  * Watcher uses statusFromEntry() directly with already-parsed data.
  */
 export function getSessionStatus(sessionId, filePath, runningInfo) {
-  // WSL monitoring Windows CC: can't detect processes, use mtime + content only
-  const wslMode = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
+  const metadataOnly = process.platform === 'win32'
+    || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'));
 
-  // 1. No CC process for this project → completed (skip on WSL)
-  if (!wslMode && !runningInfo.sessions.has(sessionId)) {
+  // 1. No CC process for this project → completed (skip where cwd inspection is unavailable)
+  if (!metadataOnly && !runningInfo.sessions.has(sessionId)) {
     const projectHash = path.basename(path.dirname(filePath));
     if (!runningInfo.projects.has(projectHash)) return 'completed';
     if (runningInfo.sessions.size > 0) return 'completed';
@@ -313,8 +317,7 @@ export function getRunningInfo() {
   const projects = new Set();
   const sessions = new Set();
 
-  // WSL bridge monitoring Windows CC: can't see Windows processes, use mtime fallback
-  if (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/')) {
+  if (process.platform === 'win32' || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'))) {
     return { projects, sessions };
   }
 
@@ -393,17 +396,8 @@ export function agentDetailFor(a) {
 let _claudeBin;
 export function resolveClaudeBin() {
   if (_claudeBin !== undefined) return _claudeBin;
-  const candidates = [
-    path.join(os.homedir(), '.local/bin/claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-    '/usr/bin/claude',
-  ];
-  for (const c of candidates) {
-    try { if (fs.existsSync(c)) { _claudeBin = c; return c; } } catch {}
-  }
-  _claudeBin = null; // fall back to `bash -lc` in getAgentsJson
-  return null;
+  _claudeBin = resolveClaudeBinForCapability();
+  return _claudeBin;
 }
 
 let _agentsCache = { at: 0, map: new Map() };
@@ -418,7 +412,7 @@ export function getAgentsJson(force) {
   let out;
   try {
     out = bin
-      ? execSync(`"${bin}" agents --json --all`, { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] })
+      ? runExecutable(bin, ['agents', '--json', '--all'], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] })
       : execSync(`bash -lc 'claude agents --json --all'`, { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] });
   } catch { return _agentsCache.map; }
   let arr;

@@ -18,7 +18,8 @@ import { startWatcher, startJobsWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
-import { installStagedBridge } from './updater.mjs';
+import { cleanupStagedBridge, installStagedBridge } from './updater.mjs';
+import { extractTar, installProductionDependencies } from './platform.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
 const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
@@ -37,6 +38,7 @@ process.on('SIGTERM', () => process.exit(0));
 process.on('SIGINT', () => process.exit(0));
 
 const CONFIG = loadConfig();
+cleanupStagedBridge(BRIDGE_HOME);
 initHttp(CONFIG);
 loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
 setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
@@ -97,10 +99,12 @@ async function checkUpdate() {
       fs.rmSync(stage, { recursive: true, force: true });
       fs.mkdirSync(stage, { recursive: true });
       try {
-        execFileSync('curl', ['-fsSL', tarUrl, '-o', tgz], { stdio: 'ignore' });
-        execFileSync('tar', ['xzf', tgz, '-C', stage], { stdio: 'ignore' });
+        const packageRes = await fetch(tarUrl);
+        if (!packageRes.ok) throw new Error(`package HTTP ${packageRes.status}`);
+        fs.writeFileSync(tgz, Buffer.from(await packageRes.arrayBuffer()));
+        extractTar(tgz, stage);
         execFileSync(process.execPath, ['--check', path.join(stage, 'bridge.mjs')], { stdio: 'ignore' });
-        execFileSync('npm', ['install', '--production', '--silent'], { cwd: stage, stdio: 'ignore' });
+        installProductionDependencies(stage);
 
         const stagedVersion = fs.readFileSync(path.join(stage, 'version.mjs'), 'utf-8');
         if (!stagedVersion.includes(`'${version}'`) && !stagedVersion.includes(`"${version}"`)) {
@@ -113,7 +117,7 @@ async function checkUpdate() {
         fs.rmSync(stage, { recursive: true, force: true });
       }
       console.log(`[update] files updated, restarting...`);
-      process.exit(1);
+      process.exit(process.platform === 'win32' ? 75 : 1);
     } catch (e) {
       console.error(`[update] failed: ${e.message}`);
     }

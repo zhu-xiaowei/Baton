@@ -393,8 +393,85 @@ async def get_messages(
     return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_cursor, "needSync": need_sync}
 
 
+def _powershell_literal(value):
+    return "'" + str(value or "").replace("'", "''") + "'"
+
+
+def _windows_install_script(url, server, api_key, name):
+    package = _powershell_literal(url)
+    server_value = _powershell_literal(server)
+    key_value = _powershell_literal(api_key)
+    name_value = _powershell_literal(name)
+    return "\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        "$task = Get-ScheduledTask -TaskName 'AgentPeek Bridge' -ErrorAction SilentlyContinue",
+        "$node = Get-Command node.exe -ErrorAction SilentlyContinue",
+        "if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }",
+        "$nodePath = if ($node) { $node.Source } else { '' }",
+        "if (-not $nodePath -and $task) {",
+        "  $nodePath = $task.Actions | ForEach-Object { $_.Execute } | Where-Object { $_ -and (Test-Path $_) -and ([IO.Path]::GetFileName($_) -ieq 'node.exe') } | Select-Object -First 1",
+        "}",
+        "$standardNode = Join-Path $env:ProgramFiles 'nodejs\\node.exe'",
+        "if (-not $nodePath -and (Test-Path $standardNode)) { $nodePath = $standardNode }",
+        "if (-not $nodePath) { throw 'Node.js 20+ is required.' }",
+        "$major = [int](& $nodePath -p \"process.versions.node.split('.')[0]\")",
+        "if ($major -lt 20) { throw \"Node.js $major is too old; version 20+ is required.\" }",
+        "$dir = Join-Path $HOME '.claude-bridge'",
+        "$configPath = Join-Path $dir 'config.json'",
+        "$existingName = ''",
+        "if (Test-Path $configPath) {",
+        "  try { $existingName = (Get-Content $configPath -Raw | ConvertFrom-Json).deviceName } catch {}",
+        "}",
+        f"$deviceName = {name_value}",
+        "if ([string]::IsNullOrWhiteSpace($deviceName)) { $deviceName = $existingName }",
+        "if ([string]::IsNullOrWhiteSpace($deviceName)) { $deviceName = $env:COMPUTERNAME }",
+        "if ($task) { Stop-ScheduledTask -TaskName 'AgentPeek Bridge' -ErrorAction SilentlyContinue }",
+        "$legacy = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq 'node.exe' -and $_.CommandLine -like '*bridge.mjs*' }",
+        "$legacy | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        "if ($legacy) { Start-Sleep -Milliseconds 500 }",
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
+        "$archive = Join-Path $env:TEMP 'agentpeek-bridge.tar.gz'",
+        f"Invoke-WebRequest -UseBasicParsing -Uri {package} -OutFile $archive",
+        "$tar = Get-Command tar.exe -ErrorAction SilentlyContinue",
+        "if (-not $tar) { throw 'tar.exe is required.' }",
+        "& $tar.Source -xzf $archive -C $dir",
+        "if ($LASTEXITCODE -ne 0) { throw 'Bridge package extraction failed.' }",
+        "Remove-Item $archive -Force -ErrorAction SilentlyContinue",
+        "$npm = Join-Path (Split-Path $nodePath) 'npm.cmd'",
+        "if (-not (Test-Path $npm)) {",
+        "  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue",
+        "  if (-not $npmCommand) { throw 'npm is required.' }",
+        "  $npm = $npmCommand.Source",
+        "}",
+        "Push-Location $dir",
+        "try {",
+        "  & $npm install --production --silent",
+        "  $npmExit = $LASTEXITCODE",
+        "  if ($npmExit -ne 0) { Start-Sleep -Seconds 2; & $npm install --production --silent; $npmExit = $LASTEXITCODE }",
+        "} finally { Pop-Location }",
+        "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
+        f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName }}",
+        "$utf8 = New-Object System.Text.UTF8Encoding($false)",
+        "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
+        "$bridge = Join-Path $dir 'bridge-launcher.mjs'",
+        "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+        "$action = New-ScheduledTaskAction -Execute $nodePath -Argument ('\"' + $bridge + '\"') -WorkingDirectory $dir",
+        "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity",
+        "$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)",
+        "$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Highest",
+        "Register-ScheduledTask -TaskName 'AgentPeek Bridge' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null",
+        "Start-ScheduledTask -TaskName 'AgentPeek Bridge'",
+        "Write-Output \"AgentPeek Bridge installed for $deviceName.\"",
+        "",
+    ])
+
+
 @read_router.get("/install")
-async def get_install(request: Request, name: str = Query(None)):
+async def get_install(
+    request: Request,
+    name: str = Query(None),
+    platform: str = Query(""),
+):
     """Return a shell script that downloads and runs bridge."""
     import boto3
     bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
@@ -410,6 +487,11 @@ async def get_install(request: Request, name: str = Query(None)):
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", "")
     server = f"{proto}://{host}/v1" if host else request.url.scheme + "://" + request.headers.get("host", "") + "/v1"
+    if platform.lower() == "windows":
+        return Response(
+            content=_windows_install_script(url, server, api_key, name),
+            media_type="text/plain",
+        )
     if name:
         name_block = f'NAME="{name}"'
     else:

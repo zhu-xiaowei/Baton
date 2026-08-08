@@ -59,5 +59,6 @@ export function projectHashFromCwd(cwd, claudeProjectsRoot) {
       } catch {}
     }
   }
+  if (/^[a-zA-Z]:[\\/]/.test(cwd) && candidates.length > 1) return candidates[1];
   return candidates[0];
 }

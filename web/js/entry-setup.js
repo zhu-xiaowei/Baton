@@ -15,7 +15,26 @@ import qrcode from 'qrcode-generator';
   // Step 1: Install command — full text, single Copy button.
   // Key is shown in plain text; user is already authenticated to view this page.
   var cmdEl = document.getElementById('installCmdText');
-  cmdEl.textContent = 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
+  var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
+
+  function renderInstallCommand() {
+    var windows = platform === 'windows';
+    cmdEl.textContent = windows
+      ? "irm -Headers @{'x-api-key'='" + state.KEY + "'} '" + state.SERVER + "/api/install?platform=windows' | iex"
+      : 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
+    document.getElementById('installHint').textContent = windows
+      ? 'Run this command in PowerShell with Node.js installed.'
+      : 'Run this command on macOS or Linux with Node.js installed.';
+    document.querySelectorAll('.platform-option').forEach(function (button) {
+      button.classList.toggle('active', button.dataset.platform === platform);
+    });
+  }
+
+  window.selectInstallPlatform = function (value) {
+    platform = value;
+    renderInstallCommand();
+  };
+  renderInstallCommand();
 
   // Step 2: Start URL — same single-URL format the install.sh prints, but
   // backed by the permanent API key (so the QR doesn't expire). Browsers

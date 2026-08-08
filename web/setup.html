@@ -39,6 +39,9 @@
     width: 24px; height: 24px; border-radius: 50%; background: #238636;
     font-size: 13px; font-weight: 700; flex-shrink: 0;
   }
+  .platform-switch { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; }
+  .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #8b949e; font-size: 12px; cursor: pointer; }
+  .platform-option.active { background: #30363d; color: #e6edf3; }
   .code-block {
     width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
     padding: 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
@@ -71,7 +74,11 @@
 <!-- Step 1: Install Bridge -->
 <div class="section">
   <h2><span class="num">1</span> Install Bridge</h2>
-  <p class="hint" style="margin-bottom:10px">Run this command on any Mac or Linux machine with Node.js installed:</p>
+  <div class="platform-switch" role="group" aria-label="Bridge platform">
+    <button class="platform-option" data-platform="unix" onclick="selectInstallPlatform('unix')">macOS / Linux</button>
+    <button class="platform-option" data-platform="windows" onclick="selectInstallPlatform('windows')">Windows</button>
+  </div>
+  <p class="hint" id="installHint" style="margin:0 0 10px">Run this command with Node.js installed.</p>
   <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
 </div>
 
