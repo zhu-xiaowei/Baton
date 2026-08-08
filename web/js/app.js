@@ -813,7 +813,6 @@ async function startNewSession(projectHash, asAgent) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
-  if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
@@ -881,7 +880,6 @@ async function loadMessages(sessionId, preview, status) {
     content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
       + '">Loading...</div>' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
-    if (typeof restorePermissionPrompt === 'function') restorePermissionPrompt();
     showInputBar(true);
 
     updateTitleFromMessages();
