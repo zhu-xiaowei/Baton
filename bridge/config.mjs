@@ -5,11 +5,13 @@ import os from 'os';
 export const BRIDGE_HOME = path.join(os.homedir(), '.claude-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
 export const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
+export const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');
 export const CLAUDE_JOBS = path.join(os.homedir(), '.claude', 'jobs');
 export const CLAUDE_DAEMON_ROSTER = path.join(os.homedir(), '.claude', 'daemon', 'roster.json');
 export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 'custom-title', 'last-prompt']);
 export const CHECK_STOPPED_INTERVAL = 10 * 60_000; // 10 min — settle stale active rows (pool onExit + jsonl-gone are the fast paths)
 export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
+export const CODEX_STATUS_STALE_MS = 5 * 60_000;
 
 // Agent state comes from `claude agents --json --all` (daemon-live, unlike the
 // stale jobs/*/state.json files). Cache the CLI output briefly (high-frequency

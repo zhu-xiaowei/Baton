@@ -2,6 +2,26 @@
 (function () {
   // On cancel, the bridge denies the ask/plan with interrupt:true; CC overwrites the tool_result with this rejection text.
   var CANCEL_MARK = 'tool use was rejected';
+  const CODEX_MUTATING_COMMAND = /\b(?:rm|mv|cp|mkdir|touch|chmod|chown|install|tee|truncate|unlink|xargs|bash|zsh)\b|(?:^|[\s|;&])sh(?:\s|$)|sed\s+-[^;\n]*i\b|find\b[^;\n]*-delete\b|git\s+(?:add|commit|checkout|switch|reset|restore|clean|merge|rebase|cherry-pick|push|pull|fetch|tag)\b/;
+  const CODEX_READ_COMMAND = /^(?:cd\b|rg\b|grep\b|egrep\b|fgrep\b|cat\b|head\b|tail\b|nl\b|sed\b|awk\b|ls\b|find\b|fd\b|tree\b|pwd\b|wc\b|stat\b|file\b|du\b|df\b|which\b|whereis\b|type\b|command\s+-v\b|lsof\b|ps\b|jq\b|yq\b|sort\b|uniq\b|cut\b|tr\b|git\s+(?:status|diff|log|show|branch|rev-parse|ls-files|remote)\b)/;
+  const CODEX_TOOL_NAMES = {
+    Read: 'Explored',
+    Grep: 'Explored',
+    Glob: 'Explored',
+    Edit: 'Edited',
+    Write: 'Edited',
+    TodoWrite: 'Updated Plan',
+    ViewImage: 'Viewed Image',
+    ToolSearch: 'Searched Tools',
+    get_goal: 'Checked Goal',
+    spawn_agent: 'Spawned Agent',
+    send_input: 'Sent Agent Input',
+    wait_agent: 'Waited for Agent',
+    close_agent: 'Closed Agent',
+    request_user_input: 'Requested Input',
+    Agent: 'Ran Agent',
+    WriteStdin: 'Ran',
+  };
   function esc(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -24,13 +44,18 @@
   function renderBash(input, result) {
     const cmd = input.command || input.cmd || JSON.stringify(input);
     const desc = input.description || '';
+    const elevated = input.sandbox_permissions === 'require_escalated';
+    const justification = elevated ? String(input.justification || '').trim() : '';
     return {
       name: 'Bash',
       desc: desc || truncate(cmd, 60),
-      body: grid([
-        ['IN', `<code>${esc(cmd)}</code>`],
-        result != null ? ['OUT', ansiHtml(truncate(resultText(result), 2000))] : null,
-      ]),
+      elevated,
+      body: (justification
+        ? `<div class="tool-note"><span>Request reason</span>${esc(justification)}</div>`
+        : '') + grid([
+          ['IN', `<code>${esc(cmd)}</code>`],
+          result != null ? ['OUT', ansiHtml(resultText(result))] : null,
+        ]),
     };
   }
 
@@ -63,7 +88,7 @@
     else if (Array.isArray(c)) text = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
     text = text.trim();
     if (!text) return '';
-    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(truncate(text, 2000))}</div>`;
+    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(text)}</div>`;
   }
 
   // File extension → hljs language
@@ -179,7 +204,17 @@
       name: 'Write',
       desc: file,
       fileLink: input.file_path || '',
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(truncate(resultText(result), 500))}</div>` : '',
+      body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(resultText(result))}</div>` : '',
+    };
+  }
+
+  function renderViewImage(input) {
+    const file = input.path || input.file_path || '';
+    return {
+      name: 'View Image',
+      desc: shortPath(file),
+      fileLink: file,
+      body: '',
     };
   }
 
@@ -191,14 +226,15 @@
     return {
       name,
       desc,
-      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(truncate(resultText(result), 2000))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(resultText(result))}</div>` : '',
     };
   }
 
   // Render TodoWrite as checklist
   function renderTodo(input, result) {
     const todos = input.todos || [];
-    if (!todos.length) return { name: 'Update Todos', desc: '', body: '' };
+    const explanation = String(input.explanation || '').trim();
+    if (!todos.length && !explanation) return { name: 'Update Todos', desc: '', body: '' };
     const icons = { completed: '&#10003;', in_progress: '&#42;', pending: '&#9711;' };
     const colors = { completed: '#8b949e', in_progress: '#e6edf3', pending: '#8b949e' };
     const textDeco = { completed: 'line-through', in_progress: 'none', pending: 'none' };
@@ -209,7 +245,11 @@
         <span style="color:${colors[s]};text-decoration:${textDeco[s]};font-size:12px;line-height:1.5">${esc(t.content)}</span>
       </div>`;
     }).join('');
-    return { name: 'Update Todos', desc: '', body: `<div style="padding:4px 0">${html}</div>` };
+    const note = explanation
+      ? `<div class="tool-note plan-explanation"><span>Plan note</span>${esc(explanation)}</div>`
+      : '';
+    const list = html ? `<div style="padding:4px 0">${html}</div>` : '';
+    return { name: 'Update Todos', desc: '', body: note + list };
   }
 
   // Render Agent tool with stats
@@ -239,7 +279,7 @@
         }, 1000);
       }, 50);
     }
-    const bodyText = result ? truncate(resultText(result), 2000) : '';
+    const bodyText = result ? resultText(result) : '';
     return {
       name: 'Agent',
       desc,
@@ -258,8 +298,8 @@
       name,
       desc: truncate(JSON.stringify(input), 80),
       body: grid([
-        ['IN', esc(truncate(JSON.stringify(input, null, 2), 1000))],
-        out != null ? ['OUT', ansiHtml(truncate(out, 2000))] : null,
+        ['IN', esc(truncate(JSON.stringify(input, null, 2), 1500))],
+        out != null ? ['OUT', ansiHtml(out)] : null,
       ]),
     };
   }
@@ -293,6 +333,24 @@
     return s.length > max ? s.slice(0, max) + '...' : s;
   }
 
+  function isExploreCommand(input) {
+    const command = String(input.command || input.cmd || '').trim();
+    if (!command || /(^|\s)>{1,2}\s*\S/.test(command)) return false;
+    if (CODEX_MUTATING_COMMAND.test(command)) return false;
+    const parts = command.split(/\s*(?:&&|\|\||;|\n)\s*/).filter(Boolean);
+    return parts.length > 0 && parts.every(part => CODEX_READ_COMMAND.test(part.replace(/^\(+\s*/, '')));
+  }
+
+  function codexToolName(name, input) {
+    if (name === 'Bash') return isExploreCommand(input) ? 'Explored' : 'Ran';
+    return CODEX_TOOL_NAMES[name] || name;
+  }
+
+  function exitCode(result) {
+    const match = /Process exited with code\s+(-?\d+)/i.exec(resultText(result));
+    return match ? Number(match[1]) : null;
+  }
+
   // Determine error state from result
   function toolState(result, name) {
     if (!result) return '';
@@ -301,6 +359,8 @@
       return resultText(result).indexOf(CANCEL_MARK) !== -1 ? 'warning' : '';
     }
     if (result.is_error) return 'error';
+    const code = exitCode(result);
+    if (code !== null && code !== 0) return 'error';
     // Only check short results (tool stderr/error messages), not long agent outputs
     const t = resultText(result);
     if (t.length < 500) {
@@ -313,7 +373,7 @@
   // Main: render a tool_use + tool_result pair (wrapping tl-item div is in render.js)
   window.detectLang = detectLang;
 
-  window.renderToolNode = function (toolUse, toolResult) {
+  window.renderToolNode = function (toolUse, toolResult, runtime) {
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
     const dispatchers = {
@@ -323,14 +383,22 @@
       Write: () => renderWrite(input, toolResult),
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
+      ViewImage: () => renderViewImage(input),
       TodoWrite: () => renderTodo(input, toolResult),
       Agent: () => renderAgent(input, toolResult),
     };
     const info = (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
+    if (runtime === 'codex') info.name = codexToolName(name, input);
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 
-    const statusHtml = info._statsHtml || (info.status ? `<span class="tool-status">${esc(info.status)}</span>` : '');
+    const code = exitCode(toolResult);
+    const failedStatus = window._lastToolState === 'error' ? (code !== null ? `Exit ${code}` : 'Failed') : '';
+    const status = failedStatus || info.status || '';
+    const statusHtml = failedStatus
+      ? `<span class="tool-status error">${esc(status)}</span>`
+      : info._statsHtml || (status ? `<span class="tool-status">${esc(status)}</span>` : '');
+    const elevatedHtml = info.elevated ? '<span class="tool-flag">Elevated request</span>' : '';
     const fileLine = info.fileLine || '';
     const matchId = (!fileLine && info.fileLink && (name === 'Edit' || name === 'Write')) ? (toolUse.id || '') : '';
     const descHtml = info.fileLink
@@ -349,6 +417,7 @@
     return `<div class="tool-header">
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}
+        ${elevatedHtml}
         ${statusHtml}
       </div>
       ${bodyHtml}`;

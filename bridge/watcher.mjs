@@ -3,7 +3,7 @@ import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
-import { getPreview, getModel, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { wsSend, wsSendWithAck, headlessPushed, poolOwns } from './ws.mjs';
 
@@ -153,7 +153,8 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
   const isNew = !recentSessions.has(sessionId);
 
   // Skip empty-shell sessions (e.g. /clear: metadata only, no preview, not running).
-  const preview = getPreview(filePath);
+  const metadata = getSessionMetadata(filePath);
+  const preview = metadata.preview;
   if (!preview && newStatus !== 'running' && !dm) return;
   if (!(statusChanged || isNew || gotNewTitle)) return;
 
@@ -176,7 +177,7 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
     lastActive: stat.mtime.toISOString(),
     size: stat.size,
     preview: preview || 'New session',
-    model: getModel(filePath),
+    model: metadata.model,
     status: newStatus,
   };
   if (dm) {
@@ -236,15 +237,16 @@ async function pollAgentStates(config) {
     // Title: --json name first, then the jsonl's first user message. At launch
     // both can be empty for a poll or two (name not inferred yet, jsonl not
     // written), so preview is part of the diff — a title arriving later re-pushes.
-    const preview = e.agentName || getPreview(filePath) || 'Agent session';
+    const metadata = getSessionMetadata(filePath);
+    const preview = e.agentName || metadata.preview || 'Agent session';
     const old = _jobsState.get(sid);
     if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.status === e.status && old.preview === preview) continue;
     _jobsState.set(sid, { ...e, preview });
-    await pushAgentMeta(config, sid, e, filePath, preview);
+    await pushAgentMeta(config, sid, e, filePath, preview, metadata.model);
   }
 }
 
-async function pushAgentMeta(config, sessionId, e, filePath, preview) {
+async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
   lastKnownStatus.set(sessionId, e.status);
@@ -258,7 +260,7 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview) {
       lastActive: stat.mtime.toISOString(),
       size: stat.size,
       preview,
-      model: getModel(filePath),
+      model,
       status: e.status,
       isAgent: true,
       agentName: e.agentName,

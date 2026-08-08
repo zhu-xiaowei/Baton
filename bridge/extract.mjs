@@ -12,16 +12,35 @@ export const synced = new Map();
 // reading from line 0 (which re-pushes whole histories). Runtime keeps the Map hot; we
 // only flush on exit + a low-frequency interval (crash fallback), never per-set.
 const SYNCED_PATH = path.join(BRIDGE_HOME, 'synced.json');
+export function decodeSyncedState(value) {
+  const version = value?.version;
+  const source = version === 2 && value?.watermarks && typeof value.watermarks === 'object'
+    ? value.watermarks
+    : value;
+  const result = new Map();
+  if (!source || typeof source !== 'object') return result;
+  for (const [key, raw] of Object.entries(source)) {
+    if (typeof raw !== 'number') continue;
+    // Replay one legacy Claude line to avoid the old trailing-newline offset.
+    const line = version === 2 || key.startsWith('codex:') ? raw : Math.max(0, raw - 1);
+    result.set(key, line);
+  }
+  return result;
+}
+
 export function loadSynced() {
   try {
-    const obj = JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8'));
-    for (const k in obj) if (typeof obj[k] === 'number') synced.set(k, obj[k]);
+    const restored = decodeSyncedState(JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8')));
+    for (const [key, line] of restored) synced.set(key, line);
     console.log(`[synced] restored ${synced.size} session watermarks`);
   } catch {} // missing/corrupt → start empty (handleHeadlessSend baselines on demand)
 }
 export function saveSynced() {
   try {
-    fs.writeFileSync(SYNCED_PATH, JSON.stringify(Object.fromEntries(synced)));
+    fs.writeFileSync(SYNCED_PATH, JSON.stringify({
+      version: 2,
+      watermarks: Object.fromEntries(synced),
+    }));
   } catch {}
 }
 // jsonl line count matching the watcher's convention (drop a single trailing empty line).
@@ -168,15 +187,17 @@ export async function extractForApp(msg) {
   return extracted;
 }
 
-export async function readNewMessages(filePath, sessionId) {
-  if (!fs.existsSync(filePath)) return [];
+export async function extractClaudeMessages(filePath, sessionId, options = {}) {
+  const watermarks = options.watermarks || synced;
+  const startLine = options.startLine ?? watermarks.get(sessionId) ?? 0;
+  if (!fs.existsSync(filePath)) return { messages: [], nextLine: startLine };
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-  const lastLine = synced.get(sessionId) ?? 0;
+  if (lines.at(-1) === '') lines.pop();
   const newMsgs = [];
   const metaUuids = new Set();
   const metaIdx = {}; // type → index in newMsgs (keep only latest per type)
 
-  for (let i = lastLine; i < lines.length; i++) {
+  for (let i = Math.min(startLine, lines.length); i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
@@ -193,36 +214,33 @@ export async function readNewMessages(filePath, sessionId) {
     newMsgs.push(extracted);
   }
 
-  synced.set(sessionId, lines.length);
-  return newMsgs;
+  return { messages: newMsgs, nextLine: lines.length };
 }
 
-// Read ALL messages from a session file (for on-demand sync)
-export async function readAllMessages(filePath, sessionId) {
-  synced.delete(sessionId); // Reset position to read from beginning
-  return readNewMessages(filePath, sessionId);
-}
-
-export async function uploadMessages(sessionId, messages) {
+export async function uploadMessages(sessionId, messages, options = {}) {
   if (messages.length === 0) return;
   let batch = [];
   let batchSize = 0;
+  const identity = {
+    ...(options.runtime ? { runtime: options.runtime } : {}),
+    ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
+  };
 
   for (const raw of messages) {
-    // Cap each message under the DDB single-item limit before it ever hits DDB
-    // (covers both the WS-oversize HTTP fallback and initial full sync).
+    // Cap every message before WS fallback or initial sync reaches DDB.
     const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
     const msgJson = JSON.stringify(msg);
-    if (batchSize + msgJson.length > MAX_POST_BYTES && batch.length > 0) {
-      await post('/api/bridge/sync-messages', { sessionId, messages: batch });
+    const msgBytes = Buffer.byteLength(msgJson);
+    if (batchSize + msgBytes > MAX_POST_BYTES && batch.length > 0) {
+      await post('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
       await new Promise(r => setTimeout(r, 200));
       batch = [];
       batchSize = 0;
     }
     batch.push(msg);
-    batchSize += msgJson.length;
+    batchSize += msgBytes;
   }
   if (batch.length > 0) {
-    await post('/api/bridge/sync-messages', { sessionId, messages: batch });
+    await post('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
   }
 }

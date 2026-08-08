@@ -8,6 +8,17 @@
     return ts ? new Date(ts).toLocaleTimeString() : '';
   }
 
+  function contentText(msg) {
+    if (typeof msg.content === 'string') return msg.content;
+    if (Array.isArray(msg.content)) return msg.content.map(b => b.text || '').join('');
+    return JSON.stringify(msg.content);
+  }
+
+  const CODEX_COMPACTION_PREFIX = 'Another language model started to solve this problem and produced a summary of its thinking process. '
+    + 'You also have access to the state of the tools that were used by that language model. '
+    + 'Use this to build on the work that has already been done and avoid duplicating work. '
+    + 'Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:';
+
   // Interrupt text mapping (same as Claude Code)
   const INTERRUPT_MAP = {
     '[Request interrupted by user]': 'Interrupted',
@@ -229,11 +240,27 @@
     </div>`;
   };
 
-  // Render system / summary / ai-title
+  window.renderSystemEvent = function (msg) {
+    const content = contentText(msg);
+    if (!content) return '';
+    return `<div class="msg-system-event"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><span>${esc(content)}</span></div>`;
+  };
+
+  window.renderSummary = function (msg) {
+    let content = contentText(msg).trim();
+    if (content.startsWith(CODEX_COMPACTION_PREFIX)) {
+      content = content.slice(CODEX_COMPACTION_PREFIX.length).trim();
+    }
+    if (!content) return '';
+    return `<details class="summary-block">
+      <summary><span>Context compacted</span><span class="summary-chevron">&#8250;</span></summary>
+      <div class="summary-body assistant-text">${renderAssistantText(content)}</div>
+    </details>`;
+  };
+
+  // Render system / ai-title
   window.renderSystemMsg = function (msg) {
-    const content = typeof msg.content === 'string' ? msg.content
-      : Array.isArray(msg.content) ? msg.content.map(b => b.text || '').join('')
-      : JSON.stringify(msg.content);
+    const content = contentText(msg);
     if (msg.type === 'ai-title') {
       return `<div class="msg-ai-title">${esc(content)}</div>`;
     }

@@ -4,8 +4,8 @@ Usage: app.include_router(bridge_router) in main.py
 """
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import Dict, List, Optional
 from boto3.dynamodb.conditions import Key
 import boto3
 import os
@@ -43,16 +43,30 @@ def _hash_key(api_key: str) -> str:
 
 class SessionItem(BaseModel):
     id: str
+    nativeSessionId: str = ""
+    runtime: str = "claude"
     project: str
     projectName: str = ""
     lastActive: str
     size: int = 0
     preview: str = ""
     model: str = ""
+    modelProvider: str = ""
+    clientSource: str = ""
+    cliVersion: str = ""
     status: str = "completed"  # "running" | "needs_input" | "completed"
     isAgent: bool = False
     agentName: str = ""
     agentDetail: str = ""
+
+
+class RuntimeCapability(BaseModel):
+    installed: bool = False
+    historyAvailable: bool = False
+    canRead: bool = False
+    canCreate: bool = False
+    canSend: bool = False
+    version: str = ""
 
 
 class DeviceAggregate(BaseModel):
@@ -61,6 +75,7 @@ class DeviceAggregate(BaseModel):
     runningCount: int = 0
     idleCount: int = 0
     lastActive: str = ""
+    runtimeCapabilities: Dict[str, RuntimeCapability] = Field(default_factory=dict)
 
 
 class ProjectAggregate(BaseModel):
@@ -106,7 +121,23 @@ class SyncSessionsRequest(BaseModel):
 
 class SyncMessagesRequest(BaseModel):
     sessionId: str
+    runtime: str = "claude"
+    nativeSessionId: str = ""
     messages: List[dict]
+
+
+def _normalize_runtime(runtime: str) -> str:
+    return "codex" if runtime == "codex" else "claude"
+
+
+def _session_ids(runtime: str, session_id: str, native_session_id: str = ""):
+    """Normalize old and new payloads to runtime, native id, and storage id."""
+    runtime = _normalize_runtime(runtime)
+    native_id = native_session_id or session_id
+    if runtime == "codex" and native_id.startswith("codex:"):
+        native_id = native_id[len("codex:"):]
+    storage_id = native_id if runtime == "claude" else f"codex:{native_id}"
+    return runtime, native_id, storage_id
 
 
 def _counter_delta(from_: str, to: str):
@@ -179,15 +210,18 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     # 1. Write SESS# items (always).
     with sessions_table.batch_writer() as batch:
         for s in req.sessions:
+            runtime, native_id, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
             item = {
                 "accountId": key_hash,
-                "sk": f"SESS#{req.deviceName}#{s.project}#{s.id}",
+                "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
                 "entityType": "session",
                 "deviceName": req.deviceName,
                 "os": req.os,
                 "projectHash": s.project,
                 "projectName": s.projectName or s.project,
-                "sessionId": s.id,
+                "sessionId": storage_id,
+                "nativeSessionId": native_id,
+                "runtime": runtime,
                 "lastActive": s.lastActive,
                 "preview": s.preview,
                 "model": s.model,
@@ -195,6 +229,12 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "size": s.size,
                 "updatedAt": now,
             }
+            if s.modelProvider:
+                item["modelProvider"] = s.modelProvider
+            if s.clientSource:
+                item["clientSource"] = s.clientSource
+            if s.cliVersion:
+                item["cliVersion"] = s.cliVersion
             # GSI accountId-activeStatus-index: active (running/needs_input) as bare
             # status; every completed session as done#<lastActive> (any type, for the
             # recent-completed list + live device/project count groupby).
@@ -211,7 +251,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
 
     # 2a. Full-sync path: PutItem-overwrite DEV# + PROJ# aggregates (authoritative counters).
     if req.device is not None and req.projects is not None:
-        sessions_table.put_item(Item={
+        device_item = {
             "accountId": key_hash,
             "sk": f"DEV#{req.deviceName}",
             "entityType": "device",
@@ -223,7 +263,13 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             "idleCount": req.device.idleCount,
             "lastActive": req.device.lastActive,
             "updatedAt": now,
-        })
+        }
+        if req.device.runtimeCapabilities:
+            device_item["runtimeCapabilities"] = {
+                runtime: capability.model_dump(exclude_none=True)
+                for runtime, capability in req.device.runtimeCapabilities.items()
+            }
+        sessions_table.put_item(Item=device_item)
         with sessions_table.batch_writer() as batch:
             for p in req.projects:
                 batch.put_item(Item={
@@ -418,6 +464,7 @@ async def delete_sessions(req: DeleteRequest, raw: Request):
 async def sync_messages(req: SyncMessagesRequest, raw: Request):
     _, messages_table = _tables()
     written = 0
+    runtime, _, storage_id = _session_ids(req.runtime, req.sessionId, req.nativeSessionId)
 
     with messages_table.batch_writer() as batch:
         for msg in req.messages:
@@ -427,7 +474,7 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
             content = json.dumps(msg.get("content", ""), ensure_ascii=False)
             timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
             item = {
-                "sessionId": req.sessionId,
+                "sessionId": storage_id,
                 "sk": f"{timestamp}#{uuid}",
                 "uuid": uuid,
                 "type": msg.get("type", ""),
@@ -435,6 +482,8 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
                 "timestamp": timestamp,
                 "ttl": _msg_ttl(),
             }
+            if runtime != "claude":
+                item["runtime"] = runtime
             if msg.get("stopReason"):
                 item["stopReason"] = msg["stopReason"]
             if msg.get("toolUseResult"):

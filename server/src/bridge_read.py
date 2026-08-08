@@ -35,6 +35,35 @@ def _account_id(request: Request) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
+def _runtime_fields(item):
+    runtime = "codex" if item.get("runtime") == "codex" else "claude"
+    session_id = item.get("sessionId", "")
+    native_id = item.get("nativeSessionId", "")
+    if not native_id:
+        native_id = session_id[len("codex:"):] if runtime == "codex" and session_id.startswith("codex:") else session_id
+    return {
+        "runtime": runtime,
+        "nativeSessionId": native_id,
+    }
+
+
+def _runtime_capabilities(item):
+    capabilities = item.get("runtimeCapabilities")
+    if isinstance(capabilities, dict) and capabilities:
+        return capabilities
+    # Devices written by older bridges only supported Claude.
+    return {
+        "claude": {
+            "installed": True,
+            "historyAvailable": True,
+            "canRead": True,
+            "canCreate": True,
+            "canSend": True,
+            "version": "",
+        }
+    }
+
+
 def _query_all(table, **kwargs):
     """Query DDB with automatic pagination."""
     items = []
@@ -82,6 +111,7 @@ async def get_active_sessions(request: Request):
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "lastActive": item.get("lastActive", ""),
+            **_runtime_fields(item),
         }
         if item.get("isAgent"):
             s["isAgent"] = True
@@ -157,6 +187,7 @@ async def get_devices(request: Request):
             "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
             "online": name in online_devices,
+            "runtimeCapabilities": _runtime_capabilities(item),
         })
     devices.sort(key=lambda x: x["lastActive"], reverse=True)
     return {"devices": devices}
@@ -213,7 +244,14 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
             "size": item.get("size", 0),
             "model": item.get("model", ""),
             "status": item.get("status", "completed"),
+            **_runtime_fields(item),
         }
+        if item.get("modelProvider"):
+            s["modelProvider"] = item["modelProvider"]
+        if item.get("clientSource"):
+            s["clientSource"] = item["clientSource"]
+        if item.get("cliVersion"):
+            s["cliVersion"] = item["cliVersion"]
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
@@ -259,24 +297,11 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 def _trim_to_budget(messages):
-    """Trim a newest-first message list to fit MAX_RESPONSE_BYTES, keeping the
-    newest prefix and dropping older messages that overflow the budget.
-    Returns (kept, trimmed). Always keeps at least one message (single items are
-    capped at DDB_ITEM_LIMIT on the bridge side). Size is approximated from the
-    already-parsed content/toolUseResult string length (base64 image data
-    dominates, so this is accurate enough) to avoid re-serializing each message."""
+    """Keep the newest messages within the Lambda response budget."""
     total, kept = 0, []
     for m in messages:
         size = len(str(m.get("content", ""))) + len(str(m.get("toolUseResult", "")))
         if kept and total + size > MAX_RESPONSE_BYTES:
-            # The `before` cursor is timestamp-only, so a dropped message sharing
-            # the oldest kept timestamp could never be re-fetched (`sk < ts`
-            # excludes both) — a gap. Never split a same-timestamp run across the
-            # page boundary: drop the whole trailing run so min(kept) is strictly
-            # newer than every dropped message.
-            boundary_ts = m.get("timestamp")
-            while len(kept) > 1 and kept[-1].get("timestamp") == boundary_ts:
-                kept.pop()
             return kept, True
         kept.append(m)
         total += size
@@ -321,7 +346,7 @@ async def get_messages(
     page_limit = min(limit, 500) if limit else 100
 
     if before:
-        # Reverse query: fetch messages BEFORE a timestamp (older messages)
+        # Reverse query: fetch messages before the opaque DDB sort-key cursor.
         items, has_more = _query_page(
             messages_table,
             page_limit,
@@ -332,9 +357,9 @@ async def get_messages(
         # response cap, keeping the newest messages closest to `before`.
         messages = _parse_messages(items)
         messages, trimmed = _trim_to_budget(messages)
+        oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
         messages.reverse()
-        oldest_ts = messages[0]["timestamp"] if messages else ""
-        return {"messages": messages, "hasMore": has_more or trimmed, "oldestTimestamp": oldest_ts, "needSync": False}
+        return {"messages": messages, "hasMore": has_more or trimmed, "oldestTimestamp": oldest_cursor, "needSync": False}
 
     # Default: fetch latest N messages (reverse scan, then flip).
     # ConsistentRead=True closes the eventual-consistency window after a bridge
@@ -351,6 +376,7 @@ async def get_messages(
     messages = _parse_messages(items)
     messages, trimmed = _trim_to_budget(messages)
     has_more = has_more or trimmed
+    oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
     messages.reverse()
 
     need_sync = len(messages) == 0
@@ -364,8 +390,7 @@ async def get_messages(
         except Exception as e:
             print(f"needSync trigger error: {e}")
 
-    oldest_ts = messages[0]["timestamp"] if messages else ""
-    return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_ts, "needSync": need_sync}
+    return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_cursor, "needSync": need_sync}
 
 
 @read_router.get("/install")

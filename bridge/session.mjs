@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, AGENTS_JSON_TTL_MS } from './config.mjs';
+import { scanJsonlLines } from './jsonl.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -24,16 +25,16 @@ export function extractFirstPromptFromMsg(msg) {
   return '';
 }
 
-export function getPreview(filePath) {
+export function getSessionMetadata(filePath) {
   try {
-    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
     let customTitle = '';
     let aiTitle = '';
     let lastPrompt = '';
     let firstUserMsg = '';
+    let model = '';
 
-    for (const line of lines) {
-      if (!line.trim()) continue;
+    const lineCount = scanJsonlLines(filePath, (line) => {
+      if (!line.trim()) return;
       try {
         const msg = JSON.parse(line);
         if (msg.type === 'custom-title' && msg.customTitle) customTitle = msg.customTitle;
@@ -43,25 +44,16 @@ export function getPreview(filePath) {
           const fp = extractFirstPromptFromMsg(msg);
           if (fp) firstUserMsg = fp;
         }
+        if (msg.type === 'assistant' && msg.message?.model) model = msg.message.model;
       } catch {}
-    }
-    return customTitle || aiTitle || lastPrompt || firstUserMsg;
+    });
+    return {
+      preview: customTitle || aiTitle || lastPrompt || firstUserMsg,
+      model,
+      lineCount,
+    };
   } catch {}
-  return '';
-}
-
-export function getModel(filePath) {
-  try {
-    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (!lines[i].trim()) continue;
-      try {
-        const msg = JSON.parse(lines[i]);
-        if (msg.type === 'assistant' && msg.message?.model) return msg.message.model;
-      } catch {}
-    }
-  } catch {}
-  return '';
+  return { preview: '', model: '', lineCount: 0 };
 }
 
 // Forward-hash a real path segment the way CC does when building a project hash:
@@ -358,7 +350,7 @@ export function getRunningInfo() {
 // project dir (parentHash + "--claude-worktrees-<name>"), producing a second
 // DDB row for the same sessionId. Collapse worktree hashes to the parent so one
 // session stays one row. Applied only to the projectHash POSTed to the server —
-// on-disk reads (findSessionFile/getPreview/projectHashToPath) keep the real hash.
+// on-disk reads (findSessionFile/getSessionMetadata/projectHashToPath) keep the real hash.
 export function normalizeProjectHash(hash) {
   return hash.replace(/--claude-worktrees-.*$/, '');
 }

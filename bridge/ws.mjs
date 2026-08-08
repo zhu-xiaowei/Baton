@@ -4,9 +4,11 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { readAllMessages, uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
-import { findSessionFile, projectHashToPath, getDaemonRunningSessionIds, getAgentsJson, resolveClaudeBin } from './session.mjs';
-import { WS_FRAME_LIMIT, CLAUDE_PROJECTS } from './config.mjs';
+import { uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
+import { projectHashToPath, getDaemonRunningSessionIds, getAgentsJson, resolveClaudeBin } from './session.mjs';
+import { parseStorageSessionId } from './session-identity.mjs';
+import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
+import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -26,6 +28,7 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 
 // onExit: a proc left the pool (reap/LRU/crash) without a turn result → settle to completed.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
+const _claudeRuntime = getRuntimeAdapter('claude');
 
 // True while the pool has a live process for this session — its status is owned
 // by pool lifecycle events, so the jsonl watcher must not also write it.
@@ -51,7 +54,7 @@ export function headlessPushed(uuid) { return _headlessPushed.has(uuid); }
 const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
 
 function cwdForSession(sessionId) {
-  const filePath = findSessionFile(sessionId);
+  const filePath = _claudeRuntime.findSessionFile(sessionId);
   if (!filePath) return null;
   const projectHash = path.basename(path.dirname(filePath));
   return projectHashToPath(projectHash);
@@ -59,7 +62,7 @@ function cwdForSession(sessionId) {
 
 // Push a pool-owned session's status to DDB (dedup + counter delta live in updateSessionStatus).
 async function syncPoolStatus(sessionId, status, detail) {
-  const filePath = findSessionFile(sessionId);
+  const filePath = _claudeRuntime.findSessionFile(sessionId);
   if (!filePath || !_config) return;
   const projectHash = path.basename(path.dirname(filePath));
   try { await updateSessionStatus(_config, sessionId, filePath, projectHash, status, detail); } catch {}
@@ -198,10 +201,10 @@ function scheduleReconnect() {
 async function handleMessage(msg) {
   switch (msg.action) {
     case 'sync_session':
-      await handleSyncSession(msg.sessionId);
+      await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId);
+      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId, msg.runtime);
       break;
     case 'permission_reply':
       handlePermissionReply(msg);
@@ -210,7 +213,11 @@ async function handleMessage(msg) {
       await handleCreateProject(msg.projectPath, msg.asAgent);
       break;
     case 'interrupt':
-      _pool.interrupt(msg.sessionId);
+      {
+        const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
+        const adapter = getRuntimeAdapter(identity.runtime);
+        if (adapter.features.interrupt) _pool.interrupt(identity.nativeSessionId);
+      }
       break;
     case 'reveal_agent':
       await handleRevealAgent(msg.sessionId);
@@ -237,12 +244,15 @@ async function handleMessage(msg) {
   }
 }
 
-async function handleSyncSession(sessionId) {
-  console.log(`[ws] sync_session: ${sessionId.slice(0, 8)}`);
-  const filePath = findSessionFile(sessionId);
+async function handleSyncSession(sessionId, runtime, nativeSessionId) {
+  const identity = parseStorageSessionId(sessionId, runtime);
+  if (nativeSessionId) identity.nativeSessionId = nativeSessionId;
+  const adapter = getRuntimeAdapter(identity.runtime);
+  console.log(`[ws] sync_session: ${identity.runtime}:${identity.nativeSessionId.slice(0, 8)}`);
+  const filePath = adapter.findSessionFile(identity.nativeSessionId);
   if (!filePath) {
     // Fresh pool session whose jsonl hasn't landed yet → ok/empty, not not_found (which wipes the live view).
-    if (_pool.owns(sessionId)) {
+    if (adapter.ownsLiveSession?.(identity.nativeSessionId, { pool: _pool })) {
       wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: 0 });
       return;
     }
@@ -251,23 +261,44 @@ async function handleSyncSession(sessionId) {
     return;
   }
 
-  const msgs = await readAllMessages(filePath, sessionId);
-  if (msgs.length > 0) {
-    await uploadMessages(sessionId, msgs);
-    console.log(`[ws] synced ${msgs.length} messages for ${sessionId.slice(0, 8)}`);
+  const { messages } = await adapter.syncAllMessages({
+    runtime: identity.runtime,
+    nativeSessionId: identity.nativeSessionId,
+    _filePath: filePath,
+  }, {
+    storageSessionId: identity.sessionId,
+    watermarks: synced,
+    uploader: uploadMessages,
+  });
+  if (messages.length > 0) {
+    console.log(`[ws] synced ${messages.length} messages for ${identity.runtime}:${identity.nativeSessionId.slice(0, 8)}`);
   }
-  wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: msgs.length });
+  wsSend({ action: 'sync_complete', sessionId: identity.sessionId, status: 'ok', count: messages.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId) {
+async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId, runtime) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
+  const identity = parseStorageSessionId(sessionId || '', runtime);
+  const adapter = getRuntimeAdapter(identity.runtime);
+  const allowed = sessionId ? adapter.features.send : adapter.features.create;
+  if (!allowed) {
+    wsSend({
+      action: 'send_message_result',
+      sessionId,
+      ok: false,
+      error: `${adapter.displayName} sessions are read-only in this Bridge version.`,
+      requestId,
+      clientId,
+    });
+    return;
+  }
 
   const resolved = await resolveBridgeImages(text);
 
   // Existing session (regular or agent): headless streaming with daemon takeover.
   if (sessionId) {
-    const handled = await handleHeadlessSend(sessionId, resolved, clientId, projectHash);
+    const handled = await handleHeadlessSend(identity.nativeSessionId, resolved, clientId, projectHash);
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', clientId });
     return;
@@ -381,7 +412,7 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
 
   // Baseline synced to the current jsonl length before this turn appends — else an old session with no synced entry gets its whole history re-pushed by the watcher (flicker). App already has history via REST.
   if (!synced.has(sessionId)) {
-    const fp = findSessionFile(sessionId);
+    const fp = _claudeRuntime.findSessionFile(sessionId);
     if (fp) { try { synced.set(sessionId, countJsonlLines(fp)); } catch {} }
   }
 
@@ -509,21 +540,26 @@ async function handleRevealAgent(sessionId) {
 // Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
 // Only touches paths inside CLAUDE_PROJECTS — never the user's real project/code dir.
 function handleDeleteFiles(msg) {
-  const root = path.resolve(CLAUDE_PROJECTS);
-  const inRoot = (p) => { const r = path.resolve(p); return r === root || r.startsWith(root + path.sep); };
-  const rmSafe = (p) => { try { if (inRoot(p)) fs.rmSync(p, { recursive: true, force: true }); } catch (e) { console.log(`[ws] delete failed ${p}: ${e.message}`); } };
-
+  let skippedReadOnly = 0;
+  let deletedSessions = 0;
   for (const sid of msg.sessionIds || []) {
-    const fp = findSessionFile(sid);
-    if (fp) rmSafe(fp);
-    synced.delete(sid);
+    const identity = parseStorageSessionId(sid);
+    const adapter = getRuntimeAdapter(identity.runtime);
+    if (!adapter.features.deleteHistory) {
+      skippedReadOnly++;
+      continue;
+    }
+    if (adapter.deleteSessionHistory(identity.nativeSessionId, { watermarks: synced })) {
+      deletedSessions++;
+    }
   }
   for (const ph of msg.projectHashes || []) {
-    if (!ph || ph.includes('/') || ph.includes('..')) continue; // hash is a flat dir name
-    rmSafe(path.join(root, ph)); // the CLAUDE_PROJECTS/<hash> dir holds the jsonl, NOT the real cwd
+    for (const adapter of runtimeAdapters) {
+      if (adapter.features.deleteHistory) adapter.deleteProjectHistory(ph);
+    }
   }
-  console.log(`[ws] deleted files: ${(msg.sessionIds || []).length} sessions, ${(msg.projectHashes || []).length} projects`);
-  wsSend({ action: 'delete_files_result', requestId: msg.requestId, ok: true });
+  console.log(`[ws] deleted files: ${deletedSessions} sessions, ${(msg.projectHashes || []).length} projects`);
+  wsSend({ action: 'delete_files_result', requestId: msg.requestId, ok: true, skippedReadOnly });
 }
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;

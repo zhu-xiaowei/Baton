@@ -142,6 +142,29 @@ function statusClass(status) {
   return 'stopped';
 }
 
+function sessionRuntime(sessionId, runtime) {
+  return runtime === 'codex' || String(sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
+}
+
+function nativeSessionId(sessionId, nativeId, runtime) {
+  var value = String(nativeId || sessionId || '');
+  return sessionRuntime(sessionId, runtime) === 'codex' && value.indexOf('codex:') === 0
+    ? value.slice('codex:'.length)
+    : value;
+}
+
+function shortSessionId(sessionId, nativeId, runtime) {
+  var value = nativeSessionId(sessionId, nativeId, runtime);
+  return sessionRuntime(sessionId, runtime) === 'codex' ? value.slice(-8) : value.slice(0, 8);
+}
+
+function runtimeIcon(sessionId, runtime) {
+  var value = sessionRuntime(sessionId, runtime);
+  var label = value === 'codex' ? 'Codex' : 'Claude Code';
+  return '<span class="runtime-mark" role="img" aria-label="' + label + '" title="' + label + '">'
+    + '<img class="runtime-icon" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+}
+
 function showStats() {}  // no-op, stats bar removed
 
 function showWsBanner(status) {
@@ -182,7 +205,8 @@ function updateBreadcrumb() {
     parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
   }
   if (state.appState.session) {
-    var label = state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...';
+    var label = state.appState.sessionPreview
+      || shortSessionId(state.appState.session, '', state.appState.runtime) + '...';
     parts.push('<span>' + esc(label) + '</span>');
   }
   var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
@@ -194,7 +218,8 @@ function updateBreadcrumb() {
     topRight.innerHTML = '<button class="text-btn" onclick="exitSelectMode()">Cancel</button>'
       + '<button class="text-btn danger" ' + (n ? '' : 'disabled') + ' onclick="openDeleteModal()">Delete' + (n ? '<span class="sel-count">' + n + '</span>' : '') + '</button>';
   } else if (state.appState.project) {
-    topRight.innerHTML = '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+    var runtimeMark = state.appState.session ? runtimeIcon(state.appState.session, state.appState.runtime) : '';
+    topRight.innerHTML = runtimeMark + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   } else if (!topRight.querySelector('.top-gear')) {
@@ -203,7 +228,8 @@ function updateBreadcrumb() {
   var titleHtml = '';
   if (state.appState.session) {
     parts.pop();
-    var titleText = esc(state.appState.sessionPreview || state.appState.session.slice(0, 8) + '...');
+    var titleText = esc(state.appState.sessionPreview
+      || shortSessionId(state.appState.session, '', state.appState.runtime) + '...');
     var agentMark = state.appState.isAgent ? ' <span class="badge agent">Agent</span>' : '';
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + agentMark + '</span>';
   }
@@ -407,13 +433,15 @@ function openActiveSession(el) {
     project: { hash: d.phash, name: d.pname },
     session: null,
     sessionPreview: '',
-    isAgent: d.isagent === 'true'
+    isAgent: d.isagent === 'true',
+    runtime: sessionRuntime(d.sid, d.runtime)
   };
   loadMessages(d.sid, d.preview, d.status);
 }
 
 function openSession(el) {
   state.appState.isAgent = el.dataset.isagent === 'true';
+  state.appState.runtime = sessionRuntime(el.dataset.sid, el.dataset.runtime);
   loadMessages(el.dataset.sid, el.dataset.preview, el.dataset.status);
 }
 
@@ -524,14 +552,17 @@ function sessionsHtml(device, projectHash, data, sel) {
     var sLabel = statusLabel(s.status);
     var sClass = statusClass(s.status);
     var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
+    var runtime = sessionRuntime(s.sessionId, s.runtime);
+    var nativeId = nativeSessionId(s.sessionId, s.nativeSessionId, runtime);
+    var shortId = shortSessionId(s.sessionId, s.nativeSessionId, runtime);
     var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
     var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
     var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
-    return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
+    return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
-      + '<div class="meta">' + esc(s.model || 'unknown model') + '<span class="meta-sid"> &middot; ' + s.sessionId.slice(0, 8) + '</span> &middot; ' + formatSize(s.size) + detailHtml + '</div></div>'
+      + '<div class="meta">' + runtimeIcon(s.sessionId, runtime) + '<span>' + esc(s.model || 'unknown model') + '</span><span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span><span>&middot; ' + formatSize(s.size) + '</span>' + detailHtml + '</div></div>'
       + '</a>';
   }).join('') + '</div>';
 }
@@ -726,16 +757,19 @@ function onNewAsAgentToggle(checked) {
 }
 
 async function startNewSession(projectHash, asAgent) {
+  var myNav = ++_navVersion;
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
     session: '__new__'
   });
   await window.loadViewerLibs();
+  if (_navVersion !== myNav) return;
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
+  state.appState.runtime = 'claude';
   markCurrentRoute(state.appState);
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
@@ -757,6 +791,8 @@ async function startNewSession(projectHash, asAgent) {
   state.lastDeliveredSeq = -1;
   if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
+  var bar = document.getElementById('input-bar');
+  if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
   // Agent mode: always starts unchecked; choice is not persisted across sessions.
   content.innerHTML =
     '<div class="new-session-hero">'
@@ -764,12 +800,11 @@ async function startNewSession(projectHash, asAgent) {
       + '<div class="hero-title">AgentPeek</div>'
       + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent"' + (asAgent ? ' checked' : '') + ' onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
-    + '<div class="messages" hidden></div>';
+    + '<div class="messages runtime-claude" hidden></div>';
   document.body.classList.add('new-session');
   showInputBar(true);
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
-  var bar = document.getElementById('input-bar');
   if (bar && bar.parentElement !== content) content.appendChild(bar);
   // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
   if (typeof updateSendBtn === 'function') updateSendBtn();
@@ -789,6 +824,7 @@ async function loadMessages(sessionId, preview, status) {
   var myNav = ++_navVersion;
   state.appState.session = sessionId;
   state.appState.sessionPreview = preview || '';
+  state.appState.runtime = sessionRuntime(sessionId, state.appState.runtime);
   markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
   _revealedSessions.delete(sessionId);
@@ -841,8 +877,8 @@ async function loadMessages(sessionId, preview, status) {
       return;
     }
 
-    content.innerHTML = '<div class="messages"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
-      + '">Loading...</div>' + renderMessages(state.wsAllMessages) + '</div>';
+    content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
+      + '">Loading...</div>' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
 
@@ -957,7 +993,7 @@ async function loadOlderAndPrepend() {
   var prevTop = anchor ? anchor.getBoundingClientRect().top : 0;
 
   // Prepend after the loader so it stays the first child.
-  var html = renderMessages(msgs);
+  var html = renderMessages(msgs, state.appState.runtime);
   if (loader) loader.insertAdjacentHTML('afterend', html);
   else container.insertAdjacentHTML('afterbegin', html);
   if (window.markTurnAdjacency) markTurnAdjacency(container); // reconnect the pagination seam

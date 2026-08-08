@@ -231,7 +231,7 @@ function handleWsMessage(msg) {
       bufferAndFetch(msg.sessionId, '').then(function () {
         if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
         var content = document.getElementById('content');
-        content.innerHTML = '<div class="messages">' + renderMessages(state.wsAllMessages) + '</div>';
+        content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
         state.wsRenderedCount = state.wsAllMessages.length;
         state.wsRunning = deriveRunning(state.wsAllMessages, state.wsOpenStatus);
         updateTitleFromMessages();
@@ -507,8 +507,8 @@ function tickStreams(now) {
           var label = b.name || 'Tool';
           var desc = '', inRaw = '';
           if (raw) {
-            try { var parsed = JSON.parse(raw); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1000); }
-            catch (e) { desc = previewPartialInput(raw).slice(0, 80); inRaw = decodeJsonEscapes(raw).slice(0, 1000); } // partial — decode \uXXXX live
+            try { var parsed = JSON.parse(raw); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1500); }
+            catch (e) { desc = previewPartialInput(raw).slice(0, 80); inRaw = decodeJsonEscapes(raw).slice(0, 1500); } // partial — decode \uXXXX live
           }
           el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
             + '<span class="tool-desc">' + esc(desc) + '</span>'
@@ -672,7 +672,7 @@ function updateLastTurn() {
           if (!toolUseBlock) continue;
           if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
           window._lastToolState = '';
-          node.innerHTML = renderToolNode(toolUseBlock, rb);
+          node.innerHTML = renderToolNode(toolUseBlock, rb, state.appState.runtime);
           var toolStateClass = window._lastToolState || '';
           node.className = 'tl-item tool-node' + (toolStateClass ? ' ' + toolStateClass : '');
         }
@@ -704,10 +704,16 @@ function updateLastTurn() {
       continue;
     }
 
-    // Assistant message
-    if (msg.type !== 'assistant' && !isInterruptMsg(msg)) continue;
+    if (msg.type === 'system_event') {
+      var eventHtml = renderSystemEvent(msg);
+      if (eventHtml) insertAtTimestamp(container, eventHtml, msg.timestamp);
+      continue;
+    }
 
-    var html = renderSingleMessage(msg, state.wsAllMessages);
+    // Assistant message
+    if (msg.type !== 'assistant' && msg.type !== 'summary' && !isInterruptMsg(msg)) continue;
+
+    var html = renderSingleMessage(msg, state.wsAllMessages, state.appState.runtime);
     if (!html) continue;
     html = applyThinkSecs(html); // carry live-measured thinking seconds into the empty authoritative node
 
@@ -874,7 +880,7 @@ async function recoverMissing() {
     var container = document.querySelector('.messages');
     if (container) {
       clearStreamPreviews();
-      container.innerHTML = renderMessages(state.wsAllMessages);
+      container.innerHTML = renderMessages(state.wsAllMessages, state.appState.runtime);
       state.wsRenderedCount = state.wsAllMessages.length;
       state.wsRunning = deriveRunning(state.wsAllMessages);
       updateSendBtn();

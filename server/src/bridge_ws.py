@@ -36,6 +36,12 @@ def _account_id(api_key):
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
+def _runtime_session_fields(session_id):
+    if session_id.startswith("codex:"):
+        return {"runtime": "codex", "nativeSessionId": session_id[len("codex:"):]}
+    return {"runtime": "claude", "nativeSessionId": session_id}
+
+
 def _query_connections(account_id, role):
     """Query ConnectionsTable.accountId-role-index for active connections.
     Auto-paginates. Returns list of items with deviceName + connectionId."""
@@ -415,4 +421,5 @@ def notify_bridge_sync(session_id, account_id, endpoint, device=None):
         _post_to_connection(endpoint, item["connectionId"], {
             "action": "sync_session",
             "sessionId": session_id,
+            **_runtime_session_fields(session_id),
         })

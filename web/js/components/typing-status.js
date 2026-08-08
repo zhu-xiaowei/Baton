@@ -20,6 +20,7 @@ import { state } from '../state.js';
 
   var _glyphIv = null, _typingIv = null, _pauseTimer = null;
   var _currentVerb = '';
+  var _currentRuntime = '';
 
   function pick() {
     var v;
@@ -33,9 +34,10 @@ import { state } from '../state.js';
   }
 
   function startTyping(verbEl) {
-    var newVerb = pick();
+    var fixed = _currentRuntime === 'codex';
+    var newVerb = fixed ? 'Working' : pick();
     var newText = newVerb + '...';
-    var oldText = _currentVerb ? _currentVerb + '...' : '';
+    var oldText = !fixed && _currentVerb ? _currentVerb + '...' : '';
     _currentVerb = newVerb;
     var len = newText.length, pos = 0;
     var frameMs = TYPING_MS / len;
@@ -59,11 +61,13 @@ import { state } from '../state.js';
     // Hold the spinner until the skeleton clears — else it shows under the loading placeholder.
     var skeleton = !!document.querySelector('#content .skeleton-messages');
     var shouldShow = state.wsRunning && !promptUp && !skeleton;
+    var runtime = state.appState.runtime === 'codex' ? 'codex' : 'claude';
 
     if (!shouldShow) {
       if (el) el.style.display = 'none';
       stopTimers();
       _currentVerb = '';
+      _currentRuntime = '';
       return;
     }
 
@@ -80,6 +84,12 @@ import { state } from '../state.js';
       content.appendChild(el);
     }
     el.style.display = 'flex';
+
+    if (_currentRuntime !== runtime) {
+      stopTimers();
+      _currentVerb = '';
+      _currentRuntime = runtime;
+    }
 
     if (!_glyphIv) {
       var frame = 0;

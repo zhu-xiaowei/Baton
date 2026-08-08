@@ -96,6 +96,12 @@
   }
   function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;'); }
+  function runtimeIcon(s) {
+    var runtime = s.runtime === 'codex' || String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
+    var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
+    return '<span class="runtime-mark" role="img" aria-label="' + label + '" title="' + label + '">'
+      + '<img class="runtime-icon" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+  }
 
   function renderInline(activeData, devData) {
     var content = document.getElementById('content');
@@ -119,8 +125,9 @@
           + ' data-device="' + esc(s.deviceName) + '"'
           + ' data-phash="' + esc(s.projectHash) + '"'
           + ' data-pname="' + esc(s.projectName) + '"'
+          + ' data-runtime="' + esc(s.runtime || '') + '"'
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
@@ -144,8 +151,9 @@
           + ' data-device="' + esc(s.deviceName) + '"'
           + ' data-phash="' + esc(s.projectHash) + '"'
           + ' data-pname="' + esc(s.projectName) + '"'
+          + ' data-runtime="' + esc(s.runtime || '') + '"'
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + '<span class="badge stopped">Done</span></span></div>'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + '<span class="badge stopped">Done</span></span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';

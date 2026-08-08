@@ -8,6 +8,62 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  function standaloneJson(text) {
+    var value = String(text || '').trim();
+    if (!value || !((value[0] === '{' && value[value.length - 1] === '}')
+      || (value[0] === '[' && value[value.length - 1] === ']'))) return null;
+    try { return JSON.parse(value); } catch (e) { return null; }
+  }
+
+  function percent(value) {
+    return Number.isFinite(value) ? Math.round(value * 100) + '%' : '';
+  }
+
+  function locationMarkdown(location) {
+    if (!location || !location.absolute_file_path) return '';
+    var path = String(location.absolute_file_path);
+    var range = location.line_range || {};
+    var lines = range.start
+      ? ':' + range.start + (range.end && range.end !== range.start ? '-' + range.end : '')
+      : '';
+    var hash = range.start
+      ? '#L' + range.start + (range.end && range.end !== range.start ? '-L' + range.end : '')
+      : '';
+    var target = (path + hash).replace(/</g, '%3C').replace(/>/g, '%3E');
+    return '[`' + path.replace(/`/g, '\\`') + lines + '`](<' + target + '>)';
+  }
+
+  function reviewMarkdown(review) {
+    if (!review || Array.isArray(review) || !Array.isArray(review.findings)
+      || !Object.prototype.hasOwnProperty.call(review, 'overall_correctness')) return '';
+    var lines = ['## Review result'];
+    if (review.overall_correctness) lines.push('**Result:** ' + review.overall_correctness);
+    var overallConfidence = percent(review.overall_confidence_score);
+    if (overallConfidence) lines.push('**Confidence:** ' + overallConfidence);
+    if (review.overall_explanation) lines.push('', String(review.overall_explanation));
+    review.findings.forEach(function (finding, index) {
+      lines.push('', '### ' + (finding.title || ('Finding ' + (index + 1))));
+      var details = [];
+      if (Number.isFinite(finding.priority)) details.push('Priority: P' + finding.priority);
+      var findingConfidence = percent(finding.confidence_score);
+      if (findingConfidence) details.push('Confidence: ' + findingConfidence);
+      if (details.length) lines.push(details.join(' | '));
+      var location = locationMarkdown(finding.code_location);
+      if (location) lines.push('**Location:** ' + location);
+      if (finding.body) lines.push('', String(finding.body));
+    });
+    return lines.join('\n');
+  }
+
+  function jsonHtml(value) {
+    var code = JSON.stringify(value, null, 2);
+    try {
+      return '<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>';
+    } catch (e) {
+      return '<pre><code>' + escHtml(code) + '</code></pre>';
+    }
+  }
+
   function mermaidCodeHtml(code) {
     try { return hljs.highlight(code, { language: 'mermaid' }).value; }
     catch (e) { return escHtml(code); }
@@ -94,6 +150,7 @@
       if (/^(mailto:|#|\/\/|tel:|data:)/i.test(href)) return m;
       var hash = (href.match(/#L?(\d+(?:[-,]L?\d+)?)/) || [])[1] || '';
       var path = href.replace(/#.*$/, '');
+      try { path = decodeURIComponent(path); } catch (e) {}
       var colon = path.match(/^(.*?):(\d+(?:-\d+)?)$/);
       if (colon) { path = colon[1]; hash = hash || colon[2]; }
       if (!path) return m;
@@ -107,6 +164,13 @@
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
     return rewriteFileLinks(marked.parse(text));
+  };
+
+  window.renderAssistantText = function (text) {
+    var json = standaloneJson(text);
+    if (json == null) return window.renderMd(text);
+    var review = reviewMarkdown(json);
+    return review ? window.renderMd(review) : jsonHtml(json);
   };
 
   // Split streamed text at ```mermaid fences (counts even while unclosed) → [{type:'text'|'mermaid', text}].

@@ -30,7 +30,11 @@ async def health():
 
 @app.get("/api/version")
 async def version():
-    return {"version": os.environ.get("APP_VERSION", "dev")}
+    app_version = os.environ.get("APP_VERSION", "dev")
+    return {
+        "version": app_version,
+        "bridgeVersion": os.environ.get("BRIDGE_VERSION", app_version),
+    }
 
 
 # Token exchange — landing page swaps a one-time token for the real API key.

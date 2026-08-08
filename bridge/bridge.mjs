@@ -11,12 +11,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
+import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startWatcher, startJobsWatcher } from './watcher.mjs';
 import { initWs } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
+import { BRIDGE_VERSION } from './version.mjs';
+import { installStagedBridge } from './updater.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
 const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
@@ -61,31 +63,24 @@ if (CONFIG.wsUrl) {
 // Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
 // --skip-init only skips replaying historical messages — metadata is cheap and required
 // for the periodic checkStopped() to detect disappeared CC processes.
-await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
+const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 // syncSessions has awaited every SESS# write, so DDB is complete — recount now
 // (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
-await reconcile(CONFIG);
+if (initialSync?.catalogComplete !== false) await reconcile(CONFIG);
+else console.log('[sync] reconcile skipped because local discovery was incomplete');
 checkStopped(CONFIG); // run once on boot — pool is empty after restart, so settle just-orphaned running rows now
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
-// Self-update: every CHECK_UPDATE_INTERVAL, compare local vs server version.
-// First tick after boot is a calibration (records version, never upgrades) so
-// that re-installing doesn't loop. Subsequent ticks trigger reinstall on mismatch.
-let _firstUpdateTick = true;
+// Compare the immutable package version; config.json is user state.
 async function checkUpdate() {
   try {
     const res = await fetch(`${CONFIG.server}/api/version`, { headers: { 'x-api-key': CONFIG.apiKey } });
     if (!res.ok) return;
-    const { version } = await res.json();
-    if (!version || version === 'dev') return;
-    if (_firstUpdateTick) {
-      _firstUpdateTick = false;
-      if (CONFIG.version !== version) { CONFIG.version = version; saveConfig(CONFIG); }
-      return;
-    }
-    if (version === CONFIG.version) return;
-    console.log(`[update] ${CONFIG.version} → ${version}, updating...`);
+    const info = await res.json();
+    const version = info.bridgeVersion || info.version;
+    if (!version || version === 'dev' || version === BRIDGE_VERSION) return;
+    console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
     const url = `${serverBase}/api/install?name=${nameParam}`;
@@ -96,13 +91,27 @@ async function checkUpdate() {
       const tarMatch = script.match(/curl -sL "([^"]+)"/);
       if (!tarMatch) throw new Error('no tar URL in install script');
       const tarUrl = tarMatch[1];
-      const { execSync: ex } = await import('child_process');
+      const { execFileSync } = await import('child_process');
       const tgz = path.join(BRIDGE_HOME, '.update.tgz');
-      ex(`curl -fsSL "${tarUrl}" -o "${tgz}" && tar xzf "${tgz}" -C "${BRIDGE_HOME}" && rm -f "${tgz}"`, { stdio: 'ignore' });
-      ex(`node --check "${path.join(BRIDGE_HOME, 'bridge.mjs')}"`, { stdio: 'ignore' });
-      ex('npm install --production --silent 2>/dev/null', { cwd: BRIDGE_HOME, stdio: 'ignore' });
-      CONFIG.version = version;
-      saveConfig(CONFIG);
+      const stage = path.join(BRIDGE_HOME, `.update-stage-${process.pid}`);
+      fs.rmSync(stage, { recursive: true, force: true });
+      fs.mkdirSync(stage, { recursive: true });
+      try {
+        execFileSync('curl', ['-fsSL', tarUrl, '-o', tgz], { stdio: 'ignore' });
+        execFileSync('tar', ['xzf', tgz, '-C', stage], { stdio: 'ignore' });
+        execFileSync(process.execPath, ['--check', path.join(stage, 'bridge.mjs')], { stdio: 'ignore' });
+        execFileSync('npm', ['install', '--production', '--silent'], { cwd: stage, stdio: 'ignore' });
+
+        const stagedVersion = fs.readFileSync(path.join(stage, 'version.mjs'), 'utf-8');
+        if (!stagedVersion.includes(`'${version}'`) && !stagedVersion.includes(`"${version}"`)) {
+          throw new Error('downloaded Bridge version does not match server');
+        }
+
+        installStagedBridge(stage, BRIDGE_HOME);
+      } finally {
+        fs.rmSync(tgz, { force: true });
+        fs.rmSync(stage, { recursive: true, force: true });
+      }
       console.log(`[update] files updated, restarting...`);
       process.exit(1);
     } catch (e) {
