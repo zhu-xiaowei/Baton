@@ -12,20 +12,35 @@ function reply(payload) {
 }
 
 function showPermissionPrompt(msg) {
-  _req = { sessionId: msg.sessionId, requestId: msg.requestId, kind: msg.kind || 'tool', toolName: msg.toolName };
+  var kind = msg.kind || 'tool';
+  if (msg.toolName === 'ExitPlanMode' || msg.toolName === 'exit_plan_mode') kind = 'plan';
+  else if (msg.toolName === 'AskUserQuestion' || msg.toolName === 'ask_user_question'
+    || (msg.questions && msg.questions.length)) kind = 'ask';
+  _req = {
+    sessionId: msg.sessionId, requestId: msg.requestId,
+    kind: kind, toolName: msg.toolName,
+    input: msg.input || {}, plan: msg.plan,
+  };
   _askQuestions = null; _askIndex = 0; _askAnswers = [];
 
-  if (msg.kind === 'ask') {
+  if (_req.kind === 'ask') {
     var qs = (msg.questions && msg.questions.length) ? msg.questions : [msg.input || {}];
     _askQuestions = qs;
     _askIndex = 0;
+  }
+  renderCurrentPrompt();
+}
+
+function renderCurrentPrompt() {
+  if (!_req) return;
+  if (_req.kind === 'ask') {
     renderAskStep();
     return;
   }
-  if (msg.kind === 'plan') {
+  if (_req.kind === 'plan') {
     renderPrompt({
       title: 'Accept this plan?',
-      description: (msg.plan || (msg.input && msg.input.plan) || ''),
+      description: (_req.plan || _req.input.plan || ''),
       options: [
         { label: 'Yes, proceed', act: 'plan-accept' },
         { label: 'No, keep planning', act: 'plan-reject', hasInput: true, placeholder: 'Tell Claude what to do instead...' }
@@ -33,8 +48,7 @@ function showPermissionPrompt(msg) {
     });
     return;
   }
-  // Ordinary tool (Bash/Edit/Write/MCP/…)
-  renderPrompt(buildToolPrompt(msg.toolName, msg.input || {}));
+  renderPrompt(buildToolPrompt(_req.toolName, _req.input));
 }
 
 // ---- Rendering ----
@@ -50,7 +64,7 @@ function renderPrompt(p) {
   }
 
   var container = document.querySelector('.messages');
-  if (!container) return;
+  if (!container || container.classList.contains('skeleton-messages')) return;
 
   var html = '<div class="permission-prompt" id="permission-prompt">';
   html += '<div class="permission-header"><div class="permission-title">' + esc(p.title || 'Confirm?') + '</div>'
@@ -211,9 +225,10 @@ function buildToolPrompt(toolName, input) {
 
 // True while a prompt awaits the user (ws.js checks this before auto-dismissing).
 function hasActivePermissionPrompt() { return !!_req; }
+function restorePermissionPrompt() { renderCurrentPrompt(); }
 
 Object.assign(window, {
   showPermissionPrompt, handlePermissionOption, submitPermissionWithInput,
   cancelPermissionPrompt, dismissPermissionPrompt,
-  hasActivePermissionPrompt,
+  hasActivePermissionPrompt, restorePermissionPrompt,
 });

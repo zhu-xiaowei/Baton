@@ -51,7 +51,7 @@ export function markHeadlessPushed(uuid) {
 export function headlessPushed(uuid) { return _headlessPushed.has(uuid); }
 
 // Pending control_request per session (CC blocks one tool call at a time).
-const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
+const _pendingControl = new Map(); // sessionId → { requestId, toolName, input, kind }
 
 function cwdForSession(sessionId) {
   const filePath = _claudeRuntime.findSessionFile(sessionId);
@@ -74,6 +74,13 @@ function controlDetail(p) {
   if (Array.isArray(input.questions) && input.questions.length) return input.questions[0].question || '';
   if (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode') return 'Review plan';
   return input.command || input.file_path || input.path || p.toolName || '';
+}
+
+function controlKind(toolName, input, requiresInteraction) {
+  if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') return 'plan';
+  if (toolName === 'AskUserQuestion' || toolName === 'ask_user_question'
+    || (Array.isArray(input.questions) && input.questions.length)) return 'ask';
+  return requiresInteraction ? 'ask' : 'tool';
 }
 
 export function initWs(config) {
@@ -377,16 +384,13 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
     onControlRequest: (req) => {
       const r = req.request || {};
       const input = r.input || {};
+      const kind = controlKind(r.tool_name, input, !!r.requires_user_interaction);
       // Surface to the app → permission_reply → handlePermissionReply (bypass mode never gets here).
       _pendingControl.set(sessionId, {
         requestId: req.request_id, toolName: r.tool_name,
-        input, requiresInteraction: !!r.requires_user_interaction,
+        input, kind,
       });
       syncPoolStatus(sessionId, 'needs_input', controlDetail(_pendingControl.get(sessionId)));
-      let kind = 'tool';
-      if (r.requires_user_interaction) {
-        kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';
-      }
       wsSend({
         action: 'permission_request', sessionId, kind,
         requestId: req.request_id, toolName: r.tool_name,
@@ -529,9 +533,8 @@ async function handleCreateProject(rawPath, asAgent) {
 async function handleRevealAgent(sessionId) {
   const p = _pendingControl.get(sessionId);
   if (!p) return;
-  const kind = p.requiresInteraction ? (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode' ? 'plan' : 'ask') : 'tool';
   wsSend({
-    action: 'permission_request', sessionId, kind,
+    action: 'permission_request', sessionId, kind: p.kind,
     requestId: p.requestId, toolName: p.toolName,
     questions: p.input.questions, plan: p.input.plan, input: p.input,
   });
@@ -699,7 +702,7 @@ function handlePermissionReply(msg) {
   if (!pending || (requestId && pending.requestId !== requestId)) return;
   _pendingControl.delete(sessionId);
 
-  if (pending.requiresInteraction) {
+  if (pending.kind !== 'tool') {
     // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
     if (decision === 'answer' && answerText) {
       _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });

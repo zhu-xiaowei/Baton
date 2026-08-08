@@ -232,6 +232,7 @@ function handleWsMessage(msg) {
         if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
+        if (typeof restorePermissionPrompt === 'function') restorePermissionPrompt();
         state.wsRenderedCount = state.wsAllMessages.length;
         state.wsRunning = deriveRunning(state.wsAllMessages, state.wsOpenStatus);
         updateTitleFromMessages();
@@ -881,6 +882,7 @@ async function recoverMissing() {
     if (container) {
       clearStreamPreviews();
       container.innerHTML = renderMessages(state.wsAllMessages, state.appState.runtime);
+      if (typeof restorePermissionPrompt === 'function') restorePermissionPrompt();
       state.wsRenderedCount = state.wsAllMessages.length;
       state.wsRunning = deriveRunning(state.wsAllMessages);
       updateSendBtn();
