@@ -552,7 +552,7 @@ function sessionsHtml(device, projectHash, data, sel) {
   return '<div class="list' + (sel ? ' select-mode' : '') + '">'
     + data.sessions.map(function (s) {
     var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
-    var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span> ' : '';
+    var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
     var sLabel = statusLabel(s.status);
     var sClass = statusClass(s.status);
     var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
@@ -560,15 +560,40 @@ function sessionsHtml(device, projectHash, data, sel) {
     var nativeId = nativeSessionId(s.sessionId, s.nativeSessionId, runtime);
     var shortId = shortSessionId(s.sessionId, s.nativeSessionId, runtime);
     var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-    var detailHtml = s.status === 'needs_input' && s.agentDetail ? '<span class="item-detail">' + esc(s.agentDetail) + '</span>' : '';
+    var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
+      + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span>'
+      + '<span> &middot; ' + formatSize(s.size) + '</span>';
+    var secondary = s.status === 'needs_input' && s.agentDetail
+      ? '<span class="session-secondary-toggle" role="button" tabindex="0" aria-label="Show session metadata">'
+        + '<span class="session-secondary-view session-detail-view">' + esc(s.agentDetail) + '</span>'
+        + '<span class="session-secondary-view session-meta-view">' + metadata + '</span></span>'
+      : '<span class="session-secondary-static">' + metadata + '</span>';
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
     var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
     return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
-      + '<div class="item-main"><div class="item-top"><span class="title">' + agentBadge + statusBadge + ' ' + esc(title) + '</span><span class="item-time">' + timeAgo(s.lastActive) + '</span></div>'
-      + '<div class="meta">' + runtimeIcon(s.sessionId, runtime) + '<span>' + esc(s.model || 'unknown model') + '</span><span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span><span>&middot; ' + formatSize(s.size) + '</span>' + detailHtml + '</div></div>'
+      + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
+      + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + statusBadge + '</span></div>'
+      + '<div class="item-bottom session-item-bottom"><span class="session-secondary-slot">' + secondary + '</span>'
+      + '<span class="item-time">' + timeAgo(s.lastActive) + '</span></div></div>'
       + '</a>';
   }).join('') + '</div>';
+}
+
+function attachSessionSecondaryToggles(container) {
+  container.querySelectorAll('.session-secondary-toggle').forEach(function (target) {
+    function toggle(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var showingMetadata = target.classList.toggle('show-meta');
+      target.setAttribute('aria-label', showingMetadata ? 'Show pending request' : 'Show session metadata');
+    }
+
+    target.addEventListener('click', toggle);
+    target.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') toggle(event);
+    });
+  });
 }
 
 function renderSessions(device, projectHash, data) {
@@ -579,7 +604,9 @@ function renderSessions(device, projectHash, data) {
     showStats('0 session(s)');
     return;
   }
-  attachLongPress(content.querySelector('.list'), 'session');
+  var list = content.querySelector('.list');
+  attachSessionSecondaryToggles(list);
+  attachLongPress(list, 'session');
   showStats(data.sessions.length + ' session(s)');
 }
 
