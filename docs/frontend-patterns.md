@@ -2,6 +2,10 @@
 
 Verified frontend logic from the web viewer (`web/`).
 
+Claude Code and Codex share the same Device → Project → Session navigation and message
+components. Runtime differences stay in identity, icon, action labels, accent, and capability
+checks; see [codex.md](codex.md).
+
 ---
 
 ## 0. iOS Keyboard / Viewport
@@ -227,8 +231,8 @@ User sends message:
   2. Optimistically render user message
 
 Bridge handling:
-  → Spawn headless `claude -p` (no --resume) → sessionId from system/init
-  → Return send_message_result { ok: true, sessionId: newId }
+  → Mint sessionId and return send_message_result first
+  → Spawn headless `claude -p --session-id <id>` so the app can subscribe before deltas
 
 On receiving sessionId:
   1. appState.session = msg.sessionId (replace '__new__')
@@ -248,42 +252,37 @@ WS returns send_message_result { ok: true }:
 
 WS receives real user message:
   → tryDedup: match text against pendingSentMessages
-  → Matched → delete optimistic DOM node, insert real message (with correct timestamp)
+  → Matched → promote the optimistic DOM node in place and apply the authoritative timestamp
 ```
 
 ## 11. Permission Prompt
 
-Two sources, same UI:
+Claude headless sends a structured `permission_request` when it receives a `control_request`.
+The frontend does not infer permission state from tool messages.
 
-### 11.1 Server-side (permission_request action)
-Bridge sends permission_request directly via WS (less commonly used).
+### 11.1 Request Types
 
-### 11.2 Client-side (checkPendingPrompts)
-**After each message update**, scan the last assistant message's tool_use:
+- `kind=tool`: show allow/deny for Bash/Edit/Write/MCP and other tools.
+- `kind=ask`: render all `questions[]` in order, preserving labels and descriptions.
+- `kind=plan`: show accept or typed feedback.
+- Bridge can resend a pending request after reconnect through `reveal_agent`.
 
-```
-tool_use type judgment:
-  ├── AskUserQuestion / ExitPlanMode → show prompt immediately (CC is waiting for user answer)
-  └── Bash / Edit / Write           → delayed judgment (5 seconds)
-       ├── tool_result arrives within 5s → auto-approved mode, no prompt
-       └── No result after 5s          → manual mode, show confirmation prompt
-```
+### 11.2 Input Bar Disabled During Prompt
 
-**Mode cache**: `_toolApproveMode` is globally cached after first detection (`auto` / `manual`). All subsequent Bash/Edit/Write tools are judged immediately regardless of tool type. Resets on page refresh.
+When showing a permission prompt, the bottom input bar and its buttons are disabled. They are
+restored when the prompt is answered or dismissed.
 
-### 11.3 Input Bar Disabled During Prompt
-
-When showing a permission prompt, the bottom input bar is disabled + placeholder changes to "Please respond to the prompt above...". Restored on dismiss. Prevents user from simultaneously sending messages and replying to permissions.
-
-### 11.4 User Actions
+### 11.3 User Actions
 
 ```
-wsSend({ action: 'permission_reply', sessionId, device, approved: value })
-
-value formats:
-  - 'arrow:N'     → select Nth option (bridge sends arrow key navigation)
-  - 'type:N:text' → navigate to Nth option, type text, press Enter
-  - 'escape'      → send Escape to cancel
+wsSend({
+  action: 'permission_reply',
+  sessionId,
+  device,
+  requestId,
+  decision: 'allow' | 'deny' | 'answer',
+  answerText
+})
 ```
 
 ## 12. Image Handling
@@ -390,6 +389,16 @@ After every DOM update (full render / incremental updateLastTurn / reconnect rec
 ```
 1. loadImages(container)    — register IntersectionObserver for lazy-loading images
 2. clampOverflow(container) — detect overflow, add collapse buttons
-3. checkPendingPrompts()    — detect permission prompts
-4. auto-scroll judgment     — wasNearBottom → scrollToBottom
+3. auto-scroll judgment     — wasNearBottom → scrollToBottom
 ```
+
+## 19. Runtime Presentation
+
+- Missing or unknown runtime normalizes to `claude`; a `codex:` storage ID also identifies Codex.
+- Claude displays the first 8 native ID characters; Codex displays the last 8.
+- Runtime icons appear on Session cards and in the detail header without changing page hierarchy.
+- Codex reuses the shared renderer with display-only names such as `Explored`, `Ran`, `Edited`,
+  `Updated Plan`, and `Viewed Image`.
+- Codex changes only runtime accent positions to `#13A7CD`; tool titles remain shared white.
+- Full load, pagination, WS insertion, and result updates pass runtime explicitly to one renderer.
+- Codex Phase 1 keeps the input layout; Bridge capabilities reject unsupported interaction.

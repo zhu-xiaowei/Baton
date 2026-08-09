@@ -4,11 +4,17 @@
 
 **Base URL**: `https://{api-id}.execute-api.{region}.amazonaws.com/v1`
 
-**Authentication**: All endpoints (REST + WS) require an API Key
+**Authentication**: API and WS endpoints require an API Key
 - REST: `x-api-key` header
 - WS: query string `?apiKey=xxx` on connection
+- Exception: `POST /auth/exchange-token` is outside `/api/` and exchanges a short-lived token for the API key
 
 **accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
+
+**Runtime identity**:
+- `runtime`: `claude` or `codex`; omitted values default to `claude`
+- Claude storage ID: native session ID unchanged
+- Codex storage ID: `codex:<nativeSessionId>`
 
 ---
 
@@ -26,17 +32,44 @@ Bridge uploads session metadata to DDB.
   "sessions": [
     {
       "id": "a1ca0870-xxxx-xxxx-xxxx",
+      "nativeSessionId": "a1ca0870-xxxx-xxxx-xxxx",
+      "runtime": "claude",
       "project": "-Users-xiaoweii-workspace-rn-agentpeek",
       "projectName": "agentpeek",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
       "preview": "Help me implement Phase 2 APIs",
       "model": "claude-sonnet-4-5-20250514",
+      "modelProvider": "",
+      "clientSource": "",
+      "cliVersion": "2.1.220",
       "status": "running"
     }
-  ]
+  ],
+  "device": {
+    "sessionCount": 1,
+    "projectCount": 1,
+    "runningCount": 1,
+    "idleCount": 0,
+    "lastActive": "2026-03-27T10:30:00.000Z",
+    "runtimeCapabilities": {
+      "claude": {
+        "installed": true,
+        "historyAvailable": true,
+        "canRead": true,
+        "canCreate": true,
+        "canSend": true,
+        "version": "2.1.220"
+      }
+    }
+  },
+  "projects": []
 }
 ```
+
+`device` and `projects` are included on an authoritative full catalog sync. Incremental status
+updates use `statusDelta` or `statusDeltas`. Valid status values are `running`,
+`needs_input`, and `completed`.
 
 **Response** `200`
 ```json
@@ -45,18 +78,61 @@ Bridge uploads session metadata to DDB.
 
 **DDB write**: BridgeSessions table
 - PK: `accountId`
-- SK: `{deviceName}#{project}#{id}`
+- Session SK: `SESS#{deviceName}#{project}#{storageSessionId}`
+- Device SK: `DEV#{deviceName}` (one row per device; `runtimeCapabilities` is a nested map)
+- Project SK: `PROJ#{deviceName}#{projectHash}`
+
+---
+
+### POST /api/bridge/reconcile
+
+Recounts a device's DEV/PROJ aggregates from its SESS rows and prunes orphan project rows.
+
+```json
+{ "deviceName": "MacBook-Pro", "os": "darwin" }
+```
+
+Response: `{ "sessionCount": 522, "projectCount": 12 }`.
+
+### POST /api/bridge/create-project
+
+Creates an idempotent empty project row before its first Session exists.
+
+```json
+{
+  "deviceName": "MacBook-Pro",
+  "projectHash": "-Users-user-workspace-new-project",
+  "projectName": "new-project",
+  "os": "darwin"
+}
+```
+
+### POST /api/bridge/delete
+
+Deletes Session/Project metadata rows and reconciles device counts. Message rows remain until TTL
+expiry. Optional local JSONL deletion is a separate WS `delete_files` action.
+
+```json
+{
+  "deviceName": "MacBook-Pro",
+  "sessionIds": ["a1ca0870-xxxx"],
+  "projectHashes": []
+}
+```
 
 ---
 
 ### POST /api/bridge/sync-messages
 
-Bridge batch-uploads messages to DDB. Used for initial sync on startup (top 2 sessions per project). Real-time messages during runtime are pushed via WS, with Lambda writing to DDB.
+Bridge batch-uploads messages to DDB. Used for startup history, HTTP fallback, oversized authoritative
+copies, and on-demand old Session sync. Real-time Claude messages normally use WS.
 
 **Request**
 ```json
 {
   "sessionId": "a1ca0870-xxxx-xxxx-xxxx",
+  "runtime": "claude",
+  "nativeSessionId": "a1ca0870-xxxx-xxxx-xxxx",
   "messages": [
     {
       "uuid": "msg_abc123",
@@ -83,6 +159,8 @@ Bridge batch-uploads messages to DDB. Used for initial sync on startup (top 2 se
 - PK: `sessionId`
 - SK: `{timestamp}#{uuid}`
 - content stored as JSON string
+- deterministic `timestamp#uuid` writes are idempotent
+- every write refreshes the message TTL to 90 days
 
 ---
 
@@ -173,6 +251,30 @@ Connectivity check, called by app on startup.
 
 ---
 
+### GET /api/version
+
+Returns independently deployable app and Bridge versions. Bridge auto-update compares
+`bridgeVersion` with its local package version.
+
+```json
+{ "version": "0.2.0-abcdef0", "bridgeVersion": "0.2.0-abcdef0" }
+```
+
+---
+
+### POST /auth/exchange-token
+
+Exchanges a short-lived setup token for the API key. This route is intentionally outside `/api/`
+and does not require the API key header.
+
+```json
+{ "token": "one-time-token" }
+```
+
+Response: `{ "apiKey": "..." }`.
+
+---
+
 ### GET /api/bridge/config
 
 Returns server configuration for bridge/app auto-discovery of WS URL, etc.
@@ -190,26 +292,54 @@ Returns server configuration for bridge/app auto-discovery of WS URL, etc.
 
 ### GET /api/bridge/install
 
-Generates a bridge install script (shell), used by the setup page. Automatically configures launchd (macOS) or systemd (Linux) auto-start service.
+Generates a Bridge install script, used by the setup page. It configures launchd on macOS,
+systemd user service on Linux, or Task Scheduler on native Windows.
 
 **Query**:
 | Param | Required | Description |
 |-------|----------|-------------|
 | `name` | No | Device name (if omitted, script asks interactively, defaults to hostname) |
+| `platform` | No | Use `windows` for the PowerShell installer; otherwise returns the shell installer |
 
 **Alias**: `GET /api/install` (same handler)
 
-**Response** `200`: `text/plain` shell script
+**Response** `200`: `text/plain` shell or PowerShell script
 
 **Script logic**:
 1. Download bridge.tar.gz (S3 presigned URL, valid 1h)
 2. npm install
-3. Write launchd plist / systemd service (contains server URL + API key + device name)
+3. Write launchd plist / systemd service / Windows scheduled task configuration
 4. Start service
 
 ---
 
 ## REST API — App → Server
+
+### GET /api/bridge/active-sessions
+
+Returns all `running`/`needs_input` Sessions plus the 20 most recently completed Sessions across
+devices and runtimes.
+
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "codex:019e...",
+      "nativeSessionId": "019e...",
+      "runtime": "codex",
+      "status": "running",
+      "deviceName": "MacBook-Pro",
+      "projectHash": "-Users-user-project",
+      "projectName": "project",
+      "preview": "Inspect the current changes",
+      "lastActive": "2026-08-09T08:00:00.000Z"
+    }
+  ],
+  "recentSessions": []
+}
+```
+
+---
 
 ### GET /api/bridge/devices
 
@@ -229,9 +359,13 @@ Get all devices under the current account.
       "projectCount": 12,
       "sessionCount": 522,
       "runningCount": 2,
-      "idleCount": 1,
+      "needsInputCount": 1,
       "lastActive": "2026-03-27T10:30:00.000Z",
-      "online": true
+      "online": true,
+      "runtimeCapabilities": {
+        "claude": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": true, "canSend": true, "version": "2.1.220" },
+        "codex": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": false, "canSend": false, "version": "0.147.0" }
+      }
     },
     {
       "deviceName": "Ubuntu-Server",
@@ -239,7 +373,7 @@ Get all devices under the current account.
       "projectCount": 3,
       "sessionCount": 38,
       "runningCount": 0,
-      "idleCount": 0,
+      "needsInputCount": 0,
       "lastActive": "2026-03-26T08:00:00.000Z",
       "online": false
     }
@@ -251,9 +385,10 @@ Get all devices under the current account.
 - `projectCount`: number of projects on this device (deduplicated by `projectHash`)
 - `sessionCount`: total sessions on this device
 - `runningCount`: sessions with `status="running"`
-- `idleCount`: sessions with `status="idle"`
+- `needsInputCount`: sessions with `status="needs_input"`
 - `lastActive`: most recent session's lastActive on this device
 - `online`: whether bridge WS is connected (checks Connections table for role=bridge with matching deviceName)
+- `runtimeCapabilities`: installed/history/read/create/send capability for each runtime; old devices default to Claude capability
 - Sorted by `lastActive` descending
 
 ---
@@ -269,7 +404,7 @@ Get projects under a specific device.
 
 **Example**: `GET /api/bridge/projects?device=MacBook-Pro`
 
-**Logic**: Scan BridgeSessions (PK=accountId, SK begins_with `{device}#`), aggregate by `projectHash`
+**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `PROJ#{device}#`)
 
 **Response** `200`
 ```json
@@ -281,7 +416,7 @@ Get projects under a specific device.
       "projectPath": "workspace/rn/agentpeek",
       "sessionCount": 15,
       "runningCount": 1,
-      "idleCount": 1,
+      "needsInputCount": 1,
       "lastActive": "2026-03-27T10:30:00.000Z"
     }
   ]
@@ -293,7 +428,7 @@ Get projects under a specific device.
 - `projectPath`: full path relative to home, used as UI subtitle
 - `projectHash`: passed back when calling the sessions endpoint
 - `runningCount`: sessions with `status="running"`
-- `idleCount`: sessions with `status="idle"`
+- `needsInputCount`: sessions with `status="needs_input"`
 - Sorted by `lastActive` descending
 
 ---
@@ -310,19 +445,24 @@ Get sessions under a specific device + project.
 
 **Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek`
 
-**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `{device}#{project}#`)
+**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `SESS#{device}#{project}#`)
 
 **Response** `200`
 ```json
 {
   "sessions": [
     {
-      "sessionId": "a1ca0870-xxxx-xxxx-xxxx",
-      "preview": "Help me implement Phase 2 APIs",
+      "sessionId": "codex:019e86c2-fd17-7031-b8cb-63c1f56d3609",
+      "nativeSessionId": "019e86c2-fd17-7031-b8cb-63c1f56d3609",
+      "runtime": "codex",
+      "preview": "Review the current changes",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
-      "model": "claude-sonnet-4-5-20250514",
-      "status": "running"
+      "model": "gpt-5",
+      "modelProvider": "openai",
+      "clientSource": "codex-tui",
+      "cliVersion": "0.147.0",
+      "status": "completed"
     },
     {
       "sessionId": "b880a5db-xxxx-xxxx-xxxx",
@@ -330,7 +470,9 @@ Get sessions under a specific device + project.
       "lastActive": "2026-03-26T15:00:00.000Z",
       "size": 8192,
       "model": "claude-opus-4-6-20250610",
-      "status": "stopped"
+      "nativeSessionId": "b880a5db-xxxx-xxxx-xxxx",
+      "runtime": "claude",
+      "status": "completed"
     }
   ]
 }
@@ -338,7 +480,8 @@ Get sessions under a specific device + project.
 
 **Notes**:
 - Sorted by `lastActive` descending
-- `status`: session state (`running`/`idle`/`stopped`)
+- `status`: `running`, `needs_input`, or `completed`
+- `modelProvider`, `clientSource`, and `cliVersion` are sparse optional fields
 
 ---
 
@@ -351,20 +494,26 @@ Get messages for a specific session, supports incremental loading.
 |-------|----------|-------------|
 | `session` | Yes | sessionId |
 | `after` | No | ISO 8601 timestamp, returns messages after this time |
+| `before` | No | Opaque `oldestTimestamp` cursor returned by the previous page |
+| `limit` | No | Page size; default 100, maximum 500 |
+| `device` | No | Target device for routing a `needSync` request to the matching Bridge |
 
 **Examples**:
 - Full load: `GET /api/bridge/messages?session=a1ca0870-xxxx`
 - Incremental: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z`
 
 **Logic**:
-- No `after`: query BridgeMessages (PK=sessionId), return all
-- With `after`: query BridgeMessages (PK=sessionId, SK > after#\xff), single query
+- Default: consistently read the newest page, then return it in ascending order
+- With `before`: fetch the preceding page
+- With `after`: fetch all rows after the timestamp, used for reconnect recovery
 - DDB empty: return `needSync: true`, simultaneously notify bridge via WS to sync this session
 
 **Response** `200` — has messages:
 ```json
 {
   "messages": [...],
+  "hasMore": true,
+  "oldestTimestamp": "2026-03-27T10:30:00.000Z#msg_abc123",
   "needSync": false
 }
 ```
@@ -380,26 +529,24 @@ Get messages for a specific session, supports incremental loading.
 **needSync triggered flow**:
 ```
 1. Server returns needSync: true, simultaneously notifies bridge via WS:
-   → { action: "sync_session", sessionId: "abc" }
-2. Bridge receives it, reads .jsonl → POST /sync-messages to write DDB
+   → { action: "sync_session", sessionId: "codex:abc", runtime: "codex", nativeSessionId: "abc" }
+2. Bridge selects the runtime adapter, reads JSONL → POST /sync-messages to write DDB
 3. Bridge completes, notifies server via WS:
    → { action: "sync_complete", sessionId: "abc" }
-4. Server forwards to all apps subscribed to this session:
+4. Server broadcasts to all app connections under the account:
    → { action: "sync_complete", sessionId: "abc" }
 5. App receives it, re-fetches GET /messages → has data now → render
 ```
 
 **Notes**:
 - `content` is a JSON array (deserialized from JSON string in DDB)
-- `type`: `user` | `assistant` | `system` | `summary` | `ai-title`
+- `type` includes `user`, `assistant`, `summary`, `system_event`, `interrupt`, and Claude metadata types
 - Content block types: `text`, `image`, `document`, `thinking`, `tool_use`, `tool_result`
 - `document` block: `{ type: "document", source: { type: "text", media_type: "text/plain", data: "..." }, title: "filename.txt" }`
 - Sorted by `timestamp` ascending (conversation order)
 
-**Fields NOT stored in DDB** (only passed via WS real-time, not in REST response):
-- `stopReason`: assistant message stop reason (`end_turn` / `tool_use` / null), used by frontend to determine wsRunning state
-- `toolUseResult`: Agent tool execution metadata `{ status, totalDurationMs, totalToolUseCount, totalTokens, agentId }`, attached to tool_result messages
-- Impact: messages loaded from DDB after page refresh lack these fields. wsRunning can degrade to session-level `status`, Agent stats are lost
+`stopReason` and `toolUseResult` are persisted when present. `parentUuid` and transient streaming
+fields are not persisted.
 
 ---
 
@@ -437,7 +584,7 @@ Get a synced project file's content (proxied from S3).
 **Response** `200`: file content as `text/plain; charset=utf-8`
 
 **Notes**:
-- App fetches the file body via this endpoint (REST, gzip-compressed, no WebSocket 128KB frame limit), then renders it with highlight.js in the file viewer
+- App fetches the file body via this endpoint (REST, gzip-compressed, outside the WebSocket ~31 KB frame budget), then renders it with highlight.js in the file viewer
 - The viewer caches by `key`; since the key embeds mtime+size, an edited file is re-fetched automatically
 - `404` if key not found
 
@@ -480,6 +627,10 @@ DDB Connections:
 - Device routing for `send_message` / `permission_reply` / `interrupt` (only forwarded to matching bridge)
 - Online status in `GET /devices`
 
+The server strips the `device` routing field before forwarding an app action to Bridge. Codex
+Phase 1 uses `subscribe`, `sync_session`, and `sync_complete`; send/streaming/permission actions
+remain Claude-only.
+
 **$disconnect**: Delete connectionId + clean up related subscription records
 
 ---
@@ -496,8 +647,6 @@ Subscribe to real-time messages for a session.
 
 **Server handling**:
 1. Record subscription in DDB Subscriptions table
-2. Find bridge connections under this accountId
-3. Notify bridge to start pushing this session
 
 **Subscriptions table**:
 ```
@@ -535,7 +684,8 @@ Keep connection alive.
 
 #### send_message
 
-Send a message to Claude Code (via the headless stream-json process pool). Supports two modes:
+Send a message to Claude Code through the headless stream-json process pool. Codex adapters
+currently reject this action as unsupported.
 
 **Existing session:**
 ```json
@@ -555,7 +705,7 @@ Send a message to Claude Code (via the headless stream-json process pool). Suppo
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
 1. Has sessionId → `_pool.send` to the session's headless `claude -p --resume <id>` process (spawns it if none)
-2. No sessionId, has projectHash → headless spawn without `--resume`, take sessionId from `system/init` (new-session path — TODO)
+2. No sessionId, has projectHash → mint the Session ID, acknowledge it, then spawn headless without `--resume`
 
 **Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
 
@@ -566,21 +716,24 @@ Send a message to Claude Code (via the headless stream-json process pool). Suppo
 Reply to a permission confirmation or user choice.
 
 ```json
-{ "action": "permission_reply", "sessionId": "a1ca0870-xxxx", "approved": "arrow:1", "device": "MacBook-Pro" }
+{
+  "action": "permission_reply",
+  "sessionId": "a1ca0870-xxxx",
+  "requestId": "ctrl_123",
+  "decision": "answer",
+  "answerText": "西瓜",
+  "device": "MacBook-Pro"
+}
 ```
 
-**approved values**:
-| Value | Description |
-|-------|-------------|
-| `arrow:N` | Select the Nth option (0-based, applies to all selection UIs) |
-| `type:N:text` | Navigate to Nth option (Type something), enter text, press Enter |
-| `escape` | Cancel/dismiss the prompt |
+`decision` is `allow`/`deny` for ordinary tools or `answer`/`deny` for
+AskUserQuestion and plan prompts. `answerText` contains the selected or typed answer.
 
 **Server handling**: Forward to matching bridge by `device`.
 
-**Permission detection mechanism**: App detects tools requiring user confirmation from `tool_use` blocks in WS real-time messages:
-- AskUserQuestion / ExitPlanMode → show prompt immediately
-- Bash / Edit / Write → delayed judgment; if tool_result arrives first, don't show (auto-approved)
+Bridge receives Claude's headless `control_request`, emits `permission_request`, and applies the
+reply through the same pending request ID. The frontend does not infer permission prompts from
+tool output.
 
 ---
 
@@ -596,9 +749,38 @@ Interrupt the currently running Claude Code (equivalent to Ctrl+C).
 
 ---
 
+#### reveal_agent
+
+Requests Bridge to resend a still-pending Claude control request after refresh or reconnect.
+
+```json
+{ "action": "reveal_agent", "sessionId": "a1ca0870-xxxx", "device": "MacBook-Pro" }
+```
+
+---
+
+#### delete_files
+
+Optionally deletes local Session history after REST metadata deletion.
+
+```json
+{
+  "action": "delete_files",
+  "sessionIds": ["a1ca0870-xxxx"],
+  "projectHashes": [],
+  "requestId": "delete_123",
+  "device": "MacBook-Pro"
+}
+```
+
+Runtime adapters without `deleteHistory` are skipped; Codex Phase 1 never deletes rollout files.
+
+---
+
 #### create_project
 
-Create a new project directory on the device and launch a Claude Code (or Claude Agents) session in it.
+Create a new project directory and seed its Project metadata. The first `send_message` creates
+the Session.
 
 ```json
 { "action": "create_project", "projectPath": "workspace/my-new-project", "device": "MacBook-Pro", "asAgent": false }
@@ -609,11 +791,12 @@ Create a new project directory on the device and launch a Claude Code (or Claude
 |-------|----------|-------------|
 | `projectPath` | Yes | Path relative to `$HOME` (absolute paths under `$HOME` also accepted) |
 | `device` | Yes | Target device |
-| `asAgent` | No | `true` → launch via `claude agents` instead of a normal session |
+| `asAgent` | No | Echoed in `create_project_result` so the subsequent new-Session view keeps the background-agent choice |
 
 **Server handling**: Forward to matching bridge by `device` (rejected with `400` if `projectPath` missing).
 
-**Bridge handling**: `mkdir -p` the path → derive `projectHash` → launch a new session (normal or agent) → reply `create_project_result`.
+**Bridge handling**: create the path → derive `projectHash` → call REST `create-project` → reply
+`create_project_result`.
 
 ---
 
@@ -733,8 +916,9 @@ Message format pushed to app:
 ```
 
 **Notes**:
-- Bridge only sends messages via WS, no longer writes DDB directly via HTTP POST
-- DDB writes are handled by Lambda, in parallel with app push
+- Normal real-time messages use WS and are cached by Lambda
+- `noCache:true` means the WS copy is only a size-limited preview; Bridge writes the authoritative copy through REST
+- Startup, retry, and on-demand history use REST `sync-messages`
 - When no app is subscribed, only writes DDB (no wasted forwarding)
 
 ---
@@ -747,12 +931,18 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
 {
   "action": "permission_request",
   "sessionId": "a1ca0870-xxxx",
-  "title": "Run command?",
-  "description": "npm install",
-  "options": [
-    { "label": "Yes", "value": "arrow:0", "key": "1" },
-    { "label": "No", "value": "arrow:2", "key": "3" }
-  ]
+  "kind": "ask",
+  "requestId": "ctrl_123",
+  "toolName": "AskUserQuestion",
+  "questions": [
+    {
+      "question": "你最喜欢哪种水果？",
+      "header": "水果",
+      "options": [{ "label": "西瓜", "description": "水分充足" }],
+      "multiSelect": false
+    }
+  ],
+  "input": {}
 }
 ```
 
@@ -765,7 +955,7 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
 Bridge returns the result after processing send_message.
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)", "requestId": "req_abc123" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
 ```
 
 **Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`), and `requestId` (echoed from the originating `send_message`, lets the app match the result to its new-session request).
@@ -779,12 +969,24 @@ Bridge returns the result after processing send_message.
 Bridge returns the result after processing `create_project`.
 
 ```json
-{ "action": "create_project_result", "ok": true, "sessionId": "new-session-id", "projectPath": "workspace/my-new-project" }
+{ "action": "create_project_result", "ok": true, "projectHash": "-Users-user-workspace-my-new-project", "projectName": "my-new-project", "projectPath": "workspace/my-new-project" }
 ```
 
 **Fields**: `ok`, `projectPath` (echoed, used by the app to match the pending create), optional `sessionId`, and `error` (when `ok=false`).
 
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId.
+
+---
+
+#### delete_files_result
+
+Bridge reports completion of optional local history deletion.
+
+```json
+{ "action": "delete_files_result", "requestId": "delete_123", "ok": true, "skippedReadOnly": 1 }
+```
+
+The result is broadcast to all app connections under the account.
 
 ---
 
@@ -803,10 +1005,11 @@ Same as App heartbeat.
 Bridge notifies server after completing an on-demand sync.
 
 ```json
-{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
+{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx", "status": "ok", "count": 42 }
 ```
 
-**Server handling**: Forward to all apps subscribed to this session.
+**Server handling**: Broadcast to all app connections under the account. This avoids losing a
+fast completion before the app's subscription write becomes visible.
 
 ---
 
@@ -881,28 +1084,21 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 
 ---
 
-#### command_output — removed (Phase 2E)
+#### streaming actions
 
-Was the tmux `capture-pane` push for "local" slash-command terminal output. Removed with tmux: under headless a `/cmd` is sent as plain text and its output streams back normally; pure-TUI commands just aren't exposed. Original spec below, for reference only:
+Claude headless preview actions are relayed to subscribed apps and never written to DDB:
 
-```json
-{
-  "action": "command_output",
-  "sessionId": "a1ca0870-xxxx",
-  "requestId": "...",
-  "ansi": "[1m  ✔ Goal achieved[0m\n  ..."
-}
+```text
+stream_block_start
+stream_delta
+stream_tool_input
+stream_block_stop
+stream_end
 ```
 
-**Fields**:
-| Field | Description |
-|-------|-------------|
-| `sessionId` | Scopes the relay to subscribers of this session |
-| `ansi` | The captured terminal body, **ANSI colour codes preserved** (the app renders them with the same anser path as tool output). Empty string `""` when the capture found nothing meaningful — the app just stops its spinner. |
-
-**Bridge handling** (`captureCommandOutput`): poll the pane every 800 ms (≤25 s, since `/context`/`/stats` are slow). While `esc to interrupt` is present CC is busy (local calc or AI) → keep waiting. Once idle and the screen is identical across two reads → slice the body between the last `❯ /cmd` prompt and the surrounding dividers, keeping ANSI. If the screen is a full-screen dialog (`Esc to cancel/dismiss/close/clear` footer), **send `Escape`** afterwards so the input box is freed for the next message.
-
-**Server handling**: `_handle_bridge_relay` — forward to app connections subscribed to `sessionId`.
+Every frame carries `sessionId`, `streamId`, and monotonic `seq`; block actions also carry
+`blockId`. `stream_end.finalSeq` lets the app finish its reorder buffer. Authoritative
+`messages` rows replace previews by identity.
 
 ---
 
@@ -925,13 +1121,22 @@ Server acknowledges receipt and processing of bridge messages, allowing bridge t
 Server notifies bridge to sync a specific session's messages to DDB (triggered by GET /messages returning needSync).
 
 ```json
-{ "action": "sync_session", "sessionId": "a1ca0870-xxxx" }
+{
+  "action": "sync_session",
+  "sessionId": "codex:019e...",
+  "runtime": "codex",
+  "nativeSessionId": "019e..."
+}
 ```
 
 **Bridge handling**:
-1. Find the corresponding .jsonl file by sessionId
+1. Select runtime adapter and find the corresponding JSONL by native ID
 2. Read and extract messages → POST /sync-messages to write DDB
 3. On completion, send `sync_complete` via WS
+
+All App → Server operational actions are also forwarded to the matching Bridge after `device`
+is removed: `send_message`, `permission_reply`, `interrupt`, `reveal_agent`, `request_file`,
+`delete_files`, `list_commands`, and `create_project`.
 
 ---
 
@@ -959,9 +1164,10 @@ Server forwards bridge permission confirmation request (only pushed to app conne
 {
   "action": "permission_request",
   "sessionId": "a1ca0870-xxxx",
-  "title": "...",
-  "description": "...",
-  "options": [...]
+  "kind": "tool",
+  "requestId": "ctrl_123",
+  "toolName": "Bash",
+  "input": { "command": "npm test" }
 }
 ```
 
@@ -972,7 +1178,7 @@ Server forwards bridge permission confirmation request (only pushed to app conne
 Server forwards bridge send result (broadcast to **all** app connections under this account).
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id (only for new sessions)", "requestId": "req_abc123" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
 ```
 
 ---
@@ -982,7 +1188,7 @@ Server forwards bridge send result (broadcast to **all** app connections under t
 Server forwards bridge create-project result (broadcast to **all** app connections under this account).
 
 ```json
-{ "action": "create_project_result", "ok": true, "sessionId": "new-session-id", "projectPath": "workspace/my-new-project" }
+{ "action": "create_project_result", "ok": true, "projectHash": "-Users-user-workspace-my-new-project", "projectName": "my-new-project", "projectPath": "workspace/my-new-project" }
 ```
 
 ---
@@ -992,8 +1198,17 @@ Server forwards bridge create-project result (broadcast to **all** app connectio
 Notifies app that a session's historical messages have been synced to DDB, app can re-fetch GET /messages.
 
 ```json
-{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx" }
+{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx", "status": "ok", "count": 42 }
 ```
+
+---
+
+#### streaming and operation results
+
+The server forwards `stream_block_start`, `stream_delta`, `stream_tool_input`,
+`stream_block_stop`, `stream_end`, `file_progress`, and `delete_files_result` using the same
+payloads documented above. Streaming/file progress is subscription-scoped; deletion results are
+account-wide.
 
 ---
 
@@ -1030,12 +1245,6 @@ Server forwards the bridge's slash-command list (broadcast to **all** app connec
 
 ---
 
-#### command_output
-
-Server forwards a local slash command's captured terminal output to app connections subscribed to the session. Same payload as the Bridge → Server `command_output`. The app renders `ansi` (ANSI colours preserved) as a `.cmd-output` terminal block and stops the send spinner; empty `ansi` just clears the spinner. These are live-only — not persisted, so they don't reappear on reload.
-
----
-
 ## Error Responses
 
 All endpoints use a unified error format:
@@ -1060,25 +1269,25 @@ All endpoints use a unified error format:
 
 | Table | PK | SK | Purpose | TTL |
 |-------|----|----|---------|-----|
-| BridgeSessions | accountId | deviceName#projectHash#sessionId | Session metadata | 90 days |
-| BridgeMessages | sessionId | timestamp#uuid | Message cache (uuid/type/content/timestamp only) | 30 days |
-| Connections | connectionId | — | WS connection records (includes role, deviceName?) | 24h |
+| BridgeSessions | accountId | `DEV#...` / `PROJ#...` / `SESS#...` | Device, Project, and Session metadata | No TTL value written |
+| BridgeMessages | sessionId | timestamp#uuid | Message cache | 90 days |
+| Connections | connectionId | — | WS connection records with role/device routing | 24h |
 | Subscriptions | sessionId | connectionId | WS subscription relationships | 24h |
 
 ---
 
 ## Known Limitations & Design Notes
 
-### DDB message field loss
+### DDB message fields
 
-DDB only stores `uuid`, `type`, `content`, `timestamp` (four fields). The following fields are only passed via WS real-time path, not in DDB/REST:
-- `stopReason` — after page refresh, cannot determine wsRunning from messages; degrades to session-level `status`
-- `toolUseResult` — Agent sub-task statistics are lost after refresh
-- `parentUuid` — message parent-child relationships
+DDB stores `uuid`, `type`, `content`, `timestamp`, plus optional `stopReason` and
+`toolUseResult`. `parentUuid`, stream IDs, sequence numbers, and preview-only fields are not
+persisted.
 
-### Connections table scan
+### Connection routing indexes
 
-Forwarding `send_message` / `permission_reply` / `interrupt` to bridge scans DDB by `accountId + role` (Connections table has no GSI). Current connection volume is small, no impact — at scale would need GSI on accountId. `_handle_disconnect` cleanup of Subscriptions is also a scan (PK=sessionId cannot reverse-lookup by connectionId).
+Bridge routing queries `Connections.accountId-role-index`. Disconnect cleanup queries
+`Subscriptions.connectionId-index`.
 
 ### send_message_result broadcast scope
 
@@ -1086,7 +1295,17 @@ Forwarding `send_message` / `permission_reply` / `interrupt` to bridge scans DDB
 
 ### device routing strips `device` before forwarding
 
-`_handle_send_to_bridge` rebuilds the payload with a dict comprehension (`{k: v for k, v in body.items() if k != "device"}`) rather than mutating the request body, then forwards only to bridge connections whose `deviceName` matches. Applies to `send_message` / `permission_reply` / `interrupt` / `create_project` / `request_file` / `list_commands`.
+`_handle_send_to_bridge` rebuilds the payload without `device`, then forwards only to bridge
+connections whose `deviceName` matches. Applies to `send_message`, `permission_reply`,
+`interrupt`, `reveal_agent`, `create_project`, `request_file`, `delete_files`, and
+`list_commands`.
+
+### Codex Phase 1
+
+Codex currently participates in Session metadata, history reads, `sync_session`, and
+`sync_complete`. `send_message`, streaming, interrupt, permission, create, and local history
+deletion are rejected or skipped by Codex runtime capabilities until the app-server adapter is
+implemented. See [codex.md](codex.md) for phase status and validation.
 
 ### Image & file endpoints have no account isolation
 

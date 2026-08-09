@@ -1,5 +1,9 @@
 # Headless Stream-JSON 实时性 — 实现流程文档
 
+> 本文仅描述 Claude Code 的 headless stream-json 链路。Codex 当前只完成历史读取；
+> 未来发送、streaming 与权限交互使用独立 app-server controller，见
+> [Codex 接入设计与实施状态](codex.md)。
+>
 > 目标:App 发送的消息获得**逐 token 的流式反馈**,同时完整保留现有的所有能力(读 jsonl、
 > 接管终端已开会话、回电脑继续)。参考 `dnakov/litter`(headless 驱动 + ClaudePool)。
 >

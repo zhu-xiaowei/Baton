@@ -4,10 +4,14 @@
 
 **AgentPeek** — view and interact with Claude Code sessions from your phone. No wrapping of `claude` command.
 
+This document covers the Claude Code runtime. The shared runtime model and current Codex
+integration status are documented in [codex.md](codex.md); the wire contract is in
+[api.md](api.md).
+
 ## Architecture
 
 ```
-Mac/Linux/EC2                       AWS (Serverless)                    AgentPeek App
+Mac/Linux/Windows                   AWS (Serverless)                    AgentPeek App
 ┌──────────────┐              ┌───────────────────────┐           ┌──────────────┐
 │ Claude Code  │              │ REST API GW + Lambda  │           │              │
 │ (unchanged)  │              │ (FastAPI in Docker)   │           │ Device/      │
@@ -30,13 +34,16 @@ Mac/Linux/EC2                       AWS (Serverless)                    AgentPee
 ## Bridge
 
 ### Startup
+The current startup coordinator discovers all registered runtime adapters, merges their catalogs,
+and computes Device/Project aggregates once. The steps below describe the Claude-specific part.
+
 1. Scan `~/.claude/projects/` → collect ALL session metadata (preview from `ai-title`)
 2. `POST /api/bridge/sync-sessions` → full upload to DDB (only on startup)
 3. Build `recentSessions` set (sessions active in last 24h) for periodic sync
 4. Initial message sync: active session per project (latest only) + recent 24h sessions → extract + upload to DDB
    - Active: for each running project, only the most recent session (the one being used)
    - Recent: sessions with mtime within 24h
-   - Sessions synced in parallel (sliding window, concurrency=4)
+   - Sessions synced in parallel (sliding window, shared concurrency=2)
    - Images: compressed to 1280px JPEG (quality=90) via sharp → uploaded to S3 via Lambda
    - Messages batched by byte size (≤4MB per POST)
    - Line-number tracking: only reads new lines, no UUID set in memory
@@ -92,27 +99,31 @@ Content block processing:
 ### Auto-start
 - macOS: launchd plist (`~/Library/LaunchAgents/`)
 - Linux: systemd user service (`~/.config/systemd/user/`)
+- Windows: Task Scheduler runs `bridge-launcher.mjs`
 
 ## DynamoDB
 
 ```
 BridgeSessions
   PK: accountId (SHA256(apiKey)[:16])
-  SK: deviceName#projectHash#sessionId
+  SK: DEV#deviceName
+      PROJ#deviceName#projectHash
+      SESS#deviceName#projectHash#sessionId
   Attributes: deviceName, projectHash, projectName, sessionId,
-              lastActive, preview, model, status (running/idle/stopped), size, os
-  TTL: 90 days
+              lastActive, preview, model, status (running/needs_input/completed),
+              runtime, nativeSessionId, size, os
+  TTL: no value written
 
 BridgeMessages
   PK: sessionId
   SK: timestamp#uuid (e.g. "2026-03-27T10:30:00.000Z#msg_abc123")
   Attributes: uuid, type, content (JSON), timestamp
-  TTL: 30 days
+  TTL: 90 days
 ```
 
 ### Worktree project-hash normalization (one session = one row)
 
-The session row's SK is `deviceName#projectHash#sessionId`, so a session's
+The session row's SK is `SESS#deviceName#projectHash#sessionId`, so a session's
 identity in DDB is `(projectHash, sessionId)` — **not sessionId alone**. That
 breaks when a session moves between project dirs.
 
@@ -174,13 +185,13 @@ Body: {
 
 ```
 GET /api/bridge/devices
-→ { devices: [{ deviceName, os, lastActive, projectCount, sessionCount, runningCount, idleCount }] }
+→ { devices: [{ deviceName, os, lastActive, projectCount, sessionCount, runningCount, needsInputCount, runtimeCapabilities }] }
 
 GET /api/bridge/projects?device=MacBook-Pro
-→ { projects: [{ projectHash, projectName, lastActive, sessionCount, runningCount, idleCount }] }
+→ { projects: [{ projectHash, projectName, lastActive, sessionCount, runningCount, needsInputCount }] }
 
 GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-...
-→ { sessions: [{ sessionId, preview, lastActive, size, model, status }] }
+→ { sessions: [{ sessionId, nativeSessionId, runtime, preview, lastActive, size, model, status }] }
 
 GET /api/bridge/messages?session=abc&after=<timestamp>
 → { messages: [{ uuid, type, content, timestamp }] }
@@ -258,7 +269,7 @@ Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId:
 App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
      image → GET /api/bridge/image/{key} → reuse the image overlay (viewImage)
      video → GET /api/bridge/video-url/{key} (presigned, no-store, ~50min app cache) → <video> streams from S3
-     (text/image content travels via REST/S3, never over WS — avoids the 128KB frame limit;
+     (text/image content travels via REST/S3, never over WS — avoids the ~31KB frame budget;
       video bytes stream browser↔S3 directly, bypassing the Lambda 6MB payload limit)
 ```
 
@@ -299,12 +310,10 @@ App: split reply by source → cache global (user/plugin/builtin) once per DEVIC
 
 ### Local slash commands
 
-The tmux `capture-pane` capture for terminal-only commands (`command_output`) was
-removed with tmux (Phase 2E). Under headless a `/cmd` is sent as plain text and its
-output streams back normally; pure-TUI commands (`/usage`, `/context`, …) just
-aren't exposed. `/compact` still surfaces via its `<local-command-stdout>` jsonl row
-(rendered by `renderLocalCommandStdout`). `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/
-`SYNTHETIC_COMMANDS` in `commands.mjs` now only tag the command list.
+The tmux `command_output` path was removed. Under headless every `/cmd` is sent as ordinary text;
+supported commands return through normal stream/JSONL messages, while Claude itself reports commands
+that are unavailable in headless mode. `/compact` can also surface through its
+`<local-command-stdout>` JSONL row.
 
 ## Entering a Session — Complete Flow
 
@@ -352,6 +361,12 @@ agentpeek/
 │   ├── config.mjs          # CLI args, config loading, server config fetch
 │   ├── http.mjs            # HTTP POST helper
 │   ├── extract.mjs         # Message extraction, image compression, DDB upload
+│   ├── runtime-adapter.mjs # Shared runtime read contract
+│   ├── runtime-registry.mjs # Claude/Codex adapter registry
+│   ├── claude-runtime.mjs  # Claude runtime adapter
+│   ├── codex-runtime.mjs   # Codex Phase 1 runtime adapter
+│   ├── codex-session.mjs   # Codex rollout discovery
+│   ├── codex-extract.mjs   # Codex event normalization
 │   ├── session.mjs         # Preview, model, project name, session status detection
 │   ├── headless.mjs        # ClaudePool — persistent `claude -p` stream-json process per session
 │   ├── commands.mjs        # Slash-command scan (user/project/plugin/builtin)
@@ -404,6 +419,7 @@ agentpeek/
 ├── docs/
 │   ├── api.md              # Full API specification
 │   ├── claude-code-bridge.md  # This file
+│   ├── codex.md            # Codex design, implementation status, and validation
 │   ├── frontend-patterns.md   # Frontend rendering patterns
 │   └── assets/             # Images (promo.avif, etc.)
 ├── package.json            # Root package (Vite + Tauri CLI)
@@ -457,7 +473,7 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 - Biometric auth: `tauri-plugin-biometric` (planned)
 
 ### Phase 3: Production Polish (Future)
-- Windows support: bridge process detection, Task Scheduler auto-start, %APPDATA% paths
+- Improve native Windows process/status precision
 - Push notifications
-- Persist bridge sync state (~/.claude-bridge/sync-state.json) to avoid re-uploading messages on restart
-- DDB TTL: auto-clean messages for sessions inactive > 30 days
+- Harden the existing persisted `~/.claude-bridge/synced.json` recovery path
+- Continue monitoring the existing 90-day message-cache TTL
