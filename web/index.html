@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>AgentPeek</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
+<link rel="preload" as="image" type="image/svg+xml" href="./assets/claude-code.svg">
+<link rel="preload" as="image" type="image/svg+xml" href="./assets/codex.svg">
+<script>
+  if (sessionStorage.getItem('agentpeek-returning-home') === '1') {
+    window.__returningHome = true;
+    document.documentElement.classList.add('returning-home');
+    sessionStorage.removeItem('agentpeek-returning-home');
+  }
+  addEventListener('pageshow', function () {
+    sessionStorage.removeItem('agentpeek-returning-home');
+  });
+</script>
 <!-- Critical CSS inline — prevents FOUC before bundled CSS loads (mobile webview cold start) -->
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -20,7 +32,7 @@
   /* iOS WKWebView's frame settles ~50ms after first paint (status bar area gets cropped).
      Hide body briefly on iOS so users see the dark background instead of content jumping down.
      Android renders correctly on first frame, so it skips this. */
-  @supports (-webkit-touch-callout:none){body{opacity:0}body.ready{opacity:1;transition:opacity .1s}}
+  @supports (-webkit-touch-callout:none){body{opacity:0}body.ready{opacity:1;transition:opacity .1s}html.returning-home body.ready{transition:none}}
   .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
   .top-title{font-weight:600;color:#e6edf3}
   a.top-gear,a.top-gear:link,a.top-gear:visited{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;color:#6e7681;text-decoration:none}
@@ -29,9 +41,12 @@
   a.top-gear.syncing,#top-right.syncing .top-gear{animation:apk-spin 1.8s linear infinite;transition:none}
   #top-right.syncing .new-session-btn svg{border-color:transparent}
   #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
+  .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
+  .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
   .breadcrumb{display:none;flex-shrink:0}
   #content{flex:1;overflow-y:auto}
 </style>
+<link rel="stylesheet" href="css/style.css">
 <!-- Inline shell: auth guard + parallel fetch (devices + active-sessions) + first paint.
      Runs before entry-index.js so the network request flies out at HTML parse time.
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
@@ -68,6 +83,7 @@
   function setSync(syncing) {
     var topRight = document.getElementById('top-right');
     if (!topRight) return;
+    if (window.__returningHome && syncing) syncing = false;
     topRight.classList.toggle('syncing', syncing);
     var legacyGear = topRight.querySelector('.top-gear.syncing');
     if (legacyGear) legacyGear.classList.remove('syncing');
@@ -100,7 +116,7 @@
     var runtime = s.runtime === 'codex' || String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
     var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
     return '<span class="runtime-mark" role="img" aria-label="' + label + '" title="' + label + '">'
-      + '<img class="runtime-icon" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
   }
 
   function renderInline(activeData, devData) {
@@ -137,7 +153,7 @@
     var recentSessions = (activeData && activeData.recentSessions) || [];
     if (recentSessions.length) {
       var raCollapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
-      var chevron = '<svg class="collapse-arrow" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
+      var chevron = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
       html += '<div id="recent-agents-section">';
       html += '<div class="section-title collapsible' + (raCollapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">Completed Sessions (' + recentSessions.length + ') ' + chevron + '</div>';
       html += '<div class="active-grid" id="recent-agents-grid" style="' + (raCollapsed ? 'display:none' : '') + '">';
@@ -176,6 +192,7 @@
     }
     if (!html) html = '<div class="empty">No devices yet</div>';
     content.innerHTML = html;
+    if (window.__returningHome) document.body.classList.add('ready');
 
     // Event delegation: route clicks through app.js once it's loaded; queue if not yet.
     if (!content.__homeNavBound) {

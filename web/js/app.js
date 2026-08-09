@@ -10,6 +10,7 @@ import {
   attachEdgeBackGesture,
   markCurrentRoute,
   prepareNavigation,
+  savePagePreview,
   takePreviousNavigation,
 } from './edge-back.js';
 
@@ -162,7 +163,7 @@ function runtimeIcon(sessionId, runtime) {
   var value = sessionRuntime(sessionId, runtime);
   var label = value === 'codex' ? 'Codex' : 'Claude Code';
   return '<span class="runtime-mark" role="img" aria-label="' + label + '" title="' + label + '">'
-    + '<img class="runtime-icon" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
 }
 
 function showStats() {}  // no-op, stats bar removed
@@ -384,6 +385,9 @@ function prepareNavigationPreview(targetState) {
 }
 
 attachEdgeBackGesture(navigateUp, prepareNavigationPreview);
+document.addEventListener('click', function (e) {
+  if (e.target.closest('a[href="setup.html"]')) savePagePreview();
+}, true);
 
 migrateLegacyListCache();
 

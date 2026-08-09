@@ -1,6 +1,7 @@
 // Entry for setup.html — install command + Start URL QR
 import { state } from './state.js';
 import './api.js';
+import { attachPageEdgeBackGesture } from './edge-back.js';
 import qrcode from 'qrcode-generator';
 
 (function () {
@@ -75,6 +76,15 @@ import qrcode from 'qrcode-generator';
 
   window.copyCmd = copyCmd;
   window.copyUrl = copyUrl;
+
+  attachPageEdgeBackGesture(function () {
+    sessionStorage.setItem('agentpeek-returning-home', '1');
+    var referrer = document.referrer ? new URL(document.referrer) : null;
+    var fromIndex = referrer && referrer.origin === location.origin
+      && /\/(?:index\.html)?$/.test(referrer.pathname);
+    if (fromIndex && history.length > 1) history.back();
+    else location.href = 'index.html';
+  }, ['.setup-bar', '.setup-content']);
 
   // App version — baked at build time from package.json, shown on all platforms.
   var verEl = document.getElementById('appVersion');

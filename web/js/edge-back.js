@@ -6,6 +6,7 @@ var renderedState = window.__inlineRendered
   : null;
 var navigationStack = [];
 var restoringNavigation = false;
+var PAGE_PREVIEW_KEY = 'agentpeek-page-preview';
 
 function routeKey(appState) {
   if (!appState.device) return 'devices';
@@ -44,6 +45,19 @@ function captureCurrentPage() {
     contentHtml: content.innerHTML,
     scrollTop: content.scrollTop
   };
+}
+
+export function savePagePreview() {
+  var snapshot = captureCurrentPage();
+  if (!snapshot) {
+    sessionStorage.removeItem(PAGE_PREVIEW_KEY);
+    return;
+  }
+  try {
+    sessionStorage.setItem(PAGE_PREVIEW_KEY, JSON.stringify(snapshot));
+  } catch (e) {
+    sessionStorage.removeItem(PAGE_PREVIEW_KEY);
+  }
 }
 
 function navigationDepth(appState) {
@@ -128,7 +142,9 @@ export function takePreviousNavigation() {
   return cloneNavState(navigationStack.pop().state);
 }
 
-export function attachEdgeBackGesture(navigateUp, preparePrevious) {
+export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
+  options = options || {};
+  var pageMode = !!options.pageMode;
   var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (!isIOS) return;
@@ -148,6 +164,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious) {
   var shadow = null;
   var foreground = [];
   var settleTimer = null;
+  var edgeGuard = null;
 
   function hasOpenOverlay() {
     var overlays = document.querySelectorAll('.modal-overlay, .mermaid-fs-overlay, .file-overlay, .img-overlay');
@@ -194,13 +211,16 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious) {
 
   function beginSwipe(snapshot, dx) {
     underlay = makeUnderlay(snapshot);
-    var candidates = [
-      document.querySelector('body > .top-bar'),
-      document.getElementById('breadcrumb'),
-      document.getElementById('content'),
-      document.getElementById('input-bar'),
-      document.getElementById('scroll-bottom-btn')
-    ].filter(Boolean);
+    var selectors = options.foregroundSelectors || [
+      'body > .top-bar',
+      '#breadcrumb',
+      '#content',
+      '#input-bar',
+      '#scroll-bottom-btn'
+    ];
+    var candidates = selectors.map(function (selector) {
+      return document.querySelector(selector);
+    }).filter(Boolean);
     foreground = candidates.filter(function (el) {
       return !candidates.some(function (parent) { return parent !== el && parent.contains(el); });
     });
@@ -236,9 +256,11 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious) {
     settleTimer = setTimeout(function () {
       if (complete) {
         navigateUp();
-        requestAnimationFrame(function () {
-          requestAnimationFrame(cleanupSwipe);
-        });
+        if (!pageMode) {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(cleanupSwipe);
+          });
+        }
       } else {
         cleanupSwipe();
       }
@@ -247,10 +269,11 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious) {
 
   document.addEventListener('pointerdown', function (e) {
     if (settling || e.pointerType === 'mouse' || e.clientX > 24 || hasOpenOverlay()) return;
-    if (!state.selectMode && !state.appState.device) return;
+    if (pageMode && e.target !== edgeGuard) return;
+    if (!pageMode && !state.selectMode && !state.appState.device) return;
     tracking = true;
     claimed = false;
-    selectionOnly = state.selectMode;
+    selectionOnly = !pageMode && state.selectMode;
     hierarchyOnly = false;
     startX = e.clientX;
     startY = e.clientY;
@@ -321,4 +344,21 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious) {
     e.preventDefault();
     e.stopPropagation();
   }, true);
+
+  if (pageMode) {
+    edgeGuard = document.createElement('div');
+    edgeGuard.className = 'edge-back-guard';
+    document.body.appendChild(edgeGuard);
+  }
+}
+
+export function attachPageEdgeBackGesture(navigateBack, foregroundSelectors) {
+  var snapshot = null;
+  try {
+    snapshot = JSON.parse(sessionStorage.getItem(PAGE_PREVIEW_KEY) || 'null');
+  } catch (e) {}
+  attachEdgeBackGesture(navigateBack, function () { return snapshot; }, {
+    pageMode: true,
+    foregroundSelectors: foregroundSelectors
+  });
 }

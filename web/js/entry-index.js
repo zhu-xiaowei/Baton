@@ -3,8 +3,6 @@
 // lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders
 // the device list (or when the user opens a session, whichever comes first).
 
-import '../css/style.css';
-
 import './state.js';
 import './api.js';
 import './components/skeleton.js';
