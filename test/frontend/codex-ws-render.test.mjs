@@ -38,7 +38,6 @@ expose('isToolResultOnly', (message) => Array.isArray(message.content)
   && message.content.every((block) => block.type === 'tool_result'));
 expose('isInterruptMsg', () => false);
 expose('isLocalCommandStdout', () => false);
-expose('deriveRunning', () => false);
 let apiResponse = { messages: [], hasMore: false };
 expose('api', async () => apiResponse);
 for (const name of [
@@ -49,16 +48,25 @@ for (const name of [
   'showStats',
   'updateBreadcrumb',
   'updateSendBtn',
-  'updateSpinner',
 ]) expose(name, () => {});
 
+await import('../../web/js/components/message.js');
+await import('../../web/js/runtime-status.js');
+expose('deriveRunning', window.deriveRunning);
 await import('../../web/js/components/tool.js');
 expose('renderToolNode', window.renderToolNode);
 await import('../../web/js/render.js');
 expose('renderMessages', window.renderMessages);
 expose('renderSingleMessage', window.renderSingleMessage);
 const { state } = await import('../../web/js/state.js');
+await import('../../web/js/components/typing-status.js');
+expose('updateSpinner', window.updateSpinner);
 await import('../../web/js/ws.js');
+
+test.afterEach(() => {
+  state.wsRunning = false;
+  window.updateSpinner();
+});
 
 function reset() {
   document.querySelector('.messages').innerHTML = '';
@@ -423,6 +431,92 @@ test('Codex WS keeps a foreground Ran before a later Explore completion', () => 
     .map((node) => node.textContent);
   assert.deepEqual(labels, ['Ran', 'Explored']);
   assert.deepEqual(descriptions, ['aws dynamodb get-item', 'Read tool-render.test.mjs']);
+});
+
+test('Codex WS keeps running through text updates and stops on task_complete', () => {
+  reset();
+  state.wsRunning = true;
+
+  const commentary = {
+    uuid: 'commentary',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'Still working.' }],
+    timestamp: '2026-08-10T05:00:01.000Z',
+  };
+  const finalText = {
+    uuid: 'final-text',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'Finished.' }],
+    timestamp: '2026-08-10T05:00:02.000Z',
+  };
+  const failedTool = {
+    uuid: 'recoverable-tool-failure',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'recoverable-tool',
+      content: 'Temporary failure',
+      is_error: true,
+    }],
+    timestamp: '2026-08-10T05:00:02.500Z',
+  };
+  const taskComplete = {
+    uuid: 'task-complete',
+    type: 'assistant',
+    content: [],
+    timestamp: '2026-08-10T05:00:03.000Z',
+    stopReason: 'end_turn',
+  };
+
+  send([commentary]);
+  assert.equal(state.wsRunning, true);
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+
+  send([finalText]);
+  assert.equal(state.wsRunning, true);
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+
+  send([failedTool]);
+  assert.equal(state.wsRunning, true);
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+
+  send([taskComplete]);
+  assert.equal(state.wsRunning, false);
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'none');
+  assert.equal(document.querySelectorAll('.assistant-text').length, 2);
+
+  const history = [commentary, finalText, failedTool, taskComplete];
+  document.querySelector('.messages').innerHTML = window.renderMessages(history, 'codex');
+  assert.equal(window.deriveRunning(history.slice(0, -1), 'running', 'codex'), true);
+  assert.equal(window.deriveRunning(history, 'running', 'codex'), false);
+  assert.equal(document.querySelectorAll('.assistant-text').length, 2);
+});
+
+test('Claude still treats a tail error-only tool result as stopped', () => {
+  const history = [{
+    uuid: 'claude-tool',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'claude-tool',
+      name: 'Bash',
+      input: { command: 'false' },
+    }],
+    timestamp: '2026-08-10T05:10:00.000Z',
+    stopReason: 'tool_use',
+  }, {
+    uuid: 'claude-tool-error',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'claude-tool',
+      content: 'Command failed',
+      is_error: true,
+    }],
+    timestamp: '2026-08-10T05:10:01.000Z',
+  }];
+
+  assert.equal(window.deriveRunning(history, 'running', 'claude'), false);
 });
 
 test('Codex grouping does not mutate Claude turns', () => {

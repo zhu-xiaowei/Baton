@@ -920,7 +920,7 @@ async function loadMessages(sessionId, preview, status) {
     // Derive running from the tail. The list `status` is the bridge's
     // pane-checked verdict — authoritative for the ambiguous trailing-user case
     // (a reverted prompt looks 'running' in the stream but the pane is idle).
-    state.wsRunning = deriveRunning(state.wsAllMessages, status);
+    state.wsRunning = deriveRunning(state.wsAllMessages, status, state.appState.runtime);
     updateSendBtn();
 
     // Clamp before scrolling: clamp shrinks long messages, so scrolling first

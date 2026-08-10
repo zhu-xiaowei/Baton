@@ -326,9 +326,10 @@ Parcel 原生目录订阅发现 rollout
 |---|---|
 | `event_msg/user_message` | `user` |
 | `response_item/message(role=assistant)` | `assistant` text |
+| `event_msg/task_complete` | 不可见的 `assistant/end_turn` lifecycle，用于结束当前 spinner |
 | `exec_command` | `Bash` |
 | `update_plan` | `TodoWrite` |
-| `apply_patch` | 一个或多个 `Edit` |
+| `apply_patch` | 一个或多个 `Edit`；无 `FileChange/PatchApply` lifecycle 的预校验失败不显示 |
 | `write_stdin` | `WriteStdin` |
 | `item_completed/CommandExecution` | 更新原 `Bash` 的权威输出、退出状态、命令分类和完成时间 |
 | `item_completed/McpToolCall` | 更新原 MCP 调用的 server/tool、最终结果和 `Calling/Called` 状态 |
@@ -347,8 +348,20 @@ Parcel 原生目录订阅发现 rollout
 范围内相邻、同内容、同一轮 prompt 只保留一次；普通重复用户
 消息不做全局去重。
 
+Codex 的中间进度和最终正文都使用 `response_item/message(role=assistant)`；其中
+`phase=final_answer` 只表示正文阶段，不代表 turn 已经完成。前端在这些文本到达后继续
+显示 running，直到随后独立的 `event_msg/task_complete` 被标准化为不可见
+`stopReason=end_turn` lifecycle。该 lifecycle 参与状态计算但不产生额外时间线节点。
+前端状态判断通过 runtime status adapter 分离：Claude 保留原有错误结果/交互工具规则；
+Codex 的普通工具失败仍属于运行中的回合，只有 `task_complete` 或 `turn_aborted` 才结束。
+
 工具通过 `call_id + occurrence` 配对，支持同一 Session 重用 call ID；消息 UUID 与工具
 配对 ID 分离。未完成或中断的工具允许只有 IN，不能制造不存在的 OUT。
+
+Codex 在 patch 语法或上下文预校验失败时只写 `custom_tool_call_output`，不会生成
+`FileChange` 或旧版 `patch_apply_begin/end`，TUI 因而不会创建 `Edited` 节点。Bridge
+同样跳过这类临时失败；一旦 patch 已进入 FileChange/PatchApply lifecycle，即使最终失败，
+仍保留 Edit 及其错误结果。
 
 ### 8.2 ViewImage
 
@@ -427,9 +440,9 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 | 初始化 dry-run 最终消息 | 约 4095 |
 | metadata/message key 冲突 | 0 |
 | Bridge 测试 | 21 passed |
-| Codex 测试 | 27 passed |
+| Codex 测试 | 29 passed |
 | Server 测试 | 13 passed |
-| Frontend 回归 | 39 passed |
+| Frontend 回归 | 41 passed |
 | Packaging 边界测试 | 4 passed |
 | Production build | passed |
 

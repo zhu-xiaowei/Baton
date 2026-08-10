@@ -108,7 +108,11 @@ test('Codex watcher sends new lines once and preserves a partial trailing line',
   assert.deepEqual(h.delivered.flatMap((batch) => batch.messages).map((message) => message.type), [
     'user',
     'assistant',
+    'assistant',
   ]);
+  const lifecycle = h.delivered[0].messages.at(-1);
+  assert.deepEqual(lifecycle.content, []);
+  assert.equal(lifecycle.stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[0])), lines.length);
   assert.equal(h.posts.length, 1);
   assert.equal(h.posts[0].body.statusDelta.from, 'new');
@@ -161,7 +165,8 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
 
   fail = false;
   await h.watcher.processFile(filePath);
-  assert.equal(delivered.length, 2);
+  assert.equal(delivered.length, 3);
+  assert.equal(delivered.at(-1).stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[1])), 6);
 });
 
@@ -467,7 +472,9 @@ test('Codex watcher rescans changes immediately after a watcher retry', async (t
   assert.deepEqual(h.delivered.flatMap((batch) => batch.messages).map((message) => message.type), [
     'user',
     'assistant',
+    'assistant',
   ]);
+  assert.equal(h.delivered.flatMap((batch) => batch.messages).at(-1).stopReason, 'end_turn');
 });
 
 test('Codex watcher handles rename, multiple homes, and running to completed status', async (t) => {

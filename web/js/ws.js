@@ -233,7 +233,11 @@ function handleWsMessage(msg) {
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
         state.wsRenderedCount = state.wsAllMessages.length;
-        state.wsRunning = deriveRunning(state.wsAllMessages, state.wsOpenStatus);
+        state.wsRunning = deriveRunning(
+          state.wsAllMessages,
+          state.wsOpenStatus,
+          state.appState.runtime,
+        );
         updateTitleFromMessages();
         updateSendBtn();
         loadImages(content);
@@ -922,7 +926,7 @@ function updateLastTurn() {
   // the first real reply; deriveRunning skips them and scans back to the prior
   // end_turn → idle, flickering the spinner off. Only let real assistant/user frames
   // downgrade a running spinner; metadata-only batches keep the current state.
-  var derived = deriveRunning(state.wsAllMessages);
+  var derived = deriveRunning(state.wsAllMessages, null, state.appState.runtime);
   var hasTurnFrame = newMessages.some(function (m) {
     return m.type === 'assistant' || m.type === 'user';
   });
@@ -1056,7 +1060,7 @@ async function recoverMissing(after) {
       clearStreamPreviews();
       container.innerHTML = renderMessages(state.wsAllMessages, state.appState.runtime);
       state.wsRenderedCount = state.wsAllMessages.length;
-      state.wsRunning = deriveRunning(state.wsAllMessages);
+      state.wsRunning = deriveRunning(state.wsAllMessages, null, state.appState.runtime);
       updateSendBtn();
       loadImages(container);
       clampOverflow(container);

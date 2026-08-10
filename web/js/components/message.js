@@ -63,60 +63,6 @@
     return false;
   };
 
-  // Spinner's single source of truth: walk the tail to the last real turn.
-  // Assistant pre-end_turn / user awaiting reply → running; else not running.
-  // authStatus (optional): bridge's session status; for a trailing lone `user` entry
-  // (ambiguous in the stream), trust authStatus==='completed' over the stream.
-  // True if this tool_result answers an AskUserQuestion/ExitPlanMode (is_error but not an interrupt — CC resumes).
-  window.isInteractiveToolResult = function (msg, messages) {
-    if (!Array.isArray(msg.content)) return false;
-    var ids = {};
-    for (var i = 0; i < messages.length; i++) {
-      var c = messages[i] && messages[i].content;
-      if (!Array.isArray(c)) continue;
-      for (var j = 0; j < c.length; j++) {
-        if (c[j].type === 'tool_use' && (c[j].name === 'AskUserQuestion' || c[j].name === 'ExitPlanMode' || c[j].name === 'exit_plan_mode')) ids[c[j].id] = true;
-      }
-    }
-    // An answered ask/plan keeps CC running (summary follows); a cancelled one (rejection text) does not.
-    return msg.content.some(function (b) {
-      if (b.type !== 'tool_result' || !ids[b.tool_use_id]) return false;
-      var t = typeof b.content === 'string' ? b.content : (Array.isArray(b.content) ? b.content.map(function (x) { return x.text || ''; }).join('') : '');
-      return t.indexOf('tool use was rejected') === -1;
-    });
-  };
-
-  window.deriveRunning = function (messages, authStatus) {
-    if (!Array.isArray(messages)) return false;
-    var atTail = true; // first status-relevant message seen = the tail (what bridge inspects)
-    for (var i = messages.length - 1; i >= 0; i--) {
-      var m = messages[i];
-      if (!m) continue;
-      if (m.type === 'ai-title' || m.type === 'custom-title' || m.type === 'last-prompt') continue;
-      if (window.isLocalCommandStdout(m)) return false;
-      // Match bridge statusFromEntry: only streaming (null) / tool_use are running;
-      // end_turn / max_tokens / stop_sequence are a finished turn → not running.
-      if (m.type === 'assistant') return m.stopReason == null || m.stopReason === 'tool_use';
-      if (m.type === 'user') {
-        if (window.isInterruptMsg(m)) return false;
-        if (window.isLocalCommandMarker(m)) return false;
-        if (window.isToolResultOnly(m)) {
-          // Tail error-only tool_result = interrupt → idle (but an answered ask/plan OUT is running, not idle).
-          if (atTail && Array.isArray(m.content) && m.content.every(function (b) { return b.is_error; })
-            && !window.isInteractiveToolResult(m, messages)) return false;
-          atTail = false;
-          continue;
-        }
-        // Real user turn awaiting a reply — the ambiguous case. Defer to the
-        // bridge's verdict when it says the turn is done (only at tail).
-        if (atTail && authStatus === 'completed') return false;
-        return true;
-      }
-      atTail = false;
-    }
-    return false;
-  };
-
   // Detect if filename is a code file
   function isCodeFile(name) {
     const ext = (name.split('.').pop() || '').toLowerCase();

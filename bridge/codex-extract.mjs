@@ -218,6 +218,26 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
   ];
 }
 
+function hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles) {
+  const hidden = new Set();
+  for (const [callId, calls] of patchCalls) {
+    const sortedCalls = [...calls].sort((a, b) => a - b);
+    const failures = [...(patchFailures.get(callId) || [])].sort((a, b) => a - b);
+    const lifecycles = [...(patchLifecycles.get(callId) || [])].sort((a, b) => a - b);
+    for (let index = 0; index < sortedCalls.length; index++) {
+      const callLine = sortedCalls[index];
+      const nextCall = sortedCalls[index + 1] ?? Infinity;
+      const failedLines = failures.filter((line) => line > callLine && line < nextCall);
+      if (!failedLines.length) continue;
+      const started = lifecycles.some((line) => line > callLine && line < nextCall);
+      if (started) continue;
+      hidden.add(callLine);
+      for (const line of failedLines) hidden.add(line);
+    }
+  }
+  return hidden;
+}
+
 function analyzeLines(lines) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
@@ -225,9 +245,20 @@ function analyzeLines(lines) {
   const completedWebSearchIds = new Set();
   const commandExecutions = new Map();
   const mcpToolCalls = new Map();
+  const patchCalls = new Map();
+  const patchFailures = new Map();
+  const patchLifecycles = new Map();
+  const rememberPatchLine = (map, callId, line) => {
+    const entries = map.get(callId) || [];
+    entries.push(line);
+    map.set(callId, entries);
+  };
   for (let index = lines.length - 1; index >= 0; index--) {
     const hasUser = lines[index].includes('"user_message"');
     const hasPatch = lines[index].includes('patch_apply_end')
+      || lines[index].includes('patch_apply_begin')
+      || lines[index].includes('"FileChange"')
+      || lines[index].includes('"apply_patch"')
       || lines[index].includes('custom_tool_call_output');
     const hasWebSearch = lines[index].includes('"WebSearch"');
     const hasCommandExecution = lines[index].includes('"CommandExecution"');
@@ -238,6 +269,28 @@ function analyzeLines(lines) {
     let entry;
     try { entry = JSON.parse(lines[index]); } catch { continue; }
     const payload = entry.payload || {};
+    const callId = String(payload.call_id || payload.item?.id || '');
+    if (entry.type === 'response_item'
+      && payload.type === 'custom_tool_call'
+      && payload.name === 'apply_patch'
+      && callId) {
+      rememberPatchLine(patchCalls, callId, index);
+    }
+    if (entry.type === 'response_item'
+      && payload.type === 'custom_tool_call_output'
+      && callId
+      && /^apply_patch verification failed:/i.test(outputText(payload.output).trim())) {
+      rememberPatchLine(patchFailures, callId, index);
+    }
+    if (callId && (
+      (entry.type === 'event_msg'
+        && ['patch_apply_begin', 'patch_apply_end'].includes(payload.type))
+      || (entry.type === 'event_msg'
+        && ['item_started', 'item_completed'].includes(payload.type)
+        && payload.item?.type === 'FileChange')
+    )) {
+      rememberPatchLine(patchLifecycles, callId, index);
+    }
     if (entry.type === 'event_msg' && payload.type === 'user_message') {
       const text = String(payload.message || '').trim();
       if (text) eventUserCounts.set(text, (eventUserCounts.get(text) || 0) + 1);
@@ -267,16 +320,16 @@ function analyzeLines(lines) {
       mcpToolCalls.set(callId, calls);
     }
     if (!hasPatch) continue;
-    const callId = String(payload.call_id || '');
-    if (!callId) continue;
+    const legacyCallId = String(payload.call_id || '');
+    if (!legacyCallId) continue;
     if (entry.type === 'event_msg' && payload.type === 'patch_apply_end') {
-      pendingPatchEnds.set(callId, (pendingPatchEnds.get(callId) || 0) + 1);
+      pendingPatchEnds.set(legacyCallId, (pendingPatchEnds.get(legacyCallId) || 0) + 1);
     } else if (entry.type === 'response_item' && payload.type === 'custom_tool_call_output') {
-      const count = pendingPatchEnds.get(callId) || 0;
+      const count = pendingPatchEnds.get(legacyCallId) || 0;
       if (count > 0) {
         skipped.add(index);
-        if (count === 1) pendingPatchEnds.delete(callId);
-        else pendingPatchEnds.set(callId, count - 1);
+        if (count === 1) pendingPatchEnds.delete(legacyCallId);
+        else pendingPatchEnds.set(legacyCallId, count - 1);
       }
     }
   }
@@ -286,6 +339,7 @@ function analyzeLines(lines) {
     commandExecutions,
     completedWebSearchIds,
     eventUserCounts,
+    hiddenPatchLines: hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles),
     mcpToolCalls,
     skippedCustomOutputs: skipped,
   };
@@ -300,6 +354,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     commandExecutions,
     completedWebSearchIds,
     eventUserCounts,
+    hiddenPatchLines,
     mcpToolCalls,
     skippedCustomOutputs,
   } = analyzeLines(lines);
@@ -350,6 +405,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     const payload = entry.payload || {};
     const timestamp = timestampFor(entry);
     const shouldEmit = line >= startLine;
+    if (hiddenPatchLines.has(line)) {
+      if (payload.type === 'custom_tool_call' && payload.name === 'apply_patch') {
+        const callId = String(payload.call_id || payload.id || `line-${line}`);
+        callCounts.set(callId, (callCounts.get(callId) || 0) + 1);
+      }
+      continue;
+    }
     if (shouldEmit && (
       entry.type === 'session_meta'
       || (entry.type === 'turn_context' && payload.model)
@@ -438,6 +500,21 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           uuid: stableId(sessionId, line, 'assistant', payload),
           type: 'assistant',
           content: [{ type: 'text', text }],
+          timestamp,
+        });
+      }
+      continue;
+    }
+
+    if (entry.type === 'event_msg' && payload.type === 'task_complete') {
+      if (shouldEmit) {
+        messages.push({
+          uuid: stableId(sessionId, line, 'task_complete', {
+            turn_id: payload.turn_id,
+            completed_at: payload.completed_at,
+          }),
+          type: 'assistant',
+          content: [],
           timestamp,
           stopReason: 'end_turn',
         });

@@ -729,6 +729,63 @@ test('Codex extraction renders modern context compaction without exposing replac
   }
 });
 
+test('Codex assistant text stays running until the explicit task_complete event', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [
+      {
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-1' },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          phase: 'commentary',
+          content: [{ type: 'output_text', text: 'Still working.' }],
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          phase: 'final_answer',
+          content: [{ type: 'output_text', text: 'Finished.' }],
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'task_complete',
+          turn_id: 'turn-1',
+          last_agent_message: 'Finished.',
+          completed_at: 123,
+        },
+      },
+    ].map((entry, index) => ({
+      ...entry,
+      timestamp: `2026-08-10T05:00:0${index}.000Z`,
+    }));
+    fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID);
+    assert.deepEqual(extracted.messages.map((message) => message.stopReason), [
+      undefined,
+      undefined,
+      'end_turn',
+    ]);
+    assert.deepEqual(extracted.messages.at(-1).content, []);
+
+    const incremental = extractCodexMessages(target, SESSION_ID, { startLine: 3 });
+    assert.equal(incremental.messages.length, 1);
+    assert.equal(incremental.messages[0].stopReason, 'end_turn');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('incremental extraction rebuilds pairing state before the watermark', () => {
   const { messages } = extractCodexMessages(FIXTURE, SESSION_ID, { startLine: 10 });
   const first = messages[0];
@@ -782,6 +839,97 @@ test('late patch metadata overwrites the fallback output instead of duplicating 
       && message.content.some((block) => block.type === 'tool_result' && block.tool_use_id === editUse.id));
     assert.ok(enriched);
     assert.equal(`${enriched.timestamp}#${enriched.uuid}`, `${fallback.timestamp}#${fallback.uuid}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex hides apply_patch preflight failures but keeps the corrected FileChange', () => {
+  const { root, target } = tempRollout();
+  try {
+    const callId = 'reused-patch-call';
+    const entries = [
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'apply_patch',
+          call_id: callId,
+          input: [
+            '*** Begin Patch',
+            '*** Update File: missing.js',
+            '@@',
+            '-old',
+            '+new',
+            '*** End Patch',
+          ].join('\n'),
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: callId,
+          output: 'apply_patch verification failed: Failed to find expected lines in missing.js',
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'apply_patch',
+          call_id: callId,
+          input: [
+            '*** Begin Patch',
+            '*** Add File: corrected.js',
+            '+export const corrected = true;',
+            '*** End Patch',
+          ].join('\n'),
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          item: {
+            type: 'FileChange',
+            id: callId,
+            status: 'completed',
+            changes: {
+              'corrected.js': {
+                type: 'add',
+                content: 'export const corrected = true;\n',
+              },
+            },
+          },
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: callId,
+          output: 'Exit code: 0\nOutput:\nSuccess. Updated corrected.js',
+        },
+      },
+    ].map((entry, index) => ({
+      ...entry,
+      timestamp: `2026-08-10T05:10:0${index}.000Z`,
+    }));
+    fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID);
+    const blocks = extracted.messages.flatMap((message) =>
+      Array.isArray(message.content) ? message.content : []);
+    const uses = blocks.filter((block) => block.type === 'tool_use');
+    const results = blocks.filter((block) => block.type === 'tool_result');
+
+    assert.equal(uses.length, 1);
+    assert.equal(uses[0].name, 'Edit');
+    assert.equal(uses[0].input.file_path, 'corrected.js');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].tool_use_id, uses[0].id);
+    assert.doesNotMatch(JSON.stringify(extracted.messages), /verification failed|missing\.js/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
