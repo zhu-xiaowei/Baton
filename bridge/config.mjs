@@ -16,9 +16,7 @@ export const CODEX_STATUS_RECHECK_MS = 30_000;
 export const CODEX_WATCH_RESCAN_MS = 5 * 60_000;
 export const CODEX_RECENT_FILE_WATCH_LIMIT = 64;
 
-// Agent state comes from `claude agents --json --all` (daemon-live, unlike the
-// stale jobs/*/state.json files). Cache the CLI output briefly (high-frequency
-// callers) and poll for changes to push status updates.
+// Cache agent identity plus roster-aware effective status for frequent callers.
 export const AGENTS_JSON_TTL_MS = 3000;       // reuse a --json result this long
 export const AGENTS_POLL_INTERVAL_MS = 8000;  // scan for agent state changes → sync DDB
 export const MAX_POST_BYTES = 4 * 1024 * 1024;

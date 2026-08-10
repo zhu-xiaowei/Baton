@@ -4,7 +4,7 @@ import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_I
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { headlessPushed, poolOwns } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
@@ -138,13 +138,14 @@ async function readAndSend(config, filename, sessionId) {
     if (poolOwns(sessionId)) return;
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
     const dm = getDaemonSessions().get(sessionId);
-    // Daemon agents use the daemon-live status directly; others debounce the
-    // running→completed downgrade so the badge doesn't flicker mid-task.
-    const newStatus = dm ? dm.status : resolveStatus(sessionId, lastStatus);
-    await postSessionMeta(config, filePath, filename, sessionId, newStatus, dm, gotNewTitle);
+    // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
+    const daemonActive = dm && getDaemonRunningSessionIds().has(sessionId);
+    const newStatus = daemonActive ? dm.status : resolveStatus(sessionId, lastStatus);
+    const agentMeta = dm && !daemonActive ? { ...dm, agentDetail: '' } : dm;
+    await postSessionMeta(config, filePath, filename, sessionId, newStatus, agentMeta, gotNewTitle);
     // Trailing edge: content settled but debounce held it 'running'. No more
     // writes will fire fs.watch, so re-evaluate once after debounce expires.
-    if (!dm && lastStatus !== 'running' && newStatus === 'running') scheduleRecheck(config, filePath, filename, sessionId);
+    if (!daemonActive && lastStatus !== 'running' && newStatus === 'running') scheduleRecheck(config, filePath, filename, sessionId);
   }
 }
 

@@ -80,7 +80,7 @@ export function discoverClaudeSessions(options = {}) {
     }
   }
 
-  const daemonMeta = getDaemonSessions();
+  const daemonMeta = options.daemonMeta || getDaemonSessions();
   for (const session of sessions) {
     const daemon = daemonMeta.get(session.nativeSessionId);
     if (!daemon) continue;
@@ -257,7 +257,7 @@ export const claudeRuntime = defineRuntimeAdapter({
     context.lastKnownStatus.set(nativeSessionId, newStatus);
     const lastActive = stat.mtime.toISOString();
     const projectName = readableProjectName(projectHash);
-    const daemon = getDaemonSessions().get(nativeSessionId);
+    const daemon = (context.daemonMeta || getDaemonSessions()).get(nativeSessionId);
     const metadata = getSessionMetadata(filePath);
     const session = {
       id: nativeSessionId,
@@ -274,7 +274,9 @@ export const claudeRuntime = defineRuntimeAdapter({
     if (daemon) {
       session.isAgent = true;
       session.agentName = daemon.agentName;
-      session.agentDetail = detail || daemon.agentDetail || '';
+      session.agentDetail = newStatus === 'needs_input'
+        ? (detail !== undefined ? detail : daemon.agentDetail || '')
+        : '';
     }
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,

@@ -1,0 +1,382 @@
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import test from 'node:test';
+import {
+  claudeRuntime,
+  discoverClaudeSessions,
+} from '../../bridge/claude-runtime.mjs';
+import { ClaudePool } from '../../bridge/headless.mjs';
+import {
+  resolveAgentMetadata,
+  statusFromEntry,
+} from '../../bridge/session.mjs';
+
+function agent(sessionId, state = 'blocked') {
+  return {
+    id: sessionId.slice(0, 8),
+    sessionId,
+    kind: 'background',
+    name: 'Background task',
+    state,
+    waitingFor: 'Old daemon question',
+  };
+}
+
+function sessionFixture(sessionId, tail = 'completed') {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-agent-status-'));
+  const project = '-tmp-agent-project';
+  const projectDir = path.join(root, project);
+  const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+  fs.mkdirSync(projectDir, { recursive: true });
+  const rows = [{
+    type: 'user',
+    uuid: `${sessionId}-user`,
+    timestamp: '2026-08-10T00:00:00.000Z',
+    message: { content: 'Continue' },
+  }];
+  if (tail === 'completed') {
+    rows.push({
+      type: 'assistant',
+      uuid: `${sessionId}-assistant`,
+      timestamp: '2026-08-10T00:00:01.000Z',
+      message: {
+        model: 'claude-test',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Done' }],
+      },
+    });
+  }
+  fs.writeFileSync(filePath, `${rows.map(JSON.stringify).join('\n')}\n`);
+  return { root, project, filePath };
+}
+
+const noProcesses = () => ({ projects: new Set(), sessions: new Set() });
+
+function writeRows(filePath, rows) {
+  fs.writeFileSync(filePath, `${rows.map(JSON.stringify).join('\n')}\n`);
+}
+
+test('roster-active blocked agent uses daemon status and current question', () => {
+  const sessionId = '11111111-1111-4111-8111-111111111111';
+  assert.deepEqual(resolveAgentMetadata(agent(sessionId), {
+    daemonActive: true,
+    agentDetail: 'Current daemon question',
+  }), {
+    isAgent: true,
+    agentName: 'Background task',
+    agentDetail: 'Current daemon question',
+    status: 'needs_input',
+  });
+});
+
+test('roster-active working agent is running without input detail', () => {
+  const sessionId = '22222222-2222-4222-8222-222222222222';
+  assert.deepEqual(resolveAgentMetadata(agent(sessionId, 'working'), {
+    daemonActive: true,
+    agentDetail: 'Must not leak',
+  }), {
+    isAgent: true,
+    agentName: 'Background task',
+    agentDetail: '',
+    status: 'running',
+  });
+});
+
+test('roster-active done agent is completed without stale detail', () => {
+  const sessionId = '23232323-2323-4232-8232-232323232323';
+  assert.deepEqual(resolveAgentMetadata(agent(sessionId, 'done'), {
+    daemonActive: true,
+    agentDetail: 'Must not leak',
+  }), {
+    isAgent: true,
+    agentName: 'Background task',
+    agentDetail: '',
+    status: 'completed',
+  });
+});
+
+test('headless-taken-over blocked ghost falls back to completed jsonl', () => {
+  const sessionId = '33333333-3333-4333-8333-333333333333';
+  const fixture = sessionFixture(sessionId);
+  try {
+    assert.deepEqual(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo: noProcesses(),
+      agentDetail: 'Stale question',
+    }), {
+      isAgent: true,
+      agentName: 'Background task',
+      agentDetail: '',
+      status: 'completed',
+    });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('inactive historical agent resumed by an external process can be running', () => {
+  const sessionId = '44444444-4444-4444-8444-444444444444';
+  const fixture = sessionFixture(sessionId, 'running');
+  try {
+    assert.deepEqual(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo: {
+        projects: new Set([fixture.project]),
+        sessions: new Set([sessionId]),
+      },
+      agentDetail: 'Stale question',
+    }), {
+      isAgent: true,
+      agentName: 'Background task',
+      agentDetail: '',
+      status: 'running',
+    });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('inactive agent with unfinished jsonl but no process is completed', () => {
+  const sessionId = '45454545-4545-4454-8454-454545454545';
+  const fixture = sessionFixture(sessionId, 'running');
+  try {
+    assert.deepEqual(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo: noProcesses(),
+      agentDetail: 'Stale question',
+    }), {
+      isAgent: true,
+      agentName: 'Background task',
+      agentDetail: '',
+      status: 'completed',
+    });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('inactive agent with missing history is completed but keeps identity', () => {
+  const sessionId = '55555555-5555-4555-8555-555555555555';
+  assert.deepEqual(resolveAgentMetadata(agent(sessionId), {
+    daemonActive: false,
+    filePath: null,
+    runningInfo: noProcesses(),
+    agentDetail: 'Stale question',
+  }), {
+    isAgent: true,
+    agentName: 'Background task',
+    agentDetail: '',
+    status: 'completed',
+  });
+});
+
+test('startup discovery does not resurrect needs_input after headless takeover', () => {
+  const sessionId = '66666666-6666-4666-8666-666666666666';
+  const fixture = sessionFixture(sessionId);
+  try {
+    const effectiveAgent = resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo: noProcesses(),
+      agentDetail: 'Stale question',
+    });
+    const catalog = discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: noProcesses(),
+      daemonMeta: new Map([[sessionId, effectiveAgent]]),
+    });
+    assert.equal(catalog.sessions.length, 1);
+    assert.equal(catalog.sessions[0].isAgent, true);
+    assert.equal(catalog.sessions[0].agentName, 'Background task');
+    assert.equal(catalog.sessions[0].agentDetail, '');
+    assert.equal(catalog.sessions[0].status, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('pool status writes clear stale detail except for current needs_input', async () => {
+  const sessionId = '77777777-7777-4777-8777-777777777777';
+  const fixture = sessionFixture(sessionId);
+  const daemonMeta = new Map([[sessionId, {
+    isAgent: true,
+    agentName: 'Background task',
+    agentDetail: 'Stale daemon question',
+    status: 'needs_input',
+  }]]);
+  try {
+    for (const item of [
+      { previous: 'needs_input', next: 'running', detail: undefined, expected: '' },
+      { previous: 'running', next: 'completed', detail: undefined, expected: '' },
+      { previous: 'running', next: 'needs_input', detail: 'Current control question', expected: 'Current control question' },
+      { previous: 'running', next: 'needs_input', detail: '', expected: '' },
+    ]) {
+      let request;
+      await claudeRuntime.updateSessionStatus(
+        { deviceName: 'test-device' },
+        sessionId,
+        fixture.filePath,
+        fixture.project,
+        item.next,
+        item.detail,
+        {
+          daemonMeta,
+          lastKnownStatus: new Map([[sessionId, item.previous]]),
+          postFn: async (_url, body) => { request = body; },
+        },
+      );
+      assert.equal(request.sessions[0].isAgent, true);
+      assert.equal(request.sessions[0].agentName, 'Background task');
+      assert.equal(request.sessions[0].agentDetail, item.expected);
+      assert.equal(request.sessions[0].status, item.next);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('terminal interaction tools are needs_input while ordinary tools keep running', () => {
+  for (const [name, stopReason, expected] of [
+    ['AskUserQuestion', 'tool_use', 'needs_input'],
+    ['AskUserQuestion', null, 'needs_input'],
+    ['ExitPlanMode', 'tool_use', 'needs_input'],
+    ['Bash', 'tool_use', 'running'],
+  ]) {
+    assert.equal(statusFromEntry({
+      type: 'assistant',
+      message: {
+        stop_reason: stopReason,
+        content: [{ type: 'tool_use', name, input: {} }],
+      },
+    }), expected);
+  }
+});
+
+test('idle pooled process no longer owns session status', () => {
+  const sessionId = '88888888-8888-4888-8888-888888888888';
+  const pool = new ClaudePool();
+  const proc = { busy: true, dead: false, shutdown() {} };
+  try {
+    pool.procs.set(sessionId, proc);
+    assert.equal(pool.owns(sessionId), true);
+    assert.equal(pool.isBusy(sessionId), true);
+    proc.busy = false;
+    assert.equal(pool.owns(sessionId), true);
+    assert.equal(pool.isBusy(sessionId), false);
+  } finally {
+    pool.shutdownAll();
+  }
+});
+
+test('agent moves from daemon needs_input through web completion back to terminal needs_input', async () => {
+  const sessionId = '99999999-9999-4999-8999-999999999999';
+  const fixture = sessionFixture(sessionId);
+  const daemon = resolveAgentMetadata(agent(sessionId), {
+    daemonActive: true,
+    agentDetail: 'Daemon question',
+  });
+  const daemonMeta = new Map([[sessionId, daemon]]);
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    assert.equal(daemon.status, 'needs_input');
+
+    for (const [previous, next] of [
+      ['needs_input', 'running'],
+      ['running', 'completed'],
+    ]) {
+      let request;
+      await claudeRuntime.updateSessionStatus(
+        { deviceName: 'test-device' },
+        sessionId,
+        fixture.filePath,
+        fixture.project,
+        next,
+        undefined,
+        {
+          daemonMeta,
+          lastKnownStatus: new Map([[sessionId, previous]]),
+          postFn: async (_url, body) => { request = body; },
+        },
+      );
+      assert.equal(request.sessions[0].status, next);
+      assert.equal(request.sessions[0].agentDetail, '');
+    }
+
+    const runningInfo = {
+      projects: new Set([fixture.project]),
+      sessions: new Set([sessionId]),
+    };
+    const terminalRows = [{
+      type: 'user',
+      message: { content: 'Continue in terminal' },
+    }];
+    writeRows(fixture.filePath, terminalRows);
+    assert.equal(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo,
+    }).status, 'running');
+
+    terminalRows.push({
+      type: 'assistant',
+      message: {
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          name: 'AskUserQuestion',
+          input: { questions: [{ question: 'Proceed?' }] },
+        }],
+      },
+    });
+    writeRows(fixture.filePath, terminalRows);
+    const waiting = resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo,
+    });
+    assert.equal(waiting.status, 'needs_input');
+    assert.equal(waiting.agentDetail, '');
+
+    terminalRows.push({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'ask-1',
+          content: 'Proceed',
+        }],
+      },
+    });
+    writeRows(fixture.filePath, terminalRows);
+    assert.equal(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo,
+    }).status, 'running');
+
+    terminalRows.push({
+      type: 'assistant',
+      message: {
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Done' }],
+      },
+    });
+    writeRows(fixture.filePath, terminalRows);
+    now += 11_000;
+    assert.equal(resolveAgentMetadata(agent(sessionId), {
+      daemonActive: false,
+      filePath: fixture.filePath,
+      runningInfo,
+    }).status, 'completed');
+  } finally {
+    Date.now = realNow;
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});

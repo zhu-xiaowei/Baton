@@ -28,13 +28,12 @@ const SLOW_RECONNECT_DELAY = 5 * 60_000;
 const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
 
-// onExit: a proc left the pool (reap/LRU/crash) without a turn result → settle to completed.
+// onExit only fires when a process exits during an active turn.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
 const _claudeRuntime = getRuntimeAdapter('claude');
 
-// True while the pool has a live process for this session — its status is owned
-// by pool lifecycle events, so the jsonl watcher must not also write it.
-export function poolOwns(sessionId) { return _pool.owns(sessionId); }
+// Idle pooled processes do not block terminal-driven status updates.
+export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 // uuids headless already broadcast live (stdout always beats jsonl landing, measured
 // 100ms~several s). watcher checks this so the later jsonl copy only writes DDB, not WS.

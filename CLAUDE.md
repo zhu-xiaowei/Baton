@@ -89,7 +89,8 @@ Done:
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
 Remaining TODO:
-- [ ] **External-session status precision** — lost capture-pane truth; `resolveStatus`/`getSessionStatus` fall back to `ps aux` + jsonl only, and can only produce `running`/`completed` (never `needs_input`). Pool-owned sessions report the full 3-state via pool events. See §DynamoDB Schema for the count/reconcile model.
+- [ ] Detect unstructured terminal questions that end as plain assistant text; structured
+  `AskUserQuestion`/`ExitPlanMode` already report `needs_input`.
 
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.claude-bridge/synced.json` recovery path
@@ -121,11 +122,14 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()`/`statusFromEntry()`
-    read jsonl tail `stop_reason` (`tool_use`/null → running; `end_turn`/interrupt/no-process →
+    read jsonl tail `stop_reason` (`tool_use`/null → running; structured
+    `AskUserQuestion`/`ExitPlanMode` → `needs_input`; `end_turn`/interrupt/no-process →
     `completed`). `resolveStatus()` holds `running` across a 10s debounce before downgrading.
-    External sessions can't observe `needs_input` (inherent precision loss — headless-only).
-  - **daemon agent**: `mapAgentState()` maps `--json` working/blocked/done → running/needs_input/completed.
-  - Precedence when a session matches more than one source: **daemon agent > pool-owned > external**.
+  - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
+    `--json` working/blocked/done → running/needs_input/completed. Inactive historical
+    `--all` entries preserve agent identity only; status falls back to process + jsonl.
+  - Precedence when a session matches more than one source: **pool-owned >
+    roster-active daemon agent > external/jsonl**.
     watcher/`checkStopped` skip status writes for pool-owned (`poolOwns()`) and daemon-agent sessions.
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
@@ -133,11 +137,18 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     frontend's `statusLabel`/`statusClass` fallback (no migration script; re-derived on next sync).
 - `projectHashToPath()` (in `session.mjs`): reverse hash to real directory path (validates each segment exists)
 - Claude Agents support:
-  - Agent status source is **`claude agents --json --all`** (daemon-live, matches the TUI), NOT `jobs/*/state.json` (the daemon computes state live but flushes state.json lazily, so it reads stale — often `done` while the agent is really blocked/working). `getAgentsJson()` runs the CLI (3s TTL cache; returns last-good cache on failure so agents never flap to stopped), resolving the `claude` binary by absolute path since systemd's bare PATH can't find it. `mapAgentState()` maps the CLI's clean working/blocked/done → running/needs_input/completed (the unified status enum; the daemon map's field is `status`, not the old `agentState`). Filter to `kind === 'background'` — `--json` also lists plain `kind:"interactive"` sessions (no `state`) which must NOT be tagged isAgent.
+  - Agent identity source is **`claude agents --json --all`**. Its working/blocked/done state
+    is authoritative only while `roster.json` still contains that worker; stopped or
+    headless-taken-over agents remain in `--all` with stale state indefinitely, so they keep
+    `isAgent`/name but derive status from process + jsonl. `getAgentsJson()` caches the resolved
+    catalog for 3s and returns the last-good cache on CLI failure. Filter to
+    `kind === 'background'`; `kind:"interactive"` entries are not agents.
   - `agentDetail` (the blocked question shown on the card) is the ONE field still read from `jobs/<sid[:8]>/state.json`'s `needs` — `--json`'s `waitingFor` is almost always null.
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds (still used to detect a done-agent resumed as a normal CC session).
   - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll full-pushes every agent (heals DDB + covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
-  - Status paths that key off live CC processes (`checkStopped`) must **skip daemon agents AND pool-owned sessions** — daemon agents have no `--resume` process (would be misread as completed + stripped of agent metadata); pool-owned sessions get their status from pool events. Precedence: daemon agent > pool-owned > external.
+  - Status paths that key off live CC processes (`checkStopped`) skip roster-active daemon
+    agents and busy pool-owned sessions. Precedence: pool-owned > roster-active daemon >
+    external/jsonl.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal stuck agent: were tmux `claude agents` TUI navigation — **removed in Phase 2E**, TODO to re-wire via headless `claude -p --resume <agentSessionId>` (agent sessions resume like any normal CC session; the daemon-live `--json` status source is untouched).
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
@@ -318,8 +329,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - `running` → **Running** (green): a turn is generating (jsonl `stop_reason: tool_use`/`null`,
   or pool turn in flight, or agent `working`)
 - `needs_input` → **Needs input** (amber, reuses `.badge.idle`): the ball is in the user's court
-  (pool `control_request` — permission/AskUserQuestion — or agent `blocked`). External sessions
-  can't detect this.
+  (pool `control_request`, agent `blocked`, or terminal `AskUserQuestion`/`ExitPlanMode`).
 - `completed` → **Done** (grey, reuses `.badge.stopped`): turn finished / no process / stale.
   Also the fallback for legacy `idle`/`stopped`/unknown values.
 - Homepage: Active Sessions = running + needs_input (regular + agent); Completed Sessions =

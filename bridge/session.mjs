@@ -173,9 +173,10 @@ export function readableProjectName(projectHash) {
 
 /**
  * Determine session status from CC process state + jsonl content.
- * Returns "running" | "completed" (external sessions can't observe needs_input).
+ * Returns "running" | "needs_input" | "completed".
  *
  * - running: CC process on this session + jsonl shows active work
+ * - needs_input: structured AskUserQuestion/ExitPlanMode tool use
  * - completed: finished turn, no process, or stale file
  *
  * @param {string} sessionId - the session UUID
@@ -191,6 +192,11 @@ export function statusFromEntry(entry) {
   // last-prompt is a metadata snapshot CC re-appends near EOF (not a state signal),
   // so it's not turn-defining → keep scanning. (CC source: sessionStorage.ts.)
   if (t === 'assistant' && entry.message) {
+    const content = entry.message.content;
+    if (Array.isArray(content) && content.some((b) =>
+      b.type === 'tool_use' && (b.name === 'AskUserQuestion' || b.name === 'ExitPlanMode'))) {
+      return 'needs_input';
+    }
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
     if (sr === 'tool_use') return 'running';
@@ -225,6 +231,10 @@ const RUNNING_DEBOUNCE_MS = 10_000;
 
 // Hold 'running' across end_turn flicker before downgrading to the terminal 'completed'.
 export function resolveStatus(sessionId, contentStatus) {
+  if (contentStatus === 'needs_input') {
+    lastRunningTs.delete(sessionId);
+    return 'needs_input';
+  }
   if (contentStatus === 'running') {
     lastRunningTs.set(sessionId, Date.now());
     return 'running';
@@ -401,10 +411,28 @@ export function resolveClaudeBin() {
 }
 
 let _agentsCache = { at: 0, map: new Map() };
-// `claude agents --json --all` → Map<sessionId, {isAgent, agentName, agentDetail,
-// status}>. Daemon-live source of truth, cached briefly (AGENTS_JSON_TTL_MS)
-// since sync/watcher call this per session. On any failure, returns the last
-// good cache (never an empty map that would flap every agent to stopped).
+export function resolveAgentMetadata(a, context = {}) {
+  const sessionId = a.sessionId || '';
+  const daemonActive = context.daemonActive === true;
+  const runningInfo = context.runningInfo || { projects: new Set(), sessions: new Set() };
+  const status = daemonActive
+    ? mapAgentState(a)
+    : context.filePath
+      ? getSessionStatus(sessionId, context.filePath, runningInfo)
+      : 'completed';
+  const detail = daemonActive && status === 'needs_input'
+    ? (context.agentDetail === undefined ? agentDetailFor(a) : context.agentDetail)
+    : '';
+  return {
+    isAgent: true,
+    agentName: a.name || '',
+    agentDetail: detail,
+    status,
+  };
+}
+
+// --all preserves identity; only roster-owned workers trust its state.
+// Inactive agents fall back to process + jsonl status.
 export function getAgentsJson(force) {
   const now = Date.now();
   if (!force && now - _agentsCache.at < AGENTS_JSON_TTL_MS) return _agentsCache.map;
@@ -418,6 +446,8 @@ export function getAgentsJson(force) {
   let arr;
   try { arr = JSON.parse(out); } catch { return _agentsCache.map; }
   if (!Array.isArray(arr)) return _agentsCache.map;
+  const daemonRunning = getDaemonRunningSessionIds();
+  let runningInfo = null;
   const map = new Map();
   for (const a of arr) {
     if (!a || !a.sessionId) continue;
@@ -425,12 +455,14 @@ export function getAgentsJson(force) {
     // `state` field). Only kind:"background" are real daemon agents; the rest
     // must not be tagged isAgent (they'd show as bogus "Working" agents).
     if (a.kind !== 'background') continue;
-    map.set(a.sessionId, {
-      isAgent: true,
-      agentName: a.name || '',
-      agentDetail: agentDetailFor(a),
-      status: mapAgentState(a),
-    });
+    const daemonActive = daemonRunning.has(a.sessionId);
+    const filePath = daemonActive ? null : findSessionFile(a.sessionId);
+    if (!daemonActive && filePath && !runningInfo) runningInfo = getRunningInfo();
+    map.set(a.sessionId, resolveAgentMetadata(a, {
+      daemonActive,
+      filePath,
+      runningInfo,
+    }));
   }
   _agentsCache = { at: now, map };
   return map;

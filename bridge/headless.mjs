@@ -172,12 +172,12 @@ class HeadlessProc {
   }
 
   _onClose(code, detail) {
+    const wasBusy = this.busy;
     this.dead = true;
     if (this._batchTimer) { clearTimeout(this._batchTimer); this._batchTimer = null; }
     this._batch = null;
     this.pool._remove(this.key);
-    // Process left the pool (reap/LRU/crash) — its turn can't finish, so settle to completed.
-    if (this.sessionId) this.pool._onExit?.(this.sessionId);
+    if (this.sessionId && wasBusy) this.pool._onExit?.(this.sessionId);
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
     // Fail any queued sends
@@ -315,8 +315,11 @@ export class ClaudePool {
 
   interrupt(key) { this.procs.get(key)?.interrupt(); }
 
-  // True while a live process exists for this session (pool owns its status).
+  // True while a live process exists for this session.
   owns(key) { const p = this.procs.get(key); return !!p && !p.dead; }
+
+  // Busy turns own status; idle processes may be resumed from a terminal.
+  isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && p.busy; }
 
   reapIdle() {
     const now = Date.now();
