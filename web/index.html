@@ -119,6 +119,52 @@
       + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
   }
 
+  function bindHomeNavigation(content) {
+    if (content.__homeNavBound) return;
+    content.__homeNavBound = true;
+    content.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-nav]');
+      if (!t) return;
+      var act = t.dataset.nav;
+      var run = function () {
+        if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
+        else if (act === 'active' && typeof window.openActiveSession === 'function') window.openActiveSession(t);
+      };
+      if (typeof window.loadProjects === 'function') run();
+      else (window.__navQueue = window.__navQueue || []).push(run);
+    });
+  }
+
+  function restoreReturningHomePreview() {
+    if (!window.__returningHome) return false;
+    if (window.__homePreviewRestored) return true;
+
+    var snapshot = null;
+    try {
+      snapshot = JSON.parse(sessionStorage.getItem('agentpeek-page-preview') || 'null');
+    } catch (e) {}
+    if (!snapshot || typeof snapshot.contentHtml !== 'string') return false;
+
+    var topBar = document.querySelector('body > .top-bar');
+    var breadcrumb = document.getElementById('breadcrumb');
+    var content = document.getElementById('content');
+    if (!topBar || !breadcrumb || !content) return false;
+
+    topBar.innerHTML = snapshot.topBarHtml || '';
+    breadcrumb.innerHTML = snapshot.breadcrumbHtml || '';
+    breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
+    content.innerHTML = snapshot.contentHtml;
+    content.scrollTop = snapshot.scrollTop || 0;
+    sessionStorage.removeItem('agentpeek-page-preview');
+    bindHomeNavigation(content);
+    document.body.classList.add('ready');
+    window.__inlineRendered = true;
+    window.__homePreviewRestored = true;
+    window.__skelReady = 1;
+    return true;
+  }
+  window.__restoreHomePreview = restoreReturningHomePreview;
+
   function renderInline(activeData, devData) {
     var content = document.getElementById('content');
     if (!content) return;
@@ -193,22 +239,7 @@
     if (!html) html = '<div class="empty">No devices yet</div>';
     content.innerHTML = html;
     if (window.__returningHome) document.body.classList.add('ready');
-
-    // Event delegation: route clicks through app.js once it's loaded; queue if not yet.
-    if (!content.__homeNavBound) {
-      content.__homeNavBound = true;
-      content.addEventListener('click', function (e) {
-        var t = e.target.closest('[data-nav]');
-        if (!t) return;
-        var act = t.dataset.nav;
-        var run = function () {
-          if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
-          else if (act === 'active' && typeof window.openActiveSession === 'function') window.openActiveSession(t);
-        };
-        if (typeof window.loadProjects === 'function') run();
-        else (window.__navQueue = window.__navQueue || []).push(run);
-      });
-    }
+    bindHomeNavigation(content);
 
     // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
     if (typeof window.loadViewerLibs === 'function') setTimeout(window.loadViewerLibs, 1500);
@@ -259,6 +290,7 @@
     options = options || {};
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
+    var usePagePreview = !options.resetScroll && !!window.__returningHome;
     var isCurrent = options.isCurrent || function () {
       return !!document.querySelector('.top-gear');
     };
@@ -267,8 +299,12 @@
     whenContentReady(function () {
       if (!isCurrent()) return;
       setSync(true);
-      if (hasCached) renderInline(cached.active, cached.devices);
-      else renderSkeleton(!!options.resetScroll);
+      var restoredPreview = usePagePreview
+        && (window.__homePreviewRestored || restoreReturningHomePreview());
+      if (!restoredPreview) {
+        if (hasCached) renderInline(cached.active, cached.devices);
+        else renderSkeleton(!!options.resetScroll);
+      }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
     });
 
@@ -295,6 +331,10 @@
       return null;
     }).then(function (fresh) {
       if (isCurrent()) stopSync();
+      if (usePagePreview) {
+        window.__returningHome = false;
+        document.documentElement.classList.remove('returning-home');
+      }
       return fresh;
     });
 
@@ -352,6 +392,7 @@
 
 <!-- Content area -->
 <div id="content"></div>
+<script>if(window.__restoreHomePreview)window.__restoreHomePreview();</script>
 
 <!-- Input bar -->
 <div id="input-bar" style="display:none">

@@ -63,6 +63,7 @@ import qrcode from 'qrcode-generator';
       }
     }
   }
+  canvas.parentElement.classList.add('ready');
 
   function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(function () {
