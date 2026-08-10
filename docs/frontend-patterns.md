@@ -51,17 +51,22 @@ appState = { device, project: { hash, name }, session, sessionPreview }
 
 ```
 loadMessages(sessionId):
-  1. wsAllMessages = [], reset state
+  1. wsAllMessages = [], wsMessageUuids = Set(), reset state
   2. startWs(sessionId) → subscribe
   3. _wsBuffer = []          ← enable buffer mode, WS messages stored without rendering
   4. GET /api/bridge/messages?session=X  ← pull history from DDB
   5. merged = ddbMessages.concat(_wsBuffer)
   6. _wsBuffer = null         ← disable buffer, subsequent WS messages render directly
-  7. Deduplicate by uuid (skip already-existing)
+  7. Deduplicate through the current Session's persistent UUID Set
   8. Sort by timestamp
   9. renderMessages(wsAllMessages)  ← full render
   10. scrollToBottom
 ```
+
+The UUID Set is maintained alongside `wsAllMessages` for initial load, pagination, reconnect
+recovery, and final `messages` frames. This makes final-message deduplication O(1) per row.
+`stream_delta` and `stream_tool_input` bypass the Set and render immediately; no event window,
+debounce, or batch delay is introduced.
 
 **`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show loading state. Wait for `sync_complete` WS event, then re-run loadMessages.
 
@@ -399,6 +404,15 @@ After every DOM update (full render / incremental updateLastTurn / reconnect rec
 - Runtime icons appear on Session cards and in the detail header without changing page hierarchy.
 - Codex reuses the shared renderer with display-only names such as `Explored`, `Ran`, `Edited`,
   `Updated Plan`, and `Viewed Image`.
+- Codex command presentation follows persisted lifecycle metadata instead of shell regexes:
+  `parsed_cmd` controls `Explored`, independent `Ran` nodes use completion order, repeated empty
+  `WriteStdin` calls collapse by process into one wait streak, and `CommandExecution` replaces
+  wrapper output without renaming the original command.
+- Codex MCP calls use persisted `McpToolCall.server/tool` metadata: pending calls display `Calling`,
+  completed calls display `Called`, and the summary keeps `server.tool`. Claude generic tool names
+  do not enter this runtime-specific path.
+- Codex Bash IN keeps the original command. OUT uses finalized aggregate output; transport wrapper
+  fields are superseded and exit codes render as status rather than being appended to output text.
 - Codex changes only runtime accent positions to `#13A7CD`; tool titles remain shared white.
 - Full load, pagination, WS insertion, and result updates pass runtime explicitly to one renderer.
-- Codex Phase 1 keeps the input layout; Bridge capabilities reject unsupported interaction.
+- Codex Phase 2 keeps the input layout; Bridge capabilities reject unsupported interaction.

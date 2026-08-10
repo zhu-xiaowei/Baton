@@ -14,8 +14,8 @@ import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_
 import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
-import { startWatcher, startJobsWatcher } from './watcher.mjs';
-import { initWs } from './ws.mjs';
+import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
+import { initWs, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { cleanupStagedBridge, installStagedBridge } from './updater.mjs';
@@ -67,6 +67,13 @@ if (CONFIG.wsUrl) {
 // for the periodic checkStopped() to detect disappeared CC processes.
 const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
+if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {
+  wsSendWhenConnected({
+    action: 'bridge_recovery_complete',
+    deviceName: CONFIG.deviceName,
+    count: initialSync.messageCount,
+  });
+}
 // syncSessions has awaited every SESS# write, so DDB is complete — recount now
 // (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
 if (initialSync?.catalogComplete !== false) await reconcile(CONFIG);
@@ -126,5 +133,4 @@ async function checkUpdate() {
 checkUpdate();
 setInterval(checkUpdate, CHECK_UPDATE_INTERVAL);
 
-startWatcher(CONFIG);
-startJobsWatcher(CONFIG);
+startRuntimeWatchers(CONFIG, { initialSessions: initialSync?.sessions || [] });

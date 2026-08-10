@@ -619,7 +619,7 @@ Return a short-lived presigned **GET** URL so the browser `<video>` element stre
 ```
 DDB Connections:
   PK: connectionId
-  Attributes: accountId, role (app|bridge), deviceName?, connectedAt
+  Attributes: accountId, role (app|bridge), deviceName?, bridgeVersion?, connectedAt
   TTL: 24h
 ```
 
@@ -627,9 +627,12 @@ DDB Connections:
 - Device routing for `send_message` / `permission_reply` / `interrupt` (only forwarded to matching bridge)
 - Online status in `GET /devices`
 
+Bridge connections also send their immutable package version as the `version` query parameter.
+The server stores it as `bridgeVersion` so deployments can verify the running fleet directly.
+
 The server strips the `device` routing field before forwarding an app action to Bridge. Codex
-Phase 1 uses `subscribe`, `sync_session`, and `sync_complete`; send/streaming/permission actions
-remain Claude-only.
+Phase 2 also uses `messages`/`messages_ack` for live rollout updates;
+send/streaming/permission actions remain Claude-only.
 
 **$disconnect**: Delete connectionId + clean up related subscription records
 
@@ -773,7 +776,7 @@ Optionally deletes local Session history after REST metadata deletion.
 }
 ```
 
-Runtime adapters without `deleteHistory` are skipped; Codex Phase 1 never deletes rollout files.
+Runtime adapters without `deleteHistory` are skipped; the Codex read adapter never deletes rollout files.
 
 ---
 
@@ -902,9 +905,8 @@ Bridge pushes new messages to Server.
 
 **Server (Lambda) handling**:
 1. Query Subscriptions table (PK=sessionId) → get all subscribed app connectionIds
-2. Execute in parallel:
-   - **Has subscribers** → `post_to_connection` push to all apps (priority, latency-sensitive)
-   - **Write DDB** → BridgeMessages table (fallback cache, non-blocking)
+2. **Has subscribers** → `post_to_connection` push to all apps first (latency-sensitive)
+3. **Write DDB** → BridgeMessages table; acknowledge only after persistence succeeds
 
 Message format pushed to app:
 ```json
@@ -1106,7 +1108,9 @@ Every frame carries `sessionId`, `streamId`, and monotonic `seq`; block actions 
 
 #### messages_ack
 
-Server acknowledges receipt and processing of bridge messages, allowing bridge to advance its synced pointer.
+Server acknowledges receipt and successful DDB persistence of bridge messages, allowing bridge to
+advance its synced pointer. If persistence fails after retry, the server withholds the ack so the
+bridge uses its HTTP fallback before advancing.
 
 ```json
 { "action": "messages_ack", "sessionId": "a1ca0870-xxxx" }
@@ -1300,12 +1304,12 @@ connections whose `deviceName` matches. Applies to `send_message`, `permission_r
 `interrupt`, `reveal_agent`, `create_project`, `request_file`, `delete_files`, and
 `list_commands`.
 
-### Codex Phase 1
+### Codex Phase 2
 
-Codex currently participates in Session metadata, history reads, `sync_session`, and
-`sync_complete`. `send_message`, streaming, interrupt, permission, create, and local history
-deletion are rejected or skipped by Codex runtime capabilities until the app-server adapter is
-implemented. See [codex.md](codex.md) for phase status and validation.
+Codex participates in Session metadata, history reads, `sync_session`, `sync_complete`, and live
+`messages`/`messages_ack` updates from the rollout watcher. `send_message`, streaming, interrupt,
+permission, create, and local history deletion remain rejected or skipped by Codex runtime
+capabilities until the app-server adapter is implemented. See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation
 

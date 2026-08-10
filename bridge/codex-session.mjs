@@ -35,6 +35,22 @@ function previewText(value) {
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;
 }
 
+function isInternalUserContext(text) {
+  return /^<(?:environment_context|turn_aborted)>[\s\S]*<\/(?:environment_context|turn_aborted)>$/i
+    .test(text.trim());
+}
+
+export function codexResponseUserText(payload) {
+  if (payload?.type !== 'message' || payload.role !== 'user' || !Array.isArray(payload.content)) {
+    return '';
+  }
+  return payload.content
+    .filter((block) => block?.type === 'input_text' && typeof block.text === 'string')
+    .map((block) => block.text.trim())
+    .filter((text) => text && !isInternalUserContext(text))
+    .join('\n');
+}
+
 function metadataId(payload) {
   return String(payload?.id || payload?.session_id || '');
 }
@@ -81,7 +97,8 @@ export function scanCodexRollout(filePath, options = {}) {
   let onlyMetadata = null;
   let matchingMetadata = null;
   const openTurns = new Set();
-  let preview = '';
+  let eventPreview = '';
+  let responsePreview = '';
   let model = '';
   let malformedLines = 0;
   let lastMalformedLine = -1;
@@ -105,9 +122,12 @@ export function scanCodexRollout(filePath, options = {}) {
         if (metadataId(payload) === nativeSessionId) matchingMetadata = payload;
       }
       if (entry.type === 'turn_context' && payload.model) model = String(payload.model);
+      if (!responsePreview && entry.type === 'response_item') {
+        responsePreview = previewText(codexResponseUserText(payload));
+      }
       if (entry.type !== 'event_msg') return;
-      if (!preview && payload.type === 'user_message') {
-        preview = previewText(payload.message);
+      if (!eventPreview && payload.type === 'user_message') {
+        eventPreview = previewText(payload.message);
       }
       if (payload.type === 'task_started' && payload.turn_id) openTurns.add(payload.turn_id);
       if ((payload.type === 'task_complete' || payload.type === 'turn_aborted') && payload.turn_id) {
@@ -119,6 +139,7 @@ export function scanCodexRollout(filePath, options = {}) {
   }
 
   const trailingMalformed = lastMalformedLine === lineCount - 1;
+  const preview = eventPreview || responsePreview;
   if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
   const meta = matchingMetadata || (metadataCount === 1 ? onlyMetadata : null);
   if (!meta?.cwd) {

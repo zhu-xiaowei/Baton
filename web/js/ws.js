@@ -172,7 +172,7 @@ function handleWsMessage(msg) {
       }
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
-        if (m.uuid && state.wsAllMessages.some(function (x) { return x.uuid === m.uuid; })) continue;
+        if (!trackMessageUuid(m)) continue;
         if (msg.streamId) m._streamId = msg.streamId; // ties row to its send (placement/dedup by identity)
         state.wsAllMessages.push(m);
         state.wsMessageCount++;
@@ -242,6 +242,9 @@ function handleWsMessage(msg) {
         if (window.renderKatexBlocks) renderKatexBlocks(content);
         content.scrollTop = content.scrollHeight;
       }).catch(function () {});
+    } else if (msg.action === 'bridge_recovery_complete') {
+      if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
+      recoverMissing('');
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);
     } else if (msg.action === 'file_progress') {
@@ -379,6 +382,26 @@ function insertAtTimestamp(container, html, timestamp) {
     var firstPending = container.querySelector('[data-pending]');
     if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
     else container.insertAdjacentHTML('beforeend', html);
+  }
+}
+
+function insertAssistantItemAtTimestamp(container, html, timestamp) {
+  var items = container.querySelectorAll('[data-ts]');
+  var target = null;
+  for (var i = items.length - 1; i >= 0; i--) {
+    if (items[i].dataset.ts > timestamp) target = items[i];
+    else break;
+  }
+  if (target && target.classList.contains('tl-item')) {
+    target.insertAdjacentHTML('beforebegin', html);
+  } else {
+    var row = '<div class="assistant-turn" data-ts="' + (timestamp || '') + '">' + html + '</div>';
+    if (target) target.insertAdjacentHTML('beforebegin', row);
+    else {
+      var firstPending = container.querySelector('[data-pending]');
+      if (firstPending) firstPending.insertAdjacentHTML('beforebegin', row);
+      else container.insertAdjacentHTML('beforeend', row);
+    }
   }
 }
 
@@ -607,6 +630,9 @@ function clearStreamPreviews(coverCount) {
 // Cross-turn connector adjacency via explicit classes — replaces :has(+)/+ which WebKit (Safari) won't re-invalidate on live inserts. Call only when a turn is added/removed, never per frame.
 function markTurnAdjacency(container) {
   if (!container) return;
+  if (state.appState.runtime === 'codex') {
+    window.markCodexExploreGroups?.(container);
+  }
   var kids = container.children;
   for (var i = 0; i < kids.length; i++) {
     var el = kids[i];
@@ -618,6 +644,113 @@ function markTurnAdjacency(container) {
   }
 }
 window.markTurnAdjacency = markTurnAdjacency;
+
+function buildToolIndexes(messages, includeCodexGroups) {
+  var uses = {};
+  var results = {};
+  for (var i = 0; i < messages.length; i++) {
+    var message = messages[i];
+    if (!Array.isArray(message.content)) continue;
+    for (var j = 0; j < message.content.length; j++) {
+      var block = message.content[j];
+      if (block.type === 'tool_use' && block.id) {
+        uses[block.id] = { block: block, message: message };
+      } else if (block.type === 'tool_result' && block.tool_use_id
+        && !block.codexSuperseded) {
+        results[block.tool_use_id] = {
+          block: block,
+          timestamp: message.timestamp || '',
+        };
+      }
+    }
+  }
+
+  var exploreGroups = {};
+  if (!includeCodexGroups) return { uses: uses, results: results, exploreGroups: exploreGroups };
+  var current = [];
+  function flush() {
+    if (current.length) {
+      var group = current.slice();
+      for (var index = 0; index < group.length; index++) {
+        exploreGroups[group[index].id] = group;
+      }
+    }
+    current = [];
+  }
+
+  for (var mi = 0; mi < messages.length; mi++) {
+    var message = messages[mi];
+    if (isToolResultOnly(message)) continue;
+    if (message.type !== 'assistant' || !Array.isArray(message.content)) {
+      flush();
+      continue;
+    }
+    for (var bi = 0; bi < message.content.length; bi++) {
+      var block = message.content[bi];
+      if (block.type === 'tool_use') {
+        var result = results[block.id];
+        if (window.isCodexExploreTool?.(block, result?.block)) {
+          current.push({
+            id: block.id,
+            result,
+          });
+        } else {
+          flush();
+        }
+      } else if (block.type === 'text' && block.text?.trim()) {
+        flush();
+      }
+    }
+  }
+  flush();
+  return { uses: uses, results: results, exploreGroups: exploreGroups };
+}
+
+function moveCompletedCodexTool(
+  container,
+  node,
+  toolUseBlock,
+  resultBlock,
+  timestamp,
+  movedGroups,
+  exploreGroups
+) {
+  if (state.appState.runtime !== 'codex' || toolUseBlock.name !== 'Bash' || !timestamp) return;
+  if (!resultBlock.codexCommandKind && resultBlock.codexBackground !== 'complete') return;
+
+  if (window.isCodexExploreTool?.(toolUseBlock, resultBlock)) {
+    var group = exploreGroups[toolUseBlock.id];
+    if (!group || group.some(function (item) { return !item.result?.timestamp; })) return;
+    var groupKey = group.map(function (item) { return item.id; }).join(',');
+    if (movedGroups.has(groupKey)) return;
+    movedGroups.add(groupKey);
+    var groupTs = group.reduce(function (latest, item) {
+      return item.result.timestamp > latest ? item.result.timestamp : latest;
+    }, '');
+    var nodes = group.map(function (item) {
+      return container.querySelector('[data-tool-id="' + item.id + '"]');
+    });
+    if (nodes.some(function (item) { return !item; })) return;
+    var html = nodes.map(function (item) {
+      item.dataset.ts = groupTs;
+      return item.outerHTML;
+    }).join('');
+    for (var ni = 0; ni < nodes.length; ni++) {
+      var row = nodes[ni].parentElement;
+      nodes[ni].remove();
+      if (row?.classList.contains('assistant-turn') && !row.children.length) row.remove();
+    }
+    insertAssistantItemAtTimestamp(container, html, groupTs);
+    return;
+  }
+
+  node.dataset.ts = timestamp;
+  var movedHtml = node.outerHTML;
+  var oldRow = node.parentElement;
+  node.remove();
+  if (oldRow?.classList.contains('assistant-turn') && !oldRow.children.length) oldRow.remove();
+  insertAssistantItemAtTimestamp(container, movedHtml, timestamp);
+}
 
 // Authoritative thinking has no duration; use the seconds the live preview measured.
 function applyThinkSecs(html) {
@@ -649,6 +782,11 @@ function updateLastTurn() {
   if (_turnAuthBlocks > 0) clearStreamPreviews(_turnAuthBlocks);
 
   var sawToolResult = false;
+  var movedExploreGroups = new Set();
+  var hasToolResults = newMessages.some(isToolResultOnly);
+  var toolIndexes = hasToolResults
+    ? buildToolIndexes(state.wsAllMessages, state.appState.runtime === 'codex')
+    : null;
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
     // tool_result → update matching tool_use node
@@ -658,23 +796,53 @@ function updateLastTurn() {
         for (var ri = 0; ri < msg.content.length; ri++) {
           var rb = msg.content[ri];
           if (rb.type !== 'tool_result' || !rb.tool_use_id) continue;
+          if (rb.codexSuperseded) continue;
           var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
-          if (!node) continue;
-          var toolUseBlock = null;
-          for (var mi = 0; mi < state.wsAllMessages.length; mi++) {
-            var am = state.wsAllMessages[mi];
-            if (!Array.isArray(am.content)) continue;
-            for (var bi = 0; bi < am.content.length; bi++) {
-              if (am.content[bi].type === 'tool_use' && am.content[bi].id === rb.tool_use_id) { toolUseBlock = am.content[bi]; break; }
-            }
-            if (toolUseBlock) break;
-          }
+          var toolEntry = toolIndexes?.uses[rb.tool_use_id];
+          var toolUseBlock = toolEntry?.block;
+          var toolUseMessage = toolEntry?.message;
           if (!toolUseBlock) continue;
           if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
+          var hidden = state.appState.runtime === 'codex'
+            && window.isCodexHiddenTool?.(toolUseBlock, rb);
+          if (hidden) {
+            if (node) {
+              var emptyRow = node.parentElement;
+              node.remove();
+              if (emptyRow?.classList.contains('assistant-turn') && !emptyRow.children.length) {
+                emptyRow.remove();
+              }
+            }
+            continue;
+          }
+          if (!node && toolUseMessage) {
+            var restoredHtml = renderSingleMessage(toolUseMessage, state.wsAllMessages, state.appState.runtime);
+            if (restoredHtml) insertAssistantItemAtTimestamp(container, restoredHtml, msg.timestamp);
+            node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
+          }
+          if (!node) continue;
           window._lastToolState = '';
           node.innerHTML = renderToolNode(toolUseBlock, rb, state.appState.runtime);
           var toolStateClass = window._lastToolState || '';
-          node.className = 'tl-item tool-node' + (toolStateClass ? ' ' + toolStateClass : '');
+          var exploreClass = state.appState.runtime === 'codex'
+            && window.isCodexExploreTool?.(toolUseBlock, rb) ? ' codex-explore' : '';
+          var waitClass = state.appState.runtime === 'codex'
+            && toolUseBlock.name === 'WriteStdin'
+            && !String(toolUseBlock.input?.chars || '').length ? ' codex-terminal-wait' : '';
+          var backgroundClass = rb.codexBackground === 'complete'
+            ? ' codex-background-complete' : '';
+          node.className = 'tl-item tool-node' + exploreClass + waitClass + backgroundClass
+            + (toolStateClass ? ' ' + toolStateClass : '');
+          if (rb.codexProcessId) node.dataset.codexProcess = rb.codexProcessId;
+          moveCompletedCodexTool(
+            container,
+            node,
+            toolUseBlock,
+            rb,
+            msg.timestamp,
+            movedExploreGroups,
+            toolIndexes.exploreGroups,
+          );
         }
       }
       continue;
@@ -801,6 +969,13 @@ function startWs(sessionId) {
   if (window.prefetchCommands) window.prefetchCommands();
 }
 
+function trackMessageUuid(message) {
+  if (!message || !message.uuid) return true;
+  if (state.wsMessageUuids.has(message.uuid)) return false;
+  state.wsMessageUuids.add(message.uuid);
+  return true;
+}
+
 /**
  * Buffer WS → fetch DDB → merge + dedup → return merged messages.
  * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
@@ -816,16 +991,12 @@ async function bufferAndFetch(sessionId, after) {
     if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
     var all = (data.messages || []).concat(state._wsBuffer || []);
     state._wsBuffer = null;
-    // Dedup against existing wsAllMessages
-    var existing = {};
-    for (var i = 0; i < state.wsAllMessages.length; i++) existing[state.wsAllMessages[i].uuid] = 1;
     var added = 0;
     for (var i = 0; i < all.length; i++) {
-      if (!existing[all[i].uuid]) {
-        state.wsAllMessages.push(all[i]);
-        state.wsMessageCount++;
-        added++;
-      }
+      if (!trackMessageUuid(all[i])) continue;
+      state.wsAllMessages.push(all[i]);
+      state.wsMessageCount++;
+      added++;
     }
     if (added > 0) {
       state.wsAllMessages.sort(function (a, b) { return (a.timestamp || '') < (b.timestamp || '') ? -1 : (a.timestamp || '') > (b.timestamp || '') ? 1 : 0; });
@@ -853,14 +1024,11 @@ async function loadOlderMessages(sessionId) {
     state.wsHasMore = data.hasMore;
     state.wsOldestTimestamp = data.oldestTimestamp || '';
     // Dedup and prepend
-    var existing = {};
-    for (var i = 0; i < state.wsAllMessages.length; i++) existing[state.wsAllMessages[i].uuid] = 1;
     var newMsgs = [];
     for (var i = 0; i < msgs.length; i++) {
-      if (!existing[msgs[i].uuid]) {
-        newMsgs.push(msgs[i]);
-        state.wsMessageCount++;
-      }
+      if (!trackMessageUuid(msgs[i])) continue;
+      newMsgs.push(msgs[i]);
+      state.wsMessageCount++;
     }
     if (newMsgs.length) {
       state.wsAllMessages = newMsgs.concat(state.wsAllMessages);
@@ -873,9 +1041,15 @@ async function loadOlderMessages(sessionId) {
 }
 
 // Reconnect recovery
-async function recoverMissing() {
+async function recoverMissing(after) {
+  if (!state.wsSessionId) return;
+  if (after === undefined) after = state.wsLastTimestamp;
+  if (state._wsBuffer !== null) {
+    setTimeout(function () { recoverMissing(after); }, 100);
+    return;
+  }
   try {
-    var result = await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp);
+    var result = await bufferAndFetch(state.wsSessionId, after);
     if (!result.added) return;
     var container = document.querySelector('.messages');
     if (container) {

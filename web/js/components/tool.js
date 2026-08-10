@@ -2,8 +2,6 @@
 (function () {
   // On cancel, the bridge denies the ask/plan with interrupt:true; CC overwrites the tool_result with this rejection text.
   var CANCEL_MARK = 'tool use was rejected';
-  const CODEX_MUTATING_COMMAND = /\b(?:rm|mv|cp|mkdir|touch|chmod|chown|install|tee|truncate|unlink|xargs|bash|zsh)\b|(?:^|[\s|;&])sh(?:\s|$)|sed\s+-[^;\n]*i\b|find\b[^;\n]*-delete\b|git\s+(?:add|commit|checkout|switch|reset|restore|clean|merge|rebase|cherry-pick|push|pull|fetch|tag)\b/;
-  const CODEX_READ_COMMAND = /^(?:cd\b|rg\b|grep\b|egrep\b|fgrep\b|cat\b|head\b|tail\b|nl\b|sed\b|awk\b|ls\b|find\b|fd\b|tree\b|pwd\b|wc\b|stat\b|file\b|du\b|df\b|which\b|whereis\b|type\b|command\s+-v\b|lsof\b|ps\b|jq\b|yq\b|sort\b|uniq\b|cut\b|tr\b|git\s+(?:status|diff|log|show|branch|rev-parse|ls-files|remote)\b)/;
   const CODEX_TOOL_NAMES = {
     Read: 'Explored',
     Grep: 'Explored',
@@ -13,6 +11,7 @@
     TodoWrite: 'Updated Plan',
     ViewImage: 'Viewed Image',
     ToolSearch: 'Searched Tools',
+    WebSearch: 'Searched the web',
     get_goal: 'Checked Goal',
     spawn_agent: 'Spawned Agent',
     send_input: 'Sent Agent Input',
@@ -41,9 +40,30 @@
   window.ansiHtml = ansiHtml;
 
   // Render Bash tool
+  function codexCommandSummary(actions) {
+    if (!Array.isArray(actions) || !actions.length) return '';
+    const kinds = new Set(actions.map((action) => action?.type));
+    if (kinds.size !== 1) return '';
+    const kind = actions[0]?.type;
+    if (kind === 'read') {
+      const names = actions.map((action) => action?.name || action?.path).filter(Boolean);
+      return names.length ? `Read ${names.join(', ')}` : '';
+    }
+    if (kind === 'search') {
+      const terms = actions.map((action) => action?.query || action?.path).filter(Boolean);
+      return terms.length ? `Search ${terms.join(', ')}` : '';
+    }
+    if (kind === 'list_files') {
+      const paths = actions.map((action) => action?.path).filter(Boolean);
+      return paths.length ? `List ${paths.join(', ')}` : 'List files';
+    }
+    return '';
+  }
+
   function renderBash(input, result) {
     const cmd = input.command || input.cmd || JSON.stringify(input);
-    const desc = input.description || '';
+    const actions = result?.codexCommandActions || input.codexCommandActions;
+    const desc = codexCommandSummary(actions) || input.description || '';
     const elevated = input.sandbox_permissions === 'require_escalated';
     const justification = elevated ? String(input.justification || '').trim() : '';
     return {
@@ -304,6 +324,46 @@
     };
   }
 
+  function codexMcpInfo(input, result) {
+    const server = result?.codexMcpServer || input?.codexMcpServer || '';
+    const tool = result?.codexMcpTool || input?.codexMcpTool || '';
+    return server && tool ? { server, tool } : null;
+  }
+
+  function renderCodexMcp(input, result) {
+    const invocation = codexMcpInfo(input, result);
+    const visibleInput = Object.fromEntries(
+      Object.entries(input || {}).filter(([key]) => !key.startsWith('codexMcp')),
+    );
+    const out = result != null ? resultText(result) : null;
+    return {
+      name: result ? 'Called' : 'Calling',
+      desc: invocation ? `${invocation.server}.${invocation.tool}` : '',
+      body: grid([
+        ['IN', esc(truncate(JSON.stringify(visibleInput, null, 2), 1500))],
+        out != null ? ['OUT', ansiHtml(out)] : null,
+      ]),
+    };
+  }
+
+  function renderWebSearch(input) {
+    return {
+      name: 'WebSearch',
+      desc: input.query || input.url || '',
+      body: '',
+    };
+  }
+
+  function renderTerminalWait(input, result) {
+    const command = result?.codexCommand || input.codexCommand || '';
+    return {
+      name: 'WriteStdin',
+      desc: command || `Terminal ${input.session_id || ''}`.trim(),
+      body: '',
+      expandDesc: !!command,
+    };
+  }
+
   // Build tool grid HTML
   function grid(rows) {
     const valid = rows.filter(Boolean);
@@ -333,20 +393,31 @@
     return s.length > max ? s.slice(0, max) + '...' : s;
   }
 
-  function isExploreCommand(input) {
-    const command = String(input.command || input.cmd || '').trim();
-    if (!command || /(^|\s)>{1,2}\s*\S/.test(command)) return false;
-    if (CODEX_MUTATING_COMMAND.test(command)) return false;
-    const parts = command.split(/\s*(?:&&|\|\||;|\n)\s*/).filter(Boolean);
-    return parts.length > 0 && parts.every(part => CODEX_READ_COMMAND.test(part.replace(/^\(+\s*/, '')));
+  function isExploreCommand(input, result) {
+    return (result?.codexCommandKind || input?.codexCommandKind) === 'explore';
   }
 
-  function codexToolName(name, input) {
-    if (name === 'Bash') return isExploreCommand(input) ? 'Explored' : 'Ran';
+  window.isCodexExploreTool = function (toolUse, result) {
+    return toolUse?.name === 'Bash' && isExploreCommand(toolUse.input || {}, result);
+  };
+
+  window.isCodexHiddenTool = function (toolUse, result) {
+    if (toolUse?.name === 'Bash' && result?.codexBackground === 'running') return true;
+    if (toolUse?.name !== 'WriteStdin' || String(toolUse.input?.chars || '').length) return false;
+    return !!result && result.codexWait !== 'waiting';
+  };
+
+  function codexToolName(name, input, result) {
+    if (codexMcpInfo(input, result)) return result ? 'Called' : 'Calling';
+    if (name === 'Bash') return isExploreCommand(input, result) ? 'Explored' : 'Ran';
+    if (name === 'WriteStdin' && !String(input.chars || '').length) {
+      return result ? 'Waited for background terminal' : 'Waiting for background terminal';
+    }
     return CODEX_TOOL_NAMES[name] || name;
   }
 
   function exitCode(result) {
+    if (Number.isInteger(result?.codexExitCode)) return result.codexExitCode;
     const match = /Process exited with code\s+(-?\d+)/i.exec(resultText(result));
     return match ? Number(match[1]) : null;
   }
@@ -372,10 +443,15 @@
 
   // Main: render a tool_use + tool_result pair (wrapping tl-item div is in render.js)
   window.detectLang = detectLang;
+  window.toggleToolDesc = function (header) {
+    const expanded = header.classList.toggle('expanded-desc');
+    header.setAttribute('aria-expanded', String(expanded));
+  };
 
   window.renderToolNode = function (toolUse, toolResult, runtime) {
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
+    const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
     const dispatchers = {
       Bash: () => renderBash(input, toolResult),
       Read: () => renderRead(input, toolResult),
@@ -386,9 +462,15 @@
       ViewImage: () => renderViewImage(input),
       TodoWrite: () => renderTodo(input, toolResult),
       Agent: () => renderAgent(input, toolResult),
+      WebSearch: () => renderWebSearch(input),
+      WriteStdin: () => !String(input.chars || '').length
+        ? renderTerminalWait(input, toolResult)
+        : renderGeneric(name, input, toolResult),
     };
-    const info = (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
-    if (runtime === 'codex') info.name = codexToolName(name, input);
+    const info = codexMcp
+      ? renderCodexMcp(input, toolResult)
+      : (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
+    if (runtime === 'codex') info.name = codexToolName(name, input, toolResult);
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 
@@ -413,8 +495,14 @@
           <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body}</div>
         </div>`
       : '';
+    const headerClass = info.expandDesc ? 'tool-header expandable-desc' : 'tool-header';
+    const headerAttrs = info.expandDesc
+      ? ` role="button" tabindex="0" aria-expanded="false"
+        onclick="toggleToolDesc(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDesc(this)}"`
+      : '';
 
-    return `<div class="tool-header">
+    return `<div class="${headerClass}"${headerAttrs}>
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}
         ${elevatedHtml}

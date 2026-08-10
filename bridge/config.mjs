@@ -12,6 +12,9 @@ export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 
 export const CHECK_STOPPED_INTERVAL = 10 * 60_000; // 10 min — settle stale active rows (pool onExit + jsonl-gone are the fast paths)
 export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
 export const CODEX_STATUS_STALE_MS = 5 * 60_000;
+export const CODEX_STATUS_RECHECK_MS = 30_000;
+export const CODEX_WATCH_RESCAN_MS = 5 * 60_000;
+export const CODEX_RECENT_FILE_WATCH_LIMIT = 64;
 
 // Agent state comes from `claude agents --json --all` (daemon-live, unlike the
 // stale jobs/*/state.json files). Cache the CLI output briefly (high-frequency

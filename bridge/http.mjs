@@ -29,3 +29,9 @@ export async function post(endpoint, data) {
     return null;
   }
 }
+
+export async function postRequired(endpoint, data) {
+  const response = await post(endpoint, data);
+  if (!response?.ok) throw new Error(`POST ${endpoint} failed`);
+  return response;
+}

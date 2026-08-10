@@ -23,6 +23,7 @@ export const state = {
   wsMessageCount: 0,
   wsStatusText: '',
   wsAllMessages: [],          // all messages for the active session, sorted ascending
+  wsMessageUuids: new Set(),  // UUID index for final persisted messages; streaming bypasses it
   wsLastTimestamp: '',        // for reconnect recovery
   wsProjectHash: null,        // for new session creation
   wsRequestId: null,          // unique ID per new-session creation flow

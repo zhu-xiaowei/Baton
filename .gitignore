@@ -31,10 +31,9 @@ __pycache__/
 # Claude Code worktrees
 .claude/worktrees/
 
-# Test cache
-tests/__pycache__/
-tests/.pytest_cache/
-tests/.env
+# Test cache and local test credentials
+.pytest_cache/
+/test/**/.env
 
 # IDE
 .idea/
@@ -54,6 +53,3 @@ claude-code-source-code/
 
 # Release binaries
 release/
-
-# Local-only stream-render test harness (jsdom, not packaged, not committed)
-/test/

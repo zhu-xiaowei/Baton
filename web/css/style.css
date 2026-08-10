@@ -238,6 +238,22 @@ body {
 .tool-node.error::before { background: #c74e39; }
 .tool-node.warning::before { background: #e1c08d; }
 
+.codex-explore-continuation .tool-name { display: none; }
+.codex-explore-continuation::before { display: none; }
+.codex-explore-continuation::after { display: none !important; }
+.assistant-turn > .codex-explore-group-start::after {
+  bottom: calc(100% - 16px) !important;
+}
+.assistant-turn > .codex-explore-group-start.codex-explore-group-connected::after {
+  bottom: -2px !important;
+}
+.assistant-turn > .codex-explore-continuation.codex-explore-group-connected::after {
+  display: block !important; top: -2px !important; bottom: -2px !important;
+}
+.codex-explore-continuation .tool-header::before {
+  content: '└'; color: #6e7681; font-size: 11px; flex-shrink: 0;
+}
+
 .tool-header {
   display: flex; align-items: center; gap: 6px;
   padding: 0; font-size: 13px; cursor: pointer; user-select: none;
@@ -245,6 +261,10 @@ body {
 }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tool-header.expandable-desc.expanded-desc { align-items: flex-start; }
+.tool-header.expandable-desc.expanded-desc .tool-desc {
+  white-space: pre-wrap; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+}
 .tool-status, .tool-flag { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: #8b949e; }
 .tool-status.error { color: #f85149; }
 .tool-flag { color: #d29922; }

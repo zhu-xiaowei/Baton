@@ -6,6 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "npm run test:bridge && npm run test:codex && npm run test:frontend && npm run test:server && npm run test:packaging",
+    "test:bridge": "node --test test/bridge/*.test.mjs",
+    "test:codex": "node --test test/codex/phase1/*.test.mjs test/codex/phase2/*.test.mjs",
+    "test:codex:e2e": "node test/codex/phase2/e2e.mjs --run",
+    "test:codex:stress": "node test/codex/phase2/parcel-stress.mjs --run",
+    "test:frontend": "node --test test/frontend/*.test.mjs && node test/frontend/run.mjs",
+    "test:server": "python3 -m pytest test/server",
+    "test:packaging": "node --test test/packaging/*.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -29,6 +37,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.0",
+    "jsdom": "^29.1.1",
     "vite": "^5.4.10"
   }
 }

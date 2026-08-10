@@ -1,7 +1,7 @@
 # Codex 接入设计与实施状态
 
-> 最后更新：2026-08-09
-> 当前状态：Phase 1 已完成；Phase 2、Phase 3 待实施
+> 最后更新：2026-08-10
+> 当前状态：Phase 1、Phase 2 已完成；Phase 3 待实施
 > API 与 WS 完整契约见 [api.md](api.md)
 
 ## 1. 目标与范围
@@ -16,24 +16,26 @@ Device → Project → Session 信息架构。
 - 将 Codex Session metadata 和历史消息同步到现有 DynamoDB 表。
 - 老用户升级 Bridge 后自动执行 Codex 初始化同步。
 - DDB 无消息时，通过 REST → WS → Bridge 按需回填旧 Session。
+- 监听所有 Codex Session 存储目录，并在 rollout append 后实时通过 WS 同步。
+- WS ack、HTTP fallback、超大帧、失败重试和 watermark 提交与 Claude 使用同一可靠投递语义。
+- 实时更新新 Session metadata 和 `running/completed` 状态。
 - 列表和详情复用统一 UI，并用 runtime icon、短 ID 和局部展示差异区分。
 - macOS、Linux 和原生 Windows Bridge 安装、启动及升级。
 
 当前未完成：
 
-- Codex JSONL 文件监听和运行期间的实时增量同步。
 - Codex 消息发送、streaming、interrupt 和权限交互。
 - Codex app-server 的生产接入。
 
-因此，Codex Session 当前是历史读取能力。产品不显示额外“只读”标签，也不为此删除或隐藏
-现有输入区域；Bridge capability 会阻止未支持的请求进入 Claude controller。
+因此，Codex Session 当前支持历史读取和实时旁观，但不支持交互。产品不显示额外“只读”
+标签，也不删除或隐藏现有输入区域；Bridge capability 会阻止未支持的请求进入 Claude controller。
 
 ## 2. 阶段与完成条件
 
 | 阶段 | 状态 | 范围 | 完成条件 |
 |---|---|---|---|
 | Phase 1 | 已完成 | 初始化发现、metadata、历史消息、按需回填、统一 UI、跨平台安装升级 | 本地/DDB/REST/UI 数量一致；重启和重复打开无新增重复；Claude 行为无回归 |
-| Phase 2 | 待开始 | Codex watcher、增量读取、状态更新、实时旁观 | macOS/Linux/Windows 的新增行不漏不重；断连、重启、半行写入和 watermark 恢复通过 |
+| Phase 2 | 已完成 | Codex watcher、增量读取、状态更新、实时旁观 | macOS/Linux/Windows 的新增行不漏不重；断连、重启、半行写入和 watermark 恢复通过 |
 | Phase 3 | 待开始 | app-server、发送、streaming、interrupt、权限 | 同一 Session 多轮发送、流式顺序、权限、重连恢复和外部进程接管边界通过 |
 | Phase 4 | 待开始 | 性能、诊断、灰度、回滚和体验完善 | 大 Session、弱网、升级失败和多设备场景均有可执行验收与回滚流程 |
 
@@ -55,9 +57,19 @@ Phase 1 的初始化读链路由以下文件组成：
 | `bridge/runtime-adapter.mjs` | 定义和校验 runtime 公共接口及 feature flags |
 | `bridge/runtime-registry.mjs` | 注册 runtime、查找 adapter、统一能力检测 |
 | `bridge/claude-runtime.mjs` | Claude discovery、读取、状态、删除和能力 |
-| `bridge/codex-runtime.mjs` | Codex discovery、读取和 Phase 1 能力 |
+| `bridge/codex-runtime.mjs` | Codex discovery、读取和状态轮询能力 |
 | `bridge/sync.mjs` | 合并 catalog、聚合、筛选和上传 |
 | `bridge/ws.mjs` | 通用 WS 路由，通过 adapter 执行 `sync_session` |
+
+Phase 2 的实时链路：
+
+| 文件 | 职责 |
+|---|---|
+| `bridge/watcher-adapter.mjs` | 定义 runtime watcher 接口 |
+| `bridge/runtime-watcher-registry.mjs` | 注册并启动 Claude/Codex watcher |
+| `bridge/watcher.mjs` | Claude JSONL watcher |
+| `bridge/codex-watcher.mjs` | Codex 多 Home rollout watcher、watermark 和状态更新 |
+| `bridge/realtime-delivery.mjs` | 两种 runtime 共用的 WS ack、HTTP fallback 和大帧策略 |
 
 Adapter 必须实现：
 
@@ -82,8 +94,9 @@ deleteHistory
 statusPolling
 ```
 
-Phase 2 的 Claude/Codex watcher、Phase 3 的 send/streaming/permission controller 也必须采用
-同样的 registry + 分文件结构，不能在共享实现中逐步堆积 runtime 条件分支。
+Phase 2 的 Claude/Codex watcher 已采用独立 adapter + registry；Phase 3 的
+send/streaming/permission controller 也必须保持同样结构，不能在共享实现中堆积 runtime
+条件分支。
 
 ## 4. Identity 与路径
 
@@ -157,7 +170,7 @@ completed
 ```
 
 Codex JSONL 目前只能可靠得到 `running` 或 `completed`，无法仅靠落盘历史判断一个外部
-Codex 进程是否正在等待审批，因此 Phase 1 不生成 Codex `needs_input`。
+Codex 进程是否正在等待审批，因此 JSONL watcher 不生成 Codex `needs_input`。
 
 ### 5.2 Device Runtime Capabilities
 
@@ -241,11 +254,15 @@ Bridge 启动或升级重启
 → 选择 running、needs_input 或最近 24h Session
 → 并发 2 个 Session 提取和上传消息
 → 上传成功后提交 watermark
-→ 启动现有 Claude watcher
+→ 通过 watcher registry 启动 Claude/Codex watcher
 ```
 
-Codex Phase 1 没有 watcher，因此每次 Bridge 启动都会从已保存 watermark 继续读取新增行，
-而不是像 Claude watcher 一样在进程运行期间实时跟踪。
+启动同步负责关闭 Bridge 离线期间的缺口，运行期间由 Codex watcher 从同一 watermark
+继续读取。两条链路都只在消息成功写入后提交 watermark。
+
+Bridge 重启期间补齐的消息通过 HTTP 写入 DDB，不会经过实时消息广播。启动同步若实际
+补写了消息，Bridge 会在 WS 建连后发送一次设备级恢复完成通知；当前设备的 App 随即从
+DDB 合并当前 Session，避免中间的工具结果必须手动刷新后才出现。无补写时不发送通知。
 
 `--skip-init` 不上传消息，但会为两种 runtime 建立文件末尾 watermark。Catalog 超过 5000
 个 Session 时分批上传，只有第一批携带权威 DEV/PROJ 聚合。
@@ -269,6 +286,38 @@ App GET /api/bridge/messages
 默认消息读取使用一致性读，缩短 `sync_complete` 后立即刷新看不到刚写入行的窗口。
 连续打开、重复同步和 Bridge 重启都依赖确定性 UUID + DDB key 保持幂等。
 
+### 7.3 Phase 2 实时读取
+
+```text
+Parcel 原生目录订阅发现 rollout
+或 active/recent 文件 watcher 收到 append
+→ 与 Claude 相同的 busy/pending 合并
+→ 按 nativeSessionId 立即串行处理
+→ 从 watermark 提取完整 JSON 行
+→ WS messages 并等待 messages_ack
+→ 无 WS/ack 超时则 HTTP 写 DDB
+→ 成功后提交 watermark
+→ 同步 Session metadata/status
+```
+
+- 每个 `CODEX_HOME/sessions` 使用一个 `@parcel/watcher` 原生递归订阅，负责新目录、
+  新 rollout、rename 和大规模历史目录发现。
+- 所有 `running` rollout 及最近 64 个已完成 rollout 使用直接文件 watcher，负责实时
+  append。该有界集合规避 macOS FSEvents 对 Codex 长期持有文件追加的漏事件，同时不会
+  为 10,000 个历史 Session 建立 10,000 个句柄。
+- 正常事件与 Claude 一样立即进入 `busy/pending` 串行循环；所有根目录每 5 分钟做一次
+  低频安全重扫，补齐底层文件事件遗漏。
+- 文件事件可以被系统合并；任意一次事件都会从 watermark 读取到完整行 EOF，并在投递后
+  再比较文件 size/mtime。处理期间继续增长时立即进入下一轮，不依赖第二个文件事件。
+- 半写入尾行不推进 watermark；补全后按原行号生成同一个确定性 UUID。
+- 同一 Session 只有一个处理循环，密集事件只设置一个 pending 标记。
+- WS 小消息在帧预算内保持顺序批量发送；Server 仅在 DDB 持久化成功后 ack，断连、写入失败
+  或 ack 超时均走严格 HTTP fallback。
+- 超过 WS 帧预算的消息实时发送截断 `noCache` 副本，完整副本通过 HTTP 保存。
+- 任何投递失败都保留 watermark 并定时重试；重启时 `synced.json` 再次补齐。
+- `task_started/task_complete/turn_aborted` 驱动实时状态；普通 assistant/tool append 不重扫
+  rollout 状态。长期未闭合 turn 由 stale timer 和现有 `checkStopped` adapter 再检查。
+
 ## 8. 消息标准化与 UI
 
 ### 8.1 已支持映射
@@ -281,17 +330,21 @@ App GET /api/bridge/messages
 | `update_plan` | `TodoWrite` |
 | `apply_patch` | 一个或多个 `Edit` |
 | `write_stdin` | `WriteStdin` |
+| `item_completed/CommandExecution` | 更新原 `Bash` 的权威输出、退出状态、命令分类和完成时间 |
+| `item_completed/McpToolCall` | 更新原 MCP 调用的 server/tool、最终结果和 `Calling/Called` 状态 |
 | `view_image` | `ViewImage` |
 | `tool_search_call` | `ToolSearch` |
+| `item_completed/WebSearch`、`web_search_call` | 去重后的 `WebSearch` |
 | 其他工具 | generic 工具卡 |
-| `compacted` | 默认收起的 Markdown summary |
+| `compacted`（有非空 `message`） | 默认收起的 Markdown summary |
+| `item_completed/ContextCompaction`、`context_compacted` | `Context compacted` system event |
 | `entered_review_mode` | `Review started` system event |
 | `exited_review_mode` | `Review completed` system event |
 | `thread_rolled_back` | rollback system event |
 | `turn_aborted` | interrupt |
 
-不显示 developer message、`response_item/message(role=user)`、重复 `agent_message` 和没有明文
-的加密 reasoning。Review 范围内相邻、同内容、同一轮 prompt 只保留一次；普通重复用户
+不显示 developer message、重复 `agent_message` 和没有明文的加密 reasoning。Review
+范围内相邻、同内容、同一轮 prompt 只保留一次；普通重复用户
 消息不做全局去重。
 
 工具通过 `call_id + occurrence` 配对，支持同一 Session 重用 call ID；消息 UUID 与工具
@@ -310,6 +363,21 @@ Codex `ViewImage` 是 agent 查看本地图片，不是用户发送图片。Brid
 - 首页、Session 列表和详情右上角的 runtime icon。
 - native ID 后 8 位。
 - `Explored`、`Ran`、`Edited`、`Updated Plan`、`Viewed Image` 等展示名称。
+- 只有 Codex `parsed_cmd` 全部属于 `Read/ListFiles/Search` 且来源不是 `UserShell` 的
+  `Bash` 才是 `Explored`；连续调用按 TUI `ExecCell` 语义组成一组，组内保持调用顺序。
+  子项使用 `Read/Search/List` 结构化摘要，只有组首显示时间线节点和 `Explored` 标题；
+  后续子项隐藏重复圆点；组位于末尾时不画悬空竖线，后续已有独立节点时则以一条连续
+  竖线穿过折叠组并连接下一个节点。底层 call ID、IN、OUT、结果和 UUID 仍分别保留。
+- 其他 `Bash` 显示为 `Ran`，最终位置以 `CommandExecution` 完成时间为准。此前用于猜测
+  只读命令的前端正则已删除，组合命令不会再因包含 `git diff`、`find` 等片段被误分组。
+- 空输入 `WriteStdin` 是后台终端轮询：等待中的实时节点显示 `Waiting for background
+  terminal`；同一 process 的连续轮询在历史中折叠为一个 `Waited for background
+  terminal`；较长命令默认单行省略，点击标题可展开完整内容。直接结束进程的轮询不创建
+  额外 Waited。非空终端输入仍显示为 `Ran`。
+- `CommandExecution` 的聚合输出是权威 OUT；`Chunk ID`、`Wall time`、token count 等
+  wrapper 结果在最终事件存在时标记为 superseded。退出码作为节点状态展示，不拼入 OUT。
+- MCP 调用使用 `McpToolCall.server/tool` 作为权威身份：执行中显示 `Calling`，完成后显示
+  `Called`，摘要保留 `server.tool`；通用 `function_call_output` wrapper 不重复展示。
 - Codex 局部强调色 `#13A7CD`；工具标题仍使用统一白色。
 - 底部运行文案固定为逐字循环的 `Working...`。
 
@@ -342,8 +410,11 @@ thread_settings_applied
 token、thread settings 和 turn context 摘要，但不上传完整 world state、base/developer
 instructions、skills 或权限路径列表。
 
-Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状态。底层 Bash 和
-WriteStdin 历史已经显示，Phase 1 不重建该计数。
+Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状态，Phase 1
+不重建该运行计数。后台命令完成后会写入 `item_completed/CommandExecution`；Bridge
+使用该事件更新原 Bash 节点的最终输出、退出状态和完成位置，节点仍显示为 `Ran` 或
+`Explored`。`Waited for background terminal` 只代表空 stdin 轮询形成的等待 streak，
+不会替代原 Bash 节点。
 
 ## 10. 验证证据
 
@@ -355,13 +426,51 @@ WriteStdin 历史已经显示，Phase 1 不重建该计数。
 | 混合 catalog | 2403 Claude + 17 Codex = 2420 |
 | 初始化 dry-run 最终消息 | 约 4095 |
 | metadata/message key 冲突 | 0 |
-| Bridge 本地测试 | 29 passed |
-| Server runtime 测试 | 9 passed |
-| Frontend 回归 | 21 passed |
+| Bridge 测试 | 21 passed |
+| Codex 测试 | 27 passed |
+| Server 测试 | 13 passed |
+| Frontend 回归 | 39 passed |
+| Packaging 边界测试 | 4 passed |
 | Production build | passed |
 
 AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。
+
+Phase 2 真实链路验证使用隔离 `CODEX_HOME` 并发启动 2 个 Codex Session：
+
+- rollout 工具输出和最终回复均实时到达 App WS。
+- WS UUID 重复 0，DDB UUID 重复 0。
+- 两个 Session 最终 metadata 均为 `runtime=codex/status=completed`。
+- rollout 到最终回复 WS 的最大观测延迟 1363ms。
+- 最大现有 rollout 为 22.4MB / 9072 行。普通 append 路径从约 207.7ms 降至
+  138.4ms，CPU 时间减少约 33.4%；固定安全扫描从 30 秒改为 5 分钟，扫描频率减少 90%。
+
+本次发布版本 `0.2.0-codex-p2-20260810-13` 部署到 `MacBook-Pro`、`agentpeek_test`、
+`test-ec2` 和 `test-ec2-ap`；四台均通过 WS 连接记录自报相同 `bridgeVersion` 且在线。
+Mac 真实 Codex turn 的最终 assistant rollout 到 App WS 为 1359ms，DDB UUID 重复 0；
+东京 Linux 真实 turn 的用户消息、工具调用、工具结果和最终回复共 4 条，状态
+`completed` 且无重复。
+
+移除 Codex WSL/polling 分支后，Codex 使用 Parcel 根订阅做发现，并对 active/recent
+rollout 使用有界直接文件 watcher；Claude 的现有 WSL fallback 保持不变。生产 Mac 的
+纯 assistant 消息从 rollout 时间戳到真实 App WS 约 0.56 秒，同一 UUID 在 DDB 中仅
+1 条。以已提交 watermark 做本地 extractor 与 DDB UUID 集合核对，缺失 0、重复 0。
+
+Parcel 10,000 Session 压测均使用真实 `CodexWatcher`，一次更新 100 个不同 Session：
+
+| 平台 | 根订阅 | 直接 watcher | 初始化 | RSS 增量 | 总 FD | 100 个更新 |
+|---|---:|---:|---:|---:|---:|---:|
+| macOS arm64 | 1 | 64 | 843.6ms | 39.6MB | 93 | 665.1ms |
+| Linux x64 | 1 | 64 | 249.8ms | 41.4MB | 47 | 803.0ms |
+| Windows x64 | 1 | 64 | 1812.0ms | 37.6MB | N/A | 1229.4ms |
+
+三组均为 100/100 到达、唯一 UUID 100、缺失 0、重复 0。Windows 初始安装脚本显式把
+Node 目录加入 PATH，确保 Parcel 原生包安装脚本能找到 `node.exe`。
+
+Codex TUI 还存在只写 `response_item role=user`、不写 `event_msg user_message` 的 rollout
+变体。scanner 和 extractor 同时支持两种来源：旧格式同内容按计数去重，新格式补齐
+preview、Session metadata 和用户消息，并过滤 `environment_context`/`turn_aborted`
+内部上下文。
 
 ### 10.2 原生 Windows
 
@@ -374,16 +483,17 @@ AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的
 - 三组样本为 11/11、11/11、10/10，消息数与唯一 UUID 数一致。
 - 连续打开、Bridge 重启、重新安装和自动升级后数量不增加。
 - PowerShell 安装、Task Scheduler 自启动和 commit 版本升级通过。
+- Phase 2 临时源码通过 SSM 在原生 Windows Node 22 环境执行，4/4 watcher 测试通过。
+- 已部署 watcher 的受控 rollout append 通过 App WS、DDB 和 `completed` metadata
+  全链路验证；真实模型 turn 因该机 Codex 凭证返回 401 未执行。
+- 安装脚本使用 `S4U` 任务，Bridge 无需交互式用户登录即可启动。
+
+### 10.3 Linux
+
+东京 Linux EC2 使用临时源码和独立依赖安装执行 Phase 2 watcher 测试，4/4 通过；随后使用
+已部署 Bridge 完成真实 Codex turn 的 WS/DDB/status 验证。
 
 ## 11. 后续任务
-
-### Phase 2：实时读取
-
-1. 新建 Codex watcher adapter，只处理 Codex rollout。
-2. 复用确定性 extractor、watermark、上传和 WS 大帧策略。
-3. 覆盖文件新增、append、半行、rename、多个 CODEX_HOME 和断连恢复。
-4. 定义实时状态降级规则，不能把无法观测的审批等待误报为 `needs_input`。
-5. 在 macOS、Linux、原生 Windows 验证不漏、不重和重启恢复。
 
 ### Phase 3：交互
 

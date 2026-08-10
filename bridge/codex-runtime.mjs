@@ -1,7 +1,13 @@
+import fs from 'fs';
 import path from 'path';
 import { countJsonlLines } from './extract.mjs';
 import { syncCodexMessages } from './codex-extract.mjs';
-import { discoverCodexSessions, findCodexSessionFile } from './codex-session.mjs';
+import {
+  discoverCodexSessions,
+  findCodexSessionFile,
+  getCodexRunningInfo,
+  scanCodexRollout,
+} from './codex-session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import {
   binaryVersion,
@@ -9,10 +15,19 @@ import {
   resolveCodexBin,
   resolveCodexHomes,
 } from './runtime-capabilities.mjs';
+import { storageSessionId } from './session-identity.mjs';
+
+function publicSession(session) {
+  const { _filePath, _lineCount, ...item } = session;
+  return item;
+}
 
 export const codexRuntime = defineRuntimeAdapter({
   runtime: 'codex',
   displayName: 'Codex',
+  features: {
+    statusPolling: true,
+  },
 
   discover: discoverCodexSessions,
   detectCapability(options = {}) {
@@ -23,7 +38,7 @@ export const codexRuntime = defineRuntimeAdapter({
       installed: !!binary,
       historyAvailable,
       canRead: historyAvailable,
-      // Phase 1 remains read-only until the app-server path is implemented.
+      // The rollout watcher is read-only until the app-server path is implemented.
       canCreate: false,
       canSend: false,
       version: options.skipVersions ? '' : binaryVersion(binary),
@@ -32,7 +47,7 @@ export const codexRuntime = defineRuntimeAdapter({
   findSessionFile: findCodexSessionFile,
 
   shouldSkipInitial() {
-    // Without a Codex watcher, startup consumes all lines after the watermark.
+    // Startup closes the gap before the watcher attaches.
     return false;
   },
 
@@ -64,5 +79,79 @@ export const codexRuntime = defineRuntimeAdapter({
         uploader: context.uploader,
       },
     );
+  },
+
+  createStatusContext(context = {}) {
+    return {
+      runningInfo: getCodexRunningInfo(),
+      lastKnownStatus: context.lastKnownStatus,
+    };
+  },
+
+  inspectActiveSession(active, context) {
+    const nativeSessionId = active.nativeSessionId || active.sessionId;
+    const sessionId = storageSessionId('codex', nativeSessionId);
+    const filePath = findCodexSessionFile(nativeSessionId);
+    let session;
+    if (!filePath || !fs.existsSync(filePath)) {
+      session = {
+        id: nativeSessionId,
+        nativeSessionId,
+        runtime: 'codex',
+        project: active.projectHash || '',
+        projectName: active.projectName || active.projectHash || '',
+        lastActive: active.lastActive || new Date().toISOString(),
+        size: 0,
+        preview: active.preview || '',
+        model: '',
+        status: 'completed',
+      };
+    } else {
+      session = scanCodexRollout(filePath, {
+        nativeSessionId,
+        runningInfo: context.runningInfo,
+      }).session;
+      if (!session) return null;
+    }
+    if (session.status === active.status) return null;
+
+    context.lastKnownStatus.set(sessionId, session.status);
+    return {
+      session: publicSession(session),
+      statusDelta: {
+        deviceName: active.deviceName,
+        projectHash: session.project,
+        projectName: session.projectName,
+        from: active.status,
+        to: session.status,
+        lastActive: session.lastActive,
+      },
+    };
+  },
+
+  async updateSessionStatus(config, nativeSessionId, filePath, _projectHash, newStatus, _detail, context) {
+    const sessionId = storageSessionId('codex', nativeSessionId);
+    const previousStatus = context.lastKnownStatus.get(sessionId);
+    if (previousStatus === newStatus || !filePath || !fs.existsSync(filePath)) return;
+    const session = scanCodexRollout(filePath, {
+      nativeSessionId,
+      runningInfo: getCodexRunningInfo(),
+    }).session;
+    if (!session) return;
+    session.status = newStatus;
+    await context.postFn('/api/bridge/sync-sessions', {
+      deviceName: config.deviceName,
+      os: process.platform,
+      sessions: [publicSession(session)],
+      statusDeltas: [{
+        deviceName: config.deviceName,
+        projectHash: session.project,
+        projectName: session.projectName,
+        from: previousStatus || 'completed',
+        to: newStatus,
+        lastActive: session.lastActive,
+      }],
+    });
+    context.lastKnownStatus.set(sessionId, newStatus);
   },
 });

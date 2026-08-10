@@ -13,6 +13,7 @@ import { ClaudePool } from './headless.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
 import { updateSessionStatus, knownProjects } from './sync.mjs';
+import { BRIDGE_VERSION } from './version.mjs';
 
 let _ws = null;
 let _config = null;
@@ -20,6 +21,7 @@ let _reconnectTimer = null;
 let _heartbeatTimer = null;
 let _connectWatchdog = null;
 let _consecutiveFailures = 0;
+const _sendWhenConnected = [];
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const RECONNECT_DELAY = 5_000;
 const SLOW_RECONNECT_DELAY = 5 * 60_000;
@@ -91,14 +93,19 @@ export function wsSend(data) {
   }
 }
 
+export function wsSendWhenConnected(data) {
+  if (wsSend(data)) return true;
+  _sendWhenConnected.push(data);
+  return false;
+}
+
 // Ack-based send: resolves true if server acks within timeout, false otherwise
 const _pendingAcks = new Map(); // sessionId → { resolve, timer }
 
 export function wsSendWithAck(data, timeout = 5000) {
   return new Promise((resolve) => {
-    if (!wsSend(data)) return resolve(false);
     const sid = data.sessionId;
-    // If there's already a pending ack for this session, let it timeout naturally
+    if (_pendingAcks.has(sid) || !wsSend(data)) return resolve(false);
     const timer = setTimeout(() => { _pendingAcks.delete(sid); resolve(false); }, timeout);
     _pendingAcks.set(sid, { resolve, timer });
   });
@@ -125,7 +132,9 @@ function connect() {
     _ws = null;
   }
 
-  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&device=${encodeURIComponent(_config.deviceName)}`;
+  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge`
+    + `&device=${encodeURIComponent(_config.deviceName)}`
+    + `&version=${encodeURIComponent(BRIDGE_VERSION)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
@@ -152,6 +161,13 @@ function connect() {
         _ws.send(JSON.stringify({ action: 'heartbeat' }));
       }
     }, HEARTBEAT_INTERVAL);
+    while (_sendWhenConnected.length > 0) {
+      const queued = _sendWhenConnected.shift();
+      if (!wsSend(queued)) {
+        _sendWhenConnected.unshift(queued);
+        break;
+      }
+    }
   });
 
   _ws.on('message', async (data) => {

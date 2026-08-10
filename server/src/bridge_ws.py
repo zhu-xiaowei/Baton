@@ -99,6 +99,7 @@ def _handle_connect(event, connection_id):
     api_key = qs.get("apiKey", "")
     role = qs.get("role", "app")  # "app" or "bridge"
     device = qs.get("device", "")
+    version = qs.get("version", "")
 
     if not api_key:
         return {"statusCode": 401}
@@ -115,6 +116,8 @@ def _handle_connect(event, connection_id):
     }
     if device:
         item["deviceName"] = device
+    if role == "bridge" and version:
+        item["bridgeVersion"] = version
     _connections_table.put_item(Item=item)
 
     return {"statusCode": 200}
@@ -182,6 +185,9 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "sync_complete":
         if role == "bridge":
             return _handle_sync_complete(body, account_id, endpoint)
+    elif action == "bridge_recovery_complete":
+        if role == "bridge":
+            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "permission_request":
         if role == "bridge":
             return _handle_bridge_relay(body, connection_id, endpoint)
@@ -305,7 +311,10 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
     # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
     # caching the truncated version here would clobber it.
-    if _messages_table and not body.get("noCache"):
+    if not body.get("noCache"):
+        if not _messages_table:
+            return {"statusCode": 500}
+        persisted = False
         for attempt in range(2):
             try:
                 from datetime import datetime
@@ -329,12 +338,17 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                         if msg.get("toolUseResult"):
                             item["toolUseResult"] = json.dumps(msg["toolUseResult"], ensure_ascii=False)
                         batch.put_item(Item=item)
+                persisted = True
                 break
             except Exception as e:
                 if attempt == 0:
                     print(f"DDB write error (retrying): {e}")
                 else:
                     print(f"DDB write error (gave up): {e}")
+        if not persisted:
+            # Do not ack: the Bridge will time out and persist the same
+            # deterministic rows through the HTTP fallback before advancing.
+            return {"statusCode": 500}
 
     # 3. Ack back to bridge so it can advance synced position
     _post_to_connection(endpoint, bridge_connection_id, {

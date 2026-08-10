@@ -1,23 +1,26 @@
 import fs from 'fs';
 import path from 'path';
-import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, WS_FRAME_LIMIT, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
+import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post } from './http.mjs';
-import { synced, extractForApp, uploadMessages, truncateToBytes } from './extract.mjs';
+import { synced, extractForApp, uploadMessages } from './extract.mjs';
+import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
-import { wsSend, wsSendWithAck, headlessPushed, poolOwns } from './ws.mjs';
+import { headlessPushed, poolOwns } from './ws.mjs';
+import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   const busy = new Map(); // sessionId → { pending }
+  const retries = new Map();
 
   if (NEEDS_POLLING) {
     // WSL2: inotify doesn't work on /mnt/ (9P filesystem), use polling
     const mtimes = new Map(); // filePath → mtimeMs
     console.log('[watcher] WSL detected, using polling (2s interval)');
-    setInterval(() => pollProjects(config, busy, mtimes), 2000);
+    setInterval(() => pollProjects(config, busy, mtimes, retries), 2000);
   } else {
     fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
       if (!filename?.endsWith('.jsonl')) return;
@@ -27,21 +30,37 @@ export function startWatcher(config) {
       const state = busy.get(sessionId);
       if (state) { state.pending = true; return; }
       busy.set(sessionId, { pending: false });
-      processLoop(config, filename, sessionId);
+      processClaudeLoop(config, busy, retries, filename, sessionId);
     });
   }
+}
 
-  async function processLoop(config, filename, sessionId) {
-    const state = busy.get(sessionId);
+async function processClaudeLoop(config, busy, retries, filename, sessionId) {
+  const state = busy.get(sessionId);
+  try {
     do {
       state.pending = false;
       await readAndSend(config, filename, sessionId);
     } while (state.pending);
-    busy.delete(sessionId);
+    clearTimeout(retries.get(sessionId));
+    retries.delete(sessionId);
+  } catch (error) {
+    console.error(`[watcher] Claude ${sessionId.slice(0, 8)}: ${error.message}`);
+    if (!retries.has(sessionId)) {
+      const timer = setTimeout(() => {
+        retries.delete(sessionId);
+        if (busy.has(sessionId)) return;
+        busy.set(sessionId, { pending: false });
+        processClaudeLoop(config, busy, retries, filename, sessionId);
+      }, 1000);
+      timer.unref();
+      retries.set(sessionId, timer);
+    }
   }
+  busy.delete(sessionId);
 }
 
-function pollProjects(config, busy, mtimes) {
+function pollProjects(config, busy, mtimes, retries) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   try {
     for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
@@ -62,11 +81,7 @@ function pollProjects(config, busy, mtimes) {
           const state = busy.get(sessionId);
           if (state) { state.pending = true; continue; }
           busy.set(sessionId, { pending: false });
-          (async () => {
-            const s = busy.get(sessionId);
-            do { s.pending = false; await readAndSend(config, filename, sessionId); } while (s.pending);
-            busy.delete(sessionId);
-          })();
+          processClaudeLoop(config, busy, retries, filename, sessionId);
         } catch {}
       }
     }
@@ -110,20 +125,7 @@ async function readAndSend(config, filename, sessionId) {
     // DDB, don't re-push WS. user prompts + terminal/VSCode-driven rows aren't in the set → still push.
     if (headlessPushed(msg.uuid)) { await uploadMessages(sessionId, [msg]); continue; }
 
-    // Push authoritative rows over WS (uuid-deduped) so replies persist in the app, not just DDB.
-
-    // Messages over the API GW single-frame cap (32768B) would drop the whole WS
-    // connection with code 1009. Send a truncated copy over WS for real-time
-    // display (noCache → server skips DDB), and the full copy over HTTP to DDB.
-    if (Buffer.byteLength(JSON.stringify({ action: 'messages', sessionId, messages: [msg] })) > WS_FRAME_LIMIT) {
-      const wsMsg = truncateToBytes(msg, WS_FRAME_LIMIT - 512);
-      wsMsg.truncated = true;
-      wsSend({ action: 'messages', sessionId, messages: [wsMsg], noCache: true });
-      await uploadMessages(sessionId, [msg]);
-    } else {
-      const acked = await wsSendWithAck({ action: 'messages', sessionId, messages: [msg] });
-      if (!acked) await uploadMessages(sessionId, [msg]);
-    }
+    await deliverRealtimeMessages(sessionId, [msg]);
   }
 
   synced.set(sessionId, lastParsedLine);
@@ -268,3 +270,8 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
     }],
   });
 }
+
+export const claudeWatcherAdapter = defineRuntimeWatcher({
+  runtime: 'claude',
+  start: startWatcher,
+});

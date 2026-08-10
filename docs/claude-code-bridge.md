@@ -208,7 +208,7 @@ Bridge detects new message in .jsonl:
   1. Bridge → WS → API GW → Lambda
   2. Lambda in parallel:
      a. Query Subscriptions → post_to_connection → App (priority, latency-sensitive)
-     b. Write DDB BridgeMessages (fallback cache, non-blocking)
+     b. Write DDB BridgeMessages, then ack; write failure falls back to Bridge HTTP upload
   Bridge maintains one WS connection, no longer writes DDB directly via HTTP POST.
 ```
 
@@ -364,7 +364,7 @@ agentpeek/
 │   ├── runtime-adapter.mjs # Shared runtime read contract
 │   ├── runtime-registry.mjs # Claude/Codex adapter registry
 │   ├── claude-runtime.mjs  # Claude runtime adapter
-│   ├── codex-runtime.mjs   # Codex Phase 1 runtime adapter
+│   ├── codex-runtime.mjs   # Codex read/status runtime adapter
 │   ├── codex-session.mjs   # Codex rollout discovery
 │   ├── codex-extract.mjs   # Codex event normalization
 │   ├── session.mjs         # Preview, model, project name, session status detection

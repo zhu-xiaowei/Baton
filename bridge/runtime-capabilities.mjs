@@ -1,15 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
-import { DEFAULT_CODEX_HOME, IS_WSL } from './config.mjs';
+import { DEFAULT_CODEX_HOME } from './config.mjs';
 import { findExecutable, runExecutable } from './platform.mjs';
-
-function windowsToWsl(value) {
-  const match = String(value || '').trim().match(/^([a-zA-Z]):[\\/](.*)$/);
-  if (!match) return value;
-  return `/mnt/${match[1].toLowerCase()}/${match[2].replace(/\\/g, '/')}`;
-}
 
 export function existingDirectory(value) {
   try { return fs.statSync(value).isDirectory(); } catch { return false; }
@@ -17,20 +10,8 @@ export function existingDirectory(value) {
 
 export function resolveCodexHomes(env = process.env) {
   const candidates = [];
-  if (env.CODEX_HOME) candidates.push(IS_WSL ? windowsToWsl(env.CODEX_HOME) : env.CODEX_HOME);
+  if (env.CODEX_HOME) candidates.push(env.CODEX_HOME);
   candidates.push(DEFAULT_CODEX_HOME);
-
-  if (IS_WSL) {
-    if (env.USERPROFILE) candidates.push(path.join(windowsToWsl(env.USERPROFILE), '.codex'));
-    try {
-      const profile = execFileSync('cmd.exe', ['/c', 'echo', '%USERPROFILE%'], {
-        encoding: 'utf-8',
-        timeout: 3000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      if (profile) candidates.push(path.join(windowsToWsl(profile), '.codex'));
-    } catch {}
-  }
 
   const seen = new Set();
   return candidates.filter(Boolean).filter((candidate) => {

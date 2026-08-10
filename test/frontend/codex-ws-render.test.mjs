@@ -1,0 +1,442 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { JSDOM } from 'jsdom';
+
+const dom = new JSDOM(`<!doctype html><body>
+  <div id="content"><div class="messages"></div></div>
+  <div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>
+</body>`, { url: 'https://test/', pretendToBeVisual: true });
+
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+globalThis.navigator = dom.window.navigator;
+globalThis.WebSocket = function WebSocket() {};
+globalThis.WebSocket.CONNECTING = 0;
+globalThis.WebSocket.OPEN = 1;
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+window.requestAnimationFrame = globalThis.requestAnimationFrame;
+window.cancelAnimationFrame = globalThis.cancelAnimationFrame;
+window.__APEEK_TEST__ = true;
+window.Element.prototype.scrollTo = () => {};
+window.Element.prototype.scrollIntoView = () => {};
+
+const expose = (name, value) => {
+  globalThis[name] = value;
+  window[name] = value;
+};
+
+expose('renderAssistantText', (text) => `<div>${text}</div>`);
+expose('renderThinking', () => '');
+expose('renderUserBubble', () => '');
+expose('renderSystemEvent', () => '');
+expose('renderSummary', () => '');
+expose('renderInterrupt', () => '');
+expose('renderLocalCommandStdout', () => '');
+expose('isToolResultOnly', (message) => Array.isArray(message.content)
+  && message.content.length > 0
+  && message.content.every((block) => block.type === 'tool_result'));
+expose('isInterruptMsg', () => false);
+expose('isLocalCommandStdout', () => false);
+expose('deriveRunning', () => false);
+let apiResponse = { messages: [], hasMore: false };
+expose('api', async () => apiResponse);
+for (const name of [
+  'clampOverflow',
+  'dismissPermissionPrompt',
+  'loadImages',
+  'saveNav',
+  'showStats',
+  'updateBreadcrumb',
+  'updateSendBtn',
+  'updateSpinner',
+]) expose(name, () => {});
+
+await import('../../web/js/components/tool.js');
+expose('renderToolNode', window.renderToolNode);
+await import('../../web/js/render.js');
+expose('renderMessages', window.renderMessages);
+expose('renderSingleMessage', window.renderSingleMessage);
+const { state } = await import('../../web/js/state.js');
+await import('../../web/js/ws.js');
+
+function reset() {
+  document.querySelector('.messages').innerHTML = '';
+  state.appState = {
+    device: 'D',
+    project: { hash: '-project' },
+    session: 'codex:test',
+    sessionPreview: '',
+    runtime: 'codex',
+  };
+  state.wsSessionId = 'codex:test';
+  state.wsAllMessages = [];
+  state.wsMessageUuids = new Set();
+  state.wsRenderedCount = 0;
+  state.wsMessageCount = 0;
+  state.wsRunning = true;
+  state.wsOpenStatus = null;
+  state.wsLastTimestamp = '';
+  state.pendingSentMessages = [];
+  state._wsBuffer = null;
+  state.stickBottom = false;
+  apiResponse = { messages: [], hasMore: false };
+}
+
+function send(messages) {
+  window.__wsTest.handleWsMessage({
+    action: 'messages',
+    sessionId: state.wsSessionId,
+    messages,
+  });
+}
+
+const tool = (uuid, id, command, timestamp) => ({
+  uuid,
+  type: 'assistant',
+  content: [{
+    type: 'tool_use',
+    id,
+    name: 'Bash',
+    input: { command, codexCommandKind: 'ran' },
+  }],
+  timestamp,
+});
+
+const result = (uuid, id, content, timestamp, extra = {}) => ({
+  uuid,
+  type: 'user',
+  content: [{
+    type: 'tool_result',
+    tool_use_id: id,
+    content,
+    ...extra,
+  }],
+  timestamp,
+});
+
+test('Codex WS rendering commits parallel Ran nodes in completion order and merges wait streaks', () => {
+  reset();
+
+  send([
+    tool('date-use', 'date', 'date; check versions', '2026-08-10T03:00:01.000Z'),
+    tool('tail-use', 'tail', 'tail bridge.log', '2026-08-10T03:00:02.000Z'),
+    tool('git-use', 'git', 'git diff --stat; git diff --check', '2026-08-10T03:00:03.000Z'),
+  ]);
+  send([result('tail-end', 'tail', 'bridge ready', '2026-08-10T03:00:04.000Z', {
+    codexCommandKind: 'ran',
+  })]);
+  send([result('git-end', 'git', 'clean', '2026-08-10T03:00:05.000Z', {
+    codexCommandKind: 'ran',
+  })]);
+  send([result('date-end', 'date', 'all online', '2026-08-10T03:00:06.000Z', {
+    codexCommandKind: 'ran',
+  })]);
+
+  const commandOrder = Array.from(document.querySelectorAll('.tool-desc'))
+    .map((node) => node.textContent);
+  assert.deepEqual(commandOrder, [
+    'tail bridge.log',
+    'git diff --stat; git diff --check',
+    'date; check versions',
+  ]);
+
+  send([
+    tool('sleep-use', 'sleep', 'sleep 35; check fleet', '2026-08-10T03:00:07.000Z'),
+    result('sleep-running', 'sleep', 'Process running with session ID 300', '2026-08-10T03:00:08.000Z', {
+      codexBackground: 'running',
+      codexProcessId: '300',
+    }),
+  ]);
+  assert.equal(document.querySelector('[data-tool-id="sleep"]'), null);
+
+  const wait = (suffix, timestamp) => ({
+    uuid: `wait-${suffix}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `wait-${suffix}`,
+      name: 'WriteStdin',
+      input: {
+        session_id: 300,
+        chars: '',
+        codexCommand: 'sleep 35; check fleet',
+      },
+    }],
+    timestamp,
+  });
+  send([
+    wait('one', '2026-08-10T03:00:09.000Z'),
+    result('wait-one-result', 'wait-one', 'Process running with session ID 300', '2026-08-10T03:00:09.500Z', {
+      codexWait: 'waiting',
+      codexProcessId: '300',
+      codexCommand: 'sleep 35; check fleet',
+    }),
+  ]);
+  send([
+    wait('two', '2026-08-10T03:00:10.000Z'),
+    result('wait-two-result', 'wait-two', 'Process running with session ID 300', '2026-08-10T03:00:10.500Z', {
+      codexWait: 'waiting',
+      codexProcessId: '300',
+      codexCommand: 'sleep 35; check fleet',
+    }),
+  ]);
+  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 1);
+
+  send([result('sleep-end', 'sleep', 'fleet checked', '2026-08-10T03:00:11.000Z', {
+    codexBackground: 'complete',
+    codexCommandKind: 'ran',
+    codexProcessId: '300',
+  })]);
+
+  const finalNodes = Array.from(document.querySelectorAll('.tl-item'));
+  const waitIndex = finalNodes.findIndex((node) => node.classList.contains('codex-terminal-wait'));
+  const runIndex = finalNodes.findIndex((node) => node.dataset.toolId === 'sleep');
+  assert.ok(waitIndex >= 0 && waitIndex < runIndex);
+  assert.equal(document.querySelectorAll('[data-tool-id="sleep"]').length, 1);
+  assert.equal(document.querySelector('[data-tool-id="sleep"] .tool-name').textContent, 'Ran');
+});
+
+test('Codex WS matches the observed mixed Ran and Explored completion order', () => {
+  reset();
+
+  send([
+    tool('version-use', 'version', 'node check-version.mjs', '2026-08-10T04:31:52.683Z'),
+    tool('scan-use', 'scan', 'aws dynamodb scan', '2026-08-10T04:31:52.928Z'),
+    tool('local-use', 'local', 'printf local-version', '2026-08-10T04:31:53.097Z'),
+    {
+      uuid: 'search-use',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'search',
+        name: 'Bash',
+        input: {
+          command: 'rg -n bridge_recovery_complete dist/assets/ws-*.js',
+          codexCommandKind: 'explore',
+          codexCommandActions: [{
+            type: 'search',
+            query: 'bridge_recovery_complete',
+            path: 'ws-*.js',
+          }],
+        },
+      }],
+      timestamp: '2026-08-10T04:31:53.306Z',
+    },
+  ]);
+  send([result('local-result', 'local', 'local version', '2026-08-10T04:31:53.296Z', {
+    codexCommandKind: 'ran',
+  })]);
+  send([result('search-result', 'search', 'match', '2026-08-10T04:31:53.398Z', {
+    codexCommandKind: 'explore',
+  })]);
+  send([result('scan-result', 'scan', 'four devices', '2026-08-10T04:31:54.244Z', {
+    codexCommandKind: 'ran',
+  })]);
+  send([result('version-result', 'version', 'version 12', '2026-08-10T04:31:55.838Z', {
+    codexCommandKind: 'ran',
+  })]);
+
+  assert.deepEqual(
+    Array.from(document.querySelectorAll('.tool-desc')).map((node) => node.textContent),
+    [
+      'printf local-version',
+      'Search bridge_recovery_complete',
+      'aws dynamodb scan',
+      'node check-version.mjs',
+    ],
+  );
+  assert.deepEqual(
+    Array.from(document.querySelectorAll('.tool-name')).map((node) => node.textContent),
+    ['Ran', 'Explored', 'Ran', 'Ran'],
+  );
+});
+
+test('Codex WS preserves a flushed wait when the background Ran completes later', () => {
+  reset();
+
+  const processId = '65713';
+  const commandId = 'update-loop';
+  const waitMessage = (uuid, id, timestamp) => ({
+    uuid,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'WriteStdin',
+      input: { session_id: Number(processId), chars: '' },
+    }],
+    timestamp,
+  });
+
+  send([tool('loop-use', commandId, 'target=version; for i in 1 2 3; do check; done',
+    '2026-08-10T04:16:55.136Z')]);
+  send([result('loop-running', commandId, 'Process running with session ID 65713',
+    '2026-08-10T04:17:25.311Z', {
+      codexBackground: 'running',
+      codexProcessId: processId,
+    })]);
+  send([waitMessage('wait-one-use', 'wait-one', '2026-08-10T04:17:30.071Z')]);
+  send([result('wait-one-end', 'wait-one', 'Process running with session ID 65713',
+    '2026-08-10T04:18:00.079Z', {
+      codexWait: 'waiting',
+      codexProcessId: processId,
+      codexCommand: 'target=version; for i in 1 2 3; do check; done',
+    })]);
+  send([{
+    uuid: 'status-text',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'Bridge updated; waiting for the connection.' }],
+    timestamp: '2026-08-10T04:18:05.398Z',
+  }]);
+  send([waitMessage('wait-two-use', 'wait-two', '2026-08-10T04:18:05.501Z')]);
+
+  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 2);
+
+  send([
+    result('loop-complete', commandId, 'Bridge connected',
+      '2026-08-10T04:18:28.706Z', {
+        codexBackground: 'complete',
+        codexCommandKind: 'ran',
+        codexProcessId: processId,
+      }),
+    result('wait-two-end', 'wait-two', 'Process exited with code 0',
+      '2026-08-10T04:18:28.708Z', {
+        codexWait: 'completed',
+        codexProcessId: processId,
+      }),
+  ]);
+
+  const waits = document.querySelectorAll('.codex-terminal-wait');
+  assert.equal(waits.length, 1);
+  assert.match(waits[0].textContent, /target=version/);
+  assert.equal(document.querySelectorAll(`[data-tool-id="${commandId}"]`).length, 1);
+});
+
+test('Codex startup recovery restores a wait missed during Bridge restart', async () => {
+  reset();
+
+  const processId = '65713';
+  const commandId = 'update-loop';
+  const command = 'target=version; for i in 1 2 3; do check; done';
+  const waitUse = {
+    uuid: 'wait-use',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'wait-one',
+      name: 'WriteStdin',
+      input: { session_id: Number(processId), chars: '' },
+    }],
+    timestamp: '2026-08-10T04:17:30.071Z',
+  };
+  const waitingResult = result(
+    'wait-result',
+    'wait-one',
+    'Process running with session ID 65713',
+    '2026-08-10T04:18:00.079Z',
+    {
+      codexWait: 'waiting',
+      codexProcessId: processId,
+      codexCommand: command,
+    },
+  );
+
+  send([tool('loop-use', commandId, command, '2026-08-10T04:16:55.136Z')]);
+  send([result('loop-running', commandId, 'Process running with session ID 65713',
+    '2026-08-10T04:17:25.311Z', {
+      codexBackground: 'running',
+      codexProcessId: processId,
+    })]);
+  send([waitUse]);
+  send([{
+    uuid: 'status-text',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'Bridge updated; waiting for the connection.' }],
+    timestamp: '2026-08-10T04:18:05.398Z',
+  }]);
+  send([result('loop-complete', commandId, 'Bridge connected',
+    '2026-08-10T04:18:28.706Z', {
+      codexBackground: 'complete',
+      codexCommandKind: 'ran',
+      codexProcessId: processId,
+    })]);
+
+  const incompleteWait = document.querySelector('.codex-terminal-wait');
+  assert.ok(incompleteWait);
+  assert.match(incompleteWait.textContent, /Waiting for background terminal/);
+  assert.doesNotMatch(incompleteWait.textContent, /Waited for background terminal/);
+
+  apiResponse = {
+    messages: [waitingResult],
+    hasMore: false,
+  };
+  window.__wsTest.handleWsMessage({
+    action: 'bridge_recovery_complete',
+    deviceName: 'D',
+    count: 1,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const waits = document.querySelectorAll('.codex-terminal-wait');
+  assert.equal(waits.length, 1);
+  assert.match(waits[0].textContent, /Waited for background terminal/);
+  assert.match(waits[0].textContent, /target=version/);
+  assert.equal(document.querySelectorAll(`[data-tool-id="${commandId}"]`).length, 1);
+});
+
+test('Codex WS keeps a foreground Ran before a later Explore completion', () => {
+  reset();
+
+  send([
+    tool('get-use', 'get', 'aws dynamodb get-item', '2026-08-10T03:52:36.095Z'),
+    {
+      uuid: 'read-use',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'read',
+        name: 'Bash',
+        input: {
+          command: "sed -n '1,340p' test/frontend/tool-render.test.mjs",
+          codexCommandKind: 'explore',
+          codexCommandActions: [{
+            type: 'read',
+            name: 'tool-render.test.mjs',
+            path: 'test/frontend/tool-render.test.mjs',
+          }],
+        },
+      }],
+      timestamp: '2026-08-10T03:52:37.680Z',
+    },
+  ]);
+  send([result('get-result', 'get', '{"uuid":"example"}', '2026-08-10T03:52:37.733Z', {
+    codexCommandKind: 'ran',
+  })]);
+  send([result('read-result', 'read', 'test contents', '2026-08-10T03:52:37.769Z', {
+    codexCommandKind: 'explore',
+  })]);
+
+  const labels = Array.from(document.querySelectorAll('.tool-name'))
+    .map((node) => node.textContent);
+  const descriptions = Array.from(document.querySelectorAll('.tool-desc'))
+    .map((node) => node.textContent);
+  assert.deepEqual(labels, ['Ran', 'Explored']);
+  assert.deepEqual(descriptions, ['aws dynamodb get-item', 'Read tool-render.test.mjs']);
+});
+
+test('Codex grouping does not mutate Claude turns', () => {
+  reset();
+  state.appState.runtime = 'claude';
+  const container = document.querySelector('.messages');
+  container.innerHTML = `
+    <div class="assistant-turn" id="claude-empty"></div>
+    <div class="assistant-turn" id="claude-turn">
+      <div class="tl-item tool-node" data-tool-id="claude-tool"></div>
+    </div>`;
+
+  window.markTurnAdjacency(container);
+
+  assert.ok(document.getElementById('claude-empty'));
+  assert.equal(document.querySelector('[data-tool-id="claude-tool"]').className, 'tl-item tool-node');
+});

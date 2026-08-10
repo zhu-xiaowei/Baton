@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import { codexResponseUserText } from './codex-session.mjs';
 
 const TOOL_NAMES = new Map([
   ['exec_command', 'Bash'],
@@ -129,6 +130,44 @@ function patchResult(payload) {
   return details || (payload.success === false ? 'Patch failed' : 'Applied patch successfully');
 }
 
+function commandExecutionResult(item) {
+  return String(item.aggregated_output
+    || item.formatted_output
+    || [item.stdout, item.stderr].filter(Boolean).join('\n')
+    || item.status
+    || '').replace(/^(?:\r?\n)+/, '').trimEnd();
+}
+
+function commandExecutionMeta(item) {
+  const actions = Array.isArray(item?.parsed_cmd) ? item.parsed_cmd : [];
+  const source = String(item?.source || '');
+  const exploring = source !== 'user_shell'
+    && actions.length > 0
+    && actions.every((action) => ['read', 'list_files', 'search'].includes(action?.type));
+  return {
+    codexCommandKind: exploring ? 'explore' : 'ran',
+    codexCommandActions: actions,
+    codexCommandSource: source,
+  };
+}
+
+function mcpToolMeta(item) {
+  return {
+    codexMcpServer: String(item?.server || ''),
+    codexMcpTool: String(item?.tool || ''),
+  };
+}
+
+function mcpToolResult(item) {
+  const result = item?.result;
+  if (!result) return String(item?.status || '');
+  return outputText(result.content ?? result);
+}
+
+function runningProcessId(content) {
+  return /Process running with session ID\s+(\d+)/i.exec(String(content || ''))?.[1] || '';
+}
+
 function systemEvent(sessionId, line, content, payload, timestamp) {
   return {
     uuid: stableId(sessionId, line, 'system_event', payload),
@@ -138,15 +177,96 @@ function systemEvent(sessionId, line, content, payload, timestamp) {
   };
 }
 
-function customOutputsSupersededByPatch(lines) {
+function webSearchMessages(sessionId, line, payload, timestamp) {
+  const action = payload.action || {};
+  const query = String(payload.query || action.query || action.url || '');
+  const searchId = String(payload.id || `line-${line}`);
+  const toolUseId = pairId(sessionId, searchId, 1);
+  const input = {
+    action: action.type || 'search',
+    query,
+    ...(Array.isArray(action.queries) ? { queries: action.queries } : {}),
+    ...(action.url ? { url: action.url } : {}),
+  };
+  const result = action.type === 'open_page'
+    ? `Opened ${action.url || query}`
+    : `Searched the web for ${query}`;
+  return [
+    {
+      uuid: stableId(sessionId, line, 'web_search_call', payload),
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: toolUseId,
+        name: 'WebSearch',
+        input,
+      }],
+      timestamp,
+      stopReason: 'tool_use',
+    },
+    {
+      uuid: stableId(sessionId, line, 'web_search_result', payload),
+      type: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: toolUseId,
+        content: result,
+        is_error: false,
+      }],
+      timestamp,
+    },
+  ];
+}
+
+function analyzeLines(lines) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
+  const eventUserCounts = new Map();
+  const completedWebSearchIds = new Set();
+  const commandExecutions = new Map();
+  const mcpToolCalls = new Map();
   for (let index = lines.length - 1; index >= 0; index--) {
-    if (!lines[index].includes('patch_apply_end')
-      && !lines[index].includes('custom_tool_call_output')) continue;
+    const hasUser = lines[index].includes('"user_message"');
+    const hasPatch = lines[index].includes('patch_apply_end')
+      || lines[index].includes('custom_tool_call_output');
+    const hasWebSearch = lines[index].includes('"WebSearch"');
+    const hasCommandExecution = lines[index].includes('"CommandExecution"');
+    const hasMcpToolCall = lines[index].includes('"McpToolCall"');
+    if (!hasUser && !hasPatch && !hasWebSearch && !hasCommandExecution && !hasMcpToolCall) {
+      continue;
+    }
     let entry;
     try { entry = JSON.parse(lines[index]); } catch { continue; }
     const payload = entry.payload || {};
+    if (entry.type === 'event_msg' && payload.type === 'user_message') {
+      const text = String(payload.message || '').trim();
+      if (text) eventUserCounts.set(text, (eventUserCounts.get(text) || 0) + 1);
+    }
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'WebSearch'
+      && payload.item.id) {
+      completedWebSearchIds.add(String(payload.item.id));
+    }
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'CommandExecution'
+      && payload.item.id) {
+      const callId = String(payload.item.id);
+      const executions = commandExecutions.get(callId) || [];
+      executions.push({ line: index, item: payload.item, timestamp: timestampFor(entry) });
+      commandExecutions.set(callId, executions);
+    }
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'McpToolCall'
+      && payload.item.id) {
+      const callId = String(payload.item.id);
+      const calls = mcpToolCalls.get(callId) || [];
+      calls.push({ line: index, item: payload.item, timestamp: timestampFor(entry) });
+      mcpToolCalls.set(callId, calls);
+    }
+    if (!hasPatch) continue;
     const callId = String(payload.call_id || '');
     if (!callId) continue;
     if (entry.type === 'event_msg' && payload.type === 'patch_apply_end') {
@@ -160,7 +280,15 @@ function customOutputsSupersededByPatch(lines) {
       }
     }
   }
-  return skipped;
+  for (const executions of commandExecutions.values()) executions.reverse();
+  for (const calls of mcpToolCalls.values()) calls.reverse();
+  return {
+    commandExecutions,
+    completedWebSearchIds,
+    eventUserCounts,
+    mcpToolCalls,
+    skippedCustomOutputs: skipped,
+  };
 }
 
 export function extractCodexMessages(filePath, sessionId, options = {}) {
@@ -168,11 +296,23 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.at(-1) === '') lines.pop();
   const startLine = Math.min(options.startLine || 0, lines.length);
-  const skippedCustomOutputs = customOutputsSupersededByPatch(lines);
+  const {
+    commandExecutions,
+    completedWebSearchIds,
+    eventUserCounts,
+    mcpToolCalls,
+    skippedCustomOutputs,
+  } = analyzeLines(lines);
   const messages = [];
   const callCounts = new Map();
   const pending = new Map();
+  const execPairs = new Map();
+  const executionCounts = new Map();
+  const mcpPairs = new Map();
+  const mcpCompletionCounts = new Map();
+  const backgroundByProcessId = new Map();
   let nextLine = 0;
+  let needsSessionScan = startLine === 0;
   let reviewPrompt = '';
   let reviewPromptSeen = false;
 
@@ -210,6 +350,19 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     const payload = entry.payload || {};
     const timestamp = timestampFor(entry);
     const shouldEmit = line >= startLine;
+    if (shouldEmit && (
+      entry.type === 'session_meta'
+      || (entry.type === 'turn_context' && payload.model)
+      || (entry.type === 'response_item' && payload.type === 'message' && payload.role === 'user')
+      || (entry.type === 'event_msg' && [
+        'task_started',
+        'task_complete',
+        'turn_aborted',
+        'user_message',
+      ].includes(payload.type))
+    )) {
+      needsSessionScan = true;
+    }
 
     if (entry.type === 'event_msg' && payload.type === 'entered_review_mode') {
       reviewPrompt = String(payload.user_facing_hint || payload.target?.instructions || '');
@@ -225,6 +378,17 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       reviewPromptSeen = false;
       if (shouldEmit) {
         messages.push(systemEvent(sessionId, line, 'Review completed', payload, timestamp));
+      }
+      continue;
+    }
+
+    const contextCompacted = entry.type === 'event_msg' && (
+      payload.type === 'context_compacted'
+      || (payload.type === 'item_completed' && payload.item?.type === 'ContextCompaction')
+    );
+    if (contextCompacted) {
+      if (shouldEmit) {
+        messages.push(systemEvent(sessionId, line, 'Context compacted', payload, timestamp));
       }
       continue;
     }
@@ -246,6 +410,27 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     }
 
     if (entry.type === 'response_item' && payload.type === 'message') {
+      if (payload.role === 'user') {
+        const text = codexResponseUserText(payload);
+        const duplicateCount = eventUserCounts.get(text) || 0;
+        if (duplicateCount > 0) {
+          if (duplicateCount === 1) eventUserCounts.delete(text);
+          else eventUserCounts.set(text, duplicateCount - 1);
+          continue;
+        }
+        const isReviewPrompt = !!reviewPrompt && text === reviewPrompt;
+        const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
+        if (isReviewPrompt) reviewPromptSeen = true;
+        if (shouldEmit && text && !duplicateReviewPrompt) {
+          messages.push({
+            uuid: stableId(sessionId, line, 'user', payload),
+            type: 'user',
+            content: text,
+            timestamp,
+          });
+        }
+        continue;
+      }
       if (payload.role !== 'assistant') continue;
       const text = assistantText(payload);
       if (shouldEmit && text.trim()) {
@@ -256,6 +441,89 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           timestamp,
           stopReason: 'end_turn',
         });
+      }
+      continue;
+    }
+
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'WebSearch') {
+      if (shouldEmit) {
+        messages.push(...webSearchMessages(sessionId, line, payload.item, timestamp));
+      }
+      continue;
+    }
+
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'CommandExecution') {
+      const item = payload.item;
+      const callId = String(item.id || '');
+      const occurrence = (executionCounts.get(callId) || 0) + 1;
+      executionCounts.set(callId, occurrence);
+      const pair = (execPairs.get(callId) || [])[occurrence - 1];
+      if (pair) pair.executionCompleted = true;
+      if (shouldEmit && pair) {
+        messages.push({
+          uuid: stableId(sessionId, line, 'command_execution', {
+            id: callId,
+            status: item.status,
+            exitCode: item.exit_code,
+          }),
+          type: 'user',
+          content: pair.uses.map((use) => ({
+            type: 'tool_result',
+            tool_use_id: use.id,
+            content: commandExecutionResult(item),
+            is_error: item.status === 'failed'
+              || (Number.isInteger(item.exit_code) && item.exit_code !== 0),
+            ...(Number.isInteger(item.exit_code) ? { codexExitCode: item.exit_code } : {}),
+            ...commandExecutionMeta(item),
+            ...(pair.background ? {
+              codexBackground: 'complete',
+              codexProcessId: String(item.process_id || pair.processId || ''),
+            } : {}),
+          })),
+          timestamp,
+        });
+      }
+      continue;
+    }
+
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'McpToolCall') {
+      const item = payload.item;
+      const callId = String(item.id || '');
+      const occurrence = (mcpCompletionCounts.get(callId) || 0) + 1;
+      mcpCompletionCounts.set(callId, occurrence);
+      const pair = (mcpPairs.get(callId) || [])[occurrence - 1];
+      if (pair) pair.mcpCompleted = true;
+      if (shouldEmit && pair) {
+        messages.push({
+          uuid: stableId(sessionId, line, 'mcp_tool_call', {
+            id: callId,
+            server: item.server,
+            tool: item.tool,
+            status: item.status,
+          }),
+          type: 'user',
+          content: pair.uses.map((use) => ({
+            type: 'tool_result',
+            tool_use_id: use.id,
+            content: mcpToolResult(item),
+            is_error: item.status === 'failed' || item.result?.isError === true,
+            ...mcpToolMeta(item),
+          })),
+          timestamp,
+        });
+      }
+      continue;
+    }
+
+    if (entry.type === 'response_item' && payload.type === 'web_search_call') {
+      if (shouldEmit && !completedWebSearchIds.has(String(payload.id || ''))) {
+        messages.push(...webSearchMessages(sessionId, line, payload, timestamp));
       }
       continue;
     }
@@ -277,18 +545,48 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
             input,
           }));
       } else {
+        const executionInfo = payload.name === 'exec_command'
+          ? commandExecutions.get(callId)?.[occurrence - 1]
+          : null;
+        const execution = executionInfo?.item;
+        const mcpInfo = mcpToolCalls.get(callId)?.[occurrence - 1];
+        const input = payload.type === 'tool_search_call'
+          ? (payload.arguments || { execution: payload.execution || '' })
+          : mapToolInput(payload.name, payload.arguments);
+        if (execution && payload.name === 'exec_command') {
+          Object.assign(input, commandExecutionMeta(execution));
+        }
+        if (mcpInfo) Object.assign(input, mcpToolMeta(mcpInfo.item));
         uses = [{
           type: 'tool_use',
           id: pairId(sessionId, callId, occurrence),
           name: payload.type === 'tool_search_call'
             ? 'ToolSearch'
             : TOOL_NAMES.get(payload.name) || payload.name || 'Tool',
-          input: payload.type === 'tool_search_call'
-            ? (payload.arguments || { execution: payload.execution || '' })
-            : mapToolInput(payload.name, payload.arguments),
+          input,
         }];
       }
-      enqueue(callId, { callId, occurrence, uses, name: payload.name || payload.type });
+      const pair = {
+        callId,
+        occurrence,
+        uses,
+        name: payload.name || payload.type,
+        executionInfo: payload.name === 'exec_command'
+          ? commandExecutions.get(callId)?.[occurrence - 1]
+          : null,
+        mcpInfo: mcpToolCalls.get(callId)?.[occurrence - 1],
+      };
+      enqueue(callId, pair);
+      if (payload.name === 'exec_command') {
+        const executions = execPairs.get(callId) || [];
+        executions.push(pair);
+        execPairs.set(callId, executions);
+      }
+      if (pair.mcpInfo) {
+        const calls = mcpPairs.get(callId) || [];
+        calls.push(pair);
+        mcpPairs.set(callId, calls);
+      }
       if (shouldEmit) {
         messages.push({
           uuid: stableId(sessionId, line, 'tool_call', payload),
@@ -310,20 +608,54 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         continue;
       }
       const pair = dequeue(String(payload.call_id || ''));
-      if (!pair || !shouldEmit) continue;
+      if (!pair) continue;
       const content = pair.name === 'view_image'
         ? ''
         : payload.type === 'tool_search_output'
         ? outputText({ status: payload.status, execution: payload.execution, tools: payload.tools })
         : outputText(payload.output);
+      let resultMeta = {};
+      if (pair.name === 'exec_command') {
+        const processId = runningProcessId(content);
+        if (processId && (!pair.executionInfo || pair.executionInfo.line > line)) {
+          pair.background = true;
+          pair.processId = processId;
+          backgroundByProcessId.set(processId, pair);
+          resultMeta = {
+            codexBackground: 'running',
+            codexProcessId: processId,
+          };
+        } else if (pair.executionInfo || pair.executionCompleted) {
+          resultMeta = { codexSuperseded: true };
+        } else {
+          resultMeta = { codexProvisional: true };
+        }
+      } else if (pair.name === 'write_stdin') {
+        const input = pair.uses[0]?.input || {};
+        const processId = String(input.session_id || '');
+        if (!String(input.chars || '').length) {
+          const background = backgroundByProcessId.get(processId);
+          resultMeta = {
+            codexWait: runningProcessId(content) ? 'waiting' : 'completed',
+            codexProcessId: processId,
+            ...(background?.uses?.[0]?.input?.command
+              ? { codexCommand: background.uses[0].input.command }
+              : {}),
+          };
+        }
+      } else if (pair.mcpInfo || pair.mcpCompleted) {
+        resultMeta = { codexSuperseded: true };
+      }
+      if (!shouldEmit) continue;
       messages.push({
         uuid: stableId(sessionId, line, 'tool_output', payload),
         type: 'user',
         content: pair.uses.map((use) => ({
           type: 'tool_result',
           tool_use_id: use.id,
-          content,
+          content: resultMeta.codexSuperseded ? '' : content,
           is_error: payload.status === 'failed',
+          ...resultMeta,
         })),
         timestamp,
       });
@@ -378,7 +710,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     }
   }
 
-  return { messages, nextLine };
+  return { messages, nextLine, needsSessionScan };
 }
 
 export async function syncCodexMessages(filePath, nativeSessionId, storageSessionId, options) {

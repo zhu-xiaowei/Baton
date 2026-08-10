@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import { post } from './http.mjs';
+import { post, postRequired } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
 
 // Track sync position: sessionId → line number (the watcher's per-session read watermark).
@@ -232,7 +232,7 @@ export async function uploadMessages(sessionId, messages, options = {}) {
     const msgJson = JSON.stringify(msg);
     const msgBytes = Buffer.byteLength(msgJson);
     if (batchSize + msgBytes > MAX_POST_BYTES && batch.length > 0) {
-      await post('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
+      await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
       await new Promise(r => setTimeout(r, 200));
       batch = [];
       batchSize = 0;
@@ -241,6 +241,6 @@ export async function uploadMessages(sessionId, messages, options = {}) {
     batchSize += msgBytes;
   }
   if (batch.length > 0) {
-    await post('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
+    await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
   }
 }

@@ -154,11 +154,13 @@ export async function syncSessions(config, opts = {}) {
       catalogComplete,
       sessions,
       runtimeDiagnostics,
+      messageCount: 0,
     };
   }
 
   const syncJobs = [];
   const queued = new Set();
+  let messageCount = 0;
 
   for (const session of sessions) {
     const sessionKey = storageSessionId(session.runtime, session.nativeSessionId);
@@ -190,14 +192,16 @@ export async function syncSessions(config, opts = {}) {
     console.log(`[init] syncing ${syncJobs.length} sessions (running/idle + recent 24h)`);
     // Two concurrent extractions bound startup memory for large rollouts.
     const CONCURRENCY = 2;
-    let total = 0;
     let next = 0;
     const inflight = new Set();
 
     function launch() {
       while (inflight.size < CONCURRENCY && next < syncJobs.length) {
         const idx = next++;
-        const p = syncJobs[idx]().then(n => { total += n; inflight.delete(p); });
+        const p = syncJobs[idx]()
+          .then((n) => { messageCount += n; })
+          .catch((error) => console.error(`[init] message sync failed: ${error.message}`))
+          .finally(() => inflight.delete(p));
         inflight.add(p);
       }
     }
@@ -207,7 +211,7 @@ export async function syncSessions(config, opts = {}) {
       await Promise.race(inflight);
       launch();
     }
-    if (total > 0) console.log(`[init] ${total} messages synced to DDB`);
+    if (messageCount > 0) console.log(`[init] ${messageCount} messages synced to DDB`);
   }
   const runtimeDiagnostics = Object.fromEntries(
     catalogs.map(({ adapter, catalog }) => [adapter.runtime, catalog.diagnostics || {}]),
@@ -216,6 +220,7 @@ export async function syncSessions(config, opts = {}) {
     catalogComplete,
     sessions,
     runtimeDiagnostics,
+    messageCount,
   };
 }
 

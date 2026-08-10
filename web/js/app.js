@@ -810,6 +810,7 @@ async function startNewSession(projectHash, asAgent) {
   saveNav();
   // Reset WS message state for new session
   state.wsAllMessages = [];
+  state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
   state.wsRenderedCount = 0;
   state.wsLastTimestamp = '';
@@ -877,6 +878,7 @@ async function loadMessages(sessionId, preview, status) {
 
   // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
   state.wsAllMessages = [];
+  state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
   state.wsLastTimestamp = '';
   state.wsHasMore = false;
