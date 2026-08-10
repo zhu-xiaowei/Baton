@@ -265,6 +265,7 @@ body {
   transition: transform 0.2s ease; transform: rotate(90deg);
   transform-origin: 45% 55%;
 }
+.codex-explore .tool-detail-chevron { position: relative; top: -1px; }
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body { display: none; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
