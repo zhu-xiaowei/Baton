@@ -259,6 +259,13 @@
     container.querySelectorAll('.tool-body-content.collapsible:not(.open)').forEach(function (el) {
       if (!el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
     });
+    container.querySelectorAll('.tool-body-content:not(.collapsible) .diff-container').forEach(function (diff) {
+      if (diff.scrollHeight <= 240) return;
+      var body = diff.closest('.tool-body-content');
+      if (!body) return;
+      body.classList.add('collapsible');
+      if (!body.querySelector('.clamp-btn')) body.insertAdjacentHTML('beforeend', BTN);
+    });
     // Tool body with clamped .tool-value children (Bash IN/OUT, etc.)
     container.querySelectorAll('.tool-body-content:not(.open):not(.no-clamp):not(.collapsible)').forEach(function (el) {
       if (el.querySelector('.clamp-btn')) return;

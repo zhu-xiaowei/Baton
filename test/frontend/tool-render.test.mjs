@@ -305,6 +305,154 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.codex-explore-continuation\.codex-explore-group-connected::after \{[\s\S]*display: block !important;/);
 });
 
+test('tool detail policy collapses Codex history while realtime and Claude stay expanded', () => {
+  const message = {
+    uuid: 'bash-use',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'bash',
+      name: 'Bash',
+      input: { command: 'npm test', codexCommandKind: 'ran' },
+    }],
+    timestamp: '2026-08-10T05:30:00.000Z',
+  };
+
+  document.body.innerHTML = `<div class="messages">${window.renderMessages([message], 'codex')}</div>`;
+  const historyNode = document.querySelector('.tool-node');
+  const historyHeader = historyNode.querySelector('.tool-header');
+  assert.equal(historyNode.classList.contains('tool-details-collapsed'), true);
+  assert.equal(historyHeader.getAttribute('aria-expanded'), 'false');
+  assert.ok(historyHeader.querySelector('.tool-detail-chevron'));
+
+  window.toggleToolDetails(historyHeader);
+  assert.equal(historyNode.classList.contains('tool-details-collapsed'), false);
+  assert.equal(historyHeader.getAttribute('aria-expanded'), 'true');
+  assert.equal(historyNode.querySelector('.tool-body-content').classList.contains('open'), false);
+
+  document.body.innerHTML = `<div class="messages">${
+    window.renderSingleMessage(message, [message], 'codex')
+  }</div>`;
+  const realtimeNode = document.querySelector('.tool-node');
+  assert.equal(realtimeNode.classList.contains('tool-details-collapsed'), false);
+  assert.equal(realtimeNode.querySelector('.tool-header').getAttribute('aria-expanded'), 'true');
+
+  document.body.innerHTML = `<div class="messages">${window.renderMessages([message], 'claude')}</div>`;
+  const claudeNode = document.querySelector('.tool-node');
+  assert.equal(claudeNode.classList.contains('tool-details-collapsed'), false);
+  assert.equal(claudeNode.querySelector('.tool-detail-chevron'), null);
+});
+
+test('Codex Explored title toggles every detail body in the group', () => {
+  const explore = (id, command, action) => ({
+    uuid: `message-${id}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'Bash',
+      input: {
+        command,
+        codexCommandKind: 'explore',
+        codexCommandActions: [action],
+      },
+    }],
+    timestamp: `2026-08-10T05:31:0${id}.000Z`,
+  });
+  document.body.innerHTML = `<div class="messages">${window.renderMessages([
+    explore('1', 'rg -n tool web/js', { type: 'search', query: 'tool', path: 'web/js' }),
+    explore('2', "sed -n '1,80p' web/js/render.js", {
+      type: 'read',
+      name: 'render.js',
+      path: 'web/js/render.js',
+    }),
+  ], 'codex')}</div>`;
+  const container = document.querySelector('.messages');
+  window.markCodexExploreGroups(container);
+  const nodes = Array.from(container.querySelectorAll('.codex-explore'));
+  assert.equal(nodes.length, 2);
+  assert.equal(nodes[0].dataset.toolDetailsGroup, nodes[1].dataset.toolDetailsGroup);
+  assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed')));
+
+  window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+  assert.ok(nodes.every((node) => !node.classList.contains('tool-details-collapsed')));
+  assert.ok(nodes.every((node) =>
+    !node.querySelector('.tool-body-content').classList.contains('open')));
+
+  window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+  assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed')));
+});
+
+test('Codex Edit loads and renders the diff only after first expansion', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  let loads = 0;
+  window.loadDiffViewer = async () => {
+    loads++;
+    window.Diff = {
+      createTwoFilesPatch: () => 'patch',
+    };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    const message = {
+      uuid: 'edit-use',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'edit',
+        name: 'Edit',
+        input: {
+          file_path: 'src/example.js',
+          old_string: 'const value = 1;',
+          new_string: 'const value = 2;',
+        },
+      }],
+      timestamp: '2026-08-10T05:32:00.000Z',
+    };
+    document.body.innerHTML = `<div class="messages">${
+      window.renderMessages([message], 'codex')
+    }</div>`;
+    const node = document.querySelector('.tool-node');
+    const diff = node.querySelector('.diff-container');
+    assert.equal(loads, 0);
+    assert.equal(diff.textContent, '');
+
+    window.toggleToolDetails(node.querySelector('.tool-header'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(loads, 1);
+    assert.equal(diff.dataset.diffState, 'ready');
+    assert.match(diff.textContent, /rendered diff/);
+
+    window.toggleToolDetails(node.querySelector('.tool-header'));
+    window.toggleToolDetails(node.querySelector('.tool-header'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(loads, 1);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+  }
+});
+
+test('collapsed tool spacing keeps the original title baseline', () => {
+  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  assert.match(
+    css,
+    /\.tool-node\.tool-details-collapsed \{ padding-top: 6px; padding-bottom: 4px; \}/,
+  );
+});
+
 test('Codex Waited command expands from its truncated header', () => {
   const command = "target='0.2.0-codex-p2-20260810-11'; for i in 1 2 3 4 5 6 7; do echo \"$target\"; done";
   const html = window.renderMessages([

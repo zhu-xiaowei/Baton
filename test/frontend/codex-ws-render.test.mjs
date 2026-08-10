@@ -260,6 +260,49 @@ test('Codex WS matches the observed mixed Ran and Explored completion order', ()
   );
 });
 
+test('Codex WS keeps historical detail state and expands new realtime tools', () => {
+  reset();
+  const historicalUse = tool(
+    'history-use',
+    'history',
+    'npm test',
+    '2026-08-10T05:40:00.000Z',
+  );
+  state.wsAllMessages = [historicalUse];
+  state.wsMessageUuids = new Set([historicalUse.uuid]);
+  state.wsRenderedCount = 1;
+  state.wsMessageCount = 1;
+  const container = document.querySelector('.messages');
+  container.innerHTML = window.renderMessages(state.wsAllMessages, 'codex');
+  window.markTurnAdjacency(container);
+  assert.equal(
+    container.querySelector('[data-tool-id="history"]')
+      .classList.contains('tool-details-collapsed'),
+    true,
+  );
+
+  send([result(
+    'history-result',
+    'history',
+    'tests passed',
+    '2026-08-10T05:40:01.000Z',
+    { codexCommandKind: 'ran' },
+  )]);
+  const updated = container.querySelector('[data-tool-id="history"]');
+  assert.equal(updated.classList.contains('tool-details-collapsed'), true);
+  assert.equal(updated.querySelector('.tool-header').getAttribute('aria-expanded'), 'false');
+
+  send([tool(
+    'realtime-use',
+    'realtime',
+    'npm run build',
+    '2026-08-10T05:40:02.000Z',
+  )]);
+  const realtime = container.querySelector('[data-tool-id="realtime"]');
+  assert.equal(realtime.classList.contains('tool-details-collapsed'), false);
+  assert.equal(realtime.querySelector('.tool-header').getAttribute('aria-expanded'), 'true');
+});
+
 test('Codex WS preserves a flushed wait when the background Ran completes later', () => {
   reset();
 

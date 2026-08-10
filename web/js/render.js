@@ -41,6 +41,7 @@
     flushWaitRun();
 
     let exploreRows = [];
+    let exploreGroupSequence = 0;
     const flushExploreRun = () => {
       if (!exploreRows.length) return;
       const items = exploreRows.flatMap((row) => Array.from(row.children));
@@ -50,6 +51,7 @@
           'codex-explore-group-start',
           'codex-explore-group-connected',
         );
+        if (item.dataset) delete item.dataset.toolDetailsGroup;
       }
       for (let start = 0; start < items.length;) {
         if (!items[start].classList?.contains('codex-explore')) {
@@ -59,9 +61,17 @@
         let end = start + 1;
         while (end < items.length && items[end].classList?.contains('codex-explore')) end++;
         if (end - start > 1) {
+          const groupItems = items.slice(start, end);
+          const groupId = `codex-explore-${exploreGroupSequence++}`;
+          const collapsed = groupItems.every((item) =>
+            item.classList.contains('tool-details-collapsed'));
           items[start].classList.add('codex-explore-group-start');
           for (let index = start + 1; index < end; index++) {
             items[index].classList.add('codex-explore-continuation');
+          }
+          for (const item of groupItems) {
+            item.dataset.toolDetailsGroup = groupId;
+            window.setToolDetailsCollapsed?.(item, collapsed);
           }
           if (end < items.length) {
             for (let index = start; index < end; index++) {
@@ -98,7 +108,7 @@
   }
 
   // Convert one assistant message into an array of tl-item objects
-  function extractItems(msg, resultMap, runtime) {
+  function extractItems(msg, resultMap, runtime, options = {}) {
     const items = [];
     if (!Array.isArray(msg.content)) {
       const text = typeof msg.content === 'string' ? msg.content : '';
@@ -118,13 +128,17 @@
         if (runtime === 'codex' && window.isCodexHiddenTool?.(block, result)) continue;
         flush();
         window._lastToolState = '';
-        const html = renderToolNode(block, result, runtime);
+        window._lastToolHasDetails = false;
+        const html = renderToolNode(block, result, runtime, {
+          collapsed: !!options.collapseToolDetails,
+        });
         const emptyTerminalWait = runtime === 'codex'
           && block.name === 'WriteStdin'
           && !String(block.input?.chars || '').length;
         items.push({
           type: 'tool',
           state: window._lastToolState || '',
+          toolDetails: !!window._lastToolHasDetails,
           html,
           toolId: block.id,
           codexExplore: runtime === 'codex' && !!window.isCodexExploreTool?.(block, result),
@@ -204,10 +218,11 @@
     return output;
   }
 
-  function itemToHtml(item, timestamp) {
+  function itemToHtml(item, timestamp, collapseToolDetails = false) {
     let cls = 'tl-item';
     if (item.type === 'tool') {
       cls += ' tool-node';
+      if (item.toolDetails && collapseToolDetails) cls += ' tool-details-collapsed';
       if (item.codexExplore) cls += ' codex-explore';
       if (item.codexWait) cls += ' codex-terminal-wait';
       if (item.codexBackgroundComplete) cls += ' codex-background-complete';
@@ -226,13 +241,15 @@
   // Main: render all messages, merging consecutive assistant messages into one timeline
   window.renderMessages = function (messages, runtime) {
     const resultMap = buildToolMaps(messages);
+    const detailPolicy = window.getToolDetailPolicy?.(runtime) || {};
     const html = [];
     let turnItems = []; // accumulate tl-items for current assistant turn
 
     function flushTurn() {
       if (!turnItems.length) return;
       const items = runtime === 'codex' ? normalizeCodexItems(turnItems) : turnItems;
-      html.push(`<div class="assistant-turn">${items.map(i => itemToHtml(i, i.ts)).join('')}</div>`);
+      html.push(`<div class="assistant-turn">${items.map(i =>
+        itemToHtml(i, i.ts, !!detailPolicy.historyCollapsed)).join('')}</div>`);
       turnItems = [];
     }
 
@@ -260,7 +277,9 @@
 
       // Assistant → extract items into current turn
       if (msg.type === 'assistant') {
-        const items = extractItems(msg, resultMap, runtime);
+        const items = extractItems(msg, resultMap, runtime, {
+          collapseToolDetails: !!detailPolicy.historyCollapsed,
+        });
         turnItems.push(...items.map(i => ({ ...i, ts: i.ts || msg.timestamp })));
         continue;
       }
@@ -297,8 +316,13 @@
     }
     if (msg.type !== 'assistant') return '';
     const resultMap = buildToolMaps(allMessages);
-    const items = extractItems(msg, resultMap, runtime);
-    return items.map(function (i) { return itemToHtml(i, i.ts || msg.timestamp); }).join('');
+    const detailPolicy = window.getToolDetailPolicy?.(runtime) || {};
+    const items = extractItems(msg, resultMap, runtime, {
+      collapseToolDetails: !!detailPolicy.realtimeCollapsed,
+    });
+    return items.map(function (i) {
+      return itemToHtml(i, i.ts || msg.timestamp, !!detailPolicy.realtimeCollapsed);
+    }).join('');
   };
 
 })();

@@ -232,6 +232,7 @@ function handleWsMessage(msg) {
         if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
         var content = document.getElementById('content');
         content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
+        markTurnAdjacency(content.querySelector('.messages'));
         state.wsRenderedCount = state.wsAllMessages.length;
         state.wsRunning = deriveRunning(
           state.wsAllMessages,
@@ -637,6 +638,7 @@ function markTurnAdjacency(container) {
   if (state.appState.runtime === 'codex') {
     window.markCodexExploreGroups?.(container);
   }
+  window.discardDetachedToolDetails?.();
   var kids = container.children;
   for (var i = 0; i < kids.length; i++) {
     var el = kids[i];
@@ -825,8 +827,11 @@ function updateLastTurn() {
             node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
           }
           if (!node) continue;
+          var toolDetailsCollapsed = node.classList.contains('tool-details-collapsed');
           window._lastToolState = '';
-          node.innerHTML = renderToolNode(toolUseBlock, rb, state.appState.runtime);
+          node.innerHTML = renderToolNode(toolUseBlock, rb, state.appState.runtime, {
+            collapsed: toolDetailsCollapsed,
+          });
           var toolStateClass = window._lastToolState || '';
           var exploreClass = state.appState.runtime === 'codex'
             && window.isCodexExploreTool?.(toolUseBlock, rb) ? ' codex-explore' : '';
@@ -837,6 +842,7 @@ function updateLastTurn() {
             ? ' codex-background-complete' : '';
           node.className = 'tl-item tool-node' + exploreClass + waitClass + backgroundClass
             + (toolStateClass ? ' ' + toolStateClass : '');
+          window.setToolDetailsCollapsed?.(node, toolDetailsCollapsed);
           if (rb.codexProcessId) node.dataset.codexProcess = rb.codexProcessId;
           moveCompletedCodexTool(
             container,
@@ -1059,6 +1065,7 @@ async function recoverMissing(after) {
     if (container) {
       clearStreamPreviews();
       container.innerHTML = renderMessages(state.wsAllMessages, state.appState.runtime);
+      markTurnAdjacency(container);
       state.wsRenderedCount = state.wsAllMessages.length;
       state.wsRunning = deriveRunning(state.wsAllMessages, null, state.appState.runtime);
       updateSendBtn();

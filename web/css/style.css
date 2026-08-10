@@ -239,6 +239,7 @@ body {
 .tool-node.warning::before { background: #e1c08d; }
 
 .codex-explore-continuation .tool-name { display: none; }
+.codex-explore-continuation .tool-detail-chevron { visibility: hidden; }
 .codex-explore-continuation::before { display: none; }
 .codex-explore-continuation::after { display: none !important; }
 .assistant-turn > .codex-explore-group-start::after {
@@ -259,6 +260,14 @@ body {
   padding: 0; font-size: 13px; cursor: pointer; user-select: none;
   line-height: 21px;
 }
+.tool-detail-chevron {
+  display: inline-block; flex-shrink: 0; color: #8b949e;
+  transition: transform 0.2s ease; transform: rotate(90deg);
+  transform-origin: 45% 55%;
+}
+.tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
+.tool-details-collapsed .tool-body { display: none; }
+.tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tool-header.expandable-desc.expanded-desc { align-items: flex-start; }
@@ -316,6 +325,10 @@ body {
 .diff-container .d2h-code-linenumber,
 .diff-container td.d2h-code-linenumber { display: none !important; }
 .diff-container .d2h-code-line { padding: 0 0.5em !important; }
+.diff-container[data-diff-state="loading"]:empty::before {
+  content: 'Loading diff...'; display: block; padding: 10px;
+  color: #8b949e; font-size: 12px;
+}
 .diff-container .d2h-file-wrapper,
 .diff-container .d2h-file-diff,
 .diff-container .d2h-code-wrapper,

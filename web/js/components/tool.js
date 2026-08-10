@@ -120,8 +120,111 @@
     return map[ext] || null;
   }
 
+  const pendingDiffJobs = new Map();
+
+  function fallbackDiff(oldStr, newStr) {
+    return '<pre style="color:#e6edf3;padding:8px;font-size:12px">'
+      + (oldStr ? oldStr.split('\n').map((line) =>
+        '<span style="color:#f85149">- ' + esc(line) + '</span>').join('\n') : '')
+      + (oldStr && newStr ? '\n' : '')
+      + (newStr ? newStr.split('\n').map((line) =>
+        '<span style="color:#3fb950">+ ' + esc(line) + '</span>').join('\n') : '')
+      + '</pre>';
+  }
+
+  async function initializeDiffById(diffId) {
+    const job = pendingDiffJobs.get(diffId);
+    const el = document.getElementById(diffId);
+    if (!job || !el || el.dataset.diffState === 'ready') return;
+    if (job.promise) return job.promise;
+    job.promise = (async () => {
+      el.dataset.diffState = 'loading';
+      el.style.minHeight = `${job.estimatedHeight}px`;
+      try {
+        await window.loadDiffViewer?.();
+        if (!window.Diff || !window.Diff2HtmlUI) throw new Error('Diff viewer unavailable');
+        const a = job.oldStr.endsWith('\n') ? job.oldStr : job.oldStr + '\n';
+        const b = job.newStr.endsWith('\n') ? job.newStr : job.newStr + '\n';
+        const patch = window.Diff.createTwoFilesPatch(
+          job.file, job.file, a, b, '', '', { context: 3 },
+        );
+        const ui = new window.Diff2HtmlUI(el, patch, {
+          drawFileList: false,
+          fileListToggle: false,
+          fileContentToggle: false,
+          stickyFileHeaders: false,
+          outputFormat: 'line-by-line',
+          matching: 'lines',
+          colorScheme: 'dark',
+          highlight: true,
+        });
+        ui.draw();
+        el.querySelectorAll(
+          '.d2h-file-wrapper, .d2h-file-diff, .d2h-code-wrapper, .d2h-diff-table, .d2h-diff-tbody',
+        ).forEach((node) => {
+          node.style.backgroundColor = 'transparent';
+        });
+        const lang = detectLang(job.fullPath);
+        if (lang) {
+          el.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+            node.classList.add('language-' + lang, lang);
+          });
+          el.querySelectorAll('.d2h-file-wrapper').forEach((node) => {
+            node.dataset.lang = lang;
+          });
+          el.querySelectorAll('code').forEach((node) => {
+            node.classList.add('language-' + lang, lang);
+          });
+        }
+        ui.highlightCode();
+        if (lang && window.hljs) {
+          el.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+            if (!node.textContent.trim() || node.querySelector('[class*="hljs-"]')) return;
+            const delIns = node.querySelectorAll('del, ins');
+            if (delIns.length) {
+              delIns.forEach((tag) => {
+                if (!tag.textContent.trim()) return;
+                try {
+                  tag.innerHTML = window.hljs.highlight(
+                    tag.textContent, { language: lang, ignoreIllegals: true },
+                  ).value;
+                } catch (e) {}
+              });
+            } else {
+              try {
+                node.innerHTML = window.hljs.highlight(
+                  node.textContent, { language: lang, ignoreIllegals: true },
+                ).value;
+              } catch (e) {}
+            }
+          });
+        }
+      } catch (e) {
+        el.innerHTML = fallbackDiff(job.oldStr, job.newStr);
+      } finally {
+        el.style.minHeight = '';
+        el.dataset.diffState = 'ready';
+        pendingDiffJobs.delete(diffId);
+        window.clampOverflow?.(el.closest('.tool-node'));
+      }
+    })();
+    return job.promise;
+  }
+
+  window.initializeToolDetails = function (node) {
+    if (!node) return Promise.resolve();
+    return Promise.all(Array.from(node.querySelectorAll('.diff-container[data-lazy-diff]'))
+      .map((element) => initializeDiffById(element.id)));
+  };
+
+  window.discardDetachedToolDetails = function () {
+    for (const diffId of pendingDiffJobs.keys()) {
+      if (!document.getElementById(diffId)) pendingDiffJobs.delete(diffId);
+    }
+  };
+
   // Render Edit tool with Diff2HtmlUI
-  function renderEdit(input, result) {
+  function renderEdit(input, result, options = {}) {
     const file = shortPath(input.file_path || '');
     const fullPath = input.file_path || file;
     const oldStr = input.old_string || '';
@@ -130,86 +233,19 @@
     let diffHtml = '';
     if (oldStr || newStr) {
       const diffId = 'diff-' + Math.random().toString(36).slice(2, 8);
-      // diff2html draws async (setTimeout below), so its height is 0 at scroll
-      // time and the initial scroll-to-bottom lands short. Reserve an estimated
-      // min-height (~18px/row, capped at the 240px collapse threshold); cleared
-      // after draw, residual absorbed by the browser's overflow-anchor.
       const _oldLines = oldStr ? oldStr.split('\n').length : 0;
       const _newLines = newStr ? newStr.split('\n').length : 0;
       const _estH = Math.min((_oldLines + _newLines) * 18 + 12, 240);
-      diffHtml = `<div id="${diffId}" class="diff-container" style="min-height:${_estH}px"></div>`;
-
-      setTimeout(() => {
-        const el = document.getElementById(diffId);
-        if (!el || typeof Diff === 'undefined' || typeof Diff2HtmlUI === 'undefined') return;
-        try {
-          // Ensure trailing newlines so diff library doesn't flag unchanged lines
-          const a = oldStr.endsWith('\n') ? oldStr : oldStr + '\n';
-          const b = newStr.endsWith('\n') ? newStr : newStr + '\n';
-          const patch = Diff.createTwoFilesPatch(file, file, a, b, '', '', { context: 3 });
-          const ui = new Diff2HtmlUI(el, patch, {
-            drawFileList: false, fileListToggle: false, fileContentToggle: false,
-            stickyFileHeaders: false, outputFormat: 'line-by-line',
-            matching: 'lines', colorScheme: 'dark', highlight: true,
-          });
-          ui.draw();
-          // Force remove white backgrounds from structural diff2html elements only
-          el.querySelectorAll('.d2h-file-wrapper, .d2h-file-diff, .d2h-code-wrapper, .d2h-diff-table, .d2h-diff-tbody').forEach(node => {
-            node.style.backgroundColor = 'transparent';
-          });
-          // Set language on code blocks so hljs knows what to highlight
-          const lang = detectLang(fullPath);
-          if (lang) {
-            // Try multiple selectors - diff2html may use different elements
-            el.querySelectorAll('.d2h-code-line-ctn').forEach(ctn => {
-              ctn.classList.add('language-' + lang, lang);
-            });
-            el.querySelectorAll('.d2h-file-wrapper').forEach(w => {
-              w.dataset.lang = lang;
-            });
-            el.querySelectorAll('code').forEach(c => {
-              c.classList.add('language-' + lang, lang);
-            });
-          }
-          ui.highlightCode();
-          // Ensure every line gets syntax highlighting
-          if (lang && typeof hljs !== 'undefined') {
-            el.querySelectorAll('.d2h-code-line-ctn').forEach(ctn => {
-              if (!ctn.textContent.trim()) return;
-              // Skip if already highlighted
-              if (ctn.querySelector('[class*="hljs-"]')) return;
-              const delIns = ctn.querySelectorAll('del, ins');
-              if (delIns.length > 0) {
-                // Highlight text inside each del/ins separately, preserving the tag
-                delIns.forEach(tag => {
-                  if (!tag.textContent.trim()) return;
-                  try { tag.innerHTML = hljs.highlight(tag.textContent, { language: lang, ignoreIllegals: true }).value; } catch(e) {}
-                });
-              } else {
-                try { ctn.innerHTML = hljs.highlight(ctn.textContent, { language: lang, ignoreIllegals: true }).value; } catch(e) {}
-              }
-            });
-          }
-        } catch (e) {
-          el.innerHTML = '<pre style="color:#e6edf3;padding:8px;font-size:12px">'
-            + (oldStr ? oldStr.split('\n').map(l => '<span style="color:#f85149">- ' + esc(l) + '</span>').join('\n') : '')
-            + (oldStr && newStr ? '\n' : '')
-            + (newStr ? newStr.split('\n').map(l => '<span style="color:#3fb950">+ ' + esc(l) + '</span>').join('\n') : '')
-            + '</pre>';
-        }
-        // Drop the reserved estimate before the scrollHeight check below, or an
-        // over-estimate would falsely trigger the collapse.
-        el.style.minHeight = '';
-        // Collapse if rendered height exceeds 240px
-        if (el.scrollHeight > 240) {
-          const bodyContent = el.closest('.tool-body-content');
-          if (bodyContent && !bodyContent.classList.contains('collapsible')) {
-            bodyContent.classList.add('collapsible');
-            bodyContent.insertAdjacentHTML('beforeend',
-              '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.parentElement)">Show more</span>');
-          }
-        }
-      }, 50);
+      pendingDiffJobs.set(diffId, {
+        file,
+        fullPath,
+        oldStr,
+        newStr,
+        estimatedHeight: _estH,
+        promise: null,
+      });
+      diffHtml = `<div id="${diffId}" class="diff-container" data-lazy-diff="true"></div>`;
+      if (!options.defer) setTimeout(() => initializeDiffById(diffId), 0);
     }
 
     const status = resultText(result);
@@ -443,19 +479,68 @@
 
   // Main: render a tool_use + tool_result pair (wrapping tl-item div is in render.js)
   window.detectLang = detectLang;
+  const TOOL_DETAIL_POLICIES = Object.freeze({
+    codex: Object.freeze({
+      enabled: true,
+      historyCollapsed: true,
+      realtimeCollapsed: false,
+    }),
+  });
+  const DEFAULT_TOOL_DETAIL_POLICY = Object.freeze({
+    enabled: false,
+    historyCollapsed: false,
+    realtimeCollapsed: false,
+  });
+
+  window.getToolDetailPolicy = function (runtime) {
+    return TOOL_DETAIL_POLICIES[runtime] || DEFAULT_TOOL_DETAIL_POLICY;
+  };
+
+  window.setToolDetailsCollapsed = function (node, collapsed) {
+    if (!node) return;
+    node.classList.toggle('tool-details-collapsed', collapsed);
+    const header = node.querySelector(':scope > .tool-header');
+    if (header?.classList.contains('tool-details-toggle')) {
+      header.setAttribute('aria-expanded', String(!collapsed));
+    }
+  };
+
+  window.toggleToolDetails = function (header) {
+    const selection = window.getSelection?.();
+    if (selection?.toString()) return;
+    const node = header?.closest('.tool-node');
+    if (!node) return;
+    const collapsed = !node.classList.contains('tool-details-collapsed');
+    const groupId = node.dataset.toolDetailsGroup;
+    const root = node.closest('.messages') || document;
+    const members = groupId
+      ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
+        .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
+      : [node];
+    for (const member of members) {
+      window.setToolDetailsCollapsed(member, collapsed);
+      if (!collapsed) {
+        Promise.resolve(window.initializeToolDetails?.(member))
+          .then(() => window.clampOverflow?.(member));
+      }
+    }
+  };
+
   window.toggleToolDesc = function (header) {
     const expanded = header.classList.toggle('expanded-desc');
     header.setAttribute('aria-expanded', String(expanded));
   };
 
-  window.renderToolNode = function (toolUse, toolResult, runtime) {
+  window.renderToolNode = function (toolUse, toolResult, runtime, options = {}) {
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
+    const detailPolicy = window.getToolDetailPolicy(runtime);
+    const requestedDetailsCollapsed = detailPolicy.enabled && !!options.collapsed;
     const dispatchers = {
       Bash: () => renderBash(input, toolResult),
       Read: () => renderRead(input, toolResult),
-      Edit: () => renderEdit(input, toolResult),
+      Edit: () => renderEdit(input, toolResult, { defer: requestedDetailsCollapsed }),
       Write: () => renderWrite(input, toolResult),
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
@@ -495,14 +580,27 @@
           <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body}</div>
         </div>`
       : '';
-    const headerClass = info.expandDesc ? 'tool-header expandable-desc' : 'tool-header';
-    const headerAttrs = info.expandDesc
+    const detailsEnabled = detailPolicy.enabled && !!info.body;
+    const detailsCollapsed = detailsEnabled && requestedDetailsCollapsed;
+    window._lastToolHasDetails = detailsEnabled;
+    const headerClass = detailsEnabled
+      ? 'tool-header tool-details-toggle'
+      : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
+    const headerAttrs = detailsEnabled
+      ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"
+        onclick="toggleToolDetails(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDetails(this)}"`
+      : info.expandDesc
       ? ` role="button" tabindex="0" aria-expanded="false"
         onclick="toggleToolDesc(this)"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDesc(this)}"`
       : '';
+    const chevronHtml = detailsEnabled
+      ? '<span class="tool-detail-chevron" aria-hidden="true">&#8250;</span>'
+      : '';
 
     return `<div class="${headerClass}"${headerAttrs}>
+        ${chevronHtml}
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}
         ${elevatedHtml}

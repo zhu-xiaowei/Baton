@@ -391,6 +391,10 @@ Codex `ViewImage` 是 agent 查看本地图片，不是用户发送图片。Brid
   wrapper 结果在最终事件存在时标记为 superseded。退出码作为节点状态展示，不拼入 OUT。
 - MCP 调用使用 `McpToolCall.server/tool` 作为权威身份：执行中显示 `Calling`，完成后显示
   `Called`，摘要保留 `server.tool`；通用 `function_call_output` wrapper 不重复展示。
+- 工具详情使用统一 runtime policy：Codex 历史加载默认只显示标题，实时 WS 新节点默认展开；
+  点击标题或箭头切换详情。`Explored` 组由组首一次控制全部成员，内部 `Show more` 仍作为
+  第二层长内容展开。Claude 当前保持原有展开行为，未来只需启用对应 policy。
+- 历史 `Edit` 收起时不下载或执行 Diff2Html；首次展开才动态加载并渲染，后续展开复用结果。
 - Codex 局部强调色 `#13A7CD`；工具标题仍使用统一白色。
 - 底部运行文案固定为逐字循环的 `Working...`。
 
@@ -442,9 +446,11 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 | Bridge 测试 | 21 passed |
 | Codex 测试 | 29 passed |
 | Server 测试 | 13 passed |
-| Frontend 回归 | 41 passed |
+| Frontend 回归 | 46 passed |
 | Packaging 边界测试 | 4 passed |
 | Production build | passed |
+
+本地自动化合计 113 项。
 
 AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。

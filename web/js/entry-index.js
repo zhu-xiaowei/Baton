@@ -1,7 +1,7 @@
 // Entry for index.html — first-paint modules only.
-// Heavy viewer libs (marked/hljs/diff/diff2html + components/render/ws) are loaded
+// Viewer libs and modules are loaded
 // lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders
-// the device list (or when the user opens a session, whichever comes first).
+// the device list. Diff rendering stays deferred until an Edit is expanded.
 
 import './state.js';
 import './api.js';

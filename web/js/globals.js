@@ -1,27 +1,40 @@
-// Lazy loader for viewer-only libs (marked / hljs / diff / diff2html) and viewer modules.
+// Lazy loader for viewer-only libs and modules.
 // Triggered after first paint (inline shell or app.js IIFE) so device-list path doesn't pay
 // the ~1.3MB download. Calling multiple times returns the same promise.
 
 let _libsPromise = null;
+let _diffPromise = null;
+
+async function loadDiffViewer() {
+  if (window.Diff && window.Diff2HtmlUI) return;
+  if (_diffPromise) return _diffPromise;
+  _diffPromise = Promise.all([
+    import('diff'),
+    import('diff2html/lib-esm/ui/js/diff2html-ui'),
+    import('diff2html/bundles/css/diff2html.min.css'),
+  ]).then(([diffMod, diff2htmlMod]) => {
+    window.Diff = diffMod;
+    window.Diff2HtmlUI = diff2htmlMod.Diff2HtmlUI;
+  }).catch((error) => {
+    _diffPromise = null;
+    throw error;
+  });
+  return _diffPromise;
+}
 
 async function loadViewerLibs() {
   if (_libsPromise) return _libsPromise;
   _libsPromise = (async function () {
     // Phase 1: vendor libs + their CSS. markdown.js's top-level marked.setOptions()
     // requires marked + hljs to be on window first, so phase 2 must run after this.
-    const [markedMod, hljsMod, diffMod, diff2htmlMod, anserMod] = await Promise.all([
+    const [markedMod, hljsMod, anserMod] = await Promise.all([
       import('marked'),
       import('highlight.js'),
-      import('diff'),
-      import('diff2html/lib-esm/ui/js/diff2html-ui'),
       import('anser'),
       import('highlight.js/styles/vs2015.css'),
-      import('diff2html/bundles/css/diff2html.min.css'),
     ]);
     window.marked = markedMod.marked;
     window.hljs = hljsMod.default;
-    window.Diff = diffMod;
-    window.Diff2HtmlUI = diff2htmlMod.Diff2HtmlUI;
     window.Anser = anserMod.default;
 
     // Phase 2: viewer modules (IIFEs that read window.marked/hljs at top level).
@@ -46,3 +59,4 @@ async function loadViewerLibs() {
 }
 
 window.loadViewerLibs = loadViewerLibs;
+window.loadDiffViewer = loadDiffViewer;
