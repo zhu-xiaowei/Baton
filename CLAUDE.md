@@ -54,7 +54,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Message sending (was tmux send-keys → now headless stream-json pool, see Phase 2E)
 - Permission prompt detection + approval UI
 - Image upload via S3 + `claude-bridge:` protocol
-- Auto-create session when no CC process running (was tmux auto-launch → TODO under headless)
+- Auto-create regular sessions through headless `--session-id`
 - Device routing for multi-bridge setups
 
 ### Phase 2C: COMPLETE ✅ — Native App (Tauri v2)
@@ -62,17 +62,16 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Android, iOS (TestFlight), macOS builds
 
 ### Phase 2D: COMPLETE ✅ — Claude Agents Support
-- Bridge monitors daemon roster.json + jobs/state.json for agent session detection
+- Bridge discovers agent identity through `claude agents --json --all`; roster.json determines active daemon ownership, while jobs/state.json only supplies the current blocked question
 - Agent sessions display [Agent] badge + Working/Needs input/Completed status
 - Send messages to agent sessions: was `claude agents` TUI navigation over tmux; **now headless** `claude -p --resume <agentSessionId>` handles agent sessions like any other (works via `_pool.send`)
-- Create new agent sessions from web ("Run in background" toggle, localStorage persisted) — TODO under headless
+- Create new agent sessions from web through detached `claude --bg` ("Run in background" toggle, localStorage persisted)
 - Bridge respects permissions.defaultMode: bypassPermissions (no false permission prompts)
 
-### Phase 2E: IN PROGRESS 🚧 — tmux removed, headless is the only send path
+### Phase 2E: COMPLETE ✅ — tmux removed, headless is the only send path
 **tmux is fully deleted.** The entire send/permission/launch stack now goes through
-the headless stream-json process pool (`bridge/headless.mjs` `ClaudePool`). Anything
-that was tmux-only and not yet re-covered by headless is a TODO below — DO NOT
-reintroduce tmux to fix it; wire it through the pool.
+the headless stream-json process pool (`bridge/headless.mjs` `ClaudePool`). Do not
+reintroduce tmux; extend the pool for future Claude interaction work.
 
 Done:
 - **`bridge/tmux.mjs` deleted entirely** (send-keys, capture-pane, launch, TUI nav, wizard detection, `hasTmux`, stale-session cleanup).
@@ -87,10 +86,6 @@ Done:
   agents launch through `claude --bg`. Creating a project seeds an empty PROJ row and enters the
   new-Session input view.
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
-
-Remaining TODO:
-- [ ] Detect unstructured terminal questions that end as plain assistant text; structured
-  `AskUserQuestion`/`ExitPlanMode` already report `needs_input`.
 
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.claude-bridge/synced.json` recovery path
@@ -118,7 +113,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Session `status`: **three-state** (`running`/`needs_input`/`completed`), one field, no
   parallel `agentState`. Displayed as Running (green) / Needs input (amber) / Done (grey).
   Three sources map into this single enum:
-  - **pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
+  - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()`/`statusFromEntry()`
@@ -128,9 +123,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
     `--json` working/blocked/done → running/needs_input/completed. Inactive historical
     `--all` entries preserve agent identity only; status falls back to process + jsonl.
-  - Precedence when a session matches more than one source: **pool-owned >
+  - Precedence when a session matches more than one source: **busy pool-owned >
     roster-active daemon agent > external/jsonl**.
-    watcher/`checkStopped` skip status writes for pool-owned (`poolOwns()`) and daemon-agent sessions.
+    watcher/`checkStopped` skip status writes for busy pool-owned (`poolOwns()`) and daemon-agent sessions.
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
   - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the
@@ -147,10 +142,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds (still used to detect a done-agent resumed as a normal CC session).
   - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll full-pushes every agent (heals DDB + covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
   - Status paths that key off live CC processes (`checkStopped`) skip roster-active daemon
-    agents and busy pool-owned sessions. Precedence: pool-owned > roster-active daemon >
+    agents and busy pool-owned sessions. Precedence: busy pool-owned > roster-active daemon >
     external/jsonl.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
-  - Send to agent / new agent / reveal stuck agent: were tmux `claude agents` TUI navigation — **removed in Phase 2E**, TODO to re-wire via headless `claude -p --resume <agentSessionId>` (agent sessions resume like any normal CC session; the daemon-live `--json` status source is untouched).
+  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_agent`.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
 - Slash commands (`commands.mjs`): `/`-autocomplete like CC. Bridge `scanSlashCommands()` scans user/project/enabled-plugin commands+skills on disk, plus a static `BUILTIN_COMMANDS` list mirroring CC's compiled-in bundled skills (re-sync on CC upgrades). WS `list_commands` → `commands_list`; app caches per-device (global) + per-project in localStorage. NOTE: "local" command output capture (`tmux capture-pane`) was **removed in Phase 2E**; under headless a `/cmd` is sent as plain text and streams back normally. `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/`SYNTHETIC_COMMANDS` in `commands.mjs` now only tag the command list. Details: `docs/api.md` + `docs/claude-code-bridge.md`.
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
@@ -159,7 +154,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Auto-update: every 5min `checkUpdate()` compares local `version.mjs` vs server `/api/version`; on change, resolves the immutable S3 package through `/api/install`, stages and validates it, then restarts. `install.sh` uploads the versioned Bridge package before exposing that version through CloudFormation, so an interrupted deploy cannot advertise a mismatched package. Bridge WS connections report `bridgeVersion` for fleet verification.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
 - Initial sync: merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2. `await syncSessions()` then `await reconcile()` (recount aggregates at that definite completion point).
-- Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips daemon-agent + pool-owned)
+- Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips roster-active daemon agents + busy pool-owned sessions)
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
 - Debounce: busy Map per session dedup fs.watch duplicate events
@@ -214,7 +209,7 @@ BridgeMessages   PK: sessionId    SK: timestamp#uuid
   SESS# writes are awaited-done; no timer guessing) and again when a brand-new project first
   appears in the watcher. NOT periodic.
 - The incremental `statusDelta` ADD path still maintains `sessionCount` (+1 on `from:'new'`);
-  its running/idle deltas are now unread (reconcile owns those numbers).
+  aggregate status deltas are now unread (reconcile owns those numbers).
 
 ## API Summary
 
@@ -397,3 +392,5 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 
 - **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (not 128KB — exceeding it drops the whole connection with close code 1009 → reconnect storm + hundreds of stale ConnectionsTable entries). Fixed: `watcher.mjs` checks the WS envelope size; oversized messages send a **truncated copy** over WS (`truncateToBytes()` in `extract.mjs`, byte-aware so CJK/emoji keep a real prefix; carries `truncated: true` + `noCache: true`) for real-time display, and the **full copy** over HTTP to DDB. `bridge_ws.py` skips the DDB cache write when `noCache` is set so the truncated WS copy never clobbers the full HTTP copy. `uploadMessages()` also caps every message to `DDB_ITEM_LIMIT` (360KB) so the 400KB DDB item limit can't be exceeded. Limits: `WS_FRAME_LIMIT`/`DDB_ITEM_LIMIT` in `config.mjs`.
 - **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → completed). terminal-launched CC (with `--resume`) unaffected.
+- **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
+- **Concurrent regular-session control**: Claude has no daemon-style stop/lock for a normal terminal or VS Code session. Do not start a Web headless turn while the same regular session is actively generating elsewhere; simultaneous writers can fork the JSONL parent chain. Daemon agents are safe because Web takeover stops the roster worker first.

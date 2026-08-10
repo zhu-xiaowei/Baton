@@ -443,14 +443,14 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 | 混合 catalog | 2403 Claude + 17 Codex = 2420 |
 | 初始化 dry-run 最终消息 | 约 4095 |
 | metadata/message key 冲突 | 0 |
-| Bridge 测试 | 21 passed |
+| Bridge 测试 | 33 passed |
 | Codex 测试 | 29 passed |
 | Server 测试 | 13 passed |
-| Frontend 回归 | 46 passed |
+| Frontend 回归 | 47 passed |
 | Packaging 边界测试 | 4 passed |
 | Production build | passed |
 
-本地自动化合计 113 项。
+本地自动化合计 126 项。
 
 AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。
@@ -464,7 +464,7 @@ Phase 2 真实链路验证使用隔离 `CODEX_HOME` 并发启动 2 个 Codex Ses
 - 最大现有 rollout 为 22.4MB / 9072 行。普通 append 路径从约 207.7ms 降至
   138.4ms，CPU 时间减少约 33.4%；固定安全扫描从 30 秒改为 5 分钟，扫描频率减少 90%。
 
-本次发布版本 `0.2.0-codex-p2-20260810-13` 部署到 `MacBook-Pro`、`agentpeek_test`、
+Phase 2 验证版本 `0.2.0-codex-p2-20260810-13` 曾部署到 `MacBook-Pro`、`agentpeek_test`、
 `test-ec2` 和 `test-ec2-ap`；四台均通过 WS 连接记录自报相同 `bridgeVersion` 且在线。
 Mac 真实 Codex turn 的最终 assistant rollout 到 App WS 为 1359ms，DDB UUID 重复 0；
 东京 Linux 真实 turn 的用户消息、工具调用、工具结果和最终回复共 4 条，状态

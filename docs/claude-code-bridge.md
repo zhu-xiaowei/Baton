@@ -57,18 +57,20 @@ and computes Device/Project aggregates once. The steps below describe the Claude
   - WS ack: `wsSendWithAck` waits for server `messages_ack` (5s timeout), only advances synced line on ack
   - WS fallback: ack timeout or WS disconnected → HTTP POST to DDB
   - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
-- **Periodic check (1min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
-  - Only checks sessions previously known as running/idle
-  - Updates status to stopped if process gone
-- **Status detection** → three-layer architecture:
-  - `statusFromEntry(entry)`: pure function, entry → running/idle/null. Shared by watcher + file reader
+- **Periodic check (5min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
+  - Checks sessions previously known as active
+  - Updates status to completed if the process is gone
+- **Status detection** → process, daemon, pool, and JSONL sources:
+  - `statusFromEntry(entry)`: pure function, entry → running/needs_input/completed/null
   - `getSessionStatus()`: reads last lines of jsonl via reverse `\n` scan + process detection. Used by syncSessions/checkStopped
   - Watcher: uses `statusFromEntry()` directly on already-parsed data (no file re-read)
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
-  - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → idle, `tool_use`/`null` → running, `user` last → running
-  - Interrupt detection: `[Request interrupted by user*]` → idle, `tool_result(is_error=true)` only → idle
+  - stop_reason mapping: `end_turn`/`max_tokens`/`stop_sequence` → completed, `tool_use`/`null` → running
+  - structured `AskUserQuestion`/`ExitPlanMode` tool use → needs_input
+  - Interrupt detection: `[Request interrupted by user*]` and error-only tool results → completed
+  - Busy pool-owned status overrides daemon and JSONL; roster-active daemon status overrides external process/JSONL
   - terminal CC (launched with `--resume`): exact session match → precise status
-  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → stopped regardless of content)
+  - VS Code CC: no `--resume` → project-level detection + file mtime heuristic (mtime > 5min → completed)
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
@@ -236,9 +238,11 @@ App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: ".
 Bridge: _pool.send(sessionId) → headless `claude -p --resume <id>` over kept-open stdin (spawns if none)
         → stream_delta/stream_end (preview) + authoritative `messages` rows
 
-New session (TODO): projectHash-only send → headless spawn without --resume, sessionId from system/init.
+New regular session: projectHash-only send → Bridge mints a UUID and acknowledges it before
+spawning headless with `--session-id <id>`, so the app subscribes before stream frames arrive.
 
-(send_message also accepts asAgent:true → the new session runs as a Claude Agents background session)
+New agent session: `send_message` with `asAgent:true` launches detached `claude --bg`; the agent
+poll and watcher publish its metadata and messages.
 ```
 
 #### How text reaches Claude (headless stdin)
@@ -471,6 +475,22 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 - QR code login: `tauri-plugin-barcode-scanner`
 - Local notifications: `tauri-plugin-notification` (planned)
 - Biometric auth: `tauri-plugin-biometric` (planned)
+
+### Phase 2D: Claude Agents ✅ Complete
+
+- Daemon roster and agent catalog provide agent identity and active worker state.
+- Existing agents are resumed through the same headless pool as regular sessions.
+- New background agents launch through detached `claude --bg`.
+- Agent status supports Working, Needs input, and Completed without reviving stale daemon state.
+
+### Phase 2E: Headless Streaming ✅ Complete
+
+- `ClaudePool` is the only send path; tmux and Stall Rescue are removed.
+- Existing and new sessions stream previews and authoritative rows through the shared WS protocol.
+- Permission requests, `AskUserQuestion`, `ExitPlanMode`, interrupt, queueing, idle reap, and LRU
+  process limits are implemented.
+- Busy pool ownership, daemon roster state, and external JSONL/process state use explicit precedence
+  so Web takeover and terminal resume update status correctly.
 
 ### Phase 3: Production Polish (Future)
 - Improve native Windows process/status precision
