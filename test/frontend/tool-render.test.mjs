@@ -104,6 +104,40 @@ test('Codex background command completion keeps the original Ran label', () => {
   assert.doesNotMatch(html, /Failed/);
 });
 
+test('failed commands keep the error dot without a redundant status label', () => {
+  const html = window.renderMessages([
+    {
+      uuid: 'failed-use',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'failed',
+        name: 'Bash',
+        input: { command: 'exit 255' },
+      }],
+      timestamp: '2026-08-11T00:00:00.000Z',
+    },
+    {
+      uuid: 'failed-result',
+      type: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'failed',
+        content: 'Process exited with code 255',
+        is_error: true,
+        codexExitCode: 255,
+      }],
+      timestamp: '2026-08-11T00:00:01.000Z',
+    },
+  ], 'codex');
+
+  document.body.innerHTML = `<div class="messages">${html}</div>`;
+  assert.ok(document.querySelector('.tool-node.error'));
+  assert.equal(document.querySelector('.tool-status'), null);
+  assert.doesNotMatch(html, />Exit 255</);
+  assert.doesNotMatch(html, />Failed</);
+});
+
 test('Codex ignores the legacy Waited label on Bash results', () => {
   const html = window.renderToolNode({
     type: 'tool_use',

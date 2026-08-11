@@ -174,6 +174,12 @@ function handleWsMessage(msg) {
         var m = msg.messages[i];
         if (!trackMessageUuid(m)) continue;
         if (msg.streamId) m._streamId = msg.streamId; // ties row to its send (placement/dedup by identity)
+        var holdStreamId = codexAuthoritativeStream(m, msg.streamId);
+        if (holdStreamId) {
+          m._streamId = holdStreamId;
+          queueStreamAuthoritative(holdStreamId, m);
+          continue;
+        }
         state.wsAllMessages.push(m);
         state.wsMessageCount++;
         if (m.timestamp) state.wsLastTimestamp = m.timestamp;
@@ -183,6 +189,7 @@ function handleWsMessage(msg) {
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
+      if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       // Match the ack to its exact bubble by clientId (round-tripped through the
       // bridge). Fall back to "first undelivered" only for acks from an older
       // bridge that doesn't echo clientId yet.
@@ -195,10 +202,14 @@ function handleWsMessage(msg) {
             if (!state.pendingSentMessages[pi].delivered) { pending = state.pendingSentMessages[pi]; break; }
           }
         }
-        if (pending && !pending.delivered) resolvePending(pending, msg.ok, msg.error);
+        if (pending && !pending.delivered && handleCodexSendConflict(pending, msg)) return;
+        if (pending && !pending.delivered) {
+          finishCodexTakeover(pending);
+          resolvePending(pending, msg.ok, msg.error);
+        }
       }
       // Bind this turn's streamId to the sending bubble → live preview places under it.
-      if (msg.streamId && msg.clientId) state.streamAnchors[msg.streamId] = msg.clientId;
+      if (msg.ok && msg.streamId && msg.clientId) state.streamAnchors[msg.streamId] = msg.clientId;
       // New session: bridge spawned CC (headless), returned sessionId
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
         state.appState.session = msg.sessionId;
@@ -299,7 +310,13 @@ function subscribeSession(sessionId) {
   if (state.wsSessionId && state.wsSessionId !== sessionId) {
     wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
     clearStreamPreviews();
+    _rb = {};
+    _ui = {};
     _streamEnded = {}; // switching sessions: drop ended-turn guards from the old one
+    _streamEndMeta = {};
+    _streamAuthoritative = {};
+    for (var timerId in _streamEndTimers) clearTimeout(_streamEndTimers[timerId]);
+    _streamEndTimers = {};
     state.streamAnchors = {}; // anchors are per-session (old bubbles are gone)
     _lastStreamEndAt = 0;
   }
@@ -366,15 +383,24 @@ function findInsertBefore(container, timestamp) {
   return result;
 }
 
-// streamId → clientId → the question bubble that started this turn: returns the node to place the reply after (bubble, or its reply turn); null if no anchor (external/terminal send).
-// Skip the transient stream-preview container — authoritative rows appended there get wiped by clearStreamPreviews.
+// streamId → clientId → the question bubble that started this turn: returns the
+// last real reply row after that bubble. Codex watcher tool rows are separate
+// .assistant-turn siblings, so selecting only the first one inserts the final
+// answer between tools.
+// Skip transient stream previews — authoritative rows appended there get wiped
+// by clearStreamPreviews.
 function anchorForStream(container, streamId) {
   var clientId = state.streamAnchors[streamId];
   if (!clientId) return null;
   var bubble = container.querySelector('[data-anchor="' + clientId + '"]');
   if (!bubble) return null;
-  var sib = bubble.nextElementSibling;
-  return (sib && sib.classList.contains('assistant-turn') && !sib.classList.contains('stream-preview')) ? sib : bubble;
+  var anchor = bubble;
+  var sibling = bubble.nextElementSibling;
+  while (sibling && sibling.classList.contains('assistant-turn')) {
+    if (!sibling.classList.contains('stream-preview')) anchor = sibling;
+    sibling = sibling.nextElementSibling;
+  }
+  return anchor;
 }
 
 /** Insert html at correct timestamp position, before any pending messages. */
@@ -413,6 +439,9 @@ function insertAssistantItemAtTimestamp(container, html, timestamp) {
 var _rb = {};          // streamId → ReorderBuffer (seq-ordered committed content)
 var _ui = {};          // "streamId:blockId" → display-local reveal/animation state
 var _streamEnded = {};
+var _streamEndMeta = {};
+var _streamEndTimers = {};
+var _streamAuthoritative = {};
 var _lastThinkSecs = 0; // seconds the live preview measured for the latest thinking block
 var _streamRaf = null;
 var _streamLastTick = 0;
@@ -455,9 +484,62 @@ function uiState(sid, bid) {
 function pushStreamFrame(streamId, frame) {
   if (!streamId || _streamEnded[streamId]) return; // ignore late frames after turn end
   var rb = _rb[streamId] || (_rb[streamId] = new ReorderBuffer());
+  state.wsRunning = true;
+  updateSendBtn();
   rb.push(frame);
-  state.wsRunning = true; updateSendBtn();
+  finishStreamIfReady(streamId);
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+}
+
+function streamPreviewCaughtUp(streamId) {
+  var rb = _rb[streamId];
+  if (!rb) return !!_streamEnded[streamId];
+  if (rb.hasGap()) return false;
+  var blocks = rb.orderedBlocks();
+  var hasRenderableBlock = false;
+  for (var i = 0; i < blocks.length; i++) {
+    var block = blocks[i];
+    hasRenderableBlock = true;
+    if (!_streamEnded[streamId] && !block.stopped) return false;
+    if (block.kind === 'tool_use') continue;
+    var ui = uiState(streamId, block.blockId);
+    if (ui.shown < Array.from(block.committed || '').length) return false;
+  }
+  return hasRenderableBlock || !!_streamEnded[streamId];
+}
+
+function codexAuthoritativeStream(message, explicitStreamId) {
+  if (state.appState.runtime !== 'codex'
+    || message?.type !== 'assistant'
+    || !Array.isArray(message.content)
+    || !message.content.length) return '';
+  if (explicitStreamId) {
+    return streamPreviewCaughtUp(explicitStreamId) ? '' : explicitStreamId;
+  }
+  var ids = Object.keys(state.streamAnchors);
+  for (var i = ids.length - 1; i >= 0; i--) {
+    if (!streamPreviewCaughtUp(ids[i])) return ids[i];
+  }
+  return '';
+}
+
+function queueStreamAuthoritative(streamId, message) {
+  var queued = _streamAuthoritative[streamId]
+    || (_streamAuthoritative[streamId] = []);
+  queued.push(message);
+}
+
+function flushStreamAuthoritative(streamId) {
+  var queued = _streamAuthoritative[streamId];
+  if (!queued?.length) return;
+  delete _streamAuthoritative[streamId];
+  for (var i = 0; i < queued.length; i++) {
+    var message = queued[i];
+    state.wsAllMessages.push(message);
+    state.wsMessageCount++;
+    if (message.timestamp) state.wsLastTimestamp = message.timestamp;
+  }
+  updateLastTurn();
 }
 
 function insertOrdered(turn, el, bid) {
@@ -488,6 +570,7 @@ function tickStreams(now) {
     var ended = !!_streamEnded[sid];
     var turnId = 'stream-turn-' + sid;
     var turn = document.getElementById(turnId);
+    var turnCreated = false;
     for (var i = 0; i < blocks.length; i++) {
       var b = blocks[i];
       var u = uiState(sid, b.blockId);
@@ -504,7 +587,7 @@ function tickStreams(now) {
         var anchorNode = anchorForStream(container, sid);
         if (anchorNode) anchorNode.insertAdjacentElement('afterend', turn);
         else container.appendChild(turn);
-        markTurnAdjacency(container); // only on turn creation, not per frame
+        turnCreated = true;
       }
       var elId = 'sb-' + sid + '-' + b.blockId;
       var el = document.getElementById(elId);
@@ -522,6 +605,12 @@ function tickStreams(now) {
           el.className = 'tl-item assistant-text';
         }
         insertOrdered(turn, el, b.blockId);
+        // Codex grouping removes empty assistant rows. Run it only after the
+        // preview has its first child, otherwise it detaches the live turn.
+        if (turnCreated) {
+          markTurnAdjacency(container);
+          turnCreated = false;
+        }
         dirty = true;
       }
       if (!el) continue;
@@ -590,24 +679,55 @@ function tickStreams(now) {
       }
     }
   }
+  var readyAuthoritative = [];
+  for (var streamId in _streamAuthoritative) {
+    if (streamPreviewCaughtUp(streamId)) readyAuthoritative.push(streamId);
+  }
+  for (var ri = 0; ri < readyAuthoritative.length; ri++) {
+    flushStreamAuthoritative(readyAuthoritative[ri]);
+  }
   if (dirty && state.stickBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
 }
 
-function handleStreamEnd(streamId, finalSeq, error) {
-  if (!streamId) return;
+function finishStreamIfReady(streamId, force) {
+  var meta = _streamEndMeta[streamId];
+  if (!meta || _streamEnded[streamId]) return false;
   var rb = _rb[streamId];
-  if (rb) rb.end(finalSeq); // reconcile: turn ends only once ordered region reaches finalSeq
+  if (!force && !rb?.ended) return false;
   _streamEnded[streamId] = true;
-  _lastStreamEndAt = Date.now();
-  if (error) {
-    var t = document.getElementById('stream-turn-' + streamId);
-    if (t) t.classList.add('stream-error');
+  delete _streamEndMeta[streamId];
+  if (_streamEndTimers[streamId]) clearTimeout(_streamEndTimers[streamId]);
+  delete _streamEndTimers[streamId];
+  if (meta.error) {
+    var turn = document.getElementById('stream-turn-' + streamId);
+    if (turn) turn.classList.add('stream-error');
   }
-  // Keep streamAnchors[streamId]: the authoritative row arrives AFTER stream_end and still needs the anchor (deleting here stranded it → reply fell to bottom). Cleared on session switch.
-  _turnAuthBlocks = 0; // turn boundary — next turn's supersede count starts fresh
+  _turnAuthBlocks = 0;
   state.wsRunning = false;
   updateSendBtn();
+  return true;
+}
+
+function handleStreamEnd(streamId, finalSeq, error) {
+  if (!streamId) return;
+  var rb = _rb[streamId] || (_rb[streamId] = new ReorderBuffer());
+  rb.end(finalSeq); // a gap keeps the stream open until delayed frames arrive
+  _streamEndMeta[streamId] = { error: error };
+  _lastStreamEndAt = Date.now();
+  if (!finishStreamIfReady(streamId)) {
+    state.wsRunning = true;
+    updateSendBtn();
+    if (!_streamEndTimers[streamId]) {
+      _streamEndTimers[streamId] = setTimeout(function () {
+        finishStreamIfReady(streamId, true);
+        if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+      }, 5000);
+      if (_streamEndTimers[streamId]?.unref) _streamEndTimers[streamId].unref();
+    }
+  }
+  // Keep streamAnchors[streamId]: the authoritative row arrives AFTER stream_end and still needs the anchor (deleting here stranded it → reply fell to bottom). Cleared on session switch.
+  if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
 function clearStreamPreviews(coverCount) {
@@ -980,9 +1100,13 @@ function startWs(sessionId) {
 }
 
 function trackMessageUuid(message) {
-  if (!message || !message.uuid) return true;
-  if (state.wsMessageUuids.has(message.uuid)) return false;
-  state.wsMessageUuids.add(message.uuid);
+  if (!message) return true;
+  var uuidKey = message.uuid || '';
+  var nativeKey = message.nativeId ? 'native:' + message.nativeId : '';
+  if ((uuidKey && state.wsMessageUuids.has(uuidKey))
+    || (nativeKey && state.wsMessageUuids.has(nativeKey))) return false;
+  if (uuidKey) state.wsMessageUuids.add(uuidKey);
+  if (nativeKey) state.wsMessageUuids.add(nativeKey);
   return true;
 }
 
@@ -1208,6 +1332,8 @@ document.addEventListener('keydown', function (e) {
   if (imgO && imgO.style.display === 'flex') return;
   var newP = document.getElementById('newProjectModal');
   if (newP && newP.style.display === 'flex') return;
+  var takeover = document.getElementById('codexTakeoverModal');
+  if (takeover && takeover.style.display === 'flex') return;
   if (!state.wsRunning) return;
   e.preventDefault();
   interruptSession();
@@ -1225,14 +1351,16 @@ function doSend(fullText, displayText, images) {
   // mis-pairs when several sends are in flight). Doubles as the DOM element id.
   var seq = _clientIdSeq++;
   var msgId = 'sent-' + Date.now() + '-' + seq;
+  var sendPayload;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
-    wsSendReliable({ action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent });
+    sendPayload = { action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent };
   } else {
     // projectHash lets the bridge resolve cwd even if the jsonl is gone (deleted session).
     var ph = state.appState.project && state.appState.project.hash;
-    wsSendReliable({ action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, clientId: msgId, text: fullText, device: device });
+    sendPayload = { action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, clientId: msgId, text: fullText, device: device };
   }
+  wsSendReliable(sendPayload);
 
   // Empty session has no .messages yet; create one or the bubble + preview have nowhere to render.
   var empty = document.querySelector('.empty');
@@ -1258,7 +1386,7 @@ function doSend(fullText, displayText, images) {
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
-  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now(), echoScanFrom: state.wsAllMessages.length });
+  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now(), echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -1283,7 +1411,8 @@ function doSend(fullText, displayText, images) {
 var SEND_TIMEOUT_MS = 12000;
 
 function scheduleSendTimeout(msgId) {
-  setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
+  var timer = setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
+  if (timer && typeof timer.unref === 'function') timer.unref();
 }
 
 function findPending(msgId) {
@@ -1296,6 +1425,86 @@ function findPending(msgId) {
 function removePending(pending) {
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
+}
+
+var _codexTakeover = null;
+
+function pendingStatus(pending, text, color) {
+  var el = document.getElementById(pending.id);
+  var status = el && el.querySelector('.sending-status');
+  if (!status) return;
+  status.textContent = text;
+  status.style.color = color || '#d29922';
+}
+
+function handleCodexSendConflict(pending, msg) {
+  if (!['codex_active_writer', 'codex_writer_changed', 'codex_writer_unsafe'].includes(msg.errorCode)) {
+    return false;
+  }
+  var writer = msg.writer || {};
+  pending.awaitingTakeover = true;
+  state.wsRunning = false;
+  updateSendBtn();
+  pendingStatus(pending, 'Waiting for confirmation');
+
+  _codexTakeover = { pending: pending, writer: writer, sending: false };
+  var modal = document.getElementById('codexTakeoverModal');
+  if (!modal) return true;
+  var desc = document.getElementById('codexTakeoverDesc');
+  var error = document.getElementById('codexTakeoverError');
+  var confirm = document.getElementById('codexTakeoverConfirm');
+  var cancel = document.getElementById('codexTakeoverCancel');
+  var canTerminate = !!(writer.canTerminate && writer.pid);
+  desc.textContent = canTerminate
+    ? (writer.label || 'A Codex terminal') + ' is using this session. Taking over will close it, send this message, and release the session when the turn finishes.'
+    : 'Another Codex client is using this session. Close it on the device, then retry this message.';
+  error.textContent = canTerminate ? '' : 'This process cannot be terminated safely from AgentPeek.';
+  confirm.style.display = canTerminate ? '' : 'none';
+  confirm.disabled = false;
+  confirm.textContent = 'Take over and send';
+  cancel.disabled = false;
+  modal.style.display = 'flex';
+  return true;
+}
+
+function finishCodexTakeover(pending) {
+  if (!_codexTakeover || _codexTakeover.pending !== pending) return;
+  pending.awaitingTakeover = false;
+  _codexTakeover = null;
+  var modal = document.getElementById('codexTakeoverModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function closeCodexTakeoverModal() {
+  if (!_codexTakeover || _codexTakeover.sending) return;
+  var pending = _codexTakeover.pending;
+  finishCodexTakeover(pending);
+  if (!pending.delivered) resolvePending(pending, false, 'Not sent');
+}
+
+function confirmCodexTakeover() {
+  if (!_codexTakeover || _codexTakeover.sending) return;
+  var pending = _codexTakeover.pending;
+  var writer = _codexTakeover.writer;
+  if (!writer?.canTerminate || !writer.pid || !pending.sendPayload) return;
+  _codexTakeover.sending = true;
+  pending.awaitingTakeover = false;
+  pending.sentAt = Date.now();
+  state.wsRunning = true;
+  updateSendBtn();
+  pendingStatus(pending, 'Taking over Codex...');
+  var confirm = document.getElementById('codexTakeoverConfirm');
+  var cancel = document.getElementById('codexTakeoverCancel');
+  if (confirm) {
+    confirm.disabled = true;
+    confirm.innerHTML = '<span class="spinner"></span>Taking over';
+  }
+  if (cancel) cancel.disabled = true;
+  wsSendReliable(Object.assign({}, pending.sendPayload, {
+    takeover: true,
+    expectedWriterPid: writer.pid,
+  }));
+  scheduleSendTimeout(pending.id);
 }
 
 // Single terminal state for an ack. Success: stamp the bubble with a time and
@@ -1390,7 +1599,13 @@ function markPendingFailed(pending, error) {
 async function reconcilePendingSend(msgId) {
   var pending = findPending(msgId);
   if (!pending || pending.delivered) return;               // already resolved
+  if (pending.awaitingTakeover) return;                    // user has not chosen whether to take over
   if (pending.sessionId !== state.wsSessionId) return;     // user navigated away; leave it
+  var remaining = SEND_TIMEOUT_MS - (Date.now() - (pending.sentAt || 0));
+  if (remaining > 50) {
+    setTimeout(function () { reconcilePendingSend(msgId); }, remaining);
+    return;
+  }
   try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
   pending = findPending(msgId);
   if (!pending || pending.delivered) return;               // ack/dedup fired during the fetch
@@ -1483,6 +1698,7 @@ Object.assign(window, {
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
+  closeCodexTakeoverModal, confirmCodexTakeover,
   extractMsgText, stripImageRefs, tryDedup, retryPendingSend,
 });
 

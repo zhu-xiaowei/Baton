@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { countJsonlLines } from './extract.mjs';
 import { syncCodexMessages } from './codex-extract.mjs';
+import { codexInteraction } from './codex-interaction.mjs';
 import {
   discoverCodexSessions,
   findCodexSessionFile,
@@ -26,8 +27,11 @@ export const codexRuntime = defineRuntimeAdapter({
   runtime: 'codex',
   displayName: 'Codex',
   features: {
+    send: true,
+    interrupt: true,
     statusPolling: true,
   },
+  interaction: codexInteraction,
 
   discover: discoverCodexSessions,
   detectCapability(options = {}) {
@@ -38,13 +42,15 @@ export const codexRuntime = defineRuntimeAdapter({
       installed: !!binary,
       historyAvailable,
       canRead: historyAvailable,
-      // The rollout watcher is read-only until the app-server path is implemented.
       canCreate: false,
-      canSend: false,
+      canSend: !!binary,
       version: options.skipVersions ? '' : binaryVersion(binary),
     };
   },
   findSessionFile: findCodexSessionFile,
+  ownsLiveSession(nativeSessionId) {
+    return codexInteraction.owns(nativeSessionId);
+  },
 
   shouldSkipInitial() {
     // Startup closes the gap before the watcher attaches.

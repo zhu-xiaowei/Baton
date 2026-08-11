@@ -134,7 +134,10 @@ body {
 
 /* === User message === */
 .msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 8px; border-radius: 12px; }
-.msg-user .msg-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; position: relative; }
+.msg-user .msg-text {
+  min-width: 0; max-width: 100%; font-size: 13px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; position: relative;
+}
 .msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; }
 .msg-user .msg-text.clamped::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2em; background: linear-gradient(transparent, #2d333b); pointer-events: none; }
 .msg-user .msg-text.expanded { max-height: none; }
@@ -276,7 +279,6 @@ body {
   white-space: pre-wrap; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
 }
 .tool-status, .tool-flag { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: #8b949e; }
-.tool-status.error { color: #f85149; }
 .tool-flag { color: #d29922; }
 
 .tool-body {
@@ -396,6 +398,7 @@ body {
 .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .modal-btn.confirm.danger { background: #da3633; }
 @media (hover: hover) and (pointer: fine) { .modal-btn.confirm.danger:hover { background: #f85149; } }
+.codex-takeover-box { border-radius: 8px; }
 
 /* ---- Batch-delete selection ---- */
 .text-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; background: #161b22; border: 1.5px solid #30363d; border-radius: 8px; color: #539bf5; font-size: 13px; font-weight: 500; cursor: pointer; padding: 0 12px; transition: all 0.15s; }

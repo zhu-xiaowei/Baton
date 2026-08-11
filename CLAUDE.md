@@ -8,8 +8,8 @@
 ## What is this
 
 AgentPeek is a cross-platform app + bridge + server that lets you view local agent sessions from
-your phone or desktop. Claude Code supports viewing and interaction; Codex Phase 2 supports
-history discovery plus real-time read-only monitoring. Three components:
+your phone or desktop. Claude Code supports viewing and interaction; Codex supports history,
+real-time monitoring, and interaction with existing Sessions. Three components:
 
 1. **bridge/** — Node.js script running on macOS/Linux/Windows (always-on, auto-start), normalizes Claude Code and Codex JSONL
 2. **server/** — AWS Lambda (FastAPI) + DynamoDB + WebSocket API GW, relays between bridge and app
@@ -40,7 +40,14 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Codex watcher monitors every configured `CODEX_HOME/sessions` root and pushes append-only
   updates through the same WS ack, HTTP fallback, frame-limit, and watermark semantics as Claude.
 - Codex external status updates support `running`/`completed`; approval waits remain unobservable.
-- Codex send, streaming, interrupt, and permission support remain Phase 3.
+- Codex Phase 3 existing-Session interaction is implemented through `codex app-server --stdio`:
+  `thread/resume` + `turn/start`, text/reasoning streaming, interrupt, and basic approval requests.
+- Codex and Claude share `StreamFramer`: first delta is immediate, later deltas use the same 50ms
+  batch window, turn-level `seq`, authoritative-row handoff, and frontend reorder/chase rendering.
+- Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
+  rows without rebroadcast and remains the fallback when no live row was observed.
+- Codex new Session/Project creation, pending approval recovery, and complete permission variant
+  coverage remain Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification
@@ -78,7 +85,15 @@ Done:
 - `projectHashToPath` moved into `session.mjs` (pure path util, not tmux). `getClaudeProcesses` was tmux-only and dropped — `getRunningInfo` in `session.mjs` has its own `ps aux` parser.
 - Server bridge-install script (`/api/install`) no longer auto-installs tmux.
 - Existing-session send → headless streaming (`handleHeadlessSend` → `_pool.send`), the primary happy path. Works today.
-- **Stream ordering** — bridge stamps every preview frame of a turn with a **turn-level monotonic `seq`** (`headless.mjs` `_seq`, reset per turn) and sends **increment-only** chunks (not accumulated full text → traffic O(n²)→O(n)); `stream_end` carries `finalSeq`. The app reorders by `seq` in a client-side reorder buffer (`web/js/reorder.js` `ReorderBuffer`) because bridge→Lambda→API GW delivers each frame via an independent, variable-duration Lambda invocation → arrival order ≠ send order. Buffer = ordered region (`nextSeq`) + `pending` gap cache; head drains when contiguous (a dropped seq is fixed when the authoritative full assistant row overrides by uuid); `ended` only at `finalSeq`. **Authoritative-row handoff**: `clearStreamPreviews(coverCount)` → `ReorderBuffer.softReset(coverCount)` supersedes only the blocks the authoritative row covers (advancing the watermark even for reordered not-yet-arrived blocks), so a still-streaming text block after a thinking-only flush survives and a late `stop` can't rebuild a duplicate. Validated: 1000 randomized-delivery turns + multi-block/double-flush. See `docs/headless-streaming.md` §七.
+- **Stream ordering** — shared `stream-framer.mjs` stamps every Claude/Codex preview frame with a
+  **turn-level monotonic `seq`** and sends **increment-only** chunks; the first delta is immediate
+  and later deltas are coalesced over 50ms. `stream_end` carries `finalSeq`. The app reorders by
+  `seq` in a client-side reorder buffer (`web/js/reorder.js` `ReorderBuffer`) because
+  bridge→Lambda→API GW delivers frames through independent, variable-duration Lambda invocations.
+  **Authoritative-row handoff**: `clearStreamPreviews(coverCount)` →
+  `ReorderBuffer.softReset(coverCount)` supersedes only the blocks covered by the authoritative
+  row. Validated: 1000 randomized-delivery turns + multi-block/double-flush. See
+  `docs/headless-streaming.md` §七.
 - **Reply placement by identity (streamId → clientId)** — a reply is placed under its OWN question by identity, not by timestamp/text guessing (which mis-orders bursts: a queued send's timestamp is newer than the reply being generated). Bridge mints one `streamId` per turn and puts it on BOTH `send_message_result` (with the app's `clientId`) AND every stream frame + the authoritative `messages` envelope (`onMessage`, `sid`). Lambda `_handle_bridge_messages` must forward `streamId` (it rebuilds the payload — stream frames/results pass through verbatim, so only `messages` needed the fix). App: `send_message_result` binds `streamAnchors[streamId]=clientId`; the optimistic bubble carries a **durable `data-anchor=clientId`** (survives echo promotion — `tryDedup` promotes IN PLACE, never remove+re-insert, or the anchor is lost); `anchorForStream()` resolves streamId→clientId→`[data-anchor]` for both the live preview (`tickStreams`) and the authoritative row (`updateLastTurn`). No streamId (external/terminal/other-device reply) → timestamp fallback. **Race fixed**: `stream_end` must NOT delete `streamAnchors[streamId]` — the authoritative row arrives ~1ms AFTER `stream_end` and still needs the anchor; cleared wholesale on session switch instead. `replyPlacement` (old structural firstPending/last-echoed guess) deleted. Validated: `test/frontend/run.mjs` `burst-1-5-real-log` (faithful wire-order replay).
 - **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_agent`). Frontend `permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
 - **New Session / new agent / create project DONE** — regular sessions mint a UUID, acknowledge

@@ -447,6 +447,19 @@
   </div>
 </div>
 
+<!-- Codex writer takeover -->
+<div id="codexTakeoverModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCodexTakeoverModal()">
+  <div class="modal-box codex-takeover-box">
+    <div class="modal-title">Codex session is active</div>
+    <div class="modal-desc" id="codexTakeoverDesc"></div>
+    <div class="modal-error" id="codexTakeoverError"></div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="codexTakeoverCancel" onclick="closeCodexTakeoverModal()">Cancel send</button>
+      <button class="modal-btn confirm danger" id="codexTakeoverConfirm" onclick="confirmCodexTakeover()">Take over and send</button>
+    </div>
+  </div>
+</div>
+
 <!-- Image overlay -->
 <div id="imgOverlay" class="img-overlay" style="display:none" onclick="this.style.display='none'">
   <img id="imgOverlayImg" />

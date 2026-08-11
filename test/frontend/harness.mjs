@@ -18,7 +18,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export async function makeHarness() {
   const dom = new JSDOM(
     '<!DOCTYPE html><body><div id="content"><div class="messages"></div></div>' +
-    '<div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div></body>',
+    '<div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>' +
+    '<div id="codexTakeoverModal" style="display:none"><div id="codexTakeoverDesc"></div>' +
+    '<div id="codexTakeoverError"></div><button id="codexTakeoverCancel"></button>' +
+    '<button id="codexTakeoverConfirm"></button></div></body>',
     { url: 'https://test/', pretendToBeVisual: true }
   );
   const w = dom.window;

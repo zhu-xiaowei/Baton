@@ -776,6 +776,10 @@ test('Codex assistant text stays running until the explicit task_complete event'
       undefined,
       'end_turn',
     ]);
+    assert.deepEqual(extracted.messages.slice(0, 2).map((message) => message.content), [
+      [{ type: 'thinking', thinking: 'Still working.' }],
+      [{ type: 'text', text: 'Finished.' }],
+    ]);
     assert.deepEqual(extracted.messages.at(-1).content, []);
 
     const incremental = extractCodexMessages(target, SESSION_ID, { startLine: 3 });

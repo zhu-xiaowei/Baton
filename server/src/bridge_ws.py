@@ -193,7 +193,10 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "send_message_result":
         if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
+            payload = dict(body)
+            if conn.get("deviceName"):
+                payload["deviceName"] = conn["deviceName"]
+            return _handle_bridge_broadcast(payload, account_id, connection_id, endpoint)
     elif action == "send_message":
         if role == "app":
             return _handle_send_message(body, account_id, endpoint)

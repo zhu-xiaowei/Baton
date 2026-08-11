@@ -13,8 +13,10 @@ import {
   getCodexRunningInfo,
   scanCodexRollout,
 } from './codex-session.mjs';
-import { countJsonlLines, synced } from './extract.mjs';
+import { codexLiveSource } from './codex-live.mjs';
+import { countJsonlLines, synced, uploadMessages } from './extract.mjs';
 import { postRequired } from './http.mjs';
+import { liveMessagePushed } from './live-message-registry.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { storageSessionId } from './session-identity.mjs';
@@ -90,6 +92,7 @@ export class CodexWatcher {
     this.postFn = options.postFn || postRequired;
     this.reconcileFn = options.reconcileFn || reconcile;
     this.deliverFn = options.deliverFn || deliverRealtimeMessages;
+    this.uploadFn = options.uploadFn || uploadMessages;
     this.scanRollout = options.scanRollout || scanCodexRollout;
     this.runningInfoFn = options.runningInfoFn || getCodexRunningInfo;
     this.subscribeFn = options.subscribeFn
@@ -501,7 +504,16 @@ export class CodexWatcher {
     this.rememberPath(filePath, processedStat);
     const extracted = await syncCodexMessages(filePath, nativeSessionId, sessionId, {
       watermarks: this.watermarks,
-      uploader: (id, messages, identity) => this.deliverFn(id, messages, identity),
+      uploader: async (id, messages, identity) => {
+        const persistedOnly = [];
+        const realtime = [];
+        for (const message of messages) {
+          if (liveMessagePushed('codex', codexLiveSource(message))) persistedOnly.push(message);
+          else realtime.push(message);
+        }
+        if (persistedOnly.length) await this.uploadFn(id, persistedOnly, identity);
+        if (realtime.length) await this.deliverFn(id, realtime, identity);
+      },
     });
 
     const needsSessionScan = options.forceStatus

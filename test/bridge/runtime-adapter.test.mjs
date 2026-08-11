@@ -7,6 +7,7 @@ import { claudeRuntime } from '../../bridge/claude-runtime.mjs';
 import { codexRuntime } from '../../bridge/codex-runtime.mjs';
 import { decodeSyncedState } from '../../bridge/extract.mjs';
 import { scanJsonlLines } from '../../bridge/jsonl.mjs';
+import { defineInteractionAdapter } from '../../bridge/interaction-adapter.mjs';
 import { defineRuntimeAdapter } from '../../bridge/runtime-adapter.mjs';
 import {
   detectRegisteredRuntimeCapabilities,
@@ -14,6 +15,7 @@ import {
   runtimeAdapters,
 } from '../../bridge/runtime-registry.mjs';
 import { getSessionMetadata } from '../../bridge/session.mjs';
+import { resolveCodexBin } from '../../bridge/runtime-capabilities.mjs';
 
 function claudeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-runtime-'));
@@ -46,7 +48,7 @@ test('runtime registry exposes one validated adapter per runtime', () => {
   assert.equal(getRuntimeAdapter('codex'), codexRuntime);
   assert.equal(getRuntimeAdapter('unknown'), claudeRuntime);
   assert.equal(claudeRuntime.features.send, true);
-  assert.equal(codexRuntime.features.send, false);
+  assert.equal(codexRuntime.features.send, true);
   assert.throws(
     () => defineRuntimeAdapter({ runtime: 'broken' }),
     /requires discover/,
@@ -59,6 +61,27 @@ test('runtime registry exposes one validated adapter per runtime', () => {
       deleteSessionHistory: undefined,
     }),
     /requires deleteSessionHistory/,
+  );
+});
+
+test('interaction adapters expose the reusable existing-session contract', () => {
+  assert.equal(codexRuntime.interaction.runtime, 'codex');
+  assert.equal(typeof codexRuntime.interaction.shutdown, 'function');
+  assert.throws(
+    () => defineInteractionAdapter({ runtime: 'broken' }),
+    /requires sendExisting/,
+  );
+  assert.throws(
+    () => defineInteractionAdapter({
+      runtime: 'broken-shutdown',
+      sendExisting() {},
+      interrupt() {},
+      replyControl() {},
+      owns() {},
+      isBusy() {},
+      shutdown: true,
+    }),
+    /shutdown must be a function/,
   );
 });
 
@@ -83,7 +106,22 @@ test('capability detection is dispatched through runtime adapters', () => {
     });
     assert.equal(capabilities.claude.canCreate, true);
     assert.equal(capabilities.codex.canRead, true);
+    assert.equal(capabilities.codex.canSend, true);
     assert.equal(capabilities.codex.canCreate, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex binary resolution finds an NVM sibling of the running Node executable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-bin-'));
+  const bin = path.join(root, 'versions/node/v20.19.4/bin');
+  const nodeExecutable = path.join(bin, 'node');
+  const codexExecutable = path.join(bin, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(codexExecutable, '');
+  try {
+    assert.equal(resolveCodexBin({ home: root, nodeExecutable }), codexExecutable);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

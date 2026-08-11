@@ -559,12 +559,8 @@
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 
-    const code = exitCode(toolResult);
-    const failedStatus = window._lastToolState === 'error' ? (code !== null ? `Exit ${code}` : 'Failed') : '';
-    const status = failedStatus || info.status || '';
-    const statusHtml = failedStatus
-      ? `<span class="tool-status error">${esc(status)}</span>`
-      : info._statsHtml || (status ? `<span class="tool-status">${esc(status)}</span>` : '');
+    const status = info.status || '';
+    const statusHtml = info._statsHtml || (status ? `<span class="tool-status">${esc(status)}</span>` : '');
     const elevatedHtml = info.elevated ? '<span class="tool-flag">Elevated request</span>' : '';
     const fileLine = info.fileLine || '';
     const matchId = (!fileLine && info.fileLink && (name === 'Edit' || name === 'Write')) ? (toolUse.id || '') : '';

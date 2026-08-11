@@ -1,5 +1,14 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import {
+  codexItemNativeId,
+  codexItemLiveKey,
+  codexTurnUserLiveKey,
+  codexTurnUserNativeId,
+  codexUserLiveKey,
+  codexUserNativeId,
+  tagCodexLiveSource,
+} from './codex-live.mjs';
 import { codexResponseUserText } from './codex-session.mjs';
 
 const TOOL_NAMES = new Map([
@@ -242,6 +251,7 @@ function analyzeLines(lines) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
   const eventUserCounts = new Map();
+  const userClientIdsByTurn = new Map();
   const completedWebSearchIds = new Set();
   const commandExecutions = new Map();
   const mcpToolCalls = new Map();
@@ -254,7 +264,8 @@ function analyzeLines(lines) {
     map.set(callId, entries);
   };
   for (let index = lines.length - 1; index >= 0; index--) {
-    const hasUser = lines[index].includes('"user_message"');
+    const hasUser = lines[index].includes('"user_message"')
+      || lines[index].includes('"UserMessage"');
     const hasPatch = lines[index].includes('patch_apply_end')
       || lines[index].includes('patch_apply_begin')
       || lines[index].includes('"FileChange"')
@@ -294,6 +305,13 @@ function analyzeLines(lines) {
     if (entry.type === 'event_msg' && payload.type === 'user_message') {
       const text = String(payload.message || '').trim();
       if (text) eventUserCounts.set(text, (eventUserCounts.get(text) || 0) + 1);
+    }
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'UserMessage'
+      && payload.turn_id
+      && payload.item.client_id) {
+      userClientIdsByTurn.set(String(payload.turn_id), String(payload.item.client_id));
     }
     if (entry.type === 'event_msg'
       && payload.type === 'item_completed'
@@ -342,6 +360,7 @@ function analyzeLines(lines) {
     hiddenPatchLines: hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles),
     mcpToolCalls,
     skippedCustomOutputs: skipped,
+    userClientIdsByTurn,
   };
 }
 
@@ -357,6 +376,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     hiddenPatchLines,
     mcpToolCalls,
     skippedCustomOutputs,
+    userClientIdsByTurn,
   } = analyzeLines(lines);
   const messages = [];
   const callCounts = new Map();
@@ -461,12 +481,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
       if (isReviewPrompt) reviewPromptSeen = true;
       if (shouldEmit && text.trim() && !duplicateReviewPrompt) {
-        messages.push({
+        messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'user', payload.message),
+          nativeId: payload.client_id ? `codex:user:${payload.client_id}` : '',
           type: 'user',
           content: text,
           timestamp,
-        });
+        }, codexUserLiveKey(payload.client_id)));
       }
       continue;
     }
@@ -484,24 +505,35 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
         if (isReviewPrompt) reviewPromptSeen = true;
         if (shouldEmit && text && !duplicateReviewPrompt) {
-          messages.push({
+          const turnId = payload.internal_chat_message_metadata_passthrough?.turn_id;
+          const clientId = userClientIdsByTurn.get(String(turnId || ''));
+          messages.push(tagCodexLiveSource({
             uuid: stableId(sessionId, line, 'user', payload),
+            nativeId: codexUserNativeId(clientId)
+              || codexTurnUserNativeId(turnId)
+              || codexItemNativeId(payload.id),
             type: 'user',
             content: text,
             timestamp,
-          });
+          }, codexUserLiveKey(clientId)
+            || codexTurnUserLiveKey(turnId)
+            || codexItemLiveKey(payload.id)));
         }
         continue;
       }
       if (payload.role !== 'assistant') continue;
       const text = assistantText(payload);
       if (shouldEmit && text.trim()) {
-        messages.push({
+        const commentary = payload.phase === 'commentary';
+        messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'assistant', payload),
+          nativeId: codexItemNativeId(payload.id),
           type: 'assistant',
-          content: [{ type: 'text', text }],
+          content: commentary
+            ? [{ type: 'thinking', thinking: text }]
+            : [{ type: 'text', text }],
           timestamp,
-        });
+        }, codexItemLiveKey(payload.id)));
       }
       continue;
     }

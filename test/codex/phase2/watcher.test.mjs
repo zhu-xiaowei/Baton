@@ -5,6 +5,10 @@ import path from 'path';
 import test from 'node:test';
 import { CodexWatcher } from '../../../bridge/codex-watcher.mjs';
 import { deliverRealtimeMessages } from '../../../bridge/realtime-delivery.mjs';
+import {
+  clearLiveMessageRegistry,
+  markLiveMessagePushed,
+} from '../../../bridge/live-message-registry.mjs';
 import { scanCodexRollout } from '../../../bridge/codex-session.mjs';
 import { storageSessionId } from '../../../bridge/session-identity.mjs';
 
@@ -76,6 +80,7 @@ function watcherHarness(homes, options = {}) {
     deliverFn: options.deliverFn || (async (sessionId, messages, identity) => {
       delivered.push({ sessionId, messages, identity });
     }),
+    ...(options.uploadFn ? { uploadFn: options.uploadFn } : {}),
     postFn: async (endpoint, body) => {
       posts.push({ endpoint, body });
       return { ok: true };
@@ -168,6 +173,75 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
   assert.equal(delivered.length, 3);
   assert.equal(delivered.at(-1).stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[1])), 6);
+});
+
+test('Codex watcher persists live user and assistant rows without broadcasting them again', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[2]);
+  const clientId = 'stream-live-test';
+  const assistantId = 'msg-live-test';
+  writeLines(filePath, [
+    json('session_meta', {
+      session_id: IDS[2],
+      cwd: home,
+      model_provider: 'test-provider',
+      originator: 'codex-exec',
+      cli_version: '0.147.0',
+    }),
+    json('event_msg', { type: 'task_started', turn_id: 'turn-live' }, 1),
+    json('response_item', {
+      id: 'msg-user-live-test',
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'hello live' }],
+      internal_chat_message_metadata_passthrough: { turn_id: 'turn-live' },
+    }, 2),
+    json('event_msg', {
+      type: 'item_completed',
+      turn_id: 'turn-live',
+      item: {
+        type: 'UserMessage',
+        id: 'user-live-test',
+        client_id: clientId,
+        content: [{ type: 'text', text: 'hello live' }],
+      },
+    }, 3),
+    json('response_item', {
+      id: assistantId,
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'world live' }],
+    }, 4),
+    json('event_msg', { type: 'task_complete', turn_id: 'turn-live' }, 5),
+  ]);
+
+  const persisted = [];
+  const h = watcherHarness([home], {
+    uploadFn: async (sessionId, messages, identity) => {
+      persisted.push({ sessionId, messages, identity });
+    },
+  });
+  t.after(() => {
+    h.watcher.stop();
+    clearLiveMessageRegistry();
+  });
+  markLiveMessagePushed('codex', `user:${clientId}`);
+  markLiveMessagePushed('codex', `item:${assistantId}`);
+
+  await h.watcher.scanNow({ initial: true });
+
+  assert.deepEqual(
+    h.delivered.flatMap((batch) => batch.messages).map((message) => message.stopReason),
+    ['end_turn'],
+  );
+  assert.deepEqual(
+    persisted.flatMap((batch) => batch.messages).map((message) => message.type),
+    ['user', 'assistant'],
+  );
+  assert.deepEqual(
+    persisted.flatMap((batch) => batch.messages).map((message) => message.nativeId),
+    [`codex:user:${clientId}`, `codex:item:${assistantId}`],
+  );
 });
 
 test('Codex watcher skips rollout status scans for ordinary tool appends', async (t) => {

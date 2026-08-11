@@ -22,9 +22,11 @@ export function resolveCodexHomes(env = process.env) {
   });
 }
 
-export function resolveCodexBin() {
-  const home = os.homedir();
+export function resolveCodexBin(options = {}) {
+  const home = options.home || os.homedir();
+  const nodeExecutable = options.nodeExecutable || process.execPath;
   return findExecutable('codex', [
+    path.join(path.dirname(nodeExecutable), 'codex'),
     path.join(home, '.local/bin/codex'),
     path.join(home, '.npm-global/bin/codex'),
     path.join(home, 'AppData/Roaming/npm/codex'),

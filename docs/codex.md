@@ -1,7 +1,7 @@
 # Codex 接入设计与实施状态
 
-> 最后更新：2026-08-10
-> 当前状态：Phase 1、Phase 2 已完成；Phase 3 待实施
+> 最后更新：2026-08-11
+> 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成已有 Session 交互主链路
 > API 与 WS 完整契约见 [api.md](api.md)
 
 ## 1. 目标与范围
@@ -21,14 +21,22 @@ Device → Project → Session 信息架构。
 - 实时更新新 Session metadata 和 `running/completed` 状态。
 - 列表和详情复用统一 UI，并用 runtime icon、短 ID 和局部展示差异区分。
 - macOS、Linux 和原生 Windows Bridge 安装、启动及升级。
+- 已有 Codex Session 使用 app-server `thread/resume` + `turn/start` 发送消息。
+- app-server delta 复用 Claude 的首包立即发送、50ms 合批、turn 级 `seq`、前端重排和追赶渲染。
+- app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
+- interrupt 和基础 command/file/user-input 审批已接入现有 WS 控制协议。
+- 每个活跃 thread 使用临时 app-server lease；turn 和权限队列结束后立即退出并释放 writer。
+- 外部独立 Codex TUI 持有 writer 时，Web 显式确认后可安全终止该 holder、retry resume 并发送；
+  取消不会终止进程或发送消息。
 
 当前未完成：
 
-- Codex 消息发送、streaming、interrupt 和权限交互。
-- Codex app-server 的生产接入。
+- Codex 新 Session/Project 创建入口。
+- 完整审批变体、刷新后的 pending request 恢复和 `turn/steer`。
+- app-server 工具输出是否切换为 live 权威；当前最终工具卡继续复用 Phase 2 watcher。
 
-因此，Codex Session 当前支持历史读取和实时旁观，但不支持交互。产品不显示额外“只读”
-标签，也不删除或隐藏现有输入区域；Bridge capability 会阻止未支持的请求进入 Claude controller。
+因此，已有 Codex Session 已支持历史读取、实时旁观和 Web 交互；新建入口仍通过
+`canCreate=false` 隐藏。Runtime adapter 会阻止 Codex 请求进入 Claude controller。
 
 ## 2. 阶段与完成条件
 
@@ -36,7 +44,7 @@ Device → Project → Session 信息架构。
 |---|---|---|---|
 | Phase 1 | 已完成 | 初始化发现、metadata、历史消息、按需回填、统一 UI、跨平台安装升级 | 本地/DDB/REST/UI 数量一致；重启和重复打开无新增重复；Claude 行为无回归 |
 | Phase 2 | 已完成 | Codex watcher、增量读取、状态更新、实时旁观 | macOS/Linux/Windows 的新增行不漏不重；断连、重启、半行写入和 watermark 恢复通过 |
-| Phase 3 | 待开始 | app-server、发送、streaming、interrupt、权限 | 同一 Session 多轮发送、流式顺序、权限、重连恢复和外部进程接管边界通过 |
+| Phase 3 | 进行中 | app-server、发送、streaming、interrupt、权限 | 已有 Session 主链路、临时 writer lease 和显式 TUI 接管已完成；新建与完整权限待完成 |
 | Phase 4 | 待开始 | 性能、诊断、灰度、回滚和体验完善 | 大 Session、弱网、升级失败和多设备场景均有可执行验收与回滚流程 |
 
 ### 2.1 实施规则
@@ -70,6 +78,19 @@ Phase 2 的实时链路：
 | `bridge/watcher.mjs` | Claude JSONL watcher |
 | `bridge/codex-watcher.mjs` | Codex 多 Home rollout watcher、watermark 和状态更新 |
 | `bridge/realtime-delivery.mjs` | 两种 runtime 共用的 WS ack、HTTP fallback 和大帧策略 |
+
+Phase 3 的已有 Session 交互链路：
+
+| 文件 | 职责 |
+|---|---|
+| `bridge/interaction-adapter.mjs` | 定义和校验 runtime interaction 接口 |
+| `bridge/codex-app-server.mjs` | app-server stdio JSON-RPC、握手、请求配对和反向请求 |
+| `bridge/codex-interaction.mjs` | 临时 writer lease、resume、turn、item、interrupt、审批和 Session 内排队 |
+| `bridge/codex-writer.mjs` | active-writer 识别、独立 TUI holder 校验和确认后的安全终止 |
+| `bridge/stream-framer.mjs` | Claude/Codex 共用首包立即发送、50ms 合批和 turn 级 `seq` |
+| `bridge/codex-live.mjs` | app-server item 到统一 preview/完整消息的映射 |
+| `bridge/live-message-registry.mjs` | live 完整行与 rollout watcher 的短期去重 |
+| `bridge/ws.mjs` | 通过 interaction adapter 进入现有统一 WS streaming contract |
 
 Adapter 必须实现：
 
@@ -193,7 +214,7 @@ Codex 进程是否正在等待审批，因此 JSONL watcher 不生成 Codex `nee
       "historyAvailable": true,
       "canRead": true,
       "canCreate": false,
-      "canSend": false,
+      "canSend": true,
       "version": "..."
     }
   }
@@ -443,14 +464,14 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 | 混合 catalog | 2403 Claude + 17 Codex = 2420 |
 | 初始化 dry-run 最终消息 | 约 4095 |
 | metadata/message key 冲突 | 0 |
-| Bridge 测试 | 33 passed |
-| Codex 测试 | 29 passed |
-| Server 测试 | 13 passed |
-| Frontend 回归 | 47 passed |
+| Bridge 测试 | 37 passed |
+| Codex 测试 | 52 passed |
+| Server 测试 | 22 passed |
+| Frontend 回归 | 60 passed |
 | Packaging 边界测试 | 4 passed |
 | Production build | passed |
 
-本地自动化合计 126 项。
+本地自动化合计 175 项。
 
 AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。
@@ -516,11 +537,21 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 
 ### Phase 3：交互
 
-1. 建立 Codex app-server client/pool 和协议版本协商。
-2. 分别实现 Codex send、streaming、interrupt、permission controller。
-3. 将 app-server item/event 映射到现有 message 和 streaming UI。
-4. 验证 resume、外部 codex-tui 正在运行时的接管边界和单写者约束。
-5. 接通能力后更新 `canCreate/canSend`，继续复用现有输入、权限和流式组件。
+已完成：
+
+1. app-server stdio JSON-RPC client、initialize 握手、请求配对、notification 和 ServerRequest。
+2. 已有 Session 的 `thread/resume`、`turn/start`、同 Session 排队、interrupt 和基础审批。
+3. Codex delta 复用 Claude 的 `StreamFramer`、统一 WS 事件和现有前端 streaming 渲染。
+4. app-server 完整 user/assistant 行与 rollout watcher 的 live 优先、文件兜底语义。
+5. 每个活跃 thread 的临时 app-server lease；turn 和权限队列完成后立即释放 writer。
+6. 外部独立 Codex TUI 的结构化冲突、Web 确认、安全终止、retry resume 和取消路径。
+
+待完成：
+
+1. Codex 新 Session/Project 创建和 capability/UI 入口。
+2. `turn/steer` 和 pending approval 重连恢复。
+3. 剩余 ServerRequest 变体。
+4. Linux/Windows 显式 TUI 接管 smoke test 与生产灰度。
 
 ### 体验与覆盖
 

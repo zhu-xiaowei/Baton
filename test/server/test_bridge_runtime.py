@@ -333,6 +333,70 @@ def test_bridge_recovery_complete_broadcasts_to_apps(monkeypatch):
     ]
 
 
+def test_send_result_includes_the_responding_bridge_device(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "bridge",
+                    "accountId": "account-1",
+                    "deviceName": "Mac",
+                },
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_query_connections",
+        lambda account_id, role: [{"connectionId": "app-1"}]
+        if account_id == "account-1" and role == "app" else [],
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_message(
+        {
+            "body": json.dumps({
+                "action": "send_message_result",
+                "clientId": "send-1",
+                "ok": False,
+                "error": "already has an active writer",
+                "errorCode": "codex_active_writer",
+                "writer": {
+                    "pid": 123,
+                    "label": "Codex terminal",
+                    "canTerminate": True,
+                },
+            }),
+        },
+        "bridge-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [(
+        "app-1",
+        {
+            "action": "send_message_result",
+            "clientId": "send-1",
+            "ok": False,
+            "error": "already has an active writer",
+            "errorCode": "codex_active_writer",
+            "writer": {
+                "pid": 123,
+                "label": "Codex terminal",
+                "canTerminate": True,
+            },
+            "deviceName": "Mac",
+        },
+    )]
+
+
 def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch):
     class SubscriptionTable:
         def query(self, **_):

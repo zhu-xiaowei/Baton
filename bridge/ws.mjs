@@ -10,6 +10,10 @@ import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
+import {
+  liveMessagePushed,
+  markLiveMessagePushed,
+} from './live-message-registry.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
 import { updateSessionStatus, knownProjects } from './sync.mjs';
@@ -35,21 +39,24 @@ const _claudeRuntime = getRuntimeAdapter('claude');
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
+export async function shutdownInteractions() {
+  _pool.shutdownAll();
+  await Promise.allSettled(
+    runtimeAdapters
+      .map((adapter) => adapter.interaction?.shutdown?.())
+      .filter(Boolean),
+  );
+}
+
 // uuids headless already broadcast live (stdout always beats jsonl landing, measured
 // 100ms~several s). watcher checks this so the later jsonl copy only writes DDB, not WS.
 // Cap holds many turns' worth (one heavy multi-tool turn ≈ 25 rows) so no uuid is
 // evicted before its lagging jsonl copy arrives; a stale miss only costs a harmless
 // re-push (still app-side uuid-deduped).
-const _headlessPushed = new Set();
-const _headlessOrder = [];        // FIFO, caps the set at recent messages
-const HEADLESS_PUSHED_CAP = 256;
 export function markHeadlessPushed(uuid) {
-  if (!uuid || _headlessPushed.has(uuid)) return;
-  _headlessPushed.add(uuid);
-  _headlessOrder.push(uuid);
-  if (_headlessOrder.length > HEADLESS_PUSHED_CAP) _headlessPushed.delete(_headlessOrder.shift());
+  markLiveMessagePushed('claude', uuid);
 }
-export function headlessPushed(uuid) { return _headlessPushed.has(uuid); }
+export function headlessPushed(uuid) { return liveMessagePushed('claude', uuid); }
 
 // Pending control_request per session (CC blocks one tool call at a time).
 const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
@@ -219,7 +226,17 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
     case 'send_message':
-      await handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId, msg.asAgent, msg.clientId, msg.runtime);
+      await handleSendMessage(
+        msg.sessionId,
+        msg.text,
+        msg.projectHash,
+        msg.requestId,
+        msg.asAgent,
+        msg.clientId,
+        msg.runtime,
+        msg.takeover,
+        msg.expectedWriterPid,
+      );
       break;
     case 'permission_reply':
       handlePermissionReply(msg);
@@ -231,7 +248,10 @@ async function handleMessage(msg) {
       {
         const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
         const adapter = getRuntimeAdapter(identity.runtime);
-        if (adapter.features.interrupt) _pool.interrupt(identity.nativeSessionId);
+        if (adapter.features.interrupt) {
+          if (adapter.interaction?.interrupt) adapter.interaction.interrupt(identity.nativeSessionId);
+          else _pool.interrupt(identity.nativeSessionId);
+        }
       }
       break;
     case 'reveal_agent':
@@ -291,7 +311,17 @@ async function handleSyncSession(sessionId, runtime, nativeSessionId) {
   wsSend({ action: 'sync_complete', sessionId: identity.sessionId, status: 'ok', count: messages.length });
 }
 
-async function handleSendMessage(sessionId, text, projectHash, requestId, asAgent, clientId, runtime) {
+async function handleSendMessage(
+  sessionId,
+  text,
+  projectHash,
+  requestId,
+  asAgent,
+  clientId,
+  runtime,
+  takeover,
+  expectedWriterPid,
+) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
   const identity = parseStorageSessionId(sessionId || '', runtime);
@@ -302,7 +332,9 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
       action: 'send_message_result',
       sessionId,
       ok: false,
-      error: `${adapter.displayName} sessions are read-only in this Bridge version.`,
+      error: sessionId
+        ? `${adapter.displayName} sessions are read-only in this Bridge version.`
+        : `${adapter.displayName} session creation is unavailable.`,
       requestId,
       clientId,
     });
@@ -311,9 +343,17 @@ async function handleSendMessage(sessionId, text, projectHash, requestId, asAgen
 
   const resolved = await resolveBridgeImages(text);
 
-  // Existing session (regular or agent): headless streaming with daemon takeover.
+  // Existing session: route through the runtime interaction adapter when available.
   if (sessionId) {
-    const handled = await handleHeadlessSend(identity.nativeSessionId, resolved, clientId, projectHash);
+    const handled = adapter.interaction
+      ? await handleAdapterSend(
+        adapter,
+        identity,
+        resolved,
+        clientId,
+        { takeover: !!takeover, expectedWriterPid },
+      )
+      : await handleHeadlessSend(identity.nativeSessionId, resolved, clientId, projectHash);
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', clientId });
     return;
@@ -352,7 +392,7 @@ const newStreamId = () => (crypto.randomUUID
   : 'sd-' + Date.now() + '-' + Math.random().toString(36).slice(2));
 
 // Per-turn streaming callbacks shared by resume + new-regular sends (frames key off sessionId; streamId comes from each callback's `sid` arg).
-function buildStreamCallbacks(sessionId, cwd, ack) {
+function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
   return {
     // Increment-only chunks + turn-level seq → app reorders by seq (see web/js/reorder.js).
     onDelta: (sid, chunk, seq, blockId) => {
@@ -368,9 +408,9 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
       wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId, seq });
     },
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
-    onMessage: async (sid, raw) => {
+    onMessage: async (sid, raw, meta = {}) => {
       try {
-        const msg = await extractForApp(raw, cwd);
+        const msg = meta.normalized ? raw : await extractForApp(raw, cwd);
         if (!msg.uuid) return;
         let out = msg;
         if (Buffer.byteLength(JSON.stringify({ action: 'messages', sessionId, messages: [msg] })) > WS_FRAME_LIMIT) {
@@ -379,15 +419,18 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
         }
         // streamId ties this row (user echo + assistant) to its send → app places/dedupes by identity.
         wsSend({ action: 'messages', sessionId, streamId: sid, messages: [out], noCache: true });
-        markHeadlessPushed(msg.uuid); // watcher skips WS for this uuid's jsonl copy
+        if (meta.runtime && meta.liveKey) markLiveMessagePushed(meta.runtime, meta.liveKey);
+        else markHeadlessPushed(msg.uuid); // watcher skips WS for this uuid's jsonl copy
       } catch (e) {
-        console.log(`[ws] headless onMessage extract failed: ${e.message}`);
+        console.log(`[ws] live message extract failed: ${e.message}`);
       }
     },
     onResult: (sid, result, finalSeq) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
       // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
-      syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.get(sessionId)));
+      if (options.syncStatus !== false) {
+        syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.get(sessionId)));
+      }
     },
     onControlRequest: (req) => {
       const r = req.request || {};
@@ -396,8 +439,12 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
       _pendingControl.set(sessionId, {
         requestId: req.request_id, toolName: r.tool_name,
         input, requiresInteraction: !!r.requires_user_interaction,
+        runtime: options.runtime || 'claude',
+        nativeSessionId: options.nativeSessionId || sessionId,
       });
-      syncPoolStatus(sessionId, 'needs_input', controlDetail(_pendingControl.get(sessionId)));
+      if (options.syncStatus !== false) {
+        syncPoolStatus(sessionId, 'needs_input', controlDetail(_pendingControl.get(sessionId)));
+      }
       let kind = 'tool';
       if (r.requires_user_interaction) {
         kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';
@@ -409,11 +456,64 @@ function buildStreamCallbacks(sessionId, cwd, ack) {
       });
     },
     onError: (sid, err) => {
-      console.log(`[ws] headless error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
+      console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: 'unavailable' });
-      ack(false, 'Session unavailable (busy elsewhere). Read-only.');
+      ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
   };
+}
+
+async function handleAdapterSend(adapter, identity, text, clientId, sendOptions = {}) {
+  const filePath = adapter.findSessionFile(identity.nativeSessionId);
+  if (!synced.has(identity.sessionId) && filePath) {
+    try { synced.set(identity.sessionId, countJsonlLines(filePath)); } catch {}
+  }
+
+  const streamId = newStreamId();
+  let acked = false;
+  const ack = (ok, error, meta = {}) => {
+    if (acked) return;
+    acked = true;
+    wsSend({
+      action: 'send_message_result',
+      sessionId: identity.sessionId,
+      ok,
+      error,
+      clientId,
+      streamId,
+      ...meta,
+    });
+  };
+  const callbacks = buildStreamCallbacks(identity.sessionId, '', ack, {
+    runtime: identity.runtime,
+    nativeSessionId: identity.nativeSessionId,
+    syncStatus: false,
+  });
+  try {
+    await adapter.interaction.sendExisting({
+      sessionId: identity.sessionId,
+      nativeSessionId: identity.nativeSessionId,
+      streamId,
+      text,
+      callbacks,
+      takeover: sendOptions.takeover,
+      expectedWriterPid: sendOptions.expectedWriterPid,
+    });
+    ack(true);
+    return true;
+  } catch (error) {
+    const errorCode = {
+      CODEX_ACTIVE_WRITER: 'codex_active_writer',
+      CODEX_WRITER_CHANGED: 'codex_writer_changed',
+      CODEX_WRITER_UNSAFE: 'codex_writer_unsafe',
+    }[error.code];
+    ack(
+      false,
+      error.message || 'Session unavailable.',
+      errorCode ? { errorCode, writer: error.writer } : {},
+    );
+    return true;
+  }
 }
 
 // Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
@@ -713,6 +813,16 @@ function handlePermissionReply(msg) {
   const pending = _pendingControl.get(sessionId);
   if (!pending || (requestId && pending.requestId !== requestId)) return;
   _pendingControl.delete(sessionId);
+
+  if (pending.runtime !== 'claude') {
+    const adapter = getRuntimeAdapter(pending.runtime);
+    adapter.interaction?.replyControl?.(
+      pending.nativeSessionId,
+      pending.requestId,
+      { decision, answerText },
+    );
+    return;
+  }
 
   if (pending.requiresInteraction) {
     // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).

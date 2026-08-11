@@ -15,7 +15,7 @@ import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
-import { initWs, wsSendWhenConnected } from './ws.mjs';
+import { initWs, shutdownInteractions, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { cleanupStagedBridge, installStagedBridge } from './updater.mjs';
@@ -34,8 +34,15 @@ try {
   fs.writeFileSync(LOCK_FILE, String(process.pid));
 } catch {}
 process.on('exit', () => { saveSynced(); try { fs.unlinkSync(LOCK_FILE); } catch {} });
-process.on('SIGTERM', () => process.exit(0));
-process.on('SIGINT', () => process.exit(0));
+let shuttingDown = false;
+async function shutdownBridge(exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await shutdownInteractions();
+  process.exit(exitCode);
+}
+process.on('SIGTERM', () => { shutdownBridge(0).catch(() => process.exit(1)); });
+process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
 cleanupStagedBridge(BRIDGE_HOME);
@@ -124,7 +131,7 @@ async function checkUpdate() {
         fs.rmSync(stage, { recursive: true, force: true });
       }
       console.log(`[update] files updated, restarting...`);
-      process.exit(process.platform === 'win32' ? 75 : 1);
+      await shutdownBridge(process.platform === 'win32' ? 75 : 1);
     } catch (e) {
       console.error(`[update] failed: ${e.message}`);
     }
