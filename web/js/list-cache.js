@@ -1,4 +1,5 @@
-const LIST_CACHE_PREFIX = 'apeek_list_cache_v1:';
+const LIST_CACHE_PREFIX = 'apeek_list_cache_v2:';
+const STALE_LIST_CACHE_PREFIX = 'apeek_list_cache_v1:';
 const LEGACY_LIST_CACHE_KEY = 'apeek_list_cache_v1';
 
 function isQuotaError(error) {
@@ -15,7 +16,10 @@ export function clearListCaches() {
     localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
     for (var i = localStorage.length - 1; i >= 0; i--) {
       var key = localStorage.key(i);
-      if (key && key.indexOf(LIST_CACHE_PREFIX) === 0) localStorage.removeItem(key);
+      if (key && (
+        key.indexOf(LIST_CACHE_PREFIX) === 0
+        || key.indexOf(STALE_LIST_CACHE_PREFIX) === 0
+      )) localStorage.removeItem(key);
     }
   } catch (e) {}
 }
@@ -55,18 +59,15 @@ export function invalidateListCache(key) {
 }
 
 export function migrateLegacyListCache() {
-  var legacy;
-  try {
-    legacy = JSON.parse(localStorage.getItem(LEGACY_LIST_CACHE_KEY) || 'null');
-  } catch (e) {}
-
-  if (legacy && legacy.version === 1 && legacy.entries) {
-    Object.keys(legacy.entries).forEach(function (entryKey) {
-      writeListCache(entryKey, legacy.entries[entryKey].data);
-    });
-  }
-
   try {
     localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
-  } catch (e) {}
+    for (var i = localStorage.length - 1; i >= 0; i--) {
+      var key = localStorage.key(i);
+      if (key && key.indexOf(STALE_LIST_CACHE_PREFIX) === 0) localStorage.removeItem(key);
+    }
+  } catch (e) {
+    try {
+      localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
+    } catch (_e) {}
+  }
 }

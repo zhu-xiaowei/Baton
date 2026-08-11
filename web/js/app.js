@@ -6,6 +6,7 @@ import {
   readListCache,
   writeListCache,
 } from './list-cache.js';
+import { createListPageStore, LIST_PAGE_SIZE } from './list-pagination.js';
 import {
   attachEdgeBackGesture,
   markCurrentRoute,
@@ -16,6 +17,10 @@ import {
 
 var _navVersion = 0;
 var _listPrefetches = {};
+var _listPages = createListPageStore(12);
+var _activeListKey = null;
+var _activeListOptions = null;
+var LIST_PRELOAD_PX = 1200;
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -302,6 +307,44 @@ function navigateUp() {
   return false;
 }
 
+function projectListOptions(device) {
+  return {
+    key: 'projects:' + device,
+    itemsKey: 'projects',
+    idKey: 'projectHash',
+    skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
+    html: function (data) { return projectsHtml(device, data, false); },
+    render: function (data) { renderProjects(device, data); },
+    fetchPage: function (cursor) {
+      var params = { device: device, limit: LIST_PAGE_SIZE };
+      if (cursor) params.cursor = cursor;
+      return api('/api/bridge/projects', params);
+    }
+  };
+}
+
+function sessionListOptions(device, projectHash) {
+  return {
+    key: 'sessions:' + device + ':' + projectHash,
+    itemsKey: 'sessions',
+    idKey: 'sessionId',
+    skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
+    html: function (data) { return sessionsHtml(device, projectHash, data, false); },
+    render: function (data) { renderSessions(device, projectHash, data); },
+    fetchPage: function (cursor) {
+      var params = { device: device, project: projectHash, limit: LIST_PAGE_SIZE };
+      if (cursor) params.cursor = cursor;
+      return api('/api/bridge/sessions', params);
+    }
+  };
+}
+
+function listData(options, items) {
+  var data = {};
+  data[options.itemsKey] = items;
+  return data;
+}
+
 function listTarget(targetState) {
   if (!targetState) {
     if (state.appState.session && state.appState.project) {
@@ -316,37 +359,22 @@ function listTarget(targetState) {
   }
   if (!targetState || !targetState.device) return null;
   if (!targetState.project) {
-    return {
-      state: targetState,
-      cacheKey: 'projects:' + targetState.device,
-      skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
-      html: function (data) { return projectsHtml(targetState.device, data, false); },
-      fetch: function () { return api('/api/bridge/projects', { device: targetState.device }); }
-    };
+    return Object.assign({ state: targetState }, projectListOptions(targetState.device));
   }
   if (!targetState.session) {
-    return {
-      state: targetState,
-      cacheKey: 'sessions:' + targetState.device + ':' + targetState.project.hash,
-      skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
-      html: function (data) {
-        return sessionsHtml(targetState.device, targetState.project.hash, data, false);
-      },
-      fetch: function () {
-        return api('/api/bridge/sessions', {
-          device: targetState.device,
-          project: targetState.project.hash
-        });
-      }
-    };
+    return Object.assign(
+      { state: targetState },
+      sessionListOptions(targetState.device, targetState.project.hash)
+    );
   }
   return null;
 }
 
 function preloadListTarget(target) {
-  if (!target || readListCache(target.cacheKey) || _listPrefetches[target.cacheKey]) return;
-  _listPrefetches[target.cacheKey] = target.fetch().then(function (data) {
-    writeListCache(target.cacheKey, data);
+  var memory = target && _listPages.peek(target.key);
+  if (!target || (memory && memory.loaded) || readListCache(target.key) || _listPrefetches[target.key]) return;
+  _listPrefetches[target.key] = target.fetchPage(null).then(function (data) {
+    writeListCache(target.key, data);
     return data;
   }).catch(function () {
     return null;
@@ -370,7 +398,10 @@ function prepareNavigationPreview(targetState) {
   var target = listTarget(targetState);
   if (!target) return null;
 
-  var cached = readListCache(target.cacheKey);
+  var memory = _listPages.peek(target.key);
+  var cached = memory && memory.loaded
+    ? listData(target, memory.items)
+    : readListCache(target.key);
   preloadListTarget(target);
   var topBar = document.querySelector('body > .top-bar');
   if (!topBar) return null;
@@ -380,7 +411,7 @@ function prepareNavigationPreview(targetState) {
     breadcrumbHtml: previewBreadcrumb(target.state),
     breadcrumbDisplay: 'flex',
     contentHtml: cached ? target.html(cached) : target.skeleton,
-    scrollTop: 0
+    scrollTop: memory && memory.loaded ? memory.scrollTop : 0
   };
 }
 
@@ -391,32 +422,168 @@ document.addEventListener('click', function (e) {
 
 migrateLegacyListCache();
 
-async function loadCachedList(options) {
-  var content = document.getElementById('content');
-  var cached = readListCache(options.cacheKey);
-  if (window.__setTopSync) window.__setTopSync(true);
-  if (cached) options.render(cached);
-  else content.innerHTML = options.skeleton;
-  content.scrollTop = 0;
-
-  try {
-    var prefetched = _listPrefetches[options.cacheKey];
-    delete _listPrefetches[options.cacheKey];
-    var fresh = prefetched ? await prefetched : await options.fetch();
-    if (!fresh) fresh = await options.fetch();
-    if (!options.isCurrent()) return;
-    var changed = !cached || JSON.stringify(fresh) !== JSON.stringify(cached);
-    if (changed) {
-      var keepScroll = content.scrollTop;
-      options.render(fresh);
-      content.scrollTop = keepScroll;
+function captureListAnchor(content) {
+  var top = content.getBoundingClientRect().top;
+  var items = content.querySelectorAll('.list > .item[data-id]');
+  for (var i = 0; i < items.length; i++) {
+    var rect = items[i].getBoundingClientRect();
+    if (rect.bottom >= top) {
+      return { id: items[i].getAttribute('data-id'), offset: rect.top - top };
     }
-    writeListCache(options.cacheKey, fresh);
-  } catch (e) {
-    if (options.isCurrent() && !cached) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
-  } finally {
-    if (options.isCurrent() && window.__setTopSync) window.__setTopSync(false);
   }
+  return null;
+}
+
+function restoreListPosition(content, scrollTop, anchor) {
+  content.scrollTop = scrollTop || 0;
+  if (!anchor) return;
+  var items = content.querySelectorAll('.list > .item[data-id]');
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].getAttribute('data-id') !== anchor.id) continue;
+    var top = content.getBoundingClientRect().top;
+    content.scrollTop += items[i].getBoundingClientRect().top - top - anchor.offset;
+    return;
+  }
+}
+
+function renderListEntry(options, entry, scrollTop, anchor) {
+  var content = document.getElementById('content');
+  options.render(listData(options, entry.items));
+  restoreListPosition(content, scrollTop, anchor);
+  entry.scrollTop = content.scrollTop;
+}
+
+function setListLoading(loading) {
+  var content = document.getElementById('content');
+  var existing = content.querySelector('.loading-more');
+  if (!loading) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (!existing && content.querySelector('.list')) {
+    content.insertAdjacentHTML('beforeend', '<div class="loading-more"><span class="spinner"></span></div>');
+  }
+}
+
+function rememberActiveListScroll() {
+  if (!_activeListKey) return;
+  var content = document.getElementById('content');
+  _listPages.rememberScroll(_activeListKey, content.scrollTop);
+}
+
+function deactivateList() {
+  rememberActiveListScroll();
+  _activeListKey = null;
+  _activeListOptions = null;
+}
+
+function invalidatePagedList(key) {
+  invalidateListCache(key);
+  _listPages.invalidate(key);
+  delete _listPrefetches[key];
+}
+
+function isCurrentList(options, navVersion, requestId) {
+  var entry = _listPages.peek(options.key);
+  return _navVersion === navVersion
+    && _activeListKey === options.key
+    && entry
+    && entry.requestId === requestId;
+}
+
+function isLatestListRequest(options, requestId) {
+  var entry = _listPages.peek(options.key);
+  return entry && entry.requestId === requestId;
+}
+
+async function loadPagedList(options, navVersion) {
+  var content = document.getElementById('content');
+  var entry = _listPages.get(options.key);
+  var hadMemory = entry.loaded;
+  var cached = hadMemory ? null : readListCache(options.key);
+  _activeListKey = options.key;
+  _activeListOptions = options;
+
+  if (window.__setTopSync) window.__setTopSync(true);
+  if (hadMemory) {
+    renderListEntry(options, entry, entry.scrollTop, null);
+  } else if (cached) {
+    entry = _listPages.applyFirst(options.key, cached, options.itemsKey, options.idKey, false);
+    renderListEntry(options, entry, 0, null);
+  } else {
+    content.innerHTML = options.skeleton;
+    content.scrollTop = 0;
+  }
+
+  var requestId = _listPages.begin(options.key, true);
+  var refreshed = false;
+  try {
+    var prefetched = _listPrefetches[options.key];
+    delete _listPrefetches[options.key];
+    var fresh = prefetched ? await prefetched : await options.fetchPage(null);
+    if (!fresh) fresh = await options.fetchPage(null);
+    if (isLatestListRequest(options, requestId)) writeListCache(options.key, fresh);
+    if (!isCurrentList(options, navVersion, requestId)) return;
+
+    var anchor = hadMemory ? captureListAnchor(content) : null;
+    var keepScroll = content.scrollTop;
+    var preserveLoaded = hadMemory && entry.items.length > LIST_PAGE_SIZE;
+    entry = _listPages.applyFirst(
+      options.key, fresh, options.itemsKey, options.idKey, preserveLoaded
+    );
+    renderListEntry(options, entry, keepScroll, anchor);
+    refreshed = true;
+  } catch (e) {
+    if (_navVersion === navVersion && _activeListKey === options.key && !entry.loaded) {
+      content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+    }
+  } finally {
+    var stillCurrent = isCurrentList(options, navVersion, requestId);
+    _listPages.finish(options.key, requestId);
+    if (stillCurrent) {
+      if (window.__setTopSync) window.__setTopSync(false);
+      if (refreshed) maybeLoadNextListPage();
+    }
+  }
+}
+
+async function loadNextListPage() {
+  var options = _activeListOptions;
+  if (!options) return;
+  var entry = _listPages.peek(options.key);
+  if (!entry || !entry.loaded || !entry.hasMore || !entry.nextCursor) return;
+  var requestId = _listPages.begin(options.key, false);
+  if (requestId === null) return;
+
+  var navVersion = _navVersion;
+  var cursor = entry.nextCursor;
+  var appended = false;
+  setListLoading(true);
+  try {
+    var page = await options.fetchPage(cursor);
+    if (!isCurrentList(options, navVersion, requestId)) return;
+    var content = document.getElementById('content');
+    var keepScroll = content.scrollTop;
+    entry = _listPages.append(options.key, page, options.itemsKey, options.idKey);
+    renderListEntry(options, entry, keepScroll, null);
+    appended = true;
+  } catch (e) {
+    // Keep the loaded pages; the next scroll retries this cursor.
+  } finally {
+    var stillCurrent = isCurrentList(options, navVersion, requestId);
+    _listPages.finish(options.key, requestId);
+    if (stillCurrent) {
+      setListLoading(false);
+      if (appended) maybeLoadNextListPage();
+    }
+  }
+}
+
+function maybeLoadNextListPage() {
+  if (!_activeListOptions || state.appState.session) return;
+  var content = document.getElementById('content');
+  var distance = content.scrollHeight - content.scrollTop - content.clientHeight;
+  if (distance < LIST_PRELOAD_PX) loadNextListPage();
 }
 
 function toggleRecentAgents() {
@@ -464,6 +631,7 @@ function shortModel(m) {
 
 // ---- Devices ----
 async function loadDevices() {
+  deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
   prepareNavigation({ device: null, project: null, session: null });
   var myNav = ++_navVersion;
@@ -525,6 +693,10 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
+  rememberActiveListScroll();
+  var restoreLoadedPages = state.appState.device === device && !!state.appState.project;
+  var options = projectListOptions(device);
+  if (!restoreLoadedPages) _listPages.invalidate(options.key);
   prepareNavigation({ device: device, project: null, session: null });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
@@ -534,13 +706,7 @@ async function loadProjects(device) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
-  return loadCachedList({
-    cacheKey: 'projects:' + device,
-    skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
-    fetch: function () { return api('/api/bridge/projects', { device: device }); },
-    isCurrent: function () { return _navVersion === myNav; },
-    render: function (data) { renderProjects(device, data); }
-  });
+  return loadPagedList(options, myNav);
 }
 
 // ---- Sessions ----
@@ -611,6 +777,13 @@ function renderSessions(device, projectHash, data) {
 }
 
 async function loadSessions(device, projectHash, projectName) {
+  rememberActiveListScroll();
+  var restoreLoadedPages = state.appState.device === device
+    && !!state.appState.session
+    && !!state.appState.project
+    && state.appState.project.hash === projectHash;
+  var options = sessionListOptions(device, projectHash);
+  if (!restoreLoadedPages) _listPages.invalidate(options.key);
   prepareNavigation({
     device: device,
     project: { hash: projectHash, name: projectName || projectHash },
@@ -624,13 +797,7 @@ async function loadSessions(device, projectHash, projectName) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
-  return loadCachedList({
-    cacheKey: 'sessions:' + device + ':' + projectHash,
-    skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
-    fetch: function () { return api('/api/bridge/sessions', { device: device, project: projectHash }); },
-    isCurrent: function () { return _navVersion === myNav; },
-    render: function (data) { renderSessions(device, projectHash, data); }
-  });
+  return loadPagedList(options, myNav);
 }
 
 function createNewProject() {
@@ -765,13 +932,13 @@ async function submitDelete() {
   }
   closeDeleteModal();
   if (isProject) {
-    invalidateListCache('projects:' + device);
+    invalidatePagedList('projects:' + device);
     ids.forEach(function (projectHash) {
-      invalidateListCache('sessions:' + device + ':' + projectHash);
+      invalidatePagedList('sessions:' + device + ':' + projectHash);
     });
     loadProjects(device);
   } else {
-    invalidateListCache('sessions:' + state.appState.device + ':' + state.appState.project.hash);
+    invalidatePagedList('sessions:' + state.appState.device + ':' + state.appState.project.hash);
     loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
   }
   // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
@@ -788,6 +955,7 @@ function onNewAsAgentToggle(checked) {
 }
 
 async function startNewSession(projectHash, asAgent) {
+  deactivateList();
   var myNav = ++_navVersion;
   prepareNavigation({
     device: state.appState.device,
@@ -845,6 +1013,7 @@ async function startNewSession(projectHash, asAgent) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, status) {
+  deactivateList();
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
@@ -975,7 +1144,11 @@ function positionScrollBtn() {
   var content = document.getElementById('content');
 
   content.addEventListener('scroll', function () {
-    if (!state.appState.session) return;
+    if (!state.appState.session) {
+      rememberActiveListScroll();
+      maybeLoadNextListPage();
+      return;
+    }
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
     btn.classList.toggle('visible', !atBottom);
     // Position drives auto-scroll intent (programmatic scrollTo(bottom) lands here too, atBottom=true, so never clears it).
@@ -1118,3 +1291,14 @@ Object.assign(window, {
   startNewSession, onNewAsAgentToggle, loadMessages, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });
+
+if (window.__APEEK_TEST__) {
+  window.__listTest = {
+    get: function (key) { return _listPages.peek(key); },
+    loadNext: loadNextListPage,
+    invalidate: invalidatePagedList,
+    activeKey: function () { return _activeListKey; },
+    pageSize: LIST_PAGE_SIZE,
+    select: enterSelectMode,
+  };
+}

@@ -401,10 +401,13 @@ Get projects under a specific device.
 | Param | Required | Description |
 |-------|----------|-------------|
 | `device` | Yes | Device name |
+| `limit` | No | Page size (`1-100`). Omit for the legacy full response |
+| `cursor` | No | Opaque `nextCursor` from the previous page; requires `limit` |
 
-**Example**: `GET /api/bridge/projects?device=MacBook-Pro`
+**Example**: `GET /api/bridge/projects?device=MacBook-Pro&limit=50`
 
-**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `PROJ#{device}#`)
+**Logic**: Paginated requests query `listPk-listSk-index` in reverse `lastActive`
+order. Requests without `limit` retain the legacy base-table query for older clients.
 
 **Response** `200`
 ```json
@@ -419,7 +422,9 @@ Get projects under a specific device.
       "needsInputCount": 1,
       "lastActive": "2026-03-27T10:30:00.000Z"
     }
-  ]
+  ],
+  "hasMore": true,
+  "nextCursor": "eyJhY2NvdW50SWQiOi..."
 }
 ```
 
@@ -430,6 +435,7 @@ Get projects under a specific device.
 - `runningCount`: sessions with `status="running"`
 - `needsInputCount`: sessions with `status="needs_input"`
 - Sorted by `lastActive` descending
+- `hasMore` and `nextCursor` are returned only when `limit` is provided
 
 ---
 
@@ -442,10 +448,13 @@ Get sessions under a specific device + project.
 |-------|----------|-------------|
 | `device` | Yes | Device name |
 | `project` | Yes | projectHash |
+| `limit` | No | Page size (`1-100`). Omit for the legacy full response |
+| `cursor` | No | Opaque `nextCursor` from the previous page; requires `limit` |
 
-**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek`
+**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek&limit=50`
 
-**Logic**: Query BridgeSessions (PK=accountId, SK begins_with `SESS#{device}#{project}#`)
+**Logic**: Paginated requests query `listPk-listSk-index` in reverse `lastActive`
+order. Requests without `limit` retain the legacy base-table query for older clients.
 
 **Response** `200`
 ```json
@@ -474,9 +483,28 @@ Get sessions under a specific device + project.
       "runtime": "claude",
       "status": "completed"
     }
-  ]
+  ],
+  "hasMore": true,
+  "nextCursor": "eyJhY2NvdW50SWQiOi..."
 }
 ```
+
+`hasMore` and `nextCursor` are returned only when `limit` is provided.
+
+Existing rows gain the sparse list-index fields during the Bridge's full catalog sync
+after an upgrade. Before enabling paginated clients on an existing stack, run the
+idempotent backfill once to include rows belonging to offline devices:
+
+```bash
+python3 server/backfill-list-index.py \
+  --table AgentPeekTest-bridge-sessions \
+  --region ap-northeast-1 \
+  --dry-run
+```
+
+Remove `--dry-run` after checking the counts. The GSI must be active before applying
+the backfill. Concurrent Bridge writes are skipped and reported as `conflicts`; rerun
+the command until that count reaches zero.
 
 **Notes**:
 - Sorted by `lastActive` descending

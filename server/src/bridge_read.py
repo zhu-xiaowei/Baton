@@ -3,8 +3,10 @@ Bridge read routes — app reads session metadata and messages from DDB.
 Usage: app.include_router(read_router) in main.py
 """
 
-from fastapi import APIRouter, Request, Query, Response
+from fastapi import APIRouter, HTTPException, Request, Query, Response
 from boto3.dynamodb.conditions import Key
+import base64
+import binascii
 import json
 import os
 
@@ -14,6 +16,7 @@ _ddb = None
 _sessions_table = None
 _messages_table = None
 _connections_table = None
+LIST_INDEX_NAME = "listPk-listSk-index"
 
 
 def _tables():
@@ -73,6 +76,47 @@ def _query_all(table, **kwargs):
         response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
         items.extend(response.get("Items", []))
     return items
+
+
+def _project_list_pk(account_id, device):
+    return f"{account_id}#PROJ#{device}"
+
+
+def _session_list_pk(account_id, device, project):
+    return f"{account_id}#SESS#{device}#{project}"
+
+
+def _encode_list_cursor(key):
+    raw = json.dumps(key, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_list_cursor(cursor, account_id, list_pk):
+    try:
+        raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
+        key = json.loads(raw.decode())
+        required = ("accountId", "sk", "listPk", "listSk")
+        if not isinstance(key, dict) or any(not isinstance(key.get(name), str) for name in required):
+            raise ValueError
+        if key["accountId"] != account_id or key["listPk"] != list_pk:
+            raise ValueError
+        return {name: key[name] for name in required}
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid pagination cursor")
+
+
+def _query_list_page(table, account_id, list_pk, limit, cursor):
+    kwargs = {
+        "IndexName": LIST_INDEX_NAME,
+        "KeyConditionExpression": Key("listPk").eq(list_pk),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if cursor:
+        kwargs["ExclusiveStartKey"] = _decode_list_cursor(cursor, account_id, list_pk)
+    response = table.query(**kwargs)
+    next_key = response.get("LastEvaluatedKey")
+    return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
 
 
 @read_router.get("/config")
@@ -194,16 +238,29 @@ async def get_devices(request: Request):
 
 
 @read_router.get("/projects")
-async def get_projects(request: Request, device: str = Query(...)):
+async def get_projects(
+    request: Request,
+    device: str = Query(...),
+    limit: int = Query(None, ge=1, le=100),
+    cursor: str = Query(None),
+):
     """PROJ# items for sessionCount; running/needs_input counted live."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
     _, live_proj = _live_active_counts(sessions_table, account_id)
 
-    items = _query_all(
-        sessions_table,
-        KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"PROJ#{device}#"),
-    )
+    if cursor and limit is None:
+        raise HTTPException(status_code=400, detail="limit is required with cursor")
+    next_cursor = None
+    if limit is None:
+        items = _query_all(
+            sessions_table,
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"PROJ#{device}#"),
+        )
+    else:
+        items, next_cursor = _query_list_page(
+            sessions_table, account_id, _project_list_pk(account_id, device), limit, cursor
+        )
 
     projects = []
     for item in items:
@@ -221,19 +278,36 @@ async def get_projects(request: Request, device: str = Query(...)):
             "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
         })
-    projects.sort(key=lambda x: x["lastActive"], reverse=True)
-    return {"projects": projects}
+    projects.sort(key=lambda x: (x["lastActive"], x["projectHash"]), reverse=True)
+    result = {"projects": projects}
+    if limit is not None:
+        result.update({"hasMore": next_cursor is not None, "nextCursor": next_cursor})
+    return result
 
 
 @read_router.get("/sessions")
-async def get_sessions(request: Request, device: str = Query(...), project: str = Query(...)):
+async def get_sessions(
+    request: Request,
+    device: str = Query(...),
+    project: str = Query(...),
+    limit: int = Query(None, ge=1, le=100),
+    cursor: str = Query(None),
+):
     sessions_table, _ = _tables()
     account_id = _account_id(request)
 
-    items = _query_all(
-        sessions_table,
-        KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"SESS#{device}#{project}#"),
-    )
+    if cursor and limit is None:
+        raise HTTPException(status_code=400, detail="limit is required with cursor")
+    next_cursor = None
+    if limit is None:
+        items = _query_all(
+            sessions_table,
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"SESS#{device}#{project}#"),
+        )
+    else:
+        items, next_cursor = _query_list_page(
+            sessions_table, account_id, _session_list_pk(account_id, device, project), limit, cursor
+        )
 
     sessions = []
     for item in items:
@@ -257,9 +331,11 @@ async def get_sessions(request: Request, device: str = Query(...), project: str 
             s["agentName"] = item.get("agentName", "")
             s["agentDetail"] = item.get("agentDetail", "")
         sessions.append(s)
-    sessions.sort(key=lambda x: x["lastActive"], reverse=True)
-
-    return {"sessions": sessions}
+    sessions.sort(key=lambda x: (x["lastActive"], x["sessionId"]), reverse=True)
+    result = {"sessions": sessions}
+    if limit is not None:
+        result.update({"hasMore": next_cursor is not None, "nextCursor": next_cursor})
+    return result
 
 
 def _parse_messages(items):

@@ -531,7 +531,9 @@
         "AttributeDefinitions": [
           { "AttributeName": "accountId", "AttributeType": "S" },
           { "AttributeName": "sk", "AttributeType": "S" },
-          { "AttributeName": "activeStatus", "AttributeType": "S" }
+          { "AttributeName": "activeStatus", "AttributeType": "S" },
+          { "AttributeName": "listPk", "AttributeType": "S" },
+          { "AttributeName": "listSk", "AttributeType": "S" }
         ],
         "KeySchema": [
           { "AttributeName": "accountId", "KeyType": "HASH" },
@@ -543,6 +545,14 @@
             "KeySchema": [
               { "AttributeName": "accountId", "KeyType": "HASH" },
               { "AttributeName": "activeStatus", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "ALL" }
+          },
+          {
+            "IndexName": "listPk-listSk-index",
+            "KeySchema": [
+              { "AttributeName": "listPk", "KeyType": "HASH" },
+              { "AttributeName": "listSk", "KeyType": "RANGE" }
             ],
             "Projection": { "ProjectionType": "ALL" }
           }

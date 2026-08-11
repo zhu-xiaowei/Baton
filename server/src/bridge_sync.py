@@ -140,6 +140,18 @@ def _session_ids(runtime: str, session_id: str, native_session_id: str = ""):
     return runtime, native_id, storage_id
 
 
+def _project_list_pk(account_id: str, device: str) -> str:
+    return f"{account_id}#PROJ#{device}"
+
+
+def _session_list_pk(account_id: str, device: str, project: str) -> str:
+    return f"{account_id}#SESS#{device}#{project}"
+
+
+def _list_sk(last_active: str, stable_id: str) -> str:
+    return f"{last_active or '0000'}#{stable_id}"
+
+
 def _counter_delta(from_: str, to: str):
     """Map a status transition to (running_delta, idle_delta, session_delta).
     'new' from-state means this is a brand-new session (sessionCount += 1).
@@ -185,17 +197,22 @@ def _apply_status_delta(account_id: str, delta: StatusDelta):
         )
 
 
-def _bump_last_active(account_id: str, sk: str, ts: str):
+def _bump_last_active(account_id: str, sk: str, ts: str, list_pk: str = "", list_id: str = ""):
     """Conditionally update lastActive only if the incoming ts is newer."""
     if not ts:
         return
     sessions_table, _ = _tables()
+    update = "SET lastActive = :ts"
+    values = {":ts": ts}
+    if list_pk and list_id:
+        update += ", listPk = :list_pk, listSk = :list_sk"
+        values.update({":list_pk": list_pk, ":list_sk": _list_sk(ts, list_id)})
     try:
         sessions_table.update_item(
             Key={"accountId": account_id, "sk": sk},
-            UpdateExpression="SET lastActive = :ts",
+            UpdateExpression=update,
             ConditionExpression="attribute_not_exists(lastActive) OR lastActive < :ts",
-            ExpressionAttributeValues={":ts": ts},
+            ExpressionAttributeValues=values,
         )
     except Exception:
         pass
@@ -223,6 +240,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "nativeSessionId": native_id,
                 "runtime": runtime,
                 "lastActive": s.lastActive,
+                "listPk": _session_list_pk(key_hash, req.deviceName, s.project),
+                "listSk": _list_sk(s.lastActive, storage_id),
                 "preview": s.preview,
                 "model": s.model,
                 "status": s.status,
@@ -283,6 +302,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                     "runningCount": p.runningCount,
                     "idleCount": p.idleCount,
                     "lastActive": p.lastActive,
+                    "listPk": _project_list_pk(key_hash, req.deviceName),
+                    "listSk": _list_sk(p.lastActive, p.projectHash),
                     "updatedAt": now,
                 })
 
@@ -295,7 +316,13 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     for d in deltas:
         try:
             _apply_status_delta(key_hash, d)
-            _bump_last_active(key_hash, f"PROJ#{d.deviceName}#{d.projectHash}", d.lastActive)
+            _bump_last_active(
+                key_hash,
+                f"PROJ#{d.deviceName}#{d.projectHash}",
+                d.lastActive,
+                _project_list_pk(key_hash, d.deviceName),
+                d.projectHash,
+            )
             _bump_last_active(key_hash, f"DEV#{d.deviceName}", d.lastActive)
         except Exception as e:
             print(f"statusDelta apply failed: {e}")
@@ -354,12 +381,16 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
                 "entityType": "project", "deviceName": device,
                 "projectHash": ph, "projectName": p["name"],
                 "sessionCount": p["count"], "lastActive": p["lastActive"], "updatedAt": now,
+                "listPk": _project_list_pk(key_hash, device),
+                "listSk": _list_sk(p["lastActive"], ph),
             })
         for it in to_delete:
             batch.delete_item(Key={"accountId": key_hash, "sk": it["sk"]})
         for it in to_keep:
             it["sessionCount"] = 0  # keep the project in the list, now empty
             it["updatedAt"] = now
+            it["listPk"] = _project_list_pk(key_hash, device)
+            it["listSk"] = _list_sk(it.get("lastActive", ""), it["projectHash"])
             batch.put_item(Item=it)
 
     # projectCount must equal the projects-list length: kept-empty PROJ# rows still show.
@@ -407,6 +438,8 @@ async def create_project(req: CreateProjectRequest, raw: Request):
                 "entityType": "project", "deviceName": req.deviceName,
                 "projectHash": req.projectHash, "projectName": req.projectName or req.projectHash,
                 "sessionCount": 0, "userCreated": True, "lastActive": now, "updatedAt": now,
+                "listPk": _project_list_pk(key_hash, req.deviceName),
+                "listSk": _list_sk(now, req.projectHash),
             },
             ConditionExpression="attribute_not_exists(sk)",
         )

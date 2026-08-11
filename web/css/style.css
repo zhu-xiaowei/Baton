@@ -629,7 +629,7 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .card-header {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
 }
-.card-project { font-size: 14px; font-weight: 600; color: #e6edf3; min-width: 0; }
+.card-project { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; color: #e6edf3; }
 .card-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .card-time { font-size: 11px; color: #6e7681; white-space: nowrap; }
 
@@ -639,7 +639,7 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
   margin-bottom: 6px;
   overflow: hidden; white-space: nowrap;
 }
-.card-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-title-text { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .card-bottom { display: flex; justify-content: space-between; align-items: center; }
 .card-device { font-size: 11px; color: #6e7681; }
@@ -694,6 +694,8 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
 .empty { text-align: center; padding: 40px; color: #6e7681; }
+.loading-more { height: 44px; display: flex; align-items: center; justify-content: center; color: #8b949e; }
+.loading-more .spinner { width: 16px; height: 16px; border: 2px solid rgba(139,148,158,0.35); border-top-color: #8b949e; border-radius: 50%; animation: spin 0.6s linear infinite; }
 .loading-older { text-align: center; padding: 12px; color: #8b949e; font-size: 13px; }
 .loading-older.exhausted { display: none; }
 
