@@ -659,8 +659,8 @@ Bridge connections also send their immutable package version as the `version` qu
 The server stores it as `bridgeVersion` so deployments can verify the running fleet directly.
 
 The server strips the `device` routing field before forwarding an app action to Bridge. Codex
-Phase 2 also uses `messages`/`messages_ack` for live rollout updates;
-send/streaming/permission actions remain Claude-only.
+uses `messages`/`messages_ack` for live rollout updates and supports existing-Session
+send/streaming/interrupt/basic permission handling through its app-server adapter.
 
 **$disconnect**: Delete connectionId + clean up related subscription records
 
@@ -715,8 +715,8 @@ Keep connection alive.
 
 #### send_message
 
-Send a message to Claude Code through the headless stream-json process pool. Codex adapters
-currently reject this action as unsupported.
+Send a message to an existing Claude Code or Codex Session. New-Session creation currently uses
+the Claude headless stream-json path; Codex new-Session creation remains unavailable.
 
 **Existing session:**
 ```json
@@ -735,8 +735,10 @@ currently reject this action as unsupported.
 | `asAgent` | `true` → new session runs as a Claude Agents background session |
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
-1. Has sessionId → `_pool.send` to the session's headless `claude -p --resume <id>` process (spawns it if none)
-2. No sessionId, has projectHash → mint the Session ID, acknowledge it, then spawn headless without `--resume`
+1. Has sessionId → route by runtime: Claude uses the headless pool; Codex uses
+   `thread/resume` + `turn/start` through app-server
+2. No sessionId, has projectHash → create a Claude Session; Codex creation is rejected until its
+   runtime adapter enables `create`
 
 **Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
 
@@ -814,7 +816,7 @@ Create a new project directory and seed its Project metadata. The first `send_me
 the Session.
 
 ```json
-{ "action": "create_project", "projectPath": "workspace/my-new-project", "device": "MacBook-Pro", "asAgent": false }
+{ "action": "create_project", "projectPath": "workspace/my-new-project", "device": "MacBook-Pro" }
 ```
 
 **Fields**:
@@ -822,7 +824,7 @@ the Session.
 |-------|----------|-------------|
 | `projectPath` | Yes | Path relative to `$HOME` (absolute paths under `$HOME` also accepted) |
 | `device` | Yes | Target device |
-| `asAgent` | No | Echoed in `create_project_result` so the subsequent new-Session view keeps the background-agent choice |
+| `asAgent` | No | Legacy compatibility field echoed for older clients; the current New Project UI does not send it |
 
 **Server handling**: Forward to matching bridge by `device` (rejected with `400` if `projectPath` missing).
 
@@ -1332,12 +1334,13 @@ connections whose `deviceName` matches. Applies to `send_message`, `permission_r
 `interrupt`, `reveal_agent`, `create_project`, `request_file`, `delete_files`, and
 `list_commands`.
 
-### Codex Phase 2
+### Codex
 
 Codex participates in Session metadata, history reads, `sync_session`, `sync_complete`, and live
-`messages`/`messages_ack` updates from the rollout watcher. `send_message`, streaming, interrupt,
-permission, create, and local history deletion remain rejected or skipped by Codex runtime
-capabilities until the app-server adapter is implemented. See [codex.md](codex.md) for validation.
+`messages`/`messages_ack` updates from the rollout watcher. Existing-Session `send_message`,
+streaming, interrupt, and basic permission requests use the app-server adapter. New-Session
+creation and local history deletion remain disabled by Codex runtime capabilities. Project
+directory creation is runtime-neutral. See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation
 

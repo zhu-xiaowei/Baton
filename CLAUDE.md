@@ -46,7 +46,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
   batch window, turn-level `seq`, authoritative-row handoff, and frontend reorder/chase rendering.
 - Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
   rows without rebroadcast and remains the fallback when no live row was observed.
-- Codex new Session/Project creation, pending approval recovery, and complete permission variant
+- Codex new Session creation, pending approval recovery, and complete permission variant
   coverage remain Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
@@ -72,7 +72,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Bridge discovers agent identity through `claude agents --json --all`; roster.json determines active daemon ownership, while jobs/state.json only supplies the current blocked question
 - Agent sessions display [Agent] badge + Working/Needs input/Completed status
 - Send messages to agent sessions: was `claude agents` TUI navigation over tmux; **now headless** `claude -p --resume <agentSessionId>` handles agent sessions like any other (works via `_pool.send`)
-- Create new agent sessions from web through detached `claude --bg` ("Run in background" toggle, localStorage persisted)
+- Create new agent sessions from the New Session view through detached `claude --bg`
 - Bridge respects permissions.defaultMode: bypassPermissions (no false permission prompts)
 
 ### Phase 2E: COMPLETE ✅ — tmux removed, headless is the only send path

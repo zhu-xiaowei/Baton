@@ -19,22 +19,44 @@ function lockPathForThread(threadId, homes = resolveCodexHomes()) {
   return '';
 }
 
+function procPidHoldsLock(lockPath, pid) {
+  if (process.platform !== 'linux' || !pid) return false;
+  let fds;
+  try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch { return false; }
+  for (const fd of fds) {
+    try {
+      if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === lockPath) return true;
+    } catch {}
+  }
+  return false;
+}
+
 function procHolder(lockPath) {
   if (process.platform !== 'linux') return null;
   let entries;
   try { entries = fs.readdirSync('/proc'); } catch { return null; }
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
-    const fdDir = `/proc/${entry}/fd`;
-    let fds;
-    try { fds = fs.readdirSync(fdDir); } catch { continue; }
-    for (const fd of fds) {
-      try {
-        if (fs.readlinkSync(path.join(fdDir, fd)) === lockPath) return Number(entry);
-      } catch {}
-    }
+    const pid = Number(entry);
+    if (procPidHoldsLock(lockPath, pid)) return pid;
   }
   return null;
+}
+
+function pidHoldsLock(lockPath, pid) {
+  if (!lockPath || !pid || process.platform === 'win32') return false;
+  const lsof = findExecutable('lsof', ['/usr/sbin/lsof', '/usr/bin/lsof']);
+  if (!lsof) return procPidHoldsLock(lockPath, pid);
+  try {
+    const output = execFileSync(lsof, ['-a', '-p', String(pid), '-t', '--', lockPath], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.split(/\r?\n/).some((line) => Number(line) === pid);
+  } catch {
+    return false;
+  }
 }
 
 function lockHolderPid(lockPath) {
@@ -77,6 +99,29 @@ function safeStandaloneTui(info) {
   return !/\b(?:app-server|remote-control|mcp-server|exec-server)\b/i.test(info.command);
 }
 
+function standaloneTuiHolder(lockPath) {
+  if (!lockPath || process.platform === 'win32') return null;
+  let output;
+  try {
+    output = execFileSync('ps', ['-axo', 'pid=', '-o', 'tty=', '-o', 'command='], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null;
+  }
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s+(\S+)\s+([\s\S]+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const info = { tty: match[2], command: match[3].trim() };
+    if (!safeStandaloneTui(info) || !pidHoldsLock(lockPath, pid)) continue;
+    return { pid, info };
+  }
+  return null;
+}
+
 function threadStatus(threadId, options = {}) {
   try {
     const session = (options.inspectSession || inspectCodexSession)(threadId, {
@@ -94,7 +139,21 @@ function threadStatus(threadId, options = {}) {
 
 export function describeCodexWriter(threadId, options = {}) {
   const lockPath = lockPathForThread(threadId, options.codexHomes);
-  const pid = (options.lockHolderPid || lockHolderPid)(lockPath);
+  const expectedPid = Number(options.expectedPid);
+  let pid = null;
+  let info = null;
+  if (Number.isInteger(expectedPid) && expectedPid > 0) {
+    if ((options.pidHoldsLock || pidHoldsLock)(lockPath, expectedPid)) {
+      pid = expectedPid;
+      info = (options.processInfo || processInfo)(pid) || {};
+    }
+  } else {
+    const fastHolder = options.lockHolderPid || options.processInfo
+      ? null
+      : (options.standaloneTuiHolder || standaloneTuiHolder)(lockPath);
+    pid = fastHolder?.pid || (options.lockHolderPid || lockHolderPid)(lockPath);
+    info = fastHolder?.info || null;
+  }
   if (!pid) {
     return {
       pid: null,
@@ -104,7 +163,7 @@ export function describeCodexWriter(threadId, options = {}) {
       status: null,
     };
   }
-  const info = (options.processInfo || processInfo)(pid) || {};
+  if (!info) info = (options.processInfo || processInfo)(pid) || {};
   const canTerminate = safeStandaloneTui(info);
   const status = canTerminate
     ? (options.threadStatus || threadStatus)(threadId, options)
@@ -122,7 +181,7 @@ export function describeCodexWriter(threadId, options = {}) {
 
 export async function terminateCodexWriter(threadId, expectedPid, options = {}) {
   const describe = options.describe || describeCodexWriter;
-  const writer = describe(threadId, options);
+  const writer = describe(threadId, { ...options, expectedPid });
   if (!writer.pid || writer.pid !== expectedPid) {
     const error = new Error('The Codex writer changed before takeover');
     error.code = 'CODEX_WRITER_CHANGED';

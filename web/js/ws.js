@@ -316,7 +316,7 @@ function handleWsMessage(msg) {
           // Fallback to the hash's trailing segment (…-test3 → test3) if projectName is absent.
           var pname = msg.projectName || (msg.projectHash || '').split('-').filter(Boolean).pop() || msg.projectHash;
           state.appState.project = { hash: msg.projectHash, name: pname };
-          startNewSession(msg.projectHash, msg.asAgent);
+          startNewSession(msg.projectHash);
         } else {
           disconnectWs();
           // Show error in modal, reset button

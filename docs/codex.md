@@ -1,6 +1,6 @@
 # Codex 接入设计与实施状态
 
-> 最后更新：2026-08-11
+> 最后更新：2026-08-12
 > 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成已有 Session 交互主链路
 > API 与 WS 完整契约见 [api.md](api.md)
 
@@ -29,10 +29,11 @@ Device → Project → Session 信息架构。
 - 外部独立 Codex TUI 持有 writer 且仍有未结束回合时，Web 显式确认后可安全终止该
   holder、retry resume 并发送；TUI 仅空闲持锁时自动终止并 resume，取消不会终止正在
   运行的进程或发送消息。
+- Project 创建已是 runtime 无关的目录和 metadata 操作，Claude/Codex 可复用同一个入口。
 
 当前未完成：
 
-- Codex 新 Session/Project 创建入口。
+- Codex 新 Session 创建入口。
 - 完整审批变体、刷新后的 pending request 恢复和 `turn/steer`。
 - app-server 工具输出是否切换为 live 权威；当前最终工具卡继续复用 Phase 2 watcher。
 
@@ -554,7 +555,7 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 
 待完成：
 
-1. Codex 新 Session/Project 创建和 capability/UI 入口。
+1. Codex 新 Session 创建和 capability/UI 入口；Project 创建入口已通用。
 2. `turn/steer` 和 pending approval 重连恢复。
 3. 剩余 ServerRequest 变体。
 4. Linux/Windows 显式 TUI 接管 smoke test 与生产灰度。

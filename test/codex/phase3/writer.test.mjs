@@ -20,10 +20,12 @@ test('writer adapter only marks standalone Codex TUI processes as terminable', (
   const home = codexHome(t);
   const tui = describeCodexWriter('thread-1', {
     codexHomes: [home],
-    lockHolderPid: () => 123,
-    processInfo: () => ({
-      tty: 'ttys001',
-      command: '/usr/local/bin/codex resume thread-1',
+    standaloneTuiHolder: () => ({
+      pid: 123,
+      info: {
+        tty: 'ttys001',
+        command: '/usr/local/bin/codex resume thread-1',
+      },
     }),
     threadStatus: () => 'running',
   });
@@ -84,4 +86,41 @@ test('writer termination revalidates the expected PID and idle state before SIGT
     }),
     (error) => error.code === 'CODEX_ACTIVE_WRITER',
   );
+});
+
+test('writer revalidation targets the expected PID without repeating a full lock scan', (t) => {
+  const home = codexHome(t);
+  const calls = [];
+  const writer = describeCodexWriter('thread-1', {
+    codexHomes: [home],
+    expectedPid: 123,
+    pidHoldsLock: (lockPath, pid) => {
+      calls.push({ lockPath, pid });
+      return true;
+    },
+    lockHolderPid: () => {
+      throw new Error('full lock scan should not run during revalidation');
+    },
+    processInfo: () => ({
+      tty: 'ttys001',
+      command: '/usr/local/bin/codex resume thread-1',
+    }),
+    threadStatus: () => 'completed',
+  });
+
+  assert.equal(writer.pid, 123);
+  assert.equal(writer.status, 'completed');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pid, 123);
+
+  const changed = describeCodexWriter('thread-1', {
+    codexHomes: [home],
+    expectedPid: 123,
+    pidHoldsLock: () => false,
+    lockHolderPid: () => {
+      throw new Error('full lock scan should not run during revalidation');
+    },
+  });
+  assert.equal(changed.pid, null);
+  assert.equal(changed.canTerminate, false);
 });

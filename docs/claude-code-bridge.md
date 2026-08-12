@@ -253,9 +253,9 @@ The bridge writes one JSON line per message to the session's headless process st
 ### Create project
 
 ```
-App → Server → Bridge:  { action: "create_project", projectPath: "workspace/x", device: "MacBook-Pro", asAgent?: bool }
-Bridge: mkdir -p → derive projectHash → launch session → return result
-Bridge → Server → App:  { action: "create_project_result", ok: true, sessionId: "new-uuid", projectPath: "workspace/x" }
+App → Server → Bridge:  { action: "create_project", projectPath: "workspace/x", device: "MacBook-Pro" }
+Bridge: mkdir -p → derive projectHash → seed project metadata → return result
+Bridge → Server → App:  { action: "create_project_result", ok: true, projectHash: "...", projectName: "x", projectPath: "workspace/x" }
 ```
 
 ### View a project file (click-to-sync)

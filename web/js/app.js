@@ -805,11 +805,9 @@ function createNewProject() {
   var modal = document.getElementById('newProjectModal');
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
-  var agentCb = document.getElementById('newProjectAsAgent');
   // Prefill last-used parent prefix so the user only types the new project name (still editable).
   input.value = localStorage.getItem('_np_prefix') || '';
   err.textContent = '';
-  if (agentCb) agentCb.checked = false; // always default OFF; not persisted
   modal.style.display = 'flex';
   setTimeout(function () { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 100);
 }
@@ -844,8 +842,7 @@ async function submitNewProject() {
   btn.dataset.origText = btn.textContent;
   btn.innerHTML = '<span class="spinner"></span>Creating';
   await window.loadViewerLibs();
-  var asAgent = !!(document.getElementById('newProjectAsAgent') && document.getElementById('newProjectAsAgent').checked);
-  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '', asAgent: asAgent });
+  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
 }
 
 var _deleteCountdownTimer = null;
@@ -955,7 +952,7 @@ function onNewAsAgentToggle(checked) {
   if (typeof updateSendBtn === 'function') updateSendBtn();
 }
 
-async function startNewSession(projectHash, asAgent) {
+async function startNewSession(projectHash) {
   deactivateList();
   var myNav = ++_navVersion;
   prepareNavigation({
@@ -973,8 +970,7 @@ async function startNewSession(projectHash, asAgent) {
   markCurrentRoute(state.appState);
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
-  // Default OFF unless the New Project dialog opted into agent mode.
-  state.appState.isAgent = !!asAgent;
+  state.appState.isAgent = false;
   updateBreadcrumb();
   saveNav();
   // Reset WS message state for new session
@@ -996,7 +992,7 @@ async function startNewSession(projectHash, asAgent) {
     '<div class="new-session-hero">'
       + '<div class="hero-logo">🔭</div>'
       + '<div class="hero-title">AgentPeek</div>'
-      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent"' + (asAgent ? ' checked' : '') + ' onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
+      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages runtime-claude" hidden></div>';
   document.body.classList.add('new-session');

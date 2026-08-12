@@ -423,7 +423,6 @@
     <div class="modal-title">New Project</div>
     <div class="modal-desc">Enter directory name (relative to home) or full path</div>
     <input id="newProjectInput" class="modal-input" type="text" placeholder="e.g. asset/demo" autocomplete="off" onkeydown="if(event.key==='Enter')submitNewProject();if(event.key==='Escape')closeNewProjectModal();" />
-    <label class="agent-toggle" style="margin-top:8px;justify-content:flex-start"><input type="checkbox" id="newProjectAsAgent"> Claude Agents Run in background</label>
     <div class="modal-error" id="newProjectError"></div>
     <div class="modal-actions">
       <button class="modal-btn cancel" onclick="closeNewProjectModal()">Cancel</button>
