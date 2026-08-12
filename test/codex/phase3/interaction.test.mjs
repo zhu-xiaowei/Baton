@@ -743,6 +743,7 @@ test('resume failure closes the unused ephemeral client', async () => {
         tty: 'ttys008',
         label: 'Codex terminal (ttys008)',
         canTerminate: true,
+        status: 'running',
       }),
       terminate: async () => {},
     },
@@ -764,6 +765,53 @@ test('resume failure closes the unused ephemeral client', async () => {
   assert.equal(interaction.owns('thread-conflict'), false);
 });
 
+test('idle Codex writer is terminated automatically before resume', async () => {
+  const client = new FakeClient();
+  let locked = true;
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/resume' && locked) {
+      throw new Error('thread already has an active writer');
+    }
+    return request(method, params);
+  };
+  const terminated = [];
+  const interaction = new CodexInteraction({
+    client,
+    writerController: {
+      describe: () => ({
+        pid: 90,
+        tty: 'ttys009',
+        label: 'Codex terminal (ttys009)',
+        canTerminate: true,
+        status: 'completed',
+      }),
+      terminate: async (threadId, expectedPid, options) => {
+        terminated.push({ threadId, expectedPid, options });
+        locked = false;
+      },
+    },
+  });
+
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-idle',
+    nativeSessionId: 'thread-idle',
+    streamId: 'stream-idle',
+    text: 'continue',
+    callbacks: callbacks().value,
+  });
+
+  assert.deepEqual(terminated, [{
+    threadId: 'thread-idle',
+    expectedPid: 90,
+    options: { requireIdle: true },
+  }]);
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'turn/start').length,
+    1,
+  );
+});
+
 test('confirmed takeover terminates the expected writer and retries resume in one client', async () => {
   const client = new FakeClient();
   let locked = true;
@@ -783,6 +831,7 @@ test('confirmed takeover terminates the expected writer and retries resume in on
         tty: 'ttys009',
         label: 'Codex terminal (ttys009)',
         canTerminate: true,
+        status: 'running',
       }),
       terminate: async (threadId, expectedPid) => {
         terminated.push({ threadId, expectedPid });

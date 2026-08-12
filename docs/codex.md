@@ -26,8 +26,9 @@ Device → Project → Session 信息架构。
 - app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
 - interrupt 和基础 command/file/user-input 审批已接入现有 WS 控制协议。
 - 每个活跃 thread 使用临时 app-server lease；turn 和权限队列结束后立即退出并释放 writer。
-- 外部独立 Codex TUI 持有 writer 时，Web 显式确认后可安全终止该 holder、retry resume 并发送；
-  取消不会终止进程或发送消息。
+- 外部独立 Codex TUI 持有 writer 且仍有未结束回合时，Web 显式确认后可安全终止该
+  holder、retry resume 并发送；TUI 仅空闲持锁时自动终止并 resume，取消不会终止正在
+  运行的进程或发送消息。
 
 当前未完成：
 
@@ -260,6 +261,10 @@ Bridge 递归扫描：
 `running` 判定要求存在未闭合 task，且同时满足文件仍新鲜、匹配 Session 进程或匹配
 Project 进程之一；否则为 `completed`。Windows 不枚举 Codex 进程，只使用文件生命周期
 和新鲜度，因此状态精度低于 Bridge 自己管理的交互进程。
+
+页面状态轮询和 writer 接管检查统一通过 `inspectCodexSession()` 获取该状态。writer 已经
+从 lock holder 得到当前 Session 的进程证据，因此只额外提供该上下文，不维护另一套
+`running` 判断。
 
 ## 7. Phase 1 数据流程
 
@@ -544,7 +549,8 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 3. Codex delta 复用 Claude 的 `StreamFramer`、统一 WS 事件和现有前端 streaming 渲染。
 4. app-server 完整 user/assistant 行与 rollout watcher 的 live 优先、文件兜底语义。
 5. 每个活跃 thread 的临时 app-server lease；turn 和权限队列完成后立即释放 writer。
-6. 外部独立 Codex TUI 的结构化冲突、Web 确认、安全终止、retry resume 和取消路径。
+6. 外部独立 Codex TUI 的结构化冲突、运行中 Web 确认、空闲自动终止、retry resume
+   和取消路径。
 
 待完成：
 

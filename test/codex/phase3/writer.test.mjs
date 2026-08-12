@@ -25,12 +25,14 @@ test('writer adapter only marks standalone Codex TUI processes as terminable', (
       tty: 'ttys001',
       command: '/usr/local/bin/codex resume thread-1',
     }),
+    threadStatus: () => 'running',
   });
   assert.deepEqual(tui, {
     pid: 123,
     tty: 'ttys001',
     label: 'Codex terminal (ttys001)',
     canTerminate: true,
+    status: 'running',
   });
 
   const daemon = describeCodexWriter('thread-1', {
@@ -40,13 +42,17 @@ test('writer adapter only marks standalone Codex TUI processes as terminable', (
       tty: '??',
       command: '/usr/local/bin/codex app-server --stdio',
     }),
+    threadStatus: () => {
+      throw new Error('unsafe clients should not trigger a rollout scan');
+    },
   });
   assert.equal(daemon.pid, 456);
   assert.equal(daemon.canTerminate, false);
   assert.equal(daemon.label, 'another Codex client');
+  assert.equal(daemon.status, null);
 });
 
-test('writer termination revalidates the expected PID before SIGTERM', async (t) => {
+test('writer termination revalidates the expected PID and idle state before SIGTERM', async (t) => {
   const home = codexHome(t);
   const killed = [];
   const describe = () => ({
@@ -54,11 +60,13 @@ test('writer termination revalidates the expected PID before SIGTERM', async (t)
     tty: 'ttys001',
     label: 'Codex terminal (ttys001)',
     canTerminate: true,
+    status: 'completed',
   });
 
   await terminateCodexWriter('thread-1', 123, {
     codexHomes: [home],
     describe,
+    requireIdle: true,
     kill: (pid, signal) => killed.push({ pid, signal }),
   });
   assert.deepEqual(killed, [{ pid: 123, signal: 'SIGTERM' }]);
@@ -66,5 +74,14 @@ test('writer termination revalidates the expected PID before SIGTERM', async (t)
   await assert.rejects(
     terminateCodexWriter('thread-1', 999, { describe, kill: () => {} }),
     (error) => error.code === 'CODEX_WRITER_CHANGED',
+  );
+
+  await assert.rejects(
+    terminateCodexWriter('thread-1', 123, {
+      describe: () => ({ ...describe(), status: 'running' }),
+      requireIdle: true,
+      kill: () => {},
+    }),
+    (error) => error.code === 'CODEX_ACTIVE_WRITER',
   );
 });

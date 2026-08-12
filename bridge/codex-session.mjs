@@ -259,3 +259,12 @@ export function findCodexSessionFile(nativeSessionId, options = {}) {
   if (best && !options.codexHomes) codexFileIndex.set(nativeSessionId, best);
   return best;
 }
+
+export function inspectCodexSession(nativeSessionId, options = {}) {
+  const filePath = options.filePath || findCodexSessionFile(nativeSessionId, options);
+  if (!filePath) return null;
+  return scanCodexRollout(filePath, {
+    ...options,
+    nativeSessionId,
+  }).session;
+}

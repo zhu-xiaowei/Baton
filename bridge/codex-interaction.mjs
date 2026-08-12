@@ -99,10 +99,17 @@ export class CodexInteraction {
       });
     } catch (cause) {
       const error = this.#activeWriterError(session, cause);
-      if (error.code !== 'CODEX_ACTIVE_WRITER' || !options.takeover) throw error;
+      if (error.code !== 'CODEX_ACTIVE_WRITER') throw error;
+      const writer = error.writer || {};
+      const automaticTakeover = !options.takeover
+        && writer.canTerminate
+        && writer.pid
+        && writer.status === 'completed';
+      if (!options.takeover && !automaticTakeover) throw error;
       await this.writerController.terminate(
         session.nativeSessionId,
-        Number(options.expectedWriterPid),
+        automaticTakeover ? writer.pid : Number(options.expectedWriterPid),
+        automaticTakeover ? { requireIdle: true } : {},
       );
       const deadline = Date.now() + 3000;
       while (true) {

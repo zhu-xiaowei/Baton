@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { inspectCodexSession } from './codex-session.mjs';
 import { findExecutable } from './platform.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 
@@ -76,6 +77,21 @@ function safeStandaloneTui(info) {
   return !/\b(?:app-server|remote-control|mcp-server|exec-server)\b/i.test(info.command);
 }
 
+function threadStatus(threadId, options = {}) {
+  try {
+    const session = (options.inspectSession || inspectCodexSession)(threadId, {
+      codexHomes: options.codexHomes,
+      runningInfo: {
+        projects: new Set(),
+        sessions: new Set([threadId]),
+      },
+    });
+    return session?.status || null;
+  } catch {
+    return null;
+  }
+}
+
 export function describeCodexWriter(threadId, options = {}) {
   const lockPath = lockPathForThread(threadId, options.codexHomes);
   const pid = (options.lockHolderPid || lockHolderPid)(lockPath);
@@ -85,10 +101,14 @@ export function describeCodexWriter(threadId, options = {}) {
       tty: '',
       label: 'another Codex process',
       canTerminate: false,
+      status: null,
     };
   }
   const info = (options.processInfo || processInfo)(pid) || {};
   const canTerminate = safeStandaloneTui(info);
+  const status = canTerminate
+    ? (options.threadStatus || threadStatus)(threadId, options)
+    : null;
   return {
     pid,
     tty: info.tty || '',
@@ -96,6 +116,7 @@ export function describeCodexWriter(threadId, options = {}) {
       ? `Codex terminal${info.tty ? ` (${info.tty})` : ''}`
       : 'another Codex client',
     canTerminate,
+    status,
   };
 }
 
@@ -111,6 +132,14 @@ export async function terminateCodexWriter(threadId, expectedPid, options = {}) 
   if (!writer.canTerminate) {
     const error = new Error('The active Codex writer cannot be terminated safely');
     error.code = 'CODEX_WRITER_UNSAFE';
+    error.writer = writer;
+    throw error;
+  }
+  if (options.requireIdle && writer.status !== 'completed') {
+    const error = new Error(writer.status === 'running'
+      ? 'The Codex session is running locally'
+      : 'Could not verify that the Codex session is idle');
+    error.code = writer.status === 'running' ? 'CODEX_ACTIVE_WRITER' : 'CODEX_WRITER_UNSAFE';
     error.writer = writer;
     throw error;
   }

@@ -1850,10 +1850,11 @@ function pendingStatus(pending, text, color) {
 }
 
 function handleCodexSendConflict(pending, msg) {
-  if (!['codex_active_writer', 'codex_writer_changed', 'codex_writer_unsafe'].includes(msg.errorCode)) {
-    return false;
-  }
   var writer = msg.writer || {};
+  if (msg.errorCode !== 'codex_active_writer'
+    || writer.status !== 'running'
+    || !writer.canTerminate
+    || !writer.pid) return false;
   pending.awaitingTakeover = true;
   state.wsRunning = false;
   updateSendBtn();
@@ -1866,12 +1867,10 @@ function handleCodexSendConflict(pending, msg) {
   var error = document.getElementById('codexTakeoverError');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
-  var canTerminate = !!(writer.canTerminate && writer.pid);
-  desc.textContent = canTerminate
-    ? (writer.label || 'A Codex terminal') + ' is using this session. Taking over will close it, send this message, and release the session when the turn finishes.'
-    : 'Another Codex client is using this session. Close it on the device, then retry this message.';
-  error.textContent = canTerminate ? '' : 'This process cannot be terminated safely from AgentPeek.';
-  confirm.style.display = canTerminate ? '' : 'none';
+  desc.textContent = (writer.label || 'A Codex terminal')
+    + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
+  error.textContent = '';
+  confirm.style.display = '';
   confirm.disabled = false;
   confirm.textContent = 'Take over and send';
   cancel.disabled = false;

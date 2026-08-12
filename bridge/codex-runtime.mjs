@@ -7,7 +7,7 @@ import {
   discoverCodexSessions,
   findCodexSessionFile,
   getCodexRunningInfo,
-  scanCodexRollout,
+  inspectCodexSession,
 } from './codex-session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import {
@@ -113,10 +113,10 @@ export const codexRuntime = defineRuntimeAdapter({
         status: 'completed',
       };
     } else {
-      session = scanCodexRollout(filePath, {
-        nativeSessionId,
+      session = inspectCodexSession(nativeSessionId, {
+        filePath,
         runningInfo: context.runningInfo,
-      }).session;
+      });
       if (!session) return null;
     }
     if (session.status === active.status) return null;
@@ -139,10 +139,10 @@ export const codexRuntime = defineRuntimeAdapter({
     const sessionId = storageSessionId('codex', nativeSessionId);
     const previousStatus = context.lastKnownStatus.get(sessionId);
     if (previousStatus === newStatus || !filePath || !fs.existsSync(filePath)) return;
-    const session = scanCodexRollout(filePath, {
-      nativeSessionId,
+    const session = inspectCodexSession(nativeSessionId, {
+      filePath,
       runningInfo: getCodexRunningInfo(),
-    }).session;
+    });
     if (!session) return;
     session.status = newStatus;
     await context.postFn('/api/bridge/sync-sessions', {

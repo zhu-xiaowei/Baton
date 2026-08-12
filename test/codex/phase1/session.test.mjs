@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   codexSessionIdFromPath,
   discoverCodexSessions,
+  inspectCodexSession,
   scanCodexRollout,
 } from '../../../bridge/codex-session.mjs';
 import {
@@ -52,6 +53,15 @@ test('metadata scan selects matching session_meta and ignores injected previews'
   assert.equal(result.session.status, 'completed');
   assert.equal(result.malformedLines, 1);
   assert.equal(result.trailingMalformed, true);
+});
+
+test('shared session inspection returns the same status used by runtime and writer checks', () => {
+  const session = inspectCodexSession(SESSION_ID, {
+    filePath: FIXTURE,
+    now: Date.parse('2026-08-06T00:01:00.000Z'),
+    runningInfo: { projects: new Set(), sessions: new Set() },
+  });
+  assert.equal(session?.status, 'completed');
 });
 
 test('response-only user messages provide metadata preview without exposing internal context', () => {

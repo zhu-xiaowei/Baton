@@ -215,6 +215,7 @@ test('Codex live events reuse the CC preview and authoritative-row handoff', asy
       tty: 'ttys001',
       label: 'Codex terminal (ttys001)',
       canTerminate: true,
+      status: 'running',
     },
   });
 
@@ -260,7 +261,12 @@ test('Codex live events reuse the CC preview and authoritative-row handoff', asy
     clientId: cancelledPending.id,
     ok: false,
     errorCode: 'codex_active_writer',
-    writer: { pid: 321, label: 'Codex terminal', canTerminate: true },
+    writer: {
+      pid: 321,
+      label: 'Codex terminal',
+      canTerminate: true,
+      status: 'running',
+    },
   });
   h.window.closeCodexTakeoverModal();
 
@@ -268,4 +274,26 @@ test('Codex live events reuse the CC preview and authoritative-row handoff', asy
   assert.equal(cancelledPending.delivered, true);
   assert.equal(h.document.getElementById('codexTakeoverModal').style.display, 'none');
   assert.match(h.document.querySelector('.sending-status').textContent, /Not sent/);
+
+  resetSession(h, { sessionId: 'codex:idle-conflict' });
+  h.window.doSend('hello', 'hello', []);
+  const idlePending = h.state.pendingSentMessages[0];
+
+  h.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId: 'codex:idle-conflict',
+    clientId: idlePending.id,
+    ok: false,
+    error: 'Could not verify that the Codex session is idle',
+    errorCode: 'codex_writer_unsafe',
+    writer: {
+      pid: 456,
+      label: 'Codex terminal',
+      canTerminate: true,
+      status: null,
+    },
+  });
+
+  assert.equal(h.document.getElementById('codexTakeoverModal').style.display, 'none');
+  assert.equal(idlePending.delivered, true);
 });
