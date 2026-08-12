@@ -3,6 +3,8 @@ import {
   codexCompletedLiveMessages,
   codexItemLiveKey,
   codexPreviewBlocks,
+  codexTurnErrorLiveKey,
+  codexTurnErrorLiveMessage,
   codexTurnUserLiveKey,
   codexUserLiveKey,
 } from './codex-live.mjs';
@@ -220,6 +222,11 @@ export class CodexInteraction {
     }
     turn.turnId = turnId;
     this.turns.set(this.#turnKey(turn.session.nativeSessionId, turnId), turn);
+    registerLiveMessageStream(
+      'codex',
+      codexTurnErrorLiveKey(turnId),
+      turn.streamId,
+    );
     return true;
   }
 
@@ -352,6 +359,11 @@ export class CodexInteraction {
     }
     if (!turn) return;
 
+    if (method === 'error') {
+      if (!params.willRetry) turn.error = params.error;
+      return;
+    }
+
     if (method === 'item/started') {
       const streamedType = ['agentMessage', 'reasoning', 'plan']
         .includes(params.item?.type);
@@ -404,13 +416,36 @@ export class CodexInteraction {
           this.#completeItem(turn, item, completedAtMs);
         }
       }
+      const subtype = turnStatusError(params.turn);
+      const errorMessage = codexTurnErrorLiveMessage(
+        turn.turnId,
+        params.turn?.error,
+        completedAtMs,
+      ) || codexTurnErrorLiveMessage(
+        turn.turnId,
+        turn.error,
+        completedAtMs,
+      ) || (subtype === 'failed'
+        ? codexTurnErrorLiveMessage(turn.turnId, subtype, completedAtMs)
+        : null);
+      if (errorMessage) {
+        turn.callbacks.onMessage?.(
+          turn.streamId,
+          errorMessage.message,
+          {
+            normalized: true,
+            runtime: 'codex',
+            liveKey: errorMessage.liveKey,
+          },
+        );
+      }
       const finalSeq = turn.framer.finish();
       turn.ended = true;
       turn.callbacks.onResult?.(
         turn.streamId,
         {
-          is_error: !!turnStatusError(params.turn),
-          subtype: turnStatusError(params.turn),
+          is_error: !!(errorMessage || subtype),
+          subtype,
           status: params.turn?.status,
         },
         finalSeq,

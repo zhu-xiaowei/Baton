@@ -807,6 +807,50 @@ test('Codex assistant text stays running until the explicit task_complete event'
   }
 });
 
+test('Codex task_complete errors are extracted as visible turn errors', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [
+      {
+        timestamp: '2026-08-12T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-error' },
+      },
+      {
+        timestamp: '2026-08-12T10:00:01.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'task_complete',
+          turn_id: 'turn-error',
+          error: {
+            message: JSON.stringify({
+              error: {
+                code: 'validation_error',
+                message: 'Access to OpenAI models is not allowed from this region.',
+              },
+            }),
+            codex_error_info: 'other',
+          },
+        },
+      },
+    ];
+    fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID);
+    assert.equal(extracted.messages.length, 1);
+    const [message] = extracted.messages;
+    assert.equal(message.nativeId, 'codex:turn:turn-error:error');
+    assert.equal(
+      message.content[0].text,
+      'Error: Access to OpenAI models is not allowed from this region.',
+    );
+    assert.equal(message.stopReason, 'end_turn');
+    assert.equal(codexLiveSource(message), 'turn:turn-error:error');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('incremental extraction rebuilds pairing state before the watermark', () => {
   const { messages } = extractCodexMessages(FIXTURE, SESSION_ID, { startLine: 10 });
   const first = messages[0];

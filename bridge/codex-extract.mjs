@@ -3,6 +3,7 @@ import fs from 'fs';
 import {
   codexItemNativeId,
   codexItemLiveKey,
+  codexTurnErrorLiveMessage,
   codexTurnUserLiveKey,
   codexTurnUserNativeId,
   codexUserLiveKey,
@@ -538,16 +539,30 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
 
     if (entry.type === 'event_msg' && payload.type === 'task_complete') {
       if (shouldEmit) {
-        messages.push({
-          uuid: stableId(sessionId, line, 'task_complete', {
-            turn_id: payload.turn_id,
-            completed_at: payload.completed_at,
-          }),
-          type: 'assistant',
-          content: [],
-          timestamp,
-          stopReason: 'end_turn',
+        const uuid = stableId(sessionId, line, 'task_complete', {
+          turn_id: payload.turn_id,
+          completed_at: payload.completed_at,
         });
+        const errorMessage = codexTurnErrorLiveMessage(
+          payload.turn_id,
+          payload.error,
+          timestamp,
+          uuid,
+        );
+        if (errorMessage) {
+          messages.push(tagCodexLiveSource(
+            errorMessage.message,
+            errorMessage.liveKey,
+          ));
+        } else {
+          messages.push({
+            uuid,
+            type: 'assistant',
+            content: [],
+            timestamp,
+            stopReason: 'end_turn',
+          });
+        }
       }
       continue;
     }

@@ -8,12 +8,20 @@ export function codexTurnUserLiveKey(turnId) {
   return turnId ? `turn:${turnId}:user` : '';
 }
 
+export function codexTurnErrorLiveKey(turnId) {
+  return turnId ? `turn:${turnId}:error` : '';
+}
+
 export function codexItemLiveKey(itemId) {
   return itemId ? `item:${itemId}` : '';
 }
 
 export function codexTurnUserNativeId(turnId) {
   return turnId ? `codex:turn:${turnId}:user` : '';
+}
+
+export function codexTurnErrorNativeId(turnId) {
+  return turnId ? `codex:turn:${turnId}:error` : '';
 }
 
 export function codexUserNativeId(clientId) {
@@ -39,8 +47,63 @@ export function codexLiveSource(message) {
 }
 
 function timestamp(value) {
+  if (typeof value === 'string' && value) return value;
   const date = Number.isFinite(value) ? new Date(value) : new Date();
   return date.toISOString();
+}
+
+export function codexErrorMessage(error) {
+  let value = error;
+  for (let depth = 0; depth < 5; depth++) {
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return '';
+      try {
+        value = JSON.parse(text);
+        continue;
+      } catch {
+        return text;
+      }
+    }
+    if (!value || typeof value !== 'object') {
+      return value == null ? '' : String(value);
+    }
+    if (value.error != null) {
+      value = value.error;
+      continue;
+    }
+    if (value.message != null) {
+      value = value.message;
+      continue;
+    }
+    if (value.detail != null) {
+      value = value.detail;
+      continue;
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function codexTurnErrorLiveMessage(turnId, error, at, uuid = '') {
+  const detail = codexErrorMessage(error);
+  const liveKey = codexTurnErrorLiveKey(turnId);
+  if (!detail || !liveKey) return null;
+  return {
+    liveKey,
+    message: {
+      uuid: uuid || `codex_live_error_${turnId}`,
+      nativeId: codexTurnErrorNativeId(turnId),
+      type: 'assistant',
+      content: [{ type: 'text', text: `Error: ${detail}` }],
+      timestamp: timestamp(at),
+      stopReason: 'end_turn',
+    },
+  };
 }
 
 export function codexUserItemText(item) {
