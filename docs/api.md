@@ -364,7 +364,7 @@ Get all devices under the current account.
       "online": true,
       "runtimeCapabilities": {
         "claude": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": true, "canSend": true, "version": "2.1.220" },
-        "codex": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": false, "canSend": false, "version": "0.147.0" }
+        "codex": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": true, "canSend": true, "version": "0.147.0" }
       }
     },
     {
@@ -715,8 +715,8 @@ Keep connection alive.
 
 #### send_message
 
-Send a message to an existing Claude Code or Codex Session. New-Session creation currently uses
-the Claude headless stream-json path; Codex new-Session creation remains unavailable.
+Send a message to an existing Claude Code or Codex Session, or create a Session for either
+runtime from a Project.
 
 **Existing session:**
 ```json
@@ -725,20 +725,21 @@ the Claude headless stream-json path; Codex new-Session creation remains unavail
 
 **New session (no sessionId, with projectHash):**
 ```json
-{ "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "text": "hello", "device": "MacBook-Pro", "requestId": "req_abc123", "asAgent": false }
+{ "action": "send_message", "projectHash": "-Users-xxx-workspace-project", "runtime": "codex", "text": "hello", "device": "MacBook-Pro", "requestId": "req_abc123", "asAgent": false }
 ```
 
 **Optional fields**:
 | Field | Description |
 |-------|-------------|
 | `requestId` | Client-generated id echoed back in `send_message_result`. Used as the launch lock key and to match the result to the originating new-session request |
-| `asAgent` | `true` → new session runs as a Claude Agents background session |
+| `runtime` | Runtime selected from the target device's `canCreate` capabilities; defaults to `claude` for old clients |
+| `asAgent` | `true` → new Claude Session runs as a Claude Agents background session; ignored for Codex |
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
 1. Has sessionId → route by runtime: Claude uses the headless pool; Codex uses
    `thread/resume` + `turn/start` through app-server
-2. No sessionId, has projectHash → create a Claude Session; Codex creation is rejected until its
-   runtime adapter enables `create`
+2. No sessionId, has projectHash → route by selected runtime: Claude uses its existing headless
+   creation path; Codex uses `thread/start` + `turn/start` on one cwd-scoped app-server client
 
 **Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
 

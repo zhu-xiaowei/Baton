@@ -89,7 +89,7 @@ test('runtime capabilities distinguish installed binaries from history', () => {
     assert.equal(capabilities.codex.installed, true);
     assert.equal(capabilities.codex.historyAvailable, true);
     assert.equal(capabilities.codex.canRead, true);
-    assert.equal(capabilities.codex.canCreate, false);
+    assert.equal(capabilities.codex.canCreate, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

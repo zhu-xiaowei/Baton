@@ -40,14 +40,13 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Codex watcher monitors every configured `CODEX_HOME/sessions` root and pushes append-only
   updates through the same WS ack, HTTP fallback, frame-limit, and watermark semantics as Claude.
 - Codex external status updates support `running`/`completed`; approval waits remain unobservable.
-- Codex Phase 3 existing-Session interaction is implemented through `codex app-server --stdio`:
-  `thread/resume` + `turn/start`, text/reasoning streaming, interrupt, and basic approval requests.
+- Codex Phase 3 interaction is implemented through `codex app-server --stdio`: existing Sessions
+  use `thread/resume` + `turn/start`; new Sessions use `thread/start` + `turn/start`.
 - Codex and Claude share `StreamFramer`: first delta is immediate, later deltas use the same 50ms
   batch window, turn-level `seq`, authoritative-row handoff, and frontend reorder/chase rendering.
 - Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
   rows without rebroadcast and remains the fallback when no live row was observed.
-- Codex new Session creation, pending approval recovery, and complete permission variant
-  coverage remain Phase 3 work.
+- Codex pending approval recovery and complete permission variant coverage remain Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification
@@ -251,7 +250,7 @@ GET  /api/version                           — app and Bridge release versions
 App → Server:           { action: "subscribe", sessionId }
 App → Server:           { action: "unsubscribe", sessionId }
 App → Server → Bridge:  { action: "send_message", sessionId, text, device }
-                        { action: "send_message", projectHash, text, device }  — new session
+                        { action: "send_message", projectHash, runtime, text, device }  — new session
 App → Server → Bridge:  { action: "permission_reply", sessionId, requestId, decision, answerText?, device }
 App → Server → Bridge:  { action: "list_commands", projectHash, device, requestId }  — slash-command scan
 Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
@@ -307,6 +306,8 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Idle reap (10min) + LRU cap (16) manage the pool; a reaped session re-spawns with `--resume` on the next message, context intact. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
+- New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the
+  first turn on the same cwd-scoped app-server client.
 - New background agent: Bridge launches `claude --bg`, resolves the full Session ID, and lets
   the agent poll/watcher publish metadata and messages.
 

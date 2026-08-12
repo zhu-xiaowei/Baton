@@ -158,6 +158,7 @@ def test_sync_messages_uses_storage_partition(monkeypatch):
         runtime="codex",
         messages=[{
             "uuid": "m1",
+            "nativeId": "codex:user:client-1",
             "type": "user",
             "content": "hello",
             "timestamp": "2026-08-06T00:00:00.000Z",
@@ -166,6 +167,18 @@ def test_sync_messages_uses_storage_partition(monkeypatch):
     asyncio.run(bridge_sync.sync_messages(request, FakeRequest()))
     assert messages.items[0]["sessionId"] == "codex:native-id"
     assert messages.items[0]["runtime"] == "codex"
+    assert messages.items[0]["nativeId"] == "codex:user:client-1"
+
+
+def test_message_reads_preserve_native_identity():
+    parsed = bridge_read._parse_messages([{
+        "uuid": "m1",
+        "nativeId": "codex:user:client-1",
+        "type": "user",
+        "content": json.dumps("hello"),
+        "timestamp": "2026-08-06T00:00:00.000Z",
+    }])
+    assert parsed[0]["nativeId"] == "codex:user:client-1"
 
 
 def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
@@ -433,3 +446,42 @@ def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch
         )
         assert response == {"statusCode": 500}
         assert sent == []
+
+
+def test_bridge_message_cache_preserves_native_identity(monkeypatch):
+    class SubscriptionTable:
+        def query(self, **_):
+            return {"Items": []}
+
+    messages = FakeTable()
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(bridge_ws, "_messages_table", messages)
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_bridge_messages(
+        {
+            "sessionId": "codex:test",
+            "messages": [{
+                "uuid": "m1",
+                "nativeId": "codex:user:client-1",
+                "type": "user",
+                "content": "hello",
+                "timestamp": "2026-08-12T00:00:00.000Z",
+            }],
+        },
+        "bridge-1",
+        "account-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert messages.items[0]["nativeId"] == "codex:user:client-1"
+    assert sent == [(
+        "bridge-1",
+        {"action": "messages_ack", "sessionId": "codex:test"},
+    )]

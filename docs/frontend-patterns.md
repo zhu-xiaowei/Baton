@@ -225,19 +225,21 @@ recoverMissing():
 
 ```
 startNewSession(projectHash):
-  1. appState.session = '__new__'
-  2. Reset all message state
-  3. connectWs(null, projectHash)  ← WS connection carries projectHash
-  4. Show empty message page + input bar
+  1. Read device runtimeCapabilities and keep entries with canCreate=true
+  2. Auto-select a single runtime, or restore the last per-device choice
+  3. appState.session = '__new__'
+  4. Reset all message state
+  5. connectWs(null, projectHash)  ← WS connection carries projectHash
+  6. Show empty message page + input bar
 
 User sends message:
-  1. wsSend({ action: 'send_message', projectHash, requestId, text, device })
+  1. wsSend({ action: 'send_message', projectHash, runtime, requestId, text, device })
      (Note: no sessionId, projectHash tells bridge to create a new session)
   2. Optimistically render user message
 
 Bridge handling:
-  → Mint sessionId and return send_message_result first
-  → Spawn headless `claude -p --session-id <id>` so the app can subscribe before deltas
+  → Claude: mint sessionId, return send_message_result, then spawn headless with --session-id
+  → Codex: thread/start, return codex:<threadId>, then turn/start on the same app-server client
 
 On receiving sessionId:
   1. appState.session = msg.sessionId (replace '__new__')

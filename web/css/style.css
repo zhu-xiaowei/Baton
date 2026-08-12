@@ -99,6 +99,15 @@ body {
 .runtime-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
 #top-right .runtime-mark, #top-right .runtime-icon { width: 20px; height: 20px; }
 #top-right .runtime-mark { flex-basis: 20px; }
+.runtime-switch {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  flex: 0 0 28px; margin: 0 -4px; padding: 0; border: 1px solid transparent; border-radius: 50%;
+  background: transparent; color: inherit; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.runtime-switch:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) {
+  .runtime-switch:hover { background: #21262d; border-color: #30363d; }
+}
 .item .meta .runtime-mark { margin-right: 6px; }
 .session-badges { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
 .session-item-bottom { gap: 8px; min-height: 16px; }
@@ -118,6 +127,7 @@ body {
 .session-secondary-toggle.show-meta .session-meta-view { display: block; }
 .card-badges { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
 .agent-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer; margin-top: 12px; }
+.agent-toggle[hidden] { display: flex; visibility: hidden; pointer-events: none; }
 .agent-toggle input { width: 14px; height: 14px; cursor: pointer; accent-color: #484f58; opacity: 0.6; }
 .card-detail { flex: 1; min-width: 0; font-size: 12px; color: #d29922; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 

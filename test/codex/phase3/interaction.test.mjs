@@ -29,6 +29,7 @@ class FakeClient extends EventEmitter {
 
   async request(method, params) {
     this.requests.push({ method, params });
+    if (method === 'thread/start') return { thread: { id: 'thread-new' } };
     if (method === 'thread/resume') return { thread: { id: params.threadId } };
     if (method === 'turn/start') {
       this.turnSequence++;
@@ -50,6 +51,58 @@ class FakeClient extends EventEmitter {
     this.responses.push({ id, error: { code, message } });
   }
 }
+
+test('new Codex session starts a thread and first turn on the same cwd-scoped client', async () => {
+  const client = new FakeClient();
+  const contexts = [];
+  const interaction = new CodexInteraction({
+    clientFactory(context) {
+      contexts.push(context);
+      return client;
+    },
+  });
+  const cb = callbacks();
+  const created = [];
+
+  const result = await interaction.create({
+    cwd: '/workspace/project',
+    streamId: 'stream-new',
+    text: 'start here',
+    onCreated(identity) {
+      created.push(identity);
+      return cb.value;
+    },
+  });
+
+  assert.deepEqual(contexts, [{ cwd: '/workspace/project' }]);
+  assert.deepEqual(created, [{
+    nativeSessionId: 'thread-new',
+    sessionId: 'codex:thread-new',
+  }]);
+  assert.deepEqual(result, created[0]);
+  assert.deepEqual(client.requests, [
+    {
+      method: 'thread/start',
+      params: { cwd: '/workspace/project' },
+    },
+    {
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-new',
+        clientUserMessageId: 'stream-new',
+        input: [{ type: 'text', text: 'start here' }],
+      },
+    },
+  ]);
+  assert.equal(interaction.owns('thread-new'), true);
+
+  notify(client, 'turn/completed', {
+    threadId: 'thread-new',
+    turn: { id: 'turn-1', status: 'completed' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(client.stopCalls, 1);
+});
 
 function callbacks() {
   const frames = [];

@@ -48,6 +48,7 @@ test('runtime registry exposes one validated adapter per runtime', () => {
   assert.equal(getRuntimeAdapter('codex'), codexRuntime);
   assert.equal(getRuntimeAdapter('unknown'), claudeRuntime);
   assert.equal(claudeRuntime.features.send, true);
+  assert.equal(codexRuntime.features.create, true);
   assert.equal(codexRuntime.features.send, true);
   assert.throws(
     () => defineRuntimeAdapter({ runtime: 'broken' }),
@@ -66,6 +67,7 @@ test('runtime registry exposes one validated adapter per runtime', () => {
 
 test('interaction adapters expose the reusable existing-session contract', () => {
   assert.equal(codexRuntime.interaction.runtime, 'codex');
+  assert.equal(typeof codexRuntime.interaction.create, 'function');
   assert.equal(typeof codexRuntime.interaction.shutdown, 'function');
   assert.throws(
     () => defineInteractionAdapter({ runtime: 'broken' }),
@@ -107,7 +109,7 @@ test('capability detection is dispatched through runtime adapters', () => {
     assert.equal(capabilities.claude.canCreate, true);
     assert.equal(capabilities.codex.canRead, true);
     assert.equal(capabilities.codex.canSend, true);
-    assert.equal(capabilities.codex.canCreate, false);
+    assert.equal(capabilities.codex.canCreate, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -362,17 +362,19 @@ async function handleSendMessage(
     return;
   }
 
-  // New session (projectHash only): agent → detached `claude --bg`; regular → headless stream.
+  // New session (projectHash only): dispatch creation through the selected runtime.
   const cwd = projectHashToPath(projectHash);
   if (!cwd) {
     wsSend({ action: 'send_message_result', ok: false, error: 'Project path not found.', requestId, clientId });
     return;
   }
-  // Project dir deleted/never-existed → recreate so CC can spawn there.
+  // Project dir deleted/never-existed → recreate so the runtime can spawn there.
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
-  if (asAgent) {
+  if (identity.runtime === 'claude' && asAgent) {
     const r = await newAgentSession(cwd, resolved);
     wsSend({ action: 'send_message_result', ok: r.ok, sessionId: r.sessionId, error: r.error, requestId, clientId });
+  } else if (adapter.interaction?.create) {
+    await newAdapterSession(adapter, cwd, resolved, requestId, clientId);
   } else {
     await newRegularSession(cwd, resolved, requestId, clientId);
   }
@@ -522,6 +524,44 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
       errorCode ? { errorCode, writer: error.writer } : {},
     );
     return true;
+  }
+}
+
+async function newAdapterSession(adapter, cwd, text, requestId, clientId) {
+  const streamId = newStreamId();
+  let acked = false;
+  const ack = (ok, sessionId, error) => {
+    if (acked) return;
+    acked = true;
+    wsSend({
+      action: 'send_message_result',
+      sessionId,
+      ok,
+      error,
+      requestId,
+      clientId,
+      streamId,
+    });
+  };
+  try {
+    await adapter.interaction.create({
+      cwd,
+      text,
+      streamId,
+      onCreated: ({ nativeSessionId, sessionId }) => {
+        const callbacks = buildStreamCallbacks(sessionId, cwd, (_ok, error) => {
+          ack(false, sessionId, error);
+        }, {
+          runtime: adapter.runtime,
+          nativeSessionId,
+          syncStatus: false,
+        });
+        ack(true, sessionId);
+        return callbacks;
+      },
+    });
+  } catch (error) {
+    ack(false, '', error.message || 'Session creation failed.');
   }
 }
 

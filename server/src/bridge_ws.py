@@ -336,6 +336,8 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                             "timestamp": timestamp,
                             "ttl": int(time.time()) + 90 * 86400,  # 90-day expiry (matches sync_messages)
                         }
+                        if msg.get("nativeId"):
+                            item["nativeId"] = msg["nativeId"]
                         if msg.get("stopReason"):
                             item["stopReason"] = msg["stopReason"]
                         if msg.get("toolUseResult"):

@@ -1,7 +1,7 @@
 # Codex 接入设计与实施状态
 
 > 最后更新：2026-08-12
-> 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成已有 Session 交互主链路
+> 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成 Session 创建与交互主链路
 > API 与 WS 完整契约见 [api.md](api.md)
 
 ## 1. 目标与范围
@@ -22,6 +22,8 @@ Device → Project → Session 信息架构。
 - 列表和详情复用统一 UI，并用 runtime icon、短 ID 和局部展示差异区分。
 - macOS、Linux 和原生 Windows Bridge 安装、启动及升级。
 - 已有 Codex Session 使用 app-server `thread/resume` + `turn/start` 发送消息。
+- 新建 Codex Session 使用同一个 cwd-scoped app-server client 连续执行 `thread/start`
+  和首个 `turn/start`。
 - app-server delta 复用 Claude 的首包立即发送、50ms 合批、turn 级 `seq`、前端重排和追赶渲染。
 - app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
 - interrupt 和基础 command/file/user-input 审批已接入现有 WS 控制协议。
@@ -33,12 +35,12 @@ Device → Project → Session 信息架构。
 
 当前未完成：
 
-- Codex 新 Session 创建入口。
 - 完整审批变体、刷新后的 pending request 恢复和 `turn/steer`。
 - app-server 工具输出是否切换为 live 权威；当前最终工具卡继续复用 Phase 2 watcher。
 
-因此，已有 Codex Session 已支持历史读取、实时旁观和 Web 交互；新建入口仍通过
-`canCreate=false` 隐藏。Runtime adapter 会阻止 Codex 请求进入 Claude controller。
+因此，Codex Session 已支持创建、历史读取、实时旁观和 Web 交互。New Session 页面按
+设备的 `canCreate` 能力显示 runtime；仅一种 runtime 时自动选择，多种时允许切换并记住
+该设备上次选择。
 
 ## 2. 阶段与完成条件
 
@@ -46,7 +48,7 @@ Device → Project → Session 信息架构。
 |---|---|---|---|
 | Phase 1 | 已完成 | 初始化发现、metadata、历史消息、按需回填、统一 UI、跨平台安装升级 | 本地/DDB/REST/UI 数量一致；重启和重复打开无新增重复；Claude 行为无回归 |
 | Phase 2 | 已完成 | Codex watcher、增量读取、状态更新、实时旁观 | macOS/Linux/Windows 的新增行不漏不重；断连、重启、半行写入和 watermark 恢复通过 |
-| Phase 3 | 进行中 | app-server、发送、streaming、interrupt、权限 | 已有 Session 主链路、临时 writer lease 和显式 TUI 接管已完成；新建与完整权限待完成 |
+| Phase 3 | 进行中 | app-server、创建、发送、streaming、interrupt、权限 | Session 创建与交互主链路、临时 writer lease 和显式 TUI 接管已完成；完整权限待完成 |
 | Phase 4 | 待开始 | 性能、诊断、灰度、回滚和体验完善 | 大 Session、弱网、升级失败和多设备场景均有可执行验收与回滚流程 |
 
 ### 2.1 实施规则
@@ -215,7 +217,7 @@ Codex 进程是否正在等待审批，因此 JSONL watcher 不生成 Codex `nee
       "installed": true,
       "historyAvailable": true,
       "canRead": true,
-      "canCreate": false,
+      "canCreate": true,
       "canSend": true,
       "version": "..."
     }
@@ -223,9 +225,9 @@ Codex 进程是否正在等待审批，因此 JSONL watcher 不生成 Codex `nee
 }
 ```
 
-`installed` 与 `historyAvailable` 分离，因为 CLI 被卸载后本地历史仍可能可读。未来创建
-Session 时，UI 应使用 `device.online && capability.canCreate` 过滤 runtime；已有历史展示
-使用 `historyAvailable/canRead`。
+`installed` 与 `historyAvailable` 分离，因为 CLI 被卸载后本地历史仍可能可读。创建
+Session 时，UI 使用 `capability.canCreate` 过滤 runtime；已有历史展示使用
+`historyAvailable/canRead`。
 
 ### 5.3 BridgeMessages
 
@@ -236,8 +238,9 @@ TTL = 90 days
 ```
 
 重复提取使用相同 `uuid` 和 sort key，DDB `PutItem` 覆盖同一行，不累积副本。消息 item
-保持统一结构：`uuid`、`type`、`content`、`timestamp`，以及可选 `stopReason`、
-`toolUseResult`。
+保持统一结构：`uuid`、`type`、`content`、`timestamp`，以及可选 `nativeId`、
+`stopReason`、`toolUseResult`。`nativeId` 是 live 与 watcher/DDB 行共用的稳定身份，
+前端通过与 Claude 相同的 identity set 去重。
 
 ## 6. Codex Discovery 与状态
 
@@ -552,13 +555,13 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 5. 每个活跃 thread 的临时 app-server lease；turn 和权限队列完成后立即释放 writer。
 6. 外部独立 Codex TUI 的结构化冲突、运行中 Web 确认、空闲自动终止、retry resume
    和取消路径。
+7. Codex 新 Session 的 capability/UI 入口、`thread/start` 和首个 `turn/start`。
 
 待完成：
 
-1. Codex 新 Session 创建和 capability/UI 入口；Project 创建入口已通用。
-2. `turn/steer` 和 pending approval 重连恢复。
-3. 剩余 ServerRequest 变体。
-4. Linux/Windows 显式 TUI 接管 smoke test 与生产灰度。
+1. `turn/steer` 和 pending approval 重连恢复。
+2. 剩余 ServerRequest 变体。
+3. Linux/Windows 显式 TUI 接管 smoke test 与生产灰度。
 
 ### 体验与覆盖
 

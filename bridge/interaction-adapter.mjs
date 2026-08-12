@@ -6,7 +6,7 @@ const REQUIRED_METHODS = [
   'isBusy',
 ];
 
-const OPTIONAL_METHODS = ['shutdown'];
+const OPTIONAL_METHODS = ['create', 'shutdown'];
 
 export function defineInteractionAdapter(definition) {
   if (!definition?.runtime || typeof definition.runtime !== 'string') {

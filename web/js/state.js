@@ -11,6 +11,8 @@ export const state = {
   // ---- Navigation / device list (app.js) ----
   appState: { device: null, project: null, session: null, sessionPreview: '' },
   deviceOnlineMap: {},
+  deviceRuntimeCapabilities: {},
+  newSessionRuntimes: [],
 
   // ---- Batch-delete selection (app.js) ----
   selectMode: false,

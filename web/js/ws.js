@@ -167,7 +167,11 @@ function handleWsMessage(msg) {
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
       if (state._wsBuffer !== null) {
         // Buffering during initial load — collect, don't render yet
-        state._wsBuffer.push.apply(state._wsBuffer, msg.messages);
+        for (var bi = 0; bi < msg.messages.length; bi++) {
+          state._wsBuffer.push(msg.streamId
+            ? Object.assign({}, msg.messages[bi], { _streamId: msg.streamId })
+            : msg.messages[bi]);
+        }
         return;
       }
       for (var i = 0; i < msg.messages.length; i++) {
@@ -179,11 +183,11 @@ function handleWsMessage(msg) {
           _activeStreamId = msg.streamId;
           state.wsRunning = true;
         }
+        if (msg.streamId) m._streamId = msg.streamId;
         if (!trackMessageUuid(m)) {
           if (msg.streamId) claimScopedDuplicate(msg.streamId, m);
           continue;
         }
-        if (msg.streamId) m._streamId = msg.streamId; // ties row to its send (placement/dedup by identity)
         var holdStreamId = authoritativeStream(m, msg.streamId);
         if (holdStreamId) {
           m._streamId = holdStreamId;
@@ -1450,13 +1454,21 @@ function trackMessageUuid(message) {
 }
 
 function claimScopedDuplicate(streamId, message) {
-  if (!streamId || message?.type !== 'assistant' || !Array.isArray(message.content)
-    || !message.content.length) return;
+  if (!streamId) return;
 
   var existing = state.wsAllMessages.find(function (candidate) {
     return (message.nativeId && candidate.nativeId === message.nativeId)
       || (message.uuid && candidate.uuid === message.uuid);
   });
+  if (message?.type === 'user') {
+    if (existing) {
+      existing._streamId = streamId;
+      tryDedup(existing);
+    }
+    return;
+  }
+  if (message?.type !== 'assistant' || !Array.isArray(message.content)
+    || !message.content.length) return;
   if (!message.nativeId && existing?._streamId
     && existing._streamId !== streamId) return;
 
@@ -1552,7 +1564,10 @@ async function bufferAndFetch(sessionId, after) {
     state._wsBuffer = null;
     var added = 0;
     for (var i = 0; i < all.length; i++) {
-      if (!trackMessageUuid(all[i])) continue;
+      if (!trackMessageUuid(all[i])) {
+        if (all[i]._streamId) claimScopedDuplicate(all[i]._streamId, all[i]);
+        continue;
+      }
       state.wsAllMessages.push(all[i]);
       state.wsMessageCount++;
       added++;
@@ -1793,8 +1808,9 @@ function doSend(fullText, displayText, images) {
   updateSendBtn();
   var sendPayload;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
-    var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
-    sendPayload = { action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, asAgent: asAgent };
+    var asAgent = state.appState.runtime === 'claude'
+      && !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
+    sendPayload = { action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, clientId: msgId, text: fullText, device: device, runtime: state.appState.runtime, asAgent: asAgent };
   } else {
     // projectHash lets the bridge resolve cwd even if the jsonl is gone (deleted session).
     var ph = state.appState.project && state.appState.project.hash;

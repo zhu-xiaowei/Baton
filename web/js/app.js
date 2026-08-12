@@ -14,6 +14,12 @@ import {
   savePagePreview,
   takePreviousNavigation,
 } from './edge-back.js';
+import {
+  creatableRuntimes,
+  newSessionRuntimePreferenceKey,
+  nextNewSessionRuntime,
+  preferredNewSessionRuntime,
+} from './new-session-runtime.js';
 
 var _navVersion = 0;
 var _listPrefetches = {};
@@ -172,6 +178,22 @@ function runtimeIcon(sessionId, runtime) {
     + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
 }
 
+function runtimeLabel(runtime) {
+  return runtime === 'codex' ? 'Codex' : 'Claude Code';
+}
+
+function newSessionRuntimeControl() {
+  var runtimes = state.newSessionRuntimes;
+  var current = state.appState.runtime;
+  if (!runtimes.length || !current) return '';
+  var mark = runtimeIcon('__new__', current);
+  if (runtimes.length === 1) return mark;
+  var next = nextNewSessionRuntime(runtimes, current);
+  return '<button class="runtime-switch" type="button" onclick="toggleNewSessionRuntime()"'
+    + ' aria-label="Switch coding runtime. Current: ' + runtimeLabel(current) + '"'
+    + ' title="Switch to ' + runtimeLabel(next) + '">' + mark + '</button>';
+}
+
 function showStats() {}  // no-op, stats bar removed
 
 function showWsBanner(status) {
@@ -225,7 +247,9 @@ function updateBreadcrumb() {
     topRight.innerHTML = '<button class="text-btn" onclick="exitSelectMode()">Cancel</button>'
       + '<button class="text-btn danger" ' + (n ? '' : 'disabled') + ' onclick="openDeleteModal()">Delete' + (n ? '<span class="sel-count">' + n + '</span>' : '') + '</button>';
   } else if (state.appState.project) {
-    var runtimeMark = state.appState.session ? runtimeIcon(state.appState.session, state.appState.runtime) : '';
+    var runtimeMark = state.appState.session === '__new__'
+      ? newSessionRuntimeControl()
+      : (state.appState.session ? runtimeIcon(state.appState.session, state.appState.runtime) : '');
     topRight.innerHTML = runtimeMark + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -631,6 +655,31 @@ function shortModel(m) {
 }
 
 // ---- Devices ----
+function rememberDevices(data) {
+  (data?.devices || []).forEach(function (device) {
+    state.deviceOnlineMap[device.deviceName] = device.online;
+    state.deviceRuntimeCapabilities[device.deviceName] = device.runtimeCapabilities || {
+      claude: { canCreate: true },
+    };
+  });
+}
+
+async function runtimeCapabilitiesForDevice(device) {
+  if (Object.prototype.hasOwnProperty.call(state.deviceRuntimeCapabilities, device)) {
+    return state.deviceRuntimeCapabilities[device];
+  }
+  var data = null;
+  try {
+    data = window.__preload?.devices
+      ? await window.__preload.devices
+      : await api('/api/bridge/devices');
+  } catch (e) {}
+  if (data) rememberDevices(data);
+  return state.deviceRuntimeCapabilities[device] || {
+    claude: { canCreate: true },
+  };
+}
+
 async function loadDevices() {
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
@@ -651,7 +700,7 @@ async function loadDevices() {
     window.__preload = null;
     window.__homeLoadPromise.then(function (fresh) {
       if (_navVersion !== myNav || !fresh || !fresh[1]) return;
-      fresh[1].devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+      rememberDevices(fresh[1]);
     });
     return;
   }
@@ -663,7 +712,7 @@ async function loadDevices() {
   window.__loadHome(activePromise, devicesPromise, {
     resetScroll: true,
     onFresh: function (_activeData, devData) {
-      devData.devices.forEach(function (d) { state.deviceOnlineMap[d.deviceName] = d.online; });
+      rememberDevices(devData);
       showStats(devData.devices.length + ' device(s)');
     }
   });
@@ -952,6 +1001,38 @@ function onNewAsAgentToggle(checked) {
   if (typeof updateSendBtn === 'function') updateSendBtn();
 }
 
+function applyNewSessionRuntime(runtime, remember) {
+  if (!runtime || !state.newSessionRuntimes.includes(runtime)) return;
+  state.appState.runtime = runtime;
+  if (remember) {
+    try {
+      localStorage.setItem(
+        newSessionRuntimePreferenceKey(state.appState.device),
+        runtime,
+      );
+    } catch (e) {}
+  }
+  var agent = document.getElementById('newAsAgent');
+  var agentToggle = document.getElementById('newAgentToggle');
+  if (runtime !== 'claude') {
+    state.appState.isAgent = false;
+    if (agent) agent.checked = false;
+  }
+  if (agentToggle) agentToggle.hidden = runtime !== 'claude';
+  var messages = document.querySelector('.messages');
+  if (messages) messages.className = 'messages runtime-' + runtime;
+  updateBreadcrumb();
+  if (typeof updateSendBtn === 'function') updateSendBtn();
+}
+
+function toggleNewSessionRuntime() {
+  if (state.appState.session !== '__new__') return;
+  applyNewSessionRuntime(
+    nextNewSessionRuntime(state.newSessionRuntimes, state.appState.runtime),
+    true,
+  );
+}
+
 async function startNewSession(projectHash) {
   deactivateList();
   var myNav = ++_navVersion;
@@ -960,13 +1041,25 @@ async function startNewSession(projectHash) {
     project: state.appState.project,
     session: '__new__'
   });
-  await window.loadViewerLibs();
+  var results = await Promise.all([
+    window.loadViewerLibs(),
+    runtimeCapabilitiesForDevice(state.appState.device),
+  ]);
   if (_navVersion !== myNav) return;
+  var runtimes = creatableRuntimes(results[1]);
+  state.newSessionRuntimes = runtimes;
+  var savedRuntime = '';
+  try {
+    savedRuntime = localStorage.getItem(
+      newSessionRuntimePreferenceKey(state.appState.device),
+    ) || '';
+  } catch (e) {}
+  var runtime = preferredNewSessionRuntime(runtimes, savedRuntime);
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
-  state.appState.runtime = 'claude';
+  state.appState.runtime = runtime || 'claude';
   markCurrentRoute(state.appState);
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
@@ -987,14 +1080,20 @@ async function startNewSession(projectHash) {
   var content = document.getElementById('content');
   var bar = document.getElementById('input-bar');
   if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
+  if (!runtime) {
+    content.innerHTML = '<div class="empty">Session creation unavailable</div>';
+    document.body.classList.remove('new-session');
+    showInputBar(false);
+    return;
+  }
   // Agent mode: always starts unchecked; choice is not persisted across sessions.
   content.innerHTML =
     '<div class="new-session-hero">'
       + '<div class="hero-logo">🔭</div>'
       + '<div class="hero-title">AgentPeek</div>'
-      + '<label class="agent-toggle"><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
+      + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
-    + '<div class="messages runtime-claude" hidden></div>';
+    + '<div class="messages runtime-' + runtime + '" hidden></div>';
   document.body.classList.add('new-session');
   showInputBar(true);
   // Move input-bar into #content so it sits with the hero in centered flex group.
@@ -1280,7 +1379,7 @@ Object.assign(window, {
   loadDevices, loadProjects, loadSessions,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
-  startNewSession, onNewAsAgentToggle, loadMessages, toggleRecentAgents,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });
 

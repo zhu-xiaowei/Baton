@@ -353,6 +353,8 @@ def _parse_messages(items):
             "content": content,
             "timestamp": item.get("timestamp", ""),
         }
+        if item.get("nativeId"):
+            msg["nativeId"] = item["nativeId"]
         if item.get("stopReason"):
             msg["stopReason"] = item["stopReason"]
         tur = item.get("toolUseResult", "")

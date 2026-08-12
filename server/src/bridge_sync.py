@@ -517,6 +517,8 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
             }
             if runtime != "claude":
                 item["runtime"] = runtime
+            if msg.get("nativeId"):
+                item["nativeId"] = msg["nativeId"]
             if msg.get("stopReason"):
                 item["stopReason"] = msg["stopReason"]
             if msg.get("toolUseResult"):

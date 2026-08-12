@@ -14,6 +14,7 @@ import {
 } from './codex-writer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { registerLiveMessageStream } from './live-message-registry.mjs';
+import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 
 function turnStatusError(turn) {
@@ -27,7 +28,10 @@ export class CodexInteraction {
     this.clientFactory = options.clientFactory
       || (options.client
         ? () => options.client
-        : () => new CodexAppServerClient(options.clientOptions));
+        : (context = {}) => new CodexAppServerClient({
+          ...options.clientOptions,
+          ...(context.cwd ? { cwd: context.cwd } : {}),
+        }));
     this.writerController = options.writerController || codexWriterController;
     this.sessions = new Map();
     this.turns = new Map();
@@ -64,6 +68,11 @@ export class CodexInteraction {
     });
     if (!client) throw new Error('Codex interaction client factory returned no client');
     session.client = client;
+    this.#bindClient(session, client);
+    return client;
+  }
+
+  #bindClient(session, client) {
     if (!this.boundClients.has(client)) {
       this.boundClients.add(client);
       client.on('notification', (notification) => {
@@ -77,7 +86,6 @@ export class CodexInteraction {
       });
       client.on('exit', (error) => this.#onExit(session, client, error));
     }
-    return client;
   }
 
   #activeWriterError(session, error) {
@@ -179,6 +187,45 @@ export class CodexInteraction {
     return operation;
   }
 
+  async create(options) {
+    const client = this.clientFactory({ cwd: options.cwd });
+    if (!client) throw new Error('Codex interaction client factory returned no client');
+    let session = null;
+    try {
+      await client.start();
+      const result = await client.request('thread/start', { cwd: options.cwd });
+      const nativeSessionId = result?.thread?.id;
+      if (!nativeSessionId) throw new Error('Codex did not return a thread id');
+
+      const sessionId = storageSessionId('codex', nativeSessionId);
+      session = this.#session(nativeSessionId, sessionId);
+      if (session.client && session.client !== client) {
+        throw new Error('Codex created a thread already owned by another client');
+      }
+      session.client = client;
+      session.subscribedGeneration = client.generation;
+      this.#bindClient(session, client);
+
+      const callbacks = options.onCreated?.({
+        nativeSessionId,
+        sessionId,
+      }) || options.callbacks || {};
+      await this.#startTurn(session, {
+        streamId: options.streamId,
+        text: options.text,
+        callbacks,
+      });
+      return { nativeSessionId, sessionId };
+    } catch (error) {
+      if (!session || session.client !== client) {
+        await Promise.resolve(client.stop()).catch(() => {});
+      } else if (!session.active) {
+        await this.#release(session);
+      }
+      throw error;
+    }
+  }
+
   async #startTurn(session, turn) {
     session.active = turn;
     turn.session = session;
@@ -187,6 +234,11 @@ export class CodexInteraction {
     turn.nextBlockId = 0;
     turn.items = new Map();
     turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
+    registerLiveMessageStream(
+      'codex',
+      codexUserLiveKey(turn.streamId),
+      turn.streamId,
+    );
 
     try {
       const result = await session.client.request('turn/start', {

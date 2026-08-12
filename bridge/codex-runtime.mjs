@@ -27,6 +27,7 @@ export const codexRuntime = defineRuntimeAdapter({
   runtime: 'codex',
   displayName: 'Codex',
   features: {
+    create: true,
     send: true,
     interrupt: true,
     statusPolling: true,
@@ -42,7 +43,7 @@ export const codexRuntime = defineRuntimeAdapter({
       installed: !!binary,
       historyAvailable,
       canRead: historyAvailable,
-      canCreate: false,
+      canCreate: !!binary,
       canSend: !!binary,
       version: options.skipVersions ? '' : binaryVersion(binary),
     };
