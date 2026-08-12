@@ -64,7 +64,13 @@ import { state } from '../state.js';
     var runtime = state.appState.runtime === 'codex' ? 'codex' : 'claude';
 
     if (!shouldShow) {
-      if (el) el.style.display = 'none';
+      if (el) {
+        // Collapse the status row instead of removing it from layout in one
+        // frame. This avoids a bottom-scroll jump without leaving an idle gap.
+        el.style.display = 'flex';
+        el.classList.add('is-collapsed');
+        el.setAttribute('aria-hidden', 'true');
+      }
       stopTimers();
       _currentVerb = '';
       _currentRuntime = '';
@@ -84,6 +90,8 @@ import { state } from '../state.js';
       content.appendChild(el);
     }
     el.style.display = 'flex';
+    el.classList.remove('is-collapsed');
+    el.removeAttribute('aria-hidden');
 
     if (_currentRuntime !== runtime) {
       stopTimers();
@@ -93,7 +101,8 @@ import { state } from '../state.js';
 
     if (!_glyphIv) {
       var frame = 0;
-      el.innerHTML = '<span class="cc-spinner-glyph">' + FRAMES[0] + '</span><span class="cc-spinner-verb"></span>';
+      el.innerHTML = '<div class="cc-spinner-inner"><span class="cc-spinner-glyph">'
+        + FRAMES[0] + '</span><span class="cc-spinner-verb"></span></div>';
       var glyphEl = el.querySelector('.cc-spinner-glyph');
       var verbEl = el.querySelector('.cc-spinner-verb');
 

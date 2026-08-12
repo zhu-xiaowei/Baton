@@ -12,7 +12,9 @@ import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessagePushed,
+  liveMessageStream,
   markLiveMessagePushed,
+  registerLiveMessageStream,
 } from './live-message-registry.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -53,10 +55,11 @@ export async function shutdownInteractions() {
 // Cap holds many turns' worth (one heavy multi-tool turn ≈ 25 rows) so no uuid is
 // evicted before its lagging jsonl copy arrives; a stale miss only costs a harmless
 // re-push (still app-side uuid-deduped).
-export function markHeadlessPushed(uuid) {
-  markLiveMessagePushed('claude', uuid);
+export function markHeadlessPushed(uuid, streamId = '') {
+  markLiveMessagePushed('claude', uuid, streamId);
 }
 export function headlessPushed(uuid) { return liveMessagePushed('claude', uuid); }
+export function headlessStream(uuid) { return liveMessageStream('claude', uuid); }
 
 // Pending control_request per session (CC blocks one tool call at a time).
 const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
@@ -410,6 +413,9 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
     onMessage: async (sid, raw, meta = {}) => {
       try {
+        if (!meta.runtime && raw?.uuid) {
+          registerLiveMessageStream('claude', raw.uuid, sid);
+        }
         const msg = meta.normalized ? raw : await extractForApp(raw, cwd);
         if (!msg.uuid) return;
         let out = msg;
@@ -418,9 +424,12 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
           out.truncated = true;
         }
         // streamId ties this row (user echo + assistant) to its send → app places/dedupes by identity.
+        if (meta.runtime && meta.liveKey) {
+          markLiveMessagePushed(meta.runtime, meta.liveKey, sid);
+        } else {
+          markHeadlessPushed(msg.uuid, sid);
+        }
         wsSend({ action: 'messages', sessionId, streamId: sid, messages: [out], noCache: true });
-        if (meta.runtime && meta.liveKey) markLiveMessagePushed(meta.runtime, meta.liveKey);
-        else markHeadlessPushed(msg.uuid); // watcher skips WS for this uuid's jsonl copy
       } catch (e) {
         console.log(`[ws] live message extract failed: ${e.message}`);
       }

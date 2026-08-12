@@ -139,22 +139,21 @@ const SCENARIOS = {
     for (const t of ['2', '3', '4']) if (!bubbles.includes(t)) fails.push(`bubble "${t}" wiped mid-flight (visible: ${JSON.stringify(bubbles)})`);
     return fails;
   },
-  // Original orphan case still covered: an UN-acked send swallowed by busy-CC (echo
-  // never comes) must still be cleared when a later send is confirmed — else it sticks
-  // forever. Bubble "A" never acked; "B" acked (bumps watermark) → "A" is a true orphan.
-  'orphan-unacked-cleared': async (h) => {
+  // A later ack cannot prove an earlier send was lost: API Gateway may return
+  // concurrent send results out of order. The earlier bubble stays until its
+  // own echo/ack or timeout reconciliation resolves it.
+  'out-of-order-ack-keeps-earlier': async (h) => {
     resetSession(h, { mode: 'existing', sessionId: 'S' });
     h.state.wsRunning = false;
     await replay(h, [
       { u: 'A' }, { u: 'B' },
-      { ack: 'B' },                       // only B acked; A swallowed (no ack, no echo)
+      { ack: 'B' },
       { start: true, block: 0, kind: 'text' }, { delta: true, block: 0, text: 'rb' }, { end: true },
       { inMsg: { uuid: 'ab', type: 'assistant', content: [{ type: 'text', text: 'rb' }], timestamp: '2026-01-01T00:00:09.000Z' } },
     ]);
     const bubbles = h.dumpDom().filter(n => /msg-user/.test(n.cls)).map(n => n.text);
-    // A (unacked, orphaned by B's confirmation) should be gone; B stays.
     const fails = [];
-    if (bubbles.includes('A')) fails.push(`orphan "A" not cleared (visible: ${JSON.stringify(bubbles)})`);
+    if (!bubbles.includes('A')) fails.push(`earlier "A" was cleared by B's ack (visible: ${JSON.stringify(bubbles)})`);
     if (!bubbles.includes('B')) fails.push(`"B" wrongly cleared`);
     return fails;
   },

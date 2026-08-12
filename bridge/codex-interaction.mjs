@@ -1,13 +1,17 @@
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import {
   codexCompletedLiveMessages,
+  codexItemLiveKey,
   codexPreviewBlocks,
+  codexTurnUserLiveKey,
+  codexUserLiveKey,
 } from './codex-live.mjs';
 import {
   codexWriterController,
   isCodexActiveWriterError,
 } from './codex-writer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
+import { registerLiveMessageStream } from './live-message-registry.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 
 function turnStatusError(turn) {
@@ -247,7 +251,20 @@ export class CodexInteraction {
     return state;
   }
 
+  #registerItemStream(turn, item) {
+    if (!item) return;
+    if (item.type === 'userMessage') {
+      const userKey = codexUserLiveKey(item.clientId);
+      const turnKey = codexTurnUserLiveKey(turn.turnId);
+      if (userKey) registerLiveMessageStream('codex', userKey, turn.streamId);
+      if (turnKey) registerLiveMessageStream('codex', turnKey, turn.streamId);
+    } else if (item.id) {
+      registerLiveMessageStream('codex', codexItemLiveKey(item.id), turn.streamId);
+    }
+  }
+
   #itemState(turn, item, options = {}) {
+    this.#registerItemStream(turn, item);
     let state = turn.items.get(item.id);
     if (state) {
       if (item.type) state.type = item.type;
@@ -271,6 +288,7 @@ export class CodexInteraction {
 
   #completeItem(turn, item, completedAtMs) {
     if (!item?.id) return;
+    this.#registerItemStream(turn, item);
     const state = this.#itemState(turn, item, { startBlocks: false });
     const finalText = item.type === 'agentMessage' || item.type === 'plan'
       ? String(item.text || '')

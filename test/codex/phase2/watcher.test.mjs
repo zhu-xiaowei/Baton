@@ -7,7 +7,9 @@ import { CodexWatcher } from '../../../bridge/codex-watcher.mjs';
 import { deliverRealtimeMessages } from '../../../bridge/realtime-delivery.mjs';
 import {
   clearLiveMessageRegistry,
+  liveMessageStream,
   markLiveMessagePushed,
+  registerLiveMessageStream,
 } from '../../../bridge/live-message-registry.mjs';
 import { scanCodexRollout } from '../../../bridge/codex-session.mjs';
 import { storageSessionId } from '../../../bridge/session-identity.mjs';
@@ -90,6 +92,7 @@ function watcherHarness(homes, options = {}) {
     ...(options.scanRollout ? { scanRollout: options.scanRollout } : {}),
     ...(options.subscribeFn ? { subscribeFn: options.subscribeFn } : {}),
     ...(options.watchFileFn ? { watchFileFn: options.watchFileFn } : {}),
+    liveRouteGraceMs: options.liveRouteGraceMs ?? 0,
     ...(options.recentFileWatchLimit !== undefined
       ? { recentFileWatchLimit: options.recentFileWatchLimit }
       : {}),
@@ -242,6 +245,86 @@ test('Codex watcher persists live user and assistant rows without broadcasting t
     persisted.flatMap((batch) => batch.messages).map((message) => message.nativeId),
     [`codex:user:${clientId}`, `codex:item:${assistantId}`],
   );
+});
+
+test('Codex watcher forwards a registered stream id for a watcher-owned item', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[1]);
+  const assistantId = 'watcher-owned-assistant';
+  writeLines(filePath, [
+    json('session_meta', {
+      session_id: IDS[1],
+      cwd: home,
+      model_provider: 'test-provider',
+      originator: 'codex-exec',
+      cli_version: '0.147.0',
+    }),
+    json('event_msg', { type: 'task_started', turn_id: 'turn-stream' }, 1),
+    json('response_item', {
+      id: assistantId,
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'stream-owned' }],
+    }, 2),
+  ]);
+
+  const h = watcherHarness([home]);
+  t.after(() => {
+    h.watcher.stop();
+    clearLiveMessageRegistry();
+  });
+  registerLiveMessageStream('codex', `item:${assistantId}`, 'stream-watcher-owned');
+
+  await h.watcher.scanNow({ initial: true });
+
+  const delivered = h.delivered.find((batch) =>
+    batch.messages.some((message) => message.nativeId === `codex:item:${assistantId}`));
+  assert.equal(delivered?.identity.streamId, 'stream-watcher-owned');
+});
+
+test('Codex watcher lets the live item claim a racing rollout row', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[1]);
+  const assistantId = 'racing-live-assistant';
+  writeLines(filePath, [
+    json('session_meta', {
+      session_id: IDS[1],
+      cwd: home,
+      model_provider: 'test-provider',
+      originator: 'codex-exec',
+      cli_version: '0.147.0',
+    }),
+    json('event_msg', { type: 'task_started', turn_id: 'turn-race' }, 1),
+    json('response_item', {
+      id: assistantId,
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'claimed live' }],
+      internal_chat_message_metadata_passthrough: { turn_id: 'turn-race' },
+    }, 2),
+  ]);
+
+  const persisted = [];
+  const h = watcherHarness([home], {
+    liveRouteGraceMs: 50,
+    uploadFn: async (sessionId, messages, identity) => {
+      persisted.push({ sessionId, messages, identity });
+    },
+  });
+  t.after(() => {
+    h.watcher.stop();
+    clearLiveMessageRegistry();
+  });
+
+  setTimeout(() => {
+    markLiveMessagePushed('codex', `item:${assistantId}`, 'stream-race');
+  }, 10);
+  await h.watcher.scanNow({ initial: true });
+
+  assert.equal(h.delivered.some((batch) =>
+    batch.messages.some((message) => message.nativeId === `codex:item:${assistantId}`)), false);
+  assert.equal(persisted.some((batch) =>
+    batch.messages.some((message) => message.nativeId === `codex:item:${assistantId}`)), true);
 });
 
 test('Codex watcher skips rollout status scans for ordinary tool appends', async (t) => {
@@ -618,6 +701,16 @@ test('Realtime delivery uses WS ack, HTTP fallback, and a truncated oversized pr
   assert.deepEqual(sent[0].messages.map((item) => item.uuid), ['m1', 'm2']);
   assert.equal(uploaded.length, 0);
 
+  const streamed = [];
+  await deliverRealtimeMessages('codex:test', [message], {
+    streamId: 'stream-realtime',
+    wsSendWithAckFn: async (payload) => {
+      streamed.push(payload);
+      return true;
+    },
+  });
+  assert.equal(streamed[0].streamId, 'stream-realtime');
+
   await deliverRealtimeMessages('codex:test', [message, secondMessage], {
     wsSendWithAckFn: async () => false,
     wsSendFn: () => true,
@@ -652,4 +745,13 @@ test('Realtime delivery uses WS ack, HTTP fallback, and a truncated oversized pr
   assert.equal(oversizedSent[0].messages[0].truncated, true);
   assert.ok(Buffer.byteLength(JSON.stringify(oversizedSent[0])) < 1200);
   assert.equal(oversizedUploads[0][1][0].content[0].text.length, 5000);
+});
+
+test('live message registry keeps stream identity independent from delivery state', () => {
+  clearLiveMessageRegistry();
+  registerLiveMessageStream('codex', 'item:item-1', 'stream-1');
+  assert.equal(liveMessageStream('codex', 'item:item-1'), 'stream-1');
+  markLiveMessagePushed('codex', 'item:item-1');
+  assert.equal(liveMessageStream('codex', 'item:item-1'), 'stream-1');
+  clearLiveMessageRegistry();
 });

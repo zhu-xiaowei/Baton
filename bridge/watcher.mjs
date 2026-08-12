@@ -6,7 +6,7 @@ import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
-import { headlessPushed, poolOwns } from './ws.mjs';
+import { headlessPushed, headlessStream, poolOwns } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
@@ -125,7 +125,8 @@ async function readAndSend(config, filename, sessionId) {
     // DDB, don't re-push WS. user prompts + terminal/VSCode-driven rows aren't in the set → still push.
     if (headlessPushed(msg.uuid)) { await uploadMessages(sessionId, [msg]); continue; }
 
-    await deliverRealtimeMessages(sessionId, [msg]);
+    const streamId = headlessStream(msg.uuid);
+    await deliverRealtimeMessages(sessionId, [msg], streamId ? { streamId } : {});
   }
 
   synced.set(sessionId, lastParsedLine);

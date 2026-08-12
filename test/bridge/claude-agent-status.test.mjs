@@ -200,6 +200,43 @@ test('startup discovery does not resurrect needs_input after headless takeover',
   }
 });
 
+test('stopped polling settles an inactive historical agent without dropping its identity', () => {
+  const sessionId = '67676767-6767-4676-8676-676767676767';
+  const fixture = sessionFixture(sessionId, 'running');
+  try {
+    const result = claudeRuntime.inspectActiveSession({
+      sessionId,
+      nativeSessionId: sessionId,
+      deviceName: 'test-device',
+      projectHash: fixture.project,
+      preview: 'Historical agent',
+      lastActive: '2026-07-17T00:00:00.000Z',
+      status: 'running',
+    }, {
+      daemonMeta: new Map([[sessionId, {
+        isAgent: true,
+        agentName: 'Historical agent',
+        agentDetail: '',
+        status: 'completed',
+      }]]),
+      daemonRunning: new Set(),
+      poolOwns: () => false,
+      runningInfo: noProcesses(),
+      lastKnownStatus: new Map([[sessionId, 'running']]),
+      findSessionFile: () => fixture.filePath,
+    });
+
+    assert.equal(result.session.status, 'completed');
+    assert.equal(result.session.isAgent, true);
+    assert.equal(result.session.agentName, 'Historical agent');
+    assert.equal(result.session.agentDetail, '');
+    assert.equal(result.statusDelta.from, 'running');
+    assert.equal(result.statusDelta.to, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('pool status writes clear stale detail except for current needs_input', async () => {
   const sessionId = '77777777-7777-4777-8777-777777777777';
   const fixture = sessionFixture(sessionId);

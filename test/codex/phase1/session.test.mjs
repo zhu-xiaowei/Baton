@@ -13,6 +13,7 @@ import {
   parseApplyPatchInput,
   syncCodexMessages,
 } from '../../../bridge/codex-extract.mjs';
+import { codexLiveSource } from '../../../bridge/codex-live.mjs';
 
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const FIXTURE = path.join(
@@ -282,6 +283,10 @@ test('Codex extraction emits each completed web search once', () => {
       new Set(results.map((result) => result.tool_use_id)),
       new Set(uses.map((use) => use.id)),
     );
+    assert.deepEqual(
+      extracted.messages.map(codexLiveSource),
+      ['item:ws-1', 'item:ws-1', 'item:ws-fallback', 'item:ws-fallback'],
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -416,6 +421,8 @@ test('completed background commands replace the initial running result', () => {
     assert.equal(results[1].codexBackground, 'complete');
     assert.equal(results[1].codexCommandKind, 'ran');
     assert.equal(results[1].is_error, false);
+    assert.ok(extracted.messages.every((message) =>
+      codexLiveSource(message) === `item:${callId}`));
 
     const incremental = extractCodexMessages(target, SESSION_ID, { startLine: 2 });
     assert.equal(incremental.messages.length, 1);
@@ -777,7 +784,7 @@ test('Codex assistant text stays running until the explicit task_complete event'
       'end_turn',
     ]);
     assert.deepEqual(extracted.messages.slice(0, 2).map((message) => message.content), [
-      [{ type: 'thinking', thinking: 'Still working.' }],
+      [{ type: 'text', text: 'Still working.' }],
       [{ type: 'text', text: 'Finished.' }],
     ]);
     assert.deepEqual(extracted.messages.at(-1).content, []);

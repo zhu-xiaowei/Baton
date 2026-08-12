@@ -111,7 +111,7 @@
     return Math.floor(d / 86400000) + 'd ago';
   }
   function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
-  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;'); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function runtimeIcon(s) {
     var runtime = s.runtime === 'codex' || String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
     var label = runtime === 'codex' ? 'Codex' : 'Claude Code';

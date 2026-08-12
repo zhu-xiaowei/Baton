@@ -200,8 +200,9 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
   const result = action.type === 'open_page'
     ? `Opened ${action.url || query}`
     : `Searched the web for ${query}`;
+  const liveKey = codexItemLiveKey(searchId);
   return [
-    {
+    tagCodexLiveSource({
       uuid: stableId(sessionId, line, 'web_search_call', payload),
       type: 'assistant',
       content: [{
@@ -212,8 +213,8 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
       }],
       timestamp,
       stopReason: 'tool_use',
-    },
-    {
+    }, liveKey),
+    tagCodexLiveSource({
       uuid: stableId(sessionId, line, 'web_search_result', payload),
       type: 'user',
       content: [{
@@ -223,7 +224,7 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
         is_error: false,
       }],
       timestamp,
-    },
+    }, liveKey),
   ];
 }
 
@@ -524,14 +525,11 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       if (payload.role !== 'assistant') continue;
       const text = assistantText(payload);
       if (shouldEmit && text.trim()) {
-        const commentary = payload.phase === 'commentary';
         messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'assistant', payload),
           nativeId: codexItemNativeId(payload.id),
           type: 'assistant',
-          content: commentary
-            ? [{ type: 'thinking', thinking: text }]
-            : [{ type: 'text', text }],
+          content: [{ type: 'text', text }],
           timestamp,
         }, codexItemLiveKey(payload.id)));
       }
@@ -573,7 +571,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = (execPairs.get(callId) || [])[occurrence - 1];
       if (pair) pair.executionCompleted = true;
       if (shouldEmit && pair) {
-        messages.push({
+        messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'command_execution', {
             id: callId,
             status: item.status,
@@ -594,7 +592,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
             } : {}),
           })),
           timestamp,
-        });
+        }, codexItemLiveKey(callId)));
       }
       continue;
     }
@@ -609,7 +607,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = (mcpPairs.get(callId) || [])[occurrence - 1];
       if (pair) pair.mcpCompleted = true;
       if (shouldEmit && pair) {
-        messages.push({
+        messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'mcp_tool_call', {
             id: callId,
             server: item.server,
@@ -625,7 +623,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
             ...mcpToolMeta(item),
           })),
           timestamp,
-        });
+        }, codexItemLiveKey(callId)));
       }
       continue;
     }
@@ -697,13 +695,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         mcpPairs.set(callId, calls);
       }
       if (shouldEmit) {
-        messages.push({
+        messages.push(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'tool_call', payload),
           type: 'assistant',
           content: uses,
           timestamp,
           stopReason: 'tool_use',
-        });
+        }, codexItemLiveKey(callId)));
       }
       continue;
     }
@@ -756,7 +754,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         resultMeta = { codexSuperseded: true };
       }
       if (!shouldEmit) continue;
-      messages.push({
+      messages.push(tagCodexLiveSource({
         uuid: stableId(sessionId, line, 'tool_output', payload),
         type: 'user',
         content: pair.uses.map((use) => ({
@@ -767,7 +765,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           ...resultMeta,
         })),
         timestamp,
-      });
+      }, codexItemLiveKey(pair.callId)));
       continue;
     }
 
@@ -775,7 +773,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = dequeue(String(payload.call_id || ''));
       if (!pair || !shouldEmit) continue;
       const identity = pair.fallbackOutput || { line, payload, timestamp };
-      messages.push({
+      messages.push(tagCodexLiveSource({
         uuid: stableId(sessionId, identity.line, 'tool_output', identity.payload),
         type: 'user',
         content: pair.uses.map((use) => ({
@@ -785,7 +783,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           is_error: payload.success === false,
         })),
         timestamp: identity.timestamp,
-      });
+      }, codexItemLiveKey(pair.callId)));
       continue;
     }
 

@@ -12,6 +12,7 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     ...(options.runtime ? { runtime: options.runtime } : {}),
     ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
   };
+  const streamId = options.streamId || '';
   let batch = [];
 
   const flush = async () => {
@@ -22,18 +23,30 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
       action: 'messages',
       sessionId,
       messages: outgoing,
+      ...(streamId ? { streamId } : {}),
     });
     if (!acked) await upload(sessionId, outgoing, identity);
   };
 
   for (const raw of messages) {
     const message = truncateToBytes(raw, itemLimit);
-    const envelope = { action: 'messages', sessionId, messages: [message] };
+    const envelope = {
+      action: 'messages',
+      sessionId,
+      messages: [message],
+      ...(streamId ? { streamId } : {}),
+    };
     if (Buffer.byteLength(JSON.stringify(envelope)) > frameLimit) {
       await flush();
       const preview = truncateToBytes(message, frameLimit - 512);
       preview.truncated = true;
-      send({ action: 'messages', sessionId, messages: [preview], noCache: true });
+      send({
+        action: 'messages',
+        sessionId,
+        messages: [preview],
+        ...(streamId ? { streamId } : {}),
+        noCache: true,
+      });
       await upload(sessionId, [message], identity);
       continue;
     }
@@ -42,6 +55,7 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
       action: 'messages',
       sessionId,
       messages: [...batch, message],
+      ...(streamId ? { streamId } : {}),
     };
     if (batch.length && Buffer.byteLength(JSON.stringify(candidate)) > frameLimit) {
       await flush();

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
 import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
+import {
+  clearLiveMessageRegistry,
+  liveMessageStream,
+} from '../../../bridge/live-message-registry.mjs';
 
 class FakeClient extends EventEmitter {
   constructor() {
@@ -82,6 +86,7 @@ function notify(client, method, params) {
 }
 
 test('existing Codex session releases after completion and reuses CC stream frames', async () => {
+  clearLiveMessageRegistry();
   const client = new FakeClient();
   const interaction = new CodexInteraction({ client });
   const cb = callbacks();
@@ -123,6 +128,8 @@ test('existing Codex session releases after completion and reuses CC stream fram
       content: [{ type: 'text', text: 'hello' }],
     },
   });
+  assert.equal(liveMessageStream('codex', 'user:stream-1'), 'stream-1');
+  assert.equal(liveMessageStream('codex', 'turn:turn-1:user'), 'stream-1');
   notify(client, 'item/completed', {
     threadId: 'thread-1',
     turnId: 'turn-1',
@@ -321,7 +328,7 @@ test('current client user item corrects a stale turn/start response id', async (
   assert.equal(cb.results[0].finalSeq, 3);
 });
 
-test('Codex commentary streams through the existing thinking view', async () => {
+test('Codex commentary streams as visible progress text', async () => {
   const client = new FakeClient();
   const interaction = new CodexInteraction({ client });
   const cb = callbacks();
@@ -362,11 +369,11 @@ test('Codex commentary streams through the existing thinking view', async () => 
     },
   });
 
-  assert.equal(cb.frames[0].kind, 'thinking');
+  assert.equal(cb.frames[0].kind, 'text');
   assert.equal(cb.frames[1].t, 'delta');
   assert.deepEqual(cb.messages[0].message.content, [{
-    type: 'thinking',
-    thinking: 'checking the draft',
+    type: 'text',
+    text: 'checking the draft',
   }]);
 });
 

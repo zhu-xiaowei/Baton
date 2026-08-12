@@ -172,9 +172,19 @@ function handleWsMessage(msg) {
       }
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
-        if (!trackMessageUuid(m)) continue;
+        if (msg.streamId && m.nativeId) cancelDeferredUnscopedMessage(m.nativeId);
+        if (!msg.streamId && !msg._unscopedReady && deferUnscopedMessage(msg, m)) continue;
+        if (msg.streamId && m.type === 'user' && !isInterruptMsg(m)
+          && !_streamEndReceived[msg.streamId]) {
+          _activeStreamId = msg.streamId;
+          state.wsRunning = true;
+        }
+        if (!trackMessageUuid(m)) {
+          if (msg.streamId) claimScopedDuplicate(msg.streamId, m);
+          continue;
+        }
         if (msg.streamId) m._streamId = msg.streamId; // ties row to its send (placement/dedup by identity)
-        var holdStreamId = codexAuthoritativeStream(m, msg.streamId);
+        var holdStreamId = authoritativeStream(m, msg.streamId);
         if (holdStreamId) {
           m._streamId = holdStreamId;
           queueStreamAuthoritative(holdStreamId, m);
@@ -185,11 +195,16 @@ function handleWsMessage(msg) {
         if (m.timestamp) state.wsLastTimestamp = m.timestamp;
       }
       updateLastTurn();
+      if (Object.keys(_streamAuthoritative).length && _streamRaf == null) {
+        _streamRaf = requestAnimationFrame(tickStreams);
+      }
       showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
+      if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
+        && state.appState.session !== '__new__') return;
       // Match the ack to its exact bubble by clientId (round-tripped through the
       // bridge). Fall back to "first undelivered" only for acks from an older
       // bridge that doesn't echo clientId yet.
@@ -209,7 +224,17 @@ function handleWsMessage(msg) {
         }
       }
       // Bind this turn's streamId to the sending bubble → live preview places under it.
-      if (msg.ok && msg.streamId && msg.clientId) state.streamAnchors[msg.streamId] = msg.clientId;
+      if (msg.ok && msg.streamId && msg.clientId) {
+        state.streamAnchors[msg.streamId] = msg.clientId;
+        rememberLatestSend(msg.clientId, msg.streamId, false);
+        var anchoredPending = findPending(msg.clientId);
+        if (anchoredPending) anchoredPending.streamId = msg.streamId;
+        if (_interruptedClientIds[msg.clientId]) _interruptedStreams[msg.streamId] = true;
+      } else if (!msg.ok && msg.clientId) {
+        rememberLatestSend(msg.clientId, '', true);
+      }
+      state.wsRunning = hasOutstandingTurns();
+      updateSendBtn();
       // New session: bridge spawned CC (headless), returned sessionId
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
         state.appState.session = msg.sessionId;
@@ -306,21 +331,32 @@ function handleWsMessage(msg) {
     }
 }
 
-function subscribeSession(sessionId) {
-  if (state.wsSessionId && state.wsSessionId !== sessionId) {
-    wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
-    clearStreamPreviews();
-    _rb = {};
-    _ui = {};
-    _streamEnded = {}; // switching sessions: drop ended-turn guards from the old one
-    _streamEndMeta = {};
-    _streamAuthoritative = {};
-    for (var timerId in _streamEndTimers) clearTimeout(_streamEndTimers[timerId]);
-    _streamEndTimers = {};
-    state.streamAnchors = {}; // anchors are per-session (old bubbles are gone)
-    _lastStreamEndAt = 0;
-  }
+function resetStreamSessionState() {
+  clearStreamPreviews();
+  _rb = {};
+  _ui = {};
+  _streamEnded = {};
+  _streamEndMeta = {};
+  _streamAuthoritative = {};
+  _streamAuthBlocks = {};
+  _turnAuthBlocks = 0;
+  resetTurnLifecycle();
+  clearDeferredUnscopedMessages();
+  for (var timerId in _streamEndTimers) clearTimeout(_streamEndTimers[timerId]);
+  _streamEndTimers = {};
+  state.streamAnchors = {};
+  _lastStreamEndAt = 0;
+}
+
+function selectWsSession(sessionId) {
+  if (state.wsSessionId === sessionId) return;
+  if (state.wsSessionId) wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
+  resetStreamSessionState();
   state.wsSessionId = sessionId;
+}
+
+function subscribeSession(sessionId) {
+  selectWsSession(sessionId);
   wsSend({ action: 'subscribe', sessionId: sessionId });
   // Ask the bridge to re-push any control_request still awaiting an answer (refresh/reconnect re-shows the prompt).
   wsSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
@@ -352,11 +388,12 @@ function disconnectWs() {
     state.ws.onclose = null;
     state.ws.close();
     state.ws = null;
-    state.wsSessionId = null;
-    state.wsRunning = false;
-    updateSpinner();
-    setWsStatus('');
   }
+  state.wsSessionId = null;
+  state.wsRunning = false;
+  resetStreamSessionState();
+  updateSpinner();
+  setWsStatus('');
 }
 
 function ensureWsAndSend(data) {
@@ -442,6 +479,14 @@ var _streamEnded = {};
 var _streamEndMeta = {};
 var _streamEndTimers = {};
 var _streamAuthoritative = {};
+var _activeStreamId = '';
+var _latestClientId = '';
+var _latestClientOrder = null;
+var _latestStreamId = '';
+var _latestSendFailed = false;
+var _streamEndReceived = {};
+var _interruptedStreams = {};
+var _interruptedClientIds = {};
 var _lastThinkSecs = 0; // seconds the live preview measured for the latest thinking block
 var _streamRaf = null;
 var _streamLastTick = 0;
@@ -449,6 +494,7 @@ var _streamLastTick = 0;
 var _lastStreamEndAt = 0;
 // Cumulative authoritative assistant block count for the in-flight turn = its preview supersede watermark. Accumulates across batches; reset per turn.
 var _turnAuthBlocks = 0;
+var _streamAuthBlocks = {};
 
 function blockKey(streamId, blockId) { return streamId + ':' + (blockId == null ? 0 : blockId); }
 
@@ -461,6 +507,14 @@ function summarizeToolInput(input) {
   if (input.url) return String(input.url);                         // WebFetch
   if (input.prompt) return String(input.prompt).slice(0, 200);     // Task/agent
   try { return JSON.stringify(input).slice(0, 200); } catch (e) { return ''; }
+}
+
+function isLiveCodexExplore(name, input) {
+  if (state.appState.runtime !== 'codex' || name !== 'Bash') return false;
+  var actions = Array.isArray(input?.codexCommandActions) ? input.codexCommandActions : [];
+  return actions.length > 0 && actions.every(function (action) {
+    return ['read', 'list_files', 'search'].includes(action?.type);
+  });
 }
 
 // Decode \uXXXX / \n etc. from a (possibly incomplete) JSON fragment for readable streaming preview.
@@ -483,8 +537,13 @@ function uiState(sid, bid) {
 // ordered result. Ordering lives in ReorderBuffer; the UI only reads its output.
 function pushStreamFrame(streamId, frame) {
   if (!streamId || _streamEnded[streamId]) return; // ignore late frames after turn end
-  var rb = _rb[streamId] || (_rb[streamId] = new ReorderBuffer());
-  state.wsRunning = true;
+  var rb = _rb[streamId];
+  if (!rb) {
+    rb = _rb[streamId] = new ReorderBuffer();
+    if (_streamAuthBlocks[streamId]) rb.softReset(_streamAuthBlocks[streamId]);
+  }
+  if (!_streamEndReceived[streamId]) _activeStreamId = streamId;
+  state.wsRunning = hasOutstandingTurns();
   updateSendBtn();
   rb.push(frame);
   finishStreamIfReady(streamId);
@@ -495,7 +554,9 @@ function streamPreviewCaughtUp(streamId) {
   var rb = _rb[streamId];
   if (!rb) return !!_streamEnded[streamId];
   if (rb.hasGap()) return false;
-  var blocks = rb.orderedBlocks();
+  var blocks = rb.orderedBlocks().filter(function (block) {
+    return block.kind === 'tool_use' || !!block.committed;
+  });
   var hasRenderableBlock = false;
   for (var i = 0; i < blocks.length; i++) {
     var block = blocks[i];
@@ -508,18 +569,219 @@ function streamPreviewCaughtUp(streamId) {
   return hasRenderableBlock || !!_streamEnded[streamId];
 }
 
-function codexAuthoritativeStream(message, explicitStreamId) {
-  if (state.appState.runtime !== 'codex'
-    || message?.type !== 'assistant'
+function authoritativeMatches(streamId, message) {
+  var rb = _rb[streamId];
+  if (_streamEnded[streamId] && (!rb || !rb.orderedBlocks().length)) return true;
+  if (!rb || !Array.isArray(message?.content)) return false;
+  var expected = message.content.map(function (block) {
+    if (block.type === 'thinking') return { kind: 'thinking', name: '' };
+    if (block.type === 'tool_use') return { kind: 'tool_use', name: block.name || '' };
+    if (block.type === 'text') return { kind: 'text', name: '' };
+    return null;
+  }).filter(Boolean);
+  var blocks = rb.orderedBlocks().filter(function (block) {
+    return block.kind === 'tool_use' || !!block.committed;
+  });
+  if (!expected.length || blocks.length < expected.length) return false;
+  for (var i = 0; i < expected.length; i++) {
+    if (blocks[i].kind !== expected[i].kind) return false;
+    if (expected[i].kind === 'tool_use' && expected[i].name
+      && blocks[i].name && blocks[i].name !== expected[i].name) return false;
+  }
+  return true;
+}
+
+function authoritativeMatchScore(streamId, message) {
+  var rb = _rb[streamId];
+  if (!rb || !Array.isArray(message?.content)) return -1;
+  var expected = message.content.filter(function (block) {
+    return block.type === 'thinking' || block.type === 'tool_use' || block.type === 'text';
+  });
+  var blocks = rb.orderedBlocks().filter(function (block) {
+    return block.kind === 'tool_use' || !!block.committed;
+  });
+  if (!expected.length || blocks.length < expected.length) return -1;
+  var score = 0;
+  for (var i = 0; i < expected.length; i++) {
+    var want = expected[i];
+    var got = blocks[i];
+    var kind = want.type === 'tool_use' ? 'tool_use' : want.type;
+    if (got.kind !== kind) return -1;
+    if (kind === 'tool_use') {
+      if (want.name && got.name && want.name !== got.name) return -1;
+      score += 1;
+      var wantInput = want.input ? JSON.stringify(want.input) : '';
+      if (wantInput && got.inputJson) {
+        try {
+          if (JSON.stringify(JSON.parse(got.inputJson)) === wantInput) score += 3;
+        } catch (e) {}
+      }
+      continue;
+    }
+    var wantText = String(kind === 'thinking' ? (want.thinking || '') : (want.text || ''));
+    var gotText = String(got.committed || '');
+    if (!wantText || !gotText) return -1;
+    if (wantText === gotText) score += 4;
+    else if (wantText.indexOf(gotText) === 0 || gotText.indexOf(wantText) === 0) score += 2;
+    else return -1;
+  }
+  return score;
+}
+
+function authoritativeCoverCount(streamId, message) {
+  var rb = _rb[streamId];
+  if (!rb || !Array.isArray(message?.content)) return message?.content?.length || 0;
+  var expectedCount = message.content.filter(function (block) {
+    return block.type === 'thinking' || block.type === 'tool_use' || block.type === 'text';
+  }).length;
+  var blocks = rb.orderedBlocks().filter(function (block) {
+    return block.kind === 'tool_use' || !!block.committed;
+  });
+  if (!expectedCount || blocks.length < expectedCount) return message.content.length;
+  return blocks[expectedCount - 1].blockId + 1;
+}
+
+function previewStreamIds() {
+  return Object.keys(state.streamAnchors).filter(function (streamId) {
+    var rb = _rb[streamId];
+    return !!(rb && rb.orderedBlocks().some(function (block) {
+      return block.kind === 'tool_use' || !!block.committed;
+    }));
+  });
+}
+
+function unsettledStreamIds() {
+  return Object.keys(state.streamAnchors).filter(function (streamId) {
+    return !_streamEnded[streamId];
+  });
+}
+
+function clientSendOrder(clientId) {
+  var match = String(clientId || '').match(/^sent-(\d+)-(\d+)$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2])];
+}
+
+function isLaterSend(order, current) {
+  if (!current) return true;
+  return order[0] > current[0]
+    || (order[0] === current[0] && order[1] > current[1]);
+}
+
+function resetTurnLifecycle() {
+  _activeStreamId = '';
+  _latestClientId = '';
+  _latestClientOrder = null;
+  _latestStreamId = '';
+  _latestSendFailed = false;
+  _streamEndReceived = {};
+  _interruptedStreams = {};
+  _interruptedClientIds = {};
+}
+
+function rememberLatestSend(clientId, streamId, failed) {
+  var order = clientSendOrder(clientId);
+  if (!order) return;
+  if (clientId !== _latestClientId && !isLaterSend(order, _latestClientOrder)) return;
+  if (clientId !== _latestClientId) {
+    _latestClientId = clientId;
+    _latestClientOrder = order;
+    _latestStreamId = '';
+    _latestSendFailed = false;
+  }
+  if (streamId) _latestStreamId = streamId;
+  if (failed) _latestSendFailed = true;
+}
+
+function hasOutstandingTurns() {
+  if (_latestClientId && !_latestSendFailed
+    && !_interruptedClientIds[_latestClientId]) {
+    if (!_latestStreamId) return true;
+    if (!_streamEndReceived[_latestStreamId]
+      && !_interruptedStreams[_latestStreamId]) return true;
+  }
+  return !!(_activeStreamId
+    && !_streamEndReceived[_activeStreamId]
+    && !_interruptedStreams[_activeStreamId]);
+}
+
+function activeStreamForInterrupt() {
+  if (_activeStreamId && !_streamEnded[_activeStreamId]
+    && !_interruptedStreams[_activeStreamId]) return _activeStreamId;
+  var streams = unsettledStreamIds().filter(function (streamId) {
+    return !_interruptedStreams[streamId];
+  });
+  var container = document.querySelector('.messages');
+  if (!container || streams.length < 2) return streams[0] || '';
+  streams.sort(function (a, b) {
+    var aId = state.streamAnchors[a];
+    var bId = state.streamAnchors[b];
+    var aNode = aId && container.querySelector('[data-anchor="' + aId + '"]');
+    var bNode = bId && container.querySelector('[data-anchor="' + bId + '"]');
+    if (!aNode || !bNode || aNode === bNode) return 0;
+    return aNode.compareDocumentPosition(bNode) & window.Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  });
+  return streams[0] || '';
+}
+
+function unresolvedQuestionAnchors(container) {
+  var ids = {};
+  var streams = unsettledStreamIds();
+  for (var i = 0; i < streams.length; i++) {
+    var clientId = state.streamAnchors[streams[i]];
+    if (clientId) ids[clientId] = true;
+  }
+  var pending = container.querySelectorAll('.msg-user[data-pending][data-anchor]');
+  for (var j = 0; j < pending.length; j++) ids[pending[j].dataset.anchor] = true;
+  return Object.keys(ids).map(function (id) {
+    return container.querySelector('[data-anchor="' + id + '"]');
+  }).filter(Boolean);
+}
+
+function authoritativeStream(message, explicitStreamId) {
+  if (message?.type !== 'assistant'
     || !Array.isArray(message.content)
     || !message.content.length) return '';
   if (explicitStreamId) {
-    return streamPreviewCaughtUp(explicitStreamId) ? '' : explicitStreamId;
+    // Claude's authoritative stdout row has always landed immediately; its
+    // streamId is already exact, and per-stream cleanup prevents cross-turn
+    // damage. Codex may deliver the row ahead of its final ordered frames, so
+    // keep the existing Codex-only handoff wait.
+    if (state.appState.runtime !== 'codex' || !_rb[explicitStreamId]) {
+      message._streamCoverCount = message.content.length;
+      return '';
+    }
+    if (streamPreviewCaughtUp(explicitStreamId)
+      && authoritativeMatches(explicitStreamId, message)) {
+      message._streamCoverCount = authoritativeCoverCount(explicitStreamId, message);
+      return '';
+    }
+    return explicitStreamId;
   }
-  var ids = Object.keys(state.streamAnchors);
-  for (var i = ids.length - 1; i >= 0; i--) {
-    if (!streamPreviewCaughtUp(ids[i])) return ids[i];
+  var ids = previewStreamIds();
+  var bestId = '';
+  var bestScore = -1;
+  var tied = false;
+  for (var i = 0; i < ids.length; i++) {
+    var score = authoritativeMatchScore(ids[i], message);
+    if (score > bestScore) {
+      bestId = ids[i];
+      bestScore = score;
+      tied = false;
+    } else if (score >= 0 && score === bestScore) {
+      tied = true;
+    }
   }
+  if (bestScore >= 0 && !tied) return bestId;
+  // A single Codex turn can emit the next tool's watcher row before its stream
+  // block starts. Queue that row behind the sole unsettled turn. With multiple
+  // sends in flight, never guess: exact stream identity must win.
+  if (state.appState.runtime === 'codex'
+    && ids.length === 1
+    && unsettledStreamIds().length === 1) return ids[0];
+  // Watcher rows do not always carry streamId. An ambiguous or mismatched row
+  // must not supersede whichever preview happened to be active at arrival.
+  if (ids.length) message._skipPreviewSupersede = true;
   return '';
 }
 
@@ -531,15 +793,19 @@ function queueStreamAuthoritative(streamId, message) {
 
 function flushStreamAuthoritative(streamId) {
   var queued = _streamAuthoritative[streamId];
-  if (!queued?.length) return;
-  delete _streamAuthoritative[streamId];
-  for (var i = 0; i < queued.length; i++) {
-    var message = queued[i];
-    state.wsAllMessages.push(message);
-    state.wsMessageCount++;
-    if (message.timestamp) state.wsLastTimestamp = message.timestamp;
-  }
+  if (!queued?.length || !streamPreviewCaughtUp(streamId)) return false;
+  var match = queued.findIndex(function (message) {
+    return authoritativeMatches(streamId, message);
+  });
+  if (match === -1) return false;
+  var message = queued.splice(match, 1)[0];
+  if (!queued.length) delete _streamAuthoritative[streamId];
+  message._streamCoverCount = authoritativeCoverCount(streamId, message);
+  state.wsAllMessages.push(message);
+  state.wsMessageCount++;
+  if (message.timestamp) state.wsLastTimestamp = message.timestamp;
   updateLastTurn();
+  return true;
 }
 
 function insertOrdered(turn, el, bid) {
@@ -622,16 +888,20 @@ function tickStreams(now) {
         if (raw !== u.inHash) {
           u.inHash = raw;
           var label = b.name || 'Tool';
-          var desc = '', inRaw = '';
+          var desc = '', inRaw = '', parsed = null;
           if (raw) {
-            try { var parsed = JSON.parse(raw); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1500); }
+            try { parsed = JSON.parse(raw); desc = summarizeToolInput(parsed); inRaw = JSON.stringify(parsed, null, 2).slice(0, 1500); }
             catch (e) { desc = previewPartialInput(raw).slice(0, 80); inRaw = decodeJsonEscapes(raw).slice(0, 1500); } // partial — decode \uXXXX live
           }
+          var wasExplore = el.classList.contains('codex-explore');
+          var isExplore = isLiveCodexExplore(label, parsed);
+          el.classList.toggle('codex-explore', isExplore);
           el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
             + '<span class="tool-desc">' + esc(desc) + '</span>'
             + '<span class="tool-status">running</span></div>'
             // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
             + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
+          if (wasExplore !== isExplore) markTurnAdjacency(container);
           dirty = true;
         }
         if (!ended && (!b.stopped || gap)) active = true;
@@ -679,12 +949,8 @@ function tickStreams(now) {
       }
     }
   }
-  var readyAuthoritative = [];
   for (var streamId in _streamAuthoritative) {
-    if (streamPreviewCaughtUp(streamId)) readyAuthoritative.push(streamId);
-  }
-  for (var ri = 0; ri < readyAuthoritative.length; ri++) {
-    flushStreamAuthoritative(readyAuthoritative[ri]);
+    while (flushStreamAuthoritative(streamId)) {}
   }
   if (dirty && state.stickBottom && content) content.scrollTop = content.scrollHeight;
   if (!active) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
@@ -704,7 +970,8 @@ function finishStreamIfReady(streamId, force) {
     if (turn) turn.classList.add('stream-error');
   }
   _turnAuthBlocks = 0;
-  state.wsRunning = false;
+  if (_activeStreamId === streamId) _activeStreamId = '';
+  state.wsRunning = hasOutstandingTurns();
   updateSendBtn();
   return true;
 }
@@ -713,10 +980,12 @@ function handleStreamEnd(streamId, finalSeq, error) {
   if (!streamId) return;
   var rb = _rb[streamId] || (_rb[streamId] = new ReorderBuffer());
   rb.end(finalSeq); // a gap keeps the stream open until delayed frames arrive
+  _streamEndReceived[streamId] = true;
   _streamEndMeta[streamId] = { error: error };
   _lastStreamEndAt = Date.now();
+  if (_activeStreamId === streamId) _activeStreamId = '';
   if (!finishStreamIfReady(streamId)) {
-    state.wsRunning = true;
+    state.wsRunning = hasOutstandingTurns();
     updateSendBtn();
     if (!_streamEndTimers[streamId]) {
       _streamEndTimers[streamId] = setTimeout(function () {
@@ -730,20 +999,35 @@ function handleStreamEnd(streamId, finalSeq, error) {
   if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
 }
 
-function clearStreamPreviews(coverCount) {
-  if (_streamRaf != null) { cancelAnimationFrame(_streamRaf); _streamRaf = null; }
-  _ui = {};
+function clearStreamPreviews(coverCount, onlyStreamId) {
+  if (!onlyStreamId && _streamRaf != null) {
+    cancelAnimationFrame(_streamRaf);
+    _streamRaf = null;
+  }
+  if (onlyStreamId) {
+    for (var uiKey in _ui) {
+      if (uiKey.indexOf(onlyStreamId + ':') === 0) delete _ui[uiKey];
+    }
+  } else {
+    _ui = {};
+  }
   // A turn can flush an authoritative row mid-stream yet keep emitting later blocks under
   // the SAME streamId. Wiping the buffer would restart nextSeq at 0 and strand continuing
   // frames. So: fully drop ended streams; soft-reset live ones (supersede only covered blocks).
   var kept = {};
   for (var sid in _rb) {
+    if (onlyStreamId && sid !== onlyStreamId) {
+      kept[sid] = _rb[sid];
+      continue;
+    }
     if (_streamEnded[sid]) continue; // ended → discard
     _rb[sid].softReset(coverCount);
     kept[sid] = _rb[sid];
   }
   _rb = kept;
-  var previews = document.querySelectorAll('[id^="stream-turn-"]');
+  var previews = onlyStreamId
+    ? [document.getElementById('stream-turn-' + onlyStreamId)].filter(Boolean)
+    : document.querySelectorAll('[id^="stream-turn-"]');
   var container = null;
   for (var i = 0; i < previews.length; i++) {
     if (!container) container = previews[i].parentNode;
@@ -900,10 +1184,24 @@ function updateLastTurn() {
   }
 
   // Supersede preview blocks the authoritative rows cover. Headless splits one turn's thinking/text into separate rows (each len 1), so a per-batch count strands later blocks → a trailing tick revives them (duplicate); accumulate across batches instead. Reset on stream_end.
+  var touchedStreams = {};
   for (var ai = 0; ai < newMessages.length; ai++) {
-    if (newMessages[ai].type === 'assistant' && Array.isArray(newMessages[ai].content)) {
-      _turnAuthBlocks += newMessages[ai].content.length;
+    var authoritative = newMessages[ai];
+    if (authoritative.type === 'assistant'
+      && !authoritative._skipPreviewSupersede
+      && Array.isArray(authoritative.content)) {
+      if (authoritative._streamId) {
+        var authStreamId = authoritative._streamId;
+        _streamAuthBlocks[authStreamId] = (_streamAuthBlocks[authStreamId] || 0)
+          + (authoritative._streamCoverCount || authoritative.content.length);
+        touchedStreams[authStreamId] = true;
+      } else {
+        _turnAuthBlocks += authoritative.content.length;
+      }
     }
+  }
+  for (var touchedStreamId in touchedStreams) {
+    clearStreamPreviews(_streamAuthBlocks[touchedStreamId], touchedStreamId);
   }
   if (_turnAuthBlocks > 0) clearStreamPreviews(_turnAuthBlocks);
 
@@ -1037,15 +1335,24 @@ function updateLastTurn() {
       continue;
     }
 
-    // Fallback (external/historical rows, no streamId): insert before the first later-timestamped node, else append.
-    var allItems = container.querySelectorAll('[data-ts]');
-    var target = null;
-    for (var j = allItems.length - 1; j >= 0; j--) {
-      if (allItems[j].dataset.ts > msg.timestamp) target = allItems[j];
-      else break;
+    // Fallback for external/legacy watcher rows without streamId. Keep them
+    // timestamp-ordered when attribution is ambiguous. With exactly one pending
+    // question, preserving the historical answer-after-question placement is
+    // unambiguous even when an older Bridge omitted streamId.
+    var unresolvedAnchors = unresolvedQuestionAnchors(container);
+    if (unresolvedAnchors.length === 1) {
+      var afterUnresolved = unresolvedAnchors[0];
+      while (afterUnresolved.nextElementSibling
+        && afterUnresolved.nextElementSibling.classList.contains('assistant-turn')) {
+        afterUnresolved = afterUnresolved.nextElementSibling;
+      }
+      afterUnresolved.insertAdjacentHTML(
+        'afterend',
+        '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>',
+      );
+    } else {
+      insertAssistantItemAtTimestamp(container, html, msg.timestamp);
     }
-    if (target) target.insertAdjacentHTML('beforebegin', html);
-    else container.insertAdjacentHTML('beforeend', '<div class="assistant-turn" data-ts="' + (msg.timestamp || '') + '">' + html + '</div>');
   }
   markTurnAdjacency(container); // turns may have been added this batch
   // Pure metadata frames (ai-title/last-prompt) arrive at a new turn's start before
@@ -1061,7 +1368,9 @@ function updateLastTurn() {
   if (hasTurnFrame) state.wsOpenStatus = null;
   // A fresh stream_end means the turn is over; don't let stop=null trailing rows re-light the spinner.
   var streamEndFresh = _lastStreamEndAt && (Date.now() - _lastStreamEndAt < 4000);
-  if (!streamEndFresh && (derived || hasTurnFrame)) state.wsRunning = derived;
+  if (hasOutstandingTurns()) state.wsRunning = true;
+  else if (streamEndFresh) state.wsRunning = false;
+  else if (!streamEndFresh && (derived || hasTurnFrame)) state.wsRunning = derived;
   updateSendBtn();
 
   // Don't dismiss a prompt still awaiting the user's answer (prompts are bridge-driven).
@@ -1090,9 +1399,11 @@ function updateLastTurn() {
 }
 
 function startWs(sessionId) {
-  state.wsSessionId = sessionId;
   state._syncedOnce = null;
-  if (!state.ws) connectWs();
+  if (!state.ws) {
+    selectWsSession(sessionId);
+    connectWs();
+  }
   else subscribeSession(sessionId);
   // Prefetch slash commands. When ws already exists this sends now; on a fresh
   // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
@@ -1107,6 +1418,92 @@ function trackMessageUuid(message) {
     || (nativeKey && state.wsMessageUuids.has(nativeKey))) return false;
   if (uuidKey) state.wsMessageUuids.add(uuidKey);
   if (nativeKey) state.wsMessageUuids.add(nativeKey);
+  return true;
+}
+
+function claimScopedDuplicate(streamId, message) {
+  if (!streamId || message?.type !== 'assistant' || !Array.isArray(message.content)
+    || !message.content.length) return;
+
+  var existing = state.wsAllMessages.find(function (candidate) {
+    return (message.nativeId && candidate.nativeId === message.nativeId)
+      || (message.uuid && candidate.uuid === message.uuid);
+  });
+  if (!message.nativeId && existing?._streamId
+    && existing._streamId !== streamId) return;
+
+  // An unscoped watcher row may win the race and render before the exact live
+  // row arrives. The latter is a content duplicate, but its stream identity is
+  // still authoritative: claim the already-rendered row and prevent delayed
+  // frames from reviving a second preview.
+  var queuedMessage = null;
+  for (var queuedStreamId in _streamAuthoritative) {
+    var queued = _streamAuthoritative[queuedStreamId];
+    var queuedIndex = queued.findIndex(function (candidate) {
+      return (message.nativeId && candidate.nativeId === message.nativeId)
+        || (message.uuid && candidate.uuid === message.uuid);
+    });
+    if (queuedIndex === -1) continue;
+    queuedMessage = queued.splice(queuedIndex, 1)[0];
+    if (!queued.length) delete _streamAuthoritative[queuedStreamId];
+    break;
+  }
+  if (queuedMessage) {
+    queuedMessage._streamId = streamId;
+    queueStreamAuthoritative(streamId, queuedMessage);
+    if (_streamRaf == null) _streamRaf = requestAnimationFrame(tickStreams);
+    return;
+  }
+
+  var coverCount = authoritativeCoverCount(streamId, message);
+  _streamAuthBlocks[streamId] = Math.max(
+    _streamAuthBlocks[streamId] || 0,
+    coverCount || message.content.length,
+  );
+  clearStreamPreviews(_streamAuthBlocks[streamId], streamId);
+  state.wsRunning = hasOutstandingTurns();
+  updateSendBtn();
+}
+
+var _deferredUnscopedMessages = {};
+var UNSCOPED_MESSAGE_GRACE_MS = 75;
+
+function hasUnsettledSend() {
+  if (state.pendingSentMessages.length) return true;
+  return unsettledStreamIds().length > 0;
+}
+
+function cancelDeferredUnscopedMessage(nativeId) {
+  var key = nativeId ? 'native:' + nativeId : '';
+  var pending = key && _deferredUnscopedMessages[key];
+  if (!pending) return;
+  clearTimeout(pending);
+  delete _deferredUnscopedMessages[key];
+}
+
+function clearDeferredUnscopedMessages() {
+  for (var key in _deferredUnscopedMessages) {
+    clearTimeout(_deferredUnscopedMessages[key]);
+  }
+  _deferredUnscopedMessages = {};
+}
+
+function deferUnscopedMessage(envelope, message) {
+  if (!message?.nativeId || !hasUnsettledSend()) return false;
+  var key = 'native:' + message.nativeId;
+  if (_deferredUnscopedMessages[key]) return true;
+  var replay = {
+    action: 'messages',
+    sessionId: envelope.sessionId,
+    messages: [message],
+    _unscopedReady: true,
+  };
+  var timer = setTimeout(function () {
+    delete _deferredUnscopedMessages[key];
+    handleWsMessage(replay);
+  }, UNSCOPED_MESSAGE_GRACE_MS);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  _deferredUnscopedMessages[key] = timer;
   return true;
 }
 
@@ -1301,7 +1698,21 @@ function interruptSession() {
     return;
   }
   wsSendReliable({ action: 'interrupt', sessionId: state.wsSessionId, device: state.appState.device || '' });
-  state.wsRunning = false;
+  var activeStreamId = activeStreamForInterrupt();
+  if (activeStreamId) {
+    _interruptedStreams[activeStreamId] = true;
+    var activeClientId = state.streamAnchors[activeStreamId];
+    if (activeClientId) _interruptedClientIds[activeClientId] = true;
+  } else {
+    for (var i = 0; i < state.pendingSentMessages.length; i++) {
+      var pending = state.pendingSentMessages[i];
+      if (!pending.delivered && !_interruptedClientIds[pending.id]) {
+        _interruptedClientIds[pending.id] = true;
+        break;
+      }
+    }
+  }
+  state.wsRunning = hasOutstandingTurns();
   updateSendBtn();
 }
 (function () {
@@ -1344,13 +1755,14 @@ var _clientIdSeq = 0;
 function doSend(fullText, displayText, images) {
   state.wsRunning = true;
   _lastStreamEndAt = 0; // new turn starting — drop any stale stream_end freshness
-  updateSendBtn();
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result
   // so the ack maps back to THIS exact bubble (not "the first pending", which
   // mis-pairs when several sends are in flight). Doubles as the DOM element id.
   var seq = _clientIdSeq++;
   var msgId = 'sent-' + Date.now() + '-' + seq;
+  rememberLatestSend(msgId, '', false);
+  updateSendBtn();
   var sendPayload;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     var asAgent = !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
@@ -1514,59 +1926,60 @@ function confirmCodexTakeover() {
 function resolvePending(pending, ok, error) {
   pending.delivered = true;
   if (ok) {
-    bumpDeliveredSeq(pending.seq);
     markPendingTime(pending);
   } else {
     markPendingFailed(pending, error);
-    state.wsRunning = false;
+    state.wsRunning = hasOutstandingTurns();
     updateSendBtn();
   }
 }
 
-// Loose match: the echoed user message may differ from what we typed (CC can
-// rewrite slash commands), so accept containment rather than strict equality.
-// Compares against stripped text (no image refs).
+// Prefer the send's exact stream identity. Text is only a compatibility fallback
+// for old/external echoes without streamId; ordinary text must match exactly so
+// short values such as "1" cannot be retired by a later "31" echo.
 function messageEchoed(pending) {
   var needle = stripImageRefs((pending.text || '').trim());
   if (!needle) return false;
+  var streamId = pending.streamId || '';
+  if (!streamId) {
+    for (var sid in state.streamAnchors) {
+      if (state.streamAnchors[sid] === pending.id) {
+        streamId = sid;
+        break;
+      }
+    }
+  }
   // Scan only rows after this send (echoScanFrom); a historical same-text row isn't its echo.
   var from = pending.echoScanFrom || 0;
   for (var i = from; i < state.wsAllMessages.length; i++) {
     var m = state.wsAllMessages[i];
-    if (m.type !== 'user') continue;
+    if (m.type !== 'user' || isInterruptMsg(m)) continue;
+    if (streamId) {
+      if (m._streamId === streamId || m.nativeId === 'codex:user:' + streamId) return true;
+      continue;
+    }
     var hay = stripImageRefs(extractMsgText(m).trim());
-    if (hay && (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1)) return true;
+    if (hay === needle) return true;
   }
   return false;
 }
 
-// Raise the delivered-seq watermark when a send is confirmed reached CC (echo
-// matched, or ack ok). Persists across pending removal, so orphan detection works
-// even after the confirmed pending itself is gone.
-function bumpDeliveredSeq(seq) {
-  if (typeof seq === 'number' && seq > state.lastDeliveredSeq) state.lastDeliveredSeq = seq;
-}
-
-// Retire orphaned optimistic bubbles. Drop a pending when: echo present; OR a later
-// send was confirmed first (seq < watermark); OR turnEnded — CC came to rest yet it
-// never echoed, i.e. a running-time queued msg logged as queue-operation not a user
-// entry (docs/headless-streaming.md §12), covering the tail case seq can't. Images kept.
+// Retire an optimistic bubble only when its own echo arrives. A later send can
+// acknowledge first because API Gateway invokes send handlers concurrently, so
+// cross-send sequence watermarks cannot prove an earlier send was lost. Messages
+// without an echo are reconciled by their own SEND_TIMEOUT_MS timer.
 function reconcileEchoedPending(turnEnded) {
-  for (var j = 0; j < state.pendingSentMessages.length; j++) {
-    var p = state.pendingSentMessages[j];
-    if (!p.isImage && messageEchoed(p)) bumpDeliveredSeq(p.seq);
-  }
   for (var i = state.pendingSentMessages.length - 1; i >= 0; i--) {
     var pending = state.pendingSentMessages[i];
     if (pending.isImage) continue; // image bubbles carry no matchable text
     var echoed = messageEchoed(pending);
-    // Orphan = an unacked earlier send whose echo never comes (a later one confirmed first). Exclude delivered bubbles — those just have a lagging jsonl echo, clearing them makes them flash out.
-    var orphaned = !pending.delivered && pending.seq < state.lastDeliveredSeq;
     // 3s grace: a normal idle-send's echo can lag an unrelated idle frame — don't clean too early.
     var idleStale = turnEnded && !pending.delivered && (Date.now() - (pending.sentAt || 0) > 3000);
-    if (!echoed && !orphaned && !idleStale) continue;
-    // idleStale + no echo/orphan = synthetic slash cmd (/status, /usage…): reached CC, replied, but writes no user echo → no jsonl bubble to dedup. Settle in place (don't remove — that's the "question vanishes" bug).
-    if (idleStale && !echoed && !orphaned) {
+    if (!echoed && !idleStale) continue;
+    // A synthetic slash command (/status, /usage…) can complete without writing
+    // a user echo. Settle it in place; the per-message timeout remains the
+    // fallback for an actually lost send.
+    if (idleStale && !echoed) {
       resolvePending(pending, true, null);
       continue;
     }
@@ -1654,9 +2067,20 @@ function tryDedup(msg) {
     var clientId = state.streamAnchors[msg._streamId];
     var byId = clientId ? findPending(clientId) : null;
     if (byId) { promoteEchoedBubble(byId, msg); return true; }
+    var anchor = clientId
+      ? document.querySelector('[data-anchor="' + clientId + '"]')
+      : null;
+    // The rollout and live Codex user rows can use different native ids
+    // (turn id vs client id). Once either has promoted this exact stream's
+    // durable anchor, the other is only a duplicate echo.
+    if (anchor && !anchor.hasAttribute('data-pending')) return true;
+    // A scoped echo belongs to another tab or its ack mapping has not arrived
+    // yet. Never text-match it against a different pending send.
+    return false;
   }
 
-  // Fallback: no streamId (external echo) → loose text containment + slash-command rewrite match.
+  // Fallback: no streamId (external/old Bridge echo) → exact text or
+  // slash-command rewrite match.
   var text = extractMsgText(msg).trim();
   if (!text) return false;
   var stripped = stripImageRefs(text);
@@ -1666,9 +2090,8 @@ function tryDedup(msg) {
   for (var i = 0; i < state.pendingSentMessages.length; i++) {
     var pending = state.pendingSentMessages[i];
     var pendingText = pending.text.trim();
-    var isTextMatch = !!pendingText && (
-      pendingText === stripped || pendingText === text ||
-      stripped.indexOf(pendingText) !== -1 || pendingText.indexOf(stripped) !== -1);
+    var isTextMatch = !!pendingText
+      && (pendingText === stripped || pendingText === text);
     var isCmdMatch = cmdName && pendingText.charAt(0) === '/' &&
       (('/' + cmdName) === pendingText || cmdName.split(':').pop() === pendingText.slice(1));
     if (!isTextMatch && !isCmdMatch) continue;
@@ -1680,7 +2103,6 @@ function tryDedup(msg) {
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
-  bumpDeliveredSeq(pending.seq); // echo landed → confirms delivery
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
   var el = document.getElementById(pending.id);

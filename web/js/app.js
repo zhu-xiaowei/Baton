@@ -45,7 +45,8 @@ function formatSize(bytes) {
 }
 
 function esc(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ---- Batch-delete selection ----
@@ -985,11 +986,8 @@ async function startNewSession(projectHash, asAgent) {
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
-  state.wsSessionId = null;
-  state.wsRunning = false;
+  disconnectWs();
   state.pendingSentMessages = [];
-  state.lastDeliveredSeq = -1;
-  if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
   var bar = document.getElementById('input-bar');
   if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
@@ -1054,9 +1052,8 @@ async function loadMessages(sessionId, preview, status) {
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
-  // watermark so they can't match or orphan against this session's messages.
+  // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
-  state.lastDeliveredSeq = -1;
   startWs(sessionId);
 
   try {
@@ -1088,7 +1085,6 @@ async function loadMessages(sessionId, preview, status) {
 
     // Derive running from the tail. The list `status` is the bridge's
     // pane-checked verdict — authoritative for the ambiguous trailing-user case
-    // (a reverted prompt looks 'running' in the stream but the pane is idle).
     state.wsRunning = deriveRunning(state.wsAllMessages, status, state.appState.runtime);
     updateSendBtn();
 

@@ -15,7 +15,7 @@ function send(h, action, extra = {}) {
   });
 }
 
-test('captured Codex Thinking, Explore, and final sequence keeps stable rows', async () => {
+test('captured Codex commentary, Explore, and final sequence keeps stable rows', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: SESSION_ID });
   h.state.appState.runtime = 'codex';
@@ -51,7 +51,7 @@ test('captured Codex Thinking, Explore, and final sequence keeps stable rows', a
     t: 'delta', seq: 2, blockId: 0, chunk: 'thought',
   });
   h.hooks.pushStreamFrame(STREAM_ID, {
-    t: 'start', seq: 0, blockId: 0, kind: 'thinking',
+    t: 'start', seq: 0, blockId: 0, kind: 'text',
   });
   await h.tick(100);
 
@@ -60,7 +60,7 @@ test('captured Codex Thinking, Explore, and final sequence keeps stable rows', a
       uuid: 'live-commentary-1',
       nativeId: 'codex:item:commentary-1',
       type: 'assistant',
-      content: [{ type: 'thinking', thinking: 'first thought' }],
+      content: [{ type: 'text', text: 'first thought' }],
       timestamp: '2026-08-11T00:00:01.000Z',
     }],
   });
@@ -81,7 +81,7 @@ test('captured Codex Thinking, Explore, and final sequence keeps stable rows', a
     }],
   });
 
-  // The authoritative Thinking and tool rows can beat the stop/tool stream
+  // The authoritative commentary and tool rows can beat the stop/tool stream
   // frames through the independent Lambda relay paths.
   h.hooks.pushStreamFrame(STREAM_ID, {
     t: 'stop', seq: 3, blockId: 0,

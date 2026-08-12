@@ -16,7 +16,10 @@ import {
 import { codexLiveSource } from './codex-live.mjs';
 import { countJsonlLines, synced, uploadMessages } from './extract.mjs';
 import { postRequired } from './http.mjs';
-import { liveMessagePushed } from './live-message-registry.mjs';
+import {
+  liveMessagePushed,
+  liveMessageStream,
+} from './live-message-registry.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { storageSessionId } from './session-identity.mjs';
@@ -104,6 +107,7 @@ export class CodexWatcher {
     this.retryMs = options.retryMs || 1000;
     this.watchRetryMs = options.watchRetryMs || 2000;
     this.statusRecheckMs = options.statusRecheckMs || CODEX_STATUS_RECHECK_MS;
+    this.liveRouteGraceMs = options.liveRouteGraceMs ?? 50;
     this.fileStats = new Map();
     this.sessionPaths = new Map();
     this.busy = new Map();
@@ -124,6 +128,22 @@ export class CodexWatcher {
     this.timers = [];
     this.stopped = false;
     this.readyPromise = Promise.resolve();
+  }
+
+  async resolveLiveRoute(liveKey) {
+    let pushed = liveMessagePushed('codex', liveKey);
+    let streamId = liveMessageStream('codex', liveKey);
+    if (!liveKey || pushed || streamId || this.liveRouteGraceMs <= 0) {
+      return { pushed, streamId };
+    }
+    const deadline = Date.now() + this.liveRouteGraceMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      pushed = liveMessagePushed('codex', liveKey);
+      streamId = liveMessageStream('codex', liveKey);
+      if (pushed || streamId) break;
+    }
+    return { pushed, streamId };
   }
 
   start() {
@@ -507,9 +527,24 @@ export class CodexWatcher {
       uploader: async (id, messages, identity) => {
         const persistedOnly = [];
         const realtime = [];
-        for (const message of messages) {
-          if (liveMessagePushed('codex', codexLiveSource(message))) persistedOnly.push(message);
-          else realtime.push(message);
+        const routed = await Promise.all(messages.map(async (message) => ({
+          message,
+          route: await this.resolveLiveRoute(codexLiveSource(message)),
+        })));
+        for (const { message, route } of routed) {
+          if (route.pushed) {
+            persistedOnly.push(message);
+            continue;
+          }
+          const streamId = route.streamId;
+          if (streamId) {
+            if (realtime.length) {
+              await this.deliverFn(id, realtime.splice(0), identity);
+            }
+            await this.deliverFn(id, [message], { ...identity, streamId });
+          } else {
+            realtime.push(message);
+          }
         }
         if (persistedOnly.length) await this.uploadFn(id, persistedOnly, identity);
         if (realtime.length) await this.deliverFn(id, realtime, identity);

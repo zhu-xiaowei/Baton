@@ -8,6 +8,7 @@ import {
 import {
   findSessionFile,
   getDaemonSessions,
+  getDaemonRunningSessionIds,
   getRunningInfo,
   getSessionMetadata,
   getSessionStatus,
@@ -201,16 +202,19 @@ export const claudeRuntime = defineRuntimeAdapter({
     return {
       runningInfo: getRunningInfo(),
       daemonMeta: getDaemonSessions(),
+      daemonRunning: getDaemonRunningSessionIds(),
       poolOwns: context.poolOwns || (() => false),
       lastKnownStatus: context.lastKnownStatus,
+      findSessionFile: context.findSessionFile || findSessionFile,
     };
   },
 
   inspectActiveSession(active, context) {
     const nativeSessionId = active.nativeSessionId || active.sessionId;
-    const filePath = findSessionFile(nativeSessionId);
+    const filePath = (context.findSessionFile || findSessionFile)(nativeSessionId);
     const gone = !filePath || !fs.existsSync(filePath);
-    if (!gone && (context.daemonMeta.has(nativeSessionId) || context.poolOwns(nativeSessionId))) {
+    const daemon = context.daemonMeta.get(nativeSessionId);
+    if (!gone && ((context.daemonRunning || new Set()).has(nativeSessionId) || context.poolOwns(nativeSessionId))) {
       return null;
     }
     const newStatus = gone
@@ -224,19 +228,25 @@ export const claudeRuntime = defineRuntimeAdapter({
     const metadata = gone ? null : getSessionMetadata(filePath);
     const lastActive = gone ? active.lastActive : stat.mtime.toISOString();
     context.lastKnownStatus.set(nativeSessionId, newStatus);
+    const session = {
+      id: nativeSessionId,
+      nativeSessionId,
+      runtime: 'claude',
+      project: projectHash,
+      projectName,
+      lastActive,
+      size: stat?.size || 0,
+      preview: metadata?.preview || active.preview || '',
+      model: metadata?.model || '',
+      status: newStatus,
+    };
+    if (daemon) {
+      session.isAgent = true;
+      session.agentName = daemon.agentName;
+      session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
+    }
     return {
-      session: {
-        id: nativeSessionId,
-        nativeSessionId,
-        runtime: 'claude',
-        project: projectHash,
-        projectName,
-        lastActive,
-        size: stat?.size || 0,
-        preview: metadata?.preview || active.preview || '',
-        model: metadata?.model || '',
-        status: newStatus,
-      },
+      session,
       statusDelta: {
         deviceName: active.deviceName,
         projectHash,

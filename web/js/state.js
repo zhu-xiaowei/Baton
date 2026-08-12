@@ -40,7 +40,6 @@ export const state = {
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],
   streamAnchors: {},          // streamId → clientId (from send_message_result); places a reply's live preview under its own question bubble
-  lastDeliveredSeq: -1,       // highest send-seq confirmed delivered; earlier still-pending = CC-skipped orphan
 
   // ---- Image staging (image.js) ----
   stagedImages: [],

@@ -68,6 +68,28 @@ test.afterEach(() => {
   window.updateSpinner();
 });
 
+test('Claude and Codex share the same collapsing spinner row', () => {
+  for (const runtime of ['claude', 'codex']) {
+    reset();
+    state.appState.runtime = runtime;
+    state.wsRunning = true;
+    window.updateSpinner();
+
+    const visible = document.getElementById('cc-spinner');
+    assert.equal(visible?.parentElement?.id, 'content');
+    assert.equal(visible?.style.display, 'flex');
+    assert.equal(visible?.classList.contains('is-collapsed'), false);
+
+    state.wsRunning = false;
+    window.updateSpinner();
+
+    const hidden = document.getElementById('cc-spinner');
+    assert.equal(hidden, visible);
+    assert.equal(hidden?.style.display, 'flex');
+    assert.equal(hidden?.classList.contains('is-collapsed'), true);
+  }
+});
+
 function reset() {
   document.querySelector('.messages').innerHTML = '';
   state.appState = {
@@ -514,18 +536,23 @@ test('Codex WS keeps running through text updates and stops on task_complete', (
   send([commentary]);
   assert.equal(state.wsRunning, true);
   assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+  assert.equal(document.getElementById('cc-spinner')?.classList.contains('is-collapsed'), false);
 
   send([finalText]);
   assert.equal(state.wsRunning, true);
   assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+  assert.equal(document.getElementById('cc-spinner')?.classList.contains('is-collapsed'), false);
 
   send([failedTool]);
   assert.equal(state.wsRunning, true);
   assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+  assert.equal(document.getElementById('cc-spinner')?.classList.contains('is-collapsed'), false);
 
   send([taskComplete]);
   assert.equal(state.wsRunning, false);
-  assert.equal(document.getElementById('cc-spinner')?.style.display, 'none');
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+  assert.equal(document.getElementById('cc-spinner')?.classList.contains('is-collapsed'), true);
+  assert.equal(document.getElementById('cc-spinner')?.getAttribute('aria-hidden'), 'true');
   assert.equal(document.querySelectorAll('.assistant-text').length, 2);
 
   const history = [commentary, finalText, failedTool, taskComplete];

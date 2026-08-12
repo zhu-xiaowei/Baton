@@ -17,7 +17,9 @@ function deferred() {
 function session(id) {
   return {
     sessionId: `s${id}`,
-    preview: `Session ${id}`,
+    preview: id === TWO_PAGES
+      ? '{"action":"send_message","text":"quoted title"}'
+      : `Session ${id}`,
     lastActive: new Date(Date.UTC(2026, 7, 10, 0, 0, id)).toISOString(),
     size: id,
     model: 'test-model',
@@ -170,6 +172,10 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     await window.loadSessions('D', 'P', 'Project');
     assert.equal(content.querySelectorAll('.item[data-id]').length, LIST_PAGE_SIZE);
     assert.deepEqual(calls[0].params, { device: 'D', project: 'P', limit: LIST_PAGE_SIZE });
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES}"]`).dataset.preview,
+      '{"action":"send_message","text":"quoted title"}',
+    );
 
     content.scrollTop = 1700;
     content.dispatchEvent(new window.Event('scroll'));

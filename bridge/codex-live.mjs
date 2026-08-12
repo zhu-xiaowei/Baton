@@ -80,16 +80,13 @@ export function codexCompletedLiveMessages(
   if (item.type === 'agentMessage') {
     const text = item.text || fallbackText;
     if (!text) return [];
-    const commentary = item.phase === 'commentary';
     return [{
       liveKey: codexItemLiveKey(item.id),
       message: {
-        uuid: `${commentary ? 'codex_live_commentary' : 'codex_live_agent'}_${item.id}`,
+        uuid: `codex_live_agent_${item.id}`,
         nativeId: codexItemNativeId(item.id),
         type: 'assistant',
-        content: commentary
-          ? [{ type: 'thinking', thinking: text }]
-          : [{ type: 'text', text }],
+        content: [{ type: 'text', text }],
         timestamp: at,
       },
     }];
@@ -149,7 +146,7 @@ function diffSides(diff) {
 export function codexPreviewBlocks(item) {
   if (!item?.id) return [];
   if (item.type === 'agentMessage') {
-    return [{ kind: item.phase === 'commentary' ? 'thinking' : 'text' }];
+    return [{ kind: 'text' }];
   }
   if (item.type === 'reasoning') return [{ kind: 'thinking' }];
   if (item.type === 'plan') return [{ kind: 'text' }];
