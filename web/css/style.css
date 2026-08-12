@@ -272,6 +272,8 @@ body {
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body { display: none; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
+.codex-explore-group-start.tool-details-collapsed { padding-bottom: 1px; }
+.codex-explore-continuation.tool-details-collapsed { padding-top: 1px; padding-bottom: 1px; }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tool-header.expandable-desc.expanded-desc { align-items: flex-start; }

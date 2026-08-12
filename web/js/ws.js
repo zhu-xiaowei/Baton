@@ -517,6 +517,32 @@ function isLiveCodexExplore(name, input) {
   });
 }
 
+function inheritLiveCodexToolMetadata(streamId, message) {
+  if (state.appState.runtime !== 'codex' || !streamId
+    || !Array.isArray(message?.content)) return;
+  var rb = _rb[streamId];
+  if (!rb) return;
+  var previews = rb.orderedBlocks().filter(function (block) {
+    return block.kind === 'tool_use' || !!block.committed;
+  });
+  var previewIndex = 0;
+  for (var i = 0; i < message.content.length; i++) {
+    var block = message.content[i];
+    if (!['thinking', 'tool_use', 'text'].includes(block.type)) continue;
+    var preview = previews[previewIndex++];
+    if (block.type !== 'tool_use' || block.name !== 'Bash'
+      || !preview || preview.kind !== 'tool_use' || !preview.inputJson) continue;
+    var input = block.input || (block.input = {});
+    if (input.codexCommandKind) continue;
+    try {
+      var liveInput = JSON.parse(preview.inputJson);
+      if (!isLiveCodexExplore(preview.name || block.name, liveInput)) continue;
+      input.codexCommandKind = 'explore';
+      input.codexCommandActions = liveInput.codexCommandActions;
+    } catch (e) {}
+  }
+}
+
 // Decode \uXXXX / \n etc. from a (possibly incomplete) JSON fragment for readable streaming preview.
 function decodeJsonEscapes(s) {
   return String(s).replace(/\\u([0-9a-fA-F]{4})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
@@ -753,6 +779,7 @@ function authoritativeStream(message, explicitStreamId) {
     }
     if (streamPreviewCaughtUp(explicitStreamId)
       && authoritativeMatches(explicitStreamId, message)) {
+      inheritLiveCodexToolMetadata(explicitStreamId, message);
       message._streamCoverCount = authoritativeCoverCount(explicitStreamId, message);
       return '';
     }
@@ -800,6 +827,7 @@ function flushStreamAuthoritative(streamId) {
   if (match === -1) return false;
   var message = queued.splice(match, 1)[0];
   if (!queued.length) delete _streamAuthoritative[streamId];
+  inheritLiveCodexToolMetadata(streamId, message);
   message._streamCoverCount = authoritativeCoverCount(streamId, message);
   state.wsAllMessages.push(message);
   state.wsMessageCount++;

@@ -337,6 +337,8 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.codex-explore-group-start::after \{[\s\S]*bottom: calc\(100% - 16px\) !important;/);
   assert.match(css, /\.codex-explore-group-start\.codex-explore-group-connected::after \{[\s\S]*bottom: -2px !important;/);
   assert.match(css, /\.codex-explore-continuation\.codex-explore-group-connected::after \{[\s\S]*display: block !important;/);
+  assert.match(css, /\.codex-explore-group-start\.tool-details-collapsed \{ padding-bottom: 1px; \}/);
+  assert.match(css, /\.codex-explore-continuation\.tool-details-collapsed \{ padding-top: 1px; padding-bottom: 1px; \}/);
 });
 
 test('tool detail policy collapses Codex history while realtime and Claude stay expanded', () => {
