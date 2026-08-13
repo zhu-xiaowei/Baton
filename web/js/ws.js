@@ -658,12 +658,17 @@ function authoritativeMatchScore(streamId, message) {
   return score;
 }
 
+function authoritativeBlockCount(message) {
+  if (!Array.isArray(message?.content)) return 0;
+  return message.content.filter(function (block) {
+    return block.type === 'thinking' || block.type === 'tool_use' || block.type === 'text';
+  }).length;
+}
+
 function authoritativeCoverCount(streamId, message) {
   var rb = _rb[streamId];
   if (!rb || !Array.isArray(message?.content)) return message?.content?.length || 0;
-  var expectedCount = message.content.filter(function (block) {
-    return block.type === 'thinking' || block.type === 'tool_use' || block.type === 'text';
-  }).length;
+  var expectedCount = authoritativeBlockCount(message);
   var blocks = rb.orderedBlocks().filter(function (block) {
     return block.kind === 'tool_use' || !!block.committed;
   });
@@ -778,13 +783,15 @@ function authoritativeStream(message, explicitStreamId) {
     // damage. Codex may deliver the row ahead of its final ordered frames, so
     // keep the existing Codex-only handoff wait.
     if (state.appState.runtime !== 'codex' || !_rb[explicitStreamId]) {
-      message._streamCoverCount = message.content.length;
+      message._streamCoverCount = authoritativeBlockCount(message);
+      message._streamCoverAbsolute = false;
       return '';
     }
     if (streamPreviewCaughtUp(explicitStreamId)
       && authoritativeMatches(explicitStreamId, message)) {
       inheritLiveCodexToolMetadata(explicitStreamId, message);
       message._streamCoverCount = authoritativeCoverCount(explicitStreamId, message);
+      message._streamCoverAbsolute = true;
       return '';
     }
     return explicitStreamId;
@@ -807,9 +814,13 @@ function authoritativeStream(message, explicitStreamId) {
   // A single Codex turn can emit the next tool's watcher row before its stream
   // block starts. Queue that row behind the sole unsettled turn. With multiple
   // sends in flight, never guess: exact stream identity must win.
-  if (state.appState.runtime === 'codex'
-    && ids.length === 1
-    && unsettledStreamIds().length === 1) return ids[0];
+  var unsettledIds = unsettledStreamIds();
+  if (state.appState.runtime === 'codex' && unsettledIds.length === 1) {
+    if (ids.length === 1) return ids[0];
+    if (ids.length === 0 && message.content.some(function (block) {
+      return block.type === 'tool_use';
+    })) return unsettledIds[0];
+  }
   // Watcher rows do not always carry streamId. An ambiguous or mismatched row
   // must not supersede whichever preview happened to be active at arrival.
   if (ids.length) message._skipPreviewSupersede = true;
@@ -833,6 +844,7 @@ function flushStreamAuthoritative(streamId) {
   if (!queued.length) delete _streamAuthoritative[streamId];
   inheritLiveCodexToolMetadata(streamId, message);
   message._streamCoverCount = authoritativeCoverCount(streamId, message);
+  message._streamCoverAbsolute = true;
   state.wsAllMessages.push(message);
   state.wsMessageCount++;
   if (message.timestamp) state.wsLastTimestamp = message.timestamp;
@@ -927,8 +939,11 @@ function tickStreams(now) {
           }
           var wasExplore = el.classList.contains('codex-explore');
           var isExplore = isLiveCodexExplore(label, parsed);
+          var displayLabel = state.appState.runtime === 'codex' && label === 'Bash'
+            ? (isExplore ? 'Explored' : 'Ran')
+            : label;
           el.classList.toggle('codex-explore', isExplore);
-          el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(label) + '</span>'
+          el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(displayLabel) + '</span>'
             + '<span class="tool-desc">' + esc(desc) + '</span>'
             + '<span class="tool-status">running</span></div>'
             // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
@@ -1224,8 +1239,11 @@ function updateLastTurn() {
       && Array.isArray(authoritative.content)) {
       if (authoritative._streamId) {
         var authStreamId = authoritative._streamId;
-        _streamAuthBlocks[authStreamId] = (_streamAuthBlocks[authStreamId] || 0)
-          + (authoritative._streamCoverCount || authoritative.content.length);
+        var previousCover = _streamAuthBlocks[authStreamId] || 0;
+        var nextCover = authoritative._streamCoverCount || authoritative.content.length;
+        _streamAuthBlocks[authStreamId] = authoritative._streamCoverAbsolute
+          ? Math.max(previousCover, nextCover)
+          : previousCover + nextCover;
         touchedStreams[authStreamId] = true;
       } else {
         _turnAuthBlocks += authoritative.content.length;
