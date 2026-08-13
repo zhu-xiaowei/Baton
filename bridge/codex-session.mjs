@@ -96,7 +96,7 @@ export function scanCodexRollout(filePath, options = {}) {
   let metadataCount = 0;
   let onlyMetadata = null;
   let matchingMetadata = null;
-  const openTurns = new Set();
+  let activeTurnId = '';
   let eventPreview = '';
   let responsePreview = '';
   let model = '';
@@ -129,9 +129,12 @@ export function scanCodexRollout(filePath, options = {}) {
       if (!eventPreview && payload.type === 'user_message') {
         eventPreview = previewText(payload.message);
       }
-      if (payload.type === 'task_started' && payload.turn_id) openTurns.add(payload.turn_id);
-      if ((payload.type === 'task_complete' || payload.type === 'turn_aborted') && payload.turn_id) {
-        openTurns.delete(payload.turn_id);
+      if (payload.type === 'task_started' && payload.turn_id) {
+        activeTurnId = payload.turn_id;
+      }
+      if ((payload.type === 'task_complete' || payload.type === 'turn_aborted')
+        && payload.turn_id === activeTurnId) {
+        activeTurnId = '';
       }
     });
   } catch (error) {
@@ -153,7 +156,7 @@ export function scanCodexRollout(filePath, options = {}) {
   const now = options.now ?? Date.now();
   const staleMs = options.staleMs ?? CODEX_STATUS_STALE_MS;
   const isFresh = now - stat.mtimeMs <= staleMs;
-  const isRunning = openTurns.size > 0 && (
+  const isRunning = !!activeTurnId && (
     isFresh
     || runningInfo.sessions.has(nativeSessionId)
     || runningInfo.projects.has(project)

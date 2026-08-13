@@ -173,6 +173,58 @@ test('fresh open turn is running while stale orphan is completed', () => {
   }
 });
 
+test('a later completed turn supersedes an older unterminated desktop turn', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [
+      {
+        type: 'session_meta',
+        payload: {
+          id: SESSION_ID,
+          cwd: '/tmp/agentpeek-codex-target',
+          originator: 'Codex Desktop',
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Start the CloudLab environment' },
+      },
+      {
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'orphaned-turn' },
+      },
+      {
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'latest-turn' },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'task_complete',
+          turn_id: 'latest-turn',
+          last_agent_message: 'Environment ready',
+        },
+      },
+    ].map((entry, index) => ({
+      ...entry,
+      timestamp: `2026-08-13T09:35:0${index}.000Z`,
+    }));
+    fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+
+    const scanned = scanCodexRollout(target, {
+      now: Date.parse('2026-08-13T15:35:00.000Z'),
+      runningInfo: {
+        projects: new Set(['-tmp-agentpeek-codex-target']),
+        sessions: new Set(),
+      },
+    });
+
+    assert.equal(scanned.session.status, 'completed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('recursive discovery returns one catalog row and tolerates a half-written tail', () => {
   const { root } = tempRollout();
   try {
