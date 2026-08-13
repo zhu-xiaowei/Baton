@@ -22,6 +22,322 @@ function turnStatusError(turn) {
   return ['failed', 'interrupted'].includes(status) ? status : undefined;
 }
 
+function commandApprovalDecisions(params) {
+  if (Array.isArray(params.availableDecisions) && params.availableDecisions.length) {
+    return params.availableDecisions;
+  }
+
+  const decisions = ['accept'];
+  if (params.networkApprovalContext) {
+    decisions.push('acceptForSession');
+    const amendment = (params.proposedNetworkPolicyAmendments || [])
+      .find((candidate) => candidate?.action === 'allow');
+    if (amendment) {
+      decisions.push({
+        applyNetworkPolicyAmendment: {
+          network_policy_amendment: amendment,
+        },
+      });
+    }
+  } else if (!params.additionalPermissions
+    && Array.isArray(params.proposedExecpolicyAmendment)
+    && params.proposedExecpolicyAmendment.length) {
+    decisions.push({
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: params.proposedExecpolicyAmendment,
+      },
+    });
+  }
+  decisions.push('cancel');
+  return decisions;
+}
+
+function approvalDecisionKey(decision) {
+  try {
+    return JSON.stringify(decision, (_key, value) => (
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(
+          Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),
+        )
+        : value
+    ));
+  } catch {
+    return '';
+  }
+}
+
+function normalizeApprovalDecision(pending, decision) {
+  const legacy = decision === 'allow'
+    ? 'accept'
+    : (decision === 'deny' ? 'decline' : decision);
+  const allowed = pending.approvalDecisions || [];
+  const key = approvalDecisionKey(legacy);
+  if (key && allowed.some((candidate) => approvalDecisionKey(candidate) === key)) {
+    return legacy;
+  }
+  if (allowed.includes('cancel')) return 'cancel';
+  if (allowed.includes('decline')) return 'decline';
+  return 'cancel';
+}
+
+function cloneJson(value, fallback = null) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function grantedPermissions(permissions) {
+  const granted = {};
+  if (permissions?.network != null) {
+    granted.network = cloneJson(permissions.network, {});
+  }
+  if (permissions?.fileSystem != null) {
+    granted.fileSystem = cloneJson(permissions.fileSystem, {});
+  }
+  return granted;
+}
+
+function permissionApprovalResponse(pending, response) {
+  const action = response?.action;
+  const grants = [
+    'grantForTurn',
+    'grantForTurnWithStrictAutoReview',
+    'grantForSession',
+  ];
+  if (!grants.includes(action)) return { permissions: {}, scope: 'turn' };
+  return {
+    permissions: grantedPermissions(pending.params.permissions),
+    scope: action === 'grantForSession' ? 'session' : 'turn',
+    ...(action === 'grantForTurnWithStrictAutoReview'
+      ? { strictAutoReview: true }
+      : {}),
+  };
+}
+
+function mcpMeta(params) {
+  return params?._meta ?? params?.meta ?? null;
+}
+
+function mcpPersistModes(meta) {
+  const value = meta && typeof meta === 'object' ? meta.persist : null;
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter((mode) => mode === 'session' || mode === 'always');
+}
+
+function isMcpToolApproval(meta) {
+  return meta?.codex_approval_kind === 'mcp_tool_call';
+}
+
+function mcpApprovalDisplayParams(meta) {
+  if (!meta || typeof meta !== 'object') return [];
+  if (Array.isArray(meta.tool_params_display)) {
+    const display = meta.tool_params_display
+      .filter((entry) => (
+        entry && typeof entry === 'object' && typeof entry.name === 'string'
+      ))
+      .slice(0, 3)
+      .map((entry) => ({
+        name: entry.name,
+        displayName: typeof entry.display_name === 'string'
+          ? entry.display_name
+          : entry.name,
+        value: cloneJson(entry.value),
+      }));
+    if (display.length) return display;
+  }
+  if (meta.tool_params && typeof meta.tool_params === 'object'
+    && !Array.isArray(meta.tool_params)) {
+    return Object.entries(meta.tool_params)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .slice(0, 3)
+      .map(([name, value]) => ({
+        name,
+        displayName: name,
+        value: cloneJson(value),
+      }));
+  }
+  return [];
+}
+
+function mcpFormFields(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)
+    || schema.type !== 'object' || !schema.properties
+    || typeof schema.properties !== 'object' || Array.isArray(schema.properties)) {
+    return null;
+  }
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const fields = [];
+  for (const [id, property] of Object.entries(schema.properties)) {
+    if (!property || typeof property !== 'object' || Array.isArray(property)) return null;
+    const label = property.title || id;
+    const prompt = property.description || label;
+    if (property.type === 'boolean') {
+      fields.push({
+        id,
+        label,
+        prompt,
+        required: required.has(id),
+        input: {
+          type: 'select',
+          options: [
+            { label: 'True', value: true },
+            { label: 'False', value: false },
+          ],
+          defaultIndex: typeof property.default === 'boolean'
+            ? (property.default ? 0 : 1)
+            : null,
+        },
+      });
+      continue;
+    }
+
+    const legacyEnum = property.type === 'string' && Array.isArray(property.enum)
+      ? property.enum
+      : null;
+    const oneOf = property.type === 'string' && Array.isArray(property.oneOf)
+      ? property.oneOf
+      : null;
+    if (legacyEnum && legacyEnum.every((value) => typeof value === 'string')) {
+      const names = Array.isArray(property.enumNames) ? property.enumNames : [];
+      const defaultIndex = legacyEnum.indexOf(property.default);
+      fields.push({
+        id,
+        label,
+        prompt,
+        required: required.has(id),
+        input: {
+          type: 'select',
+          options: legacyEnum.map((value, index) => ({
+            label: typeof names[index] === 'string' ? names[index] : value,
+            value,
+          })),
+          defaultIndex: defaultIndex >= 0 ? defaultIndex : null,
+        },
+      });
+      continue;
+    }
+    if (oneOf && oneOf.length && oneOf.every((entry) => (
+      entry && typeof entry.const === 'string' && typeof entry.title === 'string'
+    ))) {
+      const defaultIndex = oneOf.findIndex((entry) => entry.const === property.default);
+      fields.push({
+        id,
+        label,
+        prompt,
+        required: required.has(id),
+        input: {
+          type: 'select',
+          options: oneOf.map((entry) => ({
+            label: entry.title,
+            value: entry.const,
+          })),
+          defaultIndex: defaultIndex >= 0 ? defaultIndex : null,
+        },
+      });
+      continue;
+    }
+    if (property.type === 'string') {
+      fields.push({
+        id,
+        label,
+        prompt,
+        required: required.has(id),
+        input: { type: 'text' },
+      });
+      continue;
+    }
+    return null;
+  }
+  return fields;
+}
+
+function mcpElicitationDetails(params) {
+  const meta = mcpMeta(params);
+  const schema = params.requestedSchema ?? null;
+  const fields = mcpFormFields(schema);
+  const emptySchema = schema == null
+    || (fields && fields.length === 0);
+  let responseMode = 'fallback';
+  if (params.mode === 'form' && emptySchema) responseMode = 'approval';
+  else if (params.mode === 'form' && fields?.length) responseMode = 'form';
+  return {
+    serverName: params.serverName || 'MCP server',
+    mode: params.mode || 'form',
+    message: params.message || '',
+    responseMode,
+    isToolApproval: isMcpToolApproval(meta),
+    persistModes: mcpPersistModes(meta),
+    displayParams: mcpApprovalDisplayParams(meta),
+    fields: responseMode === 'form' ? fields : [],
+  };
+}
+
+function validMcpFormContent(schema, value) {
+  const fields = mcpFormFields(schema);
+  if (!fields?.length || !value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const allowed = new Map(fields.map((field) => [field.id, field]));
+  if (Object.keys(value).some((key) => !allowed.has(key))) return null;
+  const content = [];
+  for (const field of fields) {
+    if (!Object.hasOwn(value, field.id)) {
+      if (field.required) return null;
+      continue;
+    }
+    const answer = value[field.id];
+    if (field.input.type === 'text') {
+      if (typeof answer !== 'string' || (field.required && !answer)) return null;
+    } else if (!field.input.options.some((option) => (
+      approvalDecisionKey(option.value) === approvalDecisionKey(answer)
+    ))) {
+      return null;
+    }
+    content.push([field.id, answer]);
+  }
+  return Object.fromEntries(content);
+}
+
+function mcpElicitationResponse(pending, response) {
+  const params = pending.params || {};
+  const details = mcpElicitationDetails(params);
+  const action = response?.action;
+  if (details.responseMode === 'form' && action === 'acceptForm') {
+    const content = validMcpFormContent(
+      params.requestedSchema,
+      response.content,
+    );
+    if (content) return { action: 'accept', content, _meta: null };
+  }
+  if (details.responseMode === 'approval') {
+    if (action === 'accept') return { action: 'accept', content: null, _meta: null };
+    if (action === 'acceptForSession' && details.persistModes.includes('session')) {
+      return {
+        action: 'accept',
+        content: null,
+        _meta: { persist: 'session' },
+      };
+    }
+    if (action === 'acceptAlways' && details.persistModes.includes('always')) {
+      return {
+        action: 'accept',
+        content: null,
+        _meta: { persist: 'always' },
+      };
+    }
+    if (action === 'decline' && !details.isToolApproval) {
+      return { action: 'decline', content: null, _meta: null };
+    }
+  }
+  if (details.responseMode === 'fallback') {
+    if (action === 'accept') return { action: 'accept', content: null, _meta: null };
+    if (action === 'decline') return { action: 'decline', content: null, _meta: null };
+  }
+  return { action: 'cancel', content: null, _meta: null };
+}
+
 export class CodexInteraction {
   constructor(options = {}) {
     this.runtime = 'codex';
@@ -101,13 +417,37 @@ export class CodexInteraction {
     const client = this.#client(session);
     await client.start();
     if (session.subscribedGeneration === client.generation) return;
+    const pendingTurn = options.pendingTurn || null;
+    let adopted = pendingTurn
+      ? this.#prepareTurn(session, {
+        streamId: `codex-resumed-${session.nativeSessionId}-${client.generation}`,
+        text: '',
+        callbacks: pendingTurn.callbacks,
+        external: true,
+      })
+      : null;
+    if (adopted) {
+      session.active = adopted;
+      session.queue.push(pendingTurn);
+    }
+    const clearAdoption = () => {
+      if (!adopted) return;
+      const current = adopted;
+      adopted = null;
+      const queuedIndex = session.queue.indexOf(pendingTurn);
+      if (queuedIndex !== -1) session.queue.splice(queuedIndex, 1);
+      if (session.active === current) session.active = null;
+      current.framer.cancel();
+    };
+    const resumeThread = () => client.request('thread/resume', {
+      threadId: session.nativeSessionId,
+      excludeTurns: true,
+    });
     let result;
     try {
-      result = await client.request('thread/resume', {
-        threadId: session.nativeSessionId,
-        excludeTurns: true,
-      });
+      result = await resumeThread();
     } catch (cause) {
+      clearAdoption();
       const error = this.#activeWriterError(session, cause);
       if (error.code !== 'CODEX_ACTIVE_WRITER') throw error;
       const writer = error.writer || {};
@@ -124,10 +464,7 @@ export class CodexInteraction {
       const deadline = Date.now() + 3000;
       while (true) {
         try {
-          result = await client.request('thread/resume', {
-            threadId: session.nativeSessionId,
-            excludeTurns: true,
-          });
+          result = await resumeThread();
           break;
         } catch (retryCause) {
           if (!isCodexActiveWriterError(retryCause) || Date.now() >= deadline) {
@@ -138,9 +475,19 @@ export class CodexInteraction {
       }
     }
     if (result?.thread?.id !== session.nativeSessionId) {
+      clearAdoption();
       throw new Error('Codex resumed an unexpected thread');
     }
     session.subscribedGeneration = client.generation;
+    if (!adopted) return { active: false };
+    if (session.active !== adopted) {
+      return { active: true };
+    }
+    if (result?.thread?.status?.type === 'active') {
+      return { active: true };
+    }
+    clearAdoption();
+    return { active: false };
   }
 
   async #release(session) {
@@ -171,7 +518,11 @@ export class CodexInteraction {
     };
     const operation = session.sendLock.then(async () => {
       try {
-        await this.#resume(session, options);
+        const resumed = await this.#resume(session, {
+          ...options,
+          pendingTurn: turn,
+        });
+        if (resumed?.active) return { queued: true };
       } catch (error) {
         await this.#release(session);
         throw error;
@@ -228,17 +579,7 @@ export class CodexInteraction {
 
   async #startTurn(session, turn) {
     session.active = turn;
-    turn.session = session;
-    turn.turnId = null;
-    turn.userTurnConfirmed = false;
-    turn.nextBlockId = 0;
-    turn.items = new Map();
-    turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
-    registerLiveMessageStream(
-      'codex',
-      codexUserLiveKey(turn.streamId),
-      turn.streamId,
-    );
+    this.#prepareTurn(session, turn);
 
     try {
       const result = await session.client.request('turn/start', {
@@ -254,6 +595,23 @@ export class CodexInteraction {
       this.#drainOrRelease(session);
       throw error;
     }
+  }
+
+  #prepareTurn(session, turn) {
+    turn.session = session;
+    turn.turnId = null;
+    turn.userTurnConfirmed = false;
+    turn.nextBlockId = 0;
+    turn.items = new Map();
+    turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
+    if (!turn.external) {
+      registerLiveMessageStream(
+        'codex',
+        codexUserLiveKey(turn.streamId),
+        turn.streamId,
+      );
+    }
+    return turn;
   }
 
   #failTurn(turn, error) {
@@ -561,29 +919,83 @@ export class CodexInteraction {
     let toolName = 'Tool';
     let input = params;
     let requiresInteraction = false;
+    let approvalDecisions = null;
+    let approvalType = null;
     if (request.method === 'item/commandExecution/requestApproval') {
       toolName = 'Bash';
+      approvalType = 'codex-command';
+      approvalDecisions = commandApprovalDecisions(params);
       input = {
         command: params.command || '',
         cwd: params.cwd || '',
+        reason: params.reason || '',
         codexCommandActions: params.commandActions || [],
+        codexApproval: {
+          availableDecisions: approvalDecisions,
+          networkApprovalContext: params.networkApprovalContext || null,
+          additionalPermissions: params.additionalPermissions || null,
+          proposedExecpolicyAmendment: params.proposedExecpolicyAmendment || null,
+          proposedNetworkPolicyAmendments: params.proposedNetworkPolicyAmendments || null,
+        },
       };
     } else if (request.method === 'item/fileChange/requestApproval') {
       toolName = 'Edit';
-      input = { path: params.grantRoot || '', reason: params.reason || '' };
+      approvalType = 'codex-file-change';
+      approvalDecisions = ['accept', 'acceptForSession', 'cancel'];
+      input = {
+        path: params.grantRoot || '',
+        reason: params.reason || '',
+        codexApproval: {
+          availableDecisions: approvalDecisions,
+        },
+      };
+    } else if (request.method === 'item/permissions/requestApproval') {
+      toolName = 'Permissions';
+      approvalType = 'codex-permissions';
+      input = {
+        cwd: params.cwd || '',
+        reason: params.reason || '',
+        codexPermissions: {
+          permissions: cloneJson(params.permissions, {}),
+        },
+      };
+    } else if (request.method === 'mcpServer/elicitation/request') {
+      if (params.mode !== 'form'
+        || mcpMeta(params)?.codex_approval_kind === 'tool_suggestion') {
+        client.respond(request.id, {
+          action: 'decline',
+          content: null,
+          _meta: null,
+        });
+        return;
+      }
+      toolName = params.serverName || 'MCP server';
+      approvalType = 'codex-mcp-elicitation';
+      input = {
+        codexMcpElicitation: mcpElicitationDetails(params),
+      };
     } else if (request.method === 'item/tool/requestUserInput') {
       toolName = 'AskUserQuestion';
       input = { questions: params.questions || [] };
       requiresInteraction = true;
+    } else {
+      client.respondError(request.id, -32601, 'Unsupported Codex server request');
+      return;
     }
     const requestId = `codex:${session.nativeSessionId}:${request.id}`;
-    this.pendingRequests.set(requestId, { ...request, turn, client });
+    this.pendingRequests.set(requestId, {
+      ...request,
+      turn,
+      client,
+      approvalDecisions,
+    });
     turn.callbacks.onControlRequest?.({
       request_id: requestId,
       request: {
         tool_name: toolName,
         input,
         requires_user_interaction: requiresInteraction,
+        approval_type: approvalType,
       },
     });
   }
@@ -601,9 +1013,19 @@ export class CodexInteraction {
         ]),
       );
       pending.client.respond(pending.id, { answers });
+    } else if (pending.method === 'item/permissions/requestApproval') {
+      pending.client.respond(
+        pending.id,
+        permissionApprovalResponse(pending, reply.approvalResponse),
+      );
+    } else if (pending.method === 'mcpServer/elicitation/request') {
+      pending.client.respond(
+        pending.id,
+        mcpElicitationResponse(pending, reply.approvalResponse),
+      );
     } else {
       pending.client.respond(pending.id, {
-        decision: reply.decision === 'allow' ? 'accept' : 'decline',
+        decision: normalizeApprovalDecision(pending, reply.decision),
       });
     }
     return true;

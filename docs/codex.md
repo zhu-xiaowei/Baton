@@ -24,10 +24,20 @@ Device → Project → Session 信息架构。
 - 已有 Codex Session 使用 app-server `thread/resume` + `turn/start` 发送消息。
 - 新建 Codex Session 使用同一个 cwd-scoped app-server client 连续执行 `thread/start`
   和首个 `turn/start`。
+- 检测到 Codex managed daemon 时，Bridge 通过其 Unix WebSocket socket 复用同一
+  app-server；没有 daemon 或连接失败时才回退到独立 `app-server --stdio`。
+- 复用 daemon 后，已加载的 active turn 会被接管为当前流并重放 pending approval；
+  新发送的消息排队到该 turn 完成后启动，后续 delta 仍走完整 streaming 链路。
 - app-server delta 复用 Claude 的首包立即发送、50ms 合批、turn 级 `seq`、前端重排和追赶渲染。
 - app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
-- interrupt 和基础 command/file/user-input 审批已接入现有 WS 控制协议。
-- 每个活跃 thread 使用临时 app-server lease；turn 和权限队列结束后立即退出并释放 writer。
+- interrupt 和 command/file/permissions/MCP elicitation/user-input 已接入现有 WS
+  控制协议。command 审批按 App Server 的 `availableDecisions` 原序透传；permissions
+  只回传语义动作并由 Bridge 从原请求构造授权；MCP 支持普通审批、session/always
+  持久授权和 TUI 支持的 string/boolean/enum 表单。
+- MCP 不支持的 form schema 与 TUI 一样降级为三项普通审批；AgentPeek 未实现 AppLink
+  安装/认证 UI，因此 `openai/form`、URL 和 tool suggestion 会安全 `decline`。
+- 每个活跃 thread 使用临时 app-server client lease；managed daemon 模式只关闭该连接，
+  stdio fallback 才退出独立进程并释放 writer。
 - 外部独立 Codex TUI 持有 writer 且仍有未结束回合时，Web 显式确认后可安全终止该
   holder、retry resume 并发送；TUI 仅空闲持锁时自动终止并 resume，取消不会终止正在
   运行的进程或发送消息。
@@ -35,7 +45,7 @@ Device → Project → Session 信息架构。
 
 当前未完成：
 
-- 完整审批变体、刷新后的 pending request 恢复和 `turn/steer`。
+- 跨 Bridge 进程重启恢复 pending request 和 `turn/steer`。
 - app-server 工具输出是否切换为 live 权威；当前最终工具卡继续复用 Phase 2 watcher。
 
 因此，Codex Session 已支持创建、历史读取、实时旁观和 Web 交互。New Session 页面按
@@ -48,7 +58,7 @@ Device → Project → Session 信息架构。
 |---|---|---|---|
 | Phase 1 | 已完成 | 初始化发现、metadata、历史消息、按需回填、统一 UI、跨平台安装升级 | 本地/DDB/REST/UI 数量一致；重启和重复打开无新增重复；Claude 行为无回归 |
 | Phase 2 | 已完成 | Codex watcher、增量读取、状态更新、实时旁观 | macOS/Linux/Windows 的新增行不漏不重；断连、重启、半行写入和 watermark 恢复通过 |
-| Phase 3 | 进行中 | app-server、创建、发送、streaming、interrupt、权限 | Session 创建与交互主链路、临时 writer lease 和显式 TUI 接管已完成；完整权限待完成 |
+| Phase 3 | 进行中 | app-server、创建、发送、streaming、interrupt、权限 | 主链路、完整审批类型、daemon 复用和显式 TUI 接管已完成；跨 Bridge 重启自动恢复仍待完成 |
 | Phase 4 | 待开始 | 性能、诊断、灰度、回滚和体验完善 | 大 Session、弱网、升级失败和多设备场景均有可执行验收与回滚流程 |
 
 ### 2.1 实施规则
@@ -88,8 +98,8 @@ Phase 3 的已有 Session 交互链路：
 | 文件 | 职责 |
 |---|---|
 | `bridge/interaction-adapter.mjs` | 定义和校验 runtime interaction 接口 |
-| `bridge/codex-app-server.mjs` | app-server stdio JSON-RPC、握手、请求配对和反向请求 |
-| `bridge/codex-interaction.mjs` | 临时 writer lease、resume、turn、item、interrupt、审批和 Session 内排队 |
+| `bridge/codex-app-server.mjs` | managed Unix WebSocket/stdio app-server transport、握手、请求配对和反向请求 |
+| `bridge/codex-interaction.mjs` | daemon 复用、临时 writer lease、active-turn 接管、resume、turn、item、interrupt、审批和 Session 内排队 |
 | `bridge/codex-writer.mjs` | active-writer 识别、独立 TUI holder 校验和确认后的安全终止 |
 | `bridge/stream-framer.mjs` | Claude/Codex 共用首包立即发送、50ms 合批和 turn 级 `seq` |
 | `bridge/codex-live.mjs` | app-server item 到统一 preview/完整消息的映射 |
@@ -548,14 +558,18 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 
 已完成：
 
-1. app-server stdio JSON-RPC client、initialize 握手、请求配对、notification 和 ServerRequest。
-2. 已有 Session 的 `thread/resume`、`turn/start`、同 Session 排队、interrupt 和基础审批。
+1. app-server managed Unix WebSocket + stdio fallback client、initialize 握手、请求配对、
+   notification 和 ServerRequest。
+2. 已有 Session 的 `thread/resume`、`turn/start`、同 Session 排队、interrupt 和完整审批类型。
 3. Codex delta 复用 Claude 的 `StreamFramer`、统一 WS 事件和现有前端 streaming 渲染。
 4. app-server 完整 user/assistant 行与 rollout watcher 的 live 优先、文件兜底语义。
-5. 每个活跃 thread 的临时 app-server lease；turn 和权限队列完成后立即释放 writer。
+5. 每个活跃 thread 的临时 app-server client lease；managed daemon 关闭连接，stdio
+   fallback 退出独立进程并释放 writer。
 6. 外部独立 Codex TUI 的结构化冲突、运行中 Web 确认、空闲自动终止、retry resume
    和取消路径。
 7. Codex 新 Session 的 capability/UI 入口、`thread/start` 和首个 `turn/start`。
+8. managed daemon 复用、active turn/审批恢复和新消息排队；无 daemon 时保留独立
+   stdio app-server lease。
 
 待完成：
 

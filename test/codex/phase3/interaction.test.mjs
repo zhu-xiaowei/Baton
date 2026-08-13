@@ -593,7 +593,7 @@ test('Codex command items use the shared tool preview contract', async () => {
   });
 });
 
-test('Codex approval requests map to the existing permission callback', async () => {
+test('Codex approval requests preserve native ordered decisions', async () => {
   const client = new FakeClient();
   const interaction = new CodexInteraction({ client });
   const cb = callbacks();
@@ -612,19 +612,127 @@ test('Codex approval requests map to the existing permission callback', async ()
       threadId: 'thread-3',
       turnId: 'turn-1',
       itemId: 'command-1',
-      command: 'rm file',
+      command: 'git add README.md',
       cwd: '/tmp',
+      proposedExecpolicyAmendment: ['git', 'add'],
+      availableDecisions: [
+        'accept',
+        {
+          acceptWithExecpolicyAmendment: {
+            execpolicy_amendment: ['git', 'add'],
+          },
+        },
+        'cancel',
+      ],
     },
   });
 
   assert.equal(cb.controls[0].request.tool_name, 'Bash');
-  assert.equal(cb.controls[0].request.input.command, 'rm file');
+  assert.equal(cb.controls[0].request.approval_type, 'codex-command');
+  assert.equal(cb.controls[0].request.input.command, 'git add README.md');
+  assert.deepEqual(
+    cb.controls[0].request.input.codexApproval.availableDecisions,
+    [
+      'accept',
+      {
+        acceptWithExecpolicyAmendment: {
+          execpolicy_amendment: ['git', 'add'],
+        },
+      },
+      'cancel',
+    ],
+  );
   const requestId = cb.controls[0].request_id;
-  assert.equal(interaction.replyControl('thread-3', requestId, { decision: 'deny' }), true);
+  assert.equal(interaction.replyControl('thread-3', requestId, {
+    decision: {
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: ['git', 'add'],
+      },
+    },
+  }), true);
   assert.deepEqual(client.responses[0], {
     id: 42,
-    result: { decision: 'decline' },
+    result: {
+      decision: {
+        acceptWithExecpolicyAmendment: {
+          execpolicy_amendment: ['git', 'add'],
+        },
+      },
+    },
   });
+});
+
+test('Codex approval rejects decisions not offered by the server', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-invalid-approval',
+    nativeSessionId: 'thread-invalid-approval',
+    streamId: 'stream-invalid-approval',
+    text: 'run command',
+    callbacks: cb.value,
+  });
+
+  client.emit('serverRequest', {
+    id: 142,
+    method: 'item/commandExecution/requestApproval',
+    params: {
+      threadId: 'thread-invalid-approval',
+      turnId: 'turn-1',
+      itemId: 'command-1',
+      command: 'git add README.md',
+      availableDecisions: ['accept', 'cancel'],
+    },
+  });
+
+  assert.equal(interaction.replyControl(
+    'thread-invalid-approval',
+    cb.controls[0].request_id,
+    { decision: 'acceptForSession' },
+  ), true);
+  assert.deepEqual(client.responses[0], {
+    id: 142,
+    result: { decision: 'cancel' },
+  });
+});
+
+test('Codex command approval derives persistence choices for older app servers', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-derived-approval',
+    nativeSessionId: 'thread-derived-approval',
+    streamId: 'stream-derived-approval',
+    text: 'stage file',
+    callbacks: cb.value,
+  });
+
+  client.emit('serverRequest', {
+    id: 143,
+    method: 'item/commandExecution/requestApproval',
+    params: {
+      threadId: 'thread-derived-approval',
+      turnId: 'turn-1',
+      itemId: 'command-1',
+      command: 'git add README.md',
+      proposedExecpolicyAmendment: ['git', 'add'],
+    },
+  });
+
+  assert.deepEqual(
+    cb.controls[0].request.input.codexApproval.availableDecisions,
+    [
+      'accept',
+      {
+        acceptWithExecpolicyAmendment: {
+          execpolicy_amendment: ['git', 'add'],
+        },
+      },
+      'cancel',
+    ],
+  );
 });
 
 test('Codex file and user-input requests reuse the existing permission replies', async () => {
@@ -652,6 +760,7 @@ test('Codex file and user-input requests reuse the existing permission replies',
   });
   const fileRequest = cb.controls.at(-1);
   assert.equal(fileRequest.request.tool_name, 'Edit');
+  assert.equal(fileRequest.request.approval_type, 'codex-file-change');
   assert.equal(interaction.replyControl(
     'thread-4',
     fileRequest.request_id,
@@ -687,6 +796,396 @@ test('Codex file and user-input requests reuse the existing permission replies',
       },
     },
   ]);
+});
+
+test('Codex permission approvals construct grants from the original request', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-permissions',
+    nativeSessionId: 'thread-permissions',
+    streamId: 'stream-permissions',
+    text: 'request permissions',
+    callbacks: cb.value,
+  });
+
+  const permissions = {
+    network: { enabled: true },
+    fileSystem: {
+      read: ['/tmp/input'],
+      write: ['/tmp/output'],
+      entries: [
+        { path: { path: '/tmp/cache' }, access: 'write' },
+      ],
+    },
+  };
+  const actions = [
+    ['grantForTurn', {
+      permissions,
+      scope: 'turn',
+    }],
+    ['grantForTurnWithStrictAutoReview', {
+      permissions,
+      scope: 'turn',
+      strictAutoReview: true,
+    }],
+    ['grantForSession', {
+      permissions,
+      scope: 'session',
+    }],
+    ['unexpected-browser-value', {
+      permissions: {},
+      scope: 'turn',
+    }],
+  ];
+
+  for (const [index, [action, expected]] of actions.entries()) {
+    client.emit('serverRequest', {
+      id: 200 + index,
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'thread-permissions',
+        turnId: 'turn-1',
+        itemId: `permissions-${index}`,
+        cwd: '/tmp/project',
+        reason: 'Needs access',
+        permissions,
+      },
+    });
+    const control = cb.controls.at(-1);
+    assert.equal(control.request.approval_type, 'codex-permissions');
+    assert.deepEqual(control.request.input.codexPermissions.permissions, permissions);
+    assert.equal(interaction.replyControl(
+      'thread-permissions',
+      control.request_id,
+      {
+        approvalResponse: {
+          action,
+          permissions: { network: { enabled: false } },
+        },
+      },
+    ), true);
+    assert.deepEqual(client.responses.at(-1), {
+      id: 200 + index,
+      result: expected,
+    });
+  }
+});
+
+test('Codex MCP approval preserves persistence metadata and tool cancellation rules', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-mcp-approval',
+    nativeSessionId: 'thread-mcp-approval',
+    streamId: 'stream-mcp-approval',
+    text: 'use MCP',
+    callbacks: cb.value,
+  });
+
+  const params = {
+    threadId: 'thread-mcp-approval',
+    turnId: 'turn-1',
+    serverName: 'cloudlab',
+    mode: 'form',
+    message: 'Run deploy?',
+    requestedSchema: { type: 'object', properties: {} },
+    _meta: {
+      codex_approval_kind: 'mcp_tool_call',
+      persist: ['session', 'always'],
+    },
+  };
+  client.emit('serverRequest', {
+    id: 210,
+    method: 'mcpServer/elicitation/request',
+    params,
+  });
+  const approval = cb.controls.at(-1);
+  assert.equal(approval.request.approval_type, 'codex-mcp-elicitation');
+  assert.deepEqual(approval.request.input.codexMcpElicitation, {
+    serverName: 'cloudlab',
+    mode: 'form',
+    message: 'Run deploy?',
+    responseMode: 'approval',
+    isToolApproval: true,
+    persistModes: ['session', 'always'],
+    displayParams: [],
+    fields: [],
+  });
+  interaction.replyControl(
+    'thread-mcp-approval',
+    approval.request_id,
+    { approvalResponse: { action: 'acceptAlways' } },
+  );
+  assert.deepEqual(client.responses.at(-1), {
+    id: 210,
+    result: {
+      action: 'accept',
+      content: null,
+      _meta: { persist: 'always' },
+    },
+  });
+
+  client.emit('serverRequest', {
+    id: 211,
+    method: 'mcpServer/elicitation/request',
+    params,
+  });
+  const invalidDecline = cb.controls.at(-1);
+  interaction.replyControl(
+    'thread-mcp-approval',
+    invalidDecline.request_id,
+    { approvalResponse: { action: 'decline' } },
+  );
+  assert.deepEqual(client.responses.at(-1), {
+    id: 211,
+    result: { action: 'cancel', content: null, _meta: null },
+  });
+});
+
+test('Codex MCP forms expose supported TUI fields and validate submitted content', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-mcp-form',
+    nativeSessionId: 'thread-mcp-form',
+    streamId: 'stream-mcp-form',
+    text: 'fill MCP form',
+    callbacks: cb.value,
+  });
+
+  const requestedSchema = {
+    type: 'object',
+    required: ['name', 'enabled', 'region'],
+    properties: {
+      name: {
+        type: 'string',
+        title: 'Name',
+        description: 'Deployment name',
+      },
+      enabled: {
+        type: 'boolean',
+        title: 'Enabled',
+        default: true,
+      },
+      region: {
+        type: 'string',
+        title: 'Region',
+        enum: ['ap', 'us'],
+        enumNames: ['Asia Pacific', 'United States'],
+      },
+      tier: {
+        type: 'string',
+        title: 'Tier',
+        oneOf: [
+          { const: 'dev', title: 'Development' },
+          { const: 'prod', title: 'Production' },
+        ],
+      },
+    },
+  };
+  const params = {
+    threadId: 'thread-mcp-form',
+    turnId: 'turn-1',
+    serverName: 'cloudlab',
+    mode: 'form',
+    message: 'Configure deployment',
+    requestedSchema,
+  };
+
+  client.emit('serverRequest', {
+    id: 220,
+    method: 'mcpServer/elicitation/request',
+    params,
+  });
+  const form = cb.controls.at(-1);
+  const details = form.request.input.codexMcpElicitation;
+  assert.equal(details.responseMode, 'form');
+  assert.equal(details.fields.length, 4);
+  assert.deepEqual(details.fields[1].input.options, [
+    { label: 'True', value: true },
+    { label: 'False', value: false },
+  ]);
+  assert.deepEqual(details.fields[2].input.options, [
+    { label: 'Asia Pacific', value: 'ap' },
+    { label: 'United States', value: 'us' },
+  ]);
+
+  interaction.replyControl(
+    'thread-mcp-form',
+    form.request_id,
+    {
+      approvalResponse: {
+        action: 'acceptForm',
+        content: {
+          name: 'demo',
+          enabled: true,
+          region: 'ap',
+        },
+      },
+    },
+  );
+  assert.deepEqual(client.responses.at(-1), {
+    id: 220,
+    result: {
+      action: 'accept',
+      content: {
+        name: 'demo',
+        enabled: true,
+        region: 'ap',
+      },
+      _meta: null,
+    },
+  });
+
+  client.emit('serverRequest', {
+    id: 221,
+    method: 'mcpServer/elicitation/request',
+    params,
+  });
+  const invalid = cb.controls.at(-1);
+  interaction.replyControl(
+    'thread-mcp-form',
+    invalid.request_id,
+    {
+      approvalResponse: {
+        action: 'acceptForm',
+        content: {
+          name: 'demo',
+          enabled: true,
+          region: 'invalid',
+          injected: true,
+        },
+      },
+    },
+  );
+  assert.deepEqual(client.responses.at(-1), {
+    id: 221,
+    result: { action: 'cancel', content: null, _meta: null },
+  });
+});
+
+test('Codex MCP unsupported forms fall back while non-form modes auto-decline', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-mcp-fallback',
+    nativeSessionId: 'thread-mcp-fallback',
+    streamId: 'stream-mcp-fallback',
+    text: 'unsupported MCP input',
+    callbacks: cb.value,
+  });
+
+  client.emit('serverRequest', {
+    id: 225,
+    method: 'mcpServer/elicitation/request',
+    params: {
+      threadId: 'thread-mcp-fallback',
+      turnId: 'turn-1',
+      serverName: 'cloudlab',
+      mode: 'form',
+      message: 'Pick a number',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          count: { type: 'integer', title: 'Count' },
+        },
+      },
+    },
+  });
+  const fallback = cb.controls.at(-1);
+  assert.equal(
+    fallback.request.input.codexMcpElicitation.responseMode,
+    'fallback',
+  );
+  interaction.replyControl(
+    'thread-mcp-fallback',
+    fallback.request_id,
+    { approvalResponse: { action: 'accept' } },
+  );
+  assert.deepEqual(client.responses.at(-1), {
+    id: 225,
+    result: { action: 'accept', content: null, _meta: null },
+  });
+
+  const controlCount = cb.controls.length;
+  client.emit('serverRequest', {
+    id: 226,
+    method: 'mcpServer/elicitation/request',
+    params: {
+      threadId: 'thread-mcp-fallback',
+      turnId: 'turn-1',
+      serverName: 'cloudlab',
+      mode: 'openai/form',
+      message: 'Open app form',
+      requestedSchema: {},
+    },
+  });
+  assert.equal(cb.controls.length, controlCount);
+  assert.deepEqual(client.responses.at(-1), {
+    id: 226,
+    result: { action: 'decline', content: null, _meta: null },
+  });
+
+  client.emit('serverRequest', {
+    id: 227,
+    method: 'mcpServer/elicitation/request',
+    params: {
+      threadId: 'thread-mcp-fallback',
+      turnId: 'turn-1',
+      serverName: 'cloudlab',
+      mode: 'form',
+      message: 'Install tool',
+      requestedSchema: { type: 'object', properties: {} },
+      _meta: {
+        codex_approval_kind: 'tool_suggestion',
+        tool_type: 'connector',
+        suggest_type: 'install',
+        tool_id: 'calendar',
+        tool_name: 'Calendar',
+      },
+    },
+  });
+  assert.equal(cb.controls.length, controlCount);
+  assert.deepEqual(client.responses.at(-1), {
+    id: 227,
+    result: { action: 'decline', content: null, _meta: null },
+  });
+});
+
+test('unsupported Codex server requests fail without opening a generic approval', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-unsupported-control',
+    nativeSessionId: 'thread-unsupported-control',
+    streamId: 'stream-unsupported-control',
+    text: 'unsupported request',
+    callbacks: cb.value,
+  });
+
+  client.emit('serverRequest', {
+    id: 230,
+    method: 'future/requestApproval',
+    params: {
+      threadId: 'thread-unsupported-control',
+      turnId: 'turn-1',
+    },
+  });
+
+  assert.equal(cb.controls.length, 0);
+  assert.deepEqual(client.responses, [{
+    id: 230,
+    error: {
+      code: -32601,
+      message: 'Unsupported Codex server request',
+    },
+  }]);
 });
 
 test('Codex interrupt targets the active thread and turn', async () => {
@@ -760,6 +1259,78 @@ test('burst sends to one Codex thread start one turn and queue the next', async 
   notify(client, 'turn/completed', {
     threadId: 'thread-burst',
     turn: { id: 'turn-2', status: 'completed' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(client.stopCalls, 1);
+});
+
+test('managed app-server resume adopts an active approval turn before queued send', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/resume') {
+      client.emit('serverRequest', {
+        id: 21,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: 'thread-managed',
+          turnId: 'turn-external',
+          command: 'git add README.md',
+          cwd: '/workspace/demo',
+          availableDecisions: ['accept', 'cancel'],
+        },
+      });
+      return {
+        thread: {
+          id: params.threadId,
+          status: {
+            type: 'active',
+            activeFlags: ['waitingOnApproval'],
+          },
+        },
+      };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  assert.deepEqual(await interaction.sendExisting({
+    sessionId: 'codex:thread-managed',
+    nativeSessionId: 'thread-managed',
+    streamId: 'stream-queued',
+    text: 'continue after approval',
+    callbacks: cb.value,
+  }), { queued: true });
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'turn/start').length,
+    0,
+  );
+  assert.equal(cb.controls.length, 1);
+  assert.equal(cb.controls[0].request.tool_name, 'Bash');
+
+  assert.equal(interaction.replyControl(
+    'thread-managed',
+    'codex:thread-managed:21',
+    { decision: 'cancel' },
+  ), true);
+  assert.deepEqual(client.responses, [{
+    id: 21,
+    result: { decision: 'cancel' },
+  }]);
+
+  notify(client, 'turn/completed', {
+    threadId: 'thread-managed',
+    turn: { id: 'turn-external', status: 'interrupted' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const starts = client.requests.filter((entry) => entry.method === 'turn/start');
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].params.clientUserMessageId, 'stream-queued');
+
+  notify(client, 'turn/completed', {
+    threadId: 'thread-managed',
+    turn: { id: 'turn-1', status: 'completed' },
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(client.stopCalls, 1);
@@ -1056,7 +1627,7 @@ test('approval request ids are isolated across ephemeral clients', async () => {
   });
   assert.deepEqual(clients[1].responses[0], {
     id: 42,
-    result: { decision: 'decline' },
+    result: { decision: 'cancel' },
   });
 });
 

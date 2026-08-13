@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'events';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough, Writable } from 'stream';
 import test from 'node:test';
+import { WebSocketServer } from 'ws';
 import { CodexAppServerClient } from '../../../bridge/codex-app-server.mjs';
 
 function fakeProcess() {
@@ -36,6 +42,50 @@ async function waitForWrite(proc, method) {
   throw new Error(`missing write for ${method}`);
 }
 
+async function waitForMessage(appServer, predicate) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const message = appServer.messages.find(predicate);
+    if (message) return message;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error('missing managed app-server message');
+}
+
+async function fakeUnixAppServer(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-ws-'));
+  const socketPath = path.join(dir, 'app-server.sock');
+  const messages = [];
+  let connection = null;
+  const server = http.createServer();
+  const webSockets = new WebSocketServer({ server });
+  webSockets.on('connection', (socket) => {
+    connection = socket;
+    socket.on('message', (data) => {
+      messages.push(JSON.parse(data.toString()));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, resolve);
+  });
+  t.after(async () => {
+    for (const socket of webSockets.clients) socket.terminate();
+    await new Promise((resolve) => webSockets.close(resolve));
+    if (server.listening) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  return {
+    socketPath,
+    messages,
+    send(message) {
+      connection.send(JSON.stringify(message));
+    },
+  };
+}
+
 test('app-server client initializes and pairs interleaved responses', async (t) => {
   const proc = fakeProcess();
   const client = new CodexAppServerClient({
@@ -60,6 +110,82 @@ test('app-server client initializes and pairs interleaved responses', async (t) 
 
   assert.equal((await first).thread.id, 'thread-1');
   assert.equal((await second).thread.id, 'thread-2');
+});
+
+test('app-server client reuses a managed Unix WebSocket daemon', async (t) => {
+  const appServer = await fakeUnixAppServer(t);
+  const client = new CodexAppServerClient({
+    socketPath: appServer.socketPath,
+    requestTimeout: 1000,
+    spawnFn() {
+      throw new Error('stdio fallback should not be used');
+    },
+  });
+  t.after(() => client.stop());
+
+  const started = client.start();
+  const initialize = await waitForMessage(
+    appServer,
+    (message) => message.method === 'initialize',
+  );
+  appServer.send({ id: initialize.id, result: { userAgent: 'managed-daemon' } });
+  await started;
+  await waitForMessage(appServer, (message) => message.method === 'initialized');
+
+  const resumed = client.request('thread/resume', {
+    threadId: 'thread-managed',
+    excludeTurns: true,
+  });
+  const resume = await waitForMessage(
+    appServer,
+    (message) => message.method === 'thread/resume',
+  );
+  appServer.send({
+    id: resume.id,
+    result: {
+      thread: {
+        id: 'thread-managed',
+        status: { type: 'active', activeFlags: ['waitingOnApproval'] },
+      },
+    },
+  });
+  assert.equal((await resumed).thread.id, 'thread-managed');
+
+  const requests = [];
+  client.on('serverRequest', (request) => requests.push(request));
+  appServer.send({
+    id: 21,
+    method: 'item/commandExecution/requestApproval',
+    params: { threadId: 'thread-managed', turnId: 'turn-active' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(requests[0].id, 21);
+
+  client.respond(21, { decision: 'cancel' });
+  await waitForMessage(
+    appServer,
+    (message) => message.id === 21 && message.result?.decision === 'cancel',
+  );
+});
+
+test('managed socket failure falls back to a stdio app-server', async (t) => {
+  const proc = fakeProcess();
+  const client = new CodexAppServerClient({
+    bin: '/fake/codex',
+    socketPath: path.join(os.tmpdir(), `missing-${randomUUID()}.sock`),
+    spawnFn: () => proc,
+    requestTimeout: 1000,
+  });
+  t.after(() => client.stop());
+
+  const started = client.start();
+  const initialize = await waitForWrite(proc, 'initialize');
+  proc.stdout.write(`${JSON.stringify({ id: initialize.id, result: {} })}\n`);
+  await started;
+  assert.deepEqual(proc.writes.map((message) => message.method), [
+    'initialize',
+    'initialized',
+  ]);
 });
 
 test('Windows Codex cmd shim is spawned through the shell with Node on PATH', async (t) => {

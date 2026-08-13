@@ -1,172 +1,238 @@
-// Permission Prompt (headless): bridge pushes permission_request; we reply permission_reply. See docs/headless-streaming.md.
+// Permission Prompt: bridge pushes permission_request; we reply permission_reply.
 import { state } from '../state.js';
+import {
+  createCodexPermissionController,
+  isCodexPermissionRequest,
+} from './permission-codex.js';
 
-var _req = null;            // pending control_request { sessionId, requestId, kind, toolName }
-var _askQuestions = null;   // AskUserQuestion input.questions[]
+var _req = null;
+var _askQuestions = null;
 var _askIndex = 0;
-var _askAnswers = [];       // [{ question, answer }]
+var _askAnswers = [];
+
+var codexPermission = createCodexPermissionController({
+  renderPrompt: renderPrompt,
+  reply: reply,
+  dismiss: dismissPermissionPrompt,
+  buildToolSummary: buildToolSummary,
+});
 
 function reply(payload) {
   var send = (typeof wsSendReliable === 'function') ? wsSendReliable : wsSend;
-  send(Object.assign({ action: 'permission_reply', sessionId: state.wsSessionId, device: state.appState.device || '' }, payload));
+  send(Object.assign({
+    action: 'permission_reply',
+    sessionId: state.wsSessionId,
+    device: state.appState.device || '',
+  }, payload));
+}
+
+function resetClaudeState() {
+  _askQuestions = null;
+  _askIndex = 0;
+  _askAnswers = [];
 }
 
 function showPermissionPrompt(msg) {
-  _req = { sessionId: msg.sessionId, requestId: msg.requestId, kind: msg.kind || 'tool', toolName: msg.toolName };
-  _askQuestions = null; _askIndex = 0; _askAnswers = [];
+  _req = {
+    requestId: msg.requestId,
+    kind: msg.kind || 'tool',
+  };
+  resetClaudeState();
+  codexPermission.reset();
 
+  if (isCodexPermissionRequest(msg)) {
+    codexPermission.show(msg);
+    return;
+  }
   if (msg.kind === 'ask') {
-    var qs = (msg.questions && msg.questions.length) ? msg.questions : [msg.input || {}];
-    _askQuestions = qs;
-    _askIndex = 0;
+    _askQuestions = (msg.questions && msg.questions.length)
+      ? msg.questions
+      : [msg.input || {}];
     renderAskStep();
     return;
   }
   if (msg.kind === 'plan') {
     renderPrompt({
       title: 'Accept this plan?',
-      description: (msg.plan || (msg.input && msg.input.plan) || ''),
+      description: msg.plan || (msg.input && msg.input.plan) || '',
       options: [
         { label: 'Yes, proceed', act: 'plan-accept' },
-        { label: 'No, keep planning', act: 'plan-reject', hasInput: true, placeholder: 'Tell Claude what to do instead...' }
-      ]
+        {
+          label: 'No, keep planning',
+          act: 'plan-reject',
+          hasInput: true,
+          placeholder: 'Tell Claude what to do instead...',
+        },
+      ],
     });
     return;
   }
-  // Ordinary tool (Bash/Edit/Write/MCP/…)
-  renderPrompt(buildToolPrompt(msg.toolName, msg.input || {}));
+  var summary = buildToolSummary(msg.toolName, msg.input || {});
+  renderPrompt({
+    title: summary.title,
+    description: summary.description,
+    options: [
+      { label: 'Yes', act: 'allow', key: '1' },
+      { label: 'No', act: 'deny', key: '2' },
+    ],
+  });
 }
 
-// ---- Rendering ----
-
-function renderPrompt(p) {
+function renderPrompt(prompt) {
   var existing = document.getElementById('permission-prompt');
   if (existing) existing.remove();
 
   var inputBar = document.getElementById('input-bar');
   if (inputBar) {
     inputBar.querySelector('#msg-input').disabled = true;
-    inputBar.querySelectorAll('.input-row button').forEach(function (b) { b.disabled = true; });
+    inputBar.querySelectorAll('.input-row button').forEach(function (button) {
+      button.disabled = true;
+    });
   }
 
   var container = document.querySelector('.messages');
   if (!container) return;
 
   var html = '<div class="permission-prompt" id="permission-prompt">';
-  html += '<div class="permission-header"><div class="permission-title">' + esc(p.title || 'Confirm?') + '</div>'
-    + '<button class="permission-close" onclick="cancelPermissionPrompt()" title="Cancel (Esc)">&times;</button></div>';
-  if (p.description) html += '<pre class="permission-desc">' + esc(p.description) + '</pre>';
+  html += '<div class="permission-header"><div class="permission-title">'
+    + esc(prompt.title || 'Confirm?') + '</div>'
+    + '<button class="permission-close" onclick="cancelPermissionPrompt()" '
+    + 'title="Cancel (Esc)">&times;</button></div>';
+  if (prompt.description) {
+    html += '<pre class="permission-desc">' + esc(prompt.description) + '</pre>';
+  }
   html += '<div class="permission-options">';
-  for (var i = 0; i < p.options.length; i++) {
-    var opt = p.options[i];
-    var btnClass = /deny|reject|no/i.test(opt.act || '') ? 'permission-btn deny' : 'permission-btn allow';
-    html += '<button class="' + btnClass + '" data-act="' + esc(opt.act) + '" '
-      + 'data-has-input="' + (opt.hasInput ? '1' : '0') + '" '
+  for (var i = 0; i < prompt.options.length; i++) {
+    var option = prompt.options[i];
+    var buttonClass = option.tone === 'deny' || /deny|reject|no/i.test(option.act || '')
+      ? 'permission-btn deny'
+      : 'permission-btn allow';
+    html += '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
+      + 'data-has-input="' + (option.hasInput ? '1' : '0') + '" '
       + 'onclick="handlePermissionOption(this)">'
-      + (opt.key ? '<span class="permission-key">' + esc(opt.key) + '</span> ' : '')
-      + '<span class="permission-label">' + esc(opt.label) + '</span>'
-      + (opt.description ? '<span class="permission-desc-inline">' + esc(opt.description) + '</span>' : '')
+      + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span> ' : '')
+      + '<span class="permission-label">' + esc(option.label) + '</span>'
+      + (option.description
+        ? '<span class="permission-desc-inline">' + esc(option.description) + '</span>'
+        : '')
       + '</button>';
-    if (opt.hasInput) {
+    if (option.hasInput) {
       html += '<div class="permission-input-wrap" style="display:none">'
-        + '<input class="permission-input" placeholder="' + esc(opt.placeholder || '') + '" '
-        + 'onkeydown="if(event.key===\'Enter\'&&!event.isComposing&&event.keyCode!==229)submitPermissionWithInput(this,\'' + esc(opt.act) + '\')" />'
-        + '<button class="permission-submit" onclick="submitPermissionWithInput(this.previousElementSibling,\'' + esc(opt.act) + '\')">Send</button>'
-        + '</div>';
+        + '<input class="permission-input" placeholder="' + esc(option.placeholder || '') + '" '
+        + 'onkeydown="if(event.key===\'Enter\'&&!event.isComposing&&event.keyCode!==229)'
+        + 'submitPermissionWithInput(this,\'' + esc(option.act) + '\')" />'
+        + '<button class="permission-submit" '
+        + 'onclick="submitPermissionWithInput(this.previousElementSibling,\'' + esc(option.act)
+        + '\')">Send</button></div>';
     }
   }
   html += '</div></div>';
 
   container.insertAdjacentHTML('beforeend', html);
-  if (typeof updateSpinner === 'function') updateSpinner(); // hide spinner while the prompt is up
-  var el = document.getElementById('content');
-  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  if (typeof updateSpinner === 'function') updateSpinner();
+  var content = document.getElementById('content');
+  content.scrollTo({ top: content.scrollHeight, behavior: 'smooth' });
 }
 
-/** Render the current step of the AskUserQuestion wizard. */
 function renderAskStep() {
-  var q = _askQuestions[_askIndex] || {};
-  var prefix = _askQuestions.length > 1 ? '[' + (_askIndex + 1) + '/' + _askQuestions.length + '] ' : '';
-  var header = q.header ? '[' + q.header + '] ' : '';
-  var rawOptions = q.options || [];
-  var options = rawOptions.map(function (o, i) {
-    return { label: o.label, description: o.description || '', act: 'opt:' + i };
+  var question = _askQuestions[_askIndex] || {};
+  var prefix = _askQuestions.length > 1
+    ? '[' + (_askIndex + 1) + '/' + _askQuestions.length + '] '
+    : '';
+  var header = question.header ? '[' + question.header + '] ' : '';
+  var options = (question.options || []).map(function (option, index) {
+    return {
+      label: option.label,
+      description: option.description || '',
+      act: 'opt:' + index,
+    };
   });
-  options.push({ label: 'Type something…', act: 'type', hasInput: true, placeholder: 'Type your response…' });
-  renderPrompt({ title: prefix + header + (q.question || q.text || ''), options: options });
+  options.push({
+    label: 'Type something…',
+    act: 'type',
+    hasInput: true,
+    placeholder: 'Type your response…',
+  });
+  renderPrompt({
+    title: prefix + header + (question.question || question.text || ''),
+    options: options,
+  });
 }
 
-// ---- Option handling ----
-
-function handlePermissionOption(btn) {
-  var act = btn.getAttribute('data-act');
-  var hasInput = btn.getAttribute('data-has-input') === '1';
-  if (hasInput) {
-    var wrap = btn.nextElementSibling;
-    if (wrap && wrap.classList.contains('permission-input-wrap')) {
-      var visible = wrap.style.display !== 'none';
-      wrap.style.display = visible ? 'none' : 'flex';
-      if (!visible) wrap.querySelector('input').focus();
+function handlePermissionOption(button) {
+  var act = button.getAttribute('data-act');
+  if (button.getAttribute('data-has-input') === '1') {
+    var wrapper = button.nextElementSibling;
+    if (wrapper && wrapper.classList.contains('permission-input-wrap')) {
+      var visible = wrapper.style.display !== 'none';
+      wrapper.style.display = visible ? 'none' : 'flex';
+      if (!visible) wrapper.querySelector('input').focus();
       return;
     }
   }
-  var label = btn.querySelector('.permission-label');
+  var label = button.querySelector('.permission-label');
   chooseOption(act, label ? label.textContent : act);
 }
 
 function submitPermissionWithInput(input, act) {
   var text = (input.value || '').trim();
-  if (!text) return;
-  chooseOption(act, text, true);
+  if (text) chooseOption(act, text, true);
 }
 
-/** Act on a chosen option. For 'ask' this advances the wizard; for 'tool'/'plan' it replies. */
 function chooseOption(act, label, isTyped) {
-  if (!_req) return;
+  if (!_req || codexPermission.choose(act, label, isTyped)) return;
 
-  // Ordinary tool: Yes/No → allow/deny.
   if (_req.kind === 'tool') {
-    reply({ requestId: _req.requestId, decision: act === 'allow' ? 'allow' : 'deny' });
+    reply({
+      requestId: _req.requestId,
+      decision: act === 'allow' ? 'allow' : 'deny',
+    });
     dismissPermissionPrompt();
     return;
   }
-
-  // Plan approval.
   if (_req.kind === 'plan') {
-    var planAns = act === 'plan-accept' ? 'Approved, proceed with the plan.' : label;
-    reply({ requestId: _req.requestId, decision: 'answer', answerText: planAns });
+    reply({
+      requestId: _req.requestId,
+      decision: 'answer',
+      answerText: act === 'plan-accept'
+        ? 'Approved, proceed with the plan.'
+        : label,
+    });
     dismissPermissionPrompt();
     return;
   }
 
-  // AskUserQuestion wizard step.
-  var q = _askQuestions[_askIndex] || {};
-  var answer;
-  if (act === 'type' || isTyped) {
-    answer = label;
-  } else {
-    var idx = parseInt(act.slice(4), 10); // 'opt:N'
-    var opt = (q.options || [])[idx];
-    answer = opt ? opt.label : label;
+  var question = _askQuestions[_askIndex] || {};
+  var answer = label;
+  if (act !== 'type' && !isTyped) {
+    var index = parseInt(act.slice(4), 10);
+    var option = (question.options || [])[index];
+    answer = option ? option.label : label;
   }
-  _askAnswers.push({ question: q.question || q.text || '', answer: answer });
+  _askAnswers.push({
+    question: question.question || question.text || '',
+    answer: answer,
+  });
 
   if (_askIndex < _askQuestions.length - 1) {
     _askIndex++;
     renderAskStep();
     return;
   }
-  // Last question answered — build "question → answer" text (historical format).
-  var text = _askAnswers.map(function (a) {
-    return (a.question ? a.question + ' ' : '') + '→ ' + a.answer;
+  var text = _askAnswers.map(function (entry) {
+    return (entry.question ? entry.question + ' ' : '') + '→ ' + entry.answer;
   }).join('\n');
-  reply({ requestId: _req.requestId, decision: 'answer', answerText: text });
+  reply({
+    requestId: _req.requestId,
+    decision: 'answer',
+    answerText: text,
+  });
   dismissPermissionPrompt();
 }
 
 function cancelPermissionPrompt() {
+  if (codexPermission.cancel()) return;
   if (_req) {
-    // Bare deny (no answerText) tells CC the user declined to answer.
     reply({ requestId: _req.requestId, decision: 'deny' });
   }
   dismissPermissionPrompt();
@@ -174,46 +240,55 @@ function cancelPermissionPrompt() {
 
 function dismissPermissionPrompt() {
   _req = null;
-  _askQuestions = null; _askIndex = 0; _askAnswers = [];
-  var el = document.getElementById('permission-prompt');
-  if (el) el.remove();
+  resetClaudeState();
+  codexPermission.reset();
+  var prompt = document.getElementById('permission-prompt');
+  if (prompt) prompt.remove();
   var inputBar = document.getElementById('input-bar');
   if (inputBar) {
     inputBar.querySelector('#msg-input').disabled = false;
-    inputBar.querySelectorAll('.input-row button').forEach(function (b) { b.disabled = false; });
+    inputBar.querySelectorAll('.input-row button').forEach(function (button) {
+      button.disabled = false;
+    });
   }
   if (typeof updateSpinner === 'function') updateSpinner();
 }
 
-/** Build title/description + Yes/No options for an ordinary tool. */
-function buildToolPrompt(toolName, input) {
-  var title, description;
+function buildToolSummary(toolName, input) {
   if (toolName === 'Bash' || toolName === 'bash') {
-    title = 'Run command?';
-    description = input.command || input.cmd || '';
-  } else if (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
-    var fp = input.file_path || input.path || '';
-    title = toolName + ': ' + fp;
-    description = toolName === 'Write' ? 'Create/overwrite file' : 'Edit file';
-  } else {
-    title = toolName || 'Run tool?';
-    try { description = JSON.stringify(input, null, 2); } catch (e) { description = ''; }
-    if (description && description.length > 500) description = description.slice(0, 500) + '…';
+    return {
+      title: 'Run command?',
+      description: input.command || input.cmd || '',
+    };
+  }
+  if (toolName === 'Edit' || toolName === 'Write'
+    || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
+    var filePath = input.file_path || input.path || '';
+    return {
+      title: toolName + ': ' + filePath,
+      description: toolName === 'Write' ? 'Create/overwrite file' : 'Edit file',
+    };
+  }
+  var description;
+  try { description = JSON.stringify(input, null, 2); } catch (e) { description = ''; }
+  if (description && description.length > 500) {
+    description = description.slice(0, 500) + '…';
   }
   return {
-    title: title, description: description,
-    options: [
-      { label: 'Yes', act: 'allow', key: '1' },
-      { label: 'No', act: 'deny', key: '2' }
-    ]
+    title: toolName || 'Run tool?',
+    description: description,
   };
 }
 
-// True while a prompt awaits the user (ws.js checks this before auto-dismissing).
-function hasActivePermissionPrompt() { return !!_req; }
+function hasActivePermissionPrompt() {
+  return !!_req;
+}
 
 Object.assign(window, {
-  showPermissionPrompt, handlePermissionOption, submitPermissionWithInput,
-  cancelPermissionPrompt, dismissPermissionPrompt,
-  hasActivePermissionPrompt,
+  showPermissionPrompt: showPermissionPrompt,
+  handlePermissionOption: handlePermissionOption,
+  submitPermissionWithInput: submitPermissionWithInput,
+  cancelPermissionPrompt: cancelPermissionPrompt,
+  dismissPermissionPrompt: dismissPermissionPrompt,
+  hasActivePermissionPrompt: hasActivePermissionPrompt,
 });

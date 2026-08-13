@@ -39,14 +39,18 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 - Runtime icons and normalized message/tool rendering are complete.
 - Codex watcher monitors every configured `CODEX_HOME/sessions` root and pushes append-only
   updates through the same WS ack, HTTP fallback, frame-limit, and watermark semantics as Claude.
-- Codex external status updates support `running`/`completed`; approval waits remain unobservable.
-- Codex Phase 3 interaction is implemented through `codex app-server --stdio`: existing Sessions
-  use `thread/resume` + `turn/start`; new Sessions use `thread/start` + `turn/start`.
+- Codex rollout-only status updates support `running`/`completed`; interaction resume recovers
+  daemon-owned approval waits even though the startup catalog cannot infer them from JSONL alone.
+- Codex Phase 3 interaction prefers the managed app-server Unix WebSocket when present and falls
+  back to `codex app-server --stdio`: existing Sessions use `thread/resume` + `turn/start`; new
+  Sessions use `thread/start` + `turn/start`. A resumed active turn is adopted so pending approvals
+  and later deltas keep streaming; a new user turn waits in the same per-session queue.
 - Codex and Claude share `StreamFramer`: first delta is immediate, later deltas use the same 50ms
   batch window, turn-level `seq`, authoritative-row handoff, and frontend reorder/chase rendering.
 - Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
   rows without rebroadcast and remains the fallback when no live row was observed.
-- Codex pending approval recovery and complete permission variant coverage remain Phase 3 work.
+- Codex command/file/permissions/MCP approval variants are implemented. Automatic pending-request
+  recovery immediately after a Bridge restart, before any send resumes the thread, remains Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification

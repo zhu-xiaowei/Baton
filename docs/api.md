@@ -660,7 +660,7 @@ The server stores it as `bridgeVersion` so deployments can verify the running fl
 
 The server strips the `device` routing field before forwarding an app action to Bridge. Codex
 uses `messages`/`messages_ack` for live rollout updates and supports existing-Session
-send/streaming/interrupt/basic permission handling through its app-server adapter.
+send/streaming/interrupt and runtime-specific permission handling through its app-server adapter.
 
 **$disconnect**: Delete connectionId + clean up related subscription records
 
@@ -737,7 +737,8 @@ runtime from a Project.
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
 1. Has sessionId → route by runtime: Claude uses the headless pool; Codex uses
-   `thread/resume` + `turn/start` through app-server
+   `thread/resume` + `turn/start` through the managed Unix-socket app-server when available,
+   with an isolated stdio app-server fallback
 2. No sessionId, has projectHash → route by selected runtime: Claude uses its existing headless
    creation path; Codex uses `thread/start` + `turn/start` on one cwd-scoped app-server client
 
@@ -760,14 +761,57 @@ Reply to a permission confirmation or user choice.
 }
 ```
 
-`decision` is `allow`/`deny` for ordinary tools or `answer`/`deny` for
-AskUserQuestion and plan prompts. `answerText` contains the selected or typed answer.
+For Claude ordinary tools, `decision` is `allow`/`deny`. AskUserQuestion and plan prompts use
+`answer`/`deny`, with the selected or typed value in `answerText`.
+
+Codex requests include a discriminating `permission_request.approvalType` and use the App Server
+response shape for that request:
+
+| `approvalType` | Frontend reply | App Server result |
+| --- | --- | --- |
+| `codex-command` | `decision` | `{ "decision": ... }` |
+| `codex-file-change` | `decision` | `{ "decision": ... }` |
+| `codex-permissions` | `approvalResponse.action` | `{ "permissions": ..., "scope": ..., "strictAutoReview"?: true }` |
+| `codex-mcp-elicitation` | `approvalResponse` | `{ "action": ..., "content": ..., "_meta": ... }` |
+
+Command decisions preserve the ordered value advertised by
+`permission_request.input.codexApproval.availableDecisions`. Values can be strings such as
+`accept`, `acceptForSession`, `decline`, or `cancel`, or structured values such as:
+
+```json
+{
+  "acceptWithExecpolicyAmendment": {
+    "execpolicy_amendment": ["git", "add"]
+  }
+}
+```
+
+The bridge validates command/file decisions against the pending request. Permission replies send
+only a semantic action; the bridge copies the granted permission profile from the original trusted
+App Server request. MCP form keys, required values, types, enum values, and persistence modes are
+validated against the original schema and metadata. Invalid replies fail closed.
+
+For example, a permission choice is sent as:
+
+```json
+{
+  "action": "permission_reply",
+  "sessionId": "codex:thread-id",
+  "requestId": "codex:thread-id:42",
+  "approvalResponse": {
+    "action": "grantForTurnWithStrictAutoReview"
+  }
+}
+```
+
+These Codex fields are ignored by the Claude branch; Claude continues to use the existing
+`decision` and `answerText` contract.
 
 **Server handling**: Forward to matching bridge by `device`.
 
-Bridge receives Claude's headless `control_request`, emits `permission_request`, and applies the
-reply through the same pending request ID. The frontend does not infer permission prompts from
-tool output.
+Bridge receives a runtime control request, emits `permission_request`, and applies the reply
+through the same pending request ID. The frontend does not infer permission prompts from tool
+output.
 
 ---
 
@@ -1339,8 +1383,10 @@ connections whose `deviceName` matches. Applies to `send_message`, `permission_r
 
 Codex participates in Session metadata, history reads, `sync_session`, `sync_complete`, and live
 `messages`/`messages_ack` updates from the rollout watcher. Existing-Session `send_message`,
-streaming, interrupt, and basic permission requests use the app-server adapter. New-Session
-creation and local history deletion remain disabled by Codex runtime capabilities. Project
+streaming, interrupt, and permission requests use the app-server adapter. The adapter reuses a
+managed Unix WebSocket daemon when present, including active-turn and pending-approval recovery,
+and falls back to `app-server --stdio` otherwise. New-Session creation is supported; local
+history deletion remains disabled by Codex runtime capabilities. Project
 directory creation is runtime-neutral. See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation

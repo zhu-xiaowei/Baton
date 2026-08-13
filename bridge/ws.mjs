@@ -450,6 +450,7 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
       _pendingControl.set(sessionId, {
         requestId: req.request_id, toolName: r.tool_name,
         input, requiresInteraction: !!r.requires_user_interaction,
+        approvalType: r.approval_type || null,
         runtime: options.runtime || 'claude',
         nativeSessionId: options.nativeSessionId || sessionId,
       });
@@ -463,6 +464,7 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
       wsSend({
         action: 'permission_request', sessionId, kind,
         requestId: req.request_id, toolName: r.tool_name,
+        approvalType: r.approval_type || null,
         questions: input.questions, plan: input.plan, input,
       });
     },
@@ -697,6 +699,7 @@ async function handleRevealAgent(sessionId) {
   wsSend({
     action: 'permission_request', sessionId, kind,
     requestId: p.requestId, toolName: p.toolName,
+    approvalType: p.approvalType || null,
     questions: p.input.questions, plan: p.input.plan, input: p.input,
   });
 }
@@ -856,9 +859,12 @@ async function downloadBridgeImage(key) {
   } catch { return null; }
 }
 
-// App answered permission_request: tools → allow/deny; ask/plan → deny with answerText in message (CC's only answer channel, verified CC 2.1.211).
+// App answered permission_request. Claude uses allow/deny; Codex preserves its native
+// approval decision; ask/plan use deny with answerText (CC's only answer channel).
 function handlePermissionReply(msg) {
-  const { sessionId, requestId, decision, answerText } = msg;
+  const {
+    sessionId, requestId, decision, answerText, approvalResponse,
+  } = msg;
   const pending = _pendingControl.get(sessionId);
   if (!pending || (requestId && pending.requestId !== requestId)) return;
   _pendingControl.delete(sessionId);
@@ -868,7 +874,7 @@ function handlePermissionReply(msg) {
     adapter.interaction?.replyControl?.(
       pending.nativeSessionId,
       pending.requestId,
-      { decision, answerText },
+      { decision, answerText, approvalResponse },
     );
     return;
   }
