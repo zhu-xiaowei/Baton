@@ -11,7 +11,7 @@
   "description": "",
   "dependencies": {
     "@parcel/watcher": "2.6.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "ws": "^8.21.3"
   }
 }
