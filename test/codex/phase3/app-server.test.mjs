@@ -62,6 +62,35 @@ test('app-server client initializes and pairs interleaved responses', async (t) 
   assert.equal((await second).thread.id, 'thread-2');
 });
 
+test('Windows Codex cmd shim is spawned through the shell with Node on PATH', async (t) => {
+  const proc = fakeProcess();
+  let call;
+  const client = new CodexAppServerClient({
+    bin: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd',
+    platform: 'win32',
+    nodeExecutable: 'C:\\nodejs\\node.exe',
+    spawnFn(binary, args, options) {
+      call = { binary, args, options };
+      return proc;
+    },
+    requestTimeout: 1000,
+  });
+  t.after(() => client.stop());
+
+  const started = client.start();
+  const init = await waitForWrite(proc, 'initialize');
+  proc.stdout.write(`${JSON.stringify({ id: init.id, result: {} })}\n`);
+  await started;
+
+  assert.equal(call.binary, 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd');
+  assert.deepEqual(call.args, ['app-server', '--stdio']);
+  assert.equal(call.options.shell, true);
+  assert.equal(call.options.windowsHide, true);
+  const pathKey = Object.keys(call.options.env)
+    .find((key) => key.toLowerCase() === 'path');
+  assert.ok(call.options.env[pathKey].startsWith('C:\\nodejs;'));
+});
+
 test('app-server client dispatches notifications and server requests', async (t) => {
   const proc = fakeProcess();
   const client = new CodexAppServerClient({

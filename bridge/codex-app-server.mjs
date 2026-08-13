@@ -1,7 +1,7 @@
-import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import os from 'os';
 import readline from 'readline';
+import { spawnExecutable } from './platform.mjs';
 import { resolveCodexBin } from './runtime-capabilities.mjs';
 
 export const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 120_000;
@@ -11,7 +11,11 @@ export class CodexAppServerClient extends EventEmitter {
     super();
     this.bin = options.bin || null;
     this.cwd = options.cwd || os.homedir();
-    this.spawnFn = options.spawnFn || spawn;
+    this.spawnFn = options.spawnFn;
+    this.runtime = {
+      platform: options.platform || process.platform,
+      nodeExecutable: options.nodeExecutable || process.execPath,
+    };
     this.requestTimeout = options.requestTimeout ?? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS;
     this.clientInfo = options.clientInfo || {
       name: 'agentpeek',
@@ -39,10 +43,11 @@ export class CodexAppServerClient extends EventEmitter {
     const bin = this.bin || resolveCodexBin();
     if (!bin) throw new Error('Codex executable not found');
 
-    const proc = this.spawnFn(bin, ['app-server', '--stdio'], {
+    const proc = spawnExecutable(bin, ['app-server', '--stdio'], {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-    });
+      windowsHide: true,
+    }, this.spawnFn, this.runtime);
     this.proc = proc;
     this.stderr = '';
     this.generation++;

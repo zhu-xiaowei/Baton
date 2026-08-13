@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 export const IS_WINDOWS = process.platform === 'win32';
 
@@ -26,17 +26,28 @@ export function findExecutable(name, candidates = []) {
   }
 }
 
-export function runExecutable(binary, args, options = {}) {
+export function executableOptions(binary, options = {}, runtime = {}) {
+  const platform = runtime.platform || process.platform;
+  const nodeExecutable = runtime.nodeExecutable || process.execPath;
   const env = { ...process.env, ...(options.env || {}) };
-  if (IS_WINDOWS) {
+  if (platform === 'win32') {
     const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path';
-    env[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${env[pathKey] || ''}`;
+    env[pathKey] = `${path.win32.dirname(nodeExecutable)};${env[pathKey] || ''}`;
   }
-  return execFileSync(binary, args, {
+
+  return {
     ...options,
     env,
-    shell: IS_WINDOWS && /\.(?:cmd|bat)$/i.test(binary),
-  });
+    shell: options.shell ?? (platform === 'win32' && /\.(?:cmd|bat)$/i.test(binary)),
+  };
+}
+
+export function runExecutable(binary, args, options = {}) {
+  return execFileSync(binary, args, executableOptions(binary, options));
+}
+
+export function spawnExecutable(binary, args, options = {}, spawnFn = spawn, runtime = {}) {
+  return spawnFn(binary, args, executableOptions(binary, options, runtime));
 }
 
 export function installProductionDependencies(cwd) {
