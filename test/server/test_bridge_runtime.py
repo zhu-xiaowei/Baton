@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 sys.path.insert(
     0,
@@ -263,6 +264,27 @@ def test_windows_installer_runs_without_an_interactive_logon():
     assert "-LogonType S4U" in script
     assert "-LogonType Interactive" not in script
     assert "$env:Path = (Split-Path $nodePath) + ';' + $env:Path" in script
+    assert "ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
+    assert "verify-dependencies.mjs" in script
+    assert "[version]'20.9.0'" in script
+
+
+def test_unix_installer_validates_runtime_dependencies(monkeypatch):
+    class S3:
+        def generate_presigned_url(self, *_args, **_kwargs):
+            return "https://example.com/bridge.tar.gz"
+
+    request = FakeRequest()
+    request.url = SimpleNamespace(scheme="https")
+    monkeypatch.setenv("BRIDGE_IMAGES_BUCKET", "bridge-bucket")
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: S3())
+
+    response = asyncio.run(bridge_read.get_install(request, name="Linux", platform=""))
+    script = response.body.decode()
+
+    assert "Requires >= 20.9" in script
+    assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
+    assert "node verify-dependencies.mjs" in script
 
 
 def test_bridge_connection_persists_running_version(monkeypatch):

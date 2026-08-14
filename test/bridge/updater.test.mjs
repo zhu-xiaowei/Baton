@@ -17,12 +17,17 @@ test('staged update replaces package files and dependencies but preserves user s
   fs.writeFileSync(path.join(stage, 'bridge.mjs'), 'new bridge');
   fs.writeFileSync(path.join(stage, 'codex-session.mjs'), 'new module');
   fs.writeFileSync(path.join(stage, 'package.json'), '{"name":"bridge"}');
+  fs.writeFileSync(path.join(stage, 'package-lock.json'), '{"name":"bridge","lockfileVersion":3}');
   fs.writeFileSync(path.join(stage, 'node_modules', 'new-dep', 'index.js'), 'new');
 
   try {
     installStagedBridge(stage, home);
     assert.equal(fs.readFileSync(path.join(home, 'bridge.mjs'), 'utf-8'), 'new bridge');
     assert.equal(fs.readFileSync(path.join(home, 'codex-session.mjs'), 'utf-8'), 'new module');
+    assert.equal(
+      fs.readFileSync(path.join(home, 'package-lock.json'), 'utf-8'),
+      '{"name":"bridge","lockfileVersion":3}',
+    );
     assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf-8'), '{"deviceName":"Mac"}');
     assert.equal(fs.readFileSync(path.join(home, 'node_modules', 'new-dep', 'index.js'), 'utf-8'), 'new');
     assert.equal(fs.existsSync(path.join(home, 'node_modules', 'old-dep')), false);

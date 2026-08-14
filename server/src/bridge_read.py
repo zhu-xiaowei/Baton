@@ -492,8 +492,8 @@ def _windows_install_script(url, server, api_key, name):
         "$standardNode = Join-Path $env:ProgramFiles 'nodejs\\node.exe'",
         "if (-not $nodePath -and (Test-Path $standardNode)) { $nodePath = $standardNode }",
         "if (-not $nodePath) { throw 'Node.js 20+ is required.' }",
-        "$major = [int](& $nodePath -p \"process.versions.node.split('.')[0]\")",
-        "if ($major -lt 20) { throw \"Node.js $major is too old; version 20+ is required.\" }",
+        "$nodeVersion = [version](& $nodePath -p \"process.versions.node\")",
+        "if ($nodeVersion -lt [version]'20.9.0') { throw \"Node.js $nodeVersion is too old; version 20.9+ is required.\" }",
         "$env:Path = (Split-Path $nodePath) + ';' + $env:Path",
         "$dir = Join-Path $HOME '.claude-bridge'",
         "$configPath = Join-Path $dir 'config.json'",
@@ -524,9 +524,14 @@ def _windows_install_script(url, server, api_key, name):
         "}",
         "Push-Location $dir",
         "try {",
-        "  & $npm install --production --silent",
-        "  $npmExit = $LASTEXITCODE",
-        "  if ($npmExit -ne 0) { Start-Sleep -Seconds 2; & $npm install --production --silent; $npmExit = $LASTEXITCODE }",
+        "  $npmExit = 1",
+        "  foreach ($attempt in 1..2) {",
+        "    if ($attempt -gt 1) { Start-Sleep -Seconds 2 }",
+        "    & $npm ci --omit=dev --include=optional --silent --no-audit --no-fund",
+        "    $npmExit = $LASTEXITCODE",
+        "    if ($npmExit -eq 0) { & $nodePath (Join-Path $dir 'verify-dependencies.mjs'); $npmExit = $LASTEXITCODE }",
+        "    if ($npmExit -eq 0) { break }",
+        "  }",
         "} finally { Pop-Location }",
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
         f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName }}",
@@ -593,15 +598,15 @@ async def get_install(
         '#!/bin/bash\n'
         'set -e\n'
         '\n'
-        '# Require Node.js >= 20\n'
+        '# Require Node.js >= 20.9\n'
         'if ! command -v node &>/dev/null; then\n'
         '  echo "\\033[0;31mError: Node.js is not installed.\\033[0m" >&2\n'
-        '  echo "Install Node.js 20+ from https://nodejs.org/ and try again." >&2\n'
+        '  echo "Install Node.js 20.9+ from https://nodejs.org/ and try again." >&2\n'
         '  exit 1\n'
         'fi\n'
-        'NODE_VER=$(node -e "process.stdout.write(process.versions.node.split(\\".\\")[0])")\n'
-        'if [ "$NODE_VER" -lt 20 ] 2>/dev/null; then\n'
-        '  echo "\\033[0;31mError: Node.js $NODE_VER is too old. Requires >= 20.\\033[0m" >&2\n'
+        'NODE_VER=$(node -p "process.versions.node")\n'
+        'if ! node -e "const [major, minor] = process.versions.node.split(\'.\').map(Number); process.exit(major > 20 || (major === 20 && minor >= 9) ? 0 : 1)"; then\n'
+        '  echo "\\033[0;31mError: Node.js $NODE_VER is too old. Requires >= 20.9.\\033[0m" >&2\n'
         '  echo "Current: $(node --version)  —  upgrade from https://nodejs.org/" >&2\n'
         '  exit 1\n'
         'fi\n'
@@ -611,7 +616,11 @@ async def get_install(
         'NODE=$(which node)\n'
         'mkdir -p "$DIR" && cd "$DIR"\n'
         f'curl -sL "{url}" | tar xz 2>/dev/null\n'
-        'npm install --production --silent 2>/dev/null\n'
+        'install_bridge_dependencies() {\n'
+        '  npm ci --omit=dev --include=optional --silent --no-audit --no-fund 2>/dev/null &&\n'
+        '    node verify-dependencies.mjs\n'
+        '}\n'
+        'install_bridge_dependencies || { sleep 2; install_bridge_dependencies; }\n'
         '\n'
         '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n'
         'if [ -n "$WSL_DISTRO_NAME" ]; then\n'

@@ -22,7 +22,11 @@ export function installStagedBridge(stage, bridgeHome) {
   const nextModules = path.join(bridgeHome, `.node_modules-next-${token}`);
   const oldModules = path.join(bridgeHome, `.node_modules-old-${token}`);
   const sourceEntries = fs.readdirSync(stage, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && (entry.name.endsWith('.mjs') || entry.name === 'package.json'));
+    .filter((entry) => entry.isFile() && (
+      entry.name.endsWith('.mjs')
+      || entry.name === 'package.json'
+      || entry.name === 'package-lock.json'
+    ));
   const newlyAdded = [];
   let modulesInstalled = false;
 

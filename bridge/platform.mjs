@@ -50,16 +50,36 @@ export function spawnExecutable(binary, args, options = {}, spawnFn = spawn, run
   return spawnFn(binary, args, executableOptions(binary, options, runtime));
 }
 
+export function validateProductionDependencies(cwd) {
+  return runExecutable(
+    process.execPath,
+    [path.join(cwd, 'verify-dependencies.mjs')],
+    { cwd, stdio: 'ignore' },
+  );
+}
+
 export function installProductionDependencies(cwd) {
   const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const args = [
+    'ci',
+    '--omit=dev',
+    '--include=optional',
+    '--silent',
+    '--no-audit',
+    '--no-fund',
+  ];
   const npm = fs.existsSync(npmCli)
-    ? [process.execPath, [npmCli, 'install', '--production', '--silent']]
-    : [findExecutable('npm', [path.join(path.dirname(process.execPath), 'npm')]), ['install', '--production', '--silent']];
+    ? [process.execPath, [npmCli, ...args]]
+    : [findExecutable('npm', [path.join(path.dirname(process.execPath), 'npm')]), args];
   if (!npm[0]) throw new Error('npm not found');
   let error;
   for (let attempt = 0; attempt < 2; attempt++) {
-    try { return runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore' }); }
-    catch (cause) { error = cause; }
+    try {
+      runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore' });
+      return validateProductionDependencies(cwd);
+    } catch (cause) {
+      error = cause;
+    }
   }
   throw error;
 }
