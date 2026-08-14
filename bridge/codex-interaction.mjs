@@ -347,6 +347,7 @@ export class CodexInteraction {
         : (context = {}) => new CodexAppServerClient({
           ...options.clientOptions,
           ...(context.cwd ? { cwd: context.cwd } : {}),
+          ...(context.managedOnly ? { managedOnly: true } : {}),
         }));
     this.writerController = options.writerController || codexWriterController;
     this.sessions = new Map();
@@ -376,11 +377,12 @@ export class CodexInteraction {
     return session;
   }
 
-  #client(session) {
+  #client(session, options = {}) {
     if (session.client) return session.client;
     const client = this.clientFactory({
       nativeSessionId: session.nativeSessionId,
       storageSessionId: session.storageSessionId,
+      managedOnly: !!options.managedOnly,
     });
     if (!client) throw new Error('Codex interaction client factory returned no client');
     session.client = client;
@@ -414,28 +416,33 @@ export class CodexInteraction {
 
   async #resume(session, options = {}) {
     if (session.releasePromise) await session.releasePromise;
-    const client = this.#client(session);
+    const client = this.#client(session, {
+      managedOnly: options.managedOnly,
+    });
     await client.start();
     if (session.subscribedGeneration === client.generation) return;
     const pendingTurn = options.pendingTurn || null;
-    let adopted = pendingTurn
+    const observedTurn = options.observedTurn || null;
+    let adopted = (pendingTurn || observedTurn)
       ? this.#prepareTurn(session, {
         streamId: `codex-resumed-${session.nativeSessionId}-${client.generation}`,
         text: '',
-        callbacks: pendingTurn.callbacks,
+        callbacks: (pendingTurn || observedTurn).callbacks,
         external: true,
       })
       : null;
     if (adopted) {
       session.active = adopted;
-      session.queue.push(pendingTurn);
+      if (pendingTurn) session.queue.push(pendingTurn);
     }
     const clearAdoption = () => {
       if (!adopted) return;
       const current = adopted;
       adopted = null;
-      const queuedIndex = session.queue.indexOf(pendingTurn);
-      if (queuedIndex !== -1) session.queue.splice(queuedIndex, 1);
+      if (pendingTurn) {
+        const queuedIndex = session.queue.indexOf(pendingTurn);
+        if (queuedIndex !== -1) session.queue.splice(queuedIndex, 1);
+      }
       if (session.active === current) session.active = null;
       current.framer.cancel();
     };
@@ -451,11 +458,13 @@ export class CodexInteraction {
       const error = this.#activeWriterError(session, cause);
       if (error.code !== 'CODEX_ACTIVE_WRITER') throw error;
       const writer = error.writer || {};
-      const automaticTakeover = !options.takeover
+      const automaticTakeover = options.allowTakeover !== false
+        && !options.takeover
         && writer.canTerminate
         && writer.pid
         && writer.status === 'completed';
-      if (!options.takeover && !automaticTakeover) throw error;
+      if ((options.allowTakeover === false || !options.takeover)
+        && !automaticTakeover) throw error;
       await this.writerController.terminate(
         session.nativeSessionId,
         automaticTakeover ? writer.pid : Number(options.expectedWriterPid),
@@ -533,6 +542,36 @@ export class CodexInteraction {
       }
       await this.#startTurn(session, turn);
       return { queued: false };
+    });
+    session.sendLock = operation.catch(() => {});
+    return operation;
+  }
+
+  async observeExisting(options) {
+    const session = this.#session(options.nativeSessionId, options.sessionId);
+    const operation = session.sendLock.then(async () => {
+      if (session.active) return { active: true };
+      try {
+        const client = this.#client(session, { managedOnly: true });
+        await client.start();
+        const loaded = await client.request('thread/loaded/list');
+        if (!(loaded?.data || []).includes(session.nativeSessionId)) {
+          await this.#release(session);
+          return { active: false, loaded: false };
+        }
+        const result = await this.#resume(session, {
+          observedTurn: {
+            callbacks: options.callbacks || {},
+          },
+          managedOnly: true,
+          allowTakeover: false,
+        });
+        if (!result?.active) await this.#release(session);
+        return { active: !!result?.active, loaded: true };
+      } catch (error) {
+        await this.#release(session);
+        return { active: false, loaded: false, error };
+      }
     });
     session.sendLock = operation.catch(() => {});
     return operation;
@@ -755,6 +794,15 @@ export class CodexInteraction {
 
   #onNotification(session, client, { method, params }) {
     if (session.client !== client) return;
+    if (method === 'serverRequest/resolved') {
+      const requestId = `codex:${session.nativeSessionId}:${params.requestId}`;
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        this.pendingRequests.delete(requestId);
+        pending.turn.callbacks.onControlResolved?.(requestId);
+      }
+      return;
+    }
     const active = session.active;
     if (active && this.#matchesCurrentUserItem(active, method, params)) {
       this.#bindTurnId(active, params.turnId, true);

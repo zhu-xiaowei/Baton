@@ -73,12 +73,28 @@ function cwdForSession(sessionId) {
   return projectHashToPath(projectHash);
 }
 
-// Push a pool-owned session's status to DDB (dedup + counter delta live in updateSessionStatus).
-async function syncPoolStatus(sessionId, status, detail) {
-  const filePath = _claudeRuntime.findSessionFile(sessionId);
+// Push an interaction-owned session's status to DDB.
+async function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
+  const identity = parseStorageSessionId(sessionId, runtimeHint);
+  const adapter = getRuntimeAdapter(identity.runtime);
+  const filePath = adapter.findSessionFile(identity.nativeSessionId);
   if (!filePath || !_config) return;
   const projectHash = path.basename(path.dirname(filePath));
-  try { await updateSessionStatus(_config, sessionId, filePath, projectHash, status, detail); } catch {}
+  try {
+    await updateSessionStatus(
+      _config,
+      identity.sessionId,
+      filePath,
+      projectHash,
+      status,
+      detail,
+      identity.runtime,
+    );
+  } catch {}
+}
+
+function syncPoolStatus(sessionId, status, detail) {
+  return syncInteractionStatus(sessionId, status, detail, 'claude');
 }
 
 function controlDetail(p) {
@@ -116,6 +132,24 @@ function clearPendingControls(sessionId) {
       sessionId,
       requestId: cleared.current.requestId,
     });
+  }
+}
+
+function dismissPendingControl(sessionId, requestId) {
+  const dismissed = _pendingControl.dismiss(sessionId, requestId);
+  if (!dismissed || dismissed.current) return;
+  wsSend({ action: 'permission_resolved', sessionId, requestId });
+  if (dismissed.next) {
+    sendPermissionRequest(sessionId, dismissed.next);
+  }
+  const statusTarget = dismissed.next || dismissed.resolved;
+  if (statusTarget.syncStatus) {
+    syncInteractionStatus(
+      sessionId,
+      dismissed.next ? 'needs_input' : 'running',
+      controlDetail(dismissed.next),
+      statusTarget.runtime,
+    );
   }
 }
 
@@ -473,7 +507,12 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
       if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
       // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
       if (options.syncStatus !== false) {
-        syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.current(sessionId)));
+        syncInteractionStatus(
+          sessionId,
+          _pendingControl.has(sessionId) ? 'needs_input' : 'completed',
+          controlDetail(_pendingControl.current(sessionId)),
+          options.runtime,
+        );
       }
     },
     onControlRequest: (req) => {
@@ -489,9 +528,17 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
         syncStatus: options.syncStatus !== false,
       });
       if (options.syncStatus !== false) {
-        syncPoolStatus(sessionId, 'needs_input', controlDetail(queued.current));
+        syncInteractionStatus(
+          sessionId,
+          'needs_input',
+          controlDetail(queued.current),
+          options.runtime,
+        );
       }
       if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
+    },
+    onControlResolved: (requestId) => {
+      dismissPendingControl(sessionId, requestId);
     },
     onError: (sid, err) => {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
@@ -717,11 +764,32 @@ async function handleCreateProject(rawPath, asAgent) {
   }
 }
 
-// App (re)subscribed: re-push any control_request still awaiting an answer so a refresh/reconnect re-shows the prompt.
+// App (re)subscribed: show a known prompt, or passively attach to an active
+// managed Codex thread so app-server can replay TUI-owned pending requests.
 async function handleRevealAgent(sessionId) {
   const p = _pendingControl.current(sessionId);
-  if (!p) return;
-  sendPermissionRequest(sessionId, p);
+  if (p) {
+    sendPermissionRequest(sessionId, p);
+    return;
+  }
+  const identity = parseStorageSessionId(sessionId);
+  const adapter = getRuntimeAdapter(identity.runtime);
+  if (typeof adapter.interaction?.observeExisting !== 'function') return;
+  const callbacks = buildStreamCallbacks(
+    identity.sessionId,
+    '',
+    () => {},
+    {
+      runtime: identity.runtime,
+      nativeSessionId: identity.nativeSessionId,
+      syncStatus: true,
+    },
+  );
+  await adapter.interaction.observeExisting({
+    sessionId: identity.sessionId,
+    nativeSessionId: identity.nativeSessionId,
+    callbacks,
+  });
 }
 
 // Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
@@ -916,10 +984,17 @@ function handlePermissionReply(msg) {
   if (advanced.next) {
     sendPermissionRequest(sessionId, advanced.next);
     if (advanced.next.syncStatus) {
-      syncPoolStatus(sessionId, 'needs_input', controlDetail(advanced.next));
+      syncInteractionStatus(
+        sessionId,
+        'needs_input',
+        controlDetail(advanced.next),
+        advanced.next.runtime,
+      );
     }
   } else {
     wsSend({ action: 'permission_resolved', sessionId, requestId: pending.requestId });
-    if (pending.syncStatus) syncPoolStatus(sessionId, 'running');
+    if (pending.syncStatus) {
+      syncInteractionStatus(sessionId, 'running', '', pending.runtime);
+    }
   }
 }

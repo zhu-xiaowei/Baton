@@ -109,11 +109,13 @@ function callbacks() {
   const messages = [];
   const results = [];
   const controls = [];
+  const resolvedControls = [];
   return {
     frames,
     messages,
     results,
     controls,
+    resolvedControls,
     value: {
       onBlockStart: (_sid, blockId, kind, name, seq) => {
         frames.push({ t: 'start', blockId, kind, name, seq });
@@ -130,6 +132,7 @@ function callbacks() {
       onMessage: (_sid, message, meta) => messages.push({ message, meta }),
       onResult: (_sid, result, finalSeq) => results.push({ result, finalSeq }),
       onControlRequest: (request) => controls.push(request),
+      onControlResolved: (requestId) => resolvedControls.push(requestId),
     },
   };
 }
@@ -1382,6 +1385,204 @@ test('managed app-server resume adopts an active approval turn before queued sen
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(client.stopCalls, 1);
+});
+
+test('passive observation replays a managed TUI approval without starting or terminating a turn', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-observed'] };
+    }
+    if (method === 'thread/resume') {
+      client.emit('serverRequest', {
+        id: 31,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: 'thread-observed',
+          turnId: 'turn-external',
+          command: 'git commit -m test',
+          cwd: '/workspace/demo',
+          availableDecisions: ['accept', 'cancel'],
+        },
+      });
+      return {
+        thread: {
+          id: params.threadId,
+          status: {
+            type: 'active',
+            activeFlags: ['waitingOnApproval'],
+          },
+        },
+      };
+    }
+    return request(method, params);
+  };
+  const terminated = [];
+  const contexts = [];
+  const interaction = new CodexInteraction({
+    clientFactory(context) {
+      contexts.push(context);
+      return client;
+    },
+    writerController: {
+      describe: () => ({
+        pid: 77,
+        canTerminate: true,
+        status: 'completed',
+      }),
+      terminate: async (...args) => terminated.push(args),
+    },
+  });
+  const cb = callbacks();
+
+  assert.deepEqual(await interaction.observeExisting({
+    sessionId: 'codex:thread-observed',
+    nativeSessionId: 'thread-observed',
+    callbacks: cb.value,
+  }), { active: true, loaded: true });
+
+  assert.deepEqual(contexts, [{
+    nativeSessionId: 'thread-observed',
+    storageSessionId: 'codex:thread-observed',
+    managedOnly: true,
+  }]);
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'turn/start').length,
+    0,
+  );
+  assert.deepEqual(terminated, []);
+  assert.equal(cb.controls.length, 1);
+  assert.equal(cb.controls[0].request.input.command, 'git commit -m test');
+
+  assert.equal(interaction.replyControl(
+    'thread-observed',
+    cb.controls[0].request_id,
+    { decision: 'accept' },
+  ), true);
+  assert.deepEqual(client.responses, [{
+    id: 31,
+    result: { decision: 'accept' },
+  }]);
+
+  notify(client, 'turn/completed', {
+    threadId: 'thread-observed',
+    turn: { id: 'turn-external', status: 'completed' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(client.stopCalls, 1);
+});
+
+test('passive observation ignores unloaded threads without resuming them', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['another-thread'] };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+
+  assert.deepEqual(await interaction.observeExisting({
+    sessionId: 'codex:thread-idle',
+    nativeSessionId: 'thread-idle',
+    callbacks: callbacks().value,
+  }), { active: false, loaded: false });
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'thread/resume').length,
+    0,
+  );
+  assert.equal(client.stopCalls, 1);
+});
+
+test('passive observation never terminates a conflicting standalone writer', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-conflict-observed'] };
+    }
+    if (method === 'thread/resume') {
+      throw new Error('thread already has an active writer');
+    }
+    return request(method, params);
+  };
+  const terminated = [];
+  const interaction = new CodexInteraction({
+    client,
+    writerController: {
+      describe: () => ({
+        pid: 88,
+        canTerminate: true,
+        status: 'completed',
+      }),
+      terminate: async (...args) => terminated.push(args),
+    },
+  });
+
+  const observed = await interaction.observeExisting({
+    sessionId: 'codex:thread-conflict-observed',
+    nativeSessionId: 'thread-conflict-observed',
+    callbacks: callbacks().value,
+  });
+  assert.equal(observed.active, false);
+  assert.equal(observed.loaded, false);
+  assert.equal(observed.error.code, 'CODEX_ACTIVE_WRITER');
+  assert.deepEqual(terminated, []);
+  assert.equal(client.stopCalls, 1);
+});
+
+test('another app-server client resolving approval dismisses the passive prompt', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-resolved'] };
+    }
+    if (method === 'thread/resume') {
+      client.emit('serverRequest', {
+        id: 41,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: 'thread-resolved',
+          turnId: 'turn-external',
+          command: 'pwd',
+        },
+      });
+      return {
+        thread: {
+          id: params.threadId,
+          status: { type: 'active', activeFlags: ['waitingOnApproval'] },
+        },
+      };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  await interaction.observeExisting({
+    sessionId: 'codex:thread-resolved',
+    nativeSessionId: 'thread-resolved',
+    callbacks: cb.value,
+  });
+  const requestId = cb.controls[0].request_id;
+  notify(client, 'serverRequest/resolved', {
+    threadId: 'thread-resolved',
+    requestId: 41,
+  });
+
+  assert.deepEqual(cb.resolvedControls, [requestId]);
+  assert.equal(interaction.replyControl(
+    'thread-resolved',
+    requestId,
+    { decision: 'accept' },
+  ), false);
 });
 
 test('different Codex threads use independent ephemeral clients', async () => {

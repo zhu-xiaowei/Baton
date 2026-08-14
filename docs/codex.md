@@ -28,6 +28,9 @@ Device → Project → Session 信息架构。
   app-server；没有 daemon 或连接失败时才回退到独立 `app-server --stdio`。
 - 复用 daemon 后，已加载的 active turn 会被接管为当前流并重放 pending approval；
   新发送的消息排队到该 turn 完成后启动，后续 delta 仍走完整 streaming 链路。
+- 打开已有 Codex Session 时，Bridge 会对 managed daemon 中仍加载的 thread 执行 passive
+  `thread/resume`：只订阅现有 turn 并重放 TUI pending approval，不调用 `turn/start`，
+  不终止 writer。Web 或 TUI 任一端回答后，另一端的弹窗会同步关闭或继续显示队列下一项。
 - app-server delta 复用 Claude 的首包立即发送、50ms 合批、turn 级 `seq`、前端重排和追赶渲染。
 - app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
 - interrupt 和 command/file/permissions/MCP elicitation/user-input 已接入现有 WS
@@ -45,7 +48,7 @@ Device → Project → Session 信息架构。
 
 当前未完成：
 
-- 跨 Bridge 进程重启恢复 pending request 和 `turn/steer`。
+- `turn/steer`，以及没有 managed daemon 的 standalone pending request 跨 Bridge 重启恢复。
 - app-server 工具输出是否切换为 live 权威；当前最终工具卡继续复用 Phase 2 watcher。
 
 因此，Codex Session 已支持创建、历史读取、实时旁观和 Web 交互。New Session 页面按
@@ -570,10 +573,12 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 7. Codex 新 Session 的 capability/UI 入口、`thread/start` 和首个 `turn/start`。
 8. managed daemon 复用、active turn/审批恢复和新消息排队；无 daemon 时保留独立
    stdio app-server lease。
+9. 打开 Session 时 passive 订阅 managed TUI thread、重放 pending approval，以及
+   `serverRequest/resolved` 的双端弹窗同步。
 
 待完成：
 
-1. `turn/steer` 和 pending approval 重连恢复。
+1. `turn/steer` 和 standalone pending approval 重连恢复。
 2. 剩余 ServerRequest 变体。
 3. Linux/Windows 显式 TUI 接管 smoke test 与生产灰度。
 

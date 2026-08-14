@@ -814,7 +814,11 @@ through the same pending request ID. The frontend does not infer permission prom
 output. Codex may send several approval requests before the first is answered. The bridge matches
 the Codex TUI by keeping the first request active and stacking later requests; after the active
 request is answered, the newest queued request is shown next. Replayed request IDs are
-deduplicated, and only the active request ID can be answered.
+deduplicated, and only the active request ID can be answered. Opening a Codex session also
+passively resumes an already-loaded managed-daemon thread. This subscribes to its existing turn
+and replays TUI-owned pending requests without starting a turn or invoking writer takeover.
+If another app-server client resolves a request first, `serverRequest/resolved` removes it from
+the bridge queue and emits `permission_resolved` for the visible prompt.
 
 ---
 
@@ -1403,9 +1407,12 @@ Codex participates in Session metadata, history reads, `sync_session`, `sync_com
 `messages`/`messages_ack` updates from the rollout watcher. Existing-Session `send_message`,
 streaming, interrupt, and permission requests use the app-server adapter. The adapter reuses a
 managed Unix WebSocket daemon when present, including active-turn and pending-approval recovery,
-and falls back to `app-server --stdio` otherwise. New-Session creation is supported; local
-history deletion remains disabled by Codex runtime capabilities. Project
-directory creation is runtime-neutral. See [codex.md](codex.md) for validation.
+and falls back to `app-server --stdio` otherwise. Revealing an existing session uses a
+managed-daemon-only passive subscription: it never starts a turn and never terminates a writer.
+The standalone writer termination flow remains only as the explicit fallback for a subsequent
+message send that cannot share a daemon. New-Session creation is supported; local history
+deletion remains disabled by Codex runtime capabilities. Project directory creation is
+runtime-neutral. See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation
 

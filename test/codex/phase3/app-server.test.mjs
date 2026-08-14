@@ -168,6 +168,21 @@ test('app-server client reuses a managed Unix WebSocket daemon', async (t) => {
   );
 });
 
+test('managed-only app-server client never falls back to stdio', async () => {
+  let spawned = false;
+  const client = new CodexAppServerClient({
+    socketPath: false,
+    managedOnly: true,
+    spawnFn() {
+      spawned = true;
+      return fakeProcess();
+    },
+  });
+
+  await assert.rejects(client.start(), /Managed Codex app-server is unavailable/);
+  assert.equal(spawned, false);
+});
+
 test('managed socket failure falls back to a stdio app-server', async (t) => {
   const proc = fakeProcess();
   const client = new CodexAppServerClient({

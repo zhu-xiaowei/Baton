@@ -117,6 +117,7 @@ export class CodexAppServerClient extends EventEmitter {
       spawnFn: options.spawnFn,
       platform: options.platform || process.platform,
     };
+    this.managedOnly = !!options.managedOnly;
     this.requestTimeout = options.requestTimeout ?? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS;
     this.clientInfo = options.clientInfo || {
       name: 'agentpeek',
@@ -148,7 +149,11 @@ export class CodexAppServerClient extends EventEmitter {
         return await this.#connectAndInitialize(socketPath);
       } catch (error) {
         this.stderr = `managed app-server unavailable: ${error.message}`;
+        if (this.managedOnly) throw error;
       }
+    }
+    if (this.managedOnly) {
+      throw new Error('Managed Codex app-server is unavailable');
     }
     return this.#spawnAndInitialize();
   }

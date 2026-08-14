@@ -40,6 +40,18 @@ export class PermissionQueue {
     return { resolved, next };
   }
 
+  dismiss(sessionId, requestId) {
+    const state = this.sessions.get(sessionId);
+    if (!state) return null;
+    if (state.current.requestId === requestId) {
+      return this.resolve(sessionId, requestId);
+    }
+    const index = state.stack.findIndex((item) => item.requestId === requestId);
+    if (index === -1) return null;
+    const [resolved] = state.stack.splice(index, 1);
+    return { resolved, next: null, current: state.current };
+  }
+
   clear(sessionId) {
     const state = this.sessions.get(sessionId);
     if (!state) return null;

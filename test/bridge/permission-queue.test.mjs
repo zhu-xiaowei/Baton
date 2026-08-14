@@ -53,3 +53,19 @@ test('permission queue clears a session without affecting another session', () =
   assert.equal(queue.has('session-1'), false);
   assert.equal(queue.current('session-2').requestId, 'other');
 });
+
+test('permission queue dismisses requests resolved by another client', () => {
+  const queue = new PermissionQueue();
+  queue.enqueue('session-1', request('first'));
+  queue.enqueue('session-1', request('second'));
+  queue.enqueue('session-1', request('third'));
+
+  const queued = queue.dismiss('session-1', 'second');
+  assert.equal(queued.resolved.requestId, 'second');
+  assert.equal(queued.current.requestId, 'first');
+  assert.equal(queue.current('session-1').requestId, 'first');
+
+  const active = queue.dismiss('session-1', 'first');
+  assert.equal(active.next.requestId, 'third');
+  assert.equal(queue.current('session-1').requestId, 'third');
+});
