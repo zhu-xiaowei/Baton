@@ -12,6 +12,7 @@ import {
   resolveAgentMetadata,
   statusFromEntry,
 } from '../../bridge/session.mjs';
+import { preferPendingInteraction } from '../../bridge/watcher.mjs';
 
 function agent(sessionId, state = 'blocked') {
   return {
@@ -298,6 +299,67 @@ test('regular Claude sessions persist the current interaction detail', async () 
     assert.equal(request.sessions[0].isAgent, undefined);
     assert.equal(request.sessions[0].status, 'needs_input');
     assert.equal(request.sessions[0].agentDetail, 'Allow writing the test file?');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('pending Hook interaction overrides JSONL running status', () => {
+  assert.deepEqual(
+    preferPendingInteraction('running', 'printf test > /tmp/test.txt'),
+    { status: 'needs_input', detail: 'printf test > /tmp/test.txt' },
+  );
+  assert.deepEqual(
+    preferPendingInteraction('completed', null),
+    { status: 'completed', detail: null },
+  );
+});
+
+test('interaction status refreshes the server even when the local status matches', async () => {
+  const sessionId = '79797979-7979-4797-8797-797979797979';
+  const fixture = sessionFixture(sessionId);
+  let request;
+  const statuses = new Map([[sessionId, 'needs_input']]);
+  try {
+    await claudeRuntime.updateSessionStatus(
+      { deviceName: 'test-device' },
+      sessionId,
+      fixture.filePath,
+      fixture.project,
+      'needs_input',
+      'Current command',
+      {
+        daemonMeta: new Map(),
+        lastKnownStatus: statuses,
+        postFn: async (_url, body) => { request = body; },
+      },
+    );
+    assert.equal(request.sessions[0].status, 'needs_input');
+    assert.equal(request.sessions[0].agentDetail, 'Current command');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('failed interaction status writes do not advance the local status cache', async () => {
+  const sessionId = '80808080-8080-4808-8808-808080808080';
+  const fixture = sessionFixture(sessionId);
+  const statuses = new Map([[sessionId, 'running']]);
+  try {
+    await assert.rejects(() => claudeRuntime.updateSessionStatus(
+      { deviceName: 'test-device' },
+      sessionId,
+      fixture.filePath,
+      fixture.project,
+      'needs_input',
+      'Current command',
+      {
+        daemonMeta: new Map(),
+        lastKnownStatus: statuses,
+        postFn: async () => { throw new Error('network down'); },
+      },
+    ));
+    assert.equal(statuses.get(sessionId), 'running');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

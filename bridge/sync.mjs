@@ -1,4 +1,4 @@
-import { post, get } from './http.mjs';
+import { post, postRequired, get } from './http.mjs';
 import { synced, uploadMessages } from './extract.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 import {
@@ -6,7 +6,7 @@ import {
   getRuntimeAdapter,
   runtimeAdapters,
 } from './runtime-registry.mjs';
-import { poolOwns } from './ws.mjs';
+import { pendingInteractionDetail, poolOwns } from './ws.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
 
@@ -250,7 +250,7 @@ export async function updateSessionStatus(
     detail,
     {
       lastKnownStatus,
-      postFn: post,
+      postFn: postRequired,
     },
   );
 }
@@ -267,6 +267,7 @@ export async function checkStopped(config) {
   for (const s of active.sessions) {
     if (s.deviceName !== config.deviceName || !s.sessionId) continue;
     const identity = parseStorageSessionId(s.sessionId, s.runtime);
+    if (pendingInteractionDetail(identity.sessionId) !== null) continue;
     const adapter = getRuntimeAdapter(identity.runtime);
     if (!adapter.features.statusPolling) continue;
     if (!statusContexts.has(adapter.runtime)) {

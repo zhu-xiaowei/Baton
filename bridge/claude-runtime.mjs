@@ -261,10 +261,8 @@ export const claudeRuntime = defineRuntimeAdapter({
   async updateSessionStatus(config, nativeSessionId, filePath, projectHash, newStatus, detail, context) {
     projectHash = normalizeProjectHash(projectHash);
     const previousStatus = context.lastKnownStatus.get(nativeSessionId);
-    if (previousStatus === newStatus) return;
     let stat;
     try { stat = fs.statSync(filePath); } catch { return; }
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
     const lastActive = stat.mtime.toISOString();
     const projectName = readableProjectName(projectHash);
     const daemon = (context.daemonMeta || getDaemonSessions()).get(nativeSessionId);
@@ -301,5 +299,6 @@ export const claudeRuntime = defineRuntimeAdapter({
         lastActive,
       }],
     });
+    context.lastKnownStatus.set(nativeSessionId, newStatus);
   },
 });

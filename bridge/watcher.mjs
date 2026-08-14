@@ -6,7 +6,12 @@ import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
-import { headlessPushed, headlessStream, poolOwns } from './ws.mjs';
+import {
+  headlessPushed,
+  headlessStream,
+  pendingInteractionDetail,
+  poolOwns,
+} from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
@@ -33,6 +38,12 @@ export function startWatcher(config) {
       processClaudeLoop(config, busy, retries, filename, sessionId);
     });
   }
+}
+
+export function preferPendingInteraction(status, detail) {
+  return detail === null
+    ? { status, detail: null }
+    : { status: 'needs_input', detail };
 }
 
 async function processClaudeLoop(config, busy, retries, filename, sessionId) {
@@ -141,17 +152,41 @@ async function readAndSend(config, filename, sessionId) {
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
     const daemonActive = dm && getDaemonRunningSessionIds().has(sessionId);
-    const newStatus = daemonActive ? dm.status : resolveStatus(sessionId, lastStatus);
+    const resolvedStatus = daemonActive ? dm.status : resolveStatus(sessionId, lastStatus);
+    const effective = preferPendingInteraction(
+      resolvedStatus,
+      pendingInteractionDetail(sessionId),
+    );
     const agentMeta = dm && !daemonActive ? { ...dm, agentDetail: '' } : dm;
-    await postSessionMeta(config, filePath, filename, sessionId, newStatus, agentMeta, gotNewTitle);
+    await postSessionMeta(
+      config,
+      filePath,
+      filename,
+      sessionId,
+      effective.status,
+      agentMeta,
+      gotNewTitle,
+      effective.detail,
+    );
     // Trailing edge: content settled but debounce held it 'running'. No more
     // writes will fire fs.watch, so re-evaluate once after debounce expires.
-    if (!daemonActive && lastStatus !== 'running' && newStatus === 'running') scheduleRecheck(config, filePath, filename, sessionId);
+    if (!daemonActive && effective.detail === null && lastStatus !== 'running' && effective.status === 'running') {
+      scheduleRecheck(config, filePath, filename, sessionId);
+    }
   }
 }
 
 // Post session metadata + counter delta when status changed, is new, or title arrived.
-async function postSessionMeta(config, filePath, filename, sessionId, newStatus, dm, gotNewTitle) {
+async function postSessionMeta(
+  config,
+  filePath,
+  filename,
+  sessionId,
+  newStatus,
+  dm,
+  gotNewTitle,
+  interactionDetail = null,
+) {
   const oldStatus = lastKnownStatus.get(sessionId);
   const statusChanged = newStatus !== oldStatus;
   const isNew = !recentSessions.has(sessionId);
@@ -189,6 +224,9 @@ async function postSessionMeta(config, filePath, filename, sessionId, newStatus,
     sessionMeta.agentName = dm.agentName;
     sessionMeta.agentDetail = dm.agentDetail;
   }
+  if (newStatus === 'needs_input' && interactionDetail !== null) {
+    sessionMeta.agentDetail = interactionDetail;
+  }
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
@@ -211,8 +249,20 @@ function scheduleRecheck(config, filePath, filename, sessionId) {
   _recheckTimers.set(sessionId, setTimeout(async () => {
     _recheckTimers.delete(sessionId);
     if (!fs.existsSync(filePath)) return;
-    const status = getSessionStatus(sessionId, filePath, getRunningInfo());
-    await postSessionMeta(config, filePath, filename, sessionId, status, null, false);
+    const effective = preferPendingInteraction(
+      getSessionStatus(sessionId, filePath, getRunningInfo()),
+      pendingInteractionDetail(sessionId),
+    );
+    await postSessionMeta(
+      config,
+      filePath,
+      filename,
+      sessionId,
+      effective.status,
+      null,
+      false,
+      effective.detail,
+    );
   }, RECHECK_DELAY_MS));
 }
 

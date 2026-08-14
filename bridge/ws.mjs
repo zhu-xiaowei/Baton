@@ -119,6 +119,11 @@ function controlDetail(p) {
   return input.command || input.file_path || input.path || p.toolName || '';
 }
 
+export function pendingInteractionDetail(sessionId) {
+  const pending = _pendingControl.current(sessionId);
+  return pending ? controlDetail(pending) : null;
+}
+
 function permissionKind(p) {
   if (!p.requiresInteraction) return 'tool';
   return p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode' ? 'plan' : 'ask';
@@ -820,6 +825,9 @@ async function handleCreateProject(rawPath, asAgent) {
 async function handleRevealAgent(sessionId) {
   const p = _pendingControl.current(sessionId);
   if (p) {
+    if (p.syncStatus) {
+      syncInteractionStatus(sessionId, 'needs_input', controlDetail(p), p.runtime);
+    }
     sendPermissionRequest(sessionId, p);
     return;
   }
