@@ -33,6 +33,44 @@ test('Codex live events reuse the CC preview and authoritative-row handoff', asy
   ]), []);
   assert.equal(h.document.querySelector('[id^="stream-turn-"]'), null);
 
+  resetSession(h, { sessionId: 'codex:thread-reloaded-approval' });
+  h.state.appState.runtime = 'codex';
+  await replay(h, [{ authUser: 'approval question' }]);
+  h.hooks.pushStreamFrame('codex-stream-reloaded', {
+    t: 'start',
+    seq: 10,
+    blockId: 3,
+    kind: 'text',
+  });
+  h.hooks.pushStreamFrame('codex-stream-reloaded', {
+    t: 'delta',
+    seq: 11,
+    blockId: 3,
+    chunk: 'THREE_DONE',
+  });
+  h.hooks.handleWsMessage({
+    action: 'messages',
+    sessionId: 'codex:thread-reloaded-approval',
+    streamId: 'codex-stream-reloaded',
+    messages: [{
+      uuid: 'live-reloaded-final',
+      nativeId: 'codex:item:agent-reloaded',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'THREE_DONE' }],
+      timestamp: '2026-08-14T03:26:13.553Z',
+    }],
+  });
+
+  assert.deepEqual(assertTurns(h, [
+    { u: 'approval question', a: 'THREE_DONE' },
+  ]), []);
+  assert.equal(
+    h.state.wsAllMessages.filter(
+      (message) => message.nativeId === 'codex:item:agent-reloaded',
+    ).length,
+    1,
+  );
+
   resetSession(h, { sessionId: 'codex:thread-tools' });
   h.state.appState.runtime = 'codex';
   h.state.streamAnchors = { 'codex-stream-tools': 'sent-tools' };

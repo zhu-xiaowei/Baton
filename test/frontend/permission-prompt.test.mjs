@@ -103,6 +103,19 @@ test('closing a Codex command approval sends cancel', () => {
   assert.equal(sent[0].decision, 'cancel');
 });
 
+test('resolved events only dismiss the matching permission prompt', () => {
+  reset();
+  commandPrompt();
+
+  assert.equal(window.resolvePermissionPrompt('another-approval'), false);
+  assert.ok(document.getElementById('permission-prompt'));
+  assert.equal(document.getElementById('msg-input').disabled, true);
+
+  assert.equal(window.resolvePermissionPrompt('approval-1'), true);
+  assert.equal(document.getElementById('permission-prompt'), null);
+  assert.equal(document.getElementById('msg-input').disabled, false);
+});
+
 test('Claude tool approvals keep the legacy Yes and No decisions', () => {
   reset();
   window.showPermissionPrompt({

@@ -254,6 +254,12 @@ function dismissPermissionPrompt() {
   if (typeof updateSpinner === 'function') updateSpinner();
 }
 
+function resolvePermissionPrompt(requestId) {
+  if (!_req || (requestId && _req.requestId !== requestId)) return false;
+  dismissPermissionPrompt();
+  return true;
+}
+
 function buildToolSummary(toolName, input) {
   if (toolName === 'Bash' || toolName === 'bash') {
     return {
@@ -290,5 +296,6 @@ Object.assign(window, {
   submitPermissionWithInput: submitPermissionWithInput,
   cancelPermissionPrompt: cancelPermissionPrompt,
   dismissPermissionPrompt: dismissPermissionPrompt,
+  resolvePermissionPrompt: resolvePermissionPrompt,
   hasActivePermissionPrompt: hasActivePermissionPrompt,
 });

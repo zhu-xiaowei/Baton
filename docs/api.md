@@ -811,7 +811,10 @@ These Codex fields are ignored by the Claude branch; Claude continues to use the
 
 Bridge receives a runtime control request, emits `permission_request`, and applies the reply
 through the same pending request ID. The frontend does not infer permission prompts from tool
-output.
+output. Codex may send several approval requests before the first is answered. The bridge matches
+the Codex TUI by keeping the first request active and stacking later requests; after the active
+request is answered, the newest queued request is shown next. Replayed request IDs are
+deduplicated, and only the active request ID can be answered.
 
 ---
 
@@ -1024,6 +1027,21 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
 ```
 
 **Server handling**: `_handle_bridge_relay` — query Subscriptions table by sessionId, forward to all subscribed app connections (excluding bridge itself).
+
+---
+
+#### permission_resolved
+
+Bridge tells subscribed apps that the visible permission prompt is no longer pending. Apps only
+dismiss the prompt when `requestId` matches, so a late completion cannot close a newer prompt.
+
+```json
+{
+  "action": "permission_resolved",
+  "sessionId": "a1ca0870-xxxx",
+  "requestId": "ctrl_123"
+}
+```
 
 ---
 

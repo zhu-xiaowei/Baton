@@ -205,6 +205,11 @@ function handleWsMessage(msg) {
       showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'permission_request') {
       if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
+    } else if (msg.action === 'permission_resolved') {
+      if (msg.sessionId === state.wsSessionId
+        && typeof resolvePermissionPrompt === 'function') {
+        resolvePermissionPrompt(msg.requestId);
+      }
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -778,6 +783,19 @@ function authoritativeStream(message, explicitStreamId) {
     || !Array.isArray(message.content)
     || !message.content.length) return '';
   if (explicitStreamId) {
+    var explicitBuffer = _rb[explicitStreamId];
+    // After a page reload we can rejoin a turn after its early frames are gone.
+    // The complete authoritative row must not wait forever behind that
+    // unrecoverable prefix gap. Self-sent streams have an anchor and keep the
+    // normal strict reorder behavior for genuinely delayed frames.
+    if (state.appState.runtime === 'codex'
+      && !state.streamAnchors[explicitStreamId]
+      && explicitBuffer?.hasGap()
+      && !explicitBuffer.orderedBlocks().length) {
+      message._streamCoverCount = authoritativeBlockCount(message);
+      message._streamCoverAbsolute = false;
+      return '';
+    }
     // Claude's authoritative stdout row has always landed immediately; its
     // streamId is already exact, and per-stream cleanup prevents cross-turn
     // damage. Codex may deliver the row ahead of its final ordered frames, so

@@ -20,6 +20,7 @@ import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
 import { updateSessionStatus, knownProjects } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
+import { PermissionQueue } from './permission-queue.mjs';
 
 let _ws = null;
 let _config = null;
@@ -61,8 +62,9 @@ export function markHeadlessPushed(uuid, streamId = '') {
 export function headlessPushed(uuid) { return liveMessagePushed('claude', uuid); }
 export function headlessStream(uuid) { return liveMessageStream('claude', uuid); }
 
-// Pending control_request per session (CC blocks one tool call at a time).
-const _pendingControl = new Map(); // sessionId → { requestId, toolName, toolUseId, input, requiresInteraction }
+// Codex may issue several approvals in parallel. Match its TUI: keep the first
+// visible and process later requests newest-first.
+const _pendingControl = new PermissionQueue();
 
 function cwdForSession(sessionId) {
   const filePath = _claudeRuntime.findSessionFile(sessionId);
@@ -85,6 +87,36 @@ function controlDetail(p) {
   if (Array.isArray(input.questions) && input.questions.length) return input.questions[0].question || '';
   if (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode') return 'Review plan';
   return input.command || input.file_path || input.path || p.toolName || '';
+}
+
+function permissionKind(p) {
+  if (!p.requiresInteraction) return 'tool';
+  return p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode' ? 'plan' : 'ask';
+}
+
+function sendPermissionRequest(sessionId, p) {
+  wsSend({
+    action: 'permission_request',
+    sessionId,
+    kind: permissionKind(p),
+    requestId: p.requestId,
+    toolName: p.toolName,
+    approvalType: p.approvalType || null,
+    questions: p.input.questions,
+    plan: p.input.plan,
+    input: p.input,
+  });
+}
+
+function clearPendingControls(sessionId) {
+  const cleared = _pendingControl.clear(sessionId);
+  if (cleared?.current) {
+    wsSend({
+      action: 'permission_resolved',
+      sessionId,
+      requestId: cleared.current.requestId,
+    });
+  }
 }
 
 export function initWs(config) {
@@ -438,38 +470,32 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
     },
     onResult: (sid, result, finalSeq) => {
       wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
+      if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
       // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
       if (options.syncStatus !== false) {
-        syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.get(sessionId)));
+        syncPoolStatus(sessionId, _pendingControl.has(sessionId) ? 'needs_input' : 'completed', controlDetail(_pendingControl.current(sessionId)));
       }
     },
     onControlRequest: (req) => {
       const r = req.request || {};
       const input = r.input || {};
       // Surface to the app → permission_reply → handlePermissionReply (bypass mode never gets here).
-      _pendingControl.set(sessionId, {
+      const queued = _pendingControl.enqueue(sessionId, {
         requestId: req.request_id, toolName: r.tool_name,
         input, requiresInteraction: !!r.requires_user_interaction,
         approvalType: r.approval_type || null,
         runtime: options.runtime || 'claude',
         nativeSessionId: options.nativeSessionId || sessionId,
+        syncStatus: options.syncStatus !== false,
       });
       if (options.syncStatus !== false) {
-        syncPoolStatus(sessionId, 'needs_input', controlDetail(_pendingControl.get(sessionId)));
+        syncPoolStatus(sessionId, 'needs_input', controlDetail(queued.current));
       }
-      let kind = 'tool';
-      if (r.requires_user_interaction) {
-        kind = (r.tool_name === 'ExitPlanMode' || r.tool_name === 'exit_plan_mode') ? 'plan' : 'ask';
-      }
-      wsSend({
-        action: 'permission_request', sessionId, kind,
-        requestId: req.request_id, toolName: r.tool_name,
-        approvalType: r.approval_type || null,
-        questions: input.questions, plan: input.plan, input,
-      });
+      if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
     },
     onError: (sid, err) => {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
+      if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
       wsSend({ action: 'stream_end', sessionId, streamId: sid, error: 'unavailable' });
       ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
@@ -693,15 +719,9 @@ async function handleCreateProject(rawPath, asAgent) {
 
 // App (re)subscribed: re-push any control_request still awaiting an answer so a refresh/reconnect re-shows the prompt.
 async function handleRevealAgent(sessionId) {
-  const p = _pendingControl.get(sessionId);
+  const p = _pendingControl.current(sessionId);
   if (!p) return;
-  const kind = p.requiresInteraction ? (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode' ? 'plan' : 'ask') : 'tool';
-  wsSend({
-    action: 'permission_request', sessionId, kind,
-    requestId: p.requestId, toolName: p.toolName,
-    approvalType: p.approvalType || null,
-    questions: p.input.questions, plan: p.input.plan, input: p.input,
-  });
+  sendPermissionRequest(sessionId, p);
 }
 
 // Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
@@ -865,35 +885,41 @@ function handlePermissionReply(msg) {
   const {
     sessionId, requestId, decision, answerText, approvalResponse,
   } = msg;
-  const pending = _pendingControl.get(sessionId);
+  const pending = _pendingControl.current(sessionId);
   if (!pending || (requestId && pending.requestId !== requestId)) return;
-  _pendingControl.delete(sessionId);
 
+  let replied = false;
   if (pending.runtime !== 'claude') {
     const adapter = getRuntimeAdapter(pending.runtime);
-    adapter.interaction?.replyControl?.(
+    replied = !!adapter.interaction?.replyControl?.(
       pending.nativeSessionId,
       pending.requestId,
       { decision, answerText, approvalResponse },
     );
-    return;
-  }
-
-  if (pending.requiresInteraction) {
+  } else if (pending.requiresInteraction) {
     // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
     if (decision === 'answer' && answerText) {
-      _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });
+      replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });
     } else {
-      _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'The user did not answer.', interrupt: true });
+      replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'The user did not answer.', interrupt: true });
     }
-    syncPoolStatus(sessionId, 'running'); // turn resumes; onResult settles to completed
-    return;
-  }
-  // Ordinary tool: allow (input unchanged) or deny.
-  if (decision === 'allow') {
-    _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input });
   } else {
-    _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'User denied this tool call.' });
+    // Ordinary Claude tool: allow (input unchanged) or deny.
+    replied = decision === 'allow'
+      ? _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input })
+      : _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'User denied this tool call.' });
   }
-  syncPoolStatus(sessionId, 'running'); // turn resumes; onResult settles to completed
+  if (!replied) return;
+
+  const advanced = _pendingControl.resolve(sessionId, pending.requestId);
+  if (!advanced) return;
+  if (advanced.next) {
+    sendPermissionRequest(sessionId, advanced.next);
+    if (advanced.next.syncStatus) {
+      syncPoolStatus(sessionId, 'needs_input', controlDetail(advanced.next));
+    }
+  } else {
+    wsSend({ action: 'permission_resolved', sessionId, requestId: pending.requestId });
+    if (pending.syncStatus) syncPoolStatus(sessionId, 'running');
+  }
 }

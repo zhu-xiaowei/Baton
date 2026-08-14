@@ -662,6 +662,54 @@ test('Codex approval requests preserve native ordered decisions', async () => {
   });
 });
 
+test('Codex keeps multiple approval requests pending in the same turn', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-multi-approval',
+    nativeSessionId: 'thread-multi-approval',
+    streamId: 'stream-multi-approval',
+    text: 'run both commands',
+    callbacks: cb.value,
+  });
+
+  for (const [id, command] of [[43, 'printf one'], [44, 'printf two']]) {
+    client.emit('serverRequest', {
+      id,
+      method: 'item/commandExecution/requestApproval',
+      params: {
+        threadId: 'thread-multi-approval',
+        turnId: 'turn-1',
+        itemId: `command-${id}`,
+        command,
+        availableDecisions: ['accept', 'cancel'],
+      },
+    });
+  }
+
+  assert.equal(cb.controls.length, 2);
+  assert.equal(interaction.pendingRequests.size, 2);
+  assert.notEqual(cb.controls[0].request_id, cb.controls[1].request_id);
+
+  assert.equal(interaction.replyControl(
+    'thread-multi-approval',
+    cb.controls[1].request_id,
+    { decision: 'cancel' },
+  ), true);
+  assert.equal(interaction.pendingRequests.size, 1);
+  assert.equal(interaction.replyControl(
+    'thread-multi-approval',
+    cb.controls[0].request_id,
+    { decision: 'accept' },
+  ), true);
+  assert.equal(interaction.pendingRequests.size, 0);
+  assert.deepEqual(client.responses, [
+    { id: 44, result: { decision: 'cancel' } },
+    { id: 43, result: { decision: 'accept' } },
+  ]);
+});
+
 test('Codex approval rejects decisions not offered by the server', async () => {
   const client = new FakeClient();
   const interaction = new CodexInteraction({ client });
