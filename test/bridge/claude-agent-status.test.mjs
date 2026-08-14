@@ -277,6 +277,32 @@ test('pool status writes clear stale detail except for current needs_input', asy
   }
 });
 
+test('regular Claude sessions persist the current interaction detail', async () => {
+  const sessionId = '78787878-7878-4787-8787-787878787878';
+  const fixture = sessionFixture(sessionId);
+  let request;
+  try {
+    await claudeRuntime.updateSessionStatus(
+      { deviceName: 'test-device' },
+      sessionId,
+      fixture.filePath,
+      fixture.project,
+      'needs_input',
+      'Allow writing the test file?',
+      {
+        daemonMeta: new Map(),
+        lastKnownStatus: new Map([[sessionId, 'running']]),
+        postFn: async (_url, body) => { request = body; },
+      },
+    );
+    assert.equal(request.sessions[0].isAgent, undefined);
+    assert.equal(request.sessions[0].status, 'needs_input');
+    assert.equal(request.sessions[0].agentDetail, 'Allow writing the test file?');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('terminal interaction tools are needs_input while ordinary tools keep running', () => {
   for (const [name, stopReason, expected] of [
     ['AskUserQuestion', 'tool_use', 'needs_input'],

@@ -131,7 +131,12 @@ function renderPrompt(prompt) {
   container.insertAdjacentHTML('beforeend', html);
   if (typeof updateSpinner === 'function') updateSpinner();
   var content = document.getElementById('content');
-  content.scrollTo({ top: content.scrollHeight, behavior: 'smooth' });
+  var promptEl = document.getElementById('permission-prompt');
+  function pinPromptToBottom() {
+    if (promptEl && promptEl.isConnected) content.scrollTop = content.scrollHeight;
+  }
+  pinPromptToBottom();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pinPromptToBottom);
 }
 
 function renderAskStep() {

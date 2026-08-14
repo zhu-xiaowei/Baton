@@ -21,6 +21,7 @@ import { scanSlashCommands } from './commands.mjs';
 import { updateSessionStatus, knownProjects } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { PermissionQueue } from './permission-queue.mjs';
+import { ClaudeHookServer } from './claude-hook.mjs';
 
 let _ws = null;
 let _config = null;
@@ -38,12 +39,15 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 // onExit only fires when a process exits during an active turn.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
 const _claudeRuntime = getRuntimeAdapter('claude');
+let _claudeHookServer = null;
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 export async function shutdownInteractions() {
   _pool.shutdownAll();
+  await _claudeHookServer?.close();
+  _claudeHookServer = null;
   await Promise.allSettled(
     runtimeAdapters
       .map((adapter) => adapter.interaction?.shutdown?.())
@@ -65,6 +69,7 @@ export function headlessStream(uuid) { return liveMessageStream('claude', uuid);
 // Codex may issue several approvals in parallel. Match its TUI: keep the first
 // visible and process later requests newest-first.
 const _pendingControl = new PermissionQueue();
+const _statusSyncs = new Map();
 
 function cwdForSession(sessionId) {
   const filePath = _claudeRuntime.findSessionFile(sessionId);
@@ -74,23 +79,32 @@ function cwdForSession(sessionId) {
 }
 
 // Push an interaction-owned session's status to DDB.
-async function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
+function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
-  const adapter = getRuntimeAdapter(identity.runtime);
-  const filePath = adapter.findSessionFile(identity.nativeSessionId);
-  if (!filePath || !_config) return;
-  const projectHash = path.basename(path.dirname(filePath));
-  try {
-    await updateSessionStatus(
-      _config,
-      identity.sessionId,
-      filePath,
-      projectHash,
-      status,
-      detail,
-      identity.runtime,
-    );
-  } catch {}
+  const key = identity.sessionId;
+  const previous = _statusSyncs.get(key) || Promise.resolve();
+  const next = previous.then(async () => {
+    const adapter = getRuntimeAdapter(identity.runtime);
+    const filePath = adapter.findSessionFile(identity.nativeSessionId);
+    if (!filePath || !_config) return;
+    const projectHash = path.basename(path.dirname(filePath));
+    try {
+      await updateSessionStatus(
+        _config,
+        identity.sessionId,
+        filePath,
+        projectHash,
+        status,
+        detail,
+        identity.runtime,
+      );
+    } catch {}
+  });
+  _statusSyncs.set(key, next);
+  next.finally(() => {
+    if (_statusSyncs.get(key) === next) _statusSyncs.delete(key);
+  });
+  return next;
 }
 
 function syncPoolStatus(sessionId, status, detail) {
@@ -153,8 +167,45 @@ function dismissPendingControl(sessionId, requestId) {
   }
 }
 
+function handleClaudeHookRequest(input, reply) {
+  const sessionId = input.session_id;
+  const toolName = input.tool_name;
+  const toolUseId = input.tool_use_id;
+  if (!sessionId || !toolName || !toolUseId) {
+    reply({ action: 'pass' });
+    return null;
+  }
+
+  const requestId = `hook:${toolUseId}`;
+  const requiresInteraction = toolName === 'AskUserQuestion'
+    || toolName === 'ExitPlanMode'
+    || toolName === 'exit_plan_mode';
+  const queued = _pendingControl.enqueue(sessionId, {
+    requestId,
+    toolName,
+    input: input.tool_input || {},
+    requiresInteraction,
+    runtime: 'claude',
+    nativeSessionId: sessionId,
+    syncStatus: true,
+    hookReply: reply,
+  });
+  syncInteractionStatus(sessionId, 'needs_input', controlDetail(queued.current), 'claude');
+  if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
+  return () => dismissPendingControl(sessionId, requestId);
+}
+
 export function initWs(config) {
   _config = config;
+  if (!_claudeHookServer) {
+    _claudeHookServer = new ClaudeHookServer({ onRequest: handleClaudeHookRequest });
+    _claudeHookServer.start()
+      .then(() => console.log('[hook] Claude relay ready'))
+      .catch((error) => {
+        console.log(`[hook] Claude relay unavailable: ${error.message}`);
+        _claudeHookServer = null;
+      });
+  }
   connect();
 }
 
@@ -964,6 +1015,19 @@ function handlePermissionReply(msg) {
       pending.requestId,
       { decision, answerText, approvalResponse },
     );
+  } else if (pending.hookReply) {
+    if (pending.requiresInteraction && decision === 'answer' && answerText) {
+      replied = pending.hookReply({ action: 'answer', answerText });
+    } else if (decision === 'allow') {
+      replied = pending.hookReply({ action: 'allow' });
+    } else {
+      replied = pending.hookReply({
+        action: 'deny',
+        reason: pending.requiresInteraction
+          ? 'The user did not answer through AgentPeek.'
+          : 'The user denied this tool call through AgentPeek.',
+      });
+    }
   } else if (pending.requiresInteraction) {
     // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
     if (decision === 'answer' && answerText) {

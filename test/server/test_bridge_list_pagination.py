@@ -187,6 +187,8 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
         session_item(account_id, "Mac", "repo", "old", "2026-08-08T00:00:00.000Z"),
         session_item(account_id, "Mac", "repo", "new", "2026-08-10T00:00:00.000Z"),
     ]
+    items[1]["status"] = "needs_input"
+    items[1]["agentDetail"] = "Choose environment"
     monkeypatch.setattr(bridge_read, "_tables", lambda: (object(), None))
     monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: items)
 
@@ -194,6 +196,7 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
 
     assert list(result) == ["sessions"]
     assert [item["sessionId"] for item in result["sessions"]] == ["new", "old"]
+    assert result["sessions"][0]["agentDetail"] == "Choose environment"
 
 
 def test_cursor_is_bound_to_account_and_list(monkeypatch):

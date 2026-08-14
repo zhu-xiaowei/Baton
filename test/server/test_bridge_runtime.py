@@ -130,6 +130,8 @@ def test_sync_sessions_writes_separate_runtime_keys(monkeypatch):
                 runtime="claude",
                 project="-repo",
                 lastActive="2026-08-06T00:00:00.000Z",
+                status="needs_input",
+                agentDetail="Allow writing the test file?",
             ),
             bridge_sync.SessionItem(
                 id="same-id",
@@ -144,6 +146,7 @@ def test_sync_sessions_writes_separate_runtime_keys(monkeypatch):
     asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
     by_runtime = {item["runtime"]: item for item in sessions.items}
     assert by_runtime["claude"]["sk"].endswith("#same-id")
+    assert by_runtime["claude"]["agentDetail"] == "Allow writing the test file?"
     assert by_runtime["codex"]["sk"].endswith("#codex:same-id")
     assert by_runtime["codex"]["sessionId"] == "codex:same-id"
     assert by_runtime["codex"]["nativeSessionId"] == "same-id"

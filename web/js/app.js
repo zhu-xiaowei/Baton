@@ -643,7 +643,7 @@ function openSession(el) {
 
 var _revealedSessions = new Set();
 function maybeRevealStuckAgent(sessionId) {
-  if (!state.appState.isAgent) return;
+  if (!state.appState.isAgent && state.wsOpenStatus !== 'needs_input') return;
   if (document.getElementById('permission-prompt')) return;
   if (_revealedSessions.has(sessionId)) return;
   _revealedSessions.add(sessionId);

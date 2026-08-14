@@ -284,10 +284,10 @@ export const claudeRuntime = defineRuntimeAdapter({
     if (daemon) {
       session.isAgent = true;
       session.agentName = daemon.agentName;
-      session.agentDetail = newStatus === 'needs_input'
-        ? (detail !== undefined ? detail : daemon.agentDetail || '')
-        : '';
     }
+    session.agentDetail = newStatus === 'needs_input'
+      ? (detail !== undefined ? detail : daemon?.agentDetail || '')
+      : '';
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,

@@ -265,6 +265,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             if s.isAgent:
                 item["isAgent"] = True
                 item["agentName"] = s.agentName
+            if s.agentDetail:
                 item["agentDetail"] = s.agentDetail
             batch.put_item(Item=item)
 

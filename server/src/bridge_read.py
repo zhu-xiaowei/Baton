@@ -160,6 +160,7 @@ async def get_active_sessions(request: Request):
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
+        if item.get("agentDetail"):
             s["agentDetail"] = item.get("agentDetail", "")
         return s
 
@@ -329,6 +330,7 @@ async def get_sessions(
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
+        if item.get("agentDetail"):
             s["agentDetail"] = item.get("agentDetail", "")
         sessions.append(s)
     sessions.sort(key=lambda x: (x["lastActive"], x["sessionId"]), reverse=True)

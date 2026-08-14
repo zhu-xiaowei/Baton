@@ -13,6 +13,7 @@ const dom = new JSDOM(
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 dom.window.Element.prototype.scrollTo = function () {};
+globalThis.requestAnimationFrame = (callback) => callback();
 
 const sent = [];
 globalThis.esc = (value) => String(value)
@@ -118,6 +119,9 @@ test('resolved events only dismiss the matching permission prompt', () => {
 
 test('Claude tool approvals keep the legacy Yes and No decisions', () => {
   reset();
+  const content = document.getElementById('content');
+  Object.defineProperty(content, 'scrollHeight', { configurable: true, value: 640 });
+  content.scrollTop = 0;
   window.showPermissionPrompt({
     sessionId: 'claude-session',
     requestId: 'approval-2',
@@ -130,6 +134,7 @@ test('Claude tool approvals keep the legacy Yes and No decisions', () => {
     [...document.querySelectorAll('.permission-label')].map((el) => el.textContent),
     ['Yes', 'No'],
   );
+  assert.equal(content.scrollTop, 640);
   window.handlePermissionOption(document.querySelectorAll('.permission-btn')[0]);
   assert.equal(sent[0].decision, 'allow');
 });
