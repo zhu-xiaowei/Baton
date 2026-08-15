@@ -835,6 +835,9 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
     });
   };
   const callbacks = buildStreamCallbacks(identity.sessionId, cwd, ack);
+  // CC emits the same synthetic assistant row and result text for synchronous
+  // local commands. commandOutput below is the single rendered source.
+  callbacks.onMessage = () => {};
   const onResult = callbacks.onResult;
   callbacks.onResult = (sid, result, finalSeq) => {
     const output = typeof result.result === 'string' ? result.result : '';

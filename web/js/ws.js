@@ -2111,11 +2111,31 @@ function completeLocalCommand(pending, result) {
     _streamEnded[result.streamId] = true;
     if (_activeStreamId === result.streamId) _activeStreamId = '';
   }
+  var output = String(result.commandOutput || '');
+  var existing = null;
+  if (result.streamId) {
+    for (var i = 0; i < state.wsAllMessages.length; i++) {
+      var candidate = state.wsAllMessages[i];
+      if (candidate.type === 'assistant'
+        && candidate._streamId === result.streamId
+        && extractMsgText(candidate).trim() === output.trim()) {
+        existing = candidate;
+        break;
+      }
+    }
+  }
+  if (existing) {
+    existing._localCommand = true;
+    updateLastTurn();
+    state.wsRunning = hasOutstandingTurns();
+    updateSendBtn();
+    return;
+  }
   var message = {
     uuid: 'codex-command:' + (result.streamId || pending.id),
     nativeId: 'codex:command:' + (result.streamId || pending.id),
     type: 'assistant',
-    content: [{ type: 'text', text: String(result.commandOutput || '') }],
+    content: [{ type: 'text', text: output }],
     timestamp: new Date().toISOString(),
     _streamId: result.streamId || '',
     _localCommand: true,

@@ -44,6 +44,17 @@ test('local command output promotes its bubble and renders atomically', async ()
   harness.window.doSend('/model default', '/model default', []);
   const claudePending = harness.state.pendingSentMessages[0];
   harness.hooks.handleWsMessage({
+    action: 'messages',
+    sessionId: 'claude-session-1',
+    streamId: 'stream-claude-model',
+    messages: [{
+      uuid: 'claude-local-model',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'Set model to Opus for this session only' }],
+    }],
+  });
+  await harness.tick();
+  harness.hooks.handleWsMessage({
     action: 'send_message_result',
     sessionId: 'claude-session-1',
     ok: true,
@@ -54,6 +65,13 @@ test('local command output promotes its bubble and renders atomically', async ()
   await harness.tick();
   assert.equal(harness.state.pendingSentMessages.length, 0);
   assert.equal(harness.state.wsRunning, false);
+  assert.equal(
+    harness.state.wsAllMessages.filter((message) => (
+      message.type === 'assistant'
+      && message.content?.[0]?.text === 'Set model to Opus for this session only'
+    )).length,
+    1,
+  );
   assert.match(
     harness.document.querySelector('.assistant-text').textContent,
     /Opus/,
