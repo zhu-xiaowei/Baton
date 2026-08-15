@@ -10,7 +10,7 @@ import {
 } from '../../bridge/claude-hook.mjs';
 
 test('Claude hook relay carries one request and returns an AskUserQuestion answer', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-hook-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-hook-'));
   const endpoint = path.join(dir, 'hook.sock');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -56,7 +56,7 @@ test('Claude hook allow uses the documented PreToolUse response', () => {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'allow',
-      permissionDecisionReason: 'Approved through AgentPeek.',
+      permissionDecisionReason: 'Approved through Baton.',
     },
   });
 });

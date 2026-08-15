@@ -5,7 +5,7 @@ Run this BEFORE restarting the bridge so it can re-populate with new SK formats
 (DEV# / PROJ# / SESS#).
 
 Usage:
-  python3 clear-sessions-table.py --table AgentPeekTest-bridge-sessions --region us-west-2
+  python3 clear-sessions-table.py --table BatonTest-bridge-sessions --region us-west-2
 """
 
 import argparse

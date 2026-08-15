@@ -4,7 +4,7 @@ allowed-tools: Bash(./scripts/package-all.sh), Bash(bash scripts/package-all.sh)
 ---
 
 Build the release packages for the current `package.json` version and copy them
-into `release/<version>/` as `AgentPeek.apk`, `AgentPeek.dmg`, `AgentPeek.exe`.
+into `release/<version>/` as `Baton.apk`, `Baton.dmg`, `Baton.exe`.
 
 Run the packaging script (it reads the version itself, builds all three
 platforms independently, and copies the artifacts):

@@ -50,7 +50,7 @@ import './api.js';
     var btn = document.getElementById('connectBtn');
 
     if (!raw) {
-      errEl.textContent = 'Please enter your AgentPeek Start URL';
+      errEl.textContent = 'Please enter your Baton Start URL';
       errEl.style.display = 'block';
       return;
     }

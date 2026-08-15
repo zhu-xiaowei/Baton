@@ -16,7 +16,7 @@ test('New Session switches available runtimes and remembers the last per-device 
       + '<div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>'
       + '<button id="scroll-bottom-btn"></button>'
       + '</body>',
-    { url: 'https://agentpeek.test/index.html', pretendToBeVisual: true },
+    { url: 'https://baton.test/index.html', pretendToBeVisual: true },
   );
   const window = dom.window;
   Object.assign(globalThis, {

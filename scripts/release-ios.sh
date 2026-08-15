@@ -47,7 +47,7 @@ IOS_CONFIG="{\"bundle\":{\"iOS\":{\"bundleVersion\":\"${NEXT_BUILD}\"}}}"
 npx tauri ios build --config "${IOS_CONFIG}" --export-method app-store-connect
 
 # Locate the generated IPA — Tauri stores it under:
-# src-tauri/gen/apple/build/arm64/AgentPeek.ipa  (path may vary by version)
+# src-tauri/gen/apple/build/arm64/Baton.ipa  (path may vary by version)
 IPA="$(find src-tauri/gen/apple/build -name '*.ipa' -type f -print -quit)"
 if [[ -z "${IPA}" ]]; then
     echo "ERROR: no .ipa produced under src-tauri/gen/apple/build/" >&2
@@ -80,4 +80,4 @@ xcrun altool --upload-app -f "${IPA}" -t ios \
     --apiKey "${KEY_ID}" --apiIssuer "${ISSUER_ID}"
 
 echo "==> Done. TestFlight build will be available in ~5-15 minutes."
-echo "    https://appstoreconnect.apple.com/apps -> AgentPeek -> TestFlight"
+echo "    https://appstoreconnect.apple.com/apps -> Baton -> TestFlight"

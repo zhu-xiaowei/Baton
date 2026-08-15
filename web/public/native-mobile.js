@@ -6,5 +6,5 @@
   var isNativeMobile = !!window.__TAURI_INTERNALS__ && isMobileOS;
 
   document.documentElement.classList.toggle('native-mobile', isNativeMobile);
-  window.__AGENTPEEK_NATIVE_MOBILE__ = isNativeMobile;
+  window.__BATON_NATIVE_MOBILE__ = isNativeMobile;
 })();

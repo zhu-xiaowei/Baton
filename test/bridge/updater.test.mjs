@@ -6,7 +6,7 @@ import test from 'node:test';
 import { installStagedBridge } from '../../bridge/updater.mjs';
 
 test('staged update replaces package files and dependencies but preserves user state', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-update-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-update-'));
   const home = path.join(root, 'home');
   const stage = path.join(root, 'stage');
   fs.mkdirSync(path.join(home, 'node_modules', 'old-dep'), { recursive: true });
@@ -37,7 +37,7 @@ test('staged update replaces package files and dependencies but preserves user s
 });
 
 test('staged update restores dependencies when the new directory cannot be installed', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-update-rollback-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-update-rollback-'));
   const home = path.join(root, 'home');
   const stage = path.join(root, 'stage');
   fs.mkdirSync(path.join(home, 'node_modules', 'old-dep'), { recursive: true });

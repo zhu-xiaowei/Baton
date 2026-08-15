@@ -18,7 +18,7 @@ import { getSessionMetadata } from '../../bridge/session.mjs';
 import { resolveCodexBin } from '../../bridge/runtime-capabilities.mjs';
 
 function claudeFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-runtime-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-runtime-'));
   const filePath = path.join(root, 'session.jsonl');
   fs.writeFileSync(filePath, [
     JSON.stringify({
@@ -88,7 +88,7 @@ test('interaction adapters expose the reusable existing-session contract', () =>
 });
 
 test('capability detection is dispatched through runtime adapters', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-capabilities-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-capabilities-'));
   const claudeProjects = path.join(root, 'claude-projects');
   const codexHome = path.join(root, 'codex');
   fs.mkdirSync(claudeProjects);
@@ -116,7 +116,7 @@ test('capability detection is dispatched through runtime adapters', () => {
 });
 
 test('Codex binary resolution finds an NVM sibling of the running Node executable', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-bin-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-bin-'));
   const bin = path.join(root, 'versions/node/v20.19.4/bin');
   const nodeExecutable = path.join(bin, 'node');
   const codexExecutable = path.join(bin, process.platform === 'win32' ? 'codex.cmd' : 'codex');
@@ -143,7 +143,7 @@ test('Claude metadata scan returns preview, latest model, and line count in one 
 });
 
 test('chunked JSONL scan preserves UTF-8, CRLF, and line numbering', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-jsonl-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-jsonl-'));
   const filePath = path.join(root, 'sample.jsonl');
   fs.writeFileSync(filePath, 'alpha\n中文\r\nomega\n');
   try {

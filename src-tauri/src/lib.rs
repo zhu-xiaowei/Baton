@@ -39,7 +39,7 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
   let offset = (n % 8) as f64 * 28.0;
 
   let res = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-    .title("AgentPeek")
+    .title("Baton")
     .inner_size(1024.0, 768.0)
     .min_inner_size(480.0, 400.0)
     .resizable(true)

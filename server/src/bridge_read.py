@@ -484,7 +484,7 @@ def _windows_install_script(url, server, api_key, name):
     name_value = _powershell_literal(name)
     return "\n".join([
         "$ErrorActionPreference = 'Stop'",
-        "$task = Get-ScheduledTask -TaskName 'AgentPeek Bridge' -ErrorAction SilentlyContinue",
+        "$task = Get-ScheduledTask -TaskName 'Baton Bridge' -ErrorAction SilentlyContinue",
         "$node = Get-Command node.exe -ErrorAction SilentlyContinue",
         "if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }",
         "$nodePath = if ($node) { $node.Source } else { '' }",
@@ -497,7 +497,7 @@ def _windows_install_script(url, server, api_key, name):
         "$nodeVersion = [version](& $nodePath -p \"process.versions.node\")",
         "if ($nodeVersion -lt [version]'20.9.0') { throw \"Node.js $nodeVersion is too old; version 20.9+ is required.\" }",
         "$env:Path = (Split-Path $nodePath) + ';' + $env:Path",
-        "$dir = Join-Path $HOME '.claude-bridge'",
+        "$dir = Join-Path $HOME '.baton-bridge'",
         "$configPath = Join-Path $dir 'config.json'",
         "$existingName = ''",
         "if (Test-Path $configPath) {",
@@ -506,12 +506,12 @@ def _windows_install_script(url, server, api_key, name):
         f"$deviceName = {name_value}",
         "if ([string]::IsNullOrWhiteSpace($deviceName)) { $deviceName = $existingName }",
         "if ([string]::IsNullOrWhiteSpace($deviceName)) { $deviceName = $env:COMPUTERNAME }",
-        "if ($task) { Stop-ScheduledTask -TaskName 'AgentPeek Bridge' -ErrorAction SilentlyContinue }",
+        "if ($task) { Stop-ScheduledTask -TaskName 'Baton Bridge' -ErrorAction SilentlyContinue }",
         "$legacy = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq 'node.exe' -and $_.CommandLine -like '*bridge.mjs*' }",
         "$legacy | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
         "if ($legacy) { Start-Sleep -Milliseconds 500 }",
         "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
-        "$archive = Join-Path $env:TEMP 'agentpeek-bridge.tar.gz'",
+        "$archive = Join-Path $env:TEMP 'baton-bridge.tar.gz'",
         f"Invoke-WebRequest -UseBasicParsing -Uri {package} -OutFile $archive",
         "$tar = Get-Command tar.exe -ErrorAction SilentlyContinue",
         "if (-not $tar) { throw 'tar.exe is required.' }",
@@ -545,9 +545,9 @@ def _windows_install_script(url, server, api_key, name):
         "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity",
         "$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)",
         "$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType S4U -RunLevel Highest",
-        "Register-ScheduledTask -TaskName 'AgentPeek Bridge' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null",
-        "Start-ScheduledTask -TaskName 'AgentPeek Bridge'",
-        "Write-Output \"AgentPeek Bridge installed for $deviceName.\"",
+        "Register-ScheduledTask -TaskName 'Baton Bridge' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null",
+        "Start-ScheduledTask -TaskName 'Baton Bridge'",
+        "Write-Output \"Baton Bridge installed for $deviceName.\"",
         "",
     ])
 
@@ -613,7 +613,7 @@ async def get_install(
         '  exit 1\n'
         'fi\n'
         '\n'
-        'DIR="$HOME/.claude-bridge"\n'
+        'DIR="$HOME/.baton-bridge"\n'
         f'{name_block}\n'
         'NODE=$(which node)\n'
         'mkdir -p "$DIR" && cd "$DIR"\n'
@@ -641,13 +641,13 @@ async def get_install(
         '# Setup auto-start service\n'
         'if [ "$(uname)" = "Darwin" ]; then\n'
         '  # macOS: launchd\n'
-        '  PLIST="$HOME/Library/LaunchAgents/com.agentpeek.bridge.plist"\n'
+        '  PLIST="$HOME/Library/LaunchAgents/com.baton.bridge.plist"\n'
         '  mkdir -p "$HOME/Library/LaunchAgents"\n'
         '  cat > "$PLIST" << PLIST_EOF\n'
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         '<plist version="1.0"><dict>\n'
-        '  <key>Label</key><string>com.agentpeek.bridge</string>\n'
+        '  <key>Label</key><string>com.baton.bridge</string>\n'
         '  <key>ProgramArguments</key><array>\n'
         '    <string>$NODE</string>\n'
         '    <string>$DIR/bridge.mjs</string>\n'
@@ -681,9 +681,9 @@ async def get_install(
         '  # Linux: systemd\n'
         '  SERVICE_DIR="$HOME/.config/systemd/user"\n'
         '  mkdir -p "$SERVICE_DIR"\n'
-        '  cat > "$SERVICE_DIR/claude-bridge.service" << SVC_EOF\n'
+        '  cat > "$SERVICE_DIR/baton-bridge.service" << SVC_EOF\n'
         '[Unit]\n'
-        'Description=AgentPeek Bridge\n'
+        'Description=Baton Bridge\n'
         'After=network.target\n'
         '[Service]\n'
         'ExecStart=$NODE $DIR/bridge.mjs --server '
@@ -697,17 +697,17 @@ async def get_install(
         '  sudo loginctl enable-linger $(whoami) 2>/dev/null || loginctl enable-linger $(whoami) 2>/dev/null || true\n'
         '  export XDG_RUNTIME_DIR=/run/user/$(id -u)\n'
         '  systemctl --user daemon-reload\n'
-        '  systemctl --user enable claude-bridge\n'
-        '  systemctl --user restart claude-bridge\n'
+        '  systemctl --user enable baton-bridge\n'
+        '  systemctl --user restart baton-bridge\n'
         '  echo ""\n'
         '  echo "================================================================"\n'
         '  printf "  \\033[0;32mBridge installed and running successfully! (systemd)\\033[0m\\n"\n'
         '  echo "  Device: $NAME"\n'
         '  echo "================================================================"\n'
         '  echo ""\n'
-        '  echo "  Stop:    systemctl --user stop claude-bridge"\n'
-        '  echo "  Start:   systemctl --user start claude-bridge"\n'
-        '  echo "  Logs:    journalctl --user -u claude-bridge -f"\n'
+        '  echo "  Stop:    systemctl --user stop baton-bridge"\n'
+        '  echo "  Start:   systemctl --user start baton-bridge"\n'
+        '  echo "  Logs:    journalctl --user -u baton-bridge -f"\n'
         'fi\n'
     )
     return Response(content=script, media_type="text/plain")

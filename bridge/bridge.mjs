@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Claude Code Bridge — watches .jsonl session files and syncs to server.
+ * Baton Bridge — syncs supported local agent runtimes to the server.
  *
- * Config: ~/.claude-bridge/config.json
+ * Config: ~/.baton-bridge/config.json
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
@@ -54,7 +54,7 @@ setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler c
 const serverConfig = await fetchServerConfig(CONFIG);
 if (serverConfig.wsUrl) CONFIG.wsUrl = serverConfig.wsUrl;
 
-console.log('claude-bridge started');
+console.log('Baton Bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
 if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);

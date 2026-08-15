@@ -120,8 +120,8 @@ export class CodexAppServerClient extends EventEmitter {
     this.managedOnly = !!options.managedOnly;
     this.requestTimeout = options.requestTimeout ?? CODEX_APP_SERVER_REQUEST_TIMEOUT_MS;
     this.clientInfo = options.clientInfo || {
-      name: 'agentpeek',
-      title: 'AgentPeek',
+      name: 'baton',
+      title: 'Baton',
       version: '0.0.0',
     };
     this.proc = null;
@@ -207,14 +207,14 @@ export class CodexAppServerClient extends EventEmitter {
 
     const lines = readline.createInterface({ input: proc.stdout });
     lines.on('line', (line) => this.#handleLine(line));
-    proc._agentpeekReadline = lines;
+    proc._batonReadline = lines;
 
     try {
       await this.#initialize();
       return this;
     } catch (error) {
       if (this.proc === proc) this.proc = null;
-      proc._agentpeekReadline?.close();
+      proc._batonReadline?.close();
       try { proc.kill('SIGTERM'); } catch {}
       throw error;
     }
@@ -334,7 +334,7 @@ export class CodexAppServerClient extends EventEmitter {
   #handleExit(proc, error) {
     if (this.proc !== proc) return;
     this.proc = null;
-    proc._agentpeekReadline?.close();
+    proc._batonReadline?.close();
     this.#rejectPending(error);
     this.emit('exit', error);
   }
@@ -361,7 +361,7 @@ export class CodexAppServerClient extends EventEmitter {
     const proc = this.proc;
     this.proc = null;
     if (!proc) return Promise.resolve();
-    proc._agentpeekReadline?.close();
+    proc._batonReadline?.close();
     const closed = new Promise((resolve) => {
       proc.once('close', (code, signal) => resolve({ code, signal }));
     });

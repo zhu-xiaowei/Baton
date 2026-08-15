@@ -107,7 +107,7 @@ test('invalidating an entry does not reuse an in-flight request token', () => {
 });
 
 test('list cache v2 ignores and removes the old full-list cache', async () => {
-  const dom = new JSDOM('', { url: 'https://agentpeek.test/' });
+  const dom = new JSDOM('', { url: 'https://baton.test/' });
   globalThis.localStorage = dom.window.localStorage;
   localStorage.setItem('apeek_list_cache_v1:sessions:D:P', '{"sessions":[{"sessionId":"old"}]}');
   localStorage.setItem('apeek_list_cache_v1', '{"version":1,"entries":{}}');

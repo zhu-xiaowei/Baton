@@ -4,11 +4,11 @@ import { defineConfig } from 'vite';
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
 
-// Dev-only: read AGENTPEEK_API_URL from .env.local so /api/* in dev proxies to the real Lambda.
+// Dev-only: read BATON_API_URL from .env.local so /api/* in dev proxies to the real Lambda.
 function devApiUrl() {
   try {
     const txt = readFileSync(resolve(__dirname, '.env.local'), 'utf-8');
-    const m = txt.match(/^AGENTPEEK_API_URL=(.+)$/m);
+    const m = txt.match(/^BATON_API_URL=(.+)$/m);
     return m ? m[1].trim() : '';
   } catch { return ''; }
 }

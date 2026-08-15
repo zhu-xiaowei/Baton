@@ -17,7 +17,7 @@ function writeRows(filePath, rows) {
 }
 
 test('Claude stats aggregates sessions, dates, and model usage without double counting', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-stats-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-stats-'));
   const projects = path.join(root, 'projects');
   const first = path.join(projects, 'project-a', 'session-a.jsonl');
   const duplicate = path.join(projects, 'project-b', 'session-a.jsonl');
@@ -96,7 +96,7 @@ test('Claude stats aggregates sessions, dates, and model usage without double co
 });
 
 test('Claude usage panel uses live controls and redacts sensitive config values', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-panel-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-panel-'));
   const projects = path.join(root, 'projects');
   const filePath = path.join(projects, 'project', 'session.jsonl');
   writeRows(filePath, [{
@@ -181,7 +181,7 @@ test('Claude usage panel uses live controls and redacts sensitive config values'
 });
 
 test('Claude usage panel stays within the WebSocket transport budget', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-panel-large-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-panel-large-'));
   const projects = path.join(root, 'projects');
   const huge = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [
     `setting${index}`,
@@ -228,7 +228,7 @@ test('Claude usage panel stays within the WebSocket transport budget', async () 
 });
 
 test('ClaudePool inspectSession requests live session controls without persistence', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-session-inspect-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-session-inspect-'));
   const bin = path.join(root, 'fake-claude.mjs');
   const argvFile = path.join(root, 'argv.json');
   fs.writeFileSync(bin, `#!/usr/bin/env node

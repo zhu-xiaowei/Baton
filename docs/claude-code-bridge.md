@@ -2,7 +2,7 @@
 
 ## Overview
 
-**AgentPeek** — view and interact with Claude Code sessions from your phone. No wrapping of `claude` command.
+**Baton** — view and interact with Claude Code sessions from your phone. No wrapping of `claude` command.
 
 This document covers the Claude Code runtime. The shared runtime model and current Codex
 integration status are documented in [codex.md](codex.md); the wire contract is in
@@ -11,7 +11,7 @@ integration status are documented in [codex.md](codex.md); the wire contract is 
 ## Architecture
 
 ```
-Mac/Linux/Windows                   AWS (Serverless)                    AgentPeek App
+Mac/Linux/Windows                   AWS (Serverless)                    Baton App
 ┌──────────────┐              ┌───────────────────────┐           ┌──────────────┐
 │ Claude Code  │              │ REST API GW + Lambda  │           │              │
 │ (unchanged)  │              │ (FastAPI in Docker)   │           │ Device/      │
@@ -363,7 +363,7 @@ App taps session "abc":
 ## Code Structure
 
 ```
-agentpeek/
+baton/
 ├── bridge/
 │   ├── bridge.mjs          # Entry point — startup, orchestration
 │   ├── config.mjs          # CLI args, config loading, server config fetch
@@ -387,7 +387,7 @@ agentpeek/
 │   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image, upload-file, video-prepare
 │   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image/file/video-url
 │   │   └── bridge_ws.py    # WS relay ($connect/$disconnect/$default)
-│   ├── template/AgentPeek.template
+│   ├── template/Baton.template
 │   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
 ├── web/
 │   ├── landing.html        # API key auth page
@@ -441,7 +441,7 @@ agentpeek/
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
 - Periodic check (1min) only detects disappeared CC processes
-- Deployed to ap-northeast-1 (AgentPeekTest), verified
+- Deployed to ap-northeast-1 (BatonTest), verified
 
 ### Phase 2A: Backend + API Validation ✅ Complete
 
@@ -468,7 +468,7 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 - `src-tauri/` at project root (sibling to web/, bridge/, server/)
 - `frontendDist: "../web"` — directly serves static HTML/CSS/JS
 - `withGlobalTauri: true` — JS accesses native APIs via `window.__TAURI__`
-- Bundle identifier: `com.agentpeek.app`
+- Bundle identifier: `com.batonai.app`
 
 **Targets:**
 - Android: APK via `npm run build:android`
@@ -499,5 +499,5 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 ### Phase 3: Production Polish (Future)
 - Improve native Windows process/status precision
 - Push notifications
-- Harden the existing persisted `~/.claude-bridge/synced.json` recovery path
+- Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 - Continue monitoring the existing 90-day message-cache TTL

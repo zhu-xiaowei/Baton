@@ -41,7 +41,7 @@ Hierarchy: **Devices → Projects → Sessions → Messages**
 appState = { device, project: { hash, name }, session, sessionPreview }
 ```
 
-- Each navigation updates `appState` and persists to `localStorage('agentpeek-nav')`
+- Each navigation updates `appState` and persists to `localStorage('baton-nav')`
 - On startup, reads persisted state and jumps directly to the last page (skips intermediate hierarchy loading)
 - When switching sessions: `disconnectWs()` first, then connect to new session
 
@@ -297,7 +297,7 @@ wsSend({
 ### Sending Images
 ```
 Select/paste image → compress (720p JPEG) → upload to S3 → get key
-On send: text + '\n![](claude-bridge:key)'
+On send: text + '\n![](baton-bridge:key)'
 Bridge receives → download from S3 → replace with local path → CC Read tool reads it
 ```
 
@@ -319,7 +319,7 @@ renderUserBubble(msg):
   3. Remove: <ide_selection>, <system-reminder>, <task-notification>
   4. Extract <ide_opened_file> → render file path as file badge
   5. Extract plain text /command prefix → also display as slashCmd
-  6. Extract ![](claude-bridge:key) → render as image
+  6. Extract ![](baton-bridge:key) → render as image
   7. Extract document content blocks → render as expandable file badge
 ```
 

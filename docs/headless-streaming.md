@@ -158,7 +158,7 @@ jsonl watcher 独占写,避免同 uuid 双写)。
 
 ## 三·五、进程生命周期(按需启动 + idle 回收,实证自 litter ClaudePool)
 
-**不预启动、不常驻一堆进程**。参数与机制照搬 litter `crates/claude-bridge/src/pool/` +
+**不预启动、不常驻一堆进程**。参数与机制照搬 litter `crates/baton-bridge/src/pool/` +
 `bridge-core/src/pool.rs`(已读源码核对):
 
 | 阶段 | 行为 |
@@ -445,7 +445,7 @@ Bridge 状态交接和 frontend streaming/queue 场景有自动化回归。`Clau
 | 多工具序列 | t6 | 多个 tool_use/tool_result 交替,块边界清晰 | ✅ |
 | 扩展 thinking | t7 | `thinking` 块 + `thinking_delta`/`signature_delta` | ✅(可选流式) |
 | TodoWrite(todo 列表) | t8 | tool_use.input 经 input_json_delta 流式,完整 assistant 行落地 | ✅ |
-| 图片 Read | t9 | tool_use → tool_result(user 行) → 文本 | ✅(图片走 claude-bridge: → Read 路径不变) |
+| 图片 Read | t9 | tool_use → tool_result(user 行) → 文本 | ✅(图片走 baton-bridge: → Read 路径不变) |
 
 **关键**:stream-json 的 `assistant`/`user` 行的 `message.content[]` 与 jsonl **完全同构**,
 tool_use/tool_result/toolUseResult 字段名一致 → **现有 extract.mjs / renderSingleMessage 零改动即可复用**。

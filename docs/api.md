@@ -1,4 +1,4 @@
-# AgentPeek API Specification
+# Baton API Specification
 
 ## General
 
@@ -34,8 +34,8 @@ Bridge uploads session metadata to DDB.
       "id": "a1ca0870-xxxx-xxxx-xxxx",
       "nativeSessionId": "a1ca0870-xxxx-xxxx-xxxx",
       "runtime": "claude",
-      "project": "-Users-xiaoweii-workspace-rn-agentpeek",
-      "projectName": "agentpeek",
+      "project": "-Users-xiaoweii-workspace-rn-baton",
+      "projectName": "baton",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
       "preview": "Help me implement Phase 2 APIs",
@@ -414,9 +414,9 @@ order. Requests without `limit` retain the legacy base-table query for older cli
 {
   "projects": [
     {
-      "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
-      "projectName": "agentpeek",
-      "projectPath": "workspace/rn/agentpeek",
+      "projectHash": "-Users-xiaoweii-workspace-rn-baton",
+      "projectName": "baton",
+      "projectPath": "workspace/rn/baton",
       "sessionCount": 15,
       "runningCount": 1,
       "needsInputCount": 1,
@@ -451,7 +451,7 @@ Get sessions under a specific device + project.
 | `limit` | No | Page size (`1-100`). Omit for the legacy full response |
 | `cursor` | No | Opaque `nextCursor` from the previous page; requires `limit` |
 
-**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-agentpeek&limit=50`
+**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-baton&limit=50`
 
 **Logic**: Paginated requests query `listPk-listSk-index` in reverse `lastActive`
 order. Requests without `limit` retain the legacy base-table query for older clients.
@@ -497,7 +497,7 @@ idempotent backfill once to include rows belonging to offline devices:
 
 ```bash
 python3 server/backfill-list-index.py \
-  --table AgentPeekTest-bridge-sessions \
+  --table BatonTest-bridge-sessions \
   --region ap-northeast-1 \
   --dry-run
 ```
@@ -894,7 +894,7 @@ Ask the bridge to read a project file from the device's local disk and upload it
   "action": "request_file",
   "path": "bridge/ws.mjs",
   "sessionId": "a1ca0870-xxxx",
-  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
   "device": "MacBook-Pro",
   "requestId": "file_xyz789"
 }
@@ -935,7 +935,7 @@ Ask the bridge for the slash-command catalog of the active runtime.
 ```json
 {
   "action": "list_commands",
-  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
   "runtime": "codex",
   "device": "MacBook-Pro",
   "knownRevision": "a1b2c3d4",
@@ -964,7 +964,7 @@ command or Skill content changes.
 2. Send stream-json `control_request {subtype:"initialize"}`.
 3. Use the returned runtime-filtered commands, descriptions, argument hints, aliases,
    models and provider/account state. No environment-specific command or model table is
-   hardcoded in AgentPeek.
+   hardcoded in Baton.
 4. Filter terminal-only, internal or unsafe commands. Order executable local commands
    alphabetically, then prompt/Skill commands alphabetically, matching the TUI groups.
 5. `/model` options preserve `initialize.models` order and values. Enum pickers such as
@@ -1178,7 +1178,7 @@ Bridge has uploaded a requested file to S3 and notifies the app. Sent in respons
   "requestId": "file_xyz789",
   "sessionId": "a1ca0870-xxxx",
   "key": "5f3a9c1b2d4e6f80.ts",
-  "path": "/Users/xiaoweii/workspace/rn/agentpeek/bridge/ws.mjs",
+  "path": "/Users/xiaoweii/workspace/rn/baton/bridge/ws.mjs",
   "size": 18342,
   "truncated": false,
   "image": false
@@ -1224,7 +1224,7 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
   "requestId": "cmds_1717300000000",
   "runtime": "codex",
   "device": "MacBook-Pro",
-  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
   "revision": "a1b2c3d4",
   "notModified": false,
   "commands": [
@@ -1273,7 +1273,7 @@ Session-scoped picker options are not stored in the project catalog. Selecting a
   "action": "list_command_options",
   "requestId": "cmdopts_1717300000000",
   "runtime": "codex",
-  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
   "sessionId": "codex:0198...",
   "commandName": "agent",
   "device": "MacBook-Pro"
@@ -1426,7 +1426,7 @@ Server forwards bridge's file-ready notification (only pushed to app connections
   "requestId": "file_xyz789",
   "sessionId": "a1ca0870-xxxx",
   "key": "5f3a9c1b2d4e6f80.ts",
-  "path": "/Users/xiaoweii/workspace/rn/agentpeek/bridge/ws.mjs",
+  "path": "/Users/xiaoweii/workspace/rn/baton/bridge/ws.mjs",
   "size": 18342,
   "truncated": false,
   "image": false

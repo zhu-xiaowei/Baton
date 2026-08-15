@@ -1,13 +1,13 @@
 # Uncomment the next line to define a global platform for your project
 
-target 'agentpeek_iOS' do
+target 'baton_iOS' do
 platform :ios, '14.0'
-  # Pods for agentpeek_iOS
+  # Pods for baton_iOS
 end
 
-target 'agentpeek_macOS' do
+target 'baton_macOS' do
 platform :osx, '11.0'
-  # Pods for agentpeek_macOS
+  # Pods for baton_macOS
 end
 
 # Delete the deployment target for iOS and macOS, causing it to be inherited from the Podfile

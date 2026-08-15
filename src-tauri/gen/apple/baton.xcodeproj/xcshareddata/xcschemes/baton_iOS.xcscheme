@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A2503540127E866A260709EA"
-               BuildableName = "AgentPeek.app"
-               BlueprintName = "agentpeek_iOS"
-               ReferencedContainer = "container:agentpeek.xcodeproj">
+               BuildableName = "Baton.app"
+               BlueprintName = "baton_iOS"
+               ReferencedContainer = "container:baton.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -31,9 +31,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A2503540127E866A260709EA"
-            BuildableName = "AgentPeek.app"
-            BlueprintName = "agentpeek_iOS"
-            ReferencedContainer = "container:agentpeek.xcodeproj">
+            BuildableName = "Baton.app"
+            BlueprintName = "baton_iOS"
+            ReferencedContainer = "container:baton.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <EnvironmentVariables>
@@ -66,9 +66,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A2503540127E866A260709EA"
-            BuildableName = "AgentPeek.app"
-            BlueprintName = "agentpeek_iOS"
-            ReferencedContainer = "container:agentpeek.xcodeproj">
+            BuildableName = "Baton.app"
+            BlueprintName = "baton_iOS"
+            ReferencedContainer = "container:baton.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
@@ -95,9 +95,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A2503540127E866A260709EA"
-            BuildableName = "AgentPeek.app"
-            BlueprintName = "agentpeek_iOS"
-            ReferencedContainer = "container:agentpeek.xcodeproj">
+            BuildableName = "Baton.app"
+            BlueprintName = "baton_iOS"
+            ReferencedContainer = "container:baton.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>

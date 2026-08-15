@@ -26,7 +26,7 @@ __pycache__/
 .venv/
 
 # Bridge
-~/.claude-bridge/
+~/.baton-bridge/
 
 # Claude Code worktrees
 .claude/worktrees/

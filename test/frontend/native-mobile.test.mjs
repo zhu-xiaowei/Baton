@@ -33,7 +33,7 @@ function detectNativeMobile({
   vm.runInNewContext(detectorSource, context);
   return {
     classApplied: classes.has('native-mobile'),
-    flag: context.window.__AGENTPEEK_NATIVE_MOBILE__,
+    flag: context.window.__BATON_NATIVE_MOBILE__,
   };
 }
 

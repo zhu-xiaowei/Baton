@@ -120,7 +120,7 @@ test('a custom command that shadows a builtin keeps prompt semantics', () => {
 });
 
 test('ClaudePool inspect reads initialize without persisting a session', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-inspect-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-inspect-'));
   const bin = path.join(root, 'fake-claude.mjs');
   const argvFile = path.join(root, 'argv.json');
   fs.writeFileSync(bin, `#!/usr/bin/env node
@@ -163,7 +163,7 @@ rl.on('line', (line) => {
 });
 
 test('disk fallback keeps custom metadata and hides non-invocable skills', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-claude-fallback-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-fallback-'));
   const home = path.join(root, 'home');
   const project = path.join(root, 'project');
   const commands = path.join(project, '.claude', 'commands', 'nested');

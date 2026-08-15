@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-export const BRIDGE_HOME = path.join(os.homedir(), '.claude-bridge');
+export const BRIDGE_HOME = path.join(os.homedir(), '.baton-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
 export const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 export const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');

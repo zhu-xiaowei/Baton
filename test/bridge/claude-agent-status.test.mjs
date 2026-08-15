@@ -26,7 +26,7 @@ function agent(sessionId, state = 'blocked') {
 }
 
 function sessionFixture(sessionId, tail = 'completed') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-agent-status-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-agent-status-'));
   const project = '-tmp-agent-project';
   const projectDir = path.join(root, project);
   const filePath = path.join(projectDir, `${sessionId}.jsonl`);

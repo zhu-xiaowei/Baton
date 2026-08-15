@@ -1,12 +1,12 @@
 # Claude Code command support
 
-AgentPeek does not use this document as a command manifest. At runtime, the Bridge asks the
+Baton does not use this document as a command manifest. At runtime, the Bridge asks the
 installed Claude Code for its `initialize.commands` and `initialize.models`, then preserves the
 returned descriptions, argument hints, aliases, provider filtering, and model order. Custom
 commands and Skills therefore follow each user's environment.
 
 This is an implementation audit against Claude Code `2.1.233` on 2026-08-15. The clean TUI exposed
-54 built-in commands. Later Claude Code versions may add or remove commands without an AgentPeek
+54 built-in commands. Later Claude Code versions may add or remove commands without an Baton
 release; unknown headless commands remain usable as normal prompt/Skill entries unless explicitly
 filtered.
 
@@ -16,22 +16,22 @@ filtered.
 |---|---|
 | Full | The primary command effect is available end to end. |
 | Reduced | Useful behavior is available, but a TUI-only view, editor, or management action is omitted. |
-| Filtered | Claude exposes the command to headless, but AgentPeek deliberately hides it. |
-| TUI-only | Claude does not expose an executable headless entry and AgentPeek has no replacement. |
+| Filtered | Claude exposes the command to headless, but Baton deliberately hides it. |
+| TUI-only | Claude does not expose an executable headless entry and Baton has no replacement. |
 
 ## TUI built-ins
 
-| Command | Status | AgentPeek behavior or reason |
+| Command | Status | Baton behavior or reason |
 |---|---|---|
 | `/add-dir` | TUI-only | Working-directory management UI is not exposed by headless. |
-| `/agents` | Filtered | Current runtime marks this entry removed. Runtime agent sessions remain visible in AgentPeek. |
+| `/agents` | Filtered | Current runtime marks this entry removed. Runtime agent sessions remain visible in Baton. |
 | `/autocompact` | Reduced | Native command works with typed `auto` or token value; no TUI slider/picker. |
 | `/background` | TUI-only | Moves ownership to a terminal background worker; no equivalent phone action. |
 | `/branch` | TUI-only | Conversation branching UI is not exposed by headless. |
 | `/btw` | TUI-only | Side-question overlay depends on TUI conversation state. |
 | `/bug` | TUI-only | Anthropic feedback form is not exposed by headless. |
 | `/cd` | TUI-only | Session working-directory picker is not exposed by headless. |
-| `/clear` | Filtered | It changes session identity; sending it headlessly would desynchronize AgentPeek's session mapping. |
+| `/clear` | Filtered | It changes session identity; sending it headlessly would desynchronize Baton's session mapping. |
 | `/color` | Filtered | Changes only the terminal prompt bar. |
 | `/compact` | Full | Executes through the active headless session and streams the compaction result. |
 | `/config` | Reduced | Bare command opens Config data; `key=value` uses Claude's native write. TUI setting pickers are not replicated. |
@@ -45,7 +45,7 @@ filtered.
 | `/focus` | TUI-only | Terminal presentation mode only. |
 | `/fork` | TUI-only | Background-session fork UI is not exposed by headless. |
 | `/goal` | Full | Current runtime command is sent through the active Claude session. |
-| `/help` | TUI-only | Terminal help overlay; the slash list itself is available in AgentPeek. |
+| `/help` | TUI-only | Terminal help overlay; the slash list itself is available in Baton. |
 | `/hooks` | TUI-only | Claude's hook detail panel is not exposed by headless. |
 | `/ide` | TUI-only | Manages local IDE integrations. |
 | `/keybindings` | TUI-only | Opens the local keyboard-shortcuts file/editor. |
@@ -63,7 +63,7 @@ filtered.
 | `/reload-plugins` | TUI-only | Current headless catalog does not expose it. |
 | `/reload-skills` | Full | Reloads command/Skill files in the active session. |
 | `/rename` | Full | Composes a name and executes Claude's native session rename. |
-| `/resume` | TUI-only | AgentPeek already provides session navigation; the TUI resume browser is not embedded. |
+| `/resume` | TUI-only | Baton already provides session navigation; the TUI resume browser is not embedded. |
 | `/rewind` | TUI-only | Code/conversation checkpoint browser and destructive confirmation are not implemented. |
 | `/sandbox` | TUI-only | Local sandbox configuration wizard. |
 | `/setup-bedrock` | TUI-only | Local provider authentication/region wizard. |
@@ -83,7 +83,7 @@ filtered.
 These entries are supplied by `initialize.commands` but were not present in the 54-item clean TUI
 snapshot above:
 
-| Command | Status | AgentPeek behavior |
+| Command | Status | Baton behavior |
 |---|---|---|
 | `/init` | Full | Initializes CLAUDE.md through the active Claude session when the runtime offers it. |
 | `/fast` | Full | Opens a live on/off picker only when the current provider/account enables fast mode. |
@@ -96,7 +96,7 @@ snapshot above:
 - `/cost` and `/stats` open the Usage and Stats tabs. `/settings` and bare `/config` open Config.
   These aliases remain hidden from the menu when Claude hides them, matching the TUI.
 - A custom command that shadows names such as `model`, `usage`, or `status` keeps custom prompt
-  semantics; AgentPeek does not replace it with a built-in picker or panel.
+  semantics; Baton does not replace it with a built-in picker or panel.
 - If `initialize` is unavailable on an old Claude Code version, disk fallback discovers only custom
   commands and Skills. It does not invent an obsolete static built-in list.
 

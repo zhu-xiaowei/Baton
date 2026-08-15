@@ -686,9 +686,9 @@ async function handleSendMessage(
   }
 }
 
-// Replace claude-bridge: image refs with downloaded local paths CC's Read can open.
+// Replace baton-bridge: image refs with downloaded local paths CC's Read can open.
 async function resolveBridgeImages(text) {
-  const imgPattern = /!\[.*?\]\(claude-bridge:(.+?)\)/g;
+  const imgPattern = /!\[.*?\]\(baton-bridge:(.+?)\)/g;
   let resolved = text;
   let match;
   while ((match = imgPattern.exec(text)) !== null) {
@@ -1435,7 +1435,7 @@ async function handleListCommandOptions(msg) {
 
 async function downloadBridgeImage(key) {
   try {
-    const tmpDir = path.join(os.homedir(), '.claude-bridge', 'tmp');
+    const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
     const url = `${_config.server}/api/bridge/image/${key}`;
@@ -1481,8 +1481,8 @@ function handlePermissionReply(msg) {
       replied = pending.hookReply({
         action: 'deny',
         reason: pending.requiresInteraction
-          ? 'The user did not answer through AgentPeek.'
-          : 'The user denied this tool call through AgentPeek.',
+          ? 'The user did not answer through Baton.'
+          : 'The user denied this tool call through Baton.',
       });
     }
   } else if (pending.requiresInteraction) {

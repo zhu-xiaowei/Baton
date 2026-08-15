@@ -1,7 +1,7 @@
 [package]
-name = "agentpeek"
+name = "baton"
 version = "0.2.0"
-description = "AgentPeek - Monitor Claude Code sessions from anywhere"
+description = "Baton - Monitor and control local agent sessions from anywhere"
 authors = ["xiaoweii"]
 edition = "2021"
 rust-version = "1.77.2"

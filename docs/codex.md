@@ -6,7 +6,7 @@
 
 ## 1. 目标与范围
 
-AgentPeek 将 Codex 作为第二种本地 agent runtime 接入，并继续使用统一的
+Baton 将 Codex 作为第二种本地 agent runtime 接入，并继续使用统一的
 Device → Project → Session 信息架构。
 
 当前已完成：
@@ -37,7 +37,7 @@ Device → Project → Session 信息架构。
   控制协议。command 审批按 App Server 的 `availableDecisions` 原序透传；permissions
   只回传语义动作并由 Bridge 从原请求构造授权；MCP 支持普通审批、session/always
   持久授权和 TUI 支持的 string/boolean/enum 表单。
-- MCP 不支持的 form schema 与 TUI 一样降级为三项普通审批；AgentPeek 未实现 AppLink
+- MCP 不支持的 form schema 与 TUI 一样降级为三项普通审批；Baton 未实现 AppLink
   安装/认证 UI，因此 `openai/form`、URL 和 tool suggestion 会安全 `decline`。
 - 每个活跃 thread 使用临时 app-server client lease；managed daemon 模式只关闭该连接，
   stdio fallback 才退出独立进程并释放 writer。
@@ -467,7 +467,7 @@ Review JSON 使用结构化结果展示；普通独立 JSON 使用格式化代�
 - API Gateway WS 帧预算约 31 KB；超限实时消息发送缩小的预览并标记 `noCache`。
 - 完整副本通过 HTTP 写 DDB，单条标准化消息上限约 360 KB。
 - 用户重新进入 Session 后从 REST/DDB 读取可用的完整版本。
-- Codex 自身已写入 `Warning: truncated output` 的内容无法由 AgentPeek 恢复。
+- Codex 自身已写入 `Warning: truncated output` 的内容无法由 Baton 恢复。
 
 ## 9. 不进入时间线的 Codex 数据
 
@@ -511,7 +511,7 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 
 本地自动化合计 175 项。
 
-AgentPeekTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
+BatonTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。
 
 Phase 2 真实链路验证使用隔离 `CODEX_HOME` 并发启动 2 个 Codex Session：
@@ -523,7 +523,7 @@ Phase 2 真实链路验证使用隔离 `CODEX_HOME` 并发启动 2 个 Codex Ses
 - 最大现有 rollout 为 22.4MB / 9072 行。普通 append 路径从约 207.7ms 降至
   138.4ms，CPU 时间减少约 33.4%；固定安全扫描从 30 秒改为 5 分钟，扫描频率减少 90%。
 
-Phase 2 验证版本 `0.2.0-codex-p2-20260810-13` 曾部署到 `MacBook-Pro`、`agentpeek_test`、
+Phase 2 验证版本 `0.2.0-codex-p2-20260810-13` 曾部署到 `MacBook-Pro`、`baton_test`、
 `test-ec2` 和 `test-ec2-ap`；四台均通过 WS 连接记录自报相同 `bridgeVersion` 且在线。
 Mac 真实 Codex turn 的最终 assistant rollout 到 App WS 为 1359ms，DDB UUID 重复 0；
 东京 Linux 真实 turn 的用户消息、工具调用、工具结果和最终回复共 4 条，状态
@@ -552,7 +552,7 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
 
 ### 10.2 原生 Windows
 
-东京 `agentpeek_test` Windows Server 2025 EC2 验证：
+东京 `baton_test` Windows Server 2025 EC2 验证：
 
 - Claude 2.1.148、Codex 0.147.0 均被识别。
 - 原生 Bridge 运行，不依赖 WSL 或 tmux。

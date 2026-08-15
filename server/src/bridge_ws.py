@@ -1,5 +1,5 @@
 """
-WebSocket handler for AgentPeek — manages connections, subscriptions, and message relay.
+WebSocket handler for Baton — manages connections, subscriptions, and message relay.
 Deployed as a standalone Lambda (not in Docker), invoked by WebSocket API Gateway.
 """
 

@@ -13,7 +13,7 @@ import {
 } from '../../bridge/codex-commands.mjs';
 
 function temporaryCodexHome(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-commands-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-commands-'));
   fs.mkdirSync(path.join(home, 'prompts'), { recursive: true });
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   return home;

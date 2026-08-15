@@ -25,7 +25,7 @@ if (!Number.isInteger(updateCount) || updateCount < 1 || updateCount > fileCount
   throw new Error('updates must be an integer between 1 and files');
 }
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-parcel-stress-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-parcel-stress-'));
 const sessionsRoot = path.join(root, 'sessions');
 fs.mkdirSync(sessionsRoot, { recursive: true });
 

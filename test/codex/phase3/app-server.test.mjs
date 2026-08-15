@@ -52,7 +52,7 @@ async function waitForMessage(appServer, predicate) {
 }
 
 async function fakeUnixAppServer(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-ws-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-ws-'));
   const socketPath = path.join(dir, 'app-server.sock');
   const messages = [];
   let connection = null;

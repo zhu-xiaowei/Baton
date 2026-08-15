@@ -6,7 +6,7 @@ var renderedState = window.__inlineRendered
   : null;
 var navigationStack = [];
 var restoringNavigation = false;
-var PAGE_PREVIEW_KEY = 'agentpeek-page-preview';
+var PAGE_PREVIEW_KEY = 'baton-page-preview';
 
 function routeKey(appState) {
   if (!appState.device) return 'devices';

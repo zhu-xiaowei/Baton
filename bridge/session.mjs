@@ -88,7 +88,7 @@ export function matchRealSegment(currentDir, parts, i) {
 /**
  * Resolve projectHash back to an absolute directory path.
  * Hash rule: path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-')
- * e.g. "-Users-xiaoweii-workspace-rn-agentpeek" → "/Users/xiaoweii/workspace/rn/agentpeek"
+ * e.g. "-Users-xiaoweii-workspace-rn-baton" → "/Users/xiaoweii/workspace/rn/baton"
  *
  * Windows CC generates hashes like "C-Users-Admin-workspace-project" (drive letter prefix).
  * On WSL, we map these to /mnt/c/Users/Admin/workspace/project.

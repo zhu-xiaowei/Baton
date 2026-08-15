@@ -6,7 +6,7 @@
 #   cargo install --locked cargo-xwin
 #   rustup target add x86_64-pc-windows-msvc
 #
-# Output: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/AgentPeek_<version>_x64-setup.exe
+# Output: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Baton_<version>_x64-setup.exe
 
 set -euo pipefail
 
@@ -68,7 +68,7 @@ fi
 
 VERSION="$(grep '"version"' src-tauri/tauri.conf.json | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')"
 OUTPUT_DIR="$(dirname "${EXE}")"
-FINAL="${OUTPUT_DIR}/AgentPeek_${VERSION}_x64-setup.exe"
+FINAL="${OUTPUT_DIR}/Baton_${VERSION}_x64-setup.exe"
 
 if [[ "${EXE}" != "${FINAL}" ]]; then
     mv "${EXE}" "${FINAL}"

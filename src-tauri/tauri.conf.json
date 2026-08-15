@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "AgentPeek",
+  "productName": "Baton",
   "version": "0.2.0",
-  "identifier": "com.agentpeek.app",
+  "identifier": "com.batonai.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "AgentPeek",
+        "title": "Baton",
         "width": 1024,
         "height": 768,
         "minWidth": 480,

@@ -1145,7 +1145,7 @@ export class CodexInteraction {
       migrationItems: items,
       migrationSource: args,
       providerId: args,
-      source: 'agentpeek',
+      source: 'baton',
     });
     return `Import started for **${items.length}** ${args} item${items.length === 1 ? '' : 's'}.`;
   }
@@ -1738,7 +1738,7 @@ export class CodexInteraction {
     if (session.client !== client) return;
     const turn = this.#turn(session, request.params);
     if (!turn) {
-      client.respondError(request.id, -32602, 'No active AgentPeek turn');
+      client.respondError(request.id, -32602, 'No active Baton turn');
       return;
     }
     const params = request.params || {};

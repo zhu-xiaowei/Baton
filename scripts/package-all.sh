@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Android APK, macOS DMG, and Windows EXE, then copy each into
-# release/<version>/ (version read from package.json) as AgentPeek.{apk,dmg,exe}.
+# release/<version>/ (version read from package.json) as Baton.{apk,dmg,exe}.
 # Each platform builds independently — one failing never blocks the others.
 # Invoked by the /package slash command. iOS is excluded (TestFlight flow).
 
@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 VERSION="$(node -p "require('./package.json').version")"
 DEST="release/${VERSION}"
 mkdir -p "${DEST}"
-echo "==> Packaging AgentPeek v${VERSION} -> ${DEST}/"
+echo "==> Packaging Baton v${VERSION} -> ${DEST}/"
 
 RESULTS=()
 
@@ -30,11 +30,11 @@ package_one() { # label  build-cmd  out-name  find-args...
   RESULTS+=("${label}: ${DEST}/${out} ($(du -h "${DEST}/${out}" | cut -f1))")
 }
 
-package_one "Android" "npm run build:android" "AgentPeek.apk" \
+package_one "Android" "npm run build:android" "Baton.apk" \
   src-tauri/gen/android -name "*.apk" -path "*release*" -type f
-package_one "macOS"   "npm run build:mac"     "AgentPeek.dmg" \
+package_one "macOS"   "npm run build:mac"     "Baton.dmg" \
   src-tauri/target -path "*bundle/dmg/*.dmg" -type f
-package_one "Windows" "npm run build:windows" "AgentPeek.exe" \
+package_one "Windows" "npm run build:windows" "Baton.exe" \
   src-tauri/target/x86_64-pc-windows-msvc -path "*bundle/nsis/*.exe" -type f
 
 echo ""

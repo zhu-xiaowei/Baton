@@ -18,12 +18,12 @@ test('returning from settings restores the saved home frame during parsing', () 
   };
 
   const dom = new JSDOM(indexHtml, {
-    url: 'http://agentpeek.test/index.html',
+    url: 'http://baton.test/index.html',
     runScripts: 'dangerously',
     beforeParse(window) {
       window.localStorage.setItem('_ak', window.btoa('test_key'));
-      window.sessionStorage.setItem('agentpeek-returning-home', '1');
-      window.sessionStorage.setItem('agentpeek-page-preview', JSON.stringify(snapshot));
+      window.sessionStorage.setItem('baton-returning-home', '1');
+      window.sessionStorage.setItem('baton-page-preview', JSON.stringify(snapshot));
       window.fetch = () => new Promise(() => {});
     },
   });

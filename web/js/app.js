@@ -347,7 +347,7 @@ function showInputBar(visible) {
 }
 
 function saveNav() {
-  sessionStorage.setItem('agentpeek-nav', JSON.stringify(state.appState));
+  sessionStorage.setItem('baton-nav', JSON.stringify(state.appState));
 }
 
 function navigateUp() {
@@ -1150,7 +1150,7 @@ async function startNewSession(projectHash) {
   content.innerHTML =
     '<div class="new-session-hero">'
       + '<img class="hero-logo" src="assets/baton-logo.svg" alt="">'
-      + '<div class="hero-title">AgentPeek</div>'
+      + '<div class="hero-title">Baton</div>'
       + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages runtime-' + runtime + '" hidden></div>';
@@ -1387,7 +1387,7 @@ async function loadOlderAndPrepend() {
   if (window.__inlineRendered) return;
 
   // Route immediately so skeleton shows without waiting for any network call
-  var nav = sessionStorage.getItem('agentpeek-nav');
+  var nav = sessionStorage.getItem('baton-nav');
   var hash = location.hash.replace(/^#\/?/, '');
   if (hash) {
     history.replaceState(null, '', location.pathname + location.search);

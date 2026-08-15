@@ -82,5 +82,5 @@ if os.path.isdir(WEB_DIR):
 
 
 if __name__ == "__main__":
-    print("Starting AgentPeek server...")
+    print("Starting Baton server...")
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # nosec B104

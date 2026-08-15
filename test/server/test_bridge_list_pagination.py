@@ -260,7 +260,7 @@ def test_sync_and_incremental_updates_write_list_index_fields(monkeypatch):
 
 def test_template_defines_shared_list_index():
     root = os.path.join(os.path.dirname(__file__), "..", "..")
-    with open(os.path.join(root, "server", "template", "AgentPeek.template")) as handle:
+    with open(os.path.join(root, "server", "template", "Baton.template")) as handle:
         template = json.load(handle)
     table = template["Resources"]["BridgeSessionsTable"]["Properties"]
 

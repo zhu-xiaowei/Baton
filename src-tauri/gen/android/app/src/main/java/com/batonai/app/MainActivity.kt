@@ -1,4 +1,4 @@
-package com.agentpeek.app
+package com.batonai.app
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

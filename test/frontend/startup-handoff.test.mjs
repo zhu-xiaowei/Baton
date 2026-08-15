@@ -20,7 +20,7 @@ const launchScreen = readFileSync(
   'utf8',
 );
 const nativeMain = readFileSync(
-  new URL('../../src-tauri/gen/apple/Sources/agentpeek/main.mm', import.meta.url),
+  new URL('../../src-tauri/gen/apple/Sources/baton/main.mm', import.meta.url),
   'utf8',
 );
 
@@ -58,12 +58,12 @@ test('native container keeps the shared skeleton until WKWebView is ready', () =
   assert.match(skeletonSection, /UIWindowDidBecomeVisibleNotification/);
   assert.match(
     skeletonSection,
-    /UIViewController \*existing = objc_getAssociatedObject\([\s\S]*_agentpeek_skeleton_controller_key/,
+    /UIViewController \*existing = objc_getAssociatedObject\([\s\S]*_baton_skeleton_controller_key/,
   );
   assert.match(skeletonSection, /\[hostController addChildViewController:skeletonController\]/);
   assert.match(skeletonSection, /\[hostView addSubview:skel\]/);
   assert.match(skeletonSection, /\[hostView bringSubviewToFront:skel\]/);
-  assert.match(skeletonSection, /agentpeek_window_top_inset\(UIWindow \*window\)/);
+  assert.match(skeletonSection, /baton_window_top_inset\(UIWindow \*window\)/);
   assert.match(skeletonSection, /window\.windowScene\.statusBarManager\.statusBarFrame/);
   assert.match(
     skeletonSection,
@@ -75,15 +75,15 @@ test('native container keeps the shared skeleton until WKWebView is ready', () =
   );
   assert.doesNotMatch(skeletonSection, /UIWindowLevelNormal \+ 1\.0/);
   assert.doesNotMatch(skeletonSection, /\[hostView layoutIfNeeded\]/);
-  assert.doesNotMatch(skeletonSection, /AGENTPEEK_SKEL_LOG|AgentPeekSkeleton/);
-  assert.match(skeletonSection, /objc_getAssociatedObject\(kw, &_agentpeek_skeleton_installed_key\)/);
+  assert.doesNotMatch(skeletonSection, /BATON_SKEL_LOG|BatonSkeleton/);
+  assert.match(skeletonSection, /objc_getAssociatedObject\(kw, &_baton_skeleton_installed_key\)/);
   assert.match(skeletonSection, /for \(UIWindow \*window in app\.windows\)/);
   assert.match(skeletonSection, /if \(!wv\) \{[\s\S]*if \(poll\) poll\(\)/);
   assert.match(skeletonSection, /window\.__skelReady\?1:0/);
   assert.match(skeletonSection, /\[cover removeFromSuperview\]/);
   assert.match(
     skeletonSection,
-    /objc_setAssociatedObject\(weakKw, &_agentpeek_skeleton_controller_key,\s*nil/,
+    /objc_setAssociatedObject\(weakKw, &_baton_skeleton_controller_key,\s*nil/,
   );
   assert.doesNotMatch(skeletonSection, /animateWithDuration/);
 });
@@ -194,7 +194,7 @@ test('mobile header separator is drawn inside the fixed 44px bar', () => {
 test('mobile header title uses the same 20px logo slot and 6px gap as LaunchScreen', () => {
   assert.match(
     indexHtml,
-    /class="top-logo" aria-hidden="true"><img src="assets\/baton-logo\.svg" alt=""><\/span><span class="top-title">AgentPeek/,
+    /class="top-logo" aria-hidden="true"><img src="assets\/baton-logo\.svg" alt=""><\/span><span class="top-title">Baton/,
   );
   assert.match(
     indexHtml,

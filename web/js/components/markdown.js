@@ -94,7 +94,7 @@
   marked.use({
     renderer: {
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
-      // being inserted into AgentPeek's document where <style>/<meta> can alter the UI.
+      // being inserted into Baton's document where <style>/<meta> can alter the UI.
       html: function (html) {
         return escHtml(html);
       },

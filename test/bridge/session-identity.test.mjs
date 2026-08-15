@@ -44,7 +44,7 @@ test('Windows path candidates cover canonical and literal drive separators', () 
 });
 
 test('an existing Claude Windows hash wins over the canonical candidate', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-projects-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-projects-'));
   try {
     fs.mkdirSync(path.join(root, 'C--Users-Admin-repo'));
     assert.equal(projectHashFromCwd('C:\\Users\\Admin\\repo', root), 'C--Users-Admin-repo');
@@ -67,7 +67,7 @@ test('Codex homes ignore legacy WSL profile discovery', () => {
 });
 
 test('runtime capabilities distinguish installed binaries from history', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-runtime-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-runtime-'));
   const claudeProjects = path.join(root, 'claude-projects');
   const codexHome = path.join(root, 'codex');
   fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });

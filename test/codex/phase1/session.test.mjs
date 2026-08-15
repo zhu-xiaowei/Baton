@@ -24,7 +24,7 @@ const FIXTURE = path.join(
 );
 
 function tempRollout() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-'));
   const dir = path.join(root, 'sessions', '2026', '08', '06');
   fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, path.basename(FIXTURE));
@@ -44,7 +44,7 @@ test('metadata scan selects matching session_meta and ignores injected previews'
   });
   assert.ok(result.session);
   assert.equal(result.session.nativeSessionId, SESSION_ID);
-  assert.equal(result.session.project, '-tmp-agentpeek-codex-target');
+  assert.equal(result.session.project, '-tmp-baton-codex-target');
   assert.equal(result.session.preview, 'Inspect the repository');
   assert.equal(result.session.model, 'gpt-test');
   assert.equal(result.session.modelProvider, 'openai');
@@ -72,7 +72,7 @@ test('response-only user messages provide metadata preview without exposing inte
         type: 'session_meta',
         payload: {
           id: SESSION_ID,
-          cwd: '/tmp/agentpeek-codex-target',
+          cwd: '/tmp/baton-codex-target',
           originator: 'codex-tui',
         },
       },
@@ -83,7 +83,7 @@ test('response-only user messages provide metadata preview without exposing inte
           role: 'user',
           content: [{
             type: 'input_text',
-            text: '<environment_context>\n  <cwd>/tmp/agentpeek-codex-target</cwd>\n</environment_context>',
+            text: '<environment_context>\n  <cwd>/tmp/baton-codex-target</cwd>\n</environment_context>',
           }],
         },
       },
@@ -222,7 +222,7 @@ test('a later completed turn supersedes an older unterminated desktop turn', () 
         type: 'session_meta',
         payload: {
           id: SESSION_ID,
-          cwd: '/tmp/agentpeek-codex-target',
+          cwd: '/tmp/baton-codex-target',
           originator: 'Codex Desktop',
         },
       },
@@ -255,7 +255,7 @@ test('a later completed turn supersedes an older unterminated desktop turn', () 
     const scanned = scanCodexRollout(target, {
       now: Date.parse('2026-08-13T15:35:00.000Z'),
       runningInfo: {
-        projects: new Set(['-tmp-agentpeek-codex-target']),
+        projects: new Set(['-tmp-baton-codex-target']),
         sessions: new Set(),
       },
     });

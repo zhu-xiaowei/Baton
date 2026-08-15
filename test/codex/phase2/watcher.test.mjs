@@ -53,7 +53,7 @@ function baseLines(id, cwd, options = {}) {
 }
 
 function createHome(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   return home;
 }

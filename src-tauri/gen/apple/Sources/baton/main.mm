@@ -3,15 +3,15 @@
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 
-static int _agentpeek_swizzle_attempts = 0;
-static int _agentpeek_cancel_swizzle_attempts = 0;
-static char _agentpeek_skeleton_installed_key;
-static char _agentpeek_skeleton_controller_key;
+static int _baton_swizzle_attempts = 0;
+static int _baton_cancel_swizzle_attempts = 0;
+static char _baton_skeleton_installed_key;
+static char _baton_skeleton_controller_key;
 
 // Find the barcode-scanner Swift class. Its runtime name is mangled with the module
 // prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
 // runtime class list to locate it by suffix.
-static Class agentpeek_find_class_by_suffix(const char *suffix) {
+static Class baton_find_class_by_suffix(const char *suffix) {
     int count = objc_getClassList(NULL, 0);
     if (count <= 0) return NULL;
     Class *classes = (Class *)malloc(sizeof(Class) * count);
@@ -29,12 +29,12 @@ static Class agentpeek_find_class_by_suffix(const char *suffix) {
 // internally calls UIView.removeFromSuperview, which requires the main thread.
 // On iOS 17+, UIKit asserts on this and crashes (NSAssertion / SIGABRT).
 // Fix by swizzling cancel(_:) to dispatch to main thread first.
-static void agentpeek_install_scanner_cancel_swizzle(void) {
-    Class plugin = agentpeek_find_class_by_suffix("BarcodeScannerPlugin");
+static void baton_install_scanner_cancel_swizzle(void) {
+    Class plugin = baton_find_class_by_suffix("BarcodeScannerPlugin");
     if (!plugin) {
-        if (_agentpeek_cancel_swizzle_attempts++ < 30) {
+        if (_baton_cancel_swizzle_attempts++ < 30) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
+                           dispatch_get_main_queue(), ^{ baton_install_scanner_cancel_swizzle(); });
         }
         return;
     }
@@ -60,7 +60,7 @@ static void agentpeek_install_scanner_cancel_swizzle(void) {
 // reliably appears at the top-right under the Dynamic Island / notch. We then poll
 // every 200ms; once the CameraView is gone (scan finished or cancelled), we remove
 // the button. Tapping the button evaluates window.__cancelScan() in the webview.
-static void agentpeek_install_scan_close_swizzle(void) {
+static void baton_install_scan_close_swizzle(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         SEL sel = @selector(didAddSubview:);
@@ -178,13 +178,13 @@ static void agentpeek_install_scan_close_swizzle(void) {
 
 // Disable iOS keyboard accessory toolbar (the prev/next/done bar above keyboard).
 // WKContentView is a private class, so retry until WebKit registers it.
-static void agentpeek_install_kb_swizzle(void) {
-    _agentpeek_swizzle_attempts++;
+static void baton_install_kb_swizzle(void) {
+    _baton_swizzle_attempts++;
     Class WKContentView = NSClassFromString(@"WKContentView");
     if (!WKContentView) {
-        if (_agentpeek_swizzle_attempts < 30) {
+        if (_baton_swizzle_attempts < 30) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });
+                           dispatch_get_main_queue(), ^{ baton_install_kb_swizzle(); });
         }
         return;
     }
@@ -218,7 +218,7 @@ static void agentpeek_install_kb_swizzle(void) {
 // additionalSafeAreaInsets so WebKit calculates viewport = full screen. Then inject
 // real inset values as CSS custom properties (--sat/--sab) since env() becomes 0.
 // Only applies when WKContentView height < window height (bug is present).
-static void agentpeek_fix_viewport(void) {
+static void baton_fix_viewport(void) {
 
     UIWindow *kw = nil;
     for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
@@ -233,7 +233,7 @@ static void agentpeek_fix_viewport(void) {
         static int retries = 0;
         if (retries++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
+                           dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
         }
         return;
     }
@@ -249,7 +249,7 @@ static void agentpeek_fix_viewport(void) {
         static int retries2 = 0;
         if (retries2++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
+                           dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
         }
         return;
     }
@@ -296,23 +296,23 @@ static void agentpeek_fix_viewport(void) {
 
 // Native skeleton overlay: keep the LaunchScreen view above the app's root view
 // until the Web skeleton or cached content has completed layout.
-static WKWebView *agentpeek_find_webview_in_view(UIView *view) {
+static WKWebView *baton_find_webview_in_view(UIView *view) {
     if (!view) return nil;
     if ([view isKindOfClass:[WKWebView class]]) return (WKWebView *)view;
     for (UIView *subview in view.subviews) {
-        WKWebView *found = agentpeek_find_webview_in_view(subview);
+        WKWebView *found = baton_find_webview_in_view(subview);
         if (found) return found;
     }
     return nil;
 }
 
-static void agentpeek_find_webview(UIWindow *kw, void (^cb)(WKWebView *)) {
+static void baton_find_webview(UIWindow *kw, void (^cb)(WKWebView *)) {
     cb(kw.rootViewController
-        ? agentpeek_find_webview_in_view(kw.rootViewController.view)
+        ? baton_find_webview_in_view(kw.rootViewController.view)
         : nil);
 }
 
-static CGFloat agentpeek_window_top_inset(UIWindow *window) {
+static CGFloat baton_window_top_inset(UIWindow *window) {
     CGFloat top = window.safeAreaInsets.top;
     if (top <= 0 && window.rootViewController) {
         top = window.rootViewController.view.safeAreaInsets.top;
@@ -323,25 +323,25 @@ static CGFloat agentpeek_window_top_inset(UIWindow *window) {
     return MAX(0, top);
 }
 
-static void agentpeek_layout_skeleton_content(
+static void baton_layout_skeleton_content(
     UIWindow *window, UIViewController *containerController) {
     UIView *container = containerController.view;
     UIViewController *launchController =
         containerController.childViewControllers.firstObject;
     if (!container || !launchController) return;
 
-    CGFloat top = agentpeek_window_top_inset(window);
+    CGFloat top = baton_window_top_inset(window);
     CGRect bounds = container.bounds;
     launchController.view.frame = CGRectMake(
         0, top, CGRectGetWidth(bounds), MAX(0, CGRectGetHeight(bounds) - top));
 }
 
-static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
+static void baton_attach_skeleton_overlay(UIWindow *kw) {
     if (!kw || !kw.rootViewController) return;
     UIViewController *hostController = kw.rootViewController;
     UIView *hostView = hostController.view;
     UIViewController *existing = objc_getAssociatedObject(
-        kw, &_agentpeek_skeleton_controller_key);
+        kw, &_baton_skeleton_controller_key);
     if (existing) {
         UIView *existingView = existing.view;
         if (existing.parentViewController != hostController) {
@@ -353,11 +353,11 @@ static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
             [existing didMoveToParentViewController:hostController];
         }
         existingView.frame = hostView.bounds;
-        agentpeek_layout_skeleton_content(kw, existing);
+        baton_layout_skeleton_content(kw, existing);
         [hostView bringSubviewToFront:existingView];
         return;
     }
-    if (objc_getAssociatedObject(kw, &_agentpeek_skeleton_installed_key)) {
+    if (objc_getAssociatedObject(kw, &_baton_skeleton_installed_key)) {
         return;
     }
 
@@ -386,16 +386,16 @@ static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
     [skeletonController addChildViewController:launchController];
     [skel addSubview:launchView];
     [launchController didMoveToParentViewController:skeletonController];
-    agentpeek_layout_skeleton_content(kw, skeletonController);
+    baton_layout_skeleton_content(kw, skeletonController);
 
     [hostController addChildViewController:skeletonController];
     [hostView addSubview:skel];
     [skeletonController didMoveToParentViewController:hostController];
     [hostView bringSubviewToFront:skel];
 
-    objc_setAssociatedObject(kw, &_agentpeek_skeleton_installed_key, @YES,
+    objc_setAssociatedObject(kw, &_baton_skeleton_installed_key, @YES,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(kw, &_agentpeek_skeleton_controller_key,
+    objc_setAssociatedObject(kw, &_baton_skeleton_controller_key,
                              skeletonController,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     skel.tag = 0x5EE1;
@@ -414,14 +414,14 @@ static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
         if (!controller || !cover.superview) { poll = nil; return; }
         ticks++;
         BOOL timedOut = ticks > 750; // ~15s hard cap (20ms * 750)
-        agentpeek_find_webview(weakKw, ^(WKWebView *wv) {
+        baton_find_webview(weakKw, ^(WKWebView *wv) {
             void (^removeOverlay)(void) = ^{
                 // The native and Web skeletons are pixel-aligned. A direct
                 // removal avoids cross-fading two different shimmer phases.
                 [controller willMoveToParentViewController:nil];
                 [cover removeFromSuperview];
                 [controller removeFromParentViewController];
-                objc_setAssociatedObject(weakKw, &_agentpeek_skeleton_controller_key,
+                objc_setAssociatedObject(weakKw, &_baton_skeleton_controller_key,
                                          nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                 poll = nil;
             };
@@ -446,26 +446,26 @@ static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
                    dispatch_get_main_queue(), poll);
 }
 
-static BOOL agentpeek_is_main_window(UIWindow *window) {
+static BOOL baton_is_main_window(UIWindow *window) {
     return window && window.windowLevel == UIWindowLevelNormal;
 }
 
 // Install the app-owned skeleton through every UIWindow visibility path used by
 // Tao. Tao resets rootViewController during startup, so each reset must also
 // bring an existing overlay back above the new root view.
-static void agentpeek_install_window_skeleton_swizzle(void) {
+static void baton_install_window_skeleton_swizzle(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         SEL visibleSel = @selector(makeKeyAndVisible);
         Method visibleMethod = class_getInstanceMethod([UIWindow class], visibleSel);
         IMP visibleOriginal = method_getImplementation(visibleMethod);
         IMP visibleReplacement = imp_implementationWithBlock(^(UIWindow *window) {
-            if (agentpeek_is_main_window(window)) {
-                agentpeek_attach_skeleton_overlay(window);
+            if (baton_is_main_window(window)) {
+                baton_attach_skeleton_overlay(window);
             }
             ((void (*)(id, SEL))visibleOriginal)(window, visibleSel);
-            if (agentpeek_is_main_window(window)) {
-                agentpeek_attach_skeleton_overlay(window);
+            if (baton_is_main_window(window)) {
+                baton_attach_skeleton_overlay(window);
             }
         });
         method_setImplementation(visibleMethod, visibleReplacement);
@@ -474,12 +474,12 @@ static void agentpeek_install_window_skeleton_swizzle(void) {
         Method hiddenMethod = class_getInstanceMethod([UIWindow class], hiddenSel);
         IMP hiddenOriginal = method_getImplementation(hiddenMethod);
         IMP hiddenReplacement = imp_implementationWithBlock(^(UIWindow *window, BOOL hidden) {
-            if (!hidden && agentpeek_is_main_window(window)) {
-                agentpeek_attach_skeleton_overlay(window);
+            if (!hidden && baton_is_main_window(window)) {
+                baton_attach_skeleton_overlay(window);
             }
             ((void (*)(id, SEL, BOOL))hiddenOriginal)(window, hiddenSel, hidden);
-            if (!hidden && agentpeek_is_main_window(window)) {
-                agentpeek_attach_skeleton_overlay(window);
+            if (!hidden && baton_is_main_window(window)) {
+                baton_attach_skeleton_overlay(window);
             }
         });
         method_setImplementation(hiddenMethod, hiddenReplacement);
@@ -491,8 +491,8 @@ static void agentpeek_install_window_skeleton_swizzle(void) {
             ^(UIWindow *window, UIViewController *controller) {
                 ((void (*)(id, SEL, UIViewController *))rootOriginal)(
                     window, rootSel, controller);
-                if (agentpeek_is_main_window(window)) {
-                    agentpeek_attach_skeleton_overlay(window);
+                if (baton_is_main_window(window)) {
+                    baton_attach_skeleton_overlay(window);
                 }
             });
         method_setImplementation(rootMethod, rootReplacement);
@@ -505,14 +505,14 @@ static void agentpeek_install_window_skeleton_swizzle(void) {
                         UIWindow *window = [note.object isKindOfClass:[UIWindow class]]
                             ? (UIWindow *)note.object
                             : nil;
-                        if (agentpeek_is_main_window(window)) {
-                            agentpeek_attach_skeleton_overlay(window);
+                        if (baton_is_main_window(window)) {
+                            baton_attach_skeleton_overlay(window);
                         }
                     }];
     });
 }
 
-static UIWindow *agentpeek_find_key_window(void) {
+static UIWindow *baton_find_key_window(void) {
     UIApplication *app = [UIApplication sharedApplication];
     for (UIScene *scene in app.connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
@@ -524,32 +524,32 @@ static UIWindow *agentpeek_find_key_window(void) {
         if (window.isKeyWindow) return window;
     }
     for (UIWindow *window in app.windows) {
-        if (agentpeek_is_main_window(window) && !window.hidden) return window;
+        if (baton_is_main_window(window) && !window.hidden) return window;
     }
     return nil;
 }
 
-static void agentpeek_install_skeleton_overlay(void) {
-    UIWindow *kw = agentpeek_find_key_window();
+static void baton_install_skeleton_overlay(void) {
+    UIWindow *kw = baton_find_key_window();
     if (!kw) {
         static int retries = 0;
         if (retries++ < 750) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
+                           dispatch_get_main_queue(), ^{ baton_install_skeleton_overlay(); });
         }
         return;
     }
-    agentpeek_attach_skeleton_overlay(kw);
+    baton_attach_skeleton_overlay(kw);
 }
 
 int main(int argc, char * argv[]) {
 	[WKWebView class]; // force-load WebKit framework
-	agentpeek_install_window_skeleton_swizzle();
-	agentpeek_install_scan_close_swizzle();
-	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
-	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });
-	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_scanner_cancel_swizzle(); });
-	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_fix_viewport(); });
+	baton_install_window_skeleton_swizzle();
+	baton_install_scan_close_swizzle();
+	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_skeleton_overlay(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_kb_swizzle(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_scanner_cancel_swizzle(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
 	ffi::start_app();
 	return 0;
 }

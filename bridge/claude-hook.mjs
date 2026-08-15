@@ -11,7 +11,7 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 export function claudeHookEndpoint(home = BRIDGE_HOME, platform = process.platform) {
   if (platform === 'win32') {
     const suffix = crypto.createHash('sha256').update(home).digest('hex').slice(0, 12);
-    return `\\\\.\\pipe\\agentpeek-claude-hook-${suffix}`;
+    return `\\\\.\\pipe\\baton-claude-hook-${suffix}`;
   }
   return path.join(home, 'claude-hook.sock');
 }
@@ -22,14 +22,14 @@ export function formatClaudeHookResponse(response = {}) {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
-        permissionDecisionReason: 'Approved through AgentPeek.',
+        permissionDecisionReason: 'Approved through Baton.',
       },
     };
   }
 
   const reason = response.action === 'answer' && response.answerText
     ? response.answerText
-    : (response.reason || 'The user denied this tool call through AgentPeek.');
+    : (response.reason || 'The user denied this tool call through Baton.');
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',

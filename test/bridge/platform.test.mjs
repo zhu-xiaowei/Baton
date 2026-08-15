@@ -11,7 +11,7 @@ import {
 } from '../../bridge/platform.mjs';
 
 function dependencyFixture(failing = false) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-dependencies-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dependencies-'));
   const dependency = path.join(root, 'fixture-dependency');
   fs.mkdirSync(dependency);
   fs.writeFileSync(path.join(dependency, 'package.json'), JSON.stringify({

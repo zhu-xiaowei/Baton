@@ -1,12 +1,12 @@
-# <img src="web/public/assets/baton-app-icon.svg" width="32" alt=""> AgentPeek
+# <img src="web/public/assets/baton-app-icon.svg" width="32" alt=""> Baton
 
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 
 <p align="center">
-  <img src="docs/assets/promo.avif" alt="AgentPeek" width="100%">
+  <img src="docs/assets/promo.avif" alt="Baton" width="100%">
 </p>
 
-AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code. All data stays in your own AWS account — fast, real-time, and always in sync.
+Baton is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero intrusion to Claude Code. All data stays in your own AWS account — fast, real-time, and always in sync.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ AgentPeek is built on AWS serverless (Lambda + DynamoDB + API Gateway) with zero
 Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/agentpeek/main/server/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
 ```
 
 Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
@@ -33,8 +33,8 @@ Requires [Node.js](https://nodejs.org/) >= 20.
 
 | iOS | Android | macOS | Windows |
 |:---:|:---:|:---:|:---:|
-| <img src="docs/assets/agentpeek_ios.png" width="120"> | <img src="docs/assets/agentpeek_android.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) | [AgentPeek.apk](https://github.com/zhu-xiaowei/agentpeek/releases/download/v0.2.0/AgentPeek.apk) | [AgentPeek.dmg](https://github.com/zhu-xiaowei/agentpeek/releases/download/v0.2.0/AgentPeek.dmg) | [AgentPeek.exe](https://github.com/zhu-xiaowei/agentpeek/releases/download/v0.2.0/AgentPeek.exe) |
+| <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
+| [TestFlight](https://testflight.apple.com/join/jJ4KQWjZ) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v0.2.0/Baton.apk) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v0.2.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v0.2.0/Baton.exe) |
 
 After downloading the app, scan the QR code or input the Start URL to get started.
 

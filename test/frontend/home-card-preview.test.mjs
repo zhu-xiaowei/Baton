@@ -23,8 +23,8 @@ test('inline home cards preserve quoted session previews for detail navigation',
       preview,
       status: 'running',
       deviceName: 'MacBook-Pro',
-      projectHash: '-workspace-agentpeek',
-      projectName: 'agentpeek',
+      projectHash: '-workspace-baton',
+      projectName: 'baton',
       runtime: 'codex',
       lastActive: '2026-08-12T00:00:00.000Z',
     }],
@@ -32,7 +32,7 @@ test('inline home cards preserve quoted session previews for detail navigation',
   };
   const devices = { devices: [] };
   const dom = new JSDOM(indexHtml, {
-    url: 'http://agentpeek.test/index.html',
+    url: 'http://baton.test/index.html',
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(window) {

@@ -54,7 +54,7 @@ test('session and project lists paginate, cache page one, and restore loaded pag
       + '<div id="breadcrumb"></div><div id="content"></div>'
       + '<div id="input-bar"></div><button id="scroll-bottom-btn"></button>'
       + '</body>',
-    { url: 'https://agentpeek.test/index.html', pretendToBeVisual: true }
+    { url: 'https://baton.test/index.html', pretendToBeVisual: true }
   );
   const window = dom.window;
   const content = window.document.getElementById('content');

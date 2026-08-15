@@ -1,9 +1,9 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.agentpeek" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.baton" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:statusBarColor">#161b22</item>
         <item name="android:navigationBarColor">#0d1117</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <item name="android:windowBackground">@color/agentpeek_background</item>
+        <item name="android:windowBackground">@color/baton_background</item>
     </style>
 </resources>

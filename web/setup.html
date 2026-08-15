@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
-<title>AgentPeek Setup</title>
+<title>Baton Setup</title>
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -104,17 +104,17 @@
   <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
 </div>
 
-<!-- Step 2: Start URL — paste into another browser or the AgentPeek app -->
+<!-- Step 2: Start URL — paste into another browser or the Baton app -->
 <div class="section">
   <h2><span class="num">2</span> Start URL</h2>
-  <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the AgentPeek app to sign in.</p>
+  <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the Baton app to sign in.</p>
   <div class="code-block" id="qrUrlBlock"><span id="qrUrl"></span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
 </div>
 
 <!-- Step 3: QR Code (scan version of the same Start URL) -->
 <div class="section">
   <h2><span class="num">3</span> Scan QR Code</h2>
-  <p class="hint" style="margin-bottom:14px">Scan with the AgentPeek app on your phone to sign in.</p>
+  <p class="hint" style="margin-bottom:14px">Scan with the Baton app on your phone to sign in.</p>
   <div class="qr-wrap">
     <div class="qr-frame"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
   </div>

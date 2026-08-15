@@ -15,7 +15,7 @@ is lossless — a session reopened after expiry re-syncs from jsonl.
 Only touches rows missing `ttl`; safe and idempotent to re-run.
 
 Usage:
-  python3 backfill-message-ttl.py --table AgentPeekTest-bridge-messages --region ap-northeast-1
+  python3 backfill-message-ttl.py --table BatonTest-bridge-messages --region ap-northeast-1
   python3 backfill-message-ttl.py ... --days 90 --dry-run
 """
 

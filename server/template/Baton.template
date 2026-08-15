@@ -107,7 +107,7 @@
       "Type": "AWS::ApiGateway::RestApi",
       "Properties": {
         "Name": { "Fn::Sub": "${AWS::StackName}-api" },
-        "Description": "AgentPeek API",
+        "Description": "Baton API",
         "EndpointConfiguration": { "Types": ["REGIONAL"] }
       }
     },

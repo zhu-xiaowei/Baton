@@ -9,7 +9,7 @@ import {
 } from '../../../bridge/codex-writer.mjs';
 
 function codexHome(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-writer-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-writer-'));
   fs.mkdirSync(path.join(home, 'thread-writer-locks'));
   fs.writeFileSync(path.join(home, 'thread-writer-locks', 'thread-1.lock'), '');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

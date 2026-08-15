@@ -1,4 +1,4 @@
-# AgentPeek — Project Context
+# Baton — Project Context
 
 ## Workflow Rules
 
@@ -7,7 +7,7 @@
 
 ## What is this
 
-AgentPeek is a cross-platform app + bridge + server that lets you view local agent sessions from
+Baton is a cross-platform app + bridge + server that lets you view local agent sessions from
 your phone or desktop. Claude Code supports viewing and interaction; Codex supports history,
 real-time monitoring, and interaction with existing Sessions. Three components:
 
@@ -15,7 +15,7 @@ real-time monitoring, and interaction with existing Sessions. Three components:
 2. **server/** — AWS Lambda (FastAPI) + DynamoDB + WebSocket API GW, relays between bridge and app
 3. **web/ + src-tauri/** — Static HTML/CSS/JS frontend, packaged as native app via Tauri v2 (Android/iOS/Desktop)
 
-Brand name "AgentPeek" is only in user-facing places. Internal code uses generic names so renaming is easy.
+Brand name "Baton" is only in user-facing places. Internal code uses generic names so renaming is easy.
 
 ## Core Design Principle
 
@@ -29,7 +29,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 ### Phase 1: COMPLETE ✅
 - bridge.mjs syncs session metadata to DDB via HTTP POST
 - bridge.mjs watches .jsonl files, detects new messages in real-time
-- Deployed to ap-northeast-1 (AgentPeekTest), verified 300+ sessions
+- Deployed to ap-northeast-1 (BatonTest), verified 300+ sessions
 
 ### Codex Phase 1 + Phase 2: COMPLETE
 - Runtime adapters discover Claude Code and Codex into one Device → Project → Session catalog.
@@ -63,7 +63,7 @@ Brand name "AgentPeek" is only in user-facing places. Internal code uses generic
 > ⚠️ Originally built on tmux send-keys; **superseded by Phase 2E (headless)** — tmux is deleted. The image/device pieces below still stand.
 - Message sending (was tmux send-keys → now headless stream-json pool, see Phase 2E)
 - Permission prompt detection + approval UI
-- Image upload via S3 + `claude-bridge:` protocol
+- Image upload via S3 + `baton-bridge:` protocol
 - Auto-create regular sessions through headless `--session-id`
 - Device routing for multi-bridge setups
 
@@ -106,20 +106,20 @@ Done:
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
 ### Phase 3: LATER — Production polish
-- Harden the existing persisted `~/.claude-bridge/synced.json` recovery path
+- Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 
 ## Deployed Test Environment
 
 **API URL and API key live in `.env.local` (gitignored). When you need them,
 read that file** — do not hardcode them in committed code. Variables:
-`AGENTPEEK_API_URL`, `AGENTPEEK_API_KEY`. See `.env.local.example` for the
+`BATON_API_URL`, `BATON_API_KEY`. See `.env.local.example` for the
 template. S3 bucket / ECR repo / AWS account id are derived automatically by
 `server/install.sh` from the stack name + `aws sts get-caller-identity`.
 
 - **Region**: ap-northeast-1
-- **Stack**: AgentPeekTest
-- **DDB Tables**: `AgentPeekTest-bridge-sessions`, `AgentPeekTest-bridge-messages`
-- **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack AgentPeekTest`
+- **Stack**: BatonTest
+- **DDB Tables**: `BatonTest-bridge-sessions`, `BatonTest-bridge-messages`
+- **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack BatonTest`
 
 ## Key Technical Decisions
 
@@ -178,9 +178,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   Codex Skills come from app-server `skills/list`; selecting one composes `$name`, and
   `turn/start.input` carries the matching structured Skill item. The app preserves Bridge order
   and caches by device + runtime + project. Details: `docs/api.md` + `docs/codex.md`.
-- Config: `~/.claude-bridge/config.json`, auto-created from CLI args
+- Config: `~/.baton-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS), systemd user service + `loginctl enable-linger` (Linux), Task Scheduler (Windows)
-- Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
+- Deployed bridge runs from `~/.baton-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.baton-bridge/` + restart service.
 - Auto-update: every 5min `checkUpdate()` compares local `version.mjs` vs server `/api/version`; on change, resolves the immutable S3 package through `/api/install`, stages and validates it, then restarts. `install.sh` uploads the versioned Bridge package before exposing that version through CloudFormation, so an interrupted deploy cannot advertise a mismatched package. Bridge WS connections report `bridgeVersion` for fleet verification.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
 - Initial sync: merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2. `await syncSessions()` then `await reconcile()` (recount aggregates at that definite completion point).
@@ -308,7 +308,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - `permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 
 ### Image Sending
-- S3 upload + `![](claude-bridge:key)` protocol
+- S3 upload + `![](baton-bridge:key)` protocol
 - Bridge downloads → replaces with absolute path → CC Read tool reads it
 - Multi-image staging + gallery + paste support
 
@@ -338,7 +338,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
 - `web/index.html` — Session viewer (auth guard redirects to landing if no key)
 - `web/setup.html` — Bridge install command + QR code + connected devices list
-- Top bar: AgentPeek logo + Setup gear icon
+- Top bar: Baton logo + Setup gear icon
 - Favicon: inline data:image/svg+xml (all pages unified)
 
 ### Auth Flow
@@ -371,7 +371,7 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
 - `src-tauri/` at project root (sibling to web/, bridge/, server/)
 - `frontendDist: "../web"` — directly serves static HTML/CSS/JS
 - `withGlobalTauri: true` — JS accesses native API via `window.__TAURI__`
-- Bundle identifier: `com.agentpeek.app`
+- Bundle identifier: `com.batonai.app`
 - Built-in dev server (no http-server needed), hot-reload
 
 ### Targets

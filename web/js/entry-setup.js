@@ -79,7 +79,7 @@ import qrcode from 'qrcode-generator';
   window.copyUrl = copyUrl;
 
   attachPageEdgeBackGesture(function () {
-    sessionStorage.setItem('agentpeek-returning-home', '1');
+    sessionStorage.setItem('baton-returning-home', '1');
     var referrer = document.referrer ? new URL(document.referrer) : null;
     var fromIndex = referrer && referrer.origin === location.origin
       && /\/(?:index\.html)?$/.test(referrer.pathname);

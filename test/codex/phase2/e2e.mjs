@@ -162,16 +162,16 @@ async function fetchJson(url, apiKey, options = {}) {
 }
 
 const env = loadEnv(path.join(process.cwd(), '.env.local'));
-const server = String(env.AGENTPEEK_API_URL || '').replace(/\/$/, '');
-const apiKey = env.AGENTPEEK_API_KEY || '';
-if (!server || !apiKey) throw new Error('.env.local must define AGENTPEEK_API_URL and AGENTPEEK_API_KEY');
+const server = String(env.BATON_API_URL || '').replace(/\/$/, '');
+const apiKey = env.BATON_API_KEY || '';
+if (!server || !apiKey) throw new Error('.env.local must define BATON_API_URL and BATON_API_KEY');
 const serverConfig = await fetchJson(`${server}/api/bridge/config`, apiKey);
 if (!serverConfig.wsUrl) throw new Error('Server did not return wsUrl');
 
 const deviceName = 'Codex-E2E';
 const config = { server, apiKey, wsUrl: serverConfig.wsUrl, deviceName };
 const sourceCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-home-'));
+const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-home-'));
 for (const name of ['config.toml', 'auth.json', 'installation_id', 'models_cache.json']) {
   const source = path.join(sourceCodexHome, name);
   if (fs.existsSync(source)) fs.copyFileSync(source, path.join(codexHome, name));
@@ -220,7 +220,7 @@ app.on('message', (data) => {
 
 const codexBin = resolveCodexBin();
 if (!codexBin) throw new Error('Codex binary not found');
-const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-codex-e2e-'));
+const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-e2e-'));
 const projectHash = projectHashFromCwd(cwd);
 const runId = Date.now().toString(36);
 

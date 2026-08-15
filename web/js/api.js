@@ -24,8 +24,8 @@ state.WS_URL = localStorage.getItem('_wsurl') || '';
 
 function clearCachedAccountData() {
   localStorage.removeItem('apeek_home_cache');
-  localStorage.removeItem('agentpeek-nav'); // legacy location
-  sessionStorage.removeItem('agentpeek-nav');
+  localStorage.removeItem('baton-nav'); // legacy location
+  sessionStorage.removeItem('baton-nav');
   clearListCaches();
 }
 

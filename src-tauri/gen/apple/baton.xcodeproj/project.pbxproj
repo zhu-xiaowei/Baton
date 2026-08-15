@@ -27,7 +27,7 @@
 		61378BA66E288276E8A10955 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		68FBBA7CC3D85010B6ED3AEE /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		7E32CDDA1E07D663F2D787D5 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
-		84A972D3462D1E60A55DDDF8 /* agentpeek_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = agentpeek_iOS.entitlements; sourceTree = "<group>"; };
+		84A972D3462D1E60A55DDDF8 /* baton_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = baton_iOS.entitlements; sourceTree = "<group>"; };
 		A2CEE11050869BE43BFC8E8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A54811B2B6C308FA22B388F1 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		A7304CB0DF068194EE64A834 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
@@ -35,7 +35,7 @@
 		BAB74A7161237F019677FAC3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BD620A7FB8555F7A97A5142D /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		C0CBF41BB32B0C5FAC111825 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
-		CD8ADAB5909C4A50162C8FB4 /* agentpeek_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = agentpeek_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD8ADAB5909C4A50162C8FB4 /* baton_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = baton_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CF0FF78280526A7689FDA40E /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		CFE3EC88DB96407255D3AAF8 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		D1A597C571E5260F664FF14D /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
@@ -89,7 +89,7 @@
 				16CF4C723507481915BCDA5D /* assets */,
 				A2CEE11050869BE43BFC8E8C /* Assets.xcassets */,
 				FED35A802561E14F21EB20E9 /* LaunchScreen.storyboard */,
-				7EC96FC8D066FC5F8397973F /* agentpeek_iOS */,
+				7EC96FC8D066FC5F8397973F /* baton_iOS */,
 				1BD81BBB6066C732E0D400AE /* Externals */,
 				A84484EF34892DA691DAE146 /* Sources */,
 				A121A1E10C0AC15F47E763E1 /* src */,
@@ -98,13 +98,13 @@
 			);
 			sourceTree = "<group>";
 		};
-		7EC96FC8D066FC5F8397973F /* agentpeek_iOS */ = {
+		7EC96FC8D066FC5F8397973F /* baton_iOS */ = {
 			isa = PBXGroup;
 			children = (
-				84A972D3462D1E60A55DDDF8 /* agentpeek_iOS.entitlements */,
+				84A972D3462D1E60A55DDDF8 /* baton_iOS.entitlements */,
 				BAB74A7161237F019677FAC3 /* Info.plist */,
 			);
-			path = agentpeek_iOS;
+			path = baton_iOS;
 			sourceTree = "<group>";
 		};
 		81EBC91F644470E9FA06CFA1 /* bindings */ = {
@@ -118,7 +118,7 @@
 		92EA6804765750DCEF1FE651 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				CD8ADAB5909C4A50162C8FB4 /* agentpeek_iOS.app */,
+				CD8ADAB5909C4A50162C8FB4 /* baton_iOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -136,26 +136,26 @@
 		A84484EF34892DA691DAE146 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				BE448FCA74C94AA8D7908DD1 /* agentpeek */,
+				BE448FCA74C94AA8D7908DD1 /* baton */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		BE448FCA74C94AA8D7908DD1 /* agentpeek */ = {
+		BE448FCA74C94AA8D7908DD1 /* baton */ = {
 			isa = PBXGroup;
 			children = (
 				7E32CDDA1E07D663F2D787D5 /* main.mm */,
 				81EBC91F644470E9FA06CFA1 /* bindings */,
 			);
-			path = agentpeek;
+			path = baton;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A2503540127E866A260709EA /* agentpeek_iOS */ = {
+		A2503540127E866A260709EA /* baton_iOS */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = FAC741070A7BEE8586CECBBF /* Build configuration list for PBXNativeTarget "agentpeek_iOS" */;
+			buildConfigurationList = FAC741070A7BEE8586CECBBF /* Build configuration list for PBXNativeTarget "baton_iOS" */;
 			buildPhases = (
 				E9290D8B92A7CD63D9DF1A4D /* Build Rust Code */,
 				7DFBD3B0E014FC1F8DFC1899 /* Sources */,
@@ -166,11 +166,11 @@
 			);
 			dependencies = (
 			);
-			name = agentpeek_iOS;
+			name = baton_iOS;
 			packageProductDependencies = (
 			);
-			productName = agentpeek_iOS;
-			productReference = CD8ADAB5909C4A50162C8FB4 /* agentpeek_iOS.app */;
+			productName = baton_iOS;
+			productReference = CD8ADAB5909C4A50162C8FB4 /* baton_iOS.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -184,7 +184,7 @@
 				TargetAttributes = {
 				};
 			};
-			buildConfigurationList = 81EDDDAB297776E9727C08D5 /* Build configuration list for PBXProject "agentpeek" */;
+			buildConfigurationList = 81EDDDAB297776E9727C08D5 /* Build configuration list for PBXProject "baton" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -198,7 +198,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A2503540127E866A260709EA /* agentpeek_iOS */,
+				A2503540127E866A260709EA /* baton_iOS */,
 			);
 		};
 /* End PBXProject section */
@@ -260,7 +260,7 @@
 					arm64,
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = agentpeek_iOS/agentpeek_iOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = baton_iOS/baton_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
@@ -268,15 +268,15 @@
 					"$(inherited)",
 					"\".\"",
 				);
-				INFOPLIST_FILE = agentpeek_iOS/Info.plist;
+				INFOPLIST_FILE = baton_iOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.agentpeek.app;
-				PRODUCT_NAME = "AgentPeek";
+				PRODUCT_BUNDLE_IDENTIFIER = com.batonai.app;
+				PRODUCT_NAME = "Baton";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
@@ -292,7 +292,7 @@
 					arm64,
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = agentpeek_iOS/agentpeek_iOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = baton_iOS/baton_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
@@ -300,15 +300,15 @@
 					"$(inherited)",
 					"\".\"",
 				);
-				INFOPLIST_FILE = agentpeek_iOS/Info.plist;
+				INFOPLIST_FILE = baton_iOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.agentpeek.app;
-				PRODUCT_NAME = "AgentPeek";
+				PRODUCT_BUNDLE_IDENTIFIER = com.batonai.app;
+				PRODUCT_NAME = "Baton";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
@@ -438,7 +438,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		81EDDDAB297776E9727C08D5 /* Build configuration list for PBXProject "agentpeek" */ = {
+		81EDDDAB297776E9727C08D5 /* Build configuration list for PBXProject "baton" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				504C57E27785EB6B42EDC5F1 /* debug */,
@@ -447,7 +447,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;
 		};
-		FAC741070A7BEE8586CECBBF /* Build configuration list for PBXNativeTarget "agentpeek_iOS" */ = {
+		FAC741070A7BEE8586CECBBF /* Build configuration list for PBXNativeTarget "baton_iOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				08DC7902440A702BD4FADF12 /* debug */,

@@ -4,16 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
-<title>AgentPeek</title>
+<title>Baton</title>
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg">
 <script>
-  if (sessionStorage.getItem('agentpeek-returning-home') === '1') {
+  if (sessionStorage.getItem('baton-returning-home') === '1') {
     window.__returningHome = true;
     document.documentElement.classList.add('returning-home');
-    sessionStorage.removeItem('agentpeek-returning-home');
+    sessionStorage.removeItem('baton-returning-home');
   }
   addEventListener('pageshow', function () {
-    sessionStorage.removeItem('agentpeek-returning-home');
+    sessionStorage.removeItem('baton-returning-home');
   });
 </script>
 <!-- Critical CSS inline — prevents FOUC before bundled CSS loads (mobile webview cold start) -->
@@ -113,7 +113,7 @@
   var hash = (location.hash || '').replace(/^#\/?/, '');
   var navDeep = false;
   try {
-    var _nav = JSON.parse(sessionStorage.getItem('agentpeek-nav') || '{}');
+    var _nav = JSON.parse(sessionStorage.getItem('baton-nav') || '{}');
     navDeep = !!(_nav && (_nav.session || _nav.project));
   } catch (e) {}
   var willRenderInline = !hash && !navDeep;
@@ -194,7 +194,7 @@
 
     var snapshot = null;
     try {
-      snapshot = JSON.parse(sessionStorage.getItem('agentpeek-page-preview') || 'null');
+      snapshot = JSON.parse(sessionStorage.getItem('baton-page-preview') || 'null');
     } catch (e) {}
     if (!snapshot || typeof snapshot.contentHtml !== 'string') return false;
 
@@ -208,7 +208,7 @@
     breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
     content.innerHTML = snapshot.contentHtml;
     content.scrollTop = snapshot.scrollTop || 0;
-    sessionStorage.removeItem('agentpeek-page-preview');
+    sessionStorage.removeItem('baton-page-preview');
     bindHomeNavigation(content);
     document.body.classList.add('ready');
     window.__inlineRendered = true;
@@ -478,7 +478,7 @@
 
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">
-  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true"><img src="assets/baton-logo.svg" alt=""></span><span class="top-title">AgentPeek</span></div>
+  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true"><img src="assets/baton-logo.svg" alt=""></span><span class="top-title">Baton</span></div>
   <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear syncing" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
 </div>
 

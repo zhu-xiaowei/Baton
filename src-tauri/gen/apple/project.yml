@@ -1,6 +1,6 @@
-name: agentpeek
+name: baton
 options:
-  bundleIdPrefix: com.agentpeek.app
+  bundleIdPrefix: com.batonai.app
   deploymentTarget:
     iOS: 14.0
 fileGroups: [../../src]
@@ -10,8 +10,8 @@ configs:
 settingGroups:
   app:
     base:
-      PRODUCT_NAME: AgentPeek
-      PRODUCT_BUNDLE_IDENTIFIER: com.agentpeek.app
+      PRODUCT_NAME: Baton
+      PRODUCT_BUNDLE_IDENTIFIER: com.batonai.app
 targetTemplates:
   app:
     type: application
@@ -24,20 +24,20 @@ targetTemplates:
     settings:
       groups: [app]
 targets:
-  agentpeek_iOS:
+  baton_iOS:
     type: application
     platform: iOS
     sources:
       - path: Sources
       - path: Assets.xcassets
       - path: Externals
-      - path: agentpeek_iOS
+      - path: baton_iOS
       - path: assets
         buildPhase: resources
         type: folder
       - path: LaunchScreen.storyboard
     info:
-      path: agentpeek_iOS/Info.plist
+      path: baton_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
@@ -57,10 +57,10 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.2.0
         CFBundleVersion: "54"
-        NSMicrophoneUsageDescription: AgentPeek uses the microphone for voice input.
-        NSSpeechRecognitionUsageDescription: AgentPeek uses speech recognition to convert your voice to text.
+        NSMicrophoneUsageDescription: Baton uses the microphone for voice input.
+        NSSpeechRecognitionUsageDescription: Baton uses speech recognition to convert your voice to text.
     entitlements:
-      path: agentpeek_iOS/agentpeek_iOS.entitlements
+      path: baton_iOS/baton_iOS.entitlements
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
