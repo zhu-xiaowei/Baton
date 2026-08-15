@@ -5,7 +5,14 @@ import os from 'os';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
-import { projectHashToPath, getDaemonRunningSessionIds, getAgentsJson, resolveClaudeBin } from './session.mjs';
+import {
+  projectHashToPath,
+  getDaemonRunningSessionIds,
+  getAgentsJson,
+  getSessionMetadata,
+  normalizeProjectHash,
+  resolveClaudeBin,
+} from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT } from './config.mjs';
@@ -31,7 +38,12 @@ import {
   isSupportedCodexCommand,
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
-import { updateSessionStatus, knownProjects } from './sync.mjs';
+import {
+  updateSessionStatus,
+  knownProjects,
+  recentSessions,
+  reconcile,
+} from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { PermissionQueue } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
@@ -89,6 +101,22 @@ export function headlessStream(uuid) { return liveMessageStream('claude', uuid);
 // visible and process later requests newest-first.
 const _pendingControl = new PermissionQueue();
 const _statusSyncs = new Map();
+const NEW_SESSION_FILE_WAIT_MS = 30_000;
+const SESSION_FILE_POLL_MS = 50;
+
+export async function waitForSessionFile(adapter, nativeSessionId, options = {}) {
+  const timeoutMs = options.timeoutMs ?? NEW_SESSION_FILE_WAIT_MS;
+  const pollMs = options.pollMs ?? SESSION_FILE_POLL_MS;
+  const ready = options.ready || (() => true);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    const filePath = adapter.findSessionFile(nativeSessionId);
+    if (filePath && ready(filePath)) return filePath;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
 
 function cwdForSession(sessionId) {
   const filePath = _claudeRuntime.findSessionFile(sessionId);
@@ -138,15 +166,24 @@ function commandCatalog(runtime, cwd, fallbackDir = cwd) {
 }
 
 // Push an interaction-owned session's status to DDB.
-function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
+function syncInteractionStatus(sessionId, status, detail, runtimeHint, options = {}) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
   const key = identity.sessionId;
   const previous = _statusSyncs.get(key) || Promise.resolve();
   const next = previous.then(async () => {
     const adapter = getRuntimeAdapter(identity.runtime);
-    const filePath = adapter.findSessionFile(identity.nativeSessionId);
+    let filePath = adapter.findSessionFile(identity.nativeSessionId);
+    if (options.waitForFile
+      && (!filePath || (options.fileReady && !options.fileReady(filePath)))) {
+      filePath = await waitForSessionFile(adapter, identity.nativeSessionId, {
+        ready: options.fileReady,
+      });
+    }
     if (!filePath || !_config) return;
     const projectHash = path.basename(path.dirname(filePath));
+    const normalizedProjectHash = normalizeProjectHash(projectHash);
+    const isNew = !!options.registerNew && !recentSessions.has(key);
+    if (isNew) recentSessions.add(key);
     try {
       await updateSessionStatus(
         _config,
@@ -156,8 +193,15 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
         status,
         detail,
         identity.runtime,
+        { isNew },
       );
-    } catch {}
+      if (isNew && !knownProjects.has(normalizedProjectHash)) {
+        knownProjects.add(normalizedProjectHash);
+        await reconcile(_config);
+      }
+    } catch {
+      if (isNew) recentSessions.delete(key);
+    }
   });
   _statusSyncs.set(key, next);
   next.finally(() => {
@@ -166,8 +210,8 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint) {
   return next;
 }
 
-function syncPoolStatus(sessionId, status, detail) {
-  return syncInteractionStatus(sessionId, status, detail, 'claude');
+function syncPoolStatus(sessionId, status, detail, options) {
+  return syncInteractionStatus(sessionId, status, detail, 'claude', options);
 }
 
 function controlDetail(p) {
@@ -1060,7 +1104,11 @@ async function newRegularSession(cwd, text, requestId, clientId) {
   const streamId = newStreamId();
   // Ack sid before spawn → app subscribes; any pre-subscribe delta is corrected by the authoritative row + bufferAndFetch.
   wsSend({ action: 'send_message_result', sessionId, ok: true, requestId, clientId, streamId });
-  syncPoolStatus(sessionId, 'running');
+  syncPoolStatus(sessionId, 'running', undefined, {
+    waitForFile: true,
+    registerNew: true,
+    fileReady: (filePath) => !!getSessionMetadata(filePath).preview,
+  });
   const cb = buildStreamCallbacks(sessionId, cwd, () => {});
   await _pool.send(sessionId, text, { cwd, createId: sessionId, streamId, ...cb });
 }

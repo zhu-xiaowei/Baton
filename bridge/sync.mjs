@@ -239,6 +239,7 @@ export async function updateSessionStatus(
   newStatus,
   detail,
   runtime,
+  options = {},
 ) {
   const identity = parseStorageSessionId(sessionId, runtime);
   return getRuntimeAdapter(identity.runtime).updateSessionStatus(
@@ -251,6 +252,7 @@ export async function updateSessionStatus(
     {
       lastKnownStatus,
       postFn: postRequired,
+      ...options,
     },
   );
 }

@@ -304,6 +304,35 @@ test('regular Claude sessions persist the current interaction detail', async () 
   }
 });
 
+test('first interaction status registers a new Claude session', async () => {
+  const sessionId = '79707070-7970-4797-8797-797070707070';
+  const fixture = sessionFixture(sessionId, 'running');
+  let request;
+  const statuses = new Map();
+  try {
+    await claudeRuntime.updateSessionStatus(
+      { deviceName: 'test-device' },
+      sessionId,
+      fixture.filePath,
+      fixture.project,
+      'running',
+      undefined,
+      {
+        isNew: true,
+        daemonMeta: new Map(),
+        lastKnownStatus: statuses,
+        postFn: async (_url, body) => { request = body; },
+      },
+    );
+    assert.equal(request.sessions[0].status, 'running');
+    assert.equal(request.statusDeltas[0].from, 'new');
+    assert.equal(request.statusDeltas[0].to, 'running');
+    assert.equal(statuses.get(sessionId), 'running');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('pending Hook interaction overrides JSONL running status', () => {
   assert.deepEqual(
     preferPendingInteraction('running', 'printf test > /tmp/test.txt'),

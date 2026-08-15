@@ -294,7 +294,7 @@ export const claudeRuntime = defineRuntimeAdapter({
         deviceName: config.deviceName,
         projectHash,
         projectName,
-        from: previousStatus || 'completed',
+        from: context.isNew && previousStatus === undefined ? 'new' : previousStatus || 'completed',
         to: newStatus,
         lastActive,
       }],

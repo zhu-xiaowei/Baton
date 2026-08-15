@@ -143,16 +143,20 @@ async function readAndSend(config, filename, sessionId) {
   synced.set(sessionId, lastParsedLine);
 
   // Sync metadata only when status changed, new session, or ai-title arrived
-  if (lastParsedLine > lastLine && lastStatus) {
+  if (lastParsedLine > lastLine && (lastStatus || gotNewTitle)) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
-    // isAgent), not jsonl/daemon. Once headless takes over (stopDaemon + --resume), the daemon
-    // --json status is a stale ghost, so pool wins even for agents.
-    if (poolOwns(sessionId)) return;
+    // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
+    // owns status, so list previews stay aligned with the open session title.
+    const poolOwned = poolOwns(sessionId);
+    if (poolOwned && !gotNewTitle) return;
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
-    const daemonActive = dm && getDaemonRunningSessionIds().has(sessionId);
-    const resolvedStatus = daemonActive ? dm.status : resolveStatus(sessionId, lastStatus);
+    const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
+    const resolvedStatus = poolOwned ? 'running'
+      : daemonActive ? dm.status
+      : lastStatus ? resolveStatus(sessionId, lastStatus)
+      : getSessionStatus(sessionId, filePath, getRunningInfo());
     const effective = preferPendingInteraction(
       resolvedStatus,
       pendingInteractionDetail(sessionId),
@@ -170,7 +174,7 @@ async function readAndSend(config, filename, sessionId) {
     );
     // Trailing edge: content settled but debounce held it 'running'. No more
     // writes will fire fs.watch, so re-evaluate once after debounce expires.
-    if (!daemonActive && effective.detail === null && lastStatus !== 'running' && effective.status === 'running') {
+    if (!poolOwned && !daemonActive && lastStatus && effective.detail === null && lastStatus !== 'running' && effective.status === 'running') {
       scheduleRecheck(config, filePath, filename, sessionId);
     }
   }
