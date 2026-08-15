@@ -86,6 +86,12 @@ Baton is being prepared as a new app under `com.batonai.app`. Store and binary d
 
 ---
 
+## Uninstall
+
+See the [uninstall guide](scripts/uninstall/README.md).
+
+---
+
 ## License
 
 MIT
