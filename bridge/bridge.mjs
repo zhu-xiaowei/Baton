@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, CHECK_UPDATE_INTERVAL, BRIDGE_HOME } from './config.mjs';
 import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
@@ -19,9 +20,14 @@ import { initWs, shutdownInteractions, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { cleanupStagedBridge, installStagedBridge } from './updater.mjs';
-import { extractTar, installProductionDependencies } from './platform.mjs';
+import {
+  extractTar,
+  installProductionDependencies,
+  validateProductionDependencies,
+} from './platform.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
+const BRIDGE_INSTALL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
 try {
   if (!fs.existsSync(BRIDGE_HOME)) fs.mkdirSync(BRIDGE_HOME, { recursive: true });
@@ -46,6 +52,7 @@ process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
 cleanupStagedBridge(BRIDGE_HOME);
+if (BRIDGE_INSTALL_DIR !== BRIDGE_HOME) cleanupStagedBridge(BRIDGE_INSTALL_DIR);
 initHttp(CONFIG);
 loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
 setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
@@ -125,7 +132,7 @@ async function checkUpdate() {
           throw new Error('downloaded Bridge version does not match server');
         }
 
-        installStagedBridge(stage, BRIDGE_HOME);
+        installStagedBridge(stage, BRIDGE_INSTALL_DIR, validateProductionDependencies);
       } finally {
         fs.rmSync(tgz, { force: true });
         fs.rmSync(stage, { recursive: true, force: true });

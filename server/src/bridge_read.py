@@ -485,11 +485,13 @@ def _windows_install_script(url, server, api_key, name):
     return "\n".join([
         "$ErrorActionPreference = 'Stop'",
         "$task = Get-ScheduledTask -TaskName 'Baton Bridge' -ErrorAction SilentlyContinue",
+        "$legacyTaskNames = @('AgentPeek Bridge', 'AgentPeek Bridge Service', 'Claude Bridge')",
+        "$knownTasks = @($task) + @($legacyTaskNames | ForEach-Object { Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue })",
         "$node = Get-Command node.exe -ErrorAction SilentlyContinue",
         "if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }",
         "$nodePath = if ($node) { $node.Source } else { '' }",
-        "if (-not $nodePath -and $task) {",
-        "  $nodePath = $task.Actions | ForEach-Object { $_.Execute } | Where-Object { $_ -and (Test-Path $_) -and ([IO.Path]::GetFileName($_) -ieq 'node.exe') } | Select-Object -First 1",
+        "if (-not $nodePath) {",
+        "  $nodePath = $knownTasks.Actions | ForEach-Object { $_.Execute } | Where-Object { $_ -and (Test-Path $_) -and ([IO.Path]::GetFileName($_) -ieq 'node.exe') } | Select-Object -First 1",
         "}",
         "$standardNode = Join-Path $env:ProgramFiles 'nodejs\\node.exe'",
         "if (-not $nodePath -and (Test-Path $standardNode)) { $nodePath = $standardNode }",
@@ -500,8 +502,11 @@ def _windows_install_script(url, server, api_key, name):
         "$dir = Join-Path $HOME '.baton-bridge'",
         "$configPath = Join-Path $dir 'config.json'",
         "$existingName = ''",
-        "if (Test-Path $configPath) {",
-        "  try { $existingName = (Get-Content $configPath -Raw | ConvertFrom-Json).deviceName } catch {}",
+        "$configCandidates = @($configPath, (Join-Path $HOME '.claude-bridge\\config.json'), (Join-Path $HOME '.agentpeek-bridge\\config.json'))",
+        "foreach ($candidate in $configCandidates) {",
+        "  if (-not $existingName -and (Test-Path $candidate)) {",
+        "    try { $existingName = (Get-Content $candidate -Raw | ConvertFrom-Json).deviceName } catch {}",
+        "  }",
         "}",
         f"$deviceName = {name_value}",
         "if ([string]::IsNullOrWhiteSpace($deviceName)) { $deviceName = $existingName }",
@@ -547,6 +552,10 @@ def _windows_install_script(url, server, api_key, name):
         "$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType S4U -RunLevel Highest",
         "Register-ScheduledTask -TaskName 'Baton Bridge' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null",
         "Start-ScheduledTask -TaskName 'Baton Bridge'",
+        "foreach ($legacyTaskName in $legacyTaskNames) {",
+        "  Stop-ScheduledTask -TaskName $legacyTaskName -ErrorAction SilentlyContinue",
+        "  Unregister-ScheduledTask -TaskName $legacyTaskName -Confirm:$false -ErrorAction SilentlyContinue",
+        "}",
         "Write-Output \"Baton Bridge installed for $deviceName.\"",
         "",
     ])
@@ -582,11 +591,13 @@ async def get_install(
         name_block = f'NAME="{name}"'
     else:
         name_block = (
-            '# Read existing name from config, fall back to hostname\n'
+            '# Read existing name from current or legacy config, fall back to hostname\n'
             'EXISTING_NAME=""\n'
-            'if [ -f "$DIR/config.json" ]; then\n'
-            '  EXISTING_NAME=$(python3 -c "import json; print(json.load(open(\'$DIR/config.json\')).get(\'deviceName\',\'\'))" 2>/dev/null || true)\n'
-            'fi\n'
+            'for CONFIG_CANDIDATE in "$DIR/config.json" "$HOME/.claude-bridge/config.json" "$HOME/.agentpeek-bridge/config.json"; do\n'
+            '  if [ -z "$EXISTING_NAME" ] && [ -f "$CONFIG_CANDIDATE" ]; then\n'
+            '    EXISTING_NAME=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(\'deviceName\',\'\'))" "$CONFIG_CANDIDATE" 2>/dev/null || true)\n'
+            '  fi\n'
+            'done\n'
             'DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"\n'
             'if [ -t 0 ] && [ -e /dev/tty ]; then\n'
             '  printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
@@ -665,6 +676,10 @@ async def get_install(
         '  <key>StandardErrorPath</key><string>$DIR/bridge.log</string>\n'
         '</dict></plist>\n'
         'PLIST_EOF\n'
+        '  for LEGACY_PLIST in "$HOME/Library/LaunchAgents/com.agentpeek.bridge.plist" "$HOME/Library/LaunchAgents/com.claude.bridge.plist"; do\n'
+        '    launchctl unload "$LEGACY_PLIST" 2>/dev/null || true\n'
+        '    rm -f "$LEGACY_PLIST"\n'
+        '  done\n'
         '  launchctl unload "$PLIST" 2>/dev/null || true\n'
         '  launchctl load "$PLIST"\n'
         '  echo ""\n'
@@ -696,6 +711,10 @@ async def get_install(
         'SVC_EOF\n'
         '  sudo loginctl enable-linger $(whoami) 2>/dev/null || loginctl enable-linger $(whoami) 2>/dev/null || true\n'
         '  export XDG_RUNTIME_DIR=/run/user/$(id -u)\n'
+        '  for LEGACY_SERVICE in claude-bridge agentpeek-bridge; do\n'
+        '    systemctl --user disable --now "$LEGACY_SERVICE" 2>/dev/null || true\n'
+        '    rm -f "$SERVICE_DIR/$LEGACY_SERVICE.service"\n'
+        '  done\n'
         '  systemctl --user daemon-reload\n'
         '  systemctl --user enable baton-bridge\n'
         '  systemctl --user restart baton-bridge\n'

@@ -270,6 +270,9 @@ def test_windows_installer_runs_without_an_interactive_logon():
     assert "ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "verify-dependencies.mjs" in script
     assert "[version]'20.9.0'" in script
+    assert "AgentPeek Bridge Service" in script
+    assert "Unregister-ScheduledTask -TaskName $legacyTaskName" in script
+    assert ".claude-bridge\\config.json" in script
 
 
 def test_unix_installer_validates_runtime_dependencies(monkeypatch):
@@ -288,6 +291,10 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     assert "Requires >= 20.9" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script
+    assert "systemctl --user disable --now \"$LEGACY_SERVICE\"" in script
+
+    response = asyncio.run(bridge_read.get_install(request, name=None, platform=""))
+    assert "$HOME/.claude-bridge/config.json" in response.body.decode()
 
 
 def test_bridge_connection_persists_running_version(monkeypatch):
