@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import { post, postRequired } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
 
@@ -100,7 +101,6 @@ export function truncateToBytes(msg, maxBytes) {
 }
 
 async function processImage(base64Data) {
-  const { default: sharp } = await import('sharp');
   const buffer = Buffer.from(base64Data, 'base64');
   const compressed = await sharp(buffer)
     .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })

@@ -4,10 +4,6 @@ import os from 'os';
 
 export const BRIDGE_HOME = path.join(os.homedir(), '.baton-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
-export const LEGACY_CONFIG_PATHS = [
-  path.join(os.homedir(), '.claude-bridge', 'config.json'),
-  path.join(os.homedir(), '.agentpeek-bridge', 'config.json'),
-];
 export const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 export const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');
 export const CLAUDE_JOBS = path.join(os.homedir(), '.claude', 'jobs');
@@ -52,20 +48,6 @@ export function saveConfig(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-export function loadStoredConfig(
-  configPath = CONFIG_PATH,
-  legacyConfigPaths = LEGACY_CONFIG_PATHS,
-) {
-  for (const candidate of [configPath, ...legacyConfigPaths]) {
-    if (!fs.existsSync(candidate)) continue;
-    return {
-      config: JSON.parse(fs.readFileSync(candidate, 'utf-8')),
-      path: candidate,
-    };
-  }
-  return null;
-}
-
 export function loadConfig() {
   const cliArgs = parseArgs();
   let config;
@@ -78,19 +60,12 @@ export function loadConfig() {
     fs.mkdirSync(BRIDGE_HOME, { recursive: true });
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
     console.log(`Config saved to ${CONFIG_PATH}`);
+  } else if (fs.existsSync(CONFIG_PATH)) {
+    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    if (cliArgs.skipInit) config.skipInit = true;
   } else {
-    const stored = loadStoredConfig();
-    if (stored) {
-      config = stored.config;
-      if (stored.path !== CONFIG_PATH) {
-        saveConfig(config);
-        console.log(`Config migrated from ${stored.path} to ${CONFIG_PATH}`);
-      }
-      if (cliArgs.skipInit) config.skipInit = true;
-    } else {
-      console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');
-      process.exit(1);
-    }
+    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');
+    process.exit(1);
   }
   return config;
 }

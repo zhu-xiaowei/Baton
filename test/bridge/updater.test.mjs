@@ -65,29 +65,3 @@ test('staged update restores dependencies when the new directory cannot be insta
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
-
-test('staged update rolls back package files and dependencies when validation fails', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-update-validation-'));
-  const home = path.join(root, 'home');
-  const stage = path.join(root, 'stage');
-  fs.mkdirSync(path.join(home, 'node_modules', 'old-dep'), { recursive: true });
-  fs.mkdirSync(path.join(stage, 'node_modules', 'new-dep'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'bridge.mjs'), 'old bridge');
-  fs.writeFileSync(path.join(home, 'node_modules', 'old-dep', 'index.js'), 'old');
-  fs.writeFileSync(path.join(stage, 'bridge.mjs'), 'new bridge');
-  fs.writeFileSync(path.join(stage, 'node_modules', 'new-dep', 'index.js'), 'new');
-
-  try {
-    assert.throws(
-      () => installStagedBridge(stage, home, () => {
-        throw new Error('native dependency unavailable');
-      }),
-      /native dependency unavailable/,
-    );
-    assert.equal(fs.readFileSync(path.join(home, 'bridge.mjs'), 'utf-8'), 'old bridge');
-    assert.equal(fs.readFileSync(path.join(home, 'node_modules', 'old-dep', 'index.js'), 'utf-8'), 'old');
-    assert.equal(fs.existsSync(path.join(home, 'node_modules', 'new-dep')), false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});

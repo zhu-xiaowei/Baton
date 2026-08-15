@@ -16,7 +16,7 @@ export function cleanupStagedBridge(bridgeHome) {
   }
 }
 
-export function installStagedBridge(stage, bridgeHome, validate = null) {
+export function installStagedBridge(stage, bridgeHome) {
   const token = `${process.pid}-${Date.now()}`;
   const backupDir = path.join(bridgeHome, `.update-backup-${token}`);
   const nextModules = path.join(bridgeHome, `.node_modules-next-${token}`);
@@ -52,7 +52,6 @@ export function installStagedBridge(stage, bridgeHome, validate = null) {
       fs.renameSync(nextModules, currentModules);
       modulesInstalled = true;
     }
-    if (validate) validate(bridgeHome);
   } catch (error) {
     for (const entry of fs.readdirSync(backupDir, { withFileTypes: true })) {
       if (entry.isFile()) fs.copyFileSync(path.join(backupDir, entry.name), path.join(bridgeHome, entry.name));
