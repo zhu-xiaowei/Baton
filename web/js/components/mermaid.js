@@ -13,6 +13,47 @@
     _svgCache[code] = svg;
   }
 
+  var _isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  var _maxLiveSvgs = _isMobile ? 6 : 12;
+  var _viewportObserver = null;
+  var _observedBlocks = new Set();
+
+  function releaseSvg(block) {
+    var box = block && block.querySelector('.mermaid-svg');
+    var svg = box && box.firstElementChild;
+    if (!svg || svg.tagName.toLowerCase() !== 'svg') return;
+    var srcEl = block.querySelector('.mermaid-src');
+    var code = (srcEl ? srcEl.textContent : '').trim();
+    if (code) cacheSvg(code, svg.outerHTML);
+    box.innerHTML = '';
+    block.classList.remove('rendered');
+  }
+
+  function limitLiveSvgs(preferred) {
+    var root = document.getElementById('content') || document;
+    var live = Array.from(root.querySelectorAll('.mermaid-block.rendered'));
+    if (live.length <= _maxLiveSvgs) return;
+    var viewport = root === document ? { top: 0, bottom: window.innerHeight } : root.getBoundingClientRect();
+    live.sort(function (a, b) {
+      function distance(block) {
+        var rect = block.getBoundingClientRect();
+        if (rect.bottom < viewport.top) return viewport.top - rect.bottom;
+        if (rect.top > viewport.bottom) return rect.top - viewport.bottom;
+        return 0;
+      }
+      return distance(b) - distance(a);
+    });
+    var count = live.length;
+    for (var i = 0; i < live.length && count > _maxLiveSvgs; i++) {
+      var rect = live[i].getBoundingClientRect();
+      var visible = rect.bottom > viewport.top && rect.top < viewport.bottom;
+      if (live[i] !== preferred && !visible) {
+        releaseSvg(live[i]);
+        count--;
+      }
+    }
+  }
+
   // Offscreen render container (keeps mermaid's temp measuring nodes out of <body>). MUST keep a real width — gantt measures it to size the axis, so a 0-width sandbox renders blank (mermaid #1846); left:-99999px hides it without collapsing width.
   var _sandbox = null;
   function sandbox() {
@@ -84,12 +125,56 @@
     }, 600);
   }
 
+  function pruneObservedBlocks() {
+    _observedBlocks.forEach(function (block) {
+      if (block.isConnected) return;
+      _viewportObserver.unobserve(block);
+      _observedBlocks.delete(block);
+    });
+  }
+
+  function ensureViewportObserver() {
+    if (_viewportObserver || !window.IntersectionObserver) return _viewportObserver;
+    _viewportObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var block = entry.target;
+        if (!block.isConnected) {
+          _viewportObserver.unobserve(block);
+          _observedBlocks.delete(block);
+          return;
+        }
+        block._mermaidInRange = entry.isIntersecting;
+        if (entry.isIntersecting) window.renderMermaidBlocks(block);
+        else releaseSvg(block);
+      });
+    }, {
+      root: document.getElementById('content') || null,
+      rootMargin: (_isMobile ? 480 : 900) + 'px 0px',
+      threshold: 0,
+    });
+    return _viewportObserver;
+  }
+
   // (Re)render any .mermaid-block under `container` whose source changed since its current SVG.
   window.renderMermaidBlocks = function (container) {
     if (!container) return;
     var blocks = container.matches && container.matches('.mermaid-block')
-      ? [container] : container.querySelectorAll('.mermaid-block');
+      ? [container] : Array.from(container.querySelectorAll('.mermaid-block'));
     if (!blocks.length) return;
+
+    var observer = ensureViewportObserver();
+    if (observer) {
+      pruneObservedBlocks();
+      blocks = blocks.filter(function (block) {
+        if (!_observedBlocks.has(block)) {
+          _observedBlocks.add(block);
+          block._mermaidInRange = false;
+          observer.observe(block);
+        }
+        return block._mermaidInRange;
+      });
+      if (!blocks.length) return;
+    }
 
     var todo = [];
     for (var i = 0; i < blocks.length; i++) {
@@ -103,6 +188,7 @@
       var cur = svgBox && svgBox.firstElementChild;         // SVG already in this box (persistent node or prior render)
       if (cur && cur.getAttribute('data-mcode') === code) { // already showing this exact source → no-op
         block.classList.add('rendered');
+        limitLiveSvgs(block);
         continue;
       }
       // Rendered this source before (e.g. streaming→authoritative swap): restore cached SVG sync, no flash.
@@ -110,6 +196,7 @@
         svgBox.innerHTML = _svgCache[code];
         if (svgBox.firstElementChild) svgBox.firstElementChild.setAttribute('data-mcode', code);
         block.classList.add('rendered');
+        limitLiveSvgs(block);
         continue;
       }
       var key = stableKey(block);
@@ -131,12 +218,14 @@
             var box = t.block.querySelector('.mermaid-svg');
             // replace this block's SVG only if it's still attached + still on this source
             if (!box || !srcEl || !document.body.contains(t.block) || srcEl.textContent.trim() !== t.code) return;
+            if (_viewportObserver && !t.block._mermaidInRange) return;
             box.innerHTML = res.svg;
             var svg = box.firstElementChild;
             if (svg) svg.setAttribute('data-mcode', t.code); // tag so unchanged frames become a no-op
             clearTimeout(_failTimers[t.key]);                // a good render cancels any pending fail switch
             t.block.classList.remove('mermaid-failed');
             t.block.classList.add('rendered');
+            limitLiveSvgs(t.block);
           });
         }).catch(function () { markFailed(t.block, t.code); })
           .then(function () { if (_pending[t.key] === t.code) delete _pending[t.key]; });
@@ -337,6 +426,7 @@
   function fsSettle() {
     if (!_fs) return;
     var scale = Math.max(FS_MIN_SCALE, Math.min(fsScale(_fs.view), FS_MAX_SCALE));
+    if (_isMobile && scale >= 0.9 && scale <= 1.1) scale = 1;
     var target = {
       w: _fs.home.w / scale,
       h: _fs.home.h / scale,

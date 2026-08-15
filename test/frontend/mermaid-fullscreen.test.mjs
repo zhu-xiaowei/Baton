@@ -12,7 +12,7 @@ const markdownSource = fs.readFileSync(
   'utf8',
 );
 
-function setupViewer() {
+function setupViewer({ mobile = false } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div class="mermaid-block">
       <button class="mermaid-zoom"></button>
@@ -32,6 +32,12 @@ function setupViewer() {
   };
   dom.window.cancelAnimationFrame = () => {};
   dom.window.matchMedia = () => ({ matches: false });
+  if (mobile) {
+    Object.defineProperty(dom.window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'iPhone',
+    });
+  }
   dom.window.eval(source);
   dom.window.openMermaidFullscreen(dom.window.document.querySelector('.mermaid-zoom'));
 
@@ -163,6 +169,59 @@ test('iOS native pinch overscroll springs back to the half-scale boundary', () =
   const settled = viewBox(svg);
   assert.equal(settled[2], initial[2] * 2);
   assert.equal(settled[3], initial[3] * 2);
+});
+
+test('mobile Mermaid pinch snaps near-home scale back to 1x', () => {
+  const viewer = setupViewer({ mobile: true });
+  const { dom, stage, svg } = viewer;
+  const initial = viewBox(svg);
+
+  stage.dispatchEvent(gestureEvent(dom, 'gesturestart', {
+    clientX: 200,
+    clientY: 400,
+    scale: 1,
+  }));
+  stage.dispatchEvent(gestureEvent(dom, 'gesturechange', {
+    clientX: 200,
+    clientY: 400,
+    scale: 0.95,
+  }));
+  stage.dispatchEvent(gestureEvent(dom, 'gestureend', {
+    clientX: 200,
+    clientY: 400,
+    scale: 0.95,
+  }));
+  viewer.flushAnimation();
+
+  assert.deepEqual(viewBox(svg), initial);
+});
+
+test('mobile Mermaid pinch keeps scales outside the 1x snap range', () => {
+  const viewer = setupViewer({ mobile: true });
+  const { dom, stage, svg } = viewer;
+  const initial = viewBox(svg);
+
+  stage.dispatchEvent(gestureEvent(dom, 'gesturestart', {
+    clientX: 200,
+    clientY: 400,
+    scale: 1,
+  }));
+  stage.dispatchEvent(gestureEvent(dom, 'gesturechange', {
+    clientX: 200,
+    clientY: 400,
+    scale: 0.85,
+  }));
+  stage.dispatchEvent(gestureEvent(dom, 'gestureend', {
+    clientX: 200,
+    clientY: 400,
+    scale: 0.85,
+  }));
+  viewer.flushAnimation();
+
+  const settled = viewBox(svg);
+  assert.ok(settled[2] > initial[2]);
+  assert.ok(settled[3] > initial[3]);
+  assert.notDeepEqual(settled, initial);
 });
 
 test('fullscreen Mermaid pan resists overscroll and springs back inside the diagram', () => {
