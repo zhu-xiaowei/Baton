@@ -528,5 +528,12 @@ command/Skill 作为回退。
 headless stdin，并以 `commandOutput` 结束乐观气泡和 loading。普通 prompt/Skill 仍走正常
 streaming 与 JSONL。
 
+`/usage`、`/cost`、`/stats`、`/status` 和无参数 `/config` 不写入 session JSONL。Bridge
+对当前 session 发 `initialize/get_settings/get_usage` control request，同时在 Worker 线程只读
+聚合 `~/.claude/projects/**/*.jsonl`，返回 `Status / Config / Usage / Stats` 四 tab 面板。
+Stats 含 `Overview / Models` 和 all-time/7-day/30-day 范围；历史 session 的 Usage token 在
+CC control response 为空时从该 session JSONL 补齐。响应被限制在 WebSocket 单帧预算内，
+超大配置会明确标记部分明细被裁剪。
+
 headless 被 Claude 拒绝或进程异常时，Bridge 返回明确错误并保留只读 JSONL 监听，不再尝试
 任何 tmux fallback。

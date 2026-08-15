@@ -1080,6 +1080,31 @@ Bridge returns the result after processing send_message.
 { "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
 ```
 
+Synchronous local commands may also return:
+
+```json
+{
+  "action": "send_message_result",
+  "ok": true,
+  "sessionId": "session-id",
+  "clientId": "client_123",
+  "streamId": "stream_123",
+  "commandOutput": "Copyable plain-text result",
+  "commandName": "usage",
+  "commandPanel": {
+    "type": "claude-usage",
+    "initialTab": "usage",
+    "status": {},
+    "config": {},
+    "usage": {},
+    "stats": {}
+  }
+}
+```
+
+`commandPanel` is ephemeral UI state. The server broadcasts it verbatim but does not write it to
+the Claude transcript. The frontend stores `commandOutput` as the panel's copyable text fallback.
+
 **Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`),
 `requestId`, `clientId`, and `streamId`. Immediate Codex commands may also return
 `commandOutput`; the app atomically promotes the optimistic command bubble and renders that

@@ -355,6 +355,36 @@ export class ClaudePool {
     }
   }
 
+  async inspectSession(key, cwd, subtypes) {
+    let proc = this.procs.get(key);
+    let temporary = false;
+    if (!proc || proc.dead) {
+      const inspectKey = 'inspect-session-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      proc = new HeadlessProc(this, inspectKey, cwd, key, null, { noPersistence: true });
+      this._inspectProcs.add(proc);
+      proc.spawn();
+      temporary = true;
+    }
+
+    const result = {};
+    const errors = {};
+    try {
+      for (const subtype of subtypes) {
+        try {
+          result[subtype] = await proc.requestControl({ subtype }, this.initTimeout);
+        } catch (error) {
+          errors[subtype] = error.message || String(error);
+        }
+      }
+    } finally {
+      if (temporary) {
+        this._inspectProcs.delete(proc);
+        proc.shutdown();
+      }
+    }
+    return { result, errors };
+  }
+
   // Release a daemon-held (bg-agent) session so --resume can take it over. `claude stop` blocks until released (~200ms) — no polling needed.
   stopDaemon(sessionId) {
     const bin = this.bin || resolveClaudeBin() || 'claude';

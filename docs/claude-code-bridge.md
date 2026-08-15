@@ -304,10 +304,18 @@ does not maintain a static built-in table.
 
 ### Local slash commands
 
-The tmux `command_output` path was removed. Under headless every `/cmd` is sent as ordinary text;
-supported commands return through normal stream/JSONL messages, while Claude itself reports commands
-that are unavailable in headless mode. `/compact` can also surface through its
-`<local-command-stdout>` JSONL row.
+The tmux `command_output` path was removed. Prompt/Skill commands and streaming local commands are
+sent through the current headless process. Synchronous commands such as model selection use the same
+process but finish through an ephemeral `commandOutput`; they do not invent a JSONL row.
+
+`/usage` and its aliases (`/cost`, `/stats`) open a structured four-tab Settings panel. `/status`
+and bare `/config` open the same panel at their matching tab. Status, Config, and current-session
+Usage use `initialize`, `get_settings`, and `get_usage`. Stats is a read-only Worker-thread scan of
+Claude's JSONL history, with Overview/Models and all-time/7-day/30-day ranges. The panel never writes
+Claude settings or transcripts. `/config key=value` remains Claude's native setting command.
+
+See [claude-commands.md](claude-commands.md) for the audited TUI command matrix and explicit
+full/reduced/filtered classifications.
 
 ## Entering a Session — Complete Flow
 

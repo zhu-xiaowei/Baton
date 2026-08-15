@@ -2113,7 +2113,7 @@ function completeLocalCommand(pending, result) {
   }
   var output = String(result.commandOutput || '');
   var existing = null;
-  if (result.streamId) {
+  if (result.streamId && !result.commandPanel) {
     for (var i = 0; i < state.wsAllMessages.length; i++) {
       var candidate = state.wsAllMessages[i];
       if (candidate.type === 'assistant'
@@ -2139,6 +2139,9 @@ function completeLocalCommand(pending, result) {
     timestamp: new Date().toISOString(),
     _streamId: result.streamId || '',
     _localCommand: true,
+    _commandPanel: result.commandPanel
+      ? Object.assign({ rawText: output }, result.commandPanel)
+      : null,
   };
   if (trackMessageUuid(message)) {
     state.wsAllMessages.push(message);

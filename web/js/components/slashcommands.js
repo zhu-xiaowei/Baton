@@ -2,7 +2,7 @@
 // presentation order; Skills use the same "$name" composer syntax as Codex.
 import { state } from '../state.js';
 
-var CACHE_PREFIX = 'apeek_cmds:v5:';
+var CACHE_PREFIX = 'apeek_cmds:v6:';
 
 var _commands = [];     // current command list shown/filtered against
 var _skills = [];

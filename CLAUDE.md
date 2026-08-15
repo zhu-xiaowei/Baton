@@ -165,8 +165,11 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_agent`.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
-- Slash commands are runtime-aware. Claude uses `commands.mjs` to scan user/project/plugin
-  commands and skills plus its static built-in list. Codex uses `codex-commands.mjs`: the mobile
+- Slash commands are runtime-aware. Claude's primary catalog comes from the current CLI's
+  no-persistence `initialize` control response, including environment-filtered commands, descriptions,
+  argument hints and model choices. `commands.mjs` only scans custom commands and Skills as an
+  old-version fallback; there is no static Claude built-in list. `/usage`, `/cost`, `/stats`, `/status`,
+  and bare `/config` open the local four-tab Settings panel. Codex uses `codex-commands.mjs`: the mobile
   catalog starts from the complete 44-command popup observed in Codex 0.147, then preserves that
   presentation order while filtering only commands without a complete phone equivalent. The
   current macOS Bridge exposes 33 built-ins; Linux exposes 32 because `/app` is host-platform

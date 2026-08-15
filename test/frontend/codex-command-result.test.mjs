@@ -77,6 +77,32 @@ test('local command output promotes its bubble and renders atomically', async ()
     /Opus/,
   );
 
+  resetSession(harness, { sessionId: 'claude-session-usage' });
+  harness.state.appState.runtime = 'claude';
+  harness.state.ws = null;
+  harness.window.doSend('/usage', '/usage', []);
+  const usagePending = harness.state.pendingSentMessages[0];
+  harness.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId: 'claude-session-usage',
+    ok: true,
+    clientId: usagePending.id,
+    streamId: 'stream-claude-usage',
+    commandOutput: 'Claude Code settings',
+    commandPanel: {
+      type: 'claude-usage',
+      initialTab: 'usage',
+    },
+  });
+  await harness.tick();
+  assert.equal(harness.state.pendingSentMessages.length, 0);
+  assert.equal(harness.state.wsRunning, false);
+  assert.equal(
+    harness.state.wsAllMessages.find((message) => message._streamId === 'stream-claude-usage')
+      ._commandPanel.type,
+    'claude-usage',
+  );
+
   resetSession(harness, { sessionId: 'codex:thread-1' });
   harness.state.appState.runtime = 'codex';
   harness.state.ws = null;

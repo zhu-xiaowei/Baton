@@ -49,7 +49,6 @@ const CAPTURED_LOCAL_COMMAND_NAMES = new Set([
 
 const COMPOSE_COMMAND_NAMES = new Set([
   'autocompact',
-  'config',
   'rename',
 ]);
 
@@ -135,6 +134,17 @@ export function claudeCommandCatalog(context = {}) {
     (runtimeLocal ? local : prompts).push(item);
   }
 
+  if (local.some((command) => command.name === 'usage') && !seen.has('status')) {
+    local.push({
+      name: 'status',
+      source: 'builtin',
+      description: 'Show Claude Code session status',
+      argumentHint: '',
+      aliases: [],
+      behavior: 'send',
+    });
+  }
+
   local.sort(compareNames);
   prompts.sort(compareNames);
   return local.concat(prompts);
@@ -152,8 +162,16 @@ export function parseClaudeSlashCommand(text) {
 
 export function capturedClaudeCommandNames(context = {}) {
   const commands = Array.isArray(context.commands) ? context.commands : [];
-  return new Set(commands
-    .filter((command) => isRuntimeLocalCommand(command)
-      && CAPTURED_LOCAL_COMMAND_NAMES.has(command.name))
-    .map((command) => command.name));
+  const declaredNames = new Set(commands.map((command) => command?.name).filter(Boolean));
+  const captured = new Set();
+  for (const command of commands) {
+    if (!isRuntimeLocalCommand(command)
+      || !CAPTURED_LOCAL_COMMAND_NAMES.has(command.name)) continue;
+    captured.add(command.name);
+    for (const alias of command.aliases || []) {
+      if (!declaredNames.has(alias)) captured.add(alias);
+    }
+    if (command.name === 'usage' && !declaredNames.has('status')) captured.add('status');
+  }
+  return captured;
 }

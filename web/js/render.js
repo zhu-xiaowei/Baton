@@ -110,6 +110,10 @@
   // Convert one assistant message into an array of tl-item objects
   function extractItems(msg, resultMap, runtime, options = {}) {
     const items = [];
+    if (msg._commandPanel?.type === 'claude-usage' && window.renderClaudeUsagePanel) {
+      items.push({ type: 'panel', html: renderClaudeUsagePanel(msg._commandPanel) });
+      return items;
+    }
     if (!Array.isArray(msg.content)) {
       const text = typeof msg.content === 'string' ? msg.content : '';
       if (text) items.push({ type: 'text', html: renderAssistantText(text) });
@@ -232,6 +236,7 @@
     if (item.type === 'thinking') cls += ' thinking-tl';
     if (item.type === 'interrupt') cls += ' msg-interrupt';
     if (item.type === 'summary') cls += ' summary-tl';
+    if (item.type === 'panel') cls += ' command-panel-tl';
     const toolAttr = item.toolId ? ` data-tool-id="${item.toolId}"` : '';
     const processAttr = item.codexProcessId ? ` data-codex-process="${item.codexProcessId}"` : '';
     const tsAttr = timestamp ? ` data-ts="${timestamp}"` : '';

@@ -23,6 +23,7 @@ import {
   claudeCommandCatalog,
   parseClaudeSlashCommand,
 } from './claude-commands.mjs';
+import { buildClaudeUsagePanel } from './claude-usage.mjs';
 import {
   CODEX_INIT_PROMPT,
   codexCommandCatalog,
@@ -820,6 +821,49 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
 
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
   const streamId = newStreamId();
+  const settingsTab = !command.args && {
+    usage: 'usage',
+    cost: 'usage',
+    stats: 'stats',
+    status: 'status',
+    config: 'config',
+    settings: 'config',
+  }[command.name];
+  if (settingsTab) {
+    try {
+      const panel = await buildClaudeUsagePanel({
+        pool: _pool,
+        sessionId: identity.nativeSessionId,
+        cwd,
+        filePath: _claudeRuntime.findSessionFile(identity.nativeSessionId),
+        initialTab: settingsTab,
+      });
+      const commandOutput = panel.rawText;
+      delete panel.rawText;
+      wsSend({
+        action: 'send_message_result',
+        sessionId: identity.sessionId,
+        ok: true,
+        error: null,
+        clientId,
+        streamId,
+        commandOutput,
+        commandPanel: panel,
+        commandName: command.name,
+      });
+    } catch (error) {
+      wsSend({
+        action: 'send_message_result',
+        sessionId: identity.sessionId,
+        ok: false,
+        error: error.message || 'Claude Code settings are unavailable.',
+        clientId,
+        streamId,
+      });
+    }
+    return;
+  }
+
   let acked = false;
   const ack = (ok, error, meta = {}) => {
     if (acked) return;

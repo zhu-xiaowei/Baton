@@ -42,6 +42,7 @@ test('Claude catalog preserves TUI grouping while using live metadata and model 
   assert.deepEqual(commands.map((command) => command.name), [
     'effort',
     'model',
+    'status',
     'usage',
     'audit',
     'review-project',
@@ -77,6 +78,25 @@ test('Claude command parser only captures supported synchronous local commands',
   assert.equal(captured.has('model'), true);
   assert.equal(captured.has('compact'), false);
   assert.equal(captured.has('review-project'), false);
+});
+
+test('Claude usage aliases and derived status command are captured without shadowing custom commands', () => {
+  const captured = capturedClaudeCommandNames({
+    commands: [{
+      name: 'usage',
+      description: 'Show usage',
+      argumentHint: '',
+      aliases: ['cost', 'stats'],
+    }, {
+      name: 'stats',
+      description: 'Custom stats prompt',
+      argumentHint: '',
+    }],
+  });
+  assert.equal(captured.has('usage'), true);
+  assert.equal(captured.has('cost'), true);
+  assert.equal(captured.has('stats'), false);
+  assert.equal(captured.has('status'), true);
 });
 
 test('a custom command that shadows a builtin keeps prompt semantics', () => {
