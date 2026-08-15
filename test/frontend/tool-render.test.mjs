@@ -81,6 +81,99 @@ test('Codex MCP calls render Calling or Called while Claude keeps the tool name'
   assert.doesNotMatch(claude, />Calling</);
 });
 
+test('Update Plan renders aligned status icons for completed, active, and pending steps', () => {
+  const html = window.renderToolNode({
+    type: 'tool_use',
+    id: 'plan-1',
+    name: 'TodoWrite',
+    input: {
+      explanation: 'Verify each plan state.',
+      todos: [
+        { content: 'Inspect the current UI', status: 'completed' },
+        { content: 'Improve the status markers', status: 'in_progress' },
+        { content: 'Validate mobile and desktop', status: 'pending' },
+      ],
+    },
+  }, null, 'codex');
+
+  document.body.innerHTML = html;
+  const items = document.querySelectorAll('.plan-item');
+  assert.equal(items.length, 3);
+  assert.equal(document.querySelectorAll('.plan-status-icon svg').length, 3);
+  assert.equal(document.querySelectorAll('.plan-item-completed').length, 1);
+  assert.equal(document.querySelectorAll('.plan-item-in_progress').length, 1);
+  assert.equal(document.querySelectorAll('.plan-item-pending').length, 1);
+  assert.equal(
+    document.querySelector('.plan-item-in_progress .plan-status-icon').getAttribute('aria-label'),
+    'In progress',
+  );
+  assert.equal(document.querySelector('.plan-item-in_progress .plan-status-dot') !== null, true);
+  assert.doesNotMatch(html, /&#42;|\*<\/span>/);
+
+  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.plan-status-icon \{[\s\S]*height: 18px;/);
+  assert.match(css, /html\.native-mobile \.plan-status-icon \{ width: 18px; height: 21px; \}/);
+  assert.match(css, /html\.native-mobile \.plan-item-text \{ font-size: 14px; line-height: 21px; \}/);
+});
+
+test('Bash commands use catalog-free syntax highlighting without a fixed header character limit', () => {
+  const command = `brandnew-cli --mode=fast "green value" && next-tool -3 $HOME/a/longer/path/to/file.txt`;
+  const html = window.renderToolNode({
+    type: 'tool_use',
+    id: 'bash-highlight',
+    name: 'Bash',
+    input: { command },
+  }, null, 'codex');
+
+  document.body.innerHTML = html;
+  const header = document.querySelector('.tool-desc.shell-command');
+  const body = document.querySelector('.tool-value code.shell-command');
+  assert.ok(header);
+  assert.ok(body);
+  assert.ok(header.closest('.tool-header').classList.contains('shell-command-header'));
+  assert.equal(header.textContent, command);
+  assert.equal(body.textContent, command);
+  assert.equal(header.querySelector('.shell-command-name')?.textContent, 'brandnew-cli');
+  assert.equal(body.querySelector('.shell-command-name')?.textContent, 'brandnew-cli');
+  assert.equal(body.querySelector('.shell-option')?.textContent, '--mode=fast');
+  assert.equal(body.querySelector('.shell-string')?.textContent, '"green value"');
+  assert.equal(body.querySelector('.shell-operator')?.textContent, '&&');
+  assert.equal(body.querySelector('.shell-variable')?.textContent, '$HOME');
+
+  const claude = window.renderToolNode({
+    type: 'tool_use',
+    id: 'bash-highlight-cc',
+    name: 'Bash',
+    input: { command: 'unknown-future-command --new-option' },
+  }, null, 'claude');
+  document.body.innerHTML = claude;
+  assert.equal(
+    document.querySelector('.tool-desc .shell-command-name')?.textContent,
+    'unknown-future-command',
+  );
+
+  const hostile = window.highlightShellCommand(`echo '<img src=x onerror=alert(1)>'`);
+  document.body.innerHTML = hostile;
+  assert.equal(document.querySelector('img'), null);
+  assert.match(document.body.textContent, /<img src=x onerror=alert\(1\)>/);
+});
+
+test('Codex Explore summaries stay plain instead of being treated as shell commands', () => {
+  const html = window.renderToolNode({
+    type: 'tool_use',
+    id: 'bash-explore',
+    name: 'Bash',
+    input: {
+      command: 'rg needle web/js',
+      codexCommandActions: [{ type: 'search', query: 'needle', path: 'web/js' }],
+    },
+  }, null, 'codex');
+
+  document.body.innerHTML = html;
+  assert.equal(document.querySelector('.tool-desc')?.textContent, 'Search needle');
+  assert.equal(document.querySelector('.tool-desc.shell-command'), null);
+});
+
 test('Codex background command completion keeps the original Ran label', () => {
   const html = window.renderToolNode({
     type: 'tool_use',
@@ -99,7 +192,8 @@ test('Codex background command completion keeps the original Ran label', () => {
   }, 'codex');
 
   assert.match(html, /Ran/);
-  assert.match(html, /sleep 1; echo done/);
+  document.body.innerHTML = html;
+  assert.equal(document.querySelector('.tool-desc')?.textContent, 'sleep 1; echo done');
   assert.doesNotMatch(html, /Waited for background terminal/);
   assert.doesNotMatch(html, /Failed/);
 });
@@ -157,7 +251,8 @@ test('Codex ignores the legacy Waited label on Bash results', () => {
   }, 'codex');
 
   assert.match(html, /Ran/);
-  assert.match(html, /npm test/);
+  document.body.innerHTML = html;
+  assert.equal(document.querySelector('.tool-desc')?.textContent, 'npm test');
   assert.doesNotMatch(html, /Waited for background terminal/);
 });
 
@@ -331,6 +426,8 @@ test('Codex exploration calls share one visible group label and empty waits stay
   ]);
   assert.doesNotMatch(html, /wait-04/);
   const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tool-header\.shell-command-header:not\(\.expanded-desc\) \{ align-items: baseline; \}/);
+  assert.match(css, /\.assistant-text code \{ background: #161b22; color: var\(--runtime-accent\);/);
   assert.match(css, /\.codex-explore-continuation \.tool-name \{ display: none; \}/);
   assert.match(css, /\.codex-explore-continuation::before \{ display: none; \}/);
   assert.match(css, /\.codex-explore-continuation::after \{ display: none !important; \}/);

@@ -223,3 +223,11 @@ test('mobile header title uses the same 20px logo slot and 6px gap as LaunchScre
     /firstItem="tbgear"[^>]*secondItem="topbar"[^>]*constant="-22" id="tbg-cy"/,
   );
 });
+
+test('runtime icons load on demand instead of using unconditional image preloads', () => {
+  assert.doesNotMatch(
+    indexHtml,
+    /<link[^>]+rel="preload"[^>]+(?:claude-code|codex)\.svg/,
+  );
+  assert.match(indexHtml, /runtime === 'codex' \? 'codex\.svg' : 'claude-code\.svg'/);
+});

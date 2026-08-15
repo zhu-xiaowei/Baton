@@ -26,6 +26,185 @@
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  const SHELL_HIGHLIGHT_CACHE_LIMIT = 256;
+  const SHELL_HIGHLIGHT_MAX_BYTES = 16 * 1024;
+  const SHELL_HIGHLIGHT_MAX_LINE_BYTES = 4 * 1024;
+  const shellHighlightCache = new Map();
+  const shellKeywords = new Set([
+    'case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
+    'if', 'in', 'select', 'then', 'time', 'until', 'while',
+  ]);
+
+  function shellToken(kind, text) {
+    return `<span class="shell-token shell-${kind}">${esc(text)}</span>`;
+  }
+
+  function shellOperatorAt(source, index) {
+    const three = source.slice(index, index + 3);
+    if (three === '<<<' || three === '<<-' || three === ';;&') return three;
+    const two = source.slice(index, index + 2);
+    if (['&&', '||', '<<', '>>', '|&', ';;', ';&', '>&', '<&', '>|'].includes(two)) return two;
+    return '|;&><()'.includes(source[index]) ? source[index] : '';
+  }
+
+  function readQuotedShellToken(source, start) {
+    const quote = source[start];
+    let index = start + 1;
+    while (index < source.length) {
+      if (source[index] === '\\' && quote === '"' && index + 1 < source.length) {
+        index += 2;
+        continue;
+      }
+      if (source[index] === quote) {
+        index++;
+        break;
+      }
+      index++;
+    }
+    return index;
+  }
+
+  function readShellVariable(source, start) {
+    if (source[start + 1] === '{') {
+      const end = source.indexOf('}', start + 2);
+      return end === -1 ? source.length : end + 1;
+    }
+    if (source[start + 1] === '(') return Math.min(start + 2, source.length);
+    let index = start + 1;
+    while (index < source.length && /[A-Za-z0-9_?!#$*@-]/.test(source[index])) index++;
+    return index === start + 1 ? start + 1 : index;
+  }
+
+  function heredocEnd(source, start, delimiter) {
+    let lineStart = start;
+    while (lineStart <= source.length) {
+      const newline = source.indexOf('\n', lineStart);
+      const lineEnd = newline === -1 ? source.length : newline;
+      if (source.slice(lineStart, lineEnd).trim() === delimiter) {
+        return { bodyEnd: lineStart, delimiterEnd: lineEnd };
+      }
+      if (newline === -1) break;
+      lineStart = newline + 1;
+    }
+    return null;
+  }
+
+  // Lightweight shell highlighting for compact tool rows. It recognizes syntax
+  // positions rather than executable names, so new CLIs work without a command catalog.
+  function highlightShellCommand(command) {
+    const source = String(command || '');
+    if (!source) return '';
+    if (shellHighlightCache.has(source)) {
+      const cached = shellHighlightCache.get(source);
+      shellHighlightCache.delete(source);
+      shellHighlightCache.set(source, cached);
+      return cached;
+    }
+    if (source.length > SHELL_HIGHLIGHT_MAX_BYTES
+      || source.split('\n').some((line) => line.length > SHELL_HIGHLIGHT_MAX_LINE_BYTES)) {
+      return esc(source);
+    }
+
+    let html = '';
+    let index = 0;
+    let expectsCommand = true;
+    let expectsHeredocDelimiter = false;
+    let pendingHeredoc = '';
+    while (index < source.length) {
+      const char = source[index];
+      if (char === '\n') {
+        html += '\n';
+        index++;
+        expectsCommand = true;
+        if (pendingHeredoc) {
+          const end = heredocEnd(source, index, pendingHeredoc);
+          if (end) {
+            html += shellToken('string', source.slice(index, end.bodyEnd));
+            html += shellToken('heredoc', source.slice(end.bodyEnd, end.delimiterEnd));
+            index = end.delimiterEnd;
+          }
+          pendingHeredoc = '';
+        }
+        continue;
+      }
+      if (/\s/.test(char)) {
+        let end = index + 1;
+        while (end < source.length && source[end] !== '\n' && /\s/.test(source[end])) end++;
+        html += esc(source.slice(index, end));
+        index = end;
+        continue;
+      }
+      if (char === '#' && (index === 0 || /\s/.test(source[index - 1]))) {
+        const end = source.indexOf('\n', index);
+        const commentEnd = end === -1 ? source.length : end;
+        html += shellToken('comment', source.slice(index, commentEnd));
+        index = commentEnd;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        const end = readQuotedShellToken(source, index);
+        const token = source.slice(index, end);
+        html += shellToken(expectsHeredocDelimiter ? 'heredoc' : 'string', token);
+        if (expectsHeredocDelimiter) {
+          pendingHeredoc = token.slice(1, token.endsWith(char) ? -1 : undefined);
+          expectsHeredocDelimiter = false;
+        }
+        index = end;
+        continue;
+      }
+      if (char === '$') {
+        const end = readShellVariable(source, index);
+        html += shellToken('variable', source.slice(index, end));
+        index = end;
+        continue;
+      }
+      const operator = shellOperatorAt(source, index);
+      if (operator) {
+        html += shellToken('operator', operator);
+        index += operator.length;
+        expectsHeredocDelimiter = operator === '<<' || operator === '<<-';
+        if (['&&', '||', '|', '|&', ';', '&', '('].includes(operator)) expectsCommand = true;
+        continue;
+      }
+
+      let end = index + 1;
+      while (end < source.length
+        && !/\s/.test(source[end])
+        && source[end] !== '"'
+        && source[end] !== "'"
+        && source[end] !== '$'
+        && !shellOperatorAt(source, end)) {
+        end++;
+      }
+      const token = source.slice(index, end);
+      let kind = '';
+      if (expectsHeredocDelimiter) {
+        kind = 'heredoc';
+        pendingHeredoc = token;
+        expectsHeredocDelimiter = false;
+      } else if (/^--?[^-]/.test(token) || /^-\d/.test(token)) {
+        kind = 'option';
+      } else if (shellKeywords.has(token)) {
+        kind = 'keyword';
+        if (['do', 'else', 'elif', 'then'].includes(token)) expectsCommand = true;
+      } else if (expectsCommand && /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+        kind = 'variable';
+      } else if (expectsCommand) {
+        kind = 'command-name';
+        expectsCommand = false;
+      }
+      html += kind ? shellToken(kind, token) : esc(token);
+      index = end;
+    }
+
+    if (shellHighlightCache.size >= SHELL_HIGHLIGHT_CACHE_LIMIT) {
+      shellHighlightCache.delete(shellHighlightCache.keys().next().value);
+    }
+    shellHighlightCache.set(source, html);
+    return html;
+  }
+  window.highlightShellCommand = highlightShellCommand;
+
   // ANSI escape codes in terminal output → colored HTML (XSS-safe via anser).
   // Fast path: no ESC byte or lib not loaded → plain esc().
   function ansiHtml(str) {
@@ -63,17 +242,18 @@
   function renderBash(input, result) {
     const cmd = input.command || input.cmd || JSON.stringify(input);
     const actions = result?.codexCommandActions || input.codexCommandActions;
-    const desc = codexCommandSummary(actions) || input.description || '';
+    const summary = codexCommandSummary(actions) || input.description || '';
     const elevated = input.sandbox_permissions === 'require_escalated';
     const justification = elevated ? String(input.justification || '').trim() : '';
     return {
       name: 'Bash',
-      desc: desc || truncate(cmd, 60),
+      desc: summary || cmd,
+      commandDesc: !summary,
       elevated,
       body: (justification
         ? `<div class="tool-note"><span>Request reason</span>${esc(justification)}</div>`
         : '') + grid([
-          ['IN', `<code>${esc(cmd)}</code>`],
+          ['IN', `<code class="shell-command">${highlightShellCommand(cmd)}</code>`],
           result != null ? ['OUT', ansiHtml(resultText(result))] : null,
         ]),
     };
@@ -291,20 +471,24 @@
     const todos = input.todos || [];
     const explanation = String(input.explanation || '').trim();
     if (!todos.length && !explanation) return { name: 'Update Todos', desc: '', body: '' };
-    const icons = { completed: '&#10003;', in_progress: '&#42;', pending: '&#9711;' };
-    const colors = { completed: '#8b949e', in_progress: '#e6edf3', pending: '#8b949e' };
-    const textDeco = { completed: 'line-through', in_progress: 'none', pending: 'none' };
+    const labels = { completed: 'Completed', in_progress: 'In progress', pending: 'Pending' };
+    const icons = {
+      completed: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M5.25 8.15 7.15 10l3.7-4.05"/></svg>',
+      in_progress: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle class="plan-status-dot" cx="8" cy="8" r="2.25"/></svg>',
+      pending: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg>',
+    };
     const html = todos.map(t => {
-      const s = t.status || 'pending';
-      return `<div style="display:flex;align-items:flex-start;gap:8px;padding:3px 8px;">
-        <span style="color:${colors[s]};font-size:13px;flex-shrink:0;width:16px;text-align:center">${icons[s]}</span>
-        <span style="color:${colors[s]};text-decoration:${textDeco[s]};font-size:12px;line-height:1.5">${esc(t.content)}</span>
+      const s = Object.hasOwn(labels, t.status) ? t.status : 'pending';
+      const text = String(t.content || t.step || '').trim();
+      return `<div class="plan-item plan-item-${s}">
+        <span class="plan-status-icon" role="img" aria-label="${labels[s]}">${icons[s]}</span>
+        <span class="plan-item-text">${esc(text)}</span>
       </div>`;
     }).join('');
     const note = explanation
       ? `<div class="tool-note plan-explanation"><span>Plan note</span>${esc(explanation)}</div>`
       : '';
-    const list = html ? `<div style="padding:4px 0">${html}</div>` : '';
+    const list = html ? `<div class="plan-list">${html}</div>` : '';
     return { name: 'Update Todos', desc: '', body: note + list };
   }
 
@@ -395,6 +579,7 @@
     return {
       name: 'WriteStdin',
       desc: command || `Terminal ${input.session_id || ''}`.trim(),
+      commandDesc: !!command,
       body: '',
       expandDesc: !!command,
     };
@@ -564,9 +749,11 @@
     const elevatedHtml = info.elevated ? '<span class="tool-flag">Elevated request</span>' : '';
     const fileLine = info.fileLine || '';
     const matchId = (!fileLine && info.fileLink && (name === 'Edit' || name === 'Write')) ? (toolUse.id || '') : '';
+    const descClass = `tool-desc${info.commandDesc ? ' shell-command' : ''}`;
+    const descContent = info.commandDesc ? highlightShellCommand(info.desc) : esc(info.desc);
     const descHtml = info.fileLink
       ? `<span class="tool-desc file-link" onclick="event.stopPropagation();openFile('${esc(info.fileLink).replace(/'/g, "\\'")}','${esc(info.desc).replace(/'/g, "\\'")}','${fileLine}','${matchId}')">${esc(info.desc)}</span>`
-      : `<span class="tool-desc">${esc(info.desc)}</span>`;
+      : `<span class="${descClass}">${descContent}</span>`;
     const id = 'tool-' + Math.random().toString(36).slice(2, 8);
 
     const noClamp = name === 'TodoWrite';
@@ -579,9 +766,10 @@
     const detailsEnabled = detailPolicy.enabled && !!info.body;
     const detailsCollapsed = detailsEnabled && requestedDetailsCollapsed;
     window._lastToolHasDetails = detailsEnabled;
-    const headerClass = detailsEnabled
+    const baseHeaderClass = detailsEnabled
       ? 'tool-header tool-details-toggle'
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
+    const headerClass = `${baseHeaderClass}${info.commandDesc ? ' shell-command-header' : ''}`;
     const headerAttrs = detailsEnabled
       ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"
         onclick="toggleToolDetails(this)"

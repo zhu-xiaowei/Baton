@@ -141,12 +141,10 @@ body {
 /* === Messages container === */
 .messages {
   --runtime-accent: #D7BA7D;
-  --runtime-accent-soft: rgba(215, 186, 125, 0.15);
   padding: 8px 12px;
 }
 .messages.runtime-codex {
   --runtime-accent: #13A7CD;
-  --runtime-accent-soft: rgba(19, 167, 205, 0.15);
 }
 
 /* === User message === */
@@ -220,7 +218,7 @@ body {
 /* === Markdown in assistant text === */
 .assistant-text p { margin: 0 0 8px 0; }
 .assistant-text p:last-child { margin-bottom: 0; }
-.assistant-text code { background: var(--runtime-accent-soft); color: var(--runtime-accent); padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.assistant-text code { background: #161b22; color: var(--runtime-accent); padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
 .assistant-text pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; }
 .assistant-text pre code { background: none; padding: 0; font-size: 12px; }
 .assistant-text .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
@@ -280,6 +278,8 @@ body {
   padding: 0; font-size: 13px; cursor: pointer; user-select: none;
   line-height: 21px;
 }
+.tool-header.shell-command-header:not(.expanded-desc) { align-items: baseline; }
+.tool-header.shell-command-header .tool-detail-chevron { align-self: center; }
 .tool-detail-chevron {
   display: inline-block; flex-shrink: 0; color: #8b949e;
   transition: transform 0.2s ease; transform: rotate(90deg);
@@ -293,6 +293,20 @@ body {
 .codex-explore-continuation.tool-details-collapsed { padding-top: 1px; padding-bottom: 1px; }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tool-desc.shell-command {
+  color: #d8dee9; font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+}
+.shell-command .shell-command-name { color: #82aaff; }
+.shell-command .shell-option { color: #f78caa; }
+.shell-command .shell-string { color: #a6e3a1; }
+.shell-command .shell-operator { color: #89ddff; }
+.shell-command .shell-variable,
+.shell-command .shell-keyword,
+.shell-command .shell-heredoc { color: #c792ea; }
+.shell-command .shell-comment { color: #6e7681; font-style: italic; }
+.tool-value > code.shell-command {
+  color: #d8dee9; font: inherit; white-space: inherit;
+}
 .tool-header.expandable-desc.expanded-desc { align-items: flex-start; }
 .tool-header.expandable-desc.expanded-desc .tool-desc {
   white-space: pre-wrap; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
@@ -306,6 +320,25 @@ body {
 }
 .tool-note { padding: 8px; border-bottom: 0.8px solid #3d444d; color: #c9d1d9; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-note > span { display: block; margin-bottom: 2px; color: #6e7681; font-size: 10px; }
+.plan-list { padding: 4px 0; }
+.plan-item {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start;
+  column-gap: 8px; padding: 3px 8px; color: #8b949e;
+}
+.plan-status-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 18px; color: #6e7681;
+}
+.plan-status-icon svg {
+  display: block; width: 14px; height: 14px; overflow: visible;
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.plan-status-icon .plan-status-dot { fill: currentColor; stroke: none; }
+.plan-item-text { min-width: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.plan-item-in_progress { color: #e6edf3; }
+.plan-item-in_progress .plan-status-icon { color: var(--runtime-accent, #58a6ff); }
+.plan-item-completed { color: #8b949e; }
 .tool-body-content { cursor: pointer; }
 .tool-body-content.no-clamp { cursor: default; }
 /* Clamp each value row to 3 lines by default */
@@ -860,6 +893,12 @@ html.native-mobile .thinking-body,
 html.native-mobile .tool-status,
 html.native-mobile .tool-flag,
 html.native-mobile .tool-note { font-size: 13px; }
+html.native-mobile .plan-item {
+  grid-template-columns: 18px minmax(0, 1fr); padding: 4px 8px;
+}
+html.native-mobile .plan-status-icon { width: 18px; height: 21px; }
+html.native-mobile .plan-status-icon svg { width: 16px; height: 16px; }
+html.native-mobile .plan-item-text { font-size: 14px; line-height: 21px; }
 html.native-mobile .msg-interrupt { font-size: 14px; line-height: 21px; }
 html.native-mobile .tool-label { font-size: 12px; }
 html.native-mobile .tool-value,

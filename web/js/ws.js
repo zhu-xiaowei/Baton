@@ -976,9 +976,13 @@ function tickStreams(now) {
           var displayLabel = state.appState.runtime === 'codex' && label === 'Bash'
             ? (isExplore ? 'Explored' : 'Ran')
             : label;
+          var commandDesc = label === 'Bash' && !isExplore;
+          var descHtml = commandDesc && window.highlightShellCommand
+            ? window.highlightShellCommand(desc)
+            : esc(desc);
           el.classList.toggle('codex-explore', isExplore);
           el.innerHTML = '<div class="tool-header"><span class="tool-name">' + esc(displayLabel) + '</span>'
-            + '<span class="tool-desc">' + esc(desc) + '</span>'
+            + '<span class="tool-desc' + (commandDesc ? ' shell-command' : '') + '">' + descHtml + '</span>'
             + '<span class="tool-status">running</span></div>'
             // Clamp the preview IN to the final card's height (5.2em) so the authoritative row landing doesn't shrink it → no page jump.
             + (inRaw ? '<div class="tool-body"><div class="tool-body-content"><div class="tool-grid"><div class="tool-row"><div class="tool-label">IN</div><div class="tool-value clamp">' + esc(inRaw) + '</div></div></div></div></div>' : '');
