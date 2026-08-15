@@ -37,6 +37,9 @@ function gestureHarness() {
     addEventListener(name, handler) {
       handlers[name] = handler;
     },
+    removeEventListener(name, handler) {
+      if (handlers[name] === handler) delete handlers[name];
+    },
   };
   context.attachLongPress(container, 'session');
 
@@ -47,7 +50,7 @@ function gestureHarness() {
       return null;
     },
   };
-  return { context, handlers, scheduled, cleared, selections, target };
+  return { context, container, handlers, scheduled, cleared, selections, target };
 }
 
 function pointer(target, overrides = {}) {
@@ -86,4 +89,26 @@ test('list long press cancels after small movement or pointer exit', () => {
   left.handlers.pointerdown(pointer(left.target));
   left.handlers.pointerleave(pointer(left.target));
   assert.equal(left.cleared.length, 1);
+});
+
+test('a replacement pointerdown cannot inherit time from the previous press', () => {
+  const harness = gestureHarness();
+  harness.handlers.pointerdown(pointer(harness.target, { pointerId: 1 }));
+  harness.handlers.pointerdown(pointer(harness.target, { pointerId: 2 }));
+
+  harness.scheduled[0].fn();
+  assert.deepEqual(harness.selections, []);
+
+  harness.scheduled[1].fn();
+  assert.deepEqual(harness.selections, [{ type: 'session', id: 'session-1' }]);
+});
+
+test('reattaching after a list render invalidates the detached list timer', () => {
+  const harness = gestureHarness();
+  harness.handlers.pointerdown(pointer(harness.target));
+  harness.context.attachLongPress(harness.container, 'session');
+
+  harness.scheduled[0].fn();
+  assert.deepEqual(harness.selections, []);
+  assert.equal(harness.cleared.length, 1);
 });

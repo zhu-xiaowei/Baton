@@ -193,7 +193,9 @@ test('session and project lists paginate, cache page one, and restore loaded pag
 
     window.__listTest.select('session', 's25');
     assert.equal(content.querySelectorAll('.sel-box').length, TWO_PAGES);
+    assert.equal(window.document.getElementById('top-right').classList.contains('select-actions'), true);
     window.exitSelectMode();
+    assert.equal(window.document.getElementById('top-right').classList.contains('select-actions'), false);
 
     content.scrollTop = 3900;
     content.dispatchEvent(new window.Event('scroll'));

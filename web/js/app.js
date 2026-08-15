@@ -111,14 +111,22 @@ function toggleSelected(id) {
 var LONG_PRESS_MS = 800;
 var LONG_PRESS_MOVE_PX = 8;
 
+function detachLongPress(container) {
+  if (!container || typeof container.__longPressCleanup !== 'function') return;
+  container.__longPressCleanup();
+}
+
 // Long-press vs text-selection: require a deliberate 800ms hold so a slightly
 // slow click cannot become an edit action. Moving, scrolling, dragging, or
 // leaving cancels it.
 // In select mode a click toggles the item (capture handler beats the baked nav onclick).
 function attachLongPress(container, type) {
-  var timer = null, sx = 0, sy = 0, targetId = null, activePointerId = null, justLongPressed = false;
+  detachLongPress(container);
+  var timer = null, sx = 0, sy = 0, targetId = null, activePointerId = null;
+  var gestureVersion = 0, justLongPressed = false;
   var clear = function () {
-    if (timer) { clearTimeout(timer); timer = null; }
+    gestureVersion++;
+    if (timer !== null) { clearTimeout(timer); timer = null; }
     targetId = null;
     activePointerId = null;
   };
@@ -126,37 +134,66 @@ function attachLongPress(container, type) {
     if (activePointerId !== null && e.pointerId !== activePointerId) return;
     clear();
   };
-  container.addEventListener('pointerdown', function (e) {
+  var onPointerDown = function (e) {
+    // A replacement/duplicate pointerdown must invalidate the previous timer.
+    // Otherwise its remaining delay can be mistaken for a very short new press.
+    clear();
     justLongPressed = false; // new gesture: a stale flag must not swallow this tap
     if (state.selectMode || e.isPrimary === false) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (e.target.closest && e.target.closest('button, input, textarea, select, [role="button"], [contenteditable="true"]')) return;
     var item = e.target.closest && e.target.closest('.item[data-id]');
     if (!item) return;
-    sx = e.clientX; sy = e.clientY; targetId = item.getAttribute('data-id'); activePointerId = e.pointerId;
+    var pressVersion = gestureVersion;
+    var pressId = item.getAttribute('data-id');
+    var pointerId = e.pointerId;
+    sx = e.clientX; sy = e.clientY; targetId = pressId; activePointerId = pointerId;
     timer = setTimeout(function () {
+      if (pressVersion !== gestureVersion
+          || activePointerId !== pointerId
+          || targetId !== pressId
+          || state.selectMode) return;
       timer = null;
-      if (targetId) { e.preventDefault && e.preventDefault(); justLongPressed = true; enterSelectMode(type, targetId); }
+      justLongPressed = true;
+      enterSelectMode(type, pressId);
     }, LONG_PRESS_MS);
-  });
-  container.addEventListener('pointermove', function (e) {
-    if (!timer || e.pointerId !== activePointerId) return;
+  };
+  var onPointerMove = function (e) {
+    if (timer === null || e.pointerId !== activePointerId) return;
     var dx = e.clientX - sx, dy = e.clientY - sy;
     if ((dx * dx) + (dy * dy) > LONG_PRESS_MOVE_PX * LONG_PRESS_MOVE_PX) clear();
-  });
-  container.addEventListener('pointerup', clearPointer);
-  container.addEventListener('pointercancel', clearPointer);
-  container.addEventListener('pointerleave', clearPointer);
-  container.addEventListener('scroll', clear, true);
-  container.addEventListener('dragstart', clear);
-  container.addEventListener('click', function (e) {
+  };
+  var onClick = function (e) {
     if (!state.selectMode) return;
     e.preventDefault(); e.stopPropagation(); // beat the item's baked navigation onclick
     // The pointerup after a long-press fires a click; swallow it (selection already made).
     if (justLongPressed) { justLongPressed = false; return; }
     var item = e.target.closest && e.target.closest('.item[data-id]');
     if (item) toggleSelected(item.getAttribute('data-id'));
-  }, true);
+  };
+
+  container.addEventListener('pointerdown', onPointerDown);
+  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('pointerup', clearPointer);
+  container.addEventListener('pointercancel', clearPointer);
+  container.addEventListener('pointerleave', clearPointer);
+  container.addEventListener('scroll', clear, true);
+  container.addEventListener('dragstart', clear);
+  container.addEventListener('click', onClick, true);
+
+  var cleanup = function () {
+    clear();
+    container.removeEventListener('pointerdown', onPointerDown);
+    container.removeEventListener('pointermove', onPointerMove);
+    container.removeEventListener('pointerup', clearPointer);
+    container.removeEventListener('pointercancel', clearPointer);
+    container.removeEventListener('pointerleave', clearPointer);
+    container.removeEventListener('scroll', clear, true);
+    container.removeEventListener('dragstart', clear);
+    container.removeEventListener('click', onClick, true);
+    if (container.__longPressCleanup === cleanup) delete container.__longPressCleanup;
+  };
+  container.__longPressCleanup = cleanup;
 }
 
 // Unified 3-state (running / needs_input / completed); legacy idle/stopped/unknown → Done.
@@ -260,6 +297,7 @@ function updateBreadcrumb() {
   var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
   var topRight = document.getElementById('top-right');
   topRight.classList.remove('syncing');
+  topRight.classList.toggle('select-actions', state.selectMode);
   if (state.selectMode) {
     var n = state.selected.size;
     topRight.innerHTML = '<button class="text-btn" onclick="exitSelectMode()">Cancel</button>'
@@ -516,6 +554,7 @@ function rememberActiveListScroll() {
 
 function deactivateList() {
   rememberActiveListScroll();
+  detachLongPress(document.getElementById('content'));
   _activeListKey = null;
   _activeListOptions = null;
 }
@@ -554,6 +593,7 @@ async function loadPagedList(options, navVersion) {
     entry = _listPages.applyFirst(options.key, cached, options.itemsKey, options.idKey, false);
     renderListEntry(options, entry, 0, null);
   } else {
+    detachLongPress(content);
     content.innerHTML = options.skeleton;
     content.scrollTop = 0;
   }
@@ -755,8 +795,9 @@ function projectsHtml(device, data, sel) {
 function renderProjects(device, data) {
   var content = document.getElementById('content');
   var sel = state.selectMode && state.selectType === 'project';
+  detachLongPress(content);
   content.innerHTML = projectsHtml(device, data, sel);
-  attachLongPress(content.querySelector('.list'), 'project');
+  attachLongPress(content, 'project');
   showStats(data.projects.length + ' project(s)');
 }
 
@@ -833,6 +874,7 @@ function attachSessionSecondaryToggles(container) {
 function renderSessions(device, projectHash, data) {
   var content = document.getElementById('content');
   var sel = state.selectMode && state.selectType === 'session';
+  detachLongPress(content);
   content.innerHTML = sessionsHtml(device, projectHash, data, sel);
   if (!data.sessions.length) {
     showStats('0 session(s)');
@@ -840,7 +882,7 @@ function renderSessions(device, projectHash, data) {
   }
   var list = content.querySelector('.list');
   attachSessionSecondaryToggles(list);
-  attachLongPress(list, 'session');
+  attachLongPress(content, 'session');
   showStats(data.sessions.length + ' session(s)');
 }
 

@@ -94,5 +94,7 @@ test('mobile readability styles are scoped to the native mobile class', () => {
   assert.doesNotMatch(css, /@media\s*\(max-width:\s*767px\)/);
   assert.doesNotMatch(setup, /@media\s*\(max-width:\s*767px\)/);
   assert.match(css, /html\.native-mobile \.assistant-text\s*\{\s*font-size:\s*16px/);
+  assert.match(css, /html\.native-mobile #top-right\.select-actions\s*\{[^}]*gap:\s*8px;[^}]*padding:\s*0 2px 4px 0;/s);
+  assert.match(css, /html\.native-mobile #top-right\.select-actions \.text-btn\s*\{[^}]*height:\s*32px;[^}]*min-height:\s*32px;/s);
   assert.match(setup, /html\.native-mobile \.setup-bar \.title\s*\{\s*font-size:\s*17px/);
 });

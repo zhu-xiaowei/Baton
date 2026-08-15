@@ -965,7 +965,15 @@ html.native-mobile .file-loading { gap: 12px; font-size: 15px; }
 html.native-mobile .file-loading .spinner { width: 22px; height: 22px; }
 html.native-mobile .md-preview { font-size: 16px; line-height: 1.65; }
 
-html.native-mobile .text-btn { min-height: 36px; font-size: 14px; }
+html.native-mobile #top-right.select-actions {
+  box-sizing: border-box;
+  gap: 8px;
+  padding: 0 2px 4px 0;
+}
+html.native-mobile #top-right.select-actions .text-btn {
+  height: 32px; min-height: 32px; padding: 0 10px;
+  border-radius: 7px; font-size: 14px;
+}
 
 @media (max-width: 400px) {
   .meta-sid { display: none; }
