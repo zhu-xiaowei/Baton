@@ -1066,7 +1066,8 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 .mermaid-zoom { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; color: #8b949e; background: none; border: none; border-radius: 5px; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mermaid-zoom:hover { color: #c9d1d9; background: #21262d; } }
 /* Fixed-height box + contain:strict (size+layout+paint) isolates it: per-frame SVG swaps during streaming stay inside, scrollHeight is constant, no page-wide repaint/flicker. */
-.mermaid-svg { height: 300px; box-sizing: border-box; padding: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; contain: strict; }
+.mermaid-svg { height: 300px; box-sizing: border-box; padding: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; contain: strict; cursor: zoom-in; outline: none; }
+.mermaid-svg:focus-visible { box-shadow: inset 0 0 0 2px #58a6ff; }
 .mermaid-svg svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
 /* Wide charts (gantt): stretch to the container width (width:100% beats the SVG's intrinsic size) instead of sitting small + centered. */
 .mermaid-wide .mermaid-svg svg { width: 100%; max-width: 100%; height: auto; max-height: 100%; }
@@ -1087,10 +1088,10 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 .mermaid-block.mermaid-failed:not(.show-code) .mermaid-svg::after { content: 'Diagram failed to render'; }
 .mermaid-block .mermaid-svg::after { color: #8b949e; font-size: 12px; }
 
-/* Fullscreen diagram viewer (zoom + pan). Reuses the rendered SVG; no re-render. */
+/* Fullscreen diagram viewer. Pan/zoom updates SVG viewBox so WebKit keeps it vector-rendered. */
 .mermaid-fs-overlay { position: fixed; inset: 0; z-index: 2000; background: #0d1117; overflow: hidden; touch-action: none; }
-.mermaid-fs-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: grab; transform-origin: center center; will-change: transform; }
+.mermaid-fs-stage { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .mermaid-fs-stage:active { cursor: grabbing; }
-.mermaid-fs-stage svg { max-width: 92vw; max-height: 88vh; width: auto; height: auto; }
+.mermaid-fs-stage > svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; overflow: hidden; shape-rendering: geometricPrecision; text-rendering: geometricPrecision; }
 .mermaid-fs-close { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mermaid-fs-close:hover { background: rgba(48,54,61,0.95); color: #fff; } }

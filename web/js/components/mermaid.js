@@ -153,17 +153,240 @@
     btn.classList.add('active');
   };
 
-  // ---- Fullscreen viewer: zoom (wheel/pinch) + drag-pan over the rendered SVG ----
-  var _fs = null; // { overlay, stage, scale, tx, ty }
+  // ---- Fullscreen viewer: vector viewBox zoom + rubber-band pan ----
+  // CSS transforms can promote the whole SVG to a cached WebKit bitmap. Updating viewBox
+  // keeps every frame vector-rendered while still supporting anchored pinch/wheel zoom.
+  var _fs = null;
+  var FS_MIN_SCALE = 0.5;
+  var FS_MAX_SCALE = 8;
 
-  function fsApply() {
+  function fsCopyView(view) {
+    return { x: view.x, y: view.y, w: view.w, h: view.h };
+  }
+
+  function fsReadViewBox(svg) {
+    var raw = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (raw.length === 4 && raw.every(isFinite) && raw[2] > 0 && raw[3] > 0) {
+      return { x: raw[0], y: raw[1], w: raw[2], h: raw[3] };
+    }
+    var rect = svg.getBoundingClientRect();
+    var width = parseFloat(svg.getAttribute('width')) || rect.width || 800;
+    var height = parseFloat(svg.getAttribute('height')) || rect.height || 600;
+    return { x: 0, y: 0, w: width, h: height };
+  }
+
+  function fsScale(view) {
+    return _fs.home.w / view.w;
+  }
+
+  function fsBounds(view) {
+    var minX = _fs.base.x;
+    var maxX = _fs.base.x + _fs.base.w - view.w;
+    var minY = _fs.base.y;
+    var maxY = _fs.base.y + _fs.base.h - view.h;
+    if (maxX < minX) minX = maxX = _fs.base.x + (_fs.base.w - view.w) / 2;
+    if (maxY < minY) minY = maxY = _fs.base.y + (_fs.base.h - view.h) / 2;
+    return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
+  }
+
+  function fsClamp(view) {
+    var bounds = fsBounds(view);
+    view.x = Math.max(bounds.minX, Math.min(view.x, bounds.maxX));
+    view.y = Math.max(bounds.minY, Math.min(view.y, bounds.maxY));
+    return view;
+  }
+
+  function fsRubberDistance(distance, size) {
+    size = Math.max(size, 1);
+    return distance * 0.55 * size / (size + distance * 0.55);
+  }
+
+  function fsResist(view) {
+    var bounds = fsBounds(view);
+    if (view.x < bounds.minX) view.x = bounds.minX - fsRubberDistance(bounds.minX - view.x, view.w);
+    if (view.x > bounds.maxX) view.x = bounds.maxX + fsRubberDistance(view.x - bounds.maxX, view.w);
+    if (view.y < bounds.minY) view.y = bounds.minY - fsRubberDistance(bounds.minY - view.y, view.h);
+    if (view.y > bounds.maxY) view.y = bounds.maxY + fsRubberDistance(view.y - bounds.maxY, view.h);
+    return view;
+  }
+
+  function fsWrite(view) {
     if (!_fs) return;
-    _fs.stage.style.transform = 'translate(' + _fs.tx + 'px,' + _fs.ty + 'px) scale(' + _fs.scale + ')';
+    _fs.view = fsCopyView(view);
+    var values = [view.x, view.y, view.w, view.h].map(function (n) {
+      return String(Math.round(n * 10000) / 10000);
+    });
+    _fs.svg.setAttribute('viewBox', values.join(' '));
+  }
+
+  function fsLayout(view) {
+    var rect = _fs.svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) rect = _fs.stage.getBoundingClientRect();
+    var pxPerUnit = Math.min(rect.width / view.w, rect.height / view.h) || 1;
+    return {
+      rect: rect,
+      pxPerUnit: pxPerUnit,
+      offsetX: (rect.width - view.w * pxPerUnit) / 2,
+      offsetY: (rect.height - view.h * pxPerUnit) / 2,
+    };
+  }
+
+  function fsClientToUser(clientX, clientY, view) {
+    var layout = fsLayout(view);
+    return {
+      x: view.x + (clientX - layout.rect.left - layout.offsetX) / layout.pxPerUnit,
+      y: view.y + (clientY - layout.rect.top - layout.offsetY) / layout.pxPerUnit,
+    };
+  }
+
+  function fsElasticScale(scale) {
+    if (scale < FS_MIN_SCALE) {
+      return FS_MIN_SCALE - fsRubberDistance(FS_MIN_SCALE - scale, 0.35);
+    }
+    if (scale > FS_MAX_SCALE) {
+      return FS_MAX_SCALE + fsRubberDistance(scale - FS_MAX_SCALE, 0.75);
+    }
+    return scale;
+  }
+
+  function fsViewAtScale(scale, clientX, clientY, anchor) {
+    var next = {
+      x: 0,
+      y: 0,
+      w: _fs.home.w / scale,
+      h: _fs.home.h / scale,
+    };
+    var layout = fsLayout(next);
+    next.x = anchor.x - (clientX - layout.rect.left - layout.offsetX) / layout.pxPerUnit;
+    next.y = anchor.y - (clientY - layout.rect.top - layout.offsetY) / layout.pxPerUnit;
+    return next;
+  }
+
+  function fsHomeView() {
+    var rect = _fs.stage.getBoundingClientRect();
+    var width = rect.width || window.innerWidth || 800;
+    var height = rect.height || window.innerHeight || 600;
+    var screenRatio = width / height;
+    var contentRatio = _fs.base.w / _fs.base.h;
+    var home = fsCopyView(_fs.base);
+    if (contentRatio > screenRatio) {
+      home.h = home.w / screenRatio;
+      home.y = _fs.base.y - (home.h - _fs.base.h) / 2;
+    } else {
+      home.w = home.h * screenRatio;
+      home.x = _fs.base.x - (home.w - _fs.base.w) / 2;
+    }
+    return home;
+  }
+
+  function fsResize() {
+    if (!_fs) return;
+    var scale = fsScale(_fs.view);
+    var centerX = _fs.view.x + _fs.view.w / 2;
+    var centerY = _fs.view.y + _fs.view.h / 2;
+    _fs.home = fsHomeView();
+    var next = {
+      w: _fs.home.w / scale,
+      h: _fs.home.h / scale,
+      x: centerX - _fs.home.w / scale / 2,
+      y: centerY - _fs.home.h / scale / 2,
+    };
+    fsWrite(fsClamp(next));
+  }
+
+  function fsCancelSpring() {
+    if (!_fs || !_fs.raf) return;
+    cancelAnimationFrame(_fs.raf);
+    _fs.raf = 0;
+  }
+
+  function fsSpringTo(target) {
+    if (!_fs) return;
+    fsCancelSpring();
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      fsWrite(target);
+      return;
+    }
+    var current = fsCopyView(_fs.view);
+    var velocity = { x: 0, y: 0, w: 0, h: 0 };
+    var previous = performance.now();
+    var keys = ['x', 'y', 'w', 'h'];
+    function frame(now) {
+      if (!_fs) return;
+      var step = Math.max(0.5, Math.min((now - previous) / 16.667, 2));
+      previous = now;
+      var settled = true;
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        velocity[key] = (velocity[key] + (target[key] - current[key]) * 0.2 * step) * Math.pow(0.72, step);
+        current[key] += velocity[key] * step;
+        var tolerance = (key === 'w' || key === 'x') ? _fs.home.w * 0.00005 : _fs.home.h * 0.00005;
+        if (Math.abs(target[key] - current[key]) > tolerance || Math.abs(velocity[key]) > tolerance) settled = false;
+      }
+      fsWrite(current);
+      if (settled) {
+        fsWrite(target);
+        _fs.raf = 0;
+      } else {
+        _fs.raf = requestAnimationFrame(frame);
+      }
+    }
+    _fs.raf = requestAnimationFrame(frame);
+  }
+
+  function fsSettle() {
+    if (!_fs) return;
+    var scale = Math.max(FS_MIN_SCALE, Math.min(fsScale(_fs.view), FS_MAX_SCALE));
+    var target = {
+      w: _fs.home.w / scale,
+      h: _fs.home.h / scale,
+      x: _fs.view.x + (_fs.view.w - _fs.home.w / scale) / 2,
+      y: _fs.view.y + (_fs.view.h - _fs.home.h / scale) / 2,
+    };
+    fsSpringTo(fsClamp(target));
+  }
+
+  function fsBeginPan(clientX, clientY) {
+    fsCancelSpring();
+    _fs.drag = { x: clientX, y: clientY, view: fsCopyView(_fs.view) };
+  }
+
+  function fsMovePan(clientX, clientY) {
+    if (!_fs || !_fs.drag) return;
+    var start = _fs.drag;
+    var layout = fsLayout(start.view);
+    var next = fsCopyView(start.view);
+    next.x -= (clientX - start.x) / layout.pxPerUnit;
+    next.y -= (clientY - start.y) / layout.pxPerUnit;
+    fsWrite(fsResist(next));
+  }
+
+  function fsBeginPinch(touches) {
+    fsCancelSpring();
+    var x = (touches[0].clientX + touches[1].clientX) / 2;
+    var y = (touches[0].clientY + touches[1].clientY) / 2;
+    var dx = touches[0].clientX - touches[1].clientX;
+    var dy = touches[0].clientY - touches[1].clientY;
+    _fs.pinch = {
+      distance: Math.max(Math.hypot(dx, dy), 1),
+      scale: fsScale(_fs.view),
+      anchor: fsClientToUser(x, y, _fs.view),
+    };
+    _fs.drag = null;
+  }
+
+  function fsGesturePoint(event) {
+    var rect = _fs.stage.getBoundingClientRect();
+    return {
+      x: Number.isFinite(event.clientX) ? event.clientX : rect.left + rect.width / 2,
+      y: Number.isFinite(event.clientY) ? event.clientY : rect.top + rect.height / 2,
+    };
   }
 
   function closeMermaidFullscreen() {
     if (!_fs) return;
-    if (_fs.detach) _fs.detach();               // remove window-level drag listeners
+    fsCancelSpring();
+    if (_fs.detach) _fs.detach();
     _fs.overlay.remove();
     document.removeEventListener('keydown', _fs.onKey);
     _fs = null;
@@ -188,56 +411,138 @@
       + '<div class="mermaid-fs-stage">' + svgHtml + '</div>';
     document.body.appendChild(overlay);
 
-    _fs = { overlay: overlay, stage: overlay.querySelector('.mermaid-fs-stage'), scale: 1, tx: 0, ty: 0 };
+    var stage = overlay.querySelector('.mermaid-fs-stage');
+    var fullSvg = stage.querySelector('svg');
+    var base = fsReadViewBox(fullSvg);
+    fullSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    fullSvg.setAttribute('width', '100%');
+    fullSvg.setAttribute('height', '100%');
+    fullSvg.removeAttribute('transform');
+
+    _fs = {
+      overlay: overlay,
+      stage: stage,
+      svg: fullSvg,
+      base: fsCopyView(base),
+      home: fsCopyView(base),
+      view: fsCopyView(base),
+      drag: null,
+      pinch: null,
+      gesture: null,
+      raf: 0,
+    };
+    _fs.home = fsHomeView();
+    _fs.view = fsCopyView(_fs.home);
     _fs.onKey = function (e) { if (e.key === 'Escape') closeMermaidFullscreen(); };
     document.addEventListener('keydown', _fs.onKey);
+    window.addEventListener('resize', _fs.onResize = function () { fsResize(); });
 
     overlay.querySelector('.mermaid-fs-close').addEventListener('click', closeMermaidFullscreen);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) closeMermaidFullscreen(); });
 
     // Wheel / trackpad-pinch zoom, anchored at the cursor.
-    overlay.addEventListener('wheel', function (e) {
+    stage.addEventListener('wheel', function (e) {
       e.preventDefault();
-      var rect = _fs.stage.getBoundingClientRect();
-      var ox = e.clientX - (rect.left + rect.width / 2);
-      var oy = e.clientY - (rect.top + rect.height / 2);
+      fsCancelSpring();
+      var anchor = fsClientToUser(e.clientX, e.clientY, _fs.view);
       var factor = Math.exp(-e.deltaY * 0.0015);
-      var ns = Math.max(0.3, Math.min(_fs.scale * factor, 8));
-      var k = ns / _fs.scale;
-      _fs.tx = _fs.tx - ox * (k - 1);
-      _fs.ty = _fs.ty - oy * (k - 1);
-      _fs.scale = ns;
-      fsApply();
+      var scale = Math.max(FS_MIN_SCALE, Math.min(fsScale(_fs.view) * factor, FS_MAX_SCALE));
+      fsWrite(fsClamp(fsViewAtScale(scale, e.clientX, e.clientY, anchor)));
     }, { passive: false });
 
     // Drag to pan (mouse + single-touch).
-    var drag = null;
-    function down(x, y) { drag = { x: x, y: y, tx: _fs.tx, ty: _fs.ty }; }
-    function move(x, y) { if (!drag) return; _fs.tx = drag.tx + (x - drag.x); _fs.ty = drag.ty + (y - drag.y); fsApply(); }
-    function up() { drag = null; }
-    _fs.stage.addEventListener('mousedown', function (e) { e.preventDefault(); down(e.clientX, e.clientY); });
-    window.addEventListener('mousemove', _fs.mm = function (e) { move(e.clientX, e.clientY); });
-    window.addEventListener('mouseup', _fs.mu = function () { up(); });
+    stage.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      fsBeginPan(e.clientX, e.clientY);
+    });
+    window.addEventListener('mousemove', _fs.mm = function (e) { fsMovePan(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', _fs.mu = function () {
+      if (!_fs || !_fs.drag) return;
+      _fs.drag = null;
+      fsSettle();
+    });
 
     // Two-finger pinch zoom + one-finger pan for touch.
-    var pinch = null;
-    _fs.stage.addEventListener('touchstart', function (e) {
-      if (e.touches.length === 2) {
-        var dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY;
-        pinch = { d: Math.hypot(dx, dy), s: _fs.scale }; drag = null;
-      } else if (e.touches.length === 1) { down(e.touches[0].clientX, e.touches[0].clientY); }
-    }, { passive: false });
-    _fs.stage.addEventListener('touchmove', function (e) {
+    stage.addEventListener('touchstart', function (e) {
       e.preventDefault();
-      if (e.touches.length === 2 && pinch) {
-        var dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY;
-        _fs.scale = Math.max(0.3, Math.min(pinch.s * (Math.hypot(dx, dy) / pinch.d), 8)); fsApply();
-      } else if (e.touches.length === 1) { move(e.touches[0].clientX, e.touches[0].clientY); }
+      if (_fs.gesture) return;
+      if (e.touches.length === 2) {
+        fsBeginPinch(e.touches);
+      } else if (e.touches.length === 1) {
+        _fs.pinch = null;
+        fsBeginPan(e.touches[0].clientX, e.touches[0].clientY);
+      }
     }, { passive: false });
-    _fs.stage.addEventListener('touchend', function (e) { if (!e.touches.length) { up(); pinch = null; } });
+    stage.addEventListener('touchmove', function (e) {
+      e.preventDefault();
+      if (_fs.gesture) return;
+      if (e.touches.length === 2) {
+        if (!_fs.pinch) fsBeginPinch(e.touches);
+        var x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        var y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        var dx = e.touches[0].clientX - e.touches[1].clientX;
+        var dy = e.touches[0].clientY - e.touches[1].clientY;
+        var scale = fsElasticScale(_fs.pinch.scale * Math.hypot(dx, dy) / _fs.pinch.distance);
+        fsWrite(fsResist(fsViewAtScale(scale, x, y, _fs.pinch.anchor)));
+      } else if (e.touches.length === 1) {
+        if (!_fs.drag) fsBeginPan(e.touches[0].clientX, e.touches[0].clientY);
+        fsMovePan(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: false });
+    stage.addEventListener('touchend', function (e) {
+      if (e.touches.length === 1) {
+        var endedPinch = !!_fs.pinch;
+        _fs.pinch = null;
+        _fs.drag = null;
+        if (endedPinch) fsSettle();
+        else fsBeginPan(e.touches[0].clientX, e.touches[0].clientY);
+      } else if (!e.touches.length) {
+        _fs.drag = null;
+        _fs.pinch = null;
+        _fs.gesture = null;
+        fsSettle();
+      }
+    });
+    stage.addEventListener('touchcancel', function () {
+      _fs.drag = null;
+      _fs.pinch = null;
+      _fs.gesture = null;
+      fsSettle();
+    });
 
-    // closeMermaidFullscreen() calls this to drop the window-level drag listeners.
-    _fs.detach = function () { window.removeEventListener('mousemove', _fs.mm); window.removeEventListener('mouseup', _fs.mu); };
-    fsApply();
+    // WKWebView exposes native gesture events on iOS. Use them when present so pinch
+    // scale and gesture-end rebound do not depend on two touchend events arriving together.
+    stage.addEventListener('gesturestart', function (e) {
+      e.preventDefault();
+      fsCancelSpring();
+      var point = fsGesturePoint(e);
+      _fs.gesture = {
+        scale: fsScale(_fs.view),
+        anchor: fsClientToUser(point.x, point.y, _fs.view),
+      };
+      _fs.drag = null;
+      _fs.pinch = null;
+    }, { passive: false });
+    stage.addEventListener('gesturechange', function (e) {
+      if (!_fs.gesture) return;
+      e.preventDefault();
+      var point = fsGesturePoint(e);
+      var scale = fsElasticScale(_fs.gesture.scale * (Number(e.scale) || 1));
+      fsWrite(fsResist(fsViewAtScale(scale, point.x, point.y, _fs.gesture.anchor)));
+    }, { passive: false });
+    stage.addEventListener('gestureend', function (e) {
+      if (!_fs.gesture) return;
+      e.preventDefault();
+      _fs.gesture = null;
+      fsSettle();
+    }, { passive: false });
+
+    _fs.detach = function () {
+      window.removeEventListener('mousemove', _fs.mm);
+      window.removeEventListener('mouseup', _fs.mu);
+      window.removeEventListener('resize', _fs.onResize);
+    };
+    fsWrite(_fs.home);
   };
 })();

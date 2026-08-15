@@ -79,7 +79,9 @@
       + '</button>'
       + '</div>'
       + '<div class="mermaid-src" hidden>' + escHtml(code) + '</div>'
-      + '<div class="mermaid-svg"></div>'
+      + '<div class="mermaid-svg" role="button" tabindex="0" aria-label="Fullscreen diagram"'
+      + ' onclick="openMermaidFullscreen(this)"'
+      + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openMermaidFullscreen(this)}"></div>'
       + '<pre class="mermaid-code"><code class="hljs">' + mermaidCodeHtml(code) + '</code></pre>';
   };
 
