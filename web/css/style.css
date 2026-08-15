@@ -900,6 +900,8 @@ html.native-mobile .plan-status-icon { width: 18px; height: 21px; }
 html.native-mobile .plan-status-icon svg { width: 16px; height: 16px; }
 html.native-mobile .plan-item-text { font-size: 14px; line-height: 21px; }
 html.native-mobile .msg-interrupt { font-size: 14px; line-height: 21px; }
+html.native-mobile .msg-system-event { font-size: 14px; line-height: 21px; }
+html.native-mobile .summary-block > summary { font-size: 14px; line-height: 21px; }
 html.native-mobile .tool-label { font-size: 12px; }
 html.native-mobile .tool-value,
 html.native-mobile .diff-view,
