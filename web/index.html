@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
 <title>AgentPeek</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
+<link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg">
 <script>
   if (sessionStorage.getItem('agentpeek-returning-home') === '1') {
     window.__returningHome = true;
@@ -33,7 +33,8 @@
      Android renders correctly on first frame, so it skips this. */
   @supports (-webkit-touch-callout:none){html.native-mobile body{opacity:0}html.native-mobile body.ready{opacity:1;transition:none}}
   .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
-  .top-logo{display:inline-flex;align-items:center;margin-right:3px}
+  .top-logo{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:3px}
+  .top-logo img{display:block;width:100%;height:100%}
   .top-title{font-weight:600;color:#e6edf3}
   a.top-gear,a.top-gear:link,a.top-gear:visited{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;color:#6e7681;text-decoration:none}
   a.top-gear.syncing,.new-session-btn{position:relative}
@@ -477,7 +478,7 @@
 
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">
-  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true">🔭</span><span class="top-title">AgentPeek</span></div>
+  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true"><img src="assets/baton-logo.svg" alt=""></span><span class="top-title">AgentPeek</span></div>
   <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear syncing" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
 </div>
 

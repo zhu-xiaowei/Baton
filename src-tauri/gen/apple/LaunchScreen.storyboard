@@ -17,12 +17,9 @@
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="topbar">
                                 <rect key="frame" x="0.0" y="0.0" width="393" height="103"/>
                                 <subviews>
-                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="🔭" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="tbemoji">
-                                        <rect key="frame" x="12" y="71" width="20" height="21"/>
-                                        <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="17"/>
-                                        <color key="textColor" red="0.90196078431372551" green="0.92941176470588238" blue="0.95294117647058818" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                                        <nil key="highlightedColor"/>
-                                    </label>
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="BatonLogo" translatesAutoresizingMaskIntoConstraints="NO" id="tbemoji">
+                                        <rect key="frame" x="12" y="71" width="20" height="20"/>
+                                    </imageView>
                                     <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="AgentPeek" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="tbtitle">
                                         <rect key="frame" x="38" y="71" width="86" height="21"/>
                                         <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="17"/>
@@ -150,4 +147,7 @@
             </objects>
         </scene>
     </scenes>
+    <resources>
+        <image name="BatonLogo" width="20" height="20"/>
+    </resources>
 </document>

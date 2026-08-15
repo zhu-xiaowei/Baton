@@ -1149,7 +1149,7 @@ async function startNewSession(projectHash) {
   // Agent mode: always starts unchecked; choice is not persisted across sessions.
   content.innerHTML =
     '<div class="new-session-hero">'
-      + '<div class="hero-logo">🔭</div>'
+      + '<img class="hero-logo" src="assets/baton-logo.svg" alt="">'
       + '<div class="hero-title">AgentPeek</div>'
       + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'

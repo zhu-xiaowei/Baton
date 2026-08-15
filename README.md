@@ -1,4 +1,4 @@
-# 🔭 AgentPeek
+# <img src="web/public/assets/baton-app-icon.svg" width="32" alt=""> AgentPeek
 
 View and interact with your [Claude Code](https://github.com/anthropics/claude-code) sessions from anywhere — phone, tablet, or another computer.
 

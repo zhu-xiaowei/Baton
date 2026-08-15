@@ -194,7 +194,7 @@ test('mobile header separator is drawn inside the fixed 44px bar', () => {
 test('mobile header title uses the same 20px logo slot and 6px gap as LaunchScreen', () => {
   assert.match(
     indexHtml,
-    /class="top-logo" aria-hidden="true">🔭<\/span><span class="top-title">AgentPeek/,
+    /class="top-logo" aria-hidden="true"><img src="assets\/baton-logo\.svg" alt=""><\/span><span class="top-title">AgentPeek/,
   );
   assert.match(
     indexHtml,
