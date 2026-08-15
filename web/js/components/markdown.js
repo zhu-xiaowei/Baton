@@ -2,8 +2,6 @@
 (function () {
   marked.setOptions({ breaks: true, gfm: true });
 
-  // marked v12 dropped the `highlight` option; highlight code tokens up front
-  // with our existing hljs so fenced blocks render colored (zero extra deps).
   function escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -94,21 +92,29 @@
   };
 
   marked.use({
-    walkTokens: function (token) {
-      if (token.type !== 'code') return;
-      var code = token.text || '';
-      // Mermaid: emit a placeholder (mermaid.js fills the SVG async). Works mid-stream — marked tokenizes an unclosed ```mermaid fence as lang:'mermaid'.
-      if ((token.lang || '').toLowerCase() === 'mermaid') {
-        token.type = 'html';
-        token.text = '<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>';
-        return;
-      }
-      var html;
-      if (token.lang && hljs.getLanguage(token.lang)) {
-        try { html = hljs.highlight(code, { language: token.lang }).value; } catch (e) {}
-      }
-      if (html == null) { try { html = hljs.highlightAuto(code).value; } catch (e) {} }
-      if (html != null) { token.type = 'html'; token.text = '<pre><code class="hljs">' + html + '</code></pre>'; }
+    renderer: {
+      // Assistant output is untrusted. Raw HTML must remain visible text instead of
+      // being inserted into AgentPeek's document where <style>/<meta> can alter the UI.
+      html: function (html) {
+        return escHtml(html);
+      },
+      // marked v12 dropped the old highlight option, so fenced code is rendered here.
+      code: function (code, lang) {
+        code = code || '';
+        lang = (lang || '').trim().split(/\s+/)[0];
+        // Mermaid: emit a placeholder (mermaid.js fills the SVG async). Marked also
+        // recognizes an unclosed fence while content is streaming.
+        if (lang.toLowerCase() === 'mermaid') {
+          return '<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>';
+        }
+        var html;
+        if (lang && hljs.getLanguage(lang)) {
+          try { html = hljs.highlight(code, { language: lang }).value; } catch (e) {}
+        }
+        if (html == null) { try { html = hljs.highlightAuto(code).value; } catch (e) {} }
+        if (html == null) html = escHtml(code);
+        return '<pre><code class="hljs">' + html + '</code></pre>';
+      },
     },
   });
 
