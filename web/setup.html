@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<script src="/native-mobile.js"></script>
 <title>AgentPeek Setup</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 <style>
@@ -62,6 +63,25 @@
   .qr-frame { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { border-radius: 4px; display: block; }
+  .logout-btn { font-size: 13px; }
+  html.native-mobile .setup-bar {
+    min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
+    padding: var(--sat, env(safe-area-inset-top, 0px)) 8px 0;
+  }
+  html.native-mobile .setup-bar .back { width: 44px; height: 44px; }
+  html.native-mobile .setup-bar .back svg { width: 22px; height: 22px; }
+  html.native-mobile .setup-bar .title { font-size: 17px; }
+  html.native-mobile .setup-bar .spacer { width: 44px; }
+  html.native-mobile .setup-content { padding: 20px 14px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); }
+  html.native-mobile .section { padding: 18px 16px; margin-bottom: 16px; }
+  html.native-mobile .section h2 { font-size: 17px; }
+  html.native-mobile .section h2 .num { width: 26px; height: 26px; font-size: 14px; }
+  html.native-mobile .platform-option { min-height: 34px; font-size: 14px; }
+  html.native-mobile .code-block { padding: 14px 16px; font-size: 13px; line-height: 1.65; }
+  html.native-mobile .code-btn { min-height: 30px; font-size: 12px; }
+  html.native-mobile .hint { font-size: 14px; line-height: 1.55; }
+  html.native-mobile .logout-btn { min-height: 40px; font-size: 15px; }
+  html.native-mobile #appVersion { font-size: 12px !important; }
 </style>
 </head>
 <body>
@@ -103,7 +123,8 @@
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">
   <button onclick="logout()"
-    style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; font-size:13px; cursor:pointer;">Log out</button>
+    class="logout-btn"
+    style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; cursor:pointer;">Log out</button>
 </div>
 
 <!-- App version (iOS only — undefined elsewhere, hidden by default) -->

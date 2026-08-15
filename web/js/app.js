@@ -108,29 +108,47 @@ function toggleSelected(id) {
   updateBreadcrumb(); // refresh the Delete count only
 }
 
-// Long-press vs text-selection: a press that stays put ~500ms → select mode; any
-// move >10px cancels the timer so the browser's native text selection takes over.
+var LONG_PRESS_MS = 800;
+var LONG_PRESS_MOVE_PX = 8;
+
+// Long-press vs text-selection: require a deliberate 800ms hold so a slightly
+// slow click cannot become an edit action. Moving, scrolling, dragging, or
+// leaving cancels it.
 // In select mode a click toggles the item (capture handler beats the baked nav onclick).
 function attachLongPress(container, type) {
-  var timer = null, sx = 0, sy = 0, targetId = null, justLongPressed = false;
-  var clear = function () { if (timer) { clearTimeout(timer); timer = null; } targetId = null; };
+  var timer = null, sx = 0, sy = 0, targetId = null, activePointerId = null, justLongPressed = false;
+  var clear = function () {
+    if (timer) { clearTimeout(timer); timer = null; }
+    targetId = null;
+    activePointerId = null;
+  };
+  var clearPointer = function (e) {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+    clear();
+  };
   container.addEventListener('pointerdown', function (e) {
     justLongPressed = false; // new gesture: a stale flag must not swallow this tap
-    if (state.selectMode) return;
+    if (state.selectMode || e.isPrimary === false) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest && e.target.closest('button, input, textarea, select, [role="button"], [contenteditable="true"]')) return;
     var item = e.target.closest && e.target.closest('.item[data-id]');
     if (!item) return;
-    sx = e.clientX; sy = e.clientY; targetId = item.getAttribute('data-id');
+    sx = e.clientX; sy = e.clientY; targetId = item.getAttribute('data-id'); activePointerId = e.pointerId;
     timer = setTimeout(function () {
       timer = null;
       if (targetId) { e.preventDefault && e.preventDefault(); justLongPressed = true; enterSelectMode(type, targetId); }
-    }, 500);
+    }, LONG_PRESS_MS);
   });
   container.addEventListener('pointermove', function (e) {
-    if (!timer) return;
-    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) clear();
+    if (!timer || e.pointerId !== activePointerId) return;
+    var dx = e.clientX - sx, dy = e.clientY - sy;
+    if ((dx * dx) + (dy * dy) > LONG_PRESS_MOVE_PX * LONG_PRESS_MOVE_PX) clear();
   });
-  container.addEventListener('pointerup', clear);
-  container.addEventListener('pointercancel', clear);
+  container.addEventListener('pointerup', clearPointer);
+  container.addEventListener('pointercancel', clearPointer);
+  container.addEventListener('pointerleave', clearPointer);
+  container.addEventListener('scroll', clear, true);
+  container.addEventListener('dragstart', clear);
   container.addEventListener('click', function (e) {
     if (!state.selectMode) return;
     e.preventDefault(); e.stopPropagation(); // beat the item's baked navigation onclick
@@ -337,7 +355,7 @@ function projectListOptions(device) {
     key: 'projects:' + device,
     itemsKey: 'projects',
     idKey: 'projectHash',
-    skeleton: '<div class="list">' + skeletonItems(4) + '</div>',
+    skeleton: '<div class="list">' + skeletonItems(4, 'project') + '</div>',
     html: function (data) { return projectsHtml(device, data, false); },
     render: function (data) { renderProjects(device, data); },
     fetchPage: function (cursor) {
@@ -353,7 +371,7 @@ function sessionListOptions(device, projectHash) {
     key: 'sessions:' + device + ':' + projectHash,
     itemsKey: 'sessions',
     idKey: 'sessionId',
-    skeleton: '<div class="list">' + skeletonItems(5) + '</div>',
+    skeleton: '<div class="list">' + skeletonItems(5, 'session') + '</div>',
     html: function (data) { return sessionsHtml(device, projectHash, data, false); },
     render: function (data) { renderSessions(device, projectHash, data); },
     fetchPage: function (cursor) {
@@ -725,7 +743,7 @@ function projectsHtml(device, data, sel) {
     var projHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(p.projectHash);
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
     var onclick = 'loadSessions(\'' + esc(device) + '\',\'' + esc(p.projectHash) + '\',\'' + esc(p.projectName) + '\');return false;';
-    return '<a class="item" data-id="' + esc(p.projectHash) + '" href="' + projHref + '" onclick="' + onclick + '">'
+    return '<a class="item project-item" data-id="' + esc(p.projectHash) + '" href="' + projHref + '" onclick="' + onclick + '">'
       + (sel ? selectBox(p.projectHash) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(p.projectName) + '</span><span class="item-time">' + timeAgo(p.lastActive) + '</span></div>'
       + '<div class="subtitle">' + esc(p.projectPath) + '</div>'
@@ -786,7 +804,7 @@ function sessionsHtml(device, projectHash, data, sel) {
       : '<span class="session-secondary-static">' + metadata + '</span>';
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
     var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
-    return '<a class="item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
+    return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
       + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + statusBadge + '</span></div>'

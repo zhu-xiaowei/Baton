@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<script src="/native-mobile.js"></script>
 <title>AgentPeek</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 <link rel="preload" as="image" type="image/svg+xml" href="./assets/claude-code.svg">
@@ -28,12 +29,13 @@
      Floor it at 59px (Dynamic Island / notch device standard) to prevent the top-bar
      from briefly touching the top of the screen. -webkit-touch-callout is iOS-only,
      so Android skips this. Once env() resolves, the larger value naturally takes over. */
-  @supports (-webkit-touch-callout:none){.top-bar{padding-top:max(var(--sat,env(safe-area-inset-top)),59px)}}
+  @supports (-webkit-touch-callout:none){html.native-mobile .top-bar{min-height:calc(max(var(--sat,env(safe-area-inset-top,0px)),59px) + 44px);padding-top:max(var(--sat,env(safe-area-inset-top,0px)),59px)}}
   /* iOS WKWebView's frame settles ~50ms after first paint (status bar area gets cropped).
      Hide body briefly on iOS so users see the dark background instead of content jumping down.
      Android renders correctly on first frame, so it skips this. */
-  @supports (-webkit-touch-callout:none){body{opacity:0}body.ready{opacity:1;transition:opacity .1s}html.returning-home body.ready{transition:none}}
+  @supports (-webkit-touch-callout:none){html.native-mobile body{opacity:0}html.native-mobile body.ready{opacity:1;transition:none}}
   .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
+  .top-logo{display:inline-flex;align-items:center;margin-right:3px}
   .top-title{font-weight:600;color:#e6edf3}
   a.top-gear,a.top-gear:link,a.top-gear:visited{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;color:#6e7681;text-decoration:none}
   a.top-gear.syncing,.new-session-btn{position:relative}
@@ -43,6 +45,20 @@
   #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
+  html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px #30363d}
+  html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
+  html.native-mobile .top-logo{width:20px;height:21px;line-height:21px;flex:0 0 20px;margin-right:0}
+  html.native-mobile .top-title{display:inline-flex;align-items:center;height:21px;line-height:21px}
+  html.native-mobile #top-right{display:flex;align-items:center;min-height:44px;gap:2px;line-height:0}
+  html.native-mobile a.top-gear,html.native-mobile a.top-gear:link,html.native-mobile a.top-gear:visited{width:44px;height:44px}
+  html.native-mobile a.top-gear svg{width:22px;height:22px}
+  html.native-mobile .new-session-btn,html.native-mobile .runtime-switch,html.native-mobile #top-right>.runtime-mark{width:44px;height:44px;flex:0 0 44px;margin:0}
+  html.native-mobile .new-session-btn svg{width:26px;height:26px;padding:4px;border-width:1.5px}
+  html.native-mobile #top-right .runtime-mark,html.native-mobile #top-right .runtime-icon{width:24px;height:24px}
+  html.native-mobile #top-right .runtime-mark{flex-basis:24px}
+  html.native-mobile #top-right .runtime-icon{transform:translateX(1px)}
+  html.native-mobile #top-right>.runtime-mark{width:44px;height:44px;flex-basis:44px}
+  html.native-mobile #top-right.syncing .new-session-btn::after{left:9px;top:9px;width:26px;height:26px;border-width:1.5px}
   .breadcrumb{display:none;flex-shrink:0}
   #content{flex:1;overflow-y:auto}
 </style>
@@ -103,6 +119,44 @@
   } catch (e) {}
   var willRenderInline = !hash && !navDeep;
 
+  var firstWebFrameReadyScheduled = false;
+  var firstWebFrameObserver = null;
+  function markFirstWebFrameReady() {
+    if (window.__skelReady || firstWebFrameReadyScheduled) return;
+    firstWebFrameReadyScheduled = true;
+    var nextFrame = window.requestAnimationFrame || function (fn) { setTimeout(fn, 0); };
+    // Let the Web skeleton or cached content complete two layouts before the
+    // native overlay fades. Then allow the iOS body reveal transition and WebKit
+    // compositor to settle so the native fade never exposes a dim Web frame.
+    nextFrame(function () {
+      nextFrame(function () {
+        if (document.body) document.body.classList.add('ready');
+        setTimeout(function () {
+          window.__skelReady = 1;
+          if (firstWebFrameObserver) {
+            firstWebFrameObserver.disconnect();
+            firstWebFrameObserver = null;
+          }
+        }, 120);
+      });
+    });
+  }
+  window.__markFirstWebFrameReady = markFirstWebFrameReady;
+
+  function observeFirstWebFrame(content) {
+    if (!content || firstWebFrameObserver || window.__skelReady) return;
+    var check = function () {
+      if (!content.firstElementChild) return;
+      markFirstWebFrameReady();
+    };
+    firstWebFrameObserver = new MutationObserver(check);
+    firstWebFrameObserver.observe(content, {
+      childList: true,
+      subtree: true
+    });
+    check();
+  }
+
   function timeAgo(iso) {
     var d = Date.now() - new Date(iso).getTime();
     if (d < 60000) return 'just now';
@@ -160,7 +214,7 @@
     document.body.classList.add('ready');
     window.__inlineRendered = true;
     window.__homePreviewRestored = true;
-    window.__skelReady = 1;
+    markFirstWebFrameReady();
     return true;
   }
   window.__restoreHomePreview = restoreReturningHomePreview;
@@ -229,7 +283,7 @@
       html += devs.map(function (d) {
         var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
-        return '<div class="item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
+        return '<div class="item device-item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
           + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
           + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</div>';
@@ -246,21 +300,22 @@
     else window.__preheatViewer = true;
 
     window.__inlineRendered = true;
-    window.__skelReady = 1; // also lift the native overlay once real content is in (skeleton may have been skipped)
+    markFirstWebFrameReady();
   }
 
-  // First-frame skeleton, painted before the network resolves so the native LaunchScreen hands off to an identical web skeleton (no flash/jump). Mirrors skeletonCards(4)+skeletonItems(2); replaced by renderInline.
+  // First-frame skeleton mirrors the final content geometry. Once it has painted,
+  // the native overlay fades to this animated Web skeleton.
   function skelCard() {
     return '<div class="active-card skeleton-card">'
       + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="skel skel-w80 skel-h14"></div>'
+      + '<div class="card-title"><span class="skel skel-w80 skel-h14"></span></div>'
       + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
       + '</div>';
   }
   function skelItem() {
-    return '<div class="item skeleton-item">'
+    return '<div class="item device-item skeleton-item skeleton-item-device">'
       + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="skel skel-w60 skel-mt4"></div>'
+      + '<div class="item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div>'
       + '</div>';
   }
   function renderSkeleton(force) {
@@ -271,10 +326,8 @@
       + '<div id="recent-agents-section"></div>'
       + '<div class="section-title">Devices</div>'
       + '<div id="devices-section" class="list">' + skelItem() + skelItem() + '</div>';
-    // Reveal now — the skeleton matches the native LaunchScreen pixel-for-pixel, so no jump to hide; waiting for the 150ms timer would leave a bare-webview color flash.
     if (document.body) document.body.classList.add('ready');
-    // Signal the native overlay (main.mm polls this) that the web skeleton is painted + pixel-aligned, so it can fade out and stop covering the bare-webview flash.
-    window.__skelReady = 1;
+    markFirstWebFrameReady();
   }
 
   // Wait for #content to be parsed, not DOMContentLoaded — avoids waiting for module chunks.
@@ -285,15 +338,35 @@
     }, 10);
   }
 
+  whenContentReady(function () {
+    observeFirstWebFrame(document.getElementById('content'));
+  });
+
   // Shared SWR path for both cold start and logo refresh.
   function loadHome(activePromise, devicesPromise, options) {
     options = options || {};
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
     var usePagePreview = !options.resetScroll && !!window.__returningHome;
+    var stageNativeSkeleton = document.documentElement.classList.contains('native-mobile')
+      && !window.__inlineRendered
+      && !usePagePreview;
+    // The native LaunchScreen is static. Keep the existing Web shimmer visible
+    // briefly after handoff so cached data cannot replace it in the same frame.
+    var nativeSkeletonUntil = stageNativeSkeleton ? performance.now() + 650 : 0;
+    var cachedRenderTimer = null;
     var isCurrent = options.isCurrent || function () {
       return !!document.querySelector('.top-gear');
     };
+
+    function afterNativeSkeleton(fn) {
+      var delay = nativeSkeletonUntil - performance.now();
+      if (delay <= 0) {
+        fn();
+        return null;
+      }
+      return setTimeout(fn, Math.ceil(delay));
+    }
 
     setSync(true);
     whenContentReady(function () {
@@ -302,7 +375,17 @@
       var restoredPreview = usePagePreview
         && (window.__homePreviewRestored || restoreReturningHomePreview());
       if (!restoredPreview) {
-        if (hasCached) renderInline(cached.active, cached.devices);
+        if (stageNativeSkeleton) {
+          renderSkeleton(!!options.resetScroll);
+          if (hasCached) {
+            cachedRenderTimer = afterNativeSkeleton(function () {
+              cachedRenderTimer = null;
+              if (isCurrent() && !window.__inlineRendered) {
+                renderInline(cached.active, cached.devices);
+              }
+            });
+          }
+        } else if (hasCached) renderInline(cached.active, cached.devices);
         else renderSkeleton(!!options.resetScroll);
       }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
@@ -313,17 +396,30 @@
         whenContentReady(function () {
           if (!isCurrent()) { resolve(fresh); return; }
           if (!fresh[0] || !fresh[1]) { reject(new Error('Home refresh failed')); return; }
-          var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
-          var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
-          if (!window.__inlineRendered || freshRaw !== cachedRaw) {
-            var content = document.getElementById('content');
-            var keepScroll = content ? content.scrollTop : 0;
-            renderInline(fresh[0], fresh[1]);
-            if (content) content.scrollTop = keepScroll;
+          var applyFresh = function () {
+            if (!isCurrent()) { resolve(fresh); return; }
+            var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
+            var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+            if (!window.__inlineRendered || freshRaw !== cachedRaw) {
+              var content = document.getElementById('content');
+              var keepScroll = content ? content.scrollTop : 0;
+              renderInline(fresh[0], fresh[1]);
+              if (content) content.scrollTop = keepScroll;
+            }
+            writeCache(fresh[0], fresh[1]);
+            if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
+            resolve(fresh);
+          };
+
+          if (stageNativeSkeleton && performance.now() < nativeSkeletonUntil) {
+            if (cachedRenderTimer) {
+              clearTimeout(cachedRenderTimer);
+              cachedRenderTimer = null;
+            }
+            afterNativeSkeleton(applyFresh);
+          } else {
+            applyFresh();
           }
-          writeCache(fresh[0], fresh[1]);
-          if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
-          resolve(fresh);
         });
       });
     }).catch(function () {
@@ -351,10 +447,10 @@
     loadHome(window.__preload.active, window.__preload.devices);
     window.__preload = null;
   } else {
-    // Deep link / restored deep nav: no home skeleton — reveal + lift the native overlay now (app.js routes to the target view's own skeleton), else the overlay sticks.
+    // Deep links render their own skeleton in app.js. The observer releases the
+    // native overlay after that Web skeleton completes two layout frames.
     whenContentReady(function () {
       if (document.body) document.body.classList.add('ready');
-      window.__skelReady = 1;
     });
     // Deep link: preheat immediately, user is heading to a message view.
     Promise.all([window.__preload.active, window.__preload.devices]).then(function () {
@@ -383,7 +479,7 @@
 
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">
-  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer">🔭 <span class="top-title">AgentPeek</span></div>
+  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true">🔭</span><span class="top-title">AgentPeek</span></div>
   <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear syncing" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
 </div>
 
@@ -473,7 +569,14 @@
         <button class="file-tab active" data-mode="source" onclick="setFileViewMode('source')">Code</button>
         <button class="file-tab" data-mode="preview" onclick="setFileViewMode('preview')">Preview</button>
       </span>
-      <span class="file-modal-close" onclick="closeFileViewer()">×</span>
+      <span class="file-modal-close" onclick="closeFileViewer()" aria-label="Close">
+        <span class="file-modal-close-glyph" aria-hidden="true">×</span>
+        <svg class="file-modal-close-icon" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </span>
     </div>
     <div id="fileOverlayBody" class="file-modal-body"></div>
   </div>

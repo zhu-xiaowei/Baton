@@ -5,6 +5,8 @@
 
 static int _agentpeek_swizzle_attempts = 0;
 static int _agentpeek_cancel_swizzle_attempts = 0;
+static char _agentpeek_skeleton_installed_key;
+static char _agentpeek_skeleton_controller_key;
 
 // Find the barcode-scanner Swift class. Its runtime name is mangled with the module
 // prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
@@ -66,6 +68,19 @@ static void agentpeek_install_scan_close_swizzle(void) {
         IMP origImp = method_getImplementation(orig);
         IMP newImp = imp_implementationWithBlock(^(UIView *self, UIView *subview) {
             ((void (*)(id, SEL, UIView *))origImp)(self, sel, subview);
+
+            // WKWebView is added after the root controller is installed. Keep the
+            // startup skeleton above any newly inserted root-view child.
+            UIView *startupSkeleton = nil;
+            for (UIView *sibling in self.subviews) {
+                if (sibling.tag == 0x5EE1) {
+                    startupSkeleton = sibling;
+                    break;
+                }
+            }
+            if (startupSkeleton && startupSkeleton != subview) {
+                [self bringSubviewToFront:startupSkeleton];
+            }
 
             const char *clsName = object_getClassName(subview);
             if (!clsName || strstr(clsName, "CameraView") == NULL) return;
@@ -225,7 +240,6 @@ static void agentpeek_fix_viewport(void) {
 
     UIEdgeInsets sa = kw.safeAreaInsets;
     if (sa.top <= 0 && sa.bottom <= 0) return;
-
     // Check if bug is present: find WKWebView scrollView contentSize < window height.
     WKWebView *checkWv = nil;
     for (UIView *sub in kw.rootViewController.view.subviews) {
@@ -280,77 +294,146 @@ static void agentpeek_fix_viewport(void) {
     }
 }
 
-// Native skeleton overlay: instantiate the LaunchScreen view over the key window to cover the ~400ms gap between LaunchScreen removal and the web skeleton paint (else the bare WKWebView bg flashes); poll window.__skelReady, then fade out. See docs/headless-streaming.md or CLAUDE.md.
-static void agentpeek_find_webview(UIWindow *kw, void (^cb)(WKWebView *)) {
-    WKWebView *wv = nil;
-    if (kw.rootViewController) {
-        for (UIView *sub in kw.rootViewController.view.subviews) {
-            if ([sub isKindOfClass:[WKWebView class]]) { wv = (WKWebView *)sub; break; }
-        }
+// Native skeleton overlay: keep the LaunchScreen view above the app's root view
+// until the Web skeleton or cached content has completed layout.
+static WKWebView *agentpeek_find_webview_in_view(UIView *view) {
+    if (!view) return nil;
+    if ([view isKindOfClass:[WKWebView class]]) return (WKWebView *)view;
+    for (UIView *subview in view.subviews) {
+        WKWebView *found = agentpeek_find_webview_in_view(subview);
+        if (found) return found;
     }
-    cb(wv);
+    return nil;
 }
 
-static void agentpeek_install_skeleton_overlay(void) {
-    UIWindow *kw = nil;
-    for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-        if ([s isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *w in ((UIWindowScene *)s).windows) {
-                if (w.isKeyWindow) { kw = w; break; }
-            }
-        }
-        if (kw) break;
+static void agentpeek_find_webview(UIWindow *kw, void (^cb)(WKWebView *)) {
+    cb(kw.rootViewController
+        ? agentpeek_find_webview_in_view(kw.rootViewController.view)
+        : nil);
+}
+
+static CGFloat agentpeek_window_top_inset(UIWindow *window) {
+    CGFloat top = window.safeAreaInsets.top;
+    if (top <= 0 && window.rootViewController) {
+        top = window.rootViewController.view.safeAreaInsets.top;
     }
-    if (!kw || !kw.rootViewController) {
-        static int retries = 0;
-        if (retries++ < 100) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
+    if (top <= 0 && window.windowScene.statusBarManager) {
+        top = CGRectGetHeight(window.windowScene.statusBarManager.statusBarFrame);
+    }
+    return MAX(0, top);
+}
+
+static void agentpeek_layout_skeleton_content(
+    UIWindow *window, UIViewController *containerController) {
+    UIView *container = containerController.view;
+    UIViewController *launchController =
+        containerController.childViewControllers.firstObject;
+    if (!container || !launchController) return;
+
+    CGFloat top = agentpeek_window_top_inset(window);
+    CGRect bounds = container.bounds;
+    launchController.view.frame = CGRectMake(
+        0, top, CGRectGetWidth(bounds), MAX(0, CGRectGetHeight(bounds) - top));
+}
+
+static void agentpeek_attach_skeleton_overlay(UIWindow *kw) {
+    if (!kw || !kw.rootViewController) return;
+    UIViewController *hostController = kw.rootViewController;
+    UIView *hostView = hostController.view;
+    UIViewController *existing = objc_getAssociatedObject(
+        kw, &_agentpeek_skeleton_controller_key);
+    if (existing) {
+        UIView *existingView = existing.view;
+        if (existing.parentViewController != hostController) {
+            [existing willMoveToParentViewController:nil];
+            [existingView removeFromSuperview];
+            [existing removeFromParentViewController];
+            [hostController addChildViewController:existing];
+            [hostView addSubview:existingView];
+            [existing didMoveToParentViewController:hostController];
         }
+        existingView.frame = hostView.bounds;
+        agentpeek_layout_skeleton_content(kw, existing);
+        [hostView bringSubviewToFront:existingView];
+        return;
+    }
+    if (objc_getAssociatedObject(kw, &_agentpeek_skeleton_installed_key)) {
         return;
     }
 
-    // Instantiate the LaunchScreen storyboard's root view — identical skeleton.
-    UIView *skel = nil;
+    // Reuse the LaunchScreen storyboard so the system launch snapshot and the
+    // first app-owned frame have identical geometry.
+    UIViewController *launchController = nil;
     @try {
         UIStoryboard *sb = [UIStoryboard storyboardWithName:@"LaunchScreen" bundle:nil];
-        UIViewController *vc = [sb instantiateInitialViewController];
-        if (vc && vc.view) {
-            skel = vc.view;
-            skel.frame = kw.bounds;
-            skel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        }
+        launchController = [sb instantiateInitialViewController];
     } @catch (__unused NSException *e) {}
-    if (!skel) return;
+    if (!launchController || !launchController.view) return;
 
+    UIViewController *skeletonController = [UIViewController new];
+    UIView *skel = [[UIView alloc] initWithFrame:hostView.bounds];
+    skel.backgroundColor = [UIColor colorWithRed:22.0 / 255.0
+                                           green:27.0 / 255.0
+                                            blue:34.0 / 255.0
+                                           alpha:1.0];
+    skel.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    skeletonController.view = skel;
+
+    UIView *launchView = launchController.view;
+    launchView.autoresizingMask =
+        UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [skeletonController addChildViewController:launchController];
+    [skel addSubview:launchView];
+    [launchController didMoveToParentViewController:skeletonController];
+    agentpeek_layout_skeleton_content(kw, skeletonController);
+
+    [hostController addChildViewController:skeletonController];
+    [hostView addSubview:skel];
+    [skeletonController didMoveToParentViewController:hostController];
+    [hostView bringSubviewToFront:skel];
+
+    objc_setAssociatedObject(kw, &_agentpeek_skeleton_installed_key, @YES,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(kw, &_agentpeek_skeleton_controller_key,
+                             skeletonController,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     skel.tag = 0x5EE1;
-    [kw addSubview:skel];
-    [kw bringSubviewToFront:skel];
-    // Card borders use nested views (outer=#30363d, inner inset 1px) in the storyboard, so they render in the system LaunchScreen phase — no code needed.
 
-    // Poll window.__skelReady; fade out on paint. Hard cap so the overlay can't stick if the web layer never signals.
-    __weak UIView *weakSkel = skel;
+    // Keep the overlay even before WKWebView exists. This is the cold-start gap
+    // that otherwise exposes the root controller's plain background.
+    __weak UIViewController *weakSkeletonController = skeletonController;
     __weak UIWindow *weakKw = kw;
     __block int ticks = 0;
     __block void (^poll)(void) = nil;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-retain-cycles"
     poll = ^{
-        UIView *sv = weakSkel;
-        if (!sv || sv.superview == nil) { poll = nil; return; }
+        UIViewController *controller = weakSkeletonController;
+        UIView *cover = controller.view;
+        if (!controller || !cover.superview) { poll = nil; return; }
         ticks++;
-        BOOL timedOut = ticks > 250; // ~5s hard cap (20ms * 250)
+        BOOL timedOut = ticks > 750; // ~15s hard cap (20ms * 750)
         agentpeek_find_webview(weakKw, ^(WKWebView *wv) {
-            // 150ms fade out — soft handoff to the web layer (skeleton or SWR-cached content underneath).
-            void (^fadeOut)(void) = ^{
-                [UIView animateWithDuration:0.15 animations:^{ sv.alpha = 0.0; }
-                                 completion:^(__unused BOOL done){ [sv removeFromSuperview]; }];
+            void (^removeOverlay)(void) = ^{
+                // The native and Web skeletons are pixel-aligned. A direct
+                // removal avoids cross-fading two different shimmer phases.
+                [controller willMoveToParentViewController:nil];
+                [cover removeFromSuperview];
+                [controller removeFromParentViewController];
+                objc_setAssociatedObject(weakKw, &_agentpeek_skeleton_controller_key,
+                                         nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                 poll = nil;
             };
-            if (timedOut || !wv) { fadeOut(); return; }
+            if (timedOut) { removeOverlay(); return; }
+            if (!wv) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{ if (poll) poll(); });
+                return;
+            }
             [wv evaluateJavaScript:@"window.__skelReady?1:0" completionHandler:^(id result, __unused NSError *err) {
                 if ([result respondsToSelector:@selector(intValue)] && [result intValue] == 1) {
-                    fadeOut();
+                    removeOverlay();
                 } else {
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
                                    dispatch_get_main_queue(), ^{ if (poll) poll(); });
@@ -363,8 +446,105 @@ static void agentpeek_install_skeleton_overlay(void) {
                    dispatch_get_main_queue(), poll);
 }
 
+static BOOL agentpeek_is_main_window(UIWindow *window) {
+    return window && window.windowLevel == UIWindowLevelNormal;
+}
+
+// Install the app-owned skeleton through every UIWindow visibility path used by
+// Tao. Tao resets rootViewController during startup, so each reset must also
+// bring an existing overlay back above the new root view.
+static void agentpeek_install_window_skeleton_swizzle(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SEL visibleSel = @selector(makeKeyAndVisible);
+        Method visibleMethod = class_getInstanceMethod([UIWindow class], visibleSel);
+        IMP visibleOriginal = method_getImplementation(visibleMethod);
+        IMP visibleReplacement = imp_implementationWithBlock(^(UIWindow *window) {
+            if (agentpeek_is_main_window(window)) {
+                agentpeek_attach_skeleton_overlay(window);
+            }
+            ((void (*)(id, SEL))visibleOriginal)(window, visibleSel);
+            if (agentpeek_is_main_window(window)) {
+                agentpeek_attach_skeleton_overlay(window);
+            }
+        });
+        method_setImplementation(visibleMethod, visibleReplacement);
+
+        SEL hiddenSel = @selector(setHidden:);
+        Method hiddenMethod = class_getInstanceMethod([UIWindow class], hiddenSel);
+        IMP hiddenOriginal = method_getImplementation(hiddenMethod);
+        IMP hiddenReplacement = imp_implementationWithBlock(^(UIWindow *window, BOOL hidden) {
+            if (!hidden && agentpeek_is_main_window(window)) {
+                agentpeek_attach_skeleton_overlay(window);
+            }
+            ((void (*)(id, SEL, BOOL))hiddenOriginal)(window, hiddenSel, hidden);
+            if (!hidden && agentpeek_is_main_window(window)) {
+                agentpeek_attach_skeleton_overlay(window);
+            }
+        });
+        method_setImplementation(hiddenMethod, hiddenReplacement);
+
+        SEL rootSel = @selector(setRootViewController:);
+        Method rootMethod = class_getInstanceMethod([UIWindow class], rootSel);
+        IMP rootOriginal = method_getImplementation(rootMethod);
+        IMP rootReplacement = imp_implementationWithBlock(
+            ^(UIWindow *window, UIViewController *controller) {
+                ((void (*)(id, SEL, UIViewController *))rootOriginal)(
+                    window, rootSel, controller);
+                if (agentpeek_is_main_window(window)) {
+                    agentpeek_attach_skeleton_overlay(window);
+                }
+            });
+        method_setImplementation(rootMethod, rootReplacement);
+
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:UIWindowDidBecomeVisibleNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note) {
+                        UIWindow *window = [note.object isKindOfClass:[UIWindow class]]
+                            ? (UIWindow *)note.object
+                            : nil;
+                        if (agentpeek_is_main_window(window)) {
+                            agentpeek_attach_skeleton_overlay(window);
+                        }
+                    }];
+    });
+}
+
+static UIWindow *agentpeek_find_key_window(void) {
+    UIApplication *app = [UIApplication sharedApplication];
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if (window.isKeyWindow) return window;
+        }
+    }
+    for (UIWindow *window in app.windows) {
+        if (window.isKeyWindow) return window;
+    }
+    for (UIWindow *window in app.windows) {
+        if (agentpeek_is_main_window(window) && !window.hidden) return window;
+    }
+    return nil;
+}
+
+static void agentpeek_install_skeleton_overlay(void) {
+    UIWindow *kw = agentpeek_find_key_window();
+    if (!kw) {
+        static int retries = 0;
+        if (retries++ < 750) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
+        }
+        return;
+    }
+    agentpeek_attach_skeleton_overlay(kw);
+}
+
 int main(int argc, char * argv[]) {
 	[WKWebView class]; // force-load WebKit framework
+	agentpeek_install_window_skeleton_swizzle();
 	agentpeek_install_scan_close_swizzle();
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_skeleton_overlay(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ agentpeek_install_kb_swizzle(); });

@@ -34,8 +34,10 @@ body {
 /* === Top bar === */
 .top-bar { display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; min-height: 44px; padding: 6px 8px 6px 12px; padding-top: max(var(--sat, env(safe-area-inset-top)), 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
 .top-left { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+.top-logo { display: inline-flex; align-items: center; margin-right: 3px; }
 .top-title { font-weight: 600; color: #e6edf3; }
 .top-gear { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: #6e7681; text-decoration: none; transition: all 0.15s; }
+.top-gear svg { width: 18px; height: 18px; }
 @media (hover: hover) and (pointer: fine) {
   .top-gear:hover { color: #e6edf3; background: #21262d; }
 }
@@ -125,6 +127,11 @@ body {
 .session-secondary-toggle.show-meta { color: #6e7681; text-decoration-color: rgba(110, 118, 129, 0.55); }
 .session-secondary-toggle.show-meta .session-detail-view { display: none; }
 .session-secondary-toggle.show-meta .session-meta-view { display: block; }
+.project-item .item-top { min-height: 18px; }
+.project-item .subtitle { min-height: 15px; }
+.project-item .item-bottom { min-height: 13px; }
+.session-item .item-top { min-height: 18px; }
+.session-item .session-item-bottom { min-height: 17px; }
 .card-badges { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
 .agent-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer; margin-top: 12px; }
 .agent-toggle[hidden] { display: flex; visibility: hidden; pointer-events: none; }
@@ -440,6 +447,7 @@ body {
 .file-tab { display: inline-flex; align-items: center; border: none; background: transparent; color: #8b949e; font-size: 12px; height: 22px; padding: 0 8px; border-radius: 5px; cursor: pointer; }
 .file-tab.active { background: #30363d; color: #e6edf3; }
 .file-modal-close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; cursor: pointer; color: #6e7681; font-size: 18px; border-radius: 50%; transform: translateY(-1px); }
+.file-modal-close-icon { display: none; }
 @media (hover: hover) and (pointer: fine) { .file-modal-close:hover { background: #0d1117; color: #e6edf3; } }
 .file-modal-body { flex: 1; overflow: auto; }
 .file-preview { width: 100%; height: 100%; border: none; background: #fff; display: block; }
@@ -774,6 +782,152 @@ html.native-mobile .slash-description {
   .section-title { padding: 12px 12px 6px; }
 }
 
+/* Native mobile readability: CSS px maps to logical points in the Tauri WebView. */
+html.native-mobile .top-bar {
+  min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
+  padding: var(--sat, env(safe-area-inset-top, 0px)) 8px 0 12px;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px #30363d;
+}
+html.native-mobile .top-left { min-height: 44px; gap: 6px; font-size: 17px; line-height: 21px; }
+html.native-mobile .top-logo {
+  width: 20px; height: 21px; line-height: 21px; flex: 0 0 20px; margin-right: 0;
+}
+html.native-mobile .top-title {
+  display: inline-flex; align-items: center; height: 21px; line-height: 21px;
+}
+html.native-mobile #top-right { min-height: 44px; gap: 2px; line-height: 0; }
+html.native-mobile .top-gear,
+html.native-mobile .new-session-btn,
+html.native-mobile .runtime-switch {
+  width: 44px; height: 44px; flex: 0 0 44px; margin: 0;
+}
+html.native-mobile .top-gear svg { width: 22px; height: 22px; }
+html.native-mobile .new-session-btn svg { width: 26px; height: 26px; padding: 4px; border-width: 1.5px; }
+html.native-mobile #top-right.syncing .new-session-btn::after { left: 9px; top: 9px; width: 26px; height: 26px; border-width: 1.5px; }
+html.native-mobile #top-right .runtime-mark,
+html.native-mobile #top-right .runtime-icon { width: 24px; height: 24px; }
+html.native-mobile #top-right .runtime-mark { flex-basis: 24px; }
+html.native-mobile #top-right .runtime-icon { transform: translateX(1px); }
+html.native-mobile #top-right > .runtime-mark {
+  width: 44px; height: 44px; flex: 0 0 44px;
+}
+html.native-mobile .runtime-mark,
+html.native-mobile .runtime-icon { width: 18px; height: 18px; }
+html.native-mobile .runtime-mark { flex-basis: 18px; }
+
+html.native-mobile .breadcrumb { padding: 7px 12px 7px 8px; font-size: 14px; }
+html.native-mobile .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge),
+html.native-mobile .breadcrumb-nav a { padding: 2px 7px; font-size: 13px; }
+html.native-mobile .breadcrumb-sep,
+html.native-mobile .breadcrumb-title { font-size: 15px; }
+
+html.native-mobile .item { padding: 14px 16px; }
+html.native-mobile .item-top .title { font-size: 16px; }
+html.native-mobile .item-time,
+html.native-mobile .item-status,
+html.native-mobile .meta-left { font-size: 14px; }
+html.native-mobile .item .subtitle,
+html.native-mobile .item .meta,
+html.native-mobile .session-secondary-static,
+html.native-mobile .session-secondary-toggle { font-size: 14px; }
+html.native-mobile .item-bottom { gap: 8px; }
+html.native-mobile .item-bottom .subtitle {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+html.native-mobile .badge { font-size: 13px; }
+html.native-mobile .agent-toggle { font-size: 14px; }
+html.native-mobile .card-detail { font-size: 14px; }
+
+html.native-mobile .messages { padding: 10px 12px; }
+html.native-mobile .msg-user .msg-text { font-size: 16px; line-height: 1.5; }
+html.native-mobile .assistant-text { font-size: 16px; line-height: 1.55; }
+html.native-mobile .assistant-text p { margin-bottom: 10px; }
+html.native-mobile .assistant-text p:last-child { margin-bottom: 0; }
+html.native-mobile .assistant-text code,
+html.native-mobile .assistant-text pre code,
+html.native-mobile .assistant-text th,
+html.native-mobile .assistant-text td { font-size: 14px; }
+html.native-mobile .assistant-text h1 { font-size: 22px; }
+html.native-mobile .assistant-text h2 { font-size: 20px; }
+html.native-mobile .assistant-text h3 { font-size: 18px; }
+html.native-mobile .thinking-block,
+html.native-mobile .tool-header { line-height: 21px; }
+html.native-mobile .thinking-toggle,
+html.native-mobile .tool-header { font-size: 15px; }
+html.native-mobile .tool-desc { font-size: 14px; }
+html.native-mobile .thinking-body,
+html.native-mobile .tool-status,
+html.native-mobile .tool-flag,
+html.native-mobile .tool-note { font-size: 13px; }
+html.native-mobile .msg-interrupt { font-size: 14px; line-height: 21px; }
+html.native-mobile .tool-label { font-size: 12px; }
+html.native-mobile .tool-value,
+html.native-mobile .diff-view,
+html.native-mobile .tool-out-pre,
+html.native-mobile .cmd-output pre { font-size: 14px; }
+html.native-mobile .file-badge,
+html.native-mobile .file-badge-content { font-size: 13px; }
+html.native-mobile .file-code { font-size: 14px; line-height: 1.55; }
+
+html.native-mobile .permission-title { font-size: 16px; }
+html.native-mobile .permission-desc,
+html.native-mobile .permission-btn,
+html.native-mobile .permission-input { font-size: 14px; }
+html.native-mobile .permission-desc-inline,
+html.native-mobile .permission-submit { font-size: 13px; }
+
+html.native-mobile #msg-input { padding: 7px 5px; font-size: 16px; line-height: 1.4; }
+html.native-mobile .input-row { border-radius: 24px; }
+html.native-mobile .img-btn,
+html.native-mobile .mic-btn,
+html.native-mobile #send-btn { width: 36px; height: 36px; }
+html.native-mobile .img-btn { font-size: 21px; }
+html.native-mobile .slash-popup-title { font-size: 13px; }
+html.native-mobile .slash-name { font-size: 15px; }
+
+html.native-mobile .section-title { font-size: 14px; }
+html.native-mobile .section-title .collapse-arrow {
+  width: 14px; height: 14px; vertical-align: -2px;
+}
+html.native-mobile .card-project { font-size: 15px; }
+html.native-mobile .card-header { min-height: 21px; }
+html.native-mobile .card-title { min-height: 21.75px; font-size: 15px; line-height: 1.45; }
+html.native-mobile .card-bottom { min-height: 17px; }
+html.native-mobile .card-device,
+html.native-mobile .card-time { font-size: 14px; }
+html.native-mobile .skeleton-card .card-title { align-items: center; }
+
+html.native-mobile .project-item .item-top { min-height: 19px; }
+html.native-mobile .project-item .subtitle { min-height: 18px; line-height: 18px; }
+html.native-mobile .project-item .item-bottom { min-height: 18px; line-height: 18px; }
+html.native-mobile .session-item .item-top { min-height: 21px; }
+html.native-mobile .session-item .session-item-bottom { min-height: 18px; line-height: 18px; }
+html.native-mobile .device-item .item-top { min-height: 18px; }
+html.native-mobile .device-item .item-bottom { min-height: 19px; }
+
+html.native-mobile .file-modal-title { font-size: 16px; }
+html.native-mobile .file-modal-header {
+  min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
+  padding: var(--sat, env(safe-area-inset-top, 0px)) 8px 0 12px;
+}
+html.native-mobile .file-tab { height: 28px; font-size: 13px; }
+html.native-mobile .file-modal-close {
+  width: 44px; height: 44px; font-size: 26px; line-height: 1;
+  transform: none;
+}
+html.native-mobile .file-modal-close-glyph { display: none; }
+html.native-mobile .file-modal-close-icon {
+  display: block; width: 26px; height: 26px; padding: 4px;
+  border: 1.5px solid currentColor; border-radius: 50%;
+  transform: rotate(45deg);
+}
+html.native-mobile .file-loading { gap: 12px; font-size: 15px; }
+html.native-mobile .file-loading .spinner { width: 22px; height: 22px; }
+html.native-mobile .md-preview { font-size: 16px; line-height: 1.65; }
+
+html.native-mobile .text-btn { min-height: 36px; font-size: 14px; }
+
 @media (max-width: 400px) {
   .meta-sid { display: none; }
 }
@@ -803,9 +957,24 @@ html.native-mobile .slash-description {
 .skel-mt4 { margin-top: 4px; }
 .skeleton-card { pointer-events: none; }
 .skeleton-item { pointer-events: none; }
+.skeleton-item .item-main { width: 100%; }
+.skeleton-item .item-top .skel,
+.skeleton-item .item-bottom .skel,
+.skeleton-item .subtitle .skel { flex-shrink: 0; }
 .skeleton-messages { pointer-events: none; }
 .skeleton-messages .skel { display: block; }
-.skeleton-messages .tl-item { padding-top: 10px; padding-bottom: 2px; }
+.skeleton-copy-line {
+  min-height: 20.8px; display: flex; align-items: center;
+}
+.skeleton-user .skeleton-copy-line { min-height: 19.5px; }
+.skeleton-msg-meta { min-height: 16px; align-items: center; }
+.skeleton-meta-bar { width: 16%; height: 8px; }
+.skeleton-tool .tool-header,
+.skeleton-thinking .thinking-toggle {
+  min-height: 21px; display: flex; align-items: center;
+}
+html.native-mobile .skeleton-messages .skeleton-copy-line { min-height: 24.8px; }
+html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-height: 25px; }
 
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
