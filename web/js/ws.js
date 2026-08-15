@@ -152,6 +152,7 @@ function connectWs(_, projectHash) {
   state.ws.onmessage = function (e) { handleWsMessage(JSON.parse(e.data)); };
 
   state.ws.onclose = function () {
+    if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
     if (state.appState.session) {
       setWsStatus('reconnecting');
@@ -405,6 +406,7 @@ function setWsStatus(status) {
 }
 
 function disconnectWs() {
+  if (window.resetCommandRequest) window.resetCommandRequest();
   if (state.ws) {
     state.ws.onclose = null;
     state.ws.close();

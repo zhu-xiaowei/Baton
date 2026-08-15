@@ -13,7 +13,7 @@ var _mode = 'commands';
 var _parentCommand = null;
 var _latestRequestId = '';
 var _requestPending = false;
-var _lastFetchAt = 0;
+var _requestContextKey = '';
 var _contextKey = '';
 
 function esc(s) {
@@ -72,9 +72,11 @@ function prefetchCommands() {
   var send = window.wsSendReliable || window.wsSend;
   if (!send) return;
   loadCurrentContext();
+  var key = cacheKey();
+  if (_requestPending && _requestContextKey === key) return;
   _latestRequestId = 'cmds_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   _requestPending = true;
-  _lastFetchAt = Date.now();
+  _requestContextKey = key;
   send({
     action: 'list_commands',
     projectHash: projectHash(),
@@ -95,11 +97,17 @@ function handleCommandsList(msg) {
   if (msg.projectHash && msg.projectHash !== projectHash()) return;
   if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId) return;
   _requestPending = false;
+  _requestContextKey = '';
   _commands = msg.commands.slice();
   _skills = Array.isArray(msg.skills) ? msg.skills.slice() : [];
   _contextKey = cacheKey();
   saveCache(_commands, _skills);
   if (currentQuery() !== null) applyFilter();
+}
+
+function resetCommandRequest() {
+  _requestPending = false;
+  _requestContextKey = '';
 }
 
 // --- popup UI ---
@@ -296,10 +304,7 @@ function onInput() {
   }
   var needsRefresh = query !== null
     && !_requestPending
-    && (
-      (_commands.length === 0 && _skills.length === 0)
-      || (query.mode === 'commands' && query.prefix === '' && Date.now() - _lastFetchAt > 2000)
-    );
+    && (_commands.length === 0 && _skills.length === 0);
   if (needsRefresh) {
     prefetchCommands();
   }
@@ -371,10 +376,14 @@ function onKeydown(e) {
     if (e.target.closest('#slash-popup') || e.target === input) return;
     closePopup();
   });
+  // The viewer modules load lazily after the input bar becomes visible. Honor
+  // text entered before this module attached its input listener.
+  if (currentQuery() !== null) onInput();
 })();
 
 Object.assign(window, {
   prefetchCommands: prefetchCommands,
   handleCommandsList: handleCommandsList,
+  resetCommandRequest: resetCommandRequest,
   closeSlashPopup: closePopup,
 });

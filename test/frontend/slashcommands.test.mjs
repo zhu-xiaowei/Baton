@@ -8,6 +8,61 @@ import { state } from '../../web/js/state.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
+test('slash popup restores cached commands entered before lazy load and coalesces prefetches', async () => {
+  const dom = new JSDOM(
+    '<!doctype html><body>'
+      + '<div id="slash-popup" style="display:none">'
+      + '<div class="slash-popup-title">Slash Commands</div><div id="slash-list"></div></div>'
+      + '<textarea id="msg-input">/</textarea></body>',
+    { url: 'https://test/' },
+  );
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.navigator = dom.window.navigator;
+  globalThis.localStorage = dom.window.localStorage;
+  dom.window.Element.prototype.scrollIntoView = function () {};
+
+  state.appState = {
+    runtime: 'claude',
+    device: 'phone',
+    project: { hash: '-workspace-project' },
+    session: 'claude-session-cached',
+  };
+  state.wsProjectHash = '-workspace-project';
+  state.wsSessionId = 'claude-session-cached';
+  dom.window.localStorage.setItem(
+    'apeek_cmds:v6:phone:claude:-workspace-project',
+    JSON.stringify({
+      commands: [{ name: 'model', description: 'Cached model command' }],
+      skills: [],
+    }),
+  );
+  const sent = [];
+  dom.window.wsSendReliable = (payload) => sent.push(payload);
+  dom.window.updateSendBtn = () => {};
+
+  await import(
+    pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
+      + `?lazy-cache-test=${Date.now()}`
+  );
+
+  assert.equal(dom.window.document.querySelector('#slash-popup').style.display, 'block');
+  assert.equal(
+    dom.window.document.querySelector('.slash-command-name').textContent,
+    '/model',
+  );
+  assert.equal(sent.length, 0);
+
+  dom.window.prefetchCommands();
+  dom.window.prefetchCommands();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].action, 'list_commands');
+
+  dom.window.resetCommandRequest();
+  dom.window.prefetchCommands();
+  assert.equal(sent.length, 2);
+});
+
 test('Codex slash popup preserves bridge order and opens the native-style skill picker', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
