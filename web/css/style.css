@@ -829,7 +829,7 @@ html.native-mobile .top-logo {
 html.native-mobile .top-title {
   display: inline-flex; align-items: center; height: 21px; line-height: 21px;
 }
-html.native-mobile #top-right { min-height: 44px; gap: 2px; line-height: 0; }
+html.native-mobile #top-right { min-height: 44px; gap: 0; line-height: 0; }
 html.native-mobile .top-gear,
 html.native-mobile .new-session-btn,
 html.native-mobile .runtime-switch {
@@ -841,7 +841,7 @@ html.native-mobile #top-right.syncing .new-session-btn::after { left: 9px; top: 
 html.native-mobile #top-right .runtime-mark,
 html.native-mobile #top-right .runtime-icon { width: 24px; height: 24px; }
 html.native-mobile #top-right .runtime-mark { flex-basis: 24px; }
-html.native-mobile #top-right .runtime-icon { transform: translateX(1px); }
+html.native-mobile #top-right .runtime-icon { transform: translateX(3px); }
 html.native-mobile #top-right > .runtime-mark {
   width: 44px; height: 44px; flex: 0 0 44px;
 }
