@@ -106,7 +106,9 @@ snapshot above:
 - **Config:** redacted `get_settings` values and sources. Secret-like keys never leave the Bridge.
 - **Usage:** live `get_usage`; historical token fields fall back to the selected session JSONL.
 - **Stats:** Worker-thread, read-only aggregation of `~/.claude/projects/**/*.jsonl`, excluding
-  sidechains and duplicate assistant message IDs.
+  sidechains and duplicate assistant message IDs. Models includes a token-over-time coordinate
+  chart plus the complete ranked model list; 7/30-day ranges use daily buckets and all-time adapts
+  to month/quarter/year buckets.
 
 The panel is not persisted to Claude JSONL or DynamoDB. A bounded response is sent over WebSocket;
 very large settings catalogs are marked `truncated` instead of exceeding the transport frame limit.

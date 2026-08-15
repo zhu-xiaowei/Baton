@@ -63,6 +63,16 @@ test('Claude usage panel navigates tabs, stats views, ranges, and copies text', 
         },
         tokenBreakdown: { input: 500, output: 100, cacheCreation: 300, cacheRead: 300 },
         days: [{ date: '2026-08-15', tokens: 1200, sessions: 3 }],
+        modelChart: {
+          unit: 'day',
+          labels: ['2026-08-14', '2026-08-15'],
+          series: [{
+            id: 'model-opus',
+            label: 'Opus',
+            total: 1200,
+            values: [200, 1000],
+          }],
+        },
         models: [{
           id: 'model-opus',
           label: 'Opus',
@@ -87,6 +97,7 @@ test('Claude usage panel navigates tabs, stats views, ranges, and copies text', 
         },
         tokenBreakdown: { input: 100, output: 20, cacheCreation: 40, cacheRead: 40 },
         days: [{ date: '2026-08-15', tokens: 200, sessions: 1 }],
+        modelChart: { unit: 'day', labels: [], series: [] },
         models: [],
       }],
     },
@@ -112,6 +123,9 @@ test('Claude usage panel navigates tabs, stats views, ranges, and copies text', 
   dom.window.switchClaudeStatsView(models, 'models');
   assert.equal(root.querySelector('.cc-stats-view.active').dataset.view, 'models');
   assert.match(root.querySelector('.cc-stats-view.active').textContent, /1.2k tokens/);
+  assert.ok(root.querySelector('.cc-model-chart'));
+  assert.match(root.querySelector('.cc-model-chart').getAttribute('aria-label'), /usage over time/);
+  assert.match(root.querySelector('.cc-model-chart-block').textContent, /Opus/);
 
   const last7 = root.querySelector('.cc-range-tabs button[data-range="7d"]');
   dom.window.switchClaudeStatsRange(last7, '7d');

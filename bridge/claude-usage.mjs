@@ -11,6 +11,7 @@ const CONFIG_SOURCE_LIMIT = 10;
 const TEXT_LIMIT = 240;
 const STATS_CACHE_MS = 60_000;
 const MAX_PANEL_BYTES = 23_000;
+const MODEL_CHART_SERIES_LIMIT = 5;
 
 let statsCache = null;
 let statsPending = null;
@@ -236,6 +237,89 @@ function streaks(activeKeys, todayKey) {
   return { longest, current };
 }
 
+function monthDistance(startKey, endKey) {
+  const start = dateFromKey(startKey);
+  const end = dateFromKey(endKey);
+  return ((end.getFullYear() - start.getFullYear()) * 12)
+    + end.getMonth() - start.getMonth();
+}
+
+function chartUnit(key, startKey, todayKey) {
+  if (key !== 'all') return 'day';
+  const months = monthDistance(startKey, todayKey);
+  if (months <= 36) return 'month';
+  if (months <= 144) return 'quarter';
+  return 'year';
+}
+
+function chartBucket(key, unit) {
+  if (unit === 'day') return key;
+  const [year, month] = key.split('-').map(Number);
+  if (unit === 'month') return `${year}-${String(month).padStart(2, '0')}`;
+  if (unit === 'quarter') return `${year}-Q${Math.floor((month - 1) / 3) + 1}`;
+  return String(year);
+}
+
+function chartLabels(startKey, todayKey, unit) {
+  const labels = [];
+  const cursor = dateFromKey(startKey);
+  const end = dateFromKey(todayKey);
+  if (unit === 'day') {
+    while (cursor <= end) {
+      labels.push(dateKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return labels;
+  }
+  cursor.setDate(1);
+  if (unit === 'quarter') cursor.setMonth(Math.floor(cursor.getMonth() / 3) * 3);
+  if (unit === 'year') cursor.setMonth(0);
+  while (cursor <= end) {
+    labels.push(chartBucket(dateKey(cursor), unit));
+    if (unit === 'month') cursor.setMonth(cursor.getMonth() + 1);
+    else if (unit === 'quarter') cursor.setMonth(cursor.getMonth() + 3);
+    else cursor.setFullYear(cursor.getFullYear() + 1);
+  }
+  return labels;
+}
+
+function modelChart(dayValues, models, key, startKey, todayKey) {
+  if (!dayValues.length || !models.size) return { unit: 'day', labels: [], series: [] };
+  const firstKey = startKey || dayValues[0].date;
+  const unit = chartUnit(key, firstKey, todayKey);
+  const labels = chartLabels(firstKey, todayKey, unit);
+  const labelIndexes = new Map(labels.map((label, index) => [label, index]));
+  const ranked = [...models.values()]
+    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
+  const selected = ranked.slice(0, MODEL_CHART_SERIES_LIMIT);
+  const selectedIds = new Set(selected.map((model) => model.id));
+  const hasOther = ranked.length > selected.length;
+  const series = selected.map((model) => ({
+    id: model.id,
+    label: model.id,
+    total: model.total,
+    values: Array(labels.length).fill(0),
+  }));
+  if (hasOther) {
+    series.push({
+      id: '__other__',
+      label: 'Other',
+      total: ranked.slice(selected.length).reduce((total, model) => total + model.total, 0),
+      values: Array(labels.length).fill(0),
+    });
+  }
+  const seriesById = new Map(series.map((item) => [item.id, item]));
+  for (const day of dayValues) {
+    const index = labelIndexes.get(chartBucket(day.date, unit));
+    if (index == null) continue;
+    for (const [modelId, metric] of day.models) {
+      const target = seriesById.get(selectedIds.has(modelId) ? modelId : '__other__');
+      if (target) target.values[index] += metric.total;
+    }
+  }
+  return { unit, labels, series };
+}
+
 function rangeResult(aggregate, key, label, startKey, todayKey) {
   const dayValues = [...aggregate.days.values()]
     .filter((day) => !startKey || day.date >= startKey)
@@ -290,6 +374,7 @@ function rangeResult(aggregate, key, label, startKey, todayKey) {
       tokens: day.metrics.total,
       sessions: day.sessions.size,
     })),
+    modelChart: modelChart(dayValues, models, key, startKey, todayKey),
     models: [...models.values()]
       .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id)),
   };
@@ -449,6 +534,9 @@ function modelLabels(initialize) {
 function applyModelLabels(stats, labels) {
   for (const range of stats.ranges) {
     for (const model of range.models) model.label = labels.get(model.id) || model.id;
+    for (const series of range.modelChart?.series || []) {
+      if (series.id !== '__other__') series.label = labels.get(series.id) || series.id;
+    }
   }
 }
 
@@ -512,6 +600,7 @@ function fitPanelForTransport(panel) {
   panel.config.sources = [];
   for (const range of panel.stats.ranges) {
     range.models = range.models.slice(0, 20);
+    range.modelChart.series = range.modelChart.series.slice(0, 6);
     if (range.key === 'all') range.days = range.days.slice(-180);
   }
   if (panelBytes(panel) <= MAX_PANEL_BYTES) return panel;
@@ -521,6 +610,7 @@ function fitPanelForTransport(panel) {
   panel.usage.behaviors = null;
   for (const range of panel.stats.ranges) {
     range.models = range.models.slice(0, 10);
+    range.modelChart.series = range.modelChart.series.slice(0, 4);
     if (range.key === 'all') range.days = range.days.slice(-90);
   }
   if (panelBytes(panel) <= MAX_PANEL_BYTES) return panel;
@@ -528,6 +618,7 @@ function fitPanelForTransport(panel) {
   panel.config.effective = panel.config.effective.slice(0, 15);
   for (const range of panel.stats.ranges) {
     range.models = range.models.slice(0, 5);
+    range.modelChart.series = range.modelChart.series.slice(0, 3);
     if (range.key === 'all') range.days = range.days.slice(-30);
   }
   if (panelBytes(panel) <= MAX_PANEL_BYTES) return panel;
@@ -536,6 +627,7 @@ function fitPanelForTransport(panel) {
   for (const range of panel.stats.ranges) {
     range.models = [];
     range.days = [];
+    range.modelChart = { unit: range.modelChart?.unit || 'day', labels: [], series: [] };
   }
   return panel;
 }

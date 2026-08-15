@@ -76,6 +76,20 @@ test('Claude stats aggregates sessions, dates, and model usage without double co
       all.models.map((model) => [model.id, model.total]),
       [['model-sonnet', 27], ['model-opus', 20]],
     );
+    assert.equal(all.modelChart.unit, 'month');
+    assert.deepEqual(all.modelChart.labels, ['2026-08']);
+    assert.deepEqual(
+      all.modelChart.series.map((series) => [series.id, series.values]),
+      [['model-sonnet', [27]], ['model-opus', [20]]],
+    );
+    const last7 = stats.ranges.find((range) => range.key === '7d');
+    assert.equal(last7.modelChart.unit, 'day');
+    assert.equal(last7.modelChart.labels.length, 7);
+    assert.deepEqual(last7.modelChart.labels.slice(-3), [
+      '2026-08-01',
+      '2026-08-02',
+      '2026-08-03',
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -157,6 +171,7 @@ test('Claude usage panel uses live controls and redacts sensitive config values'
     assert.equal(panel.status.items.find((item) => item.label === 'Available agents').value, 1);
     assert.equal(panel.usage.items.find((item) => item.label === 'Input tokens').value, 8);
     assert.equal(panel.stats.ranges[0].models[0].label, 'Opus');
+    assert.equal(panel.stats.ranges[0].modelChart.series[0].label, 'Opus');
     assert.doesNotMatch(JSON.stringify(panel), /should-not-leak|PRIVATE_TOKEN\":\"secret|password\":\"secret/);
     assert.match(JSON.stringify(panel), /••••/);
     assert.ok(Buffer.byteLength(JSON.stringify(panel)) < 30_000);
@@ -238,7 +253,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const pool = new ClaudePool({
     bin,
     env: { ARGV_FILE: argvFile },
-    initTimeout: 2000,
+    initTimeout: 5000,
   });
   try {
     const response = await pool.inspectSession(
