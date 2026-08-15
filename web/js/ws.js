@@ -314,6 +314,8 @@ function handleWsMessage(msg) {
       if (window.handleFileProgress) window.handleFileProgress(msg);
     } else if (msg.action === 'commands_list') {
       if (window.handleCommandsList) window.handleCommandsList(msg);
+    } else if (msg.action === 'command_options') {
+      if (window.handleCommandOptions) window.handleCommandOptions(msg);
     } else if (msg.action === 'stream_delta') {
       if (msg.sessionId === state.wsSessionId) pushStreamFrame(msg.streamId, { t: 'delta', seq: msg.seq, blockId: msg.blockId, chunk: msg.chunk });
     } else if (msg.action === 'stream_tool_input') {

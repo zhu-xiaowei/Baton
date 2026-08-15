@@ -3,6 +3,7 @@
 import { state } from '../state.js';
 
 var CACHE_PREFIX = 'apeek_cmds:v6:';
+var CACHE_TTL_MS = 5 * 60 * 1000;
 
 var _commands = [];     // current command list shown/filtered against
 var _skills = [];
@@ -14,7 +15,10 @@ var _parentCommand = null;
 var _latestRequestId = '';
 var _requestPending = false;
 var _requestContextKey = '';
+var _latestOptionsRequestId = '';
 var _contextKey = '';
+var _revision = '';
+var _checkedAt = 0;
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -39,21 +43,25 @@ function cacheKey() {
 function loadCache() {
   try {
     var raw = localStorage.getItem(cacheKey());
-    if (!raw) return { commands: [], skills: [] };
+    if (!raw) return { commands: [], skills: [], revision: '', checkedAt: 0 };
     var cached = JSON.parse(raw);
     return {
       commands: Array.isArray(cached.commands) ? cached.commands : [],
       skills: Array.isArray(cached.skills) ? cached.skills : [],
+      revision: typeof cached.revision === 'string' ? cached.revision : '',
+      checkedAt: Number(cached.checkedAt) || 0,
     };
   } catch (e) {}
-  return { commands: [], skills: [] };
+  return { commands: [], skills: [], revision: '', checkedAt: 0 };
 }
 
-function saveCache(commands, skills) {
+function saveCache(commands, skills, revision, checkedAt) {
   try {
     localStorage.setItem(cacheKey(), JSON.stringify({
       commands: commands,
       skills: skills,
+      revision: revision || '',
+      checkedAt: Number(checkedAt) || 0,
     }));
   } catch (e) {}
 }
@@ -65,6 +73,8 @@ function loadCurrentContext() {
   var cached = loadCache();
   _commands = cached.commands;
   _skills = cached.skills;
+  _revision = cached.revision;
+  _checkedAt = cached.checkedAt;
 }
 
 // Fire a fresh scan request to the bridge (response → handleCommandsList).
@@ -74,6 +84,7 @@ function prefetchCommands() {
   loadCurrentContext();
   var key = cacheKey();
   if (_requestPending && _requestContextKey === key) return;
+  if (_revision && Date.now() - _checkedAt < CACHE_TTL_MS) return;
   _latestRequestId = 'cmds_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   _requestPending = true;
   _requestContextKey = key;
@@ -82,32 +93,45 @@ function prefetchCommands() {
     projectHash: projectHash(),
     device: state.appState.device || '',
     runtime: runtime(),
-    sessionId: state.wsSessionId || '',
+    knownRevision: _revision,
     requestId: _latestRequestId,
   });
 }
 
 function handleCommandsList(msg) {
-  if (!Array.isArray(msg.commands)) return;
   if (_latestRequestId && msg.requestId !== _latestRequestId) return;
   var currentRuntime = runtime();
   if (currentRuntime === 'codex' && msg.runtime !== 'codex') return;
   if (currentRuntime !== 'codex' && msg.runtime && msg.runtime !== currentRuntime) return;
   if (msg.device && msg.device !== (state.appState.device || '')) return;
   if (msg.projectHash && msg.projectHash !== projectHash()) return;
-  if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId) return;
   _requestPending = false;
   _requestContextKey = '';
+  if (msg.error && !msg.notModified && !Array.isArray(msg.commands)) return;
+  if (msg.notModified) {
+    if (msg.revision) _revision = msg.revision;
+    if (!msg.stale) _checkedAt = Date.now();
+    saveCache(_commands, _skills, _revision, _checkedAt);
+    return;
+  }
+  if (!Array.isArray(msg.commands)) return;
+  var selectedName = _filtered[_selected] && _filtered[_selected].name;
+  var changed = !msg.revision || msg.revision !== _revision;
   _commands = msg.commands.slice();
   _skills = Array.isArray(msg.skills) ? msg.skills.slice() : [];
+  _revision = msg.revision || '';
+  if (!msg.stale) _checkedAt = Date.now();
   _contextKey = cacheKey();
-  saveCache(_commands, _skills);
-  if (currentQuery() !== null) applyFilter();
+  saveCache(_commands, _skills, _revision, _checkedAt);
+  if (changed && currentQuery() !== null && (_mode === 'commands' || _mode === 'skills')) {
+    applyFilter(selectedName);
+  }
 }
 
 function resetCommandRequest() {
   _requestPending = false;
   _requestContextKey = '';
+  _latestOptionsRequestId = '';
 }
 
 // --- popup UI ---
@@ -127,7 +151,7 @@ function currentQuery() {
   return null;
 }
 
-function applyFilter() {
+function applyFilter(preferredName) {
   var query = currentQuery();
   if (query === null) { closePopup(); return; }
   _mode = query.mode;
@@ -136,7 +160,9 @@ function applyFilter() {
     return item.name.toLowerCase().indexOf(query.prefix) === 0;
   });
   if (_filtered.length === 0) { closePopup(); return; }
-  _selected = 0;
+  _selected = Math.max(0, preferredName
+    ? _filtered.findIndex(function (item) { return item.name === preferredName; })
+    : 0);
   renderPopup();
 }
 
@@ -245,6 +271,10 @@ function selectCommand(i) {
     if (window.updateSendBtn) window.updateSendBtn();
     return;
   }
+  if (item.behavior === 'picker' && item.optionsRemote) {
+    requestCommandOptions(item);
+    return;
+  }
   if (item.behavior === 'picker') {
     _mode = 'options';
     _parentCommand = item;
@@ -268,6 +298,52 @@ function selectCommand(i) {
   closePopup();
   if (item.behavior !== 'compose' && window.sendMessage) window.sendMessage();
   if (window.updateSendBtn) window.updateSendBtn();
+}
+
+function requestCommandOptions(item) {
+  var send = window.wsSendReliable || window.wsSend;
+  if (!send) return;
+  _mode = 'options';
+  _parentCommand = item;
+  _selected = 0;
+  _filtered = [{
+    name: 'loading',
+    label: 'Loading...',
+    description: 'Fetching options for this session',
+    disabled: true,
+  }];
+  renderPopup();
+  _latestOptionsRequestId = 'cmdopts_' + Date.now() + '_'
+    + Math.random().toString(36).slice(2);
+  send({
+    action: 'list_command_options',
+    projectHash: projectHash(),
+    device: state.appState.device || '',
+    runtime: runtime(),
+    sessionId: state.wsSessionId || '',
+    commandName: item.name,
+    requestId: _latestOptionsRequestId,
+  });
+}
+
+function handleCommandOptions(msg) {
+  if (!_latestOptionsRequestId || msg.requestId !== _latestOptionsRequestId) return;
+  if (!_parentCommand || msg.commandName !== _parentCommand.name) return;
+  if (msg.runtime && msg.runtime !== runtime()) return;
+  if (msg.device && msg.device !== (state.appState.device || '')) return;
+  if (msg.projectHash && msg.projectHash !== projectHash()) return;
+  if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId) return;
+  _latestOptionsRequestId = '';
+  _filtered = Array.isArray(msg.options) && msg.options.length
+    ? msg.options.slice()
+    : [{
+      name: 'unavailable',
+      label: 'No options available',
+      description: msg.error || 'No options were reported for this session.',
+      disabled: true,
+    }];
+  _selected = 0;
+  if (_open && _mode === 'options') renderPopup();
 }
 
 function runClientAction(item, input) {
@@ -301,13 +377,10 @@ function onInput() {
     var cached = loadCache();
     _commands = cached.commands;
     _skills = cached.skills;
+    _revision = cached.revision;
+    _checkedAt = cached.checkedAt;
   }
-  var needsRefresh = query !== null
-    && !_requestPending
-    && (_commands.length === 0 && _skills.length === 0);
-  if (needsRefresh) {
-    prefetchCommands();
-  }
+  if (query !== null) prefetchCommands();
   applyFilter();
 }
 
@@ -384,6 +457,7 @@ function onKeydown(e) {
 Object.assign(window, {
   prefetchCommands: prefetchCommands,
   handleCommandsList: handleCommandsList,
+  handleCommandOptions: handleCommandOptions,
   resetCommandRequest: resetCommandRequest,
   closeSlashPopup: closePopup,
 });

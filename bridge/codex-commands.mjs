@@ -363,13 +363,15 @@ export function scanCodexLegacyPrompts(options = {}) {
 
 export function codexCommandCatalog(options = {}) {
   const platform = options.platform || process.platform;
+  const remoteOptionNames = new Set(options.remoteOptionNames || []);
   const builtins = CODEX_MOBILE_COMMANDS
     .filter((command) => command.name !== 'app'
       || platform === 'darwin'
       || platform === 'win32')
     .map((command) => {
+      const optionsRemote = remoteOptionNames.has(command.name);
       const commandOptions = (
-        options.commandOptions?.[command.name]
+        (optionsRemote ? null : options.commandOptions?.[command.name])
         || STATIC_COMMAND_OPTIONS[command.name]
         || []
       ).map((item) => ({ ...item }));
@@ -379,6 +381,7 @@ export function codexCommandCatalog(options = {}) {
           ? { behavior: 'send' }
           : {}),
         options: commandOptions,
+        ...(optionsRemote ? { optionsRemote: true } : {}),
         source: 'builtin',
         runtime: 'codex',
       };

@@ -230,7 +230,19 @@ def _handle_message(event, connection_id, endpoint):
                 "list_commands",
                 preserve_device=True,
             )
+    elif action == "list_command_options":
+        if role == "app":
+            return _handle_send_to_bridge(
+                body,
+                account_id,
+                endpoint,
+                "list_command_options",
+                preserve_device=True,
+            )
     elif action == "commands_list":
+        if role == "bridge":
+            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
+    elif action == "command_options":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action in ("stream_delta", "stream_tool_input", "stream_block_start", "stream_block_stop", "stream_end"):

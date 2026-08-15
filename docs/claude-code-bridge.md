@@ -284,7 +284,7 @@ commands with the same descriptions and argument hints. Continuing to type
 filters by prefix; ↑↓ navigates; commands with options open a second-level picker.
 
 ```
-App → Server → Bridge:  { action: "list_commands", projectHash: "xxx", device: "MacBook-Pro", requestId: "cmds_..." }
+App → Server → Bridge:  { action: "list_commands", projectHash: "xxx", device: "MacBook-Pro", knownRevision: "...", requestId: "cmds_..." }
 Bridge → Claude `-p` control_request `{subtype:"initialize"}` with
          `--no-session-persistence`
 Claude → Bridge: runtime-filtered `commands`, `models`, aliases, descriptions,
@@ -292,10 +292,16 @@ Claude → Bridge: runtime-filtered `commands`, `models`, aliases, descriptions,
 Bridge: filter terminal-only or unsafe local commands; order executable local
         commands alphabetically, followed by prompt/Skill commands alphabetically,
         matching the TUI groups; attach live model/effort/fast picker options
-Bridge → Server → App: ordered `commands_list`
-App: cache by device/runtime/project; show cached data immediately and replace it
-     with the fresh runtime response
+Bridge: cache the normalized catalog for five minutes by runtime/project and hash
+        commands + Skills into a stable revision; coalesce concurrent refreshes
+Bridge → Server → App: ordered `commands_list`, or `notModified` without catalog content
+App: cache content + revision by device/runtime/project; show it immediately, skip
+     validation for five minutes, and redraw an open top-level menu only when revision changes
 ```
+
+Session-scoped picker values are requested separately through `list_command_options`; they never
+enter the project catalog. This prevents Codex agent/subagent choices from one thread appearing in
+another thread.
 
 If an old Claude Code version does not support `initialize`, `commands.mjs` scans
 only user/project/plugin Markdown commands and Skills. The fallback parses

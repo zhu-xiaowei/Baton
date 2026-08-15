@@ -471,6 +471,7 @@ def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
                 "projectHash": "-workspace-project",
                 "sessionId": "codex:thread-1",
                 "device": "Mac",
+                "knownRevision": "revision-1",
             }),
         },
         "app-1",
@@ -487,8 +488,72 @@ def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
             "projectHash": "-workspace-project",
             "sessionId": "codex:thread-1",
             "device": "Mac",
+            "knownRevision": "revision-1",
         },
     )]
+
+
+def test_command_options_route_between_app_and_bridge(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            role = "bridge" if Key["connectionId"] == "bridge-mac" else "app"
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": role,
+                    "accountId": "account-1",
+                },
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_query_connections",
+        lambda account_id, role: (
+            [{"connectionId": "bridge-mac", "deviceName": "Mac"}]
+            if role == "bridge"
+            else [{"connectionId": "app-1"}, {"connectionId": "app-2"}]
+        ),
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    request = {
+        "action": "list_command_options",
+        "requestId": "options-1",
+        "runtime": "codex",
+        "projectHash": "-workspace-project",
+        "sessionId": "codex:thread-1",
+        "commandName": "agent",
+        "device": "Mac",
+    }
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(request)},
+        "app-1",
+        "https://example.test/v1",
+    )
+    assert response == {"statusCode": 200}
+    assert sent == [("bridge-mac", request)]
+
+    sent.clear()
+    result = {
+        "action": "command_options",
+        "requestId": "options-1",
+        "runtime": "codex",
+        "commandName": "agent",
+        "options": [{"name": "thread-2"}],
+    }
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(result)},
+        "bridge-mac",
+        "https://example.test/v1",
+    )
+    assert response == {"statusCode": 200}
+    assert sent == [("app-1", result), ("app-2", result)]
 
 
 def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch):

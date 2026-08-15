@@ -35,6 +35,10 @@ import { updateSessionStatus, knownProjects } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { PermissionQueue } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
+import {
+  CommandCatalogCache,
+  commandCatalogPayload,
+} from './command-catalog-cache.mjs';
 
 let _ws = null;
 let _config = null;
@@ -53,6 +57,7 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
+const _commandCatalogCache = new CommandCatalogCache();
 let _claudeHookServer = null;
 
 // Idle pooled processes do not block terminal-driven status updates.
@@ -90,6 +95,46 @@ function cwdForSession(sessionId) {
   if (!filePath) return null;
   const projectHash = path.basename(path.dirname(filePath));
   return projectHashToPath(projectHash);
+}
+
+async function loadCommandCatalog(runtime, cwd, fallbackDir = cwd) {
+  let commands = [];
+  let skills = [];
+  if (runtime === 'codex') {
+    const context = await getRuntimeAdapter('codex').interaction.listCommandContext({
+      cwd,
+      forceReload: true,
+    });
+    commands = codexCommandCatalog({
+      commandOptions: context.commandOptions,
+      remoteOptionNames: ['experimental', 'agent', 'subagents'],
+    });
+    skills = context.skills;
+  } else {
+    try {
+      const context = await _pool.inspect(cwd);
+      commands = claudeCommandCatalog(context);
+      _claudeCapturedCommands.set(
+        cwd,
+        capturedClaudeCommandNames(context),
+      );
+      if (_claudeCapturedCommands.size > 100) {
+        _claudeCapturedCommands.delete(_claudeCapturedCommands.keys().next().value);
+      }
+    } catch (error) {
+      console.warn(`[ws] Claude command initialize unavailable, using disk fallback: ${error.message}`);
+      _claudeCapturedCommands.delete(cwd);
+      commands = scanSlashCommands(fallbackDir);
+    }
+  }
+  return { commands, skills };
+}
+
+function commandCatalog(runtime, cwd, fallbackDir = cwd) {
+  return _commandCatalogCache.get(
+    `${runtime}:${cwd}`,
+    () => loadCommandCatalog(runtime, cwd, fallbackDir),
+  );
 }
 
 // Push an interaction-owned session's status to DDB.
@@ -405,6 +450,9 @@ async function handleMessage(msg) {
     case 'list_commands':
       await handleListCommands(msg);
       break;
+    case 'list_command_options':
+      await handleListCommandOptions(msg);
+      break;
     case 'messages_ack': {
       const p = _pendingAcks.get(msg.sessionId);
       if (p) { clearTimeout(p.timer); _pendingAcks.delete(msg.sessionId); p.resolve(true); }
@@ -538,8 +586,12 @@ async function handleSendMessage(
   if (identity.runtime === 'claude' && sessionId) {
     const command = parseClaudeSlashCommand(resolved);
     const commandCwd = projectCwd || cwdForSession(identity.nativeSessionId);
-    const captured = commandCwd
-      ? _claudeCapturedCommands.get(path.resolve(commandCwd))
+    const resolvedCommandCwd = commandCwd ? path.resolve(commandCwd) : '';
+    if (command && resolvedCommandCwd && !_claudeCapturedCommands.has(resolvedCommandCwd)) {
+      await commandCatalog('claude', resolvedCommandCwd).catch(() => {});
+    }
+    const captured = resolvedCommandCwd
+      ? _claudeCapturedCommands.get(resolvedCommandCwd)
       : null;
     if (command && captured?.has(command.name)) {
       await handleClaudeCommand(
@@ -1239,52 +1291,61 @@ async function handleListCommands(msg) {
   const {
     projectHash,
     requestId,
+    knownRevision = '',
     runtime = 'claude',
     device = '',
-    sessionId = '',
   } = msg;
-  let commands = [];
-  let skills = [];
+  let result;
   try {
     const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
-    if (runtime === 'codex') {
-      const interaction = getRuntimeAdapter('codex').interaction;
-      const identity = sessionId ? parseStorageSessionId(sessionId, 'codex') : null;
-      const context = await interaction.listCommandContext({
-        cwd: dir || process.cwd(),
-        nativeSessionId: identity?.nativeSessionId || '',
-        forceReload: true,
-      });
-      commands = codexCommandCatalog({
-        commandOptions: context.commandOptions,
-      });
-      skills = context.skills;
-    } else {
-      const cwd = dir || process.cwd();
-      try {
-        const context = await _pool.inspect(cwd);
-        commands = claudeCommandCatalog(context);
-        _claudeCapturedCommands.set(
-          path.resolve(cwd),
-          capturedClaudeCommandNames(context),
-        );
-        if (_claudeCapturedCommands.size > 100) {
-          _claudeCapturedCommands.delete(_claudeCapturedCommands.keys().next().value);
-        }
-      } catch (error) {
-        console.warn(`[ws] Claude command initialize unavailable, using disk fallback: ${error.message}`);
-        _claudeCapturedCommands.delete(path.resolve(cwd));
-        commands = scanSlashCommands(dir);
-      }
-    }
+    const cwd = path.resolve(dir || process.cwd());
+    result = await commandCatalog(runtime, cwd, dir || cwd);
   } catch (err) {
     console.error(`[ws] list_commands failed: ${err.message}`);
+    result = null;
   }
   wsSend({
     action: 'commands_list',
     requestId,
-    commands,
-    skills,
+    ...commandCatalogPayload(result, knownRevision),
+    runtime,
+    device,
+    projectHash,
+  });
+}
+
+async function handleListCommandOptions(msg) {
+  const {
+    projectHash,
+    requestId,
+    runtime = 'claude',
+    device = '',
+    sessionId = '',
+    commandName = '',
+  } = msg;
+  let options = [];
+  let error = '';
+  try {
+    const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
+    if (runtime === 'codex') {
+      const identity = sessionId ? parseStorageSessionId(sessionId, 'codex') : null;
+      const context = await getRuntimeAdapter('codex').interaction.listCommandContext({
+        cwd: path.resolve(dir || process.cwd()),
+        nativeSessionId: identity?.nativeSessionId || '',
+        forceReload: false,
+      });
+      options = context.commandOptions?.[commandName] || [];
+    }
+  } catch (err) {
+    error = err.message;
+    console.error(`[ws] list_command_options failed: ${error}`);
+  }
+  wsSend({
+    action: 'command_options',
+    requestId,
+    commandName,
+    options,
+    error,
     runtime,
     device,
     projectHash,

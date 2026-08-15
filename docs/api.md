@@ -937,8 +937,8 @@ Ask the bridge for the slash-command catalog of the active runtime.
   "action": "list_commands",
   "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
   "runtime": "codex",
-  "sessionId": "codex:0198...",
   "device": "MacBook-Pro",
+  "knownRevision": "a1b2c3d4",
   "requestId": "cmds_1717300000000"
 }
 ```
@@ -948,11 +948,16 @@ Ask the bridge for the slash-command catalog of the active runtime.
 |-------|----------|-------------|
 | `projectHash` | No | Resolves project-level Claude commands or the cwd used by Codex `skills/list` |
 | `runtime` | Yes | `claude` or `codex`; omitted values retain Claude compatibility |
-| `sessionId` | No | Echoed for account-wide broadcast filtering |
 | `device` | Yes | Target device (routing) |
+| `knownRevision` | No | Revision already stored by the app; matching responses omit `commands` and `skills` |
 | `requestId` | Yes | Client-generated id, echoed back in `commands_list` |
 
 **Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
+
+The Bridge caches the normalized project catalog by `runtime + project path` for five minutes.
+Fresh cache hits do not start Claude or query Codex app-server again. Expired entries are refreshed
+on demand, concurrent refreshes share one promise, and the revision changes only when normalized
+command or Skill content changes.
 
 **Claude handling**:
 1. Start a short-lived `claude -p` process with `--no-session-persistence`.
@@ -1220,7 +1225,8 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
   "runtime": "codex",
   "device": "MacBook-Pro",
   "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
-  "sessionId": "codex:0198...",
+  "revision": "a1b2c3d4",
+  "notModified": false,
   "commands": [
     { "name": "skills", "source": "builtin", "behavior": "picker" },
     { "name": "review", "source": "builtin", "behavior": "send" }
@@ -1235,11 +1241,48 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 | Field | Description |
 |-------|-------------|
 | `requestId` | Echoed from `list_commands`; stale replies are ignored |
-| `runtime`, `device`, `projectHash`, `sessionId` | Echoed context used to ignore account-wide broadcasts for another view |
+| `runtime`, `device`, `projectHash` | Echoed project context used to ignore account-wide broadcasts for another view |
+| `revision` | Stable hash of the normalized project catalog |
+| `notModified` | `true` when `knownRevision` matches; `commands` and `skills` are omitted |
+| `stale` | The Bridge returned its last known catalog because a refresh failed |
+| `error` | Refresh error detail; empty on a normal response |
 | `commands` | Ordered command descriptors; Codex descriptors include behavior, description, and optional argument hint |
 | `skills` | Enabled Codex Skills from app-server; empty for Claude |
 
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections for the account (not scoped by session). This is deliberate: the new-session view has no `sessionId` subscription, so a session-scoped relay (like `file_ready`) wouldn't reach it. Same pattern as `create_project_result`.
+
+When `notModified` is true, the response is only a small acknowledgement:
+
+```json
+{
+  "action": "commands_list",
+  "requestId": "cmds_1717300000000",
+  "revision": "a1b2c3d4",
+  "notModified": true,
+  "stale": false
+}
+```
+
+#### list_command_options / command_options
+
+Session-scoped picker options are not stored in the project catalog. Selecting a command marked
+`optionsRemote` requests its current options:
+
+```json
+{
+  "action": "list_command_options",
+  "requestId": "cmdopts_1717300000000",
+  "runtime": "codex",
+  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "sessionId": "codex:0198...",
+  "commandName": "agent",
+  "device": "MacBook-Pro"
+}
+```
+
+The Bridge replies with `command_options`, echoing the request context and returning only the
+selected command's options. This currently keeps Codex experimental features and agent/subagent
+thread choices out of the project-level cache.
 
 ---
 

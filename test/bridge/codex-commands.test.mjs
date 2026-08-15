@@ -95,6 +95,24 @@ test('Codex catalog applies Bridge platform visibility without changing TUI orde
   );
 });
 
+test('Codex project catalog defers session-scoped picker options', () => {
+  const catalog = codexCommandCatalog({
+    codexHomes: [],
+    commandOptions: {
+      experimental: [{ name: 'feature', value: 'feature=on' }],
+      agent: [{ name: 'thread-1', value: 'thread-1' }],
+      subagents: [{ name: 'thread-1', value: 'thread-1' }],
+    },
+    remoteOptionNames: ['experimental', 'agent', 'subagents'],
+  });
+  for (const name of ['experimental', 'agent', 'subagents']) {
+    const command = catalog.find((item) => item.name === name);
+    assert.equal(command.optionsRemote, true);
+    assert.deepEqual(command.options, []);
+  }
+  assert.equal(catalog.find((item) => item.name === 'model').optionsRemote, undefined);
+});
+
 test('legacy prompts are discovered after builtins in name order', (t) => {
   const home = temporaryCodexHome(t);
   fs.writeFileSync(path.join(home, 'prompts', 'z-last.md'), 'Last prompt');
