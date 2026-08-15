@@ -1,6 +1,7 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
 import { ReorderBuffer } from './reorder.js';
+import { dedupeCodexUserMessages } from './message-dedup.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -165,6 +166,8 @@ function connectWs(_, projectHash) {
 
 // WS message dispatch — extracted from onmessage so the jsdom test harness can replay a captured WS sequence through the exact same handling (test/README.md).
 function handleWsMessage(msg) {
+    bindStreamIdentity(msg);
+    if (msg.action === 'send_message_binding') return;
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
       if (state._wsBuffer !== null) {
         // Buffering during initial load — collect, don't render yet
@@ -177,19 +180,27 @@ function handleWsMessage(msg) {
       }
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
-        if (msg.streamId && m.nativeId) cancelDeferredUnscopedMessage(m.nativeId);
-        if (!msg.streamId && !msg._unscopedReady && deferUnscopedMessage(msg, m)) continue;
-        if (msg.streamId && m.type === 'user' && !isInterruptMsg(m)
-          && !_streamEndReceived[msg.streamId]) {
-          _activeStreamId = msg.streamId;
+        var nativeUserStreamId = codexUserStreamId(m);
+        if (!msg.streamId && nativeUserStreamId
+          && !state.streamAnchors[nativeUserStreamId]
+          && deferIdentityUserMessage(msg, m, nativeUserStreamId)) continue;
+        var messageStreamId = msg.streamId
+          || (nativeUserStreamId && state.streamAnchors[nativeUserStreamId]
+            ? nativeUserStreamId
+            : '');
+        if (messageStreamId && m.nativeId) cancelDeferredUnscopedMessage(m.nativeId);
+        if (!messageStreamId && !msg._unscopedReady && deferUnscopedMessage(msg, m)) continue;
+        if (messageStreamId && m.type === 'user' && !isInterruptMsg(m)
+          && !_streamEndReceived[messageStreamId]) {
+          _activeStreamId = messageStreamId;
           state.wsRunning = true;
         }
-        if (msg.streamId) m._streamId = msg.streamId;
+        if (messageStreamId) m._streamId = messageStreamId;
         if (!trackMessageUuid(m)) {
-          if (msg.streamId) claimScopedDuplicate(msg.streamId, m);
+          if (messageStreamId) claimScopedDuplicate(messageStreamId, m);
           continue;
         }
-        var holdStreamId = authoritativeStream(m, msg.streamId);
+        var holdStreamId = authoritativeStream(m, messageStreamId);
         if (holdStreamId) {
           m._streamId = holdStreamId;
           queueStreamAuthoritative(holdStreamId, m);
@@ -215,12 +226,6 @@ function handleWsMessage(msg) {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
         && state.appState.session !== '__new__') return;
-      if (msg.ok && msg.streamId && msg.clientId) {
-        state.streamAnchors[msg.streamId] = msg.clientId;
-        rememberLatestSend(msg.clientId, msg.streamId, false);
-        var resultPending = findPending(msg.clientId);
-        if (resultPending) resultPending.streamId = msg.streamId;
-      }
       // Match the ack to its exact bubble by clientId (round-tripped through the
       // bridge). Fall back to "first undelivered" only for acks from an older
       // bridge that doesn't echo clientId yet.
@@ -248,11 +253,7 @@ function handleWsMessage(msg) {
         }
       }
       // Bind this turn's streamId to the sending bubble → live preview places under it.
-      if (msg.ok && msg.streamId && msg.clientId) {
-        var anchoredPending = findPending(msg.clientId);
-        if (anchoredPending) anchoredPending.streamId = msg.streamId;
-        if (_interruptedClientIds[msg.clientId]) _interruptedStreams[msg.streamId] = true;
-      } else if (!msg.ok && msg.clientId) {
+      if (!msg.ok && msg.clientId) {
         rememberLatestSend(msg.clientId, '', true);
       }
       state.wsRunning = hasOutstandingTurns();
@@ -264,7 +265,7 @@ function handleWsMessage(msg) {
         updateBreadcrumb();
         saveNav();
         state.wsRequestId = null;
-        subscribeSession(msg.sessionId);
+        adoptNewSession(msg.sessionId);
         // Fold fetched rows in incrementally (updateLastTurn), never innerHTML-rebuild — a rebuild renders only wsAllMessages and wipes other in-flight optimistic bubbles.
         bufferAndFetch(msg.sessionId, '').then(function () {
           var container = document.querySelector('.messages');
@@ -366,10 +367,27 @@ function resetStreamSessionState() {
   _turnAuthBlocks = 0;
   resetTurnLifecycle();
   clearDeferredUnscopedMessages();
+  clearDeferredIdentityUserMessages();
   for (var timerId in _streamEndTimers) clearTimeout(_streamEndTimers[timerId]);
   _streamEndTimers = {};
   state.streamAnchors = {};
   _lastStreamEndAt = 0;
+}
+
+// Every self-sent stream carries both identities. Bind before dispatching the
+// frame so replies never need timestamp/text fallbacks, even when the final
+// send_message_result arrives after the first Codex events.
+function bindStreamIdentity(msg) {
+  if (!msg || !msg.streamId || !msg.clientId) return false;
+  if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
+    && state.appState.session !== '__new__') return false;
+  state.streamAnchors[msg.streamId] = msg.clientId;
+  rememberLatestSend(msg.clientId, msg.streamId, false);
+  var pending = findPending(msg.clientId);
+  if (pending) pending.streamId = msg.streamId;
+  if (_interruptedClientIds[msg.clientId]) _interruptedStreams[msg.streamId] = true;
+  flushDeferredIdentityUserMessage(msg.streamId, msg.clientId);
+  return true;
 }
 
 function selectWsSession(sessionId) {
@@ -383,6 +401,17 @@ function subscribeSession(sessionId) {
   selectWsSession(sessionId);
   wsSend({ action: 'subscribe', sessionId: sessionId });
   // Ask the bridge to re-push any control_request still awaiting an answer (refresh/reconnect re-shows the prompt).
+  wsSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
+}
+
+// The first send creates a native session while its stream is already active.
+// Adopt that server id without resetting the buffer and anchor for the same turn.
+function adoptNewSession(sessionId) {
+  if (state.wsSessionId && state.wsSessionId !== sessionId) {
+    wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
+  }
+  state.wsSessionId = sessionId;
+  wsSend({ action: 'subscribe', sessionId: sessionId });
   wsSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
 }
 
@@ -1563,6 +1592,8 @@ function claimScopedDuplicate(streamId, message) {
 
 var _deferredUnscopedMessages = {};
 var UNSCOPED_MESSAGE_GRACE_MS = 75;
+var _deferredIdentityUserMessages = {};
+var IDENTITY_USER_GRACE_MS = 3000;
 
 function hasUnsettledSend() {
   if (state.pendingSentMessages.length) return true;
@@ -1582,6 +1613,58 @@ function clearDeferredUnscopedMessages() {
     clearTimeout(_deferredUnscopedMessages[key]);
   }
   _deferredUnscopedMessages = {};
+}
+
+function codexUserStreamId(message) {
+  if (!message || message.type !== 'user') return '';
+  var match = String(message.nativeId || '').match(/^codex:user:(.+)$/);
+  return match ? match[1] : '';
+}
+
+function deferIdentityUserMessage(envelope, message, streamId) {
+  if (!streamId || !hasUnsettledSend() || envelope._identityReady) return false;
+  if (_deferredIdentityUserMessages[streamId]) return true;
+  var entry = {
+    envelope: envelope,
+    message: message,
+    timer: null,
+  };
+  entry.timer = setTimeout(function () {
+    delete _deferredIdentityUserMessages[streamId];
+    handleWsMessage({
+      action: 'messages',
+      sessionId: envelope.sessionId,
+      messages: [message],
+      _identityReady: true,
+      _unscopedReady: true,
+    });
+  }, IDENTITY_USER_GRACE_MS);
+  if (entry.timer && typeof entry.timer.unref === 'function') entry.timer.unref();
+  _deferredIdentityUserMessages[streamId] = entry;
+  return true;
+}
+
+function flushDeferredIdentityUserMessage(streamId, clientId) {
+  var entry = _deferredIdentityUserMessages[streamId];
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  delete _deferredIdentityUserMessages[streamId];
+  setTimeout(function () {
+    handleWsMessage({
+      action: 'messages',
+      sessionId: entry.envelope.sessionId,
+      streamId: streamId,
+      clientId: clientId,
+      messages: [entry.message],
+    });
+  }, 0);
+}
+
+function clearDeferredIdentityUserMessages() {
+  for (var streamId in _deferredIdentityUserMessages) {
+    clearTimeout(_deferredIdentityUserMessages[streamId].timer);
+  }
+  _deferredIdentityUserMessages = {};
 }
 
 function deferUnscopedMessage(envelope, message) {
@@ -1616,7 +1699,9 @@ async function bufferAndFetch(sessionId, after) {
     var data = await api('/api/bridge/messages', params);
     // User navigated to another session while this was in flight — drop the stale response.
     if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
-    var all = (data.messages || []).concat(state._wsBuffer || []);
+    var all = dedupeCodexUserMessages(
+      (data.messages || []).concat(state._wsBuffer || []),
+    );
     state._wsBuffer = null;
     var added = 0;
     for (var i = 0; i < all.length; i++) {
@@ -1650,7 +1735,7 @@ async function loadOlderMessages(sessionId) {
   state.wsLoadingOlder = true;
   try {
     var data = await api('/api/bridge/messages', { session: sessionId, before: state.wsOldestTimestamp });
-    var msgs = data.messages || [];
+    var msgs = dedupeCodexUserMessages(data.messages || []);
     state.wsHasMore = data.hasMore;
     state.wsOldestTimestamp = data.oldestTimestamp || '';
     // Dedup and prepend
@@ -1936,8 +2021,9 @@ function doSend(fullText, displayText, images) {
   // Unique per-send id, round-tripped through the bridge in send_message_result
   // so the ack maps back to THIS exact bubble (not "the first pending", which
   // mis-pairs when several sends are in flight). Doubles as the DOM element id.
+  var sentAt = Date.now();
   var seq = _clientIdSeq++;
-  var msgId = 'sent-' + Date.now() + '-' + seq;
+  var msgId = 'sent-' + sentAt + '-' + seq;
   rememberLatestSend(msgId, '', false);
   updateSendBtn();
   var sendPayload;
@@ -1976,7 +2062,7 @@ function doSend(fullText, displayText, images) {
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
-  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: Date.now(), echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload });
+  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload });
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -2078,7 +2164,6 @@ function confirmCodexTakeover() {
   if (!writer?.canTerminate || !writer.pid || !pending.sendPayload) return;
   _codexTakeover.sending = true;
   pending.awaitingTakeover = false;
-  pending.sentAt = Date.now();
   state.wsRunning = true;
   updateSendBtn();
   pendingStatus(pending, 'Taking over Codex...');
@@ -2193,6 +2278,9 @@ function messageEchoed(pending) {
       if (m._streamId === streamId || m.nativeId === 'codex:user:' + streamId) return true;
       continue;
     }
+    // A scoped echo already belongs to another exact send. Never let the
+    // legacy text fallback retire a later identical pending message.
+    if (m._streamId) continue;
     var hay = stripImageRefs(extractMsgText(m).trim());
     if (hay === needle) return true;
   }
@@ -2227,8 +2315,13 @@ function reconcileEchoedPending(turnEnded) {
 function markPendingTime(pending) {
   var el = document.getElementById(pending.id);
   if (!el) return;
+  var sentAt = new Date(pending.sentAt || Date.now());
+  el.dataset.ts = sentAt.toISOString();
   var status = el.querySelector('.sending-status');
-  if (status) { status.innerHTML = new Date().toLocaleTimeString(); status.style.color = '#6e7681'; }
+  if (status) {
+    status.textContent = sentAt.toLocaleTimeString();
+    status.style.color = '#6e7681';
+  }
 }
 
 function markPendingFailed(pending, error) {
@@ -2298,8 +2391,14 @@ function tryDedup(msg) {
   if (msg.type !== 'user') return false;
 
   // Primary: identity match — echo's streamId → clientId → the exact pending bubble (no text guessing).
-  if (msg._streamId) {
-    var clientId = state.streamAnchors[msg._streamId];
+  var exactStreamId = msg._streamId || codexUserStreamId(msg);
+  if (exactStreamId) {
+    var clientId = state.streamAnchors[exactStreamId];
+    // A Codex native user id is the turn's clientUserMessageId (our streamId).
+    // If its binding has not arrived yet, never let identical text claim a
+    // different optimistic bubble.
+    if (!clientId) return false;
+    msg._streamId = exactStreamId;
     var byId = clientId ? findPending(clientId) : null;
     if (byId) { promoteEchoedBubble(byId, msg); return true; }
     var anchor = clientId
@@ -2338,11 +2437,21 @@ function tryDedup(msg) {
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
+  // The authoritative echo can beat the final send ack. Settle the visible
+  // optimistic bubble from its original send time before retiring its pending
+  // record, so rapid sends never show ack-arrival order as their timestamps.
+  markPendingTime(pending);
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
   var el = document.getElementById(pending.id);
   if (el) {
-    if (msg.timestamp) el.dataset.ts = msg.timestamp;
+    if (msg.timestamp) {
+      el.dataset.serverTs = msg.timestamp;
+      // Exact self-sent turns stay in immutable click order. Legacy echoes
+      // without any identity still need their authoritative timestamp because
+      // their replies use timestamp placement.
+      if (!msg._streamId && !codexUserStreamId(msg)) el.dataset.ts = msg.timestamp;
+    }
     el.removeAttribute('data-pending');
   }
 }

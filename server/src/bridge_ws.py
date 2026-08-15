@@ -197,6 +197,9 @@ def _handle_message(event, connection_id, endpoint):
             if conn.get("deviceName"):
                 payload["deviceName"] = conn["deviceName"]
             return _handle_bridge_broadcast(payload, account_id, connection_id, endpoint)
+    elif action == "send_message_binding":
+        if role == "bridge":
+            return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "send_message":
         if role == "app":
             return _handle_send_message(body, account_id, endpoint)
@@ -316,6 +319,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     ).get("Items", [])
 
     stream_id = body.get("streamId")  # ties the row to its send → app places by identity
+    client_id = body.get("clientId")
     for sub in subs:
         cid = sub.get("connectionId", "")
         if cid and cid != bridge_connection_id:
@@ -326,6 +330,8 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
             }
             if stream_id:
                 payload["streamId"] = stream_id
+            if client_id:
+                payload["clientId"] = client_id
             _post_to_connection(endpoint, cid, payload)
 
     # 2. Write to DDB (cache) with one retry.

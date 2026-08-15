@@ -704,19 +704,24 @@ const newStreamId = () => (crypto.randomUUID
 
 // Per-turn streaming callbacks shared by resume + new-regular sends (frames key off sessionId; streamId comes from each callback's `sid` arg).
 function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
+  const streamEnvelope = (sid) => ({
+    sessionId,
+    streamId: sid,
+    ...(options.clientId ? { clientId: options.clientId } : {}),
+  });
   return {
     // Increment-only chunks + turn-level seq → app reorders by seq (see web/js/reorder.js).
     onDelta: (sid, chunk, seq, blockId) => {
-      wsSend({ action: 'stream_delta', sessionId, streamId: sid, chunk, seq, blockId });
+      wsSend({ action: 'stream_delta', ...streamEnvelope(sid), chunk, seq, blockId });
     },
     onInputDelta: (sid, chunk, seq, blockId) => {
-      wsSend({ action: 'stream_tool_input', sessionId, streamId: sid, chunk, seq, blockId });
+      wsSend({ action: 'stream_tool_input', ...streamEnvelope(sid), chunk, seq, blockId });
     },
     onBlockStart: (sid, blockId, kind, name, seq) => {
-      wsSend({ action: 'stream_block_start', sessionId, streamId: sid, blockId, kind, name, seq });
+      wsSend({ action: 'stream_block_start', ...streamEnvelope(sid), blockId, kind, name, seq });
     },
     onBlockStop: (sid, blockId, seq) => {
-      wsSend({ action: 'stream_block_stop', sessionId, streamId: sid, blockId, seq });
+      wsSend({ action: 'stream_block_stop', ...streamEnvelope(sid), blockId, seq });
     },
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
     onMessage: async (sid, raw, meta = {}) => {
@@ -737,13 +742,23 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
         } else {
           markHeadlessPushed(msg.uuid, sid);
         }
-        wsSend({ action: 'messages', sessionId, streamId: sid, messages: [out], noCache: true });
+        wsSend({
+          action: 'messages',
+          ...streamEnvelope(sid),
+          messages: [out],
+          noCache: true,
+        });
       } catch (e) {
         console.log(`[ws] live message extract failed: ${e.message}`);
       }
     },
     onResult: (sid, result, finalSeq) => {
-      wsSend({ action: 'stream_end', sessionId, streamId: sid, finalSeq, error: result.is_error ? (result.subtype || 'error') : undefined });
+      wsSend({
+        action: 'stream_end',
+        ...streamEnvelope(sid),
+        finalSeq,
+        error: result.is_error ? (result.subtype || 'error') : undefined,
+      });
       if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
       // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
       if (options.syncStatus !== false) {
@@ -783,7 +798,7 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
     onError: (sid, err) => {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
       if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
-      wsSend({ action: 'stream_end', sessionId, streamId: sid, error: 'unavailable' });
+      wsSend({ action: 'stream_end', ...streamEnvelope(sid), error: 'unavailable' });
       ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
   };
@@ -814,6 +829,16 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
     runtime: identity.runtime,
     nativeSessionId: identity.nativeSessionId,
     syncStatus: false,
+    clientId,
+  });
+  // Bind the optimistic bubble before Codex can emit any turn event. This is a
+  // separate action so older clients safely ignore it and still receive the
+  // final send_message_result below.
+  wsSend({
+    action: 'send_message_binding',
+    sessionId: identity.sessionId,
+    clientId,
+    streamId,
   });
   try {
     await adapter.interaction.sendExisting({
@@ -1045,6 +1070,7 @@ async function newAdapterSession(adapter, cwd, text, requestId, clientId) {
           runtime: adapter.runtime,
           nativeSessionId,
           syncStatus: false,
+          clientId,
         });
         ack(true, sessionId);
         return callbacks;
@@ -1086,7 +1112,13 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
 
   syncPoolStatus(sessionId, 'running');
 
-  const cb = buildStreamCallbacks(sessionId, cwd, ack);
+  const cb = buildStreamCallbacks(sessionId, cwd, ack, { clientId });
+  wsSend({
+    action: 'send_message_binding',
+    sessionId,
+    clientId,
+    streamId,
+  });
   let res = await _pool.send(sessionId, text, { cwd, resumeId: sessionId, streamId, ...cb });
   // Roster read was stale (raced a still-active daemon agent) → stop + retry once.
   if (res && res.bgLocked) {
@@ -1109,7 +1141,7 @@ async function newRegularSession(cwd, text, requestId, clientId) {
     registerNew: true,
     fileReady: (filePath) => !!getSessionMetadata(filePath).preview,
   });
-  const cb = buildStreamCallbacks(sessionId, cwd, () => {});
+  const cb = buildStreamCallbacks(sessionId, cwd, () => {}, { clientId });
   await _pool.send(sessionId, text, { cwd, createId: sessionId, streamId, ...cb });
 }
 

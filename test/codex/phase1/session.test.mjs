@@ -141,6 +141,47 @@ test('response-only user messages provide metadata preview without exposing inte
   }
 });
 
+test('incremental extraction waits for the canonical Codex user event', () => {
+  const { root, target } = tempRollout();
+  try {
+    const turnId = 'turn-incremental-user';
+    const clientId = 'client-incremental-user';
+    const responseItem = {
+      timestamp: '2026-08-15T10:34:02.428Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: '你是我吗' }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      },
+    };
+    fs.writeFileSync(target, `${JSON.stringify(responseItem)}\n`);
+
+    const first = extractCodexMessages(target, SESSION_ID);
+    assert.equal(first.messages.length, 0);
+    assert.equal(first.nextLine, 0);
+
+    const userEvent = {
+      timestamp: '2026-08-15T10:34:02.429Z',
+      type: 'event_msg',
+      payload: {
+        type: 'user_message',
+        client_id: clientId,
+        message: '你是我吗',
+      },
+    };
+    fs.appendFileSync(target, `${JSON.stringify(userEvent)}\n`);
+
+    const second = extractCodexMessages(target, SESSION_ID, { startLine: first.nextLine });
+    assert.equal(second.messages.length, 1);
+    assert.equal(second.messages[0].content, '你是我吗');
+    assert.equal(second.messages[0].nativeId, `codex:user:${clientId}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('fresh open turn is running while stale orphan is completed', () => {
   const { root, target } = tempRollout();
   try {

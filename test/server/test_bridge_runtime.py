@@ -435,6 +435,51 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
     )]
 
 
+def test_send_message_binding_relays_only_to_session_subscribers(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "bridge",
+                    "accountId": "account-1",
+                },
+            }
+
+    class SubscriptionTable:
+        def query(self, **_):
+            return {
+                "Items": [
+                    {"connectionId": "app-1"},
+                    {"connectionId": "app-2"},
+                ],
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    binding = {
+        "action": "send_message_binding",
+        "sessionId": "codex:thread-1",
+        "clientId": "sent-1",
+        "streamId": "stream-1",
+    }
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(binding)},
+        "bridge-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [("app-1", binding), ("app-2", binding)]
+
+
 def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
     class ConnectionTable:
         def get_item(self, Key):
@@ -592,6 +637,54 @@ def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch
         )
         assert response == {"statusCode": 500}
         assert sent == []
+
+
+def test_bridge_messages_preserve_stream_and_client_identity(monkeypatch):
+    class SubscriptionTable:
+        def query(self, **_):
+            return {"Items": [{"connectionId": "app-1"}]}
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    message = {
+        "uuid": "m1",
+        "type": "assistant",
+        "content": "answer",
+        "timestamp": "2026-08-15T11:16:22.458Z",
+    }
+    response = bridge_ws._handle_bridge_messages(
+        {
+            "sessionId": "codex:test",
+            "streamId": "stream-1",
+            "clientId": "sent-1",
+            "messages": [message],
+            "noCache": True,
+        },
+        "bridge-1",
+        "account-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [
+        ("app-1", {
+            "action": "messages",
+            "sessionId": "codex:test",
+            "streamId": "stream-1",
+            "clientId": "sent-1",
+            "messages": [message],
+        }),
+        ("bridge-1", {
+            "action": "messages_ack",
+            "sessionId": "codex:test",
+        }),
+    ]
 
 
 def test_bridge_message_cache_preserves_native_identity(monkeypatch):

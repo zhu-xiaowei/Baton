@@ -503,6 +503,14 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           else eventUserCounts.set(text, duplicateCount - 1);
           continue;
         }
+        // Current Codex writes the response_item first, then the canonical
+        // event_msg:user_message (with client_id) a few milliseconds later.
+        // Do not advance the incremental watermark past a trailing response
+        // item, otherwise two watcher scans persist both representations.
+        if (shouldEmit && text && line === lines.length - 1) {
+          nextLine = line;
+          break;
+        }
         const isReviewPrompt = !!reviewPrompt && text === reviewPrompt;
         const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
         if (isReviewPrompt) reviewPromptSeen = true;
