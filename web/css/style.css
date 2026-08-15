@@ -558,8 +558,11 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .cmd-output .ansi-white-bg, .tool-value .ansi-white-bg { background-color: #c9d1d9; color: #0d1117; }
 
 /* Slash-command autocomplete popup (sits above the input row) */
-#slash-popup { background: #161b22; border: 1px solid #30363d; border-radius: 12px; margin-bottom: 8px; overflow: hidden; }
-.slash-popup-title { padding: 10px 14px 6px; font-size: 12px; color: #6e7681; }
+#slash-popup { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.slash-popup-title { min-height: 32px; padding: 6px 14px 4px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: #6e7681; }
+.slash-back { width: 28px; height: 28px; margin-left: -8px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: #8b949e; cursor: pointer; }
+.slash-back svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: hover) and (pointer: fine) { .slash-back:hover { color: #e6edf3; } }
 /* max-height on the SCROLL container itself (not the wrapper) so overflow-y
    reliably triggers — flex height-propagation was leaving the list uncapped. */
 #slash-list { max-height: min(40vh, 300px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
@@ -567,10 +570,28 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 #slash-list::-webkit-scrollbar-thumb { background: #3a4049; border-radius: 4px; }
 @media (hover: hover) and (pointer: fine) { #slash-list::-webkit-scrollbar-thumb:hover { background: #4a5059; } }
 #slash-list { scrollbar-width: thin; scrollbar-color: #3a4049 transparent; }
-.slash-item { padding: 5px 14px; cursor: pointer; line-height: 1.5; }
+.slash-item { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 7px 14px; cursor: pointer; line-height: 1.35; }
 .slash-item.active { background: #1f6feb33; }
+.slash-item.disabled { cursor: default; opacity: .5; }
+.slash-item.disabled.active { background: transparent; }
 @media (hover: hover) and (pointer: fine) { .slash-item:hover { background: #21262d; } }
-.slash-name { color: #e6edf3; font-size: 14px; }
+.slash-name { color: #e6edf3; font-size: 14px; overflow-wrap: anywhere; }
+.slash-description {
+  color: #8b949e; font-size: 12px; min-width: 0; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1;
+  max-height: 1.35em;
+}
+html.native-mobile .slash-description {
+  -webkit-line-clamp: 2; line-clamp: 2;
+  max-height: 2.7em;
+}
+@media (max-width: 480px) {
+  .slash-item { grid-template-columns: 1fr; gap: 2px; }
+  .slash-description {
+    -webkit-line-clamp: 2; line-clamp: 2;
+    max-height: 2.7em;
+  }
+}
 #img-preview-row { display: flex; gap: 6px; padding: 0 0 8px; flex-wrap: wrap; }
 #img-preview-row .img-thumb { position: relative; width: 64px; height: 64px; cursor: pointer; }
 #img-preview-row .img-thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; }

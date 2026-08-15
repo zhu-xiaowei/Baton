@@ -18,6 +18,13 @@ import {
 } from './live-message-registry.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
+import {
+  CODEX_INIT_PROMPT,
+  codexCommandCatalog,
+  expandCodexLegacyPrompt,
+  isSupportedCodexCommand,
+  parseCodexSlashCommand,
+} from './codex-commands.mjs';
 import { updateSessionStatus, knownProjects } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { PermissionQueue } from './permission-queue.mjs';
@@ -389,7 +396,7 @@ async function handleMessage(msg) {
       handleDeleteFiles(msg);
       break;
     case 'list_commands':
-      handleListCommands(msg);
+      await handleListCommands(msg);
       break;
     case 'messages_ack': {
       const p = _pendingAcks.get(msg.sessionId);
@@ -467,6 +474,59 @@ async function handleSendMessage(
   }
 
   const resolved = await resolveBridgeImages(text);
+  let routedText = resolved;
+  const projectCwd = typeof projectHash === 'string' && projectHash
+    ? projectHashToPath(projectHash)
+    : null;
+
+  if (identity.runtime === 'codex') {
+    const command = parseCodexSlashCommand(resolved);
+    if (command) {
+      if (command.name.startsWith('prompts:')) {
+        try {
+          const expanded = expandCodexLegacyPrompt(resolved);
+          if (expanded != null) routedText = expanded;
+        } catch (error) {
+          wsSend({
+            action: 'send_message_result',
+            sessionId,
+            ok: false,
+            error: error.message,
+            requestId,
+            clientId,
+          });
+          return;
+        }
+      } else if (command.name === 'init') {
+        routedText = CODEX_INIT_PROMPT;
+      } else if (sessionId && isSupportedCodexCommand(command.name)) {
+        await handleCodexCommand(
+          adapter,
+          identity,
+          command,
+          clientId,
+          {
+            cwd: projectCwd,
+            takeover: !!takeover,
+            expectedWriterPid,
+          },
+        );
+        return;
+      } else {
+        wsSend({
+          action: 'send_message_result',
+          sessionId,
+          ok: false,
+          error: sessionId
+            ? `Unsupported Codex command on mobile: /${command.name}`
+            : `/${command.name} requires an existing Codex session.`,
+          requestId,
+          clientId,
+        });
+        return;
+      }
+    }
+  }
 
   // Existing session: route through the runtime interaction adapter when available.
   if (sessionId) {
@@ -474,9 +534,13 @@ async function handleSendMessage(
       ? await handleAdapterSend(
         adapter,
         identity,
-        resolved,
+        routedText,
         clientId,
-        { takeover: !!takeover, expectedWriterPid },
+        {
+          cwd: projectCwd,
+          takeover: !!takeover,
+          expectedWriterPid,
+        },
       )
       : await handleHeadlessSend(identity.nativeSessionId, resolved, clientId, projectHash);
     if (handled) return;
@@ -485,7 +549,7 @@ async function handleSendMessage(
   }
 
   // New session (projectHash only): dispatch creation through the selected runtime.
-  const cwd = projectHashToPath(projectHash);
+  const cwd = projectCwd || projectHashToPath(projectHash);
   if (!cwd) {
     wsSend({ action: 'send_message_result', ok: false, error: 'Project path not found.', requestId, clientId });
     return;
@@ -493,12 +557,12 @@ async function handleSendMessage(
   // Project dir deleted/never-existed → recreate so the runtime can spawn there.
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
   if (identity.runtime === 'claude' && asAgent) {
-    const r = await newAgentSession(cwd, resolved);
+    const r = await newAgentSession(cwd, routedText);
     wsSend({ action: 'send_message_result', ok: r.ok, sessionId: r.sessionId, error: r.error, requestId, clientId });
   } else if (adapter.interaction?.create) {
-    await newAdapterSession(adapter, cwd, resolved, requestId, clientId);
+    await newAdapterSession(adapter, cwd, routedText, requestId, clientId);
   } else {
-    await newRegularSession(cwd, resolved, requestId, clientId);
+    await newRegularSession(cwd, routedText, requestId, clientId);
   }
 }
 
@@ -637,6 +701,7 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
       nativeSessionId: identity.nativeSessionId,
       streamId,
       text,
+      cwd: sendOptions.cwd || '',
       callbacks,
       takeover: sendOptions.takeover,
       expectedWriterPid: sendOptions.expectedWriterPid,
@@ -655,6 +720,64 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
       errorCode ? { errorCode, writer: error.writer } : {},
     );
     return true;
+  }
+}
+
+async function handleCodexCommand(adapter, identity, command, clientId, options = {}) {
+  const streamId = newStreamId();
+  let acked = false;
+  const ack = (ok, error, meta = {}) => {
+    if (acked) return;
+    acked = true;
+    wsSend({
+      action: 'send_message_result',
+      sessionId: identity.sessionId,
+      ok,
+      error,
+      clientId,
+      streamId,
+      ...meta,
+    });
+  };
+  const callbacks = buildStreamCallbacks(identity.sessionId, options.cwd || '', ack, {
+    runtime: 'codex',
+    nativeSessionId: identity.nativeSessionId,
+    syncStatus: false,
+  });
+  try {
+    const result = await adapter.interaction.runCommand({
+      sessionId: identity.sessionId,
+      nativeSessionId: identity.nativeSessionId,
+      streamId,
+      name: command.name,
+      args: command.args,
+      cwd: options.cwd || '',
+      callbacks,
+      takeover: options.takeover,
+      expectedWriterPid: options.expectedWriterPid,
+    });
+    ack(true, null, result?.output != null
+      ? {
+        commandOutput: result.output,
+        commandName: command.name,
+        ...(result.action ? { commandAction: result.action } : {}),
+      }
+      : {
+        commandNoEcho: !!result?.streaming,
+        commandName: command.name,
+        ...(result?.action ? { commandAction: result.action } : {}),
+      });
+  } catch (error) {
+    const errorCode = {
+      CODEX_ACTIVE_WRITER: 'codex_active_writer',
+      CODEX_WRITER_CHANGED: 'codex_writer_changed',
+      CODEX_WRITER_UNSAFE: 'codex_writer_unsafe',
+    }[error.code];
+    ack(
+      false,
+      error.message || 'Codex command failed.',
+      errorCode ? { errorCode, writer: error.writer } : {},
+    );
   }
 }
 
@@ -972,16 +1095,46 @@ async function handleRequestFile(msg) {
   done();
 }
 
-function handleListCommands(msg) {
-  const { projectHash, requestId } = msg;
+async function handleListCommands(msg) {
+  const {
+    projectHash,
+    requestId,
+    runtime = 'claude',
+    device = '',
+    sessionId = '',
+  } = msg;
   let commands = [];
+  let skills = [];
   try {
     const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
-    commands = scanSlashCommands(dir);
+    if (runtime === 'codex') {
+      const interaction = getRuntimeAdapter('codex').interaction;
+      const identity = sessionId ? parseStorageSessionId(sessionId, 'codex') : null;
+      const context = await interaction.listCommandContext({
+        cwd: dir || process.cwd(),
+        nativeSessionId: identity?.nativeSessionId || '',
+        forceReload: true,
+      });
+      commands = codexCommandCatalog({
+        commandOptions: context.commandOptions,
+      });
+      skills = context.skills;
+    } else {
+      commands = scanSlashCommands(dir);
+    }
   } catch (err) {
     console.error(`[ws] list_commands failed: ${err.message}`);
   }
-  wsSend({ action: 'commands_list', requestId, commands });
+  wsSend({
+    action: 'commands_list',
+    requestId,
+    commands,
+    skills,
+    runtime,
+    device,
+    projectHash,
+    sessionId,
+  });
 }
 
 async function downloadBridgeImage(key) {

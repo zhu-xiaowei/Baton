@@ -223,7 +223,13 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "list_commands":
         if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "list_commands")
+            return _handle_send_to_bridge(
+                body,
+                account_id,
+                endpoint,
+                "list_commands",
+                preserve_device=True,
+            )
     elif action == "commands_list":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
@@ -418,11 +424,19 @@ def _handle_send_message(body, account_id, endpoint):
     return _handle_send_to_bridge(body, account_id, endpoint, "send_message")
 
 
-def _handle_send_to_bridge(body, account_id, endpoint, action):
+def _handle_send_to_bridge(
+    body,
+    account_id,
+    endpoint,
+    action,
+    preserve_device=False,
+):
     """Forward an action to bridge connection(s) for this account. If device is specified, only forward to that device's bridge."""
     device = body.get("device", "")
     payload = {k: v for k, v in body.items() if k != "device"}
     payload["action"] = action
+    if preserve_device and device:
+        payload["device"] = device
     for item in _query_connections(account_id, "bridge"):
         if device and item.get("deviceName", "") != device:
             continue

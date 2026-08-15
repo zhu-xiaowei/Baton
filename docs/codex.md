@@ -45,6 +45,21 @@ Device → Project → Session 信息架构。
   holder、retry resume 并发送；TUI 仅空闲持锁时自动终止并 resume，取消不会终止正在
   运行的进程或发送消息。
 - Project 创建已是 runtime 无关的目录和 metadata 操作，Claude/Codex 可复用同一个入口。
+- 本机 Codex 0.147 TUI 完整滚动弹窗实测为 44 项，不是首屏的 8 项。手机菜单以这 44
+  项为基准并保持原顺序；macOS Bridge 返回 33 项，Linux 因不支持 `/app` 返回 32 项。
+- 过滤的 11 项是 `ide`、`keymap`、`vim`、`approve`、`side`、`raw`、`title`、
+  `statusline`、`theme`、`pets`、`plugins`。前 10 项依赖 IDE/TUI 渲染、TUI 内存态或
+  ephemeral side surface；`plugins` 需要尚未实现的完整安装、卸载和 App 认证流程。
+- 其余命令复用 app-server RPC 或现有手机导航/剪贴板。`model`、`permissions`、
+  `experimental`、`memories`、`hooks`、`feedback`、`personality` 等通过二级选择器执行；
+  `hooks` 支持启用、禁用和信任。`app` 仅在 macOS/Windows Bridge 上显示。
+- `$CODEX_HOME/prompts/*.md` 作为 deprecated 兼容层加入 `/prompts:<name>`，支持旧 TUI
+  的 frontmatter、位置参数、`$ARGUMENTS` 和命名参数展开。
+- Skills 使用 app-server `skills/list(forceReload)` 获取；`/skills` 和 `$` 打开选择器，
+  最终 `turn/start.input` 发送结构化 `{type:"skill", name, path}`，不读取或拼接 Skill 正文。
+- `/review`、`/compact`、会话生命周期、Plan/Goal、状态、MCP、后台终端等通过当前
+  Session 的 app-server client 执行；`/init` 展开为 TUI 同源 prompt；`/copy` 使用手机
+  剪贴板。
 
 当前未完成：
 
@@ -83,6 +98,7 @@ Phase 1 的初始化读链路由以下文件组成：
 | `bridge/runtime-registry.mjs` | 注册 runtime、查找 adapter、统一能力检测 |
 | `bridge/claude-runtime.mjs` | Claude discovery、读取、状态、删除和能力 |
 | `bridge/codex-runtime.mjs` | Codex discovery、读取和状态轮询能力 |
+| `bridge/codex-commands.mjs` | 手机命令能力矩阵、TUI 顺序、legacy prompt 扫描和参数展开 |
 | `bridge/sync.mjs` | 合并 catalog、聚合、筛选和上传 |
 | `bridge/ws.mjs` | 通用 WS 路由，通过 adapter 执行 `sync_session` |
 
@@ -102,7 +118,7 @@ Phase 3 的已有 Session 交互链路：
 |---|---|
 | `bridge/interaction-adapter.mjs` | 定义和校验 runtime interaction 接口 |
 | `bridge/codex-app-server.mjs` | managed Unix WebSocket/stdio app-server transport、握手、请求配对和反向请求 |
-| `bridge/codex-interaction.mjs` | daemon 复用、临时 writer lease、active-turn 接管、resume、turn、item、interrupt、审批和 Session 内排队 |
+| `bridge/codex-interaction.mjs` | daemon 复用、writer lease、turn、结构化 Skills、原生命令、interrupt、审批和 Session 内排队 |
 | `bridge/codex-writer.mjs` | active-writer 识别、独立 TUI holder 校验和确认后的安全终止 |
 | `bridge/stream-framer.mjs` | Claude/Codex 共用首包立即发送、50ms 合批和 turn 级 `seq` |
 | `bridge/codex-live.mjs` | app-server item 到统一 preview/完整消息的映射 |
@@ -575,6 +591,7 @@ preview、Session metadata 和用户消息，并过滤 `environment_context`/`tu
    stdio app-server lease。
 9. 打开 Session 时 passive 订阅 managed TUI thread、重放 pending approval，以及
    `serverRequest/resolved` 的双端弹窗同步。
+10. runtime-aware `/` 菜单、legacy prompts、Skills 原生发现/执行和移动端命令过滤。
 
 待完成：
 

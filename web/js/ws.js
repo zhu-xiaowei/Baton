@@ -214,6 +214,12 @@ function handleWsMessage(msg) {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
         && state.appState.session !== '__new__') return;
+      if (msg.ok && msg.streamId && msg.clientId) {
+        state.streamAnchors[msg.streamId] = msg.clientId;
+        rememberLatestSend(msg.clientId, msg.streamId, false);
+        var resultPending = findPending(msg.clientId);
+        if (resultPending) resultPending.streamId = msg.streamId;
+      }
       // Match the ack to its exact bubble by clientId (round-tripped through the
       // bridge). Fall back to "first undelivered" only for acks from an older
       // bridge that doesn't echo clientId yet.
@@ -229,13 +235,19 @@ function handleWsMessage(msg) {
         if (pending && !pending.delivered && handleCodexSendConflict(pending, msg)) return;
         if (pending && !pending.delivered) {
           finishCodexTakeover(pending);
-          resolvePending(pending, msg.ok, msg.error);
+          if (msg.ok && msg.commandOutput != null) {
+            completeLocalCommand(pending, msg);
+            applyCodexCommandAction(msg.commandAction);
+          } else if (msg.ok && msg.commandNoEcho) {
+            markPendingTime(pending);
+            promoteEchoedBubble(pending, { timestamp: new Date().toISOString() });
+          } else {
+            resolvePending(pending, msg.ok, msg.error);
+          }
         }
       }
       // Bind this turn's streamId to the sending bubble → live preview places under it.
       if (msg.ok && msg.streamId && msg.clientId) {
-        state.streamAnchors[msg.streamId] = msg.clientId;
-        rememberLatestSend(msg.clientId, msg.streamId, false);
         var anchoredPending = findPending(msg.clientId);
         if (anchoredPending) anchoredPending.streamId = msg.streamId;
         if (_interruptedClientIds[msg.clientId]) _interruptedStreams[msg.streamId] = true;
@@ -1685,6 +1697,7 @@ function sendMessage() {
   var images = state.stagedImages.slice();
 
   if (!text && !images.length) return;
+  if (!images.length && handleCodexClientCommand(text, input)) return;
   if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
   if (!state.wsSessionId && state.appState.session !== '__new__') return;
@@ -1709,6 +1722,83 @@ function sendMessage() {
   input.style.height = 'auto';
   if (typeof stopDictation === 'function') stopDictation();  // sending ends dictation too
   if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
+}
+
+function handleCodexClientCommand(text, input) {
+  if (state.appState.runtime !== 'codex') return false;
+  var match = /^\/(copy|new|clear|resume|mention|exit)(?:\s+([\s\S]*))?$/.exec(text);
+  if (!match) return false;
+  var command = match[1];
+  var args = (match[2] || '').trim();
+  if (command === 'new' || command === 'clear') {
+    var project = state.appState.project;
+    if (project && window.startNewSession) window.startNewSession(project.hash);
+    input.value = '';
+    input.style.height = 'auto';
+    updateSendBtn();
+    return true;
+  }
+  if (command === 'resume') {
+    if (args && window.loadMessages) {
+      window.loadMessages(args.indexOf('codex:') === 0 ? args : 'codex:' + args, args);
+    } else if (window.navigateUp) {
+      window.navigateUp();
+    }
+    input.value = '';
+    input.style.height = 'auto';
+    updateSendBtn();
+    return true;
+  }
+  if (command === 'mention') {
+    input.value = '@';
+    input.style.height = 'auto';
+    input.style.height = input.scrollHeight + 'px';
+    input.focus();
+    updateSendBtn();
+    return true;
+  }
+  if (command === 'exit') {
+    if (window.navigateUp) window.navigateUp();
+    input.value = '';
+    input.style.height = 'auto';
+    updateSendBtn();
+    return true;
+  }
+
+  var response = '';
+  for (var i = state.wsAllMessages.length - 1; i >= 0; i--) {
+    var message = state.wsAllMessages[i];
+    if (message.type !== 'assistant' || message._localCommand) continue;
+    if (Array.isArray(message.content)) {
+      response = message.content
+        .filter(function (block) { return block && block.type === 'text'; })
+        .map(function (block) { return block.text || ''; })
+        .join('\n')
+        .trim();
+    } else if (typeof message.content === 'string') {
+      response = message.content.trim();
+    }
+    if (response) break;
+  }
+  if (response && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(response).catch(function () {});
+  } else if (response) {
+    var copyArea = document.createElement('textarea');
+    copyArea.value = response;
+    copyArea.style.position = 'fixed';
+    copyArea.style.opacity = '0';
+    document.body.appendChild(copyArea);
+    copyArea.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    copyArea.remove();
+  }
+  input.value = '';
+  input.style.height = 'auto';
+  var original = input.placeholder;
+  input.placeholder = response ? 'Copied last response' : 'No response to copy';
+  setTimeout(function () { input.placeholder = original; }, 1600);
+  updateSendBtn();
+  return true;
 }
 
 // Textarea: Enter sends, Shift+Enter newline, auto-grow, toggle send/stop button
@@ -2010,6 +2100,41 @@ function resolvePending(pending, ok, error) {
     markPendingFailed(pending, error);
     state.wsRunning = hasOutstandingTurns();
     updateSendBtn();
+  }
+}
+
+function completeLocalCommand(pending, result) {
+  markPendingTime(pending);
+  promoteEchoedBubble(pending, { timestamp: new Date().toISOString() });
+  if (result.streamId) {
+    _streamEndReceived[result.streamId] = true;
+    _streamEnded[result.streamId] = true;
+    if (_activeStreamId === result.streamId) _activeStreamId = '';
+  }
+  var message = {
+    uuid: 'codex-command:' + (result.streamId || pending.id),
+    nativeId: 'codex:command:' + (result.streamId || pending.id),
+    type: 'assistant',
+    content: [{ type: 'text', text: String(result.commandOutput || '') }],
+    timestamp: new Date().toISOString(),
+    _streamId: result.streamId || '',
+    _localCommand: true,
+  };
+  if (trackMessageUuid(message)) {
+    state.wsAllMessages.push(message);
+    state.wsMessageCount++;
+    updateLastTurn();
+  }
+  state.wsRunning = hasOutstandingTurns();
+  updateSendBtn();
+}
+
+function applyCodexCommandAction(action) {
+  if (!action || typeof action !== 'object') return;
+  if (action.type === 'open-session' && action.sessionId && window.loadMessages) {
+    window.loadMessages(action.sessionId, action.preview || '');
+  } else if (action.type === 'leave-session' && window.navigateUp) {
+    window.navigateUp();
   }
 }
 

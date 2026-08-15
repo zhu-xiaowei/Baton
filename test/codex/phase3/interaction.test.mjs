@@ -16,6 +16,12 @@ class FakeClient extends EventEmitter {
     this.requests = [];
     this.responses = [];
     this.turnSequence = 0;
+    this.skills = [];
+    this.hooks = [];
+    this.thread = null;
+    this.mcpServers = [];
+    this.resumeModel = '';
+    this.failThreadFeatureLookup = false;
   }
 
   async start() {
@@ -30,10 +36,60 @@ class FakeClient extends EventEmitter {
   async request(method, params) {
     this.requests.push({ method, params });
     if (method === 'thread/start') return { thread: { id: 'thread-new' } };
-    if (method === 'thread/resume') return { thread: { id: params.threadId } };
+    if (method === 'thread/resume') {
+      return {
+        thread: { id: params.threadId },
+        ...(this.resumeModel ? { model: this.resumeModel } : {}),
+      };
+    }
     if (method === 'turn/start') {
       this.turnSequence++;
       return { turn: { id: `turn-${this.turnSequence}` } };
+    }
+    if (method === 'skills/list') {
+      return {
+        data: [{
+          cwd: params.cwds[0],
+          errors: [],
+          skills: this.skills,
+        }],
+      };
+    }
+    if (method === 'hooks/list') {
+      return {
+        data: [{
+          cwd: params.cwds[0],
+          hooks: this.hooks,
+          warnings: [],
+          errors: [],
+        }],
+      };
+    }
+    if (method === 'experimentalFeature/list') {
+      if (params.threadId && this.failThreadFeatureLookup) {
+        throw new Error(`thread not found: ${params.threadId}`);
+      }
+      return { data: [] };
+    }
+    if (method === 'review/start') {
+      this.turnSequence++;
+      return {
+        reviewThreadId: params.threadId,
+        turn: { id: `turn-${this.turnSequence}` },
+      };
+    }
+    if (method === 'thread/read') {
+      return {
+        thread: this.thread || {
+          id: params.threadId,
+          cwd: '/workspace/project',
+          status: { type: 'idle' },
+          modelProvider: 'openai',
+        },
+      };
+    }
+    if (method === 'mcpServerStatus/list') {
+      return { data: this.mcpServers, nextCursor: null };
     }
     return {};
   }
@@ -257,6 +313,240 @@ test('existing Codex session releases after completion and reuses CC stream fram
     callbacks: second.value,
   });
   assert.equal(client.requests.filter((request) => request.method === 'thread/resume').length, 2);
+});
+
+test('Codex skill mentions are resolved through skills/list and sent as structured input', async () => {
+  const client = new FakeClient();
+  client.skills = [{
+    name: 'reviewer',
+    description: 'Review changes',
+    path: '/skills/reviewer/SKILL.md',
+    scope: 'user',
+    enabled: true,
+  }];
+  const interaction = new CodexInteraction({ client });
+
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-skills',
+    nativeSessionId: 'thread-skills',
+    streamId: 'stream-skills',
+    cwd: '/workspace/project',
+    text: '$reviewer inspect this change',
+    callbacks: callbacks().value,
+  });
+
+  assert.deepEqual(
+    client.requests.filter((request) => (
+      request.method === 'skills/list' || request.method === 'turn/start'
+    )),
+    [
+      {
+        method: 'skills/list',
+        params: {
+          cwds: ['/workspace/project'],
+          forceReload: true,
+        },
+      },
+      {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-skills',
+          clientUserMessageId: 'stream-skills',
+          input: [
+            { type: 'text', text: '$reviewer inspect this change' },
+            {
+              type: 'skill',
+              name: 'reviewer',
+              path: '/skills/reviewer/SKILL.md',
+            },
+          ],
+        },
+      },
+    ],
+  );
+});
+
+test('Codex command context exposes actionable hooks and writes the selected state', async () => {
+  const client = new FakeClient();
+  client.hooks = [{
+    key: 'project.stop.0',
+    eventName: 'stop',
+    handlerType: 'command',
+    command: './scripts/on-stop.sh',
+    source: 'project',
+    sourcePath: '/workspace/project/.codex/hooks.json',
+    enabled: true,
+    isManaged: false,
+    currentHash: 'hash-1',
+    trustStatus: 'trusted',
+  }];
+  const interaction = new CodexInteraction({
+    clientFactory() {
+      return client;
+    },
+  });
+
+  const context = await interaction.listCommandContext({
+    cwd: '/workspace/project',
+    nativeSessionId: 'thread-hooks',
+  });
+  assert.equal(context.commandOptions.hooks.length, 1);
+  assert.equal(context.commandOptions.hooks[0].label, 'stop · On');
+
+  const result = await interaction.runCommand({
+    sessionId: 'codex:thread-hooks',
+    nativeSessionId: 'thread-hooks',
+    streamId: 'stream-hooks',
+    cwd: '/workspace/project',
+    name: 'hooks',
+    args: context.commandOptions.hooks[0].value,
+  });
+  assert.match(result.output, /Disabled hook/);
+  assert.deepEqual(
+    client.requests.find((request) => request.method === 'config/batchWrite'),
+    {
+      method: 'config/batchWrite',
+      params: {
+        edits: [{
+          keyPath: 'hooks.state',
+          value: {
+            'project.stop.0': {
+              enabled: false,
+            },
+          },
+          mergeStrategy: 'upsert',
+        }],
+        reloadUserConfig: true,
+      },
+    },
+  );
+});
+
+test('Codex command context falls back when the thread feature lookup is stale', async () => {
+  const client = new FakeClient();
+  client.failThreadFeatureLookup = true;
+  const interaction = new CodexInteraction({ client });
+
+  const context = await interaction.listCommandContext({
+    cwd: '/workspace/project',
+    nativeSessionId: 'thread-stale',
+  });
+
+  assert.deepEqual(context.commandOptions.experimental, []);
+  assert.deepEqual(
+    client.requests
+      .filter((request) => request.method === 'experimentalFeature/list')
+      .map((request) => request.params),
+    [
+      { threadId: 'thread-stale' },
+      {},
+    ],
+  );
+});
+
+test('Codex native commands map to app-server methods', async () => {
+  const client = new FakeClient();
+  client.resumeModel = 'openai.gpt-5.6-sol';
+  client.mcpServers = [{
+    name: 'repo',
+    authStatus: 'unsupported',
+    tools: {
+      search: { name: 'search', inputSchema: {} },
+    },
+    resources: [],
+    resourceTemplates: [],
+  }];
+  const interaction = new CodexInteraction({ client });
+  const reviewCallbacks = callbacks();
+
+  const review = await interaction.runCommand({
+    sessionId: 'codex:thread-command',
+    nativeSessionId: 'thread-command',
+    streamId: 'stream-review',
+    cwd: '/workspace/project',
+    name: 'review',
+    args: 'focus on permissions',
+    callbacks: reviewCallbacks.value,
+  });
+  assert.deepEqual(review, { streaming: true });
+  assert.deepEqual(
+    client.requests.find((request) => request.method === 'review/start'),
+    {
+      method: 'review/start',
+      params: {
+        threadId: 'thread-command',
+        target: { type: 'custom', instructions: 'focus on permissions' },
+        delivery: 'inline',
+      },
+    },
+  );
+
+  notify(client, 'turn/completed', {
+    threadId: 'thread-command',
+    turn: { id: 'turn-1', status: 'completed' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const rename = await interaction.runCommand({
+    sessionId: 'codex:thread-command',
+    nativeSessionId: 'thread-command',
+    streamId: 'stream-rename',
+    cwd: '/workspace/project',
+    name: 'rename',
+    args: 'Mobile commands',
+  });
+  assert.match(rename.output, /Mobile commands/);
+  assert.deepEqual(
+    client.requests.find((request) => request.method === 'thread/name/set'),
+    {
+      method: 'thread/name/set',
+      params: {
+        threadId: 'thread-command',
+        name: 'Mobile commands',
+      },
+    },
+  );
+
+  const mcp = await interaction.runCommand({
+    sessionId: 'codex:thread-command',
+    nativeSessionId: 'thread-command',
+    streamId: 'stream-mcp',
+    cwd: '/workspace/project',
+    name: 'mcp',
+    args: 'verbose',
+  });
+  assert.match(mcp.output, /\*\*repo\*\*/);
+  assert.match(mcp.output, /`search`/);
+
+  const plan = await interaction.runCommand({
+    sessionId: 'codex:thread-command',
+    nativeSessionId: 'thread-command',
+    streamId: 'stream-plan',
+    cwd: '/workspace/project',
+    name: 'plan',
+    args: '',
+  });
+  assert.match(plan.output, /Plan mode/);
+  assert.deepEqual(
+    client.requests.find((request) => (
+      request.method === 'thread/settings/update'
+      && request.params.collaborationMode
+    )),
+    {
+      method: 'thread/settings/update',
+      params: {
+        threadId: 'thread-command',
+        collaborationMode: {
+          mode: 'plan',
+          settings: {
+            model: 'openai.gpt-5.6-sol',
+            reasoning_effort: null,
+            developer_instructions: null,
+          },
+        },
+      },
+    },
+  );
 });
 
 test('turn completion reconciles a final agent item when intermediate notifications are missing', async () => {

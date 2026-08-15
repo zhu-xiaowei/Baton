@@ -165,7 +165,16 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_agent`.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
-- Slash commands (`commands.mjs`): `/`-autocomplete like CC. Bridge `scanSlashCommands()` scans user/project/enabled-plugin commands+skills on disk, plus a static `BUILTIN_COMMANDS` list mirroring CC's compiled-in bundled skills (re-sync on CC upgrades). WS `list_commands` → `commands_list`; app caches per-device (global) + per-project in localStorage. NOTE: "local" command output capture (`tmux capture-pane`) was **removed in Phase 2E**; under headless a `/cmd` is sent as plain text and streams back normally. `LOCAL_COMMANDS`/`DIALOG_COMMANDS`/`SYNTHETIC_COMMANDS` in `commands.mjs` now only tag the command list. Details: `docs/api.md` + `docs/claude-code-bridge.md`.
+- Slash commands are runtime-aware. Claude uses `commands.mjs` to scan user/project/plugin
+  commands and skills plus its static built-in list. Codex uses `codex-commands.mjs`: the mobile
+  catalog starts from the complete 44-command popup observed in Codex 0.147, then preserves that
+  presentation order while filtering only commands without a complete phone equivalent. The
+  current macOS Bridge exposes 33 built-ins; Linux exposes 32 because `/app` is host-platform
+  specific. IDE/TUI presentation commands, `/approve`, `/side`, and `/plugins` are filtered.
+  `$CODEX_HOME/prompts/*.md` legacy prompts are appended in name order.
+  Codex Skills come from app-server `skills/list`; selecting one composes `$name`, and
+  `turn/start.input` carries the matching structured Skill item. The app preserves Bridge order
+  and caches by device + runtime + project. Details: `docs/api.md` + `docs/codex.md`.
 - Config: `~/.claude-bridge/config.json`, auto-created from CLI args
 - Always-on: launchd (macOS), systemd user service + `loginctl enable-linger` (Linux), Task Scheduler (Windows)
 - Deployed bridge runs from `~/.claude-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.claude-bridge/` + restart service.
@@ -256,9 +265,9 @@ App → Server:           { action: "unsubscribe", sessionId }
 App → Server → Bridge:  { action: "send_message", sessionId, text, device }
                         { action: "send_message", projectHash, runtime, text, device }  — new session
 App → Server → Bridge:  { action: "permission_reply", sessionId, requestId, decision, answerText?, device }
-App → Server → Bridge:  { action: "list_commands", projectHash, device, requestId }  — slash-command scan
+App → Server → Bridge:  { action: "list_commands", projectHash, runtime, sessionId?, device, requestId }
 Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
-Bridge → Server → App:  { action: "commands_list", requestId, commands }  — broadcast to all app conns
+Bridge → Server → App:  { action: "commands_list", requestId, runtime, device, projectHash, sessionId?, commands, skills }
 Server → App:           { action: "messages", sessionId, messages }
 Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
 Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }

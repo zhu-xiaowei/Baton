@@ -435,6 +435,62 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
     )]
 
 
+def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "app",
+                    "accountId": "account-1",
+                },
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_query_connections",
+        lambda account_id, role: [
+            {"connectionId": "bridge-mac", "deviceName": "Mac"},
+            {"connectionId": "bridge-linux", "deviceName": "Linux"},
+        ] if account_id == "account-1" and role == "bridge" else [],
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_message(
+        {
+            "body": json.dumps({
+                "action": "list_commands",
+                "requestId": "commands-1",
+                "runtime": "codex",
+                "projectHash": "-workspace-project",
+                "sessionId": "codex:thread-1",
+                "device": "Mac",
+            }),
+        },
+        "app-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [(
+        "bridge-mac",
+        {
+            "action": "list_commands",
+            "requestId": "commands-1",
+            "runtime": "codex",
+            "projectHash": "-workspace-project",
+            "sessionId": "codex:thread-1",
+            "device": "Mac",
+        },
+    )]
+
+
 def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch):
     class SubscriptionTable:
         def query(self, **_):

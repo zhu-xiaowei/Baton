@@ -930,12 +930,14 @@ Ask the bridge to read a project file from the device's local disk and upload it
 
 #### list_commands
 
-Ask the bridge to scan all available slash commands (custom commands, skills, and enabled-plugin commands/skills) so the app can show a `/`-autocomplete menu like Claude Code's.
+Ask the bridge for the slash-command catalog of the active runtime.
 
 ```json
 {
   "action": "list_commands",
   "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "runtime": "codex",
+  "sessionId": "codex:0198...",
   "device": "MacBook-Pro",
   "requestId": "cmds_1717300000000"
 }
@@ -944,13 +946,15 @@ Ask the bridge to scan all available slash commands (custom commands, skills, an
 **Fields**:
 | Field | Required | Description |
 |-------|----------|-------------|
-| `projectHash` | No | Resolves the project dir for project-level `.claude/commands` + `/skills`. Omitted/empty → user + plugin commands only (e.g. new-session view) |
+| `projectHash` | No | Resolves project-level Claude commands or the cwd used by Codex `skills/list` |
+| `runtime` | Yes | `claude` or `codex`; omitted values retain Claude compatibility |
+| `sessionId` | No | Echoed for account-wide broadcast filtering |
 | `device` | Yes | Target device (routing) |
 | `requestId` | Yes | Client-generated id, echoed back in `commands_list` |
 
 **Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
 
-**Bridge handling** (`scanSlashCommands`, live read — no cache/watch, ~15ms):
+**Claude handling** (`scanSlashCommands`, live read):
 1. **User**: `~/.claude/commands/**/*.md` + `~/.claude/skills/*/SKILL.md`
 2. **Project**: `<projectDir>/.claude/commands/**/*.md` + `/skills/*/SKILL.md`
 3. **Plugins**: read `settings.json` `enabledPlugins`; resolve each plugin root (`installed_plugins.json` `installPath` → `extraKnownMarketplaces` path → `plugins/marketplaces/<mkt>/plugins/<name>` → `.../<name>`); scan its `/commands` + `/skills`
@@ -958,9 +962,24 @@ Ask the bridge to scan all available slash commands (custom commands, skills, an
 5. Append `BUILTIN_COMMANDS` (`source: "builtin"`) — bundled skills + builtin slash commands CC compiles into its binary (no file on disk): `batch` `code-review` `compact` `config` `context` `debug` `deep-research` `fewer-permission-prompts` `goal` `heapdump` `init` `insights` `loop` `reload-skills` `review` `run` `run-skill-generator` `security-review` `simplify` `stats` `status` `team-onboarding` `update-config` `usage` `verify` (`/clear` is excluded — it spawns a fresh empty session each time; use the "+" new-session button instead)
 6. Dedup by `name` (priority user > project > plugin > builtin — so a user's `commit.md`/`recap.md` wins over a same-named built-in), then sort all names alphabetically (`localeCompare`); reply `commands_list`
 
-Only command names are returned (no descriptions) — matches Claude Code's `/`-menu, which shows names only. Keeps the payload tiny (~2.5 KB for ~75 commands) and means command scanning needs no file reads.
-
 **Built-ins**: bundled skills and builtin slash commands live in the CC binary, not on disk, so the directory scan can't see them. `BUILTIN_COMMANDS` is a hand-maintained list that mirrors **exactly** what the running CC surfaces in its `/`-menu beyond the disk-scannable commands — so AgentPeek's list matches CC 1:1 (no padding with CC's full `COMMANDS()` set, none of CC's hidden/feature-gated commands). Re-check on CC upgrades, since CC may add/remove bundled skills between versions (e.g. `deep-research`, `run`, `goal`, `run-skill-generator`, `team-onboarding` are newer additions).
+
+**Codex handling**:
+
+1. Start from the complete 44-command popup observed by scrolling the local Codex 0.147 TUI.
+2. Preserve TUI presentation order and return 33 phone-capable built-ins on macOS. Linux returns
+   32 because `/app` is available only when the Bridge host is macOS or Windows.
+3. Filter exactly these commands from the 44-command baseline:
+   `ide`, `keymap`, `vim`, `approve`, `side`, `raw`, `title`, `statusline`, `theme`, `pets`,
+   and `plugins`. They depend on IDE/TUI-only state or an unsupported end-to-end plugin auth flow.
+4. Picker commands carry ordered `options`. Dynamic options come from app-server model, feature,
+   hook, Skill, and descendant-thread APIs. Hook options execute the same enable/disable/trust
+   config writes used by the TUI.
+5. Scan immediate Markdown files in `$CODEX_HOME/prompts`, parse `description` and
+   `argument-hint`, and append `/prompts:<name>` entries sorted by name.
+6. Call app-server `skills/list` with the project cwd and `forceReload: true`. Skills are returned
+   separately and retain Codex's resolved scope, enablement, and order.
+7. The app preserves Bridge command order. It never alphabetically resorts the Codex catalog.
 
 ---
 
@@ -1057,7 +1076,10 @@ Bridge returns the result after processing send_message.
 { "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
 ```
 
-**Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`), and `requestId` (echoed from the originating `send_message`, lets the app match the result to its new-session request).
+**Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`),
+`requestId`, `clientId`, and `streamId`. Immediate Codex commands may also return
+`commandOutput`; the app atomically promotes the optimistic command bubble and renders that
+ephemeral local result without writing it to rollout history.
 
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId (not limited to subscribers).
 
@@ -1166,9 +1188,16 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 {
   "action": "commands_list",
   "requestId": "cmds_1717300000000",
+  "runtime": "codex",
+  "device": "MacBook-Pro",
+  "projectHash": "-Users-xiaoweii-workspace-rn-agentpeek",
+  "sessionId": "codex:0198...",
   "commands": [
-    { "name": "commit", "source": "user" },
-    { "name": "pdf", "source": "plugin" }
+    { "name": "skills", "source": "builtin", "behavior": "picker" },
+    { "name": "review", "source": "builtin", "behavior": "send" }
+  ],
+  "skills": [
+    { "name": "reviewer", "description": "Review changes", "scope": "user" }
   ]
 }
 ```
@@ -1176,8 +1205,10 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 **Fields**:
 | Field | Description |
 |-------|-------------|
-| `requestId` | Echoed from `list_commands` (the app currently ignores it — see broadcast note) |
-| `commands` | Array of `{name, source}`; `source` ∈ `user` / `project` / `plugin` / `builtin` |
+| `requestId` | Echoed from `list_commands`; stale replies are ignored |
+| `runtime`, `device`, `projectHash`, `sessionId` | Echoed context used to ignore account-wide broadcasts for another view |
+| `commands` | Ordered command descriptors; Codex descriptors include behavior, description, and optional argument hint |
+| `skills` | Enabled Codex Skills from app-server; empty for Claude |
 
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections for the account (not scoped by session). This is deliberate: the new-session view has no `sessionId` subscription, so a session-scoped relay (like `file_ready`) wouldn't reach it. Same pattern as `create_project_result`.
 
@@ -1334,7 +1365,10 @@ Server forwards bridge's file-ready notification (only pushed to app connections
 
 #### commands_list
 
-Server forwards the bridge's slash-command list (broadcast to **all** app connections under this account). Same payload as the Bridge → Server `commands_list` above. The app **splits the reply by `source`** and caches it in `localStorage` in two buckets: global commands (`user`/`plugin`/`builtin`) under `apeek_cmds:g:<deviceName>` (shared by every project on that device, stored once) and project commands (`source: "project"`) under `apeek_cmds:p:<projectHash>`. The `/`-autocomplete popup shows the **union** of the two (deduped, sorted). This way a brand-new project directory immediately gets all global commands from the device cache without waiting for its own scan.
+Server broadcasts the bridge's slash-command list to all app connections under the account. The
+app accepts only the reply matching its latest request and current device/runtime/project/session,
+then caches the ordered `{commands, skills}` payload under
+`apeek_cmds:v3:<device>:<runtime>:<projectHash>`.
 
 ```json
 {

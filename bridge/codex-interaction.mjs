@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import {
   codexCompletedLiveMessages,
@@ -85,6 +86,30 @@ function cloneJson(value, fallback = null) {
     return JSON.parse(JSON.stringify(value));
   } catch {
     return fallback;
+  }
+}
+
+function runLocalCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(String(stderr || error.message).trim()));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+function encodeCommandPayload(value) {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+
+function decodeCommandPayload(value, command) {
+  try {
+    return JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+  } catch {
+    throw new Error(`Usage: /${command}`);
   }
 }
 
@@ -362,6 +387,11 @@ export class CodexInteraction {
       session = {
         nativeSessionId,
         storageSessionId,
+        cwd: '',
+        skills: null,
+        tokenUsage: null,
+        model: '',
+        effort: null,
         client: null,
         releasePromise: null,
         releasingClient: null,
@@ -382,6 +412,7 @@ export class CodexInteraction {
     const client = this.clientFactory({
       nativeSessionId: session.nativeSessionId,
       storageSessionId: session.storageSessionId,
+      ...(session.cwd ? { cwd: session.cwd } : {}),
       managedOnly: !!options.managedOnly,
     });
     if (!client) throw new Error('Codex interaction client factory returned no client');
@@ -487,6 +518,8 @@ export class CodexInteraction {
       clearAdoption();
       throw new Error('Codex resumed an unexpected thread');
     }
+    session.model = result.model || session.model;
+    session.effort = result.reasoningEffort ?? session.effort;
     session.subscribedGeneration = client.generation;
     if (!adopted) return { active: false };
     if (session.active !== adopted) {
@@ -520,6 +553,7 @@ export class CodexInteraction {
 
   async sendExisting(options) {
     const session = this.#session(options.nativeSessionId, options.sessionId);
+    if (options.cwd) session.cwd = options.cwd;
     const turn = {
       streamId: options.streamId,
       text: options.text,
@@ -589,6 +623,9 @@ export class CodexInteraction {
 
       const sessionId = storageSessionId('codex', nativeSessionId);
       session = this.#session(nativeSessionId, sessionId);
+      session.cwd = options.cwd || '';
+      session.model = result.model || '';
+      session.effort = result.reasoningEffort ?? null;
       if (session.client && session.client !== client) {
         throw new Error('Codex created a thread already owned by another client');
       }
@@ -621,10 +658,11 @@ export class CodexInteraction {
     this.#prepareTurn(session, turn);
 
     try {
+      const input = await this.#turnInput(session, turn.text);
       const result = await session.client.request('turn/start', {
         threadId: session.nativeSessionId,
         clientUserMessageId: turn.streamId,
-        input: [{ type: 'text', text: turn.text }],
+        input,
       });
       this.#bindTurnId(turn, result?.turn?.id);
     } catch (error) {
@@ -634,6 +672,736 @@ export class CodexInteraction {
       this.#drainOrRelease(session);
       throw error;
     }
+  }
+
+  async #turnInput(session, text) {
+    const input = [{ type: 'text', text }];
+    const mentioned = new Set();
+    const pattern = /(^|\s)\$([A-Za-z0-9_.:-]+)/g;
+    let match;
+    while ((match = pattern.exec(text)) !== null) mentioned.add(match[2]);
+    if (!mentioned.size) return input;
+    const skills = await this.#loadSkills(session, true);
+    for (const skill of skills) {
+      if (!skill.enabled || !mentioned.has(skill.name)) continue;
+      input.push({
+        type: 'skill',
+        name: skill.name,
+        path: skill.path,
+      });
+    }
+    return input;
+  }
+
+  async #loadSkills(session, forceReload = false) {
+    if (session.skills && !forceReload) return session.skills;
+    const cwd = session.cwd || process.cwd();
+    const response = await this.#client(session).request('skills/list', {
+      cwds: [cwd],
+      forceReload,
+    });
+    const entry = (response?.data || []).find((candidate) => candidate.cwd === cwd)
+      || response?.data?.[0];
+    session.skills = (entry?.skills || []).map((skill) => ({
+      name: skill.name,
+      description: skill.description || skill.shortDescription || '',
+      path: skill.path,
+      scope: skill.scope,
+      enabled: skill.enabled !== false,
+    }));
+    return session.skills;
+  }
+
+  async listSkills(options = {}) {
+    const context = await this.listCommandContext(options);
+    return context.skills;
+  }
+
+  async listCommandContext(options = {}) {
+    const client = this.clientFactory({ cwd: options.cwd || process.cwd() });
+    if (!client) throw new Error('Codex interaction client factory returned no client');
+    try {
+      await client.start();
+      const cwd = options.cwd || process.cwd();
+      const [
+        skillsResponse,
+        modelsResponse,
+        featuresResponse,
+        descendantsResponse,
+        hooksResponse,
+      ] = await Promise.all([
+        client.request('skills/list', {
+          cwds: [cwd],
+          forceReload: options.forceReload !== false,
+        }),
+        client.request('model/list', {
+          includeHidden: false,
+          limit: 100,
+        }),
+        client.request('experimentalFeature/list', options.nativeSessionId
+          ? { threadId: options.nativeSessionId }
+          : {}).catch(() => client.request('experimentalFeature/list', {})
+          .catch(() => ({ data: [] }))),
+        options.nativeSessionId
+          ? client.request('thread/list', {
+            ancestorThreadId: options.nativeSessionId,
+            limit: 100,
+          }).catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
+        client.request('hooks/list', {
+          cwds: [cwd],
+        }).catch(() => ({ data: [] })),
+      ]);
+      const entry = skillsResponse?.data?.[0];
+      const skills = (entry?.skills || [])
+        .filter((skill) => skill.enabled !== false)
+        .map((skill) => ({
+          name: skill.name,
+          description: skill.description || skill.shortDescription || '',
+          scope: skill.scope,
+          enabled: true,
+        }));
+      const modelOptions = [];
+      for (const model of modelsResponse?.data || []) {
+        if (model.hidden) continue;
+        const efforts = model.supportedReasoningEfforts?.length
+          ? model.supportedReasoningEfforts
+          : [{
+            reasoningEffort: model.defaultReasoningEffort,
+            description: '',
+          }];
+        for (const effort of efforts) {
+          modelOptions.push({
+            name: `${model.model}:${effort.reasoningEffort}`,
+            label: `${model.displayName} · ${effort.reasoningEffort}`,
+            description: effort.description || model.description || '',
+            value: `${model.model} ${effort.reasoningEffort}`,
+          });
+        }
+      }
+      const experimentalOptions = (featuresResponse?.data || [])
+        .filter((feature) => feature.displayName && feature.description)
+        .map((feature) => ({
+          name: feature.name,
+          label: `${feature.displayName} · ${feature.enabled ? 'On' : 'Off'}`,
+          description: feature.description,
+          value: `${feature.name}=${feature.enabled ? 'off' : 'on'}`,
+        }));
+      const agentOptions = options.nativeSessionId
+        ? [{
+          name: options.nativeSessionId,
+          label: 'Main thread',
+          description: 'Return to the primary thread.',
+          value: options.nativeSessionId,
+        }]
+        : [];
+      for (const thread of descendantsResponse?.data || []) {
+        const status = typeof thread.status === 'string'
+          ? thread.status
+          : (thread.status?.type || '');
+        agentOptions.push({
+          name: thread.id,
+          label: thread.agentNickname || thread.agentRole || thread.name
+            || thread.preview || thread.id.slice(0, 8),
+          description: [
+            thread.agentRole,
+            status,
+          ].filter(Boolean).join(' · '),
+          value: thread.id,
+        });
+      }
+      const hooksEntry = (hooksResponse?.data || [])
+        .find((candidate) => candidate.cwd === cwd)
+        || hooksResponse?.data?.[0];
+      const hookOptions = (hooksEntry?.hooks || []).map((hook) => {
+        const trustStatus = String(hook.trustStatus || '').toLowerCase();
+        const needsTrust = trustStatus === 'untrusted' || trustStatus === 'modified';
+        const action = needsTrust ? 'trust' : (hook.enabled ? 'disable' : 'enable');
+        return {
+          name: hook.key,
+          label: `${hook.eventName} · ${needsTrust ? 'Trust' : (hook.enabled ? 'On' : 'Off')}`,
+          description: [
+            hook.command || hook.handlerType,
+            hook.source,
+            hook.isManaged ? 'managed' : '',
+          ].filter(Boolean).join(' · '),
+          value: encodeCommandPayload({
+            action,
+            key: hook.key,
+            currentHash: hook.currentHash,
+          }),
+          ...(needsTrust
+            ? { confirm: `Trust the ${hook.eventName} hook from ${hook.sourcePath}?` }
+            : {}),
+          ...(hook.isManaged ? { disabled: true } : {}),
+        };
+      });
+      return {
+        skills,
+        commandOptions: {
+          model: modelOptions,
+          experimental: experimentalOptions,
+          hooks: hookOptions,
+          agent: agentOptions,
+          subagents: agentOptions,
+        },
+      };
+    } finally {
+      await Promise.resolve(client.stop()).catch(() => {});
+    }
+  }
+
+  async runCommand(options) {
+    const session = this.#session(options.nativeSessionId, options.sessionId);
+    if (options.cwd) session.cwd = options.cwd;
+    const operation = session.sendLock.then(async () => {
+      await this.#resume(session, options);
+      const name = options.name;
+      const args = String(options.args || '').trim();
+      if (name === 'review' || name === 'compact' || (name === 'plan' && args)) {
+        if (name === 'compact' && args) throw new Error('Usage: /compact');
+        if (session.active) {
+          throw new Error(`/${name} is disabled while a task is in progress.`);
+        }
+        const turn = {
+          streamId: options.streamId,
+          text: name === 'plan' ? args : `/${name}${args ? ` ${args}` : ''}`,
+          callbacks: options.callbacks || {},
+          command: name,
+        };
+        try {
+          if (name === 'review') {
+            session.active = turn;
+            this.#prepareTurn(session, turn);
+            const target = args
+              ? { type: 'custom', instructions: args }
+              : { type: 'uncommittedChanges' };
+            const response = await session.client.request('review/start', {
+              threadId: session.nativeSessionId,
+              target,
+              delivery: 'inline',
+            });
+            this.#bindTurnId(turn, response?.turn?.id);
+          } else if (name === 'compact') {
+            session.active = turn;
+            this.#prepareTurn(session, turn);
+            await session.client.request('thread/compact/start', {
+              threadId: session.nativeSessionId,
+            });
+          } else {
+            await this.#setPlanMode(session);
+            await this.#startTurn(session, turn);
+          }
+          return { streaming: true };
+        } catch (error) {
+          session.active = null;
+          turn.framer?.cancel();
+          this.#drainOrRelease(session);
+          throw error;
+        }
+      }
+
+      try {
+        switch (name) {
+          case 'model':
+            return { output: await this.#setModel(session, args) };
+          case 'permissions':
+            return { output: await this.#setPermissions(session, args) };
+          case 'experimental':
+            return { output: await this.#setExperimental(session, args) };
+          case 'memories':
+            return { output: await this.#setMemories(session, args) };
+          case 'skills': {
+            if (args) throw new Error('Usage: /skills');
+            const skills = await this.#loadSkills(session, true);
+            return { output: this.#skillsOutput(skills) };
+          }
+          case 'import':
+            return { output: await this.#importExternalConfig(session, args) };
+          case 'hooks':
+            if (args) return { output: await this.#updateHook(session, args) };
+            return { output: await this.#hooksOutput(session) };
+          case 'rename':
+            if (!args) throw new Error('Usage: /rename <name>');
+            await session.client.request('thread/name/set', {
+              threadId: session.nativeSessionId,
+              name: args,
+            });
+            return { output: `Renamed thread to **${args}**.` };
+          case 'archive':
+            if (args) throw new Error('Usage: /archive');
+            await session.client.request('thread/archive', {
+              threadId: session.nativeSessionId,
+            });
+            return {
+              output: 'Session archived.',
+              action: { type: 'leave-session' },
+            };
+          case 'delete':
+            if (args) throw new Error('Usage: /delete');
+            await session.client.request('thread/delete', {
+              threadId: session.nativeSessionId,
+            });
+            return {
+              output: 'Session deleted.',
+              action: { type: 'leave-session' },
+            };
+          case 'fork':
+            return await this.#forkThread(session, args);
+          case 'app':
+            if (args) throw new Error('Usage: /app');
+            await this.#openDesktopThread(session);
+            return { output: 'Opened this session in the Codex Desktop app.' };
+          case 'plan':
+            if (args) throw new Error('Usage: /plan [prompt]');
+            await this.#setPlanMode(session);
+            return { output: 'Switched to Plan mode.' };
+          case 'goal':
+            return { output: await this.#goalOutput(session, args) };
+          case 'agent':
+          case 'subagents':
+            if (!args) throw new Error(`Usage: /${name} <thread-id>`);
+            return {
+              output: `Switched to agent thread \`${args}\`.`,
+              action: {
+                type: 'open-session',
+                sessionId: storageSessionId('codex', args),
+                preview: 'Agent thread',
+              },
+            };
+          case 'diff':
+            if (args) throw new Error('Usage: /diff');
+            return { output: await this.#diffOutput(session) };
+          case 'status':
+            if (args) throw new Error('Usage: /status');
+            return { output: await this.#statusOutput(session) };
+          case 'usage':
+            return { output: await this.#usageOutput(session, args) };
+          case 'mcp':
+            if (args && args !== 'verbose') throw new Error('Usage: /mcp [verbose]');
+            return { output: await this.#mcpOutput(session, args === 'verbose') };
+          case 'logout':
+            if (args) throw new Error('Usage: /logout');
+            await session.client.request('account/logout');
+            return { output: 'Logged out of Codex.' };
+          case 'feedback':
+            return { output: await this.#sendFeedback(session, args) };
+          case 'ps':
+            if (args) throw new Error('Usage: /ps');
+            return { output: await this.#backgroundTerminalsOutput(session) };
+          case 'stop':
+            if (args) throw new Error('Usage: /stop');
+            await session.client.request('thread/backgroundTerminals/clean', {
+              threadId: session.nativeSessionId,
+            });
+            return { output: 'Stopped all background terminals.' };
+          case 'personality':
+            return { output: await this.#setPersonality(session, args) };
+          default:
+            throw new Error(`Unsupported Codex command: /${name}`);
+        }
+      } finally {
+        await this.#release(session);
+      }
+    });
+    session.sendLock = operation.catch(() => {});
+    return operation;
+  }
+
+  async #setModel(session, args) {
+    const [model, effort, extra] = args.split(/\s+/);
+    if (!model || !effort || extra) throw new Error('Usage: /model <model> <effort>');
+    await session.client.request('thread/settings/update', {
+      threadId: session.nativeSessionId,
+      model,
+      effort,
+    });
+    session.model = model;
+    session.effort = effort;
+    return `Using **${model}** with **${effort}** reasoning.`;
+  }
+
+  async #setPermissions(session, args) {
+    const presets = {
+      ask: {
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'user',
+        sandboxPolicy: {
+          type: 'workspaceWrite',
+          writableRoots: [],
+          networkAccess: true,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
+      },
+      'auto-review': {
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'auto_review',
+        sandboxPolicy: {
+          type: 'workspaceWrite',
+          writableRoots: [],
+          networkAccess: true,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
+      },
+      'full-access': {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      },
+    };
+    const preset = presets[args];
+    if (!preset) throw new Error('Usage: /permissions <ask|auto-review|full-access>');
+    await session.client.request('thread/settings/update', {
+      threadId: session.nativeSessionId,
+      ...preset,
+    });
+    return `Permissions changed to **${args}**.`;
+  }
+
+  async #setExperimental(session, args) {
+    const match = /^([A-Za-z0-9_-]+)=(on|off)$/.exec(args);
+    if (!match) throw new Error('Usage: /experimental <feature>=<on|off>');
+    await session.client.request('experimentalFeature/enablement/set', {
+      enablement: {
+        [match[1]]: match[2] === 'on',
+      },
+    });
+    return `Experimental feature **${match[1]}** is now **${match[2]}**.`;
+  }
+
+  async #setMemories(session, args) {
+    if (!['enabled', 'disabled', 'reset'].includes(args)) {
+      throw new Error('Usage: /memories <enabled|disabled|reset>');
+    }
+    if (args === 'reset') {
+      await session.client.request('memory/reset');
+      return 'Codex memories were reset.';
+    }
+    await session.client.request('thread/memoryMode/set', {
+      threadId: session.nativeSessionId,
+      mode: args,
+    });
+    return `Memories are **${args}** for this thread.`;
+  }
+
+  async #hooksOutput(session) {
+    const response = await session.client.request('hooks/list', {
+      cwds: [session.cwd || process.cwd()],
+    });
+    const entry = response?.data?.[0];
+    const hooks = entry?.hooks || [];
+    if (!hooks.length) return 'No lifecycle hooks are configured.';
+    return [
+      '**Lifecycle hooks**',
+      ...hooks.map((hook) => (
+        `- **${hook.eventName}** · ${hook.handlerType} · ${hook.enabled ? 'enabled' : 'disabled'}`
+        + ` · ${hook.source}`
+      )),
+    ].join('\n');
+  }
+
+  async #updateHook(session, args) {
+    const payload = decodeCommandPayload(args, 'hooks');
+    if (!payload?.key || !['enable', 'disable', 'trust'].includes(payload.action)) {
+      throw new Error('Usage: /hooks');
+    }
+    const value = payload.action === 'trust'
+      ? {
+        [payload.key]: {
+          trusted_hash: payload.currentHash,
+        },
+      }
+      : {
+        [payload.key]: {
+          enabled: payload.action === 'enable',
+        },
+      };
+    await session.client.request('config/batchWrite', {
+      edits: [{
+        keyPath: 'hooks.state',
+        value,
+        mergeStrategy: 'upsert',
+      }],
+      reloadUserConfig: true,
+    });
+    if (payload.action === 'trust') return `Trusted hook \`${payload.key}\`.`;
+    return `${payload.action === 'enable' ? 'Enabled' : 'Disabled'} hook \`${payload.key}\`.`;
+  }
+
+  async #importExternalConfig(session, args) {
+    if (!['claude-code', 'cursor'].includes(args)) {
+      throw new Error('Usage: /import <claude-code|cursor>');
+    }
+    const detected = await session.client.request('externalAgentConfig/detect', {
+      includeHome: true,
+      cwds: [session.cwd || process.cwd()],
+      migrationSource: args,
+    });
+    const items = detected?.items || [];
+    if (!items.length) return `No compatible ${args} setup was found to import.`;
+    await session.client.request('externalAgentConfig/import', {
+      migrationItems: items,
+      migrationSource: args,
+      providerId: args,
+      source: 'agentpeek',
+    });
+    return `Import started for **${items.length}** ${args} item${items.length === 1 ? '' : 's'}.`;
+  }
+
+  async #openDesktopThread(session) {
+    const url = `codex://threads/${session.nativeSessionId}`;
+    if (process.platform === 'darwin') {
+      await runLocalCommand('open', [url]);
+      return;
+    }
+    if (process.platform === 'win32') {
+      await runLocalCommand('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `Start-Process '${url}'`,
+      ]);
+      return;
+    }
+    throw new Error('/app is only available when the Bridge runs on macOS or Windows.');
+  }
+
+  async #forkThread(session, args) {
+    const response = await session.client.request('thread/fork', {
+      threadId: session.nativeSessionId,
+      excludeTurns: true,
+    });
+    const threadId = response?.thread?.id;
+    if (!threadId) throw new Error('Codex did not return a forked thread id.');
+    if (args) {
+      await session.client.request('thread/name/set', {
+        threadId,
+        name: args,
+      });
+    }
+    return {
+      output: args ? `Forked thread as **${args}**.` : 'Forked the current thread.',
+      action: {
+        type: 'open-session',
+        sessionId: storageSessionId('codex', threadId),
+        preview: args || 'Forked session',
+      },
+    };
+  }
+
+  async #setPlanMode(session) {
+    const model = session.model;
+    if (!model) throw new Error('Codex did not report the current model.');
+    await session.client.request('thread/settings/update', {
+      threadId: session.nativeSessionId,
+      collaborationMode: {
+        mode: 'plan',
+        settings: {
+          model,
+          reasoning_effort: null,
+          developer_instructions: null,
+        },
+      },
+    });
+  }
+
+  async #goalOutput(session, args) {
+    const lower = args.toLowerCase();
+    if (!args) {
+      const response = await session.client.request('thread/goal/get', {
+        threadId: session.nativeSessionId,
+      });
+      const goal = response?.goal;
+      if (!goal) return 'No goal is set for this thread.';
+      return [
+        '**Thread goal**',
+        `- Objective: ${goal.objective || '(none)'}`,
+        `- Status: ${goal.status || 'active'}`,
+        ...(Number.isFinite(goal.tokenBudget)
+          ? [`- Token budget: ${goal.tokenBudget}`]
+          : []),
+      ].join('\n');
+    }
+    if (lower === 'clear') {
+      await session.client.request('thread/goal/clear', {
+        threadId: session.nativeSessionId,
+      });
+      return 'Thread goal cleared.';
+    }
+    if (lower === 'pause' || lower === 'resume') {
+      const status = lower === 'pause' ? 'paused' : 'active';
+      await session.client.request('thread/goal/set', {
+        threadId: session.nativeSessionId,
+        status,
+      });
+      return `Thread goal is now **${status}**.`;
+    }
+    await session.client.request('thread/goal/set', {
+      threadId: session.nativeSessionId,
+      objective: args,
+      status: 'active',
+    });
+    return `Thread goal set to: ${args}`;
+  }
+
+  async #diffOutput(session) {
+    const cwd = session.cwd || process.cwd();
+    const [diff, untracked] = await Promise.all([
+      session.client.request('command/exec', {
+        command: ['git', 'diff', '--no-ext-diff', '--no-color'],
+        cwd,
+        timeoutMs: 15000,
+        outputBytesCap: 512000,
+      }),
+      session.client.request('command/exec', {
+        command: ['git', 'ls-files', '--others', '--exclude-standard'],
+        cwd,
+        timeoutMs: 15000,
+        outputBytesCap: 128000,
+      }),
+    ]);
+    if (diff.exitCode !== 0) {
+      return diff.stderr?.trim() || '`/diff` — not inside a git repository.';
+    }
+    const parts = [];
+    if (diff.stdout?.trim()) parts.push(`\`\`\`diff\n${diff.stdout.trim()}\n\`\`\``);
+    if (untracked.stdout?.trim()) {
+      parts.push([
+        '**Untracked files**',
+        ...untracked.stdout.trim().split(/\r?\n/).map((file) => `- \`${file}\``),
+      ].join('\n'));
+    }
+    return parts.join('\n\n') || 'Working tree has no changes.';
+  }
+
+  async #statusOutput(session) {
+    const response = await session.client.request('thread/read', {
+      threadId: session.nativeSessionId,
+      includeTurns: false,
+    });
+    const thread = response?.thread || {};
+    const status = typeof thread.status === 'string'
+      ? thread.status
+      : (thread.status?.type || 'unknown');
+    const lines = [
+      '**Codex status**',
+      `- Thread: \`${thread.id || session.nativeSessionId}\``,
+      `- Working directory: \`${thread.cwd || session.cwd || 'unknown'}\``,
+      `- Status: ${status}`,
+    ];
+    if (thread.name) lines.splice(2, 0, `- Name: ${thread.name}`);
+    if (thread.modelProvider) lines.push(`- Model provider: ${thread.modelProvider}`);
+    const usage = session.tokenUsage;
+    if (Number.isFinite(usage?.total?.totalTokens)) {
+      const context = usage.modelContextWindow;
+      const suffix = Number.isFinite(context) && context > 0
+        ? ` / ${context} (${Math.round((usage.total.totalTokens / context) * 100)}%)`
+        : '';
+      lines.push(`- Context tokens: ${usage.total.totalTokens}${suffix}`);
+    }
+    return lines.join('\n');
+  }
+
+  async #mcpOutput(session, verbose) {
+    const servers = [];
+    let cursor = null;
+    do {
+      const response = await session.client.request('mcpServerStatus/list', {
+        threadId: session.nativeSessionId,
+        detail: verbose ? 'full' : 'toolsAndAuthOnly',
+        cursor,
+        limit: 100,
+      });
+      servers.push(...(response?.data || []));
+      cursor = response?.nextCursor || null;
+    } while (cursor);
+    if (!servers.length) return 'No MCP servers are configured.';
+    const lines = ['**MCP servers**'];
+    for (const server of servers) {
+      const tools = Object.keys(server.tools || {});
+      const summary = `${tools.length} tool${tools.length === 1 ? '' : 's'}, auth: ${server.authStatus}`;
+      lines.push(`- **${server.name}**: ${summary}`);
+      if (verbose && tools.length) {
+        lines.push(`  ${tools.map((tool) => `\`${tool}\``).join(', ')}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  async #usageOutput(_session, args) {
+    if (args && !['daily', 'weekly', 'cumulative'].includes(args)) {
+      throw new Error('Usage: /usage [daily|weekly|cumulative]');
+    }
+    const response = await _session.client.request('account/usage/read');
+    const view = args || 'daily';
+    const usage = response?.usage || response;
+    return [
+      `**Codex usage · ${view}**`,
+      `\`\`\`json\n${JSON.stringify(usage, null, 2)}\n\`\`\``,
+    ].join('\n');
+  }
+
+  async #sendFeedback(session, args) {
+    const separator = args.indexOf(' ');
+    const classification = separator === -1 ? args : args.slice(0, separator);
+    const reason = separator === -1 ? '' : args.slice(separator + 1).trim();
+    const allowed = ['bug', 'bad_result', 'good_result', 'safety_check', 'other'];
+    if (!allowed.includes(classification) || !reason) {
+      throw new Error(
+        'Usage: /feedback <bug|bad_result|good_result|safety_check|other> <message>',
+      );
+    }
+    const response = await session.client.request('feedback/upload', {
+      classification,
+      reason,
+      includeLogs: false,
+      threadId: session.nativeSessionId,
+    });
+    return `Feedback sent for thread \`${response?.threadId || session.nativeSessionId}\`.`;
+  }
+
+  async #backgroundTerminalsOutput(session) {
+    const terminals = [];
+    let cursor = null;
+    do {
+      const response = await session.client.request('thread/backgroundTerminals/list', {
+        threadId: session.nativeSessionId,
+        cursor,
+        limit: 100,
+      });
+      terminals.push(...(response?.data || []));
+      cursor = response?.nextCursor || null;
+    } while (cursor);
+    if (!terminals.length) return 'No background terminals are running.';
+    return [
+      '**Background terminals**',
+      ...terminals.map((terminal) => (
+        `- \`${terminal.processId}\` · ${terminal.command}`
+        + `${terminal.osPid ? ` · pid ${terminal.osPid}` : ''}`
+      )),
+    ].join('\n');
+  }
+
+  async #setPersonality(session, args) {
+    if (!['friendly', 'pragmatic'].includes(args)) {
+      throw new Error('Usage: /personality <friendly|pragmatic>');
+    }
+    await session.client.request('thread/settings/update', {
+      threadId: session.nativeSessionId,
+      personality: args,
+    });
+    return `Personality changed to **${args}**.`;
+  }
+
+  #skillsOutput(skills) {
+    if (!skills.length) return 'No enabled Codex skills were found.';
+    return [
+      '**Codex skills**',
+      ...skills.map((skill) => (
+        `- **$${skill.name}**${skill.description ? `: ${skill.description}` : ''}`
+      )),
+    ].join('\n');
   }
 
   #prepareTurn(session, turn) {
@@ -794,6 +1562,16 @@ export class CodexInteraction {
 
   #onNotification(session, client, { method, params }) {
     if (session.client !== client) return;
+    if (method === 'skills/changed') {
+      session.skills = null;
+      return;
+    }
+    if (method === 'thread/tokenUsage/updated') {
+      if (!params?.threadId || params.threadId === session.nativeSessionId) {
+        session.tokenUsage = cloneJson(params?.tokenUsage);
+      }
+      return;
+    }
     if (method === 'serverRequest/resolved') {
       const requestId = `codex:${session.nativeSessionId}:${params.requestId}`;
       const pending = this.pendingRequests.get(requestId);
