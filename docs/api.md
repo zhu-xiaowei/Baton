@@ -1372,7 +1372,7 @@ Server forwards bridge's file-ready notification (only pushed to app connections
 Server broadcasts the bridge's slash-command list to all app connections under the account. The
 app accepts only the reply matching its latest request and current device/runtime/project/session,
 then caches the ordered `{commands, skills}` payload under
-`apeek_cmds:v4:<device>:<runtime>:<projectHash>`.
+`apeek_cmds:v5:<device>:<runtime>:<projectHash>`.
 
 ```json
 {
