@@ -954,15 +954,19 @@ Ask the bridge for the slash-command catalog of the active runtime.
 
 **Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
 
-**Claude handling** (`scanSlashCommands`, live read):
-1. **User**: `~/.claude/commands/**/*.md` + `~/.claude/skills/*/SKILL.md`
-2. **Project**: `<projectDir>/.claude/commands/**/*.md` + `/skills/*/SKILL.md`
-3. **Plugins**: read `settings.json` `enabledPlugins`; resolve each plugin root (`installed_plugins.json` `installPath` → `extraKnownMarketplaces` path → `plugins/marketplaces/<mkt>/plugins/<name>` → `.../<name>`); scan its `/commands` + `/skills`
-4. `name` = command file basename (sans `.md`) — directory entries only, no file read; subdirectories form a `:` namespace. Skill `name` is read from `SKILL.md` frontmatter `name` (falls back to dir name)
-5. Append `BUILTIN_COMMANDS` (`source: "builtin"`) — bundled skills + builtin slash commands CC compiles into its binary (no file on disk): `batch` `code-review` `compact` `config` `context` `debug` `deep-research` `fewer-permission-prompts` `goal` `heapdump` `init` `insights` `loop` `reload-skills` `review` `run` `run-skill-generator` `security-review` `simplify` `stats` `status` `team-onboarding` `update-config` `usage` `verify` (`/clear` is excluded — it spawns a fresh empty session each time; use the "+" new-session button instead)
-6. Dedup by `name` (priority user > project > plugin > builtin — so a user's `commit.md`/`recap.md` wins over a same-named built-in), then sort all names alphabetically (`localeCompare`); reply `commands_list`
-
-**Built-ins**: bundled skills and builtin slash commands live in the CC binary, not on disk, so the directory scan can't see them. `BUILTIN_COMMANDS` is a hand-maintained list that mirrors **exactly** what the running CC surfaces in its `/`-menu beyond the disk-scannable commands — so AgentPeek's list matches CC 1:1 (no padding with CC's full `COMMANDS()` set, none of CC's hidden/feature-gated commands). Re-check on CC upgrades, since CC may add/remove bundled skills between versions (e.g. `deep-research`, `run`, `goal`, `run-skill-generator`, `team-onboarding` are newer additions).
+**Claude handling**:
+1. Start a short-lived `claude -p` process with `--no-session-persistence`.
+2. Send stream-json `control_request {subtype:"initialize"}`.
+3. Use the returned runtime-filtered commands, descriptions, argument hints, aliases,
+   models and provider/account state. No environment-specific command or model table is
+   hardcoded in AgentPeek.
+4. Filter terminal-only, internal or unsafe commands. Order executable local commands
+   alphabetically, then prompt/Skill commands alphabetically, matching the TUI groups.
+5. `/model` options preserve `initialize.models` order and values. Enum pickers such as
+   `/effort` and `/fast` use the current command's returned argument hint.
+6. If `initialize` is unsupported or fails, scan user/project/plugin Markdown commands
+   and Skills only. The fallback parses descriptions, argument hints, nested namespaces
+   and `user-invocable:false`; it does not append a static built-in list.
 
 **Codex handling**:
 
@@ -1368,7 +1372,7 @@ Server forwards bridge's file-ready notification (only pushed to app connections
 Server broadcasts the bridge's slash-command list to all app connections under the account. The
 app accepts only the reply matching its latest request and current device/runtime/project/session,
 then caches the ordered `{commands, skills}` payload under
-`apeek_cmds:v3:<device>:<runtime>:<projectHash>`.
+`apeek_cmds:v4:<device>:<runtime>:<projectHash>`.
 
 ```json
 {

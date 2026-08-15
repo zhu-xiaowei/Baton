@@ -575,7 +575,9 @@ body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; widt
 .slash-item.disabled { cursor: default; opacity: .5; }
 .slash-item.disabled.active { background: transparent; }
 @media (hover: hover) and (pointer: fine) { .slash-item:hover { background: #21262d; } }
-.slash-name { color: #e6edf3; font-size: 14px; overflow-wrap: anywhere; }
+.slash-name { color: #e6edf3; font-size: 14px; min-width: 0; display: flex; gap: 5px; align-items: baseline; }
+.slash-command-name { min-width: 0; overflow-wrap: anywhere; }
+.slash-argument-hint { color: #6e7681; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slash-description {
   color: #8b949e; font-size: 12px; min-width: 0; overflow: hidden; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1;

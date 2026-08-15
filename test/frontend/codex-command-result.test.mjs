@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('Codex local command output promotes its bubble and renders atomically', async () => {
+test('local command output promotes its bubble and renders atomically', async () => {
   const harness = await makeHarness();
   resetSession(harness, { sessionId: 'codex:thread-1' });
   harness.state.appState.runtime = 'codex';
@@ -38,6 +38,29 @@ test('Codex local command output promotes its bubble and renders atomically', as
     /full-access/,
   );
 
+  resetSession(harness, { sessionId: 'claude-session-1' });
+  harness.state.appState.runtime = 'claude';
+  harness.state.ws = null;
+  harness.window.doSend('/model default', '/model default', []);
+  const claudePending = harness.state.pendingSentMessages[0];
+  harness.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId: 'claude-session-1',
+    ok: true,
+    clientId: claudePending.id,
+    streamId: 'stream-claude-model',
+    commandOutput: 'Set model to Opus for this session only',
+  });
+  await harness.tick();
+  assert.equal(harness.state.pendingSentMessages.length, 0);
+  assert.equal(harness.state.wsRunning, false);
+  assert.match(
+    harness.document.querySelector('.assistant-text').textContent,
+    /Opus/,
+  );
+
+  resetSession(harness, { sessionId: 'codex:thread-1' });
+  harness.state.appState.runtime = 'codex';
   harness.state.ws = null;
   harness.window.doSend('/compact', '/compact', []);
   const compactPending = harness.state.pendingSentMessages[0];

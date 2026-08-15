@@ -19,6 +19,11 @@ import {
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
 import {
+  capturedClaudeCommandNames,
+  claudeCommandCatalog,
+  parseClaudeSlashCommand,
+} from './claude-commands.mjs';
+import {
   CODEX_INIT_PROMPT,
   codexCommandCatalog,
   expandCodexLegacyPrompt,
@@ -46,6 +51,7 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 // onExit only fires when a process exits during an active turn.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
 const _claudeRuntime = getRuntimeAdapter('claude');
+const _claudeCapturedCommands = new Map();
 let _claudeHookServer = null;
 
 // Idle pooled processes do not block terminal-driven status updates.
@@ -528,6 +534,23 @@ async function handleSendMessage(
     }
   }
 
+  if (identity.runtime === 'claude' && sessionId) {
+    const command = parseClaudeSlashCommand(resolved);
+    const commandCwd = projectCwd || cwdForSession(identity.nativeSessionId);
+    const captured = commandCwd
+      ? _claudeCapturedCommands.get(path.resolve(commandCwd))
+      : null;
+    if (command && captured?.has(command.name)) {
+      await handleClaudeCommand(
+        identity,
+        command,
+        clientId,
+        projectHash,
+      );
+      return;
+    }
+  }
+
   // Existing session: route through the runtime interaction adapter when available.
   if (sessionId) {
     const handled = adapter.interaction
@@ -778,6 +801,76 @@ async function handleCodexCommand(adapter, identity, command, clientId, options 
       error.message || 'Codex command failed.',
       errorCode ? { errorCode, writer: error.writer } : {},
     );
+  }
+}
+
+async function handleClaudeCommand(identity, command, clientId, projectHash) {
+  let cwd = projectHash ? projectHashToPath(projectHash) : null;
+  if (!cwd) cwd = cwdForSession(identity.nativeSessionId);
+  if (!cwd) {
+    wsSend({
+      action: 'send_message_result',
+      sessionId: identity.sessionId,
+      ok: false,
+      error: 'Session unavailable.',
+      clientId,
+    });
+    return;
+  }
+
+  try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
+  const streamId = newStreamId();
+  let acked = false;
+  const ack = (ok, error, meta = {}) => {
+    if (acked) return;
+    acked = true;
+    wsSend({
+      action: 'send_message_result',
+      sessionId: identity.sessionId,
+      ok,
+      error,
+      clientId,
+      streamId,
+      ...meta,
+    });
+  };
+  const callbacks = buildStreamCallbacks(identity.sessionId, cwd, ack);
+  const onResult = callbacks.onResult;
+  callbacks.onResult = (sid, result, finalSeq) => {
+    const output = typeof result.result === 'string' ? result.result : '';
+    if (result.is_error) ack(false, output || result.subtype || 'Claude command failed.');
+    else {
+      ack(true, null, {
+        commandOutput: output,
+        commandName: command.name,
+      });
+    }
+    onResult(sid, result, finalSeq);
+  };
+
+  if (!_pool.owns(identity.nativeSessionId)
+    && getDaemonRunningSessionIds().has(identity.nativeSessionId)) {
+    _pool.stopDaemon(identity.nativeSessionId);
+  }
+  syncPoolStatus(identity.nativeSessionId, 'running');
+  try {
+    let res = await _pool.send(identity.nativeSessionId, command.text, {
+      cwd,
+      resumeId: identity.nativeSessionId,
+      streamId,
+      ...callbacks,
+    });
+    if (res?.bgLocked) {
+      _pool.stopDaemon(identity.nativeSessionId);
+      res = await _pool.send(identity.nativeSessionId, command.text, {
+        cwd,
+        resumeId: identity.nativeSessionId,
+        streamId,
+        ...callbacks,
+      });
+    }
+  } catch (error) {
+    ack(false, error.message || 'Claude command failed.');
   }
 }
 
@@ -1120,7 +1213,22 @@ async function handleListCommands(msg) {
       });
       skills = context.skills;
     } else {
-      commands = scanSlashCommands(dir);
+      const cwd = dir || process.cwd();
+      try {
+        const context = await _pool.inspect(cwd);
+        commands = claudeCommandCatalog(context);
+        _claudeCapturedCommands.set(
+          path.resolve(cwd),
+          capturedClaudeCommandNames(context),
+        );
+        if (_claudeCapturedCommands.size > 100) {
+          _claudeCapturedCommands.delete(_claudeCapturedCommands.keys().next().value);
+        }
+      } catch (error) {
+        console.warn(`[ws] Claude command initialize unavailable, using disk fallback: ${error.message}`);
+        _claudeCapturedCommands.delete(path.resolve(cwd));
+        commands = scanSlashCommands(dir);
+      }
     }
   } catch (err) {
     console.error(`[ws] list_commands failed: ${err.message}`);

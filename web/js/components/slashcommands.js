@@ -2,7 +2,7 @@
 // presentation order; Skills use the same "$name" composer syntax as Codex.
 import { state } from '../state.js';
 
-var CACHE_PREFIX = 'apeek_cmds:v3:';
+var CACHE_PREFIX = 'apeek_cmds:v4:';
 
 var _commands = [];     // current command list shown/filtered against
 var _skills = [];
@@ -157,9 +157,13 @@ function renderPopup() {
     var description = item.description
       ? '<span class="slash-description">' + esc(item.description) + '</span>'
       : '';
+    var argumentHint = _mode === 'commands' && item.argumentHint
+      ? '<span class="slash-argument-hint">' + esc(item.argumentHint) + '</span>'
+      : '';
     return '<div class="slash-item' + (i === _selected ? ' active' : '')
       + (item.disabled ? ' disabled' : '') + '" data-i="' + i + '">'
-      + '<span class="slash-name">' + prefix + esc(label) + '</span>'
+      + '<span class="slash-name"><span class="slash-command-name">'
+      + prefix + esc(label) + '</span>' + argumentHint + '</span>'
       + description
       + '</div>';
   }).join('');

@@ -2,39 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-// Built-in commands CC compiles into its binary (bundled skills + builtin slash
-// commands) — no file on disk, so the directory scan can't find them. Mirrors
-// exactly this CC version's "/" menu beyond disk-scannable commands; re-sync on
-// CC upgrades. /clear is excluded on purpose — it spawns a fresh empty session
-// each time (clutter, no output); users use the "+" button for a clean context.
-const BUILTIN_COMMANDS = [
-  'batch', 'code-review', 'compact', 'config', 'context', 'debug',
-  'deep-research', 'fewer-permission-prompts', 'goal', 'heapdump', 'init',
-  'insights', 'loop', 'reload-skills', 'review', 'run',
-  'run-skill-generator', 'security-review', 'simplify', 'stats', 'status',
-  'team-onboarding', 'update-config', 'usage', 'verify',
-];
-
-// AgentPeek-only synthetic commands — surfaced in the "/" list, tagged local below.
-export const SYNTHETIC_COMMANDS = {
-  'stats-models': {},
-};
-
-// "local" commands (CC `type: local`/`local-jsx`) render only in the terminal and
-// never write .jsonl. Under headless their output capture is gone — a /cmd is sent
-// as plain text and streams back normally; this set just tags them `local` in the
-// command list. (/compact is excluded — it writes a <local-command-stdout> row.)
-export const LOCAL_COMMANDS = new Set([
-  'context', 'usage', 'heapdump',
-  'goal', 'reload-skills', 'status', 'config', 'stats',
-]);
-
 const HOME = os.homedir();
-const CLAUDE_DIR = path.join(HOME, '.claude');
-const USER_COMMANDS = path.join(CLAUDE_DIR, 'commands');
-const USER_SKILLS = path.join(CLAUDE_DIR, 'skills');
-const SETTINGS = path.join(CLAUDE_DIR, 'settings.json');
-const INSTALLED_PLUGINS = path.join(CLAUDE_DIR, 'plugins', 'installed_plugins.json');
 
 function readJson(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return null; }
@@ -44,25 +12,55 @@ function isDir(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-// Read a skill's command name from SKILL.md frontmatter `name` (CC's rule),
-// falling back to the directory name. Returns null if SKILL.md is missing.
-function readSkillName(skillFile, dirName) {
+function unquote(value) {
+  const trimmed = String(value || '').trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed.replace(/\s+#.*$/, '').trim();
+}
+
+function readPromptFile(filePath) {
   let raw;
-  try { raw = fs.readFileSync(skillFile, 'utf-8'); } catch { return null; }
-  if (raw.startsWith('---')) {
-    const end = raw.indexOf('\n---', 3);
-    if (end !== -1) {
-      for (const line of raw.slice(3, end).split('\n')) {
-        const m = line.match(/^name:\s*(.+?)\s*$/);
-        if (m) return m[1].replace(/^["']|["']$/g, '');
+  try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { return null; }
+  raw = raw.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const lines = raw.split('\n');
+  const meta = {};
+  let bodyStart = 0;
+  if (lines[0]?.trim() === '---') {
+    const end = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+    if (end > 0) {
+      for (let i = 1; i < end; i++) {
+        const match = lines[i].match(/^\s*([A-Za-z][\w-]*):\s*(.*?)\s*$/);
+        if (!match) continue;
+        const key = match[1].toLowerCase();
+        let value = match[2];
+        if (/^[>|][+-]?$/.test(value)) {
+          const block = [];
+          while (i + 1 < end && /^\s+/.test(lines[i + 1])) {
+            block.push(lines[++i].trim());
+          }
+          value = value.startsWith('>') ? block.join(' ') : block.join('\n');
+        }
+        meta[key] = unquote(value);
       }
+      bodyStart = end + 1;
     }
   }
-  return dirName;
+  const firstContent = lines.slice(bodyStart).find((line) => line.trim());
+  const fallbackDescription = firstContent
+    ? firstContent.trim().replace(/^#{1,6}\s+/, '')
+    : '';
+  return {
+    name: meta.name || '',
+    description: meta.description || fallbackDescription,
+    argumentHint: meta['argument-hint'] || meta.argumenthint || '',
+    userInvocable: !/^(false|no|0)$/i.test(meta['user-invocable'] || ''),
+  };
 }
 
 // Scan a commands/ dir: each *.md is a command; subdirs form ':' namespaces.
-// Name comes from the filename — no need to read file contents.
 function scanCommands(dir, out, source) {
   if (!isDir(dir)) return;
   const walk = (cur, prefix) => {
@@ -72,7 +70,15 @@ function scanCommands(dir, out, source) {
       if (e.isDirectory()) {
         walk(path.join(cur, e.name), prefix + e.name + ':');
       } else if (e.isFile() && e.name.endsWith('.md')) {
-        out.push({ name: prefix + e.name.slice(0, -3), source });
+        const meta = readPromptFile(path.join(cur, e.name));
+        if (!meta?.userInvocable) continue;
+        out.push({
+          name: prefix + e.name.slice(0, -3),
+          source,
+          description: meta.description,
+          argumentHint: meta.argumentHint,
+          behavior: meta.argumentHint ? 'compose' : 'send',
+        });
       }
     }
   };
@@ -86,33 +92,42 @@ function scanSkills(dir, out, source) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     if (!e.isDirectory()) continue;
-    const name = readSkillName(path.join(dir, e.name, 'SKILL.md'), e.name);
-    if (name) out.push({ name, source });
+    const meta = readPromptFile(path.join(dir, e.name, 'SKILL.md'));
+    if (!meta?.userInvocable) continue;
+    out.push({
+      name: meta.name || e.name,
+      source,
+      description: meta.description,
+      argumentHint: meta.argumentHint,
+      behavior: meta.argumentHint ? 'compose' : 'send',
+    });
   }
 }
 
 // Resolve an enabled plugin's root dir, trying install path then marketplace locations.
-function resolvePluginRoot(key, installed, extraMarketplaces) {
+function resolvePluginRoot(key, installed, extraMarketplaces, home, claudeDir) {
   const [name, mkt] = key.split('@');
   const candidates = [];
   const recs = installed && installed.plugins && installed.plugins[key];
   if (Array.isArray(recs)) for (const r of recs) if (r.installPath) candidates.push(r.installPath);
   const extra = extraMarketplaces && extraMarketplaces[mkt];
   if (extra && extra.source && extra.source.path) {
-    candidates.push(path.join(extra.source.path.replace(/^~/, HOME), name));
+    candidates.push(path.join(extra.source.path.replace(/^~/, home), name));
   }
-  candidates.push(path.join(CLAUDE_DIR, 'plugins', 'marketplaces', mkt, 'plugins', name));
-  candidates.push(path.join(CLAUDE_DIR, 'plugins', 'marketplaces', mkt, name));
+  candidates.push(path.join(claudeDir, 'plugins', 'marketplaces', mkt, 'plugins', name));
+  candidates.push(path.join(claudeDir, 'plugins', 'marketplaces', mkt, name));
   return candidates.find(isDir) || null;
 }
 
 // Build the full slash-command list for a project: user + project + enabled plugins.
-export function scanSlashCommands(projectDir) {
+export function scanSlashCommands(projectDir, options = {}) {
   const list = [];
+  const home = options.home || HOME;
+  const claudeDir = path.join(home, '.claude');
 
   // User-level (global)
-  scanCommands(USER_COMMANDS, list, 'user');
-  scanSkills(USER_SKILLS, list, 'user');
+  scanCommands(path.join(claudeDir, 'commands'), list, 'user');
+  scanSkills(path.join(claudeDir, 'skills'), list, 'user');
 
   // Project-level
   if (projectDir && isDir(projectDir)) {
@@ -121,30 +136,19 @@ export function scanSlashCommands(projectDir) {
   }
 
   // Enabled plugins
-  const settings = readJson(SETTINGS) || {};
-  const installed = readJson(INSTALLED_PLUGINS);
+  const settings = readJson(path.join(claudeDir, 'settings.json')) || {};
+  const installed = readJson(path.join(claudeDir, 'plugins', 'installed_plugins.json'));
   const enabled = Object.entries(settings.enabledPlugins || {})
     .filter(([, v]) => v).map(([k]) => k);
   for (const key of enabled) {
-    const root = resolvePluginRoot(key, installed, settings.extraKnownMarketplaces);
+    const root = resolvePluginRoot(key, installed, settings.extraKnownMarketplaces, home, claudeDir);
     if (!root) continue;
     scanCommands(path.join(root, 'commands'), list, 'plugin');
     scanSkills(path.join(root, 'skills'), list, 'plugin');
   }
 
-  // Built-in commands (compiled into CC, no file on disk).
-  for (const name of BUILTIN_COMMANDS) {
-    const c = { name, source: 'builtin' };
-    if (LOCAL_COMMANDS.has(name)) c.local = true;
-    list.push(c);
-  }
-
-  // Synthetic commands (always local).
-  for (const name of Object.keys(SYNTHETIC_COMMANDS)) {
-    list.push({ name, source: 'builtin', local: true });
-  }
-
-  // Dedup by name, keeping first occurrence (user > project > plugin > builtin).
+  // Old Claude Code fallback: custom commands only. Built-ins are intentionally
+  // omitted because a static table becomes incorrect as the CLI evolves.
   const seen = new Set();
   const result = [];
   for (const c of list) {

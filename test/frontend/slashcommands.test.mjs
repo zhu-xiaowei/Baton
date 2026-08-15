@@ -100,12 +100,12 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   });
 
   assert.deepEqual(
-    [...dom.window.document.querySelectorAll('.slash-name')].map((element) => element.textContent),
+    [...dom.window.document.querySelectorAll('.slash-command-name')].map((element) => element.textContent),
     names.map((name) => `/${name}`),
   );
 
   const rename = [...dom.window.document.querySelectorAll('.slash-item')]
-    .find((element) => element.querySelector('.slash-name').textContent === '/rename');
+    .find((element) => element.querySelector('.slash-command-name').textContent === '/rename');
   rename.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
   assert.equal(input.value, '/rename ');
   assert.equal(sends, 0);
@@ -113,12 +113,12 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   input.value = '/';
   input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   const skills = [...dom.window.document.querySelectorAll('.slash-item')]
-    .find((element) => element.querySelector('.slash-name').textContent === '/skills');
+    .find((element) => element.querySelector('.slash-command-name').textContent === '/skills');
   skills
     .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
   assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, 'Skills');
   assert.deepEqual(
-    [...dom.window.document.querySelectorAll('.slash-name')].map((element) => element.textContent),
+    [...dom.window.document.querySelectorAll('.slash-command-name')].map((element) => element.textContent),
     ['$reviewer', '$tester'],
   );
   assert.ok(dom.window.document.querySelector('.slash-back'));
@@ -128,12 +128,12 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   assert.equal(dom.window.document.querySelector('#slash-popup').style.display, 'block');
   assert.equal(input.value, '/');
   assert.equal(
-    dom.window.document.querySelector('.slash-item.active .slash-name').textContent,
+    dom.window.document.querySelector('.slash-item.active .slash-command-name').textContent,
     '/skills',
   );
 
   const reopenedSkills = [...dom.window.document.querySelectorAll('.slash-item')]
-    .find((element) => element.querySelector('.slash-name').textContent === '/skills');
+    .find((element) => element.querySelector('.slash-command-name').textContent === '/skills');
   reopenedSkills.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
   dom.window.document.querySelector('.slash-item')
     .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
@@ -146,7 +146,7 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
     .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
   assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, '/model');
   assert.equal(
-    dom.window.document.querySelector('.slash-name').textContent,
+    dom.window.document.querySelector('.slash-command-name').textContent,
     'GPT-5.6 Sol · high',
   );
   input.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
@@ -157,7 +157,7 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, 'Slash Commands');
   assert.equal(input.value, '/');
   assert.equal(
-    dom.window.document.querySelector('.slash-item.active .slash-name').textContent,
+    dom.window.document.querySelector('.slash-item.active .slash-command-name').textContent,
     '/model',
   );
 
@@ -166,5 +166,106 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   dom.window.document.querySelector('.slash-item')
     .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
   assert.equal(input.value, '/model openai.gpt-5.6-sol high');
+  assert.equal(sends, 1);
+});
+
+test('Claude slash popup preserves live TUI order and opens realtime model options', async () => {
+  const dom = new JSDOM(
+    '<!doctype html><body>'
+      + '<div id="slash-popup" style="display:none">'
+      + '<div class="slash-popup-title">Slash Commands</div><div id="slash-list"></div></div>'
+      + '<textarea id="msg-input"></textarea></body>',
+    { url: 'https://test/' },
+  );
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.navigator = dom.window.navigator;
+  globalThis.localStorage = dom.window.localStorage;
+  dom.window.Element.prototype.scrollIntoView = function () {};
+
+  state.appState = {
+    runtime: 'claude',
+    device: 'phone',
+    project: { hash: '-workspace-project' },
+    session: 'claude-session-1',
+  };
+  state.wsProjectHash = '-workspace-project';
+  state.wsSessionId = 'claude-session-1';
+
+  const sent = [];
+  let sends = 0;
+  dom.window.wsSend = (payload) => sent.push(payload);
+  dom.window.sendMessage = () => { sends++; };
+  dom.window.updateSendBtn = () => {};
+
+  await import(
+    pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
+      + `?claude-test=${Date.now()}`
+  );
+  dom.window.prefetchCommands();
+  const input = dom.window.document.getElementById('msg-input');
+  input.value = '/';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  dom.window.handleCommandsList({
+    action: 'commands_list',
+    requestId: sent[0].requestId,
+    runtime: 'claude',
+    projectHash: '-workspace-project',
+    sessionId: 'claude-session-1',
+    commands: [
+      {
+        name: 'model',
+        description: 'Set the AI model for Claude Code',
+        argumentHint: '<model>',
+        behavior: 'picker',
+        options: [
+          {
+            name: 'default',
+            label: 'Default',
+            value: 'default',
+            description: 'Use the account default',
+          },
+          {
+            name: 'opus',
+            label: 'Opus',
+            value: 'opus',
+            description: 'Most capable',
+          },
+        ],
+      },
+      {
+        name: 'audit',
+        description: 'A deliberately long custom command description supplied by Claude Code.',
+        argumentHint: '[path]',
+        behavior: 'compose',
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    [...dom.window.document.querySelectorAll('.slash-command-name')]
+      .map((element) => element.textContent),
+    ['/model', '/audit'],
+  );
+  assert.equal(
+    dom.window.document.querySelectorAll('.slash-argument-hint')[1].textContent,
+    '[path]',
+  );
+  assert.equal(
+    dom.window.document.querySelectorAll('.slash-description')[1].textContent,
+    'A deliberately long custom command description supplied by Claude Code.',
+  );
+
+  dom.window.document.querySelector('.slash-item')
+    .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, '/model');
+  assert.deepEqual(
+    [...dom.window.document.querySelectorAll('.slash-command-name')]
+      .map((element) => element.textContent),
+    ['Default', 'Opus'],
+  );
+  dom.window.document.querySelectorAll('.slash-item')[1]
+    .dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(input.value, '/model opus');
   assert.equal(sends, 1);
 });

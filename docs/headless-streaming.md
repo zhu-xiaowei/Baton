@@ -519,9 +519,14 @@ tmux、Stall Rescue、capture-pane 命令输出和 `streamMode` 已全部删除�
 只保留可复用进程，不阻止 terminal 后续把状态更新为 running 或 `needs_input`；结构化
 `AskUserQuestion`/`ExitPlanMode` 可精确识别，普通文本结尾提问仍属于外部状态的已知限制。
 
-Slash command 列表继续由 `commands.mjs` 扫描用户、项目和启用插件的 command/skill，并补充
-`BUILTIN_COMMANDS`。命令以普通文本写入 headless stdin，输出走正常 streaming 与 JSONL；
-旧 TUI 导航和 capture-pane 适配不再存在。
+Slash command 主目录来自独立、无会话持久化的 headless `initialize` control request，直接复用
+当前 CC 的命令、描述、参数、模型和账号过滤结果。Bridge 只维护手机端行为分类与过滤，不维护
+内置命令数据。旧 CC 不支持该请求时，`commands.mjs` 仅扫描用户、项目和插件的自定义
+command/Skill 作为回退。
+
+`/model`、`/effort`、`/fast` 使用运行态返回的二级选项；同步本地命令继续写入同一 session 的
+headless stdin，并以 `commandOutput` 结束乐观气泡和 loading。普通 prompt/Skill 仍走正常
+streaming 与 JSONL。
 
 headless 被 Claude 拒绝或进程异常时，Bridge 返回明确错误并保留只读 JSONL 监听，不再尝试
 任何 tmux fallback。

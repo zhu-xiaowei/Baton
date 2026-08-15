@@ -20,7 +20,7 @@ export const HEADLESS_REAP_INTERVAL_MS = 60_000;
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
-  constructor(pool, key, cwd, resumeId, createId) {
+  constructor(pool, key, cwd, resumeId, createId, options = {}) {
     this.pool = pool;
     this.key = key;             // pool map key (sessionId, or a temp id for new sessions)
     this.cwd = cwd;
@@ -40,11 +40,12 @@ class HeadlessProc {
     this._cb = null;
     this._blockId = -1;
     this._framer = new StreamFramer((frame) => this._emitFrame(frame));
-    this._pendingCtl = new Map(); // outbound control_request id → resolver (interrupt ack)
+    this._pendingCtl = new Map(); // outbound control_request id → {resolve,reject,timer}
+    this.noPersistence = !!options.noPersistence;
   }
 
   spawn() {
-    const bin = resolveClaudeBin() || 'claude';
+    const bin = this.pool.bin || resolveClaudeBin() || 'claude';
     const args = [
       '-p',
       '--input-format', 'stream-json',
@@ -53,10 +54,15 @@ class HeadlessProc {
       '--verbose',
       '--permission-prompt-tool', 'stdio',
     ];
+    if (this.noPersistence) args.push('--no-session-persistence');
     // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
     if (this.createId) args.push('--session-id', this.createId);
     else if (this.sessionId) args.push('--resume', this.sessionId);
-    this.proc = spawn(bin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.proc = spawn(bin, args, {
+      cwd: this.cwd,
+      env: this.pool.env ? { ...process.env, ...this.pool.env } : undefined,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     this.stdin = this.proc.stdin;
 
     const rl = readline.createInterface({ input: this.proc.stdout });
@@ -115,7 +121,16 @@ class HeadlessProc {
     if (t === 'control_response') {
       const rid = o.response?.request_id;
       const w = rid && this._pendingCtl.get(rid);
-      if (w) { this._pendingCtl.delete(rid); w(o.response); }
+      if (w) {
+        this._pendingCtl.delete(rid);
+        clearTimeout(w.timer);
+        if (o.response?.subtype === 'success') w.resolve(o.response.response);
+        else w.reject(new Error(
+          o.response?.error
+          || o.response?.response?.error
+          || 'Claude Code control request failed.',
+        ));
+      }
       return;
     }
 
@@ -172,6 +187,11 @@ class HeadlessProc {
     for (const item of q) item.cb?.onError?.(item.streamId, { code, detail });
     const waiters = this._initWaiters; this._initWaiters = [];
     for (const w of waiters) w(null);
+    for (const pending of this._pendingCtl.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(detail || `Claude Code exited with code ${code}.`));
+    }
+    this._pendingCtl.clear();
   }
 
   waitInit(timeoutMs) {
@@ -208,19 +228,41 @@ class HeadlessProc {
     this._writeTurn(item.text, item.streamId, item.cb);
   }
 
+  requestControl(request, timeoutMs = HEADLESS_INIT_TIMEOUT_MS) {
+    if (this.dead || !this.stdin) {
+      return Promise.reject(new Error('Claude Code process is unavailable.'));
+    }
+    const rid = 'ctl-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this._pendingCtl.delete(rid)) return;
+        reject(new Error(`Claude Code ${request.subtype || 'control'} request timed out.`));
+      }, timeoutMs);
+      this._pendingCtl.set(rid, { resolve, reject, timer });
+      try {
+        this.stdin.write(JSON.stringify({
+          type: 'control_request',
+          request_id: rid,
+          request,
+        }) + '\n');
+      } catch (error) {
+        clearTimeout(timer);
+        this._pendingCtl.delete(rid);
+        reject(error);
+      }
+    });
+  }
+
   // Interrupt the current turn via stdin control_request — CC gracefully aborts and flushes
   // the partial content + [Request interrupted by user] to jsonl (verified CC 2.1.220). SIGINT
   // is the fallback (hard kill, no jsonl) when CC doesn't ack in 5s. Mirrors alleycat.
   async interrupt() {
     if (this.dead || !this.proc || !this.busy) return;
-    const rid = 'int-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-    const acked = new Promise((resolve) => {
-      this._pendingCtl.set(rid, resolve);
-      setTimeout(() => { if (this._pendingCtl.delete(rid)) resolve(null); }, 5000);
-    });
-    try { this.stdin.write(JSON.stringify({ type: 'control_request', request_id: rid, request: { subtype: 'interrupt' } }) + '\n'); }
-    catch { this._pendingCtl.delete(rid); try { this.proc.kill('SIGINT'); } catch {} return; }
-    if (!(await acked)) { try { this.proc.kill('SIGINT'); } catch {} } // no ack → hard fallback
+    try {
+      await this.requestControl({ subtype: 'interrupt' }, 5000);
+    } catch {
+      try { this.proc.kill('SIGINT'); } catch {}
+    }
   }
 
   shutdown() {
@@ -235,6 +277,10 @@ export class ClaudePool {
     this.idleTtl = opts.idleTtl ?? HEADLESS_IDLE_TTL_MS;
     this.maxProcs = opts.maxProcs ?? HEADLESS_MAX_PROCS;
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
+    this.bin = opts.bin || '';
+    this.env = opts.env || null;
+    this._inspectPending = new Map();
+    this._inspectProcs = new Set();
     this._onExit = opts.onExit || null;  // (sessionId) => void, fired when a proc leaves the pool
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
     if (this._reaper.unref) this._reaper.unref();
@@ -282,9 +328,36 @@ export class ClaudePool {
     return { sessionId: proc.sessionId, bgLocked: false };
   }
 
+  // Read the same runtime-filtered catalogs used by Claude Code's TUI without
+  // creating or persisting a conversation.
+  async inspect(cwd) {
+    const existing = this._inspectPending.get(cwd);
+    if (existing) return existing;
+    const pending = this._inspect(cwd);
+    this._inspectPending.set(cwd, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this._inspectPending.get(cwd) === pending) this._inspectPending.delete(cwd);
+    }
+  }
+
+  async _inspect(cwd) {
+    const key = 'inspect-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    const proc = new HeadlessProc(this, key, cwd, null, null, { noPersistence: true });
+    this._inspectProcs.add(proc);
+    proc.spawn();
+    try {
+      return await proc.requestControl({ subtype: 'initialize' }, this.initTimeout);
+    } finally {
+      this._inspectProcs.delete(proc);
+      proc.shutdown();
+    }
+  }
+
   // Release a daemon-held (bg-agent) session so --resume can take it over. `claude stop` blocks until released (~200ms) — no polling needed.
   stopDaemon(sessionId) {
-    const bin = resolveClaudeBin() || 'claude';
+    const bin = this.bin || resolveClaudeBin() || 'claude';
     try {
       execFileSync(bin, ['stop', sessionId.slice(0, 8)], { stdio: 'ignore', timeout: 10000 });
       return true;
@@ -331,6 +404,8 @@ export class ClaudePool {
   shutdownAll() {
     clearInterval(this._reaper);
     for (const proc of this.procs.values()) proc.shutdown();
+    for (const proc of this._inspectProcs) proc.shutdown();
     this.procs.clear();
+    this._inspectProcs.clear();
   }
 }
