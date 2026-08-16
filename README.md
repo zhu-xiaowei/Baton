@@ -27,7 +27,7 @@ Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--r
 
 ### 2. Install Bridge
 
-Requires [Node.js](https://nodejs.org/) >= 20.
+Requires [Node.js](https://nodejs.org/) 20.9+.
 
 1. Open the **Start URL** in your browser (this is also the web viewer)
 2. Copy the one-line **Install bridge** command from the Setup page
