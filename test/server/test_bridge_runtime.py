@@ -270,6 +270,27 @@ def test_windows_installer_runs_without_an_interactive_logon():
     assert "ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "verify-dependencies.mjs" in script
     assert "[version]'20.9.0'" in script
+    assert "-LogonType ServiceAccount" in script
+    assert "Baton Bridge failed to stay running" in script
+    assert "AppData\\Local\\Programs\\nodejs\\node.exe" in script
+    assert "'C:\\nodejs'" in script
+    assert "Node.js 20.9+ was not found or could not run" in script
+    assert "Get-CimInstance Win32_UserProfile" in script
+    assert "$useSystemTask = $isSystemContext -or ($currentIdentity -match" in script
+    assert "bridge.log" in script
+    assert "installed and running" in script
+
+
+def test_windows_installer_prompts_for_device_name():
+    script = bridge_read._windows_install_script(
+        "https://example.com/bridge.tar.gz",
+        "https://example.com/v1",
+        "test-key",
+        None,
+    )
+    assert "if (-not $isSystemContext)" in script
+    assert 'Read-Host "Device name [$defaultName]"' in script
+    assert "$deviceName = $defaultName" in script
 
 
 def test_unix_installer_validates_runtime_dependencies(monkeypatch):
