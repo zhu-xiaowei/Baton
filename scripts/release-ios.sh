@@ -34,16 +34,22 @@ fi
 
 # project.yml is the only persisted build-number source.
 PROJECT_YML="src-tauri/gen/apple/project.yml"
+MARKETING_VERSION="$(sed -nE 's/.*CFBundleShortVersionString: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' "${PROJECT_YML}")"
 CURRENT_BUILD="$(sed -nE 's/.*CFBundleVersion: "([0-9]+)".*/\1/p' "${PROJECT_YML}")"
+if [[ ! "${MARKETING_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: CFBundleShortVersionString must be a semantic version in ${PROJECT_YML}" >&2
+    exit 1
+fi
 if [[ ! "${CURRENT_BUILD}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: CFBundleVersion must be an integer in ${PROJECT_YML}" >&2
     exit 1
 fi
 NEXT_BUILD=$((10#${CURRENT_BUILD} + 1))
+echo "==> Marketing version: ${MARKETING_VERSION}"
 echo "==> Requested CFBundleVersion: ${NEXT_BUILD}"
 
 echo "==> Building iOS release IPA (this can take a few minutes)..."
-IOS_CONFIG="{\"bundle\":{\"iOS\":{\"bundleVersion\":\"${NEXT_BUILD}\"}}}"
+IOS_CONFIG="{\"version\":\"${MARKETING_VERSION}\",\"bundle\":{\"iOS\":{\"bundleVersion\":\"${NEXT_BUILD}\"}}}"
 npx tauri ios build --config "${IOS_CONFIG}" --export-method app-store-connect
 
 # Locate the generated IPA — Tauri stores it under:
