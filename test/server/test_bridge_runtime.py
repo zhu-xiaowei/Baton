@@ -288,6 +288,11 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     assert "Requires >= 20.9" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script
+    assert 'NODE_DIR=$(dirname "$NODE")' in script
+    assert (
+        "<key>PATH</key><string>$NODE_DIR:/opt/homebrew/bin:"
+        "/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
+    ) in script
 
 
 def test_bridge_connection_persists_running_version(monkeypatch):

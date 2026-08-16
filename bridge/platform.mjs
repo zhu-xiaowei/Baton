@@ -30,9 +30,16 @@ export function executableOptions(binary, options = {}, runtime = {}) {
   const platform = runtime.platform || process.platform;
   const nodeExecutable = runtime.nodeExecutable || process.execPath;
   const env = { ...process.env, ...(options.env || {}) };
-  if (platform === 'win32') {
-    const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path';
-    env[pathKey] = `${path.win32.dirname(nodeExecutable)};${env[pathKey] || ''}`;
+  const pathKey = platform === 'win32'
+    ? Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path'
+    : 'PATH';
+  const nodeDirectory = platform === 'win32'
+    ? path.win32.dirname(nodeExecutable)
+    : path.dirname(nodeExecutable);
+  const delimiter = platform === 'win32' ? ';' : ':';
+  const pathEntries = (env[pathKey] || '').split(delimiter).filter(Boolean);
+  if (nodeDirectory && !pathEntries.includes(nodeDirectory)) {
+    env[pathKey] = [nodeDirectory, ...pathEntries].join(delimiter);
   }
 
   return {

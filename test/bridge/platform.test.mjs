@@ -4,11 +4,38 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  executableOptions,
   findExecutable,
   installProductionDependencies,
   runExecutable,
   validateProductionDependencies,
 } from '../../bridge/platform.mjs';
+
+test('Unix child processes inherit the current Node directory on PATH', () => {
+  const options = executableOptions('/tmp/codex', {
+    env: { PATH: '/usr/bin:/bin' },
+  }, {
+    platform: 'darwin',
+    nodeExecutable: '/Users/test/.nvm/versions/node/v20.20.2/bin/node',
+  });
+
+  assert.equal(
+    options.env.PATH,
+    '/Users/test/.nvm/versions/node/v20.20.2/bin:/usr/bin:/bin',
+  );
+});
+
+test('child process PATH does not duplicate the current Node directory', () => {
+  const nodeDirectory = '/Users/test/.nvm/versions/node/v20.20.2/bin';
+  const options = executableOptions('/tmp/codex', {
+    env: { PATH: `${nodeDirectory}:/usr/bin:/bin` },
+  }, {
+    platform: 'darwin',
+    nodeExecutable: `${nodeDirectory}/node`,
+  });
+
+  assert.equal(options.env.PATH, `${nodeDirectory}:/usr/bin:/bin`);
+});
 
 function dependencyFixture(failing = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dependencies-'));
