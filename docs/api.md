@@ -257,7 +257,7 @@ Returns independently deployable app and Bridge versions. Bridge auto-update com
 `bridgeVersion` with its local package version.
 
 ```json
-{ "version": "0.2.0-abcdef0", "bridgeVersion": "0.2.0-abcdef0" }
+{ "version": "1.0.0-abcdef0", "bridgeVersion": "1.0.0-abcdef0" }
 ```
 
 ---

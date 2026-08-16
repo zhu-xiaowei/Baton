@@ -1,6 +1,6 @@
 [package]
 name = "baton"
-version = "0.2.0"
+version = "1.0.0"
 description = "Baton - Monitor and control local agent sessions from anywhere"
 authors = ["xiaoweii"]
 edition = "2021"

@@ -183,7 +183,7 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 # Ensure S3 bucket exists (shared for build artifacts, bridge package, images)
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
-# App version: semantic from package.json + short git hash (e.g. "0.2.0-92144c3").
+# App version: semantic from package.json + short git hash (e.g. "1.0.0-92144c3").
 # Git hash auto-bumps every commit — bridge auto-update triggers on each redeploy.
 SEMANTIC=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/package.json" | head -1)
 SEMANTIC="${SEMANTIC:-dev}"
