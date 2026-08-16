@@ -18,7 +18,7 @@
                                 <rect key="frame" x="0.0" y="0.0" width="393" height="103"/>
                                 <subviews>
                                     <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="BatonLogo" translatesAutoresizingMaskIntoConstraints="NO" id="tbemoji">
-                                        <rect key="frame" x="12" y="71" width="20" height="20"/>
+                                        <rect key="frame" x="12" y="72" width="20" height="20"/>
                                     </imageView>
                                     <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Baton" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="tbtitle">
                                         <rect key="frame" x="38" y="71" width="86" height="21"/>
@@ -38,7 +38,7 @@
                                 <color key="backgroundColor" red="0.08627450980392157" green="0.10588235294117647" blue="0.13333333333333333" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                 <constraints>
                                     <constraint firstItem="tbemoji" firstAttribute="leading" secondItem="topbar" secondAttribute="leading" constant="12" id="tbe-l"/>
-                                    <constraint firstItem="tbemoji" firstAttribute="centerY" secondItem="topbar" secondAttribute="bottom" constant="-22.6666666667" id="tbe-cy"/>
+                                    <constraint firstItem="tbemoji" firstAttribute="centerY" secondItem="topbar" secondAttribute="bottom" constant="-21.6666666667" id="tbe-cy"/>
                                     <constraint firstItem="tbtitle" firstAttribute="leading" secondItem="topbar" secondAttribute="leading" constant="38" id="tbt-l"/>
                                     <constraint firstItem="tbtitle" firstAttribute="centerY" secondItem="topbar" secondAttribute="bottom" constant="-22.6666666667" id="tbt-cy"/>
                                     <constraint firstAttribute="trailing" secondItem="tbgear" secondAttribute="trailing" constant="19" id="tbg-tr"/>

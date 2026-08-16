@@ -212,7 +212,7 @@ test('mobile header title uses the same 20px logo slot and 6px gap as LaunchScre
   assert.match(launchScreen, /id="tbtitle">[\s\S]*?<rect key="frame" x="38"/);
   assert.match(
     launchScreen,
-    /firstItem="tbemoji"[^>]*constant="-22\.6666666667" id="tbe-cy"/,
+    /firstItem="tbemoji"[^>]*constant="-21\.6666666667" id="tbe-cy"/,
   );
   assert.match(
     launchScreen,
