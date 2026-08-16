@@ -65,7 +65,7 @@ function publicSession(session) {
   return item;
 }
 
-export async function uploadCatalog(config, sessions, aggregates, includeAggregates, postFn = post) {
+export async function uploadCatalog(config, sessions, aggregates, catalogComplete, postFn = post) {
   // ~350-800 bytes per session, 5000 is safely under Lambda's 6MB request limit.
   const BATCH = 5000;
   for (let i = 0; i < sessions.length; i += BATCH) {
@@ -73,8 +73,9 @@ export async function uploadCatalog(config, sessions, aggregates, includeAggrega
       deviceName: config.deviceName,
       os: process.platform,
       sessions: sessions.slice(i, i + BATCH).map(publicSession),
+      catalogComplete,
     };
-    if (i === 0 && includeAggregates) {
+    if (i === 0) {
       body.device = aggregates.deviceAggregate;
       body.projects = aggregates.projectAggregates;
     }
@@ -85,11 +86,10 @@ export async function uploadCatalog(config, sessions, aggregates, includeAggrega
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [],
+      catalogComplete,
     };
-    if (includeAggregates) {
-      body.device = aggregates.deviceAggregate;
-      body.projects = aggregates.projectAggregates;
-    }
+    body.device = aggregates.deviceAggregate;
+    body.projects = aggregates.projectAggregates;
     await postFn('/api/bridge/sync-sessions', body);
   }
 }
@@ -121,7 +121,7 @@ export async function syncSessions(config, opts = {}) {
   }
 
   if (!catalogComplete) {
-    console.error('[sync] discovery incomplete; preserving existing DEV/PROJ aggregates');
+    console.error('[sync] discovery incomplete; server will preserve existing DEV/PROJ aggregates');
   }
   await uploadCatalog(config, sessions, aggregates, catalogComplete, postFn);
 

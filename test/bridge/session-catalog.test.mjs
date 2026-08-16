@@ -59,15 +59,17 @@ test('catalog batching sends authoritative aggregates only in the first request'
   );
   assert.equal(requests.length, 2);
   assert.equal(requests[0].body.sessions.length, 5000);
+  assert.equal(requests[0].body.catalogComplete, true);
   assert.ok(requests[0].body.device);
   assert.ok(requests[0].body.projects);
   assert.equal(requests[1].body.sessions.length, 1);
+  assert.equal(requests[1].body.catalogComplete, true);
   assert.equal(requests[1].body.device, undefined);
   assert.equal(requests[1].body.projects, undefined);
   assert.equal(requests[0].body.sessions[0]._filePath, undefined);
 });
 
-test('incomplete discovery uploads sessions without overwriting aggregates', async () => {
+test('incomplete discovery sends candidate aggregates for server-side bootstrap', async () => {
   const requests = [];
   await uploadCatalog(
     { deviceName: 'Mac' },
@@ -77,8 +79,9 @@ test('incomplete discovery uploads sessions without overwriting aggregates', asy
     async (_url, body) => requests.push(body),
   );
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].device, undefined);
-  assert.equal(requests[0].projects, undefined);
+  assert.equal(requests[0].catalogComplete, false);
+  assert.equal(requests[0].device.sessionCount, 1);
+  assert.equal(requests[0].projects.length, 1);
 });
 
 test('24-hour cutoff includes the boundary and future timestamps', () => {

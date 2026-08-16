@@ -50,11 +50,17 @@ function dependencyFixture(failing = false) {
     path.join(dependency, 'index.js'),
     failing ? "throw new Error('native binding unavailable');" : 'module.exports = true;',
   );
+  const npm = findExecutable('npm');
+  const archive = runExecutable(npm, ['pack', '--silent'], {
+    cwd: dependency,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
   const packageJson = {
     name: 'fixture',
     version: '1.0.0',
     dependencies: {
-      'fixture-dependency': 'file:./fixture-dependency',
+      'fixture-dependency': `file:./fixture-dependency/${archive}`,
     },
   };
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(packageJson));
@@ -62,7 +68,6 @@ function dependencyFixture(failing = false) {
     new URL('../../bridge/verify-dependencies.mjs', import.meta.url),
     path.join(root, 'verify-dependencies.mjs'),
   );
-  const npm = findExecutable('npm');
   runExecutable(npm, [
     'install',
     '--package-lock-only',
@@ -88,6 +93,27 @@ test('production installation fails when an installed dependency cannot load', (
   const root = dependencyFixture(true);
   try {
     assert.throws(() => installProductionDependencies(root));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('dependency validation rejects a direct dependency resolved from a parent directory', () => {
+  const root = dependencyFixture();
+  const stage = path.join(root, 'nested-stage');
+  try {
+    installProductionDependencies(root);
+    fs.mkdirSync(stage);
+    fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
+      name: 'nested-stage',
+      version: '1.0.0',
+      dependencies: { 'fixture-dependency': '1.0.0' },
+    }));
+    fs.copyFileSync(
+      new URL('../../bridge/verify-dependencies.mjs', import.meta.url),
+      path.join(stage, 'verify-dependencies.mjs'),
+    );
+    assert.throws(() => validateProductionDependencies(stage));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

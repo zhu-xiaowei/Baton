@@ -110,7 +110,9 @@ class SyncSessionsRequest(BaseModel):
     deviceName: str
     os: str = ""
     sessions: List[SessionItem]
-    # Full-sync path: device + projects aggregates (server PutItem-overwrites DEV#/PROJ# items).
+    # Complete catalogs overwrite aggregates. Incomplete catalogs only bootstrap
+    # a device that does not have an aggregate yet.
+    catalogComplete: bool = True
     device: Optional[DeviceAggregate] = None
     projects: Optional[List[ProjectAggregate]] = None
     # Incremental path: counter delta from a single session's status change.
@@ -269,8 +271,17 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["agentDetail"] = s.agentDetail
             batch.put_item(Item=item)
 
-    # 2a. Full-sync path: PutItem-overwrite DEV# + PROJ# aggregates (authoritative counters).
-    if req.device is not None and req.projects is not None:
+    # 2a. Complete catalogs authoritatively overwrite aggregates. An incomplete
+    # first scan may bootstrap a missing device, but never clobbers an existing one.
+    write_aggregates = req.device is not None and req.projects is not None
+    if write_aggregates and not req.catalogComplete:
+        existing = sessions_table.get_item(
+            Key={"accountId": key_hash, "sk": f"DEV#{req.deviceName}"},
+            ConsistentRead=True,
+        ).get("Item")
+        write_aggregates = existing is None
+
+    if write_aggregates:
         device_item = {
             "accountId": key_hash,
             "sk": f"DEV#{req.deviceName}",

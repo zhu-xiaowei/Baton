@@ -18,7 +18,12 @@ import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { initWs, shutdownInteractions, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
-import { cleanupStagedBridge, installStagedBridge } from './updater.mjs';
+import {
+  cleanupStagedBridge,
+  cleanupUpdateWorkspace,
+  createUpdateWorkspace,
+  installStagedBridge,
+} from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
@@ -108,10 +113,8 @@ async function checkUpdate() {
       if (!tarMatch) throw new Error('no tar URL in install script');
       const tarUrl = tarMatch[1];
       const { execFileSync } = await import('child_process');
-      const tgz = path.join(BRIDGE_HOME, '.update.tgz');
-      const stage = path.join(BRIDGE_HOME, `.update-stage-${process.pid}`);
-      fs.rmSync(stage, { recursive: true, force: true });
-      fs.mkdirSync(stage, { recursive: true });
+      const workspace = createUpdateWorkspace(BRIDGE_HOME);
+      const { archive: tgz, stage } = workspace;
       try {
         const packageRes = await fetch(tarUrl);
         if (!packageRes.ok) throw new Error(`package HTTP ${packageRes.status}`);
@@ -127,8 +130,7 @@ async function checkUpdate() {
 
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {
-        fs.rmSync(tgz, { force: true });
-        fs.rmSync(stage, { recursive: true, force: true });
+        cleanupUpdateWorkspace(workspace);
       }
       console.log(`[update] files updated, restarting...`);
       await shutdownBridge(process.platform === 'win32' ? 75 : 1);

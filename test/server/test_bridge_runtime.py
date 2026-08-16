@@ -43,6 +43,13 @@ class FakeTable:
     def put_item(self, Item, **_):
         self.items.append(Item)
 
+    def get_item(self, Key, **_):
+        item = next((
+            item for item in reversed(self.items)
+            if item.get("accountId") == Key["accountId"] and item.get("sk") == Key["sk"]
+        ), None)
+        return {"Item": item} if item else {}
+
 
 class FakeRequest:
     headers = {"x-api-key": "test-key"}
@@ -214,6 +221,72 @@ def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
     assert device["runtimeCapabilities"]["claude"]["canCreate"] is True
     assert device["runtimeCapabilities"]["codex"]["canRead"] is True
     assert device["runtimeCapabilities"]["codex"]["canCreate"] is False
+
+
+def test_incomplete_first_catalog_bootstraps_device_and_projects(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    request = bridge_sync.SyncSessionsRequest(
+        deviceName="Windows",
+        os="win32",
+        catalogComplete=False,
+        sessions=[bridge_sync.SessionItem(
+            id="session-1",
+            project="C--repo",
+            projectName="repo",
+            lastActive="2026-08-16T00:00:00.000Z",
+        )],
+        device=bridge_sync.DeviceAggregate(
+            sessionCount=1,
+            projectCount=1,
+            lastActive="2026-08-16T00:00:00.000Z",
+        ),
+        projects=[bridge_sync.ProjectAggregate(
+            projectHash="C--repo",
+            projectName="repo",
+            sessionCount=1,
+            lastActive="2026-08-16T00:00:00.000Z",
+        )],
+    )
+
+    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
+
+    assert any(item["sk"] == "DEV#Windows" for item in sessions.items)
+    assert any(item["sk"] == "PROJ#Windows#C--repo" for item in sessions.items)
+
+
+def test_incomplete_catalog_preserves_existing_device_aggregates(monkeypatch):
+    account_id = bridge_sync._hash_key("test-key")
+    existing_device = {
+        "accountId": account_id,
+        "sk": "DEV#Windows",
+        "entityType": "device",
+        "deviceName": "Windows",
+        "sessionCount": 99,
+        "projectCount": 12,
+    }
+    sessions = FakeTable()
+    sessions.items.append(existing_device)
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    request = bridge_sync.SyncSessionsRequest(
+        deviceName="Windows",
+        os="win32",
+        catalogComplete=False,
+        sessions=[],
+        device=bridge_sync.DeviceAggregate(sessionCount=1, projectCount=1),
+        projects=[bridge_sync.ProjectAggregate(
+            projectHash="partial",
+            sessionCount=1,
+        )],
+    )
+
+    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
+
+    devices = [item for item in sessions.items if item.get("sk") == "DEV#Windows"]
+    assert devices == [existing_device]
+    assert not any(item.get("sk") == "PROJ#Windows#partial" for item in sessions.items)
 
 
 def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):

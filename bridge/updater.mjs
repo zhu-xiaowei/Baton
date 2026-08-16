@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 function removable(target) {
@@ -14,6 +15,30 @@ export function cleanupStagedBridge(bridgeHome) {
       removable(path.join(bridgeHome, entry));
     }
   }
+}
+
+function isInside(parent, target) {
+  const relative = path.relative(path.resolve(parent), path.resolve(target));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+export function createUpdateWorkspace(bridgeHome, tempRoot = os.tmpdir()) {
+  if (isInside(bridgeHome, tempRoot)) {
+    throw new Error('update workspace must be outside the Bridge home');
+  }
+  fs.mkdirSync(tempRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tempRoot, 'baton-bridge-update-'));
+  const stage = path.join(root, 'stage');
+  fs.mkdirSync(stage);
+  return {
+    root,
+    stage,
+    archive: path.join(root, 'bridge.tar.gz'),
+  };
+}
+
+export function cleanupUpdateWorkspace(workspace) {
+  removable(workspace?.root);
 }
 
 export function installStagedBridge(stage, bridgeHome) {

@@ -61,7 +61,11 @@ export function validateProductionDependencies(cwd) {
   return runExecutable(
     process.execPath,
     [path.join(cwd, 'verify-dependencies.mjs')],
-    { cwd, stdio: 'ignore' },
+    {
+      cwd,
+      stdio: 'ignore',
+      env: { ...process.env, NODE_PATH: '' },
+    },
   );
 }
 
