@@ -19,6 +19,7 @@
 		B11DF5EA4F8F5C9412836125 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CFE3EC88DB96407255D3AAF8 /* WebKit.framework */; };
 		C172291577067079A9E36E43 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D1A597C571E5260F664FF14D /* CoreGraphics.framework */; };
 		D5CEFBC845B16311A1E6A004 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = FED35A802561E14F21EB20E9 /* LaunchScreen.storyboard */; };
+		E1127E4D8D3A4B62A9F60101 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = E1127E4D8D3A4B62A9F60102 /* AppIcon.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 		CFE3EC88DB96407255D3AAF8 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		D1A597C571E5260F664FF14D /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		FED35A802561E14F21EB20E9 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		E1127E4D8D3A4B62A9F60102 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +90,7 @@
 			children = (
 				16CF4C723507481915BCDA5D /* assets */,
 				A2CEE11050869BE43BFC8E8C /* Assets.xcassets */,
+				E1127E4D8D3A4B62A9F60102 /* AppIcon.icon */,
 				FED35A802561E14F21EB20E9 /* LaunchScreen.storyboard */,
 				7EC96FC8D066FC5F8397973F /* baton_iOS */,
 				1BD81BBB6066C732E0D400AE /* Externals */,
@@ -209,6 +212,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4F20BCD5FA62DEE5746C593D /* Assets.xcassets in Resources */,
+				E1127E4D8D3A4B62A9F60101 /* AppIcon.icon in Resources */,
 				D5CEFBC845B16311A1E6A004 /* LaunchScreen.storyboard in Resources */,
 				AFB766527AA32465A70713BE /* assets in Resources */,
 			);
@@ -260,6 +264,8 @@
 					arm64,
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = default;
 				CODE_SIGN_ENTITLEMENTS = baton_iOS/baton_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_BITCODE = NO;
@@ -292,6 +298,8 @@
 					arm64,
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = default;
 				CODE_SIGN_ENTITLEMENTS = baton_iOS/baton_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_BITCODE = NO;

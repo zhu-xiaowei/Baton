@@ -30,6 +30,7 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
+      - path: AppIcon.icon
       - path: Externals
       - path: baton_iOS
       - path: assets
@@ -68,6 +69,8 @@ targets:
     settings:
       base:
         ENABLE_BITCODE: false
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: false
+        ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR: default
         ARCHS: [arm64]
         VALID_ARCHS: arm64 
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
