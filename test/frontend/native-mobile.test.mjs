@@ -99,6 +99,12 @@ test('mobile readability styles are scoped to the native mobile class', () => {
   assert.match(css, /html\.native-mobile #top-right\.select-actions\s*\{[^}]*gap:\s*8px;[^}]*padding:\s*0 2px 4px 0;/s);
   assert.match(css, /html\.native-mobile #top-right\.select-actions \.text-btn\s*\{[^}]*height:\s*32px;[^}]*min-height:\s*32px;/s);
   assert.match(setup, /html\.native-mobile \.setup-bar \.title\s*\{\s*font-size:\s*17px/);
+
+  const landing = readFileSync(new URL('../../web/landing.html', import.meta.url), 'utf8');
+  assert.match(
+    landing,
+    /html\.native-mobile \.input-group label\s*\{[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s,
+  );
 });
 
 test('file preview uses one circled close icon across desktop and native mobile', () => {

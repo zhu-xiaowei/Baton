@@ -7,6 +7,10 @@ const indexHtml = readFileSync(
   new URL('../../web/index.html', import.meta.url),
   'utf8',
 );
+const landingSource = readFileSync(
+  new URL('../../web/js/entry-landing.js', import.meta.url),
+  'utf8',
+);
 const styleSource = readFileSync(
   new URL('../../web/css/style.css', import.meta.url),
   'utf8',
@@ -86,6 +90,17 @@ test('native container keeps the shared skeleton until WKWebView is ready', () =
     /objc_setAssociatedObject\(weakKw, &_baton_skeleton_controller_key,\s*nil/,
   );
   assert.doesNotMatch(skeletonSection, /animateWithDuration/);
+});
+
+test('Start URL page releases the native skeleton after redirect decisions', () => {
+  assert.match(
+    landingSource,
+    /function releaseNativeSkeleton\(\)[\s\S]*nextFrame\(function \(\) \{[\s\S]*nextFrame\(function \(\) \{[\s\S]*window\.__skelReady = 1;/,
+  );
+  assert.match(
+    landingSource,
+    /if \(state\.KEY && \(!isNativeApp \|\| localStorage\.getItem\('_as'\)\)\) \{[\s\S]*location\.replace\('index\.html'\);[\s\S]*return;[\s\S]*\}\s*releaseNativeSkeleton\(\);/,
+  );
 });
 
 test('list skeletons mirror the final row structure', () => {

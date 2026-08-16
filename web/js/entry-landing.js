@@ -6,6 +6,15 @@ import { state } from './state.js';
 import './api.js';
 
 (function () {
+  function releaseNativeSkeleton() {
+    var nextFrame = window.requestAnimationFrame || function (fn) { setTimeout(fn, 0); };
+    nextFrame(function () {
+      nextFrame(function () {
+        window.__skelReady = 1;
+      });
+    });
+  }
+
   // Tauri/native (non-http origin) lets the QR scanner button show, and we
   // accept Start URLs from any origin. Browser is bound to its own origin.
   var isNativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
@@ -28,6 +37,7 @@ import './api.js';
     var prom = urlToken
       ? exchangeToken(browserServer, urlToken).then(function (k) { return routeAfterLogin(k, browserServer); })
       : routeAfterLogin(urlKey, browserServer);
+    releaseNativeSkeleton();
     prom.catch(function (e) {
       hideLoading();
       var errEl = document.getElementById('error');
@@ -42,6 +52,8 @@ import './api.js';
     location.replace('index.html');
     return;
   }
+
+  releaseNativeSkeleton();
 
   async function doConnect() {
     var input = document.getElementById('startUrlInput');
