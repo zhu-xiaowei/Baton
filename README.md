@@ -1,19 +1,16 @@
-# <img src="web/public/assets/baton-app-icon.svg" width="32" alt=""> Baton
+# <img src="web/public/assets/baton-logo-dark.svg" width="40" height="40" align="middle" alt="">Baton
 
-Monitor and control your [Claude Code](https://github.com/anthropics/claude-code) and Codex sessions from your phone, tablet, or another computer.
+Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex](https://openai.com/codex) tasks on your phone, right where you left off on your computer.
 
 <p align="center">
   <img src="docs/assets/promo.avif" alt="Baton" width="100%">
 </p>
 
-Baton connects your local agent runtimes to a self-hosted AWS serverless backend (Lambda + DynamoDB + API Gateway). Session data stays in your own AWS account while updates and controls remain available across devices.
+Baton provides non-intrusive, real-time streaming and rendering for Claude Code and Codex sessions across your devices. Your session data stays in your own AWS account.
 
-## Why Baton
+### Why Baton?
 
-The name has two meanings:
-
-- **Relay baton** — continue following progress and working from your phone after starting on your computer.
-- **Conductor's baton** — direct and control local agents from Baton, even when the desktop UI is not in front of you.
+Named after both a relay baton and a conductor's baton, Baton lets you pick up work on another device and direct your agents remotely.
 
 ## Quick Start
 
@@ -41,29 +38,26 @@ Requires [Node.js](https://nodejs.org/) >= 20.
 | iOS | Android | macOS | Windows |
 |:---:|:---:|:---:|:---:|
 | <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| Coming soon | Coming soon | Coming soon | Coming soon |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.apk) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.exe) |
 
-Baton is being prepared as a new app under `com.batonai.app`. Store and binary download links will be added with the first public release. The browser viewer remains available from the Start URL.
+After downloading the app, scan the QR code or input the Start URL to get started.
 
 ---
 
 ## Features
 
-- **Multi-device browsing** — list all connected devices, projects, and sessions at a glance
-- **Claude Code and Codex** — browse both runtimes through one Device → Project → Session catalog
-- **Real-time session view** — follow agent output through WebSocket as work happens
-- **Session status** — running (green) / needs input (amber) / done (gray)
-- **Send messages** — continue an existing session or start a new turn from phone or desktop
-- **Slash commands** — runtime-aware `/` autocomplete for Claude Code and Codex, including Codex Skills and saved prompts
-- **Send images** — paste or pick photos, compressed and delivered to the local runtime
-- **Claude Agents support** — monitor and interact with `claude agents` background sessions
-- **Permission approval** — answer questions and approve or deny tool calls remotely
-- **Create sessions** — launch new Claude Code, Codex, or Claude background-agent sessions
-- **Code diff rendering** — inline diffs with syntax highlighting for file changes
-- **Project file viewer** — click a file to sync and view its source, with line highlight & jump; rendered preview for HTML and Markdown
-- **Markdown support** — full GFM rendering for Claude's responses
-- **Execution nodes** — collapsible tool_use/tool_result blocks showing what Claude did
-- **Dark theme UI** — clean, mobile-optimized interface that works on any screen size
+- **Real-time streaming and rendering** — follow responses, tool activity, diffs, Mermaid diagrams, and LaTeX as they arrive
+- **Non-intrusive workflow** — keep using Claude Code and Codex normally while a lightweight local Bridge observes and relays sessions
+- **Claude Code and Codex** — browse and control both runtimes through one Device → Project → Session catalog
+- **Multi-device session control** — track running, needs input, and done states, then continue work from any connected device
+- **Remote interaction** — send follow-ups, interrupt running turns, answer questions, and approve or deny tool calls
+- **Sessions and agents** — create Claude Code, Codex, or Claude background-agent sessions and monitor them after detaching
+- **Runtime-aware commands** — `/` autocomplete for Claude Code and Codex, including Codex Skills and saved prompts
+- **Image and voice input** — send compressed images and dictate messages from the iOS app
+- **QR sign-in** — scan a Start URL directly from the native app
+- **Claude usage insights** — view status, settings, rate limits, token history, and model usage charts
+- **Execution timeline** — inspect collapsible tool calls and results with runtime-specific states
+- **Project and artifact viewer** — browse source with line highlighting and preview HTML, Markdown, images, files, and videos
 
 ---
 
@@ -72,17 +66,17 @@ Baton is being prepared as a new app under `com.batonai.app`. Store and binary d
 ```
 ┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
-│  (EC2, Mac)    │               │  (AWS Lambda)  │               │  (phone/desktop) │
+│ (local hosts)  │               │  (AWS Lambda)  │               │  (phone/desktop) │
 └────────────────┘               └───────┬────────┘               └──────────────────┘
                                          │
                                          ▼
                                  ┌────────────────┐
-                                 │   DynamoDB     │
-                                 │(metadata + msg)│
+                                 │ DynamoDB + S3  │
+                                 │ (data + media) │
                                  └────────────────┘
 ```
 
-**Bridge** discovers Claude Code and Codex sessions, normalizes their events, and handles local agent control. **Server** relays real-time messages to connected clients and caches history in DynamoDB. **App/Web** loads cached history, subscribes to live updates, and routes user actions back to the correct local runtime.
+**Bridge** discovers Claude Code and Codex sessions, normalizes their events, and handles local agent control. **Server** relays real-time messages, stores session data in DynamoDB, and serves synced media through S3. **App/Web** loads cached history, subscribes to live updates, and routes user actions back to the correct local runtime.
 
 ---
 
