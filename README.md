@@ -1,4 +1,4 @@
-# <img src="web/public/assets/baton-logo-dark.svg" width="40" height="40" align="middle" alt="">Baton
+# <img src="web/public/assets/baton-logo-dark.svg" width="32" height="32" align="bottom" alt="">Baton
 
 Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex](https://openai.com/codex) tasks on your phone, right where you left off on your computer.
 
