@@ -116,7 +116,7 @@ test('Update Plan renders aligned status icons for completed, active, and pendin
   assert.match(css, /html\.native-mobile \.plan-item-text \{ font-size: 14px; line-height: 21px; \}/);
 });
 
-test('Bash commands use catalog-free syntax highlighting without a fixed header character limit', () => {
+test('Bash headers stay muted while IN keeps shell syntax highlighting', () => {
   const command = `brandnew-cli --mode=fast "green value" && next-tool -3 $HOME/a/longer/path/to/file.txt`;
   const html = window.renderToolNode({
     type: 'tool_use',
@@ -126,14 +126,14 @@ test('Bash commands use catalog-free syntax highlighting without a fixed header 
   }, null, 'codex');
 
   document.body.innerHTML = html;
-  const header = document.querySelector('.tool-desc.shell-command');
+  const header = document.querySelector('.tool-desc');
   const body = document.querySelector('.tool-value code.shell-command');
   assert.ok(header);
   assert.ok(body);
-  assert.ok(header.closest('.tool-header').classList.contains('shell-command-header'));
   assert.equal(header.textContent, command);
   assert.equal(body.textContent, command);
-  assert.equal(header.querySelector('.shell-command-name')?.textContent, 'brandnew-cli');
+  assert.equal(header.classList.contains('shell-command'), false);
+  assert.equal(header.querySelector('.shell-token'), null);
   assert.equal(body.querySelector('.shell-command-name')?.textContent, 'brandnew-cli');
   assert.equal(body.querySelector('.shell-option')?.textContent, '--mode=fast');
   assert.equal(body.querySelector('.shell-string')?.textContent, '"green value"');
@@ -147,15 +147,26 @@ test('Bash commands use catalog-free syntax highlighting without a fixed header 
     input: { command: 'unknown-future-command --new-option' },
   }, null, 'claude');
   document.body.innerHTML = claude;
-  assert.equal(
-    document.querySelector('.tool-desc .shell-command-name')?.textContent,
-    'unknown-future-command',
-  );
+  assert.equal(document.querySelector('.tool-desc')?.textContent, 'unknown-future-command --new-option');
+  assert.equal(document.querySelector('.tool-desc .shell-token'), null);
 
   const hostile = window.highlightShellCommand(`echo '<img src=x onerror=alert(1)>'`);
   document.body.innerHTML = hostile;
   assert.equal(document.querySelector('img'), null);
   assert.match(document.body.textContent, /<img src=x onerror=alert\(1\)>/);
+});
+
+test('Shell highlighting is skipped after 1024 characters', () => {
+  const atLimit = `echo ${'x'.repeat(1019)}`;
+  const overLimit = `${atLimit}x`;
+
+  document.body.innerHTML = window.highlightShellCommand(atLimit);
+  assert.equal(document.body.textContent, atLimit);
+  assert.equal(document.querySelector('.shell-command-name')?.textContent, 'echo');
+
+  document.body.innerHTML = window.highlightShellCommand(overLimit);
+  assert.equal(document.body.textContent, overLimit);
+  assert.equal(document.querySelector('.shell-token'), null);
 });
 
 test('Codex Explore summaries stay plain instead of being treated as shell commands', () => {
@@ -426,7 +437,7 @@ test('Codex exploration calls share one visible group label and empty waits stay
   ]);
   assert.doesNotMatch(html, /wait-04/);
   const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.tool-header\.shell-command-header:not\(\.expanded-desc\) \{ align-items: baseline; \}/);
+  assert.doesNotMatch(css, /\.tool-desc\.shell-command/);
   assert.match(css, /\.assistant-text code \{ background: #161b22; color: var\(--runtime-accent\);/);
   assert.match(css, /\.codex-explore-continuation \.tool-name \{ display: none; \}/);
   assert.match(css, /\.codex-explore-continuation::before \{ display: none; \}/);

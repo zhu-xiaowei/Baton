@@ -27,8 +27,7 @@
   }
 
   const SHELL_HIGHLIGHT_CACHE_LIMIT = 256;
-  const SHELL_HIGHLIGHT_MAX_BYTES = 16 * 1024;
-  const SHELL_HIGHLIGHT_MAX_LINE_BYTES = 4 * 1024;
+  const SHELL_HIGHLIGHT_MAX_CHARS = 1024;
   const shellHighlightCache = new Map();
   const shellKeywords = new Set([
     'case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
@@ -100,8 +99,7 @@
       shellHighlightCache.set(source, cached);
       return cached;
     }
-    if (source.length > SHELL_HIGHLIGHT_MAX_BYTES
-      || source.split('\n').some((line) => line.length > SHELL_HIGHLIGHT_MAX_LINE_BYTES)) {
+    if (source.length > SHELL_HIGHLIGHT_MAX_CHARS) {
       return esc(source);
     }
 
@@ -248,7 +246,6 @@
     return {
       name: 'Bash',
       desc: summary || cmd,
-      commandDesc: !summary,
       elevated,
       body: (justification
         ? `<div class="tool-note"><span>Request reason</span>${esc(justification)}</div>`
@@ -579,7 +576,6 @@
     return {
       name: 'WriteStdin',
       desc: command || `Terminal ${input.session_id || ''}`.trim(),
-      commandDesc: !!command,
       body: '',
       expandDesc: !!command,
     };
@@ -749,11 +745,9 @@
     const elevatedHtml = info.elevated ? '<span class="tool-flag">Elevated request</span>' : '';
     const fileLine = info.fileLine || '';
     const matchId = (!fileLine && info.fileLink && (name === 'Edit' || name === 'Write')) ? (toolUse.id || '') : '';
-    const descClass = `tool-desc${info.commandDesc ? ' shell-command' : ''}`;
-    const descContent = info.commandDesc ? highlightShellCommand(info.desc) : esc(info.desc);
     const descHtml = info.fileLink
       ? `<span class="tool-desc file-link" onclick="event.stopPropagation();openFile('${esc(info.fileLink).replace(/'/g, "\\'")}','${esc(info.desc).replace(/'/g, "\\'")}','${fileLine}','${matchId}')">${esc(info.desc)}</span>`
-      : `<span class="${descClass}">${descContent}</span>`;
+      : `<span class="tool-desc">${esc(info.desc)}</span>`;
     const id = 'tool-' + Math.random().toString(36).slice(2, 8);
 
     const noClamp = name === 'TodoWrite';
@@ -769,7 +763,6 @@
     const baseHeaderClass = detailsEnabled
       ? 'tool-header tool-details-toggle'
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
-    const headerClass = `${baseHeaderClass}${info.commandDesc ? ' shell-command-header' : ''}`;
     const headerAttrs = detailsEnabled
       ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"
         onclick="toggleToolDetails(this)"
@@ -783,7 +776,7 @@
       ? '<span class="tool-detail-chevron" aria-hidden="true">&#8250;</span>'
       : '';
 
-    return `<div class="${headerClass}"${headerAttrs}>
+    return `<div class="${baseHeaderClass}"${headerAttrs}>
         ${chevronHtml}
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}

@@ -279,8 +279,6 @@ body {
   padding: 0; font-size: 13px; cursor: pointer; user-select: none;
   line-height: 21px;
 }
-.tool-header.shell-command-header:not(.expanded-desc) { align-items: baseline; }
-.tool-header.shell-command-header .tool-detail-chevron { align-self: center; }
 .tool-detail-chevron {
   display: inline-block; flex-shrink: 0; color: #8b949e;
   transition: transform 0.2s ease; transform: rotate(90deg);
@@ -294,9 +292,6 @@ body {
 .codex-explore-continuation.tool-details-collapsed { padding-top: 1px; padding-bottom: 1px; }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.tool-desc.shell-command {
-  color: #d8dee9; font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-}
 .shell-command .shell-command-name { color: #82aaff; }
 .shell-command .shell-option { color: #f78caa; }
 .shell-command .shell-string { color: #a6e3a1; }
