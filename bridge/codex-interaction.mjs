@@ -2,19 +2,17 @@ import { execFile } from 'node:child_process';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import {
   codexCompletedLiveMessages,
-  codexItemLiveKey,
   codexPreviewBlocks,
-  codexTurnErrorLiveKey,
+  isCodexToolItem,
   codexTurnErrorLiveMessage,
-  codexTurnUserLiveKey,
-  codexUserLiveKey,
+  codexTurnLiveKey,
 } from './codex-live.mjs';
 import {
   codexWriterController,
   isCodexActiveWriterError,
 } from './codex-writer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
-import { registerLiveMessageStream } from './live-message-registry.mjs';
+import { registerRuntimeOwnedMessage } from './live-message-registry.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 
@@ -413,7 +411,7 @@ export class CodexInteraction {
       nativeSessionId: session.nativeSessionId,
       storageSessionId: session.storageSessionId,
       ...(session.cwd ? { cwd: session.cwd } : {}),
-      managedOnly: !!options.managedOnly,
+      ...(options.managedOnly ? { managedOnly: true } : {}),
     });
     if (!client) throw new Error('Codex interaction client factory returned no client');
     session.client = client;
@@ -447,18 +445,16 @@ export class CodexInteraction {
 
   async #resume(session, options = {}) {
     if (session.releasePromise) await session.releasePromise;
-    const client = this.#client(session, {
-      managedOnly: options.managedOnly,
-    });
+    const client = this.#client(session);
     await client.start();
     if (session.subscribedGeneration === client.generation) return;
     const pendingTurn = options.pendingTurn || null;
-    const observedTurn = options.observedTurn || null;
-    let adopted = (pendingTurn || observedTurn)
+    let adopted = pendingTurn
       ? this.#prepareTurn(session, {
-        streamId: `codex-resumed-${session.nativeSessionId}-${client.generation}`,
+        streamId: pendingTurn.streamId
+          || `codex-resumed-${session.nativeSessionId}-${client.generation}`,
         text: '',
-        callbacks: (pendingTurn || observedTurn).callbacks,
+        callbacks: pendingTurn.callbacks,
         external: true,
       })
       : null;
@@ -489,13 +485,11 @@ export class CodexInteraction {
       const error = this.#activeWriterError(session, cause);
       if (error.code !== 'CODEX_ACTIVE_WRITER') throw error;
       const writer = error.writer || {};
-      const automaticTakeover = options.allowTakeover !== false
-        && !options.takeover
+      const automaticTakeover = !options.takeover
         && writer.canTerminate
         && writer.pid
         && writer.status === 'completed';
-      if ((options.allowTakeover === false || !options.takeover)
-        && !automaticTakeover) throw error;
+      if (!options.takeover && !automaticTakeover) throw error;
       await this.writerController.terminate(
         session.nativeSessionId,
         automaticTakeover ? writer.pid : Number(options.expectedWriterPid),
@@ -581,11 +575,25 @@ export class CodexInteraction {
     return operation;
   }
 
-  async observeExisting(options) {
+  async observePermissions(options) {
     const session = this.#session(options.nativeSessionId, options.sessionId);
     const operation = session.sendLock.then(async () => {
-      if (session.active) return { active: true };
+      if (session.active) return { active: true, loaded: true };
+      let observed = null;
+      const clearObservation = () => {
+        if (!observed) return;
+        if (observed.turnId) {
+          this.turns.delete(this.#turnKey(session.nativeSessionId, observed.turnId));
+        }
+        for (const [requestId, pending] of this.pendingRequests) {
+          if (pending.turn === observed) this.pendingRequests.delete(requestId);
+        }
+        if (session.active === observed) session.active = null;
+        observed.framer.cancel();
+        observed = null;
+      };
       try {
+        if (session.releasePromise) await session.releasePromise;
         const client = this.#client(session, { managedOnly: true });
         await client.start();
         const loaded = await client.request('thread/loaded/list');
@@ -593,16 +601,38 @@ export class CodexInteraction {
           await this.#release(session);
           return { active: false, loaded: false };
         }
-        const result = await this.#resume(session, {
-          observedTurn: {
-            callbacks: options.callbacks || {},
-          },
-          managedOnly: true,
-          allowTakeover: false,
+        observed = this.#prepareTurn(session, {
+          streamId: `codex-permission-${session.nativeSessionId}-${client.generation}`,
+          text: '',
+          callbacks: options.callbacks || {},
+          external: true,
         });
-        if (!result?.active) await this.#release(session);
-        return { active: !!result?.active, loaded: true };
+        session.active = observed;
+        let result;
+        try {
+          result = await client.request('thread/resume', {
+            threadId: session.nativeSessionId,
+            excludeTurns: true,
+          });
+        } catch (cause) {
+          clearObservation();
+          throw this.#activeWriterError(session, cause);
+        }
+        if (result?.thread?.id !== session.nativeSessionId) {
+          clearObservation();
+          throw new Error('Codex resumed an unexpected thread');
+        }
+        session.model = result.model || session.model;
+        session.effort = result.reasoningEffort ?? session.effort;
+        session.subscribedGeneration = client.generation;
+        if (result?.thread?.status?.type === 'active') {
+          return { active: true, loaded: true };
+        }
+        clearObservation();
+        await this.#release(session);
+        return { active: false, loaded: true };
       } catch (error) {
+        clearObservation();
         await this.#release(session);
         return { active: false, loaded: false, error };
       }
@@ -633,7 +663,7 @@ export class CodexInteraction {
       session.subscribedGeneration = client.generation;
       this.#bindClient(session, client);
 
-      const callbacks = options.onCreated?.({
+      const callbacks = await options.onCreated?.({
         nativeSessionId,
         sessionId,
       }) || options.callbacks || {};
@@ -1411,13 +1441,6 @@ export class CodexInteraction {
     turn.nextBlockId = 0;
     turn.items = new Map();
     turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
-    if (!turn.external) {
-      registerLiveMessageStream(
-        'codex',
-        codexUserLiveKey(turn.streamId),
-        turn.streamId,
-      );
-    }
     return turn;
   }
 
@@ -1439,10 +1462,9 @@ export class CodexInteraction {
     }
     turn.turnId = turnId;
     this.turns.set(this.#turnKey(turn.session.nativeSessionId, turnId), turn);
-    registerLiveMessageStream(
+    registerRuntimeOwnedMessage(
       'codex',
-      codexTurnErrorLiveKey(turnId),
-      turn.streamId,
+      codexTurnLiveKey(turnId),
     );
     return true;
   }
@@ -1470,7 +1492,8 @@ export class CodexInteraction {
       type: state.type || item.type,
       phase: state.phase || item.phase,
     };
-    for (const preview of codexPreviewBlocks(previewItem)) {
+    const previews = codexPreviewBlocks(previewItem);
+    for (const preview of previews) {
       const blockId = turn.nextBlockId++;
       state.blocks.push(blockId);
       turn.framer.start(blockId, preview.kind, preview.name || null);
@@ -1482,24 +1505,12 @@ export class CodexInteraction {
     return state;
   }
 
-  #registerItemStream(turn, item) {
-    if (!item) return;
-    if (item.type === 'userMessage') {
-      const userKey = codexUserLiveKey(item.clientId);
-      const turnKey = codexTurnUserLiveKey(turn.turnId);
-      if (userKey) registerLiveMessageStream('codex', userKey, turn.streamId);
-      if (turnKey) registerLiveMessageStream('codex', turnKey, turn.streamId);
-    } else if (item.id) {
-      registerLiveMessageStream('codex', codexItemLiveKey(item.id), turn.streamId);
-    }
-  }
-
   #itemState(turn, item, options = {}) {
-    this.#registerItemStream(turn, item);
     let state = turn.items.get(item.id);
     if (state) {
       if (item.type) state.type = item.type;
       if (item.phase) state.phase = item.phase;
+      state.item = { ...state.item, ...item };
       if (options.startBlocks !== false) this.#startItemBlocks(turn, state, item);
       return state;
     }
@@ -1507,6 +1518,7 @@ export class CodexInteraction {
       itemId: item.id,
       type: item.type,
       phase: item.phase || null,
+      item: { ...item },
       blocks: [],
       text: '',
       completed: false,
@@ -1517,19 +1529,30 @@ export class CodexInteraction {
     return state;
   }
 
-  #completeItem(turn, item, completedAtMs) {
+  #completeItem(turn, item, completedAtMs, options = {}) {
     if (!item?.id) return;
-    this.#registerItemStream(turn, item);
     const state = this.#itemState(turn, item, { startBlocks: false });
-    const finalText = item.type === 'agentMessage' || item.type === 'plan'
-      ? String(item.text || '')
+    const completedItem = options.interrupted
+      ? {
+          ...state.item,
+          ...item,
+          interrupted: true,
+          status: 'interrupted',
+        }
+      : { ...state.item, ...item };
+    state.item = completedItem;
+    if (!state.blocks.length && isCodexToolItem(completedItem)) {
+      this.#startItemBlocks(turn, state, completedItem);
+    }
+    const finalText = completedItem.type === 'agentMessage' || completedItem.type === 'plan'
+      ? String(completedItem.text || '')
       : '';
 
     // turn/completed carries the final item list. Reconcile from it when an
     // intermediate delta notification was missed so the shared CC stream
-    // contract never collapses to finalSeq=0 with a full assistant response.
+    // contract always flushes the final buffered frame before completing.
     if (finalText) {
-      this.#startItemBlocks(turn, state, item);
+      this.#startItemBlocks(turn, state, completedItem);
       let missing = '';
       if (!state.text) missing = finalText;
       else if (finalText.startsWith(state.text)) missing = finalText.slice(state.text.length);
@@ -1547,15 +1570,22 @@ export class CodexInteraction {
     if (state.completed) return;
     state.completed = true;
     for (const complete of codexCompletedLiveMessages(
-      item,
+      completedItem,
       completedAtMs,
       state.text,
-      { turnId: turn.turnId },
+      {
+        turnId: turn.turnId,
+        sessionId: turn.session.nativeSessionId,
+      },
     )) {
       turn.callbacks.onMessage?.(
         turn.streamId,
         complete.message,
-        { normalized: true, runtime: 'codex', liveKey: complete.liveKey },
+        {
+          normalized: true,
+          runtime: 'codex',
+          liveKey: codexTurnLiveKey(turn.turnId),
+        },
       );
     }
   }
@@ -1647,12 +1677,26 @@ export class CodexInteraction {
       const completedAtMs = Number.isFinite(params.turn?.completedAt)
         ? params.turn.completedAt * 1000
         : undefined;
-      for (const item of params.turn?.items || []) {
-        if (['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(item?.type)) {
-          this.#completeItem(turn, item, completedAtMs);
+      const subtype = turnStatusError(params.turn);
+      const finalItems = params.turn?.items || [];
+      const finalItemIds = new Set(finalItems.map((item) => item?.id).filter(Boolean));
+      for (const item of finalItems) {
+        const state = turn.items.get(item?.id);
+        this.#completeItem(turn, item, completedAtMs, {
+          interrupted: subtype === 'interrupted'
+            && isCodexToolItem(item)
+            && !state?.completed,
+        });
+      }
+      if (subtype === 'interrupted') {
+        for (const state of turn.items.values()) {
+          if (state.completed || finalItemIds.has(state.itemId)
+            || !isCodexToolItem(state.item)) continue;
+          this.#completeItem(turn, state.item, completedAtMs, {
+            interrupted: true,
+          });
         }
       }
-      const subtype = turnStatusError(params.turn);
       const errorMessage = codexTurnErrorLiveMessage(
         turn.turnId,
         params.turn?.error,
@@ -1671,11 +1715,11 @@ export class CodexInteraction {
           {
             normalized: true,
             runtime: 'codex',
-            liveKey: errorMessage.liveKey,
+            liveKey: codexTurnLiveKey(turn.turnId),
           },
         );
       }
-      const finalSeq = turn.framer.finish();
+      turn.framer.finish();
       turn.ended = true;
       turn.callbacks.onResult?.(
         turn.streamId,
@@ -1684,7 +1728,6 @@ export class CodexInteraction {
           subtype,
           status: params.turn?.status,
         },
-        finalSeq,
       );
       this.turns.delete(this.#turnKey(
         turn.session.nativeSessionId,
@@ -1706,14 +1749,13 @@ export class CodexInteraction {
         frame.blockId,
         frame.kind,
         frame.name,
-        frame.seq,
       );
     } else if (frame.t === 'delta') {
-      cb.onDelta?.(turn.streamId, frame.chunk, frame.seq, frame.blockId);
+      cb.onDelta?.(turn.streamId, frame.chunk, frame.blockId);
     } else if (frame.t === 'input') {
-      cb.onInputDelta?.(turn.streamId, frame.chunk, frame.seq, frame.blockId);
+      cb.onInputDelta?.(turn.streamId, frame.chunk, frame.blockId);
     } else if (frame.t === 'stop') {
-      cb.onBlockStop?.(turn.streamId, frame.blockId, frame.seq);
+      cb.onBlockStop?.(turn.streamId, frame.blockId);
     }
   }
 
@@ -1857,14 +1899,18 @@ export class CodexInteraction {
     return true;
   }
 
-  interrupt(nativeSessionId) {
+  async interrupt(nativeSessionId) {
     const turn = this.sessions.get(nativeSessionId)?.active;
     if (!turn?.turnId) return false;
-    turn.session.client.request('turn/interrupt', {
-      threadId: nativeSessionId,
-      turnId: turn.turnId,
-    }).catch(() => {});
-    return true;
+    try {
+      await turn.session.client.request('turn/interrupt', {
+        threadId: nativeSessionId,
+        turnId: turn.turnId,
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   owns(nativeSessionId) {

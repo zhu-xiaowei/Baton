@@ -938,7 +938,7 @@ test('Codex task_complete errors are extracted as visible turn errors', () => {
       'Error: Access to OpenAI models is not allowed from this region.',
     );
     assert.equal(message.stopReason, 'end_turn');
-    assert.equal(codexLiveSource(message), 'turn:turn-error:error');
+    assert.equal(codexLiveSource(message), 'runtime-turn:turn-error');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

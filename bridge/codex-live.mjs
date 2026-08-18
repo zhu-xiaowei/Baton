@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 export const CODEX_LIVE_SOURCE = Symbol('codexLiveSource');
 
 export function codexUserLiveKey(clientId) {
@@ -10,6 +12,10 @@ export function codexTurnUserLiveKey(turnId) {
 
 export function codexTurnErrorLiveKey(turnId) {
   return turnId ? `turn:${turnId}:error` : '';
+}
+
+export function codexTurnLiveKey(turnId) {
+  return turnId ? `runtime-turn:${turnId}` : '';
 }
 
 export function codexItemLiveKey(itemId) {
@@ -32,6 +38,19 @@ export function codexItemNativeId(itemId) {
   return itemId ? `codex:item:${itemId}` : '';
 }
 
+export function codexToolUseId(sessionId, itemId, occurrence = 1, suffix = '') {
+  if (!sessionId || !itemId) return '';
+  const digest = crypto.createHash('sha1')
+    .update(`${sessionId}|${itemId}|${occurrence}|${suffix}`)
+    .digest('hex')
+    .slice(0, 20);
+  return `codex_tool_${digest}`;
+}
+
+export function codexToolMessageNativeId(itemId, phase) {
+  return itemId && phase ? `codex:item:${itemId}:${phase}` : '';
+}
+
 export function tagCodexLiveSource(message, key) {
   if (!message || !key) return message;
   Object.defineProperty(message, CODEX_LIVE_SOURCE, {
@@ -50,6 +69,132 @@ function timestamp(value) {
   if (typeof value === 'string' && value) return value;
   const date = Number.isFinite(value) ? new Date(value) : new Date();
   return date.toISOString();
+}
+
+function valueText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => {
+      if (typeof entry === 'string') return entry;
+      if (typeof entry?.text === 'string') return entry.text;
+      return JSON.stringify(entry);
+    }).join('\n');
+  }
+  if (value == null) return '';
+  if (typeof value?.content !== 'undefined') return valueText(value.content);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function commandResult(item) {
+  const fallback = [item.stdout, item.stderr].filter(Boolean).join('\n');
+  return valueText(
+    item.aggregatedOutput
+    ?? item.aggregated_output
+    ?? item.formattedOutput
+    ?? item.formatted_output
+    ?? item.output
+    ?? (fallback || undefined)
+    ?? item.status
+    ?? '',
+  ).replace(/^(?:\r?\n)+/, '').trimEnd();
+}
+
+const CODEX_TOOL_ITEM_TYPES = new Set([
+  'commandExecution',
+  'fileChange',
+  'mcpToolCall',
+  'webSearch',
+]);
+
+export function isCodexToolItem(item) {
+  return CODEX_TOOL_ITEM_TYPES.has(item?.type);
+}
+
+function completedToolResult(item) {
+  if (item.interrupted) {
+    const { interrupted, status, ...partial } = item;
+    return completedToolResult(partial) || 'Interrupted';
+  }
+  if (item.type === 'commandExecution') return commandResult(item);
+  if (item.type === 'fileChange') {
+    return valueText(item.error || item.result)
+      || (item.status === 'failed' ? 'File change failed' : 'Applied changes');
+  }
+  if (item.type === 'mcpToolCall') {
+    return valueText(item.error || item.result || item.status);
+  }
+  if (item.type === 'webSearch') {
+    return valueText(item.result)
+      || (item.query ? `Searched the web for ${item.query}` : 'Web search completed');
+  }
+  return valueText(item.result || item.output || item.status);
+}
+
+function toolFailed(item) {
+  const exitCode = item.exitCode ?? item.exit_code;
+  return item.interrupted === true
+    || item.status === 'interrupted'
+    || item.status === 'cancelled'
+    || item.status === 'failed'
+    || item.status === 'declined'
+    || item.result?.isError === true
+    || item.result?.is_error === true
+    || (Number.isInteger(exitCode) && exitCode !== 0);
+}
+
+function completedToolMessages(item, completedAtMs, context) {
+  if (!isCodexToolItem(item)) return [];
+  const previews = codexPreviewBlocks(item);
+  if (!previews.length) return [];
+  const sessionId = context.sessionId || '';
+  const uses = previews.map((preview, index) => ({
+    type: 'tool_use',
+    id: codexToolUseId(
+      sessionId,
+      item.id,
+      1,
+      previews.length > 1 ? String(index) : '',
+    ),
+    name: preview.name || 'Tool',
+    input: preview.input || {},
+  }));
+  if (uses.some((use) => !use.id)) return [];
+  const at = timestamp(completedAtMs);
+  const liveKey = codexItemLiveKey(item.id);
+  const exitCode = item.exitCode ?? item.exit_code;
+  return [
+    {
+      liveKey,
+      message: {
+        uuid: `codex_live_tool_use_${item.id}`,
+        nativeId: codexToolMessageNativeId(item.id, 'tool-use'),
+        type: 'assistant',
+        content: uses,
+        timestamp: at,
+        stopReason: 'tool_use',
+      },
+    },
+    {
+      liveKey,
+      message: {
+        uuid: `codex_live_tool_result_${item.id}`,
+        nativeId: codexToolMessageNativeId(item.id, 'tool-result'),
+        type: 'user',
+        content: uses.map((use) => ({
+          type: 'tool_result',
+          tool_use_id: use.id,
+          content: completedToolResult(item),
+          is_error: toolFailed(item),
+          ...(Number.isInteger(exitCode) ? { codexExitCode: exitCode } : {}),
+        })),
+        timestamp: at,
+      },
+    },
+  ];
 }
 
 export function codexErrorMessage(error) {
@@ -123,6 +268,8 @@ export function codexCompletedLiveMessages(
 ) {
   if (!item?.id) return [];
   const at = timestamp(completedAtMs);
+  const completedTools = completedToolMessages(item, completedAtMs, context);
+  if (completedTools.length) return completedTools;
   if (item.type === 'userMessage') {
     const text = codexUserItemText(item);
     const liveKey = codexUserLiveKey(item.clientId)

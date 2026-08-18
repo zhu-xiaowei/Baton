@@ -1,6 +1,10 @@
 import { DDB_ITEM_LIMIT, WS_FRAME_LIMIT } from './config.mjs';
 import { truncateToBytes, uploadMessages } from './extract.mjs';
-import { wsSend, wsSendWithAck } from './ws.mjs';
+import {
+  createTurnMessagesEvent,
+  wsSend,
+  wsSendWithAck,
+} from './ws.mjs';
 
 export async function deliverRealtimeMessages(sessionId, messages, options = {}) {
   const send = options.wsSendFn || wsSend;
@@ -12,20 +16,32 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     ...(options.runtime ? { runtime: options.runtime } : {}),
     ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
   };
-  const streamId = options.streamId || '';
+  const turnId = options.turnId || '';
   let batch = [];
 
   const flush = async () => {
     if (!batch.length) return;
     const outgoing = batch;
     batch = [];
-    const acked = await sendWithAck({
+    const event = turnId
+      ? createTurnMessagesEvent(sessionId, turnId, outgoing)
+      : null;
+    if (turnId && !event) {
+      await upload(sessionId, outgoing, identity);
+      return;
+    }
+    const acked = await sendWithAck(event || {
       action: 'messages',
       sessionId,
       messages: outgoing,
-      ...(streamId ? { streamId } : {}),
     });
-    if (!acked) await upload(sessionId, outgoing, identity);
+    if (!acked) {
+      await upload(
+        sessionId,
+        outgoing,
+        identity,
+      );
+    }
   };
 
   for (const raw of messages) {
@@ -34,20 +50,29 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
       action: 'messages',
       sessionId,
       messages: [message],
-      ...(streamId ? { streamId } : {}),
     };
     if (Buffer.byteLength(JSON.stringify(envelope)) > frameLimit) {
       await flush();
       const preview = truncateToBytes(message, frameLimit - 512);
       preview.truncated = true;
-      send({
+      const event = turnId
+        ? createTurnMessagesEvent(sessionId, turnId, [preview])
+        : null;
+      if (turnId && !event) {
+        await upload(sessionId, [message], identity);
+        continue;
+      }
+      send(event || {
         action: 'messages',
         sessionId,
         messages: [preview],
-        ...(streamId ? { streamId } : {}),
         noCache: true,
       });
-      await upload(sessionId, [message], identity);
+      await upload(
+        sessionId,
+        [message],
+        identity,
+      );
       continue;
     }
 
@@ -55,7 +80,6 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
       action: 'messages',
       sessionId,
       messages: [...batch, message],
-      ...(streamId ? { streamId } : {}),
     };
     if (batch.length && Buffer.byteLength(JSON.stringify(candidate)) > frameLimit) {
       await flush();

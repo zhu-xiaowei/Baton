@@ -63,6 +63,7 @@ test('Codex command approval renders the native three decisions in order', () =>
   reset();
   commandPrompt();
 
+  assert.equal(document.querySelector('.messages').classList.contains('has-permission-prompt'), true);
   assert.equal(document.querySelector('.permission-title').textContent, 'Run command?');
   assert.equal(document.querySelector('.permission-desc').textContent, 'git add README.md');
   assert.deepEqual(
@@ -72,6 +73,42 @@ test('Codex command approval renders the native three decisions in order', () =>
       "Yes, and don't ask again for commands that start with `git add`",
       'No, and tell Codex what to do differently',
     ],
+  );
+});
+
+test('long Codex approval labels render inside a shrinkable option copy', () => {
+  reset();
+  const longPrefix = 'curl -I --max-time 5 https://example.com/'
+    + 'a'.repeat(180);
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-long',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: longPrefix,
+      codexApproval: {
+        proposedExecpolicyAmendment: [longPrefix],
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: [longPrefix],
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  const second = document.querySelectorAll('.permission-btn')[1];
+  assert.ok(second.querySelector('.permission-key'));
+  assert.ok(second.querySelector('.permission-copy > .permission-label'));
+  assert.equal(
+    second.querySelector('.permission-copy').textContent.includes(longPrefix),
+    true,
   );
 });
 
@@ -114,6 +151,7 @@ test('resolved events only dismiss the matching permission prompt', () => {
 
   assert.equal(window.resolvePermissionPrompt('approval-1'), true);
   assert.equal(document.getElementById('permission-prompt'), null);
+  assert.equal(document.querySelector('.messages').classList.contains('has-permission-prompt'), false);
   assert.equal(document.getElementById('msg-input').disabled, false);
 });
 

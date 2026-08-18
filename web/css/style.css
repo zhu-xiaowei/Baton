@@ -275,12 +275,12 @@ body {
 }
 
 .tool-header {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: baseline; gap: 6px;
   padding: 0; font-size: 13px; cursor: pointer; user-select: none;
   line-height: 21px;
 }
 .tool-detail-chevron {
-  display: inline-block; flex-shrink: 0; color: #8b949e;
+  display: inline-block; align-self: center; flex-shrink: 0; color: #8b949e;
   transition: transform 0.2s ease; transform: rotate(90deg);
   transform-origin: 45% 55%;
 }
@@ -509,7 +509,13 @@ body {
 .tool-out-pre { margin: 4px 0 0; font-size: 12px; color: #8b949e; white-space: pre-wrap; word-break: break-word; }
 
 /* === Permission prompt === */
-.permission-prompt { background: #1c2333; border: 1px solid #388bfd; border-radius: 10px; padding: 14px; margin-top: 12px; }
+.messages.has-permission-prompt {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.permission-prompt { width: 100%; min-width: 0; background: #1c2333; border: 1px solid #388bfd; border-radius: 10px; padding: 14px; margin-top: 12px; }
+.messages.has-permission-prompt > .permission-prompt { margin-top: auto; }
 .permission-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
 .permission-title { font-size: 14px; font-weight: 600; color: #e6edf3; }
 .permission-close { background: none; border: none; color: #6e7681; font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
@@ -517,8 +523,8 @@ body {
   .permission-close:hover { color: #f85149; }
 }
 .permission-desc { font-size: 12px; color: #8b949e; background: #0d1117; padding: 8px 10px; border-radius: 6px; margin-bottom: 10px; white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; }
-.permission-options { display: flex; flex-direction: column; gap: 6px; }
-.permission-btn { padding: 8px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; font-size: 13px; cursor: pointer; text-align: left; }
+.permission-options { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.permission-btn { width: 100%; min-width: 0; display: flex; align-items: flex-start; gap: 6px; padding: 8px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; font-size: 13px; cursor: pointer; text-align: left; white-space: normal; overflow: hidden; }
 .permission-btn.allow { border-color: #238636; }
 .permission-btn.deny { border-color: #f85149; }
 @media (hover: hover) and (pointer: fine) {
@@ -526,8 +532,9 @@ body {
   .permission-btn.allow:hover { background: #238636; color: #fff; }
   .permission-btn.deny:hover { background: #f85149; color: #fff; }
 }
-.permission-key { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; background: #30363d; border-radius: 4px; font-size: 11px; color: #8b949e; margin-right: 6px; }
-.permission-label { font-weight: 500; }
+.permission-key { flex: 0 0 18px; height: 18px; line-height: 18px; text-align: center; background: #30363d; border-radius: 4px; font-size: 11px; color: #8b949e; }
+.permission-copy { min-width: 0; flex: 1; overflow-wrap: anywhere; word-break: break-word; }
+.permission-label { display: block; min-width: 0; font-weight: 500; }
 .permission-desc-inline { display: block; font-size: 11px; color: #8b949e; font-weight: 400; margin-top: 2px; }
 .permission-input-wrap { display: flex; gap: 6px; margin-top: 4px; }
 .permission-input { flex: 1; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; outline: none; }

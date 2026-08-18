@@ -1,45 +1,16 @@
 // Message rendering orchestrator
 (function () {
+  function escapeAttribute(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   window.markCodexExploreGroups = function (container) {
     if (!container) return;
-    let run = [];
-    const flushWaitRun = () => {
-      if (!run.length) return;
-      const items = run.flatMap((row) => Array.from(row.children));
-      let pendingWait = null;
-      for (const item of items) {
-        if (item.classList?.contains('codex-terminal-wait')) {
-          const processId = item.dataset?.codexProcess || '';
-          if (pendingWait && pendingWait.processId === processId) {
-            item.remove();
-            continue;
-          }
-          if (pendingWait) item.before(pendingWait.node);
-          pendingWait = { node: item, processId };
-          continue;
-        }
-        if (pendingWait && (
-          item.classList?.contains('assistant-text')
-          || (item.classList?.contains('codex-background-complete')
-            && item.dataset?.codexProcess === pendingWait.processId)
-        )) {
-          item.before(pendingWait.node);
-          pendingWait = null;
-        }
-      }
-      if (pendingWait) run.at(-1).appendChild(pendingWait.node);
-      for (const row of run) {
-        if (!row.children.length) row.remove();
-      }
-      run = [];
-    };
-    for (const row of Array.from(container.children)) {
-      if (row.classList?.contains('assistant-turn')) run.push(row);
-      else flushWaitRun();
-    }
-    flushWaitRun();
-
     let exploreRows = [];
     let exploreGroupSequence = 0;
     const flushExploreRun = () => {
@@ -149,10 +120,6 @@
           codexWait: emptyTerminalWait,
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
-          codexCompleted: runtime === 'codex' && block.name === 'Bash' && !!result?._timestamp,
-          ts: runtime === 'codex' && block.name === 'Bash' && result?._timestamp
-            ? result._timestamp
-            : undefined,
         });
       } else if (block.type === 'image' && block.key) {
         flush();
@@ -170,56 +137,8 @@
     return items;
   }
 
-  function sortCodexCells(items) {
-    const cells = [];
-    for (let index = 0; index < items.length;) {
-      const item = items[index];
-      if (!item.codexExplore) {
-        cells.push({ items: [item], ts: item.ts || '', _order: index });
-        index++;
-        continue;
-      }
-      const group = [];
-      const start = index;
-      while (index < items.length && items[index].codexExplore) {
-        group.push(items[index++]);
-      }
-      const completed = group.every((member) => member.codexCompleted);
-      const ts = completed
-        ? group.reduce((latest, member) => member.ts > latest ? member.ts : latest, '')
-        : (group[0].ts || '');
-      cells.push({ items: group, ts, _order: start, completed });
-    }
-    cells.sort((a, b) => a.ts.localeCompare(b.ts) || a._order - b._order);
-    return cells.flatMap((cell) => cell.items.map((item) => (
-      cell.items.length > 1 ? { ...item, ts: cell.ts } : item
-    )));
-  }
-
   function normalizeCodexItems(items) {
-    const sorted = sortCodexCells(items);
-    const output = [];
-    let pendingWait = null;
-    for (const item of sorted) {
-      if (item.codexWait) {
-        if (pendingWait && pendingWait.codexProcessId !== item.codexProcessId) {
-          output.push(pendingWait);
-        }
-        pendingWait = item;
-        continue;
-      }
-      if (pendingWait && (
-        item.type === 'text'
-        || (item.codexBackgroundComplete
-          && item.codexProcessId === pendingWait.codexProcessId)
-      )) {
-        output.push(pendingWait);
-        pendingWait = null;
-      }
-      output.push(item);
-    }
-    if (pendingWait) output.push(pendingWait);
-    return output;
+    return items;
   }
 
   function itemToHtml(item, timestamp, collapseToolDetails = false) {
@@ -237,10 +156,12 @@
     if (item.type === 'interrupt') cls += ' msg-interrupt';
     if (item.type === 'summary') cls += ' summary-tl';
     if (item.type === 'panel') cls += ' command-panel-tl';
-    const toolAttr = item.toolId ? ` data-tool-id="${item.toolId}"` : '';
-    const processAttr = item.codexProcessId ? ` data-codex-process="${item.codexProcessId}"` : '';
-    const tsAttr = timestamp ? ` data-ts="${timestamp}"` : '';
-    return `<div class="${cls}"${toolAttr}${processAttr}${tsAttr}>${item.html}</div>`;
+    const toolAttr = item.toolId ? ` data-tool-id="${escapeAttribute(item.toolId)}"` : '';
+    const messageAttr = item.messageId ? ` data-message-id="${escapeAttribute(item.messageId)}"` : '';
+    const nativeAttr = item.nativeId ? ` data-native-id="${escapeAttribute(item.nativeId)}"` : '';
+    const processAttr = item.codexProcessId ? ` data-codex-process="${escapeAttribute(item.codexProcessId)}"` : '';
+    const tsAttr = timestamp ? ` data-ts="${escapeAttribute(timestamp)}"` : '';
+    return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${tsAttr}>${item.html}</div>`;
   }
 
   // Main: render all messages, merging consecutive assistant messages into one timeline
@@ -262,7 +183,13 @@
       if (isToolResultOnly(msg)) continue;
 
       if (isInterruptMsg(msg)) {
-        turnItems.push({ type: 'interrupt', html: renderInterrupt(msg), ts: msg.timestamp });
+        turnItems.push({
+          type: 'interrupt',
+          html: renderInterrupt(msg),
+          messageId: msg.uuid || '',
+          nativeId: msg.nativeId || '',
+          ts: msg.timestamp,
+        });
         continue;
       }
 
@@ -282,10 +209,16 @@
 
       // Assistant → extract items into current turn
       if (msg.type === 'assistant') {
+        if (msg._strictManaged) continue;
         const items = extractItems(msg, resultMap, runtime, {
           collapseToolDetails: !!detailPolicy.historyCollapsed,
         });
-        turnItems.push(...items.map(i => ({ ...i, ts: i.ts || msg.timestamp })));
+        turnItems.push(...items.map(i => ({
+          ...i,
+          messageId: msg.uuid || '',
+          nativeId: msg.nativeId || '',
+          ts: i.ts || msg.timestamp,
+        })));
         continue;
       }
 
@@ -313,7 +246,12 @@
   window.renderSingleMessage = function (msg, allMessages, runtime) {
     if (isToolResultOnly(msg)) return '';
     if (isInterruptMsg(msg)) {
-      return itemToHtml({ type: 'interrupt', html: renderInterrupt(msg) }, msg.timestamp);
+      return itemToHtml({
+        type: 'interrupt',
+        html: renderInterrupt(msg),
+        messageId: msg.uuid || '',
+        nativeId: msg.nativeId || '',
+      }, msg.timestamp);
     }
     if (msg.type === 'system_event') return renderSystemEvent(msg);
     if (msg.type === 'summary') {
@@ -326,7 +264,11 @@
       collapseToolDetails: !!detailPolicy.realtimeCollapsed,
     });
     return items.map(function (i) {
-      return itemToHtml(i, i.ts || msg.timestamp, !!detailPolicy.realtimeCollapsed);
+      return itemToHtml({
+        ...i,
+        messageId: msg.uuid || '',
+        nativeId: msg.nativeId || '',
+      }, i.ts || msg.timestamp, !!detailPolicy.realtimeCollapsed);
     }).join('');
   };
 

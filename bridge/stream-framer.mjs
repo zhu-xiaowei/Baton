@@ -1,9 +1,13 @@
 export const STREAM_DELTA_BATCH_MS = 50;
+export const STREAM_CHUNK_LIMIT_BYTES = 24 * 1024;
 
 export class StreamFramer {
   constructor(onFrame, options = {}) {
     this.onFrame = onFrame;
     this.batchMs = options.batchMs ?? STREAM_DELTA_BATCH_MS;
+    this.maxChunkBytes = Number.isFinite(options.maxChunkBytes)
+      ? Math.max(4, options.maxChunkBytes)
+      : STREAM_CHUNK_LIMIT_BYTES;
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
     this.reset();
@@ -11,7 +15,6 @@ export class StreamFramer {
 
   reset() {
     this.cancel();
-    this.seq = 0;
   }
 
   start(blockId, kind, name = null) {
@@ -34,7 +37,6 @@ export class StreamFramer {
 
   finish() {
     this.flush();
-    return this.seq;
   }
 
   cancel() {
@@ -76,6 +78,31 @@ export class StreamFramer {
   }
 
   emit(frame) {
-    this.onFrame?.({ ...frame, seq: this.seq++ });
+    if (typeof frame.chunk !== 'string'
+      || Buffer.byteLength(frame.chunk) <= this.maxChunkBytes) {
+      this.onFrame?.(frame);
+      return;
+    }
+    for (const chunk of splitUtf8(frame.chunk, this.maxChunkBytes)) {
+      this.onFrame?.({ ...frame, chunk });
+    }
   }
+}
+
+function splitUtf8(text, maxBytes) {
+  const chunks = [];
+  let chunk = '';
+  let bytes = 0;
+  for (const char of text) {
+    const charBytes = Buffer.byteLength(char);
+    if (chunk && bytes + charBytes > maxBytes) {
+      chunks.push(chunk);
+      chunk = '';
+      bytes = 0;
+    }
+    chunk += char;
+    bytes += charBytes;
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
 }

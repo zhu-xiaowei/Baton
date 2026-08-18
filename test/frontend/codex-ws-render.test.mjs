@@ -145,7 +145,7 @@ const result = (uuid, id, content, timestamp, extra = {}) => ({
   timestamp,
 });
 
-test('Codex WS rendering commits parallel Ran nodes in completion order and merges wait streaks', () => {
+test('Codex WS keeps parallel Ran nodes in creation order', () => {
   reset();
 
   send([
@@ -166,9 +166,9 @@ test('Codex WS rendering commits parallel Ran nodes in completion order and merg
   const commandOrder = Array.from(document.querySelectorAll('.tool-desc'))
     .map((node) => node.textContent);
   assert.deepEqual(commandOrder, [
+    'date; check versions',
     'tail bridge.log',
     'git diff --stat; git diff --check',
-    'date; check versions',
   ]);
 
   send([
@@ -211,7 +211,7 @@ test('Codex WS rendering commits parallel Ran nodes in completion order and merg
       codexCommand: 'sleep 35; check fleet',
     }),
   ]);
-  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 1);
+  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 2);
 
   send([result('sleep-end', 'sleep', 'fleet checked', '2026-08-10T03:00:11.000Z', {
     codexBackground: 'complete',
@@ -227,7 +227,7 @@ test('Codex WS rendering commits parallel Ran nodes in completion order and merg
   assert.equal(document.querySelector('[data-tool-id="sleep"] .tool-name').textContent, 'Ran');
 });
 
-test('Codex WS matches the observed mixed Ran and Explored completion order', () => {
+test('Codex WS keeps mixed Ran and Explored blocks in creation order', () => {
   reset();
 
   send([
@@ -270,15 +270,15 @@ test('Codex WS matches the observed mixed Ran and Explored completion order', ()
   assert.deepEqual(
     Array.from(document.querySelectorAll('.tool-desc')).map((node) => node.textContent),
     [
+      'node check-version.mjs',
+      'aws dynamodb scan',
       'printf local-version',
       'Search bridge_recovery_complete',
-      'aws dynamodb scan',
-      'node check-version.mjs',
     ],
   );
   assert.deepEqual(
     Array.from(document.querySelectorAll('.tool-name')).map((node) => node.textContent),
-    ['Ran', 'Explored', 'Ran', 'Ran'],
+    ['Ran', 'Ran', 'Ran', 'Explored'],
   );
 });
 

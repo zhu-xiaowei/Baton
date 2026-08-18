@@ -42,6 +42,12 @@ function claudeFixture() {
   return { root, filePath };
 }
 
+const CODEX_SESSION_ID = '22222222-2222-4222-8222-222222222222';
+const CODEX_FIXTURE = path.resolve(
+  'test/codex/phase1/fixtures/codex',
+  `rollout-2026-08-06T00-00-00-${CODEX_SESSION_ID}.jsonl`,
+);
+
 test('runtime registry exposes one validated adapter per runtime', () => {
   assert.deepEqual(runtimeAdapters.map((adapter) => adapter.runtime), ['claude', 'codex']);
   assert.equal(getRuntimeAdapter('claude'), claudeRuntime);
@@ -68,6 +74,7 @@ test('runtime registry exposes one validated adapter per runtime', () => {
 test('interaction adapters expose the reusable existing-session contract', () => {
   assert.equal(codexRuntime.interaction.runtime, 'codex');
   assert.equal(typeof codexRuntime.interaction.create, 'function');
+  assert.equal(typeof codexRuntime.interaction.observePermissions, 'function');
   assert.equal(typeof codexRuntime.interaction.shutdown, 'function');
   assert.throws(
     () => defineInteractionAdapter({ runtime: 'broken' }),
@@ -85,6 +92,31 @@ test('interaction adapters expose the reusable existing-session contract', () =>
     }),
     /shutdown must be a function/,
   );
+});
+
+test('Codex permission status refresh preserves needs_input detail without a counter delta', async () => {
+  let request;
+  const statuses = new Map([[
+    `codex:${CODEX_SESSION_ID}`,
+    'needs_input',
+  ]]);
+
+  await codexRuntime.updateSessionStatus(
+    { deviceName: 'test-ec2-ap' },
+    CODEX_SESSION_ID,
+    CODEX_FIXTURE,
+    '-tmp-baton-codex-target',
+    'needs_input',
+    'Allow network access?',
+    {
+      lastKnownStatus: statuses,
+      postFn: async (_url, body) => { request = body; },
+    },
+  );
+
+  assert.equal(request.sessions[0].status, 'needs_input');
+  assert.equal(request.sessions[0].agentDetail, 'Allow network access?');
+  assert.equal(request.statusDeltas, undefined);
 });
 
 test('capability detection is dispatched through runtime adapters', () => {

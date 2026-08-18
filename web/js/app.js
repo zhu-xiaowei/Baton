@@ -27,6 +27,8 @@ var _listPages = createListPageStore(12);
 var _activeListKey = null;
 var _activeListOptions = null;
 var LIST_PRELOAD_PX = 1200;
+var _pageWasHidden = document.visibilityState === 'hidden';
+var _foregroundRefresh = null;
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -699,15 +701,6 @@ function openSession(el) {
   loadMessages(el.dataset.sid, el.dataset.preview, el.dataset.status);
 }
 
-var _revealedSessions = new Set();
-function maybeRevealStuckAgent(sessionId) {
-  if (!state.appState.isAgent && state.wsOpenStatus !== 'needs_input') return;
-  if (document.getElementById('permission-prompt')) return;
-  if (_revealedSessions.has(sessionId)) return;
-  _revealedSessions.add(sessionId);
-  ensureWsAndSend({ action: 'reveal_agent', sessionId: sessionId, device: state.appState.device || '' });
-}
-
 function shortModel(m) {
   return (m || 'unknown').replace(/^claude-/, '');
 }
@@ -775,6 +768,66 @@ async function loadDevices() {
     }
   });
 }
+
+function refreshHomeForeground() {
+  var navVersion = _navVersion;
+  return window.__loadHome(
+    api('/api/bridge/active-sessions'),
+    api('/api/bridge/devices'),
+    {
+      resetScroll: false,
+      isCurrent: function () {
+        return _navVersion === navVersion
+          && !state.appState.device
+          && !state.appState.project
+          && !state.appState.session;
+      },
+      onFresh: function (_activeData, devData) {
+        rememberDevices(devData);
+        showStats(devData.devices.length + ' device(s)');
+      },
+    },
+  );
+}
+
+function refreshForegroundView() {
+  if (document.visibilityState !== 'visible') return Promise.resolve(false);
+  if (_foregroundRefresh) return _foregroundRefresh;
+  _foregroundRefresh = Promise.resolve().then(function () {
+    if (state.appState.session) {
+      return typeof window.resumeSessionForeground === 'function'
+        ? window.resumeSessionForeground()
+        : false;
+    }
+    if (_activeListOptions) {
+      rememberActiveListScroll();
+      return loadPagedList(_activeListOptions, _navVersion);
+    }
+    return refreshHomeForeground();
+  }).finally(function () {
+    _foregroundRefresh = null;
+  });
+  return _foregroundRefresh;
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    _pageWasHidden = true;
+    return;
+  }
+  if (!_pageWasHidden) return;
+  _pageWasHidden = false;
+  refreshForegroundView();
+}
+
+function handlePageShow(event) {
+  if (!event.persisted) return;
+  _pageWasHidden = false;
+  refreshForegroundView();
+}
+
+document.addEventListener('visibilitychange', handleVisibilityChange);
+window.addEventListener('pageshow', handlePageShow);
 
 // ---- Projects ----
 function projectsHtml(device, data, sel) {
@@ -1181,7 +1234,6 @@ async function loadMessages(sessionId, preview, status) {
   state.appState.runtime = sessionRuntime(sessionId, state.appState.runtime);
   markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
-  _revealedSessions.delete(sessionId);
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = (status === 'running');
@@ -1233,6 +1285,7 @@ async function loadMessages(sessionId, preview, status) {
 
     content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
       + '">Loading...</div>' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
+    if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
 
@@ -1255,7 +1308,6 @@ async function loadMessages(sessionId, preview, status) {
       if (_navVersion !== myNav) return;
       content.scrollTop = content.scrollHeight;
     });
-    maybeRevealStuckAgent(sessionId);
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
@@ -1437,6 +1489,7 @@ Object.assign(window, {
   showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
+  refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleRecentAgents,
@@ -1451,5 +1504,6 @@ if (window.__APEEK_TEST__) {
     activeKey: function () { return _activeListKey; },
     pageSize: LIST_PAGE_SIZE,
     select: enterSelectMode,
+    refreshForeground: refreshForegroundView,
   };
 }

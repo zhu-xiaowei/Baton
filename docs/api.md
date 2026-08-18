@@ -679,6 +679,11 @@ Subscribe to real-time messages for a session.
 **Server handling**:
 1. Record subscription in DDB Subscriptions table
 
+The operation is fire-and-forget. The server does not acknowledge it and does not request an
+active-turn replay. If a window joins after the current turn has started, the frontend either
+resumes from `seq=1`, resumes at the next complete `stream_block_start`, or uses the complete
+deduplicated authority carried by `stream_end`.
+
 **Subscriptions table**:
 ```
 PK: sessionId
@@ -698,6 +703,25 @@ Cancel subscription.
 ```
 
 **Server handling**: Delete corresponding record in Subscriptions table
+
+---
+
+#### reveal_permission
+
+Restore only the current pending permission after entering or reconnecting to a Session.
+
+```json
+{
+  "action": "reveal_permission",
+  "sessionId": "codex:thread-id",
+  "device": "MacBook-Pro"
+}
+```
+
+The Server persists the requesting connection's Session subscription before forwarding this action
+to the selected Bridge. The Bridge either resends its current pending permission or, for a
+TUI-owned Codex thread, attaches a permission-only observer to the managed app-server. This action
+does not replay messages, stream frames, or tool nodes.
 
 ---
 
@@ -814,11 +838,9 @@ through the same pending request ID. The frontend does not infer permission prom
 output. Codex may send several approval requests before the first is answered. The bridge matches
 the Codex TUI by keeping the first request active and stacking later requests; after the active
 request is answered, the newest queued request is shown next. Replayed request IDs are
-deduplicated, and only the active request ID can be answered. Opening a Codex session also
-passively resumes an already-loaded managed-daemon thread. This subscribes to its existing turn
-and replays TUI-owned pending requests without starting a turn or invoking writer takeover.
-If another app-server client resolves a request first, `serverRequest/resolved` removes it from
-the bridge queue and emits `permission_resolved` for the visible prompt.
+deduplicated, and only the active request ID can be answered. If another app-server client resolves
+a request first, `serverRequest/resolved` removes it from the bridge queue and emits
+`permission_resolved` for the visible prompt.
 
 ---
 
@@ -831,16 +853,6 @@ Interrupt the currently running Claude Code (equivalent to Ctrl+C).
 ```
 
 **Server handling**: Forward to matching bridge by `device`. Bridge SIGINTs the session's headless Claude Code process (`_pool.interrupt`).
-
----
-
-#### reveal_agent
-
-Requests Bridge to resend a still-pending Claude control request after refresh or reconnect.
-
-```json
-{ "action": "reveal_agent", "sessionId": "a1ca0870-xxxx", "device": "MacBook-Pro" }
-```
 
 ---
 
@@ -1082,7 +1094,7 @@ dismiss the prompt when `requestId` matches, so a late completion cannot close a
 Bridge returns the result after processing send_message.
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "turnId": "sent_123" }
 ```
 
 Synchronous local commands may also return:
@@ -1092,8 +1104,7 @@ Synchronous local commands may also return:
   "action": "send_message_result",
   "ok": true,
   "sessionId": "session-id",
-  "clientId": "client_123",
-  "streamId": "stream_123",
+  "turnId": "sent_123",
   "commandOutput": "Copyable plain-text result",
   "commandName": "usage",
   "commandPanel": {
@@ -1111,7 +1122,7 @@ Synchronous local commands may also return:
 the Claude transcript. The frontend stores `commandOutput` as the panel's copyable text fallback.
 
 **Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`),
-`requestId`, `clientId`, and `streamId`. Immediate Codex commands may also return
+`requestId`, and `turnId`. Immediate Codex commands may also return
 `commandOutput`; the app atomically promotes the optimistic command bubble and renders that
 ephemeral local result without writing it to rollout history.
 
@@ -1291,16 +1302,31 @@ thread choices out of the project-level cache.
 Claude headless preview actions are relayed to subscribed apps and never written to DDB:
 
 ```text
+stream_turn_start
 stream_block_start
 stream_delta
 stream_tool_input
 stream_block_stop
+messages
+permission_request
+permission_resolved
 stream_end
 ```
 
-Every frame carries `sessionId`, `streamId`, and monotonic `seq`; block actions also carry
-`blockId`. `stream_end.finalSeq` lets the app finish its reorder buffer. Authoritative
-`messages` rows replace previews by identity.
+Every shared event from `stream_turn_start` through `stream_end` carries `sessionId`, `turnId`,
+and one contiguous turn-local `seq`. This includes authoritative `messages` and turn-scoped
+permission events. The app buffers by `turnId + seq`; no event type may cross a missing sequence.
+`stream_block_start.seq` is the live node identity, and `stream_end` is terminal.
+
+For Web-managed turns, Claude headless and Codex app-server are the only realtime authorities.
+Their user, assistant, tool-use, and tool-result messages all travel through the sequence above.
+The later JSONL copies are persisted to DDB without another WebSocket broadcast. JSONL messages
+created by an external TUI/IDE have no runtime ownership, so they continue to broadcast as complete
+unsequenced `messages` and are merged with REST history by UUID/native ID.
+
+Connection-only acknowledgements such as `send_message_result` and `messages_ack` do not consume
+turn sequence numbers. `subscribe` is fire-and-forget: the server records the subscription but
+does not return an acknowledgement or request an active-turn replay.
 
 ---
 
@@ -1339,7 +1365,7 @@ Server notifies bridge to sync a specific session's messages to DDB (triggered b
 3. On completion, send `sync_complete` via WS
 
 All App → Server operational actions are also forwarded to the matching Bridge after `device`
-is removed: `send_message`, `permission_reply`, `interrupt`, `reveal_agent`, `request_file`,
+is removed: `send_message`, `permission_reply`, `interrupt`, `request_file`,
 `delete_files`, `list_commands`, and `create_project`.
 
 ---
@@ -1382,7 +1408,7 @@ Server forwards bridge permission confirmation request (only pushed to app conne
 Server forwards bridge send result (broadcast to **all** app connections under this account).
 
 ```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "clientId": "client_123", "streamId": "stream_123" }
+{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "turnId": "sent_123" }
 ```
 
 ---
@@ -1504,7 +1530,7 @@ Bridge routing queries `Connections.accountId-role-index`. Disconnect cleanup qu
 
 `_handle_send_to_bridge` rebuilds the payload without `device`, then forwards only to bridge
 connections whose `deviceName` matches. Applies to `send_message`, `permission_reply`,
-`interrupt`, `reveal_agent`, `create_project`, `request_file`, `delete_files`, and
+`interrupt`, `create_project`, `request_file`, `delete_files`, and
 `list_commands`.
 
 ### Codex
@@ -1512,13 +1538,11 @@ connections whose `deviceName` matches. Applies to `send_message`, `permission_r
 Codex participates in Session metadata, history reads, `sync_session`, `sync_complete`, and live
 `messages`/`messages_ack` updates from the rollout watcher. Existing-Session `send_message`,
 streaming, interrupt, and permission requests use the app-server adapter. The adapter reuses a
-managed Unix WebSocket daemon when present, including active-turn and pending-approval recovery,
-and falls back to `app-server --stdio` otherwise. Revealing an existing session uses a
-managed-daemon-only passive subscription: it never starts a turn and never terminates a writer.
+managed Unix WebSocket daemon when present and falls back to `app-server --stdio` otherwise.
 The standalone writer termination flow remains only as the explicit fallback for a subsequent
-message send that cannot share a daemon. New-Session creation is supported; local history
-deletion remains disabled by Codex runtime capabilities. Project directory creation is
-runtime-neutral. See [codex.md](codex.md) for validation.
+message send that cannot share a daemon. New-Session creation is supported; local history deletion
+remains disabled by Codex runtime capabilities. Project directory creation is runtime-neutral.
+See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation
 

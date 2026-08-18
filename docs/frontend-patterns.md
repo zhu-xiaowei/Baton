@@ -52,21 +52,33 @@ appState = { device, project: { hash, name }, session, sessionPreview }
 ```
 loadMessages(sessionId):
   1. wsAllMessages = [], wsMessageUuids = Set(), reset state
-  2. startWs(sessionId) → subscribe
-  3. _wsBuffer = []          ← enable buffer mode, WS messages stored without rendering
+  2. startWs(sessionId) → subscribe → reveal_permission
+  3. _wsBuffer = []          ← buffer no-seq JSONL/TUI messages
   4. GET /api/bridge/messages?session=X  ← pull history from DDB
   5. merged = ddbMessages.concat(_wsBuffer)
   6. _wsBuffer = null         ← disable buffer, subsequent WS messages render directly
-  7. Deduplicate through the current Session's persistent UUID Set
+  7. Deduplicate by uuid/nativeId
   8. Sort by timestamp
   9. renderMessages(wsAllMessages)  ← full render
-  10. scrollToBottom
+  10. Rebind any active strict-stream preview by turnId
+  11. scrollToBottom
 ```
 
-The UUID Set is maintained alongside `wsAllMessages` for initial load, pagination, reconnect
-recovery, and final `messages` frames. This makes final-message deduplication O(1) per row.
-`stream_delta` and `stream_tool_input` bypass the Set and render immediately; no event window,
-debounce, or batch delay is introduced.
+No-seq `messages` are historical JSONL/TUI updates and use the REST buffer above. Events carrying
+`turnId + seq` belong to a live turn: they immediately enter `TurnEventQueue`, remain strictly
+ordered, and survive the first history render through DOM rebind. Authority and REST rows share the
+same UUID/nativeId deduplication set.
+
+`reveal_permission` is intentionally narrower than message replay. It asks the Bridge to resend only
+the current pending permission state after entering or reconnecting to a Session. Existing CC hook
+permissions are returned from the Bridge queue; Codex TUI permissions are discovered by attaching a
+permission-only observer to the managed app-server. No text, tool, or delta history is replayed.
+
+When a window joins an active turn, `seq=0` starts normal streaming and `seq=1 messages(user)` can
+synthesize the payload-free start. If the first available seq is greater than 1, the frontend does
+not display a block whose start is missing. Complete authority renders missed nodes, the next
+`stream_block_start` resumes streaming, and `stream_end` supplies complete deduplicated authority
+for any remaining nodes. No time-based grace is used.
 
 **`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show loading state. Wait for `sync_complete` WS event, then re-run loadMessages.
 
@@ -89,10 +101,11 @@ Each message is routed by type:
 ```
 New message arrives:
   ├── isToolResultOnly?   → update corresponding tool node in-place by tool_use_id
-  ├── user + !isInterrupt → tryDedup first (match against sent optimistic messages), then insert by timestamp
+  ├── strict user         → promote the exact optimistic bubble by turnId
+  ├── no-seq user         → insert as a historical message
   ├── ai-title            → update breadcrumb title, don't render to message list
   ├── isInterrupt         → render as tl-item (type=interrupt), placed in assistant-turn
-  └── assistant           → update wsRunning state, insert by timestamp (see next section)
+  └── assistant           → strict turn reconcile or historical insertion
 ```
 
 ### 4.3 tool_result In-place Update
@@ -106,9 +119,15 @@ container.querySelector('[data-tool-id="' + tool_use_id + '"]')
 
 ## 5. Message Ordering & Insertion
 
-**Core principle: all elements (tl-item, user-msg) carry `data-ts`, inserted by scanning for timestamp position.**
+消息使用两条明确分离的插入路径：
 
-WS message arrival order != timestamp order (bridge push has varying delays), so must insert by timestamp.
+- 带 `turnId + seq` 的 active turn 由 `TurnEventQueue` 排序，并按
+  `data-anchor=turnId` 插入对应问题下方。
+- 无 seq 的 REST 历史与外部 TUI/IDE JSONL 消息携带 `data-ts`，按 timestamp
+  插入历史时间线。
+
+timestamp 只用于历史展示顺序，不参与 active turn 的归属、传输排序或 DOM
+接管。
 
 ### 5.1 Assistant Message Insertion
 
@@ -178,7 +197,7 @@ wsRunning updates:
   loadMessages(_, _, status)     → wsRunning = (status === 'running')
   Receive assistant message      → wsRunning = (stopReason !== 'end_turn')
   doSend()                       → wsRunning = true
-  interruptSession()             → wsRunning = false
+  stream_end                     → recompute from outstanding turns
 ```
 
 ### Button State Machine
@@ -193,12 +212,14 @@ No text + !wsRunning        → show send arrow, disabled
 
 ```
 interruptSession():
-  wsSend({ action: 'interrupt', sessionId, device })
-  wsRunning = false
-  updateSendBtn()
+  activeTurnId = activeTurnForInterrupt()
+  wsSend({ action: 'interrupt', sessionId, device, turnId: activeTurnId })
 ```
 
 Equivalent to Ctrl+C / Escape in the CC terminal. Bridge SIGINTs the session's headless Claude Code process.
+Sending the request does not optimistically stop loading or create an Interrupted row: the runtime may reject
+the interrupt or emit a few final deltas. The active turn remains running until its ordered `stream_end`.
+Runtime authority emits the single Interrupted message before that end event.
 
 Besides clicking the stop button, pressing `Esc` anywhere (input focused or not) interrupts the running turn, mirroring CC — but yields to overlays that own Esc (slash popup, permission prompt, file/image viewer, new-project modal) and ignores IME composition.
 
@@ -206,20 +227,32 @@ Besides clicking the stop button, pressing `Esc` anywhere (input focused or not)
 
 ```
 ws.onclose:
-  1. State changes to 'reconnecting'
-  2. Reconnect via connectWs() after 3 seconds
+  1. Discard the old turn seq buffers, but keep the rendered DOM unchanged
+  2. State changes to 'reconnecting'
+  3. Reconnect via connectWs() after 3 seconds
 
 ws.onopen (on reconnect):
   1. Re-subscribe to current sessionId
-  2. If wsLastTimestamp exists → recoverMissing()
+  2. Start incremental REST recovery and active-turn lookup in parallel
+  3. Buffer new strict turn events until both requests complete
+  4. Merge REST history first
+  5. Close turns no longer active; preserve active-turn DOM, including partial blocks
+  6. Release buffered WS events through the normal checkpoint/late-join queue
+  7. Replace an old partial block in place when its authoritative messages arrive
 
 recoverMissing():
   1. bufferAndFetch(sessionId, after=wsLastTimestamp)  ← only pull incremental during disconnect
   2. Merge and deduplicate into wsAllMessages
-  3. If new messages exist → full re-render (container.innerHTML = renderMessages)
+  3. If new messages exist → incrementally render only unseen history
 ```
 
 **`wsLastTimestamp`**: Updated to the latest timestamp each time a new message is received. Used as the incremental query start point on reconnect.
+
+Foreground restoration uses the same reconnect pipeline as an unexpected WS close.
+The old socket is intentionally replaced, but its partial DOM remains visible until
+the matching authoritative message replaces it. `stream_block_stop` only closes the
+input stream; it does not contain full content. Navigation away from the detail page
+still disconnects and clears the whole streaming state.
 
 ## 9. New Session Creation
 
@@ -233,7 +266,7 @@ startNewSession(projectHash):
   6. Show empty message page + input bar
 
 User sends message:
-  1. wsSend({ action: 'send_message', projectHash, runtime, requestId, text, device })
+  1. Create turnId and wsSend({ action: 'send_message', projectHash, runtime, requestId, turnId, text, device })
      (Note: no sessionId, projectHash tells bridge to create a new session)
   2. Optimistically render user message
 
@@ -250,16 +283,16 @@ On receiving sessionId:
 
 ```
 sendMessage():
-  1. WS send { action: 'send_message', sessionId, text, device }
-  2. Record in pendingSentMessages { id, text }
-  3. Insert optimistic message at DOM end (with data-pending, shows "sending...")
+  1. Generate turnId
+  2. WS send { action: 'send_message', sessionId, turnId, text, device }
+  3. Record pendingSentMessages by turnId
+  4. Insert optimistic message with data-anchor=turnId
 
 WS returns send_message_result { ok: true }:
-  → Find first unconfirmed pending → mark delivered, update status to ✓ + time
+  → Find the exact pending turnId → mark delivered
 
 WS receives real user message:
-  → tryDedup: match text against pendingSentMessages
-  → Matched → promote the optimistic DOM node in place and apply the authoritative timestamp
+  → Match exact turnId → promote the same DOM node and apply authoritative uuid/timestamp
 ```
 
 ## 11. Permission Prompt
@@ -267,12 +300,18 @@ WS receives real user message:
 Claude headless sends a structured `permission_request` when it receives a `control_request`.
 The frontend does not infer permission state from tool messages.
 
+Live turn permission events carry the turn's normal `seq`. When a window enters while a live turn is
+waiting for approval, Bridge re-emits the pending `permission_request` with a fresh `seq`. The
+frontend treats that request as a safe resume checkpoint, so the subsequent
+`permission_resolved`, tool result, and later nodes continue without waiting for the missed prefix.
+External TUI permission state has no live turn and remains a standalone control event. Both paths
+update the Session row to `needs_input` with the current permission detail.
+
 ### 11.1 Request Types
 
 - `kind=tool`: show allow/deny for Bash/Edit/Write/MCP and other tools.
 - `kind=ask`: render all `questions[]` in order, preserving labels and descriptions.
 - `kind=plan`: show accept or typed feedback.
-- Bridge can resend a pending request after reconnect through `reveal_agent`.
 
 ### 11.2 Input Bar Disabled During Prompt
 

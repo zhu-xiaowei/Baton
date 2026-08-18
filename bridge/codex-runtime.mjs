@@ -136,28 +136,33 @@ export const codexRuntime = defineRuntimeAdapter({
     };
   },
 
-  async updateSessionStatus(config, nativeSessionId, filePath, _projectHash, newStatus, _detail, context) {
+  async updateSessionStatus(config, nativeSessionId, filePath, _projectHash, newStatus, detail, context) {
     const sessionId = storageSessionId('codex', nativeSessionId);
     const previousStatus = context.lastKnownStatus.get(sessionId);
-    if (previousStatus === newStatus || !filePath || !fs.existsSync(filePath)) return;
+    if ((previousStatus === newStatus && newStatus !== 'needs_input')
+      || !filePath || !fs.existsSync(filePath)) return;
     const session = inspectCodexSession(nativeSessionId, {
       filePath,
       runningInfo: getCodexRunningInfo(),
     });
     if (!session) return;
     session.status = newStatus;
+    session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
+    const statusChanged = previousStatus !== newStatus;
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [publicSession(session)],
-      statusDeltas: [{
-        deviceName: config.deviceName,
-        projectHash: session.project,
-        projectName: session.projectName,
-        from: previousStatus || 'completed',
-        to: newStatus,
-        lastActive: session.lastActive,
-      }],
+      ...(statusChanged ? {
+        statusDeltas: [{
+          deviceName: config.deviceName,
+          projectHash: session.project,
+          projectName: session.projectName,
+          from: previousStatus || 'completed',
+          to: newStatus,
+          lastActive: session.lastActive,
+        }],
+      } : {}),
     });
     context.lastKnownStatus.set(sessionId, newStatus);
   },

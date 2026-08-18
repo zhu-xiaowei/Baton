@@ -128,8 +128,10 @@ test('Bash headers stay muted while IN keeps shell syntax highlighting', () => {
   document.body.innerHTML = html;
   const header = document.querySelector('.tool-desc');
   const body = document.querySelector('.tool-value code.shell-command');
+  const bodyContainer = document.querySelector('.tool-body-content');
   assert.ok(header);
   assert.ok(body);
+  assert.equal(bodyContainer.classList.contains('no-clamp'), false);
   assert.equal(header.textContent, command);
   assert.equal(body.textContent, command);
   assert.equal(header.classList.contains('shell-command'), false);
@@ -331,7 +333,7 @@ test('Codex keeps a foreground Ran before a later Explore call', () => {
   assert.deepEqual(descriptions, ['aws dynamodb get-item', 'Read tool-render.test.mjs']);
 });
 
-test('Codex history orders mixed Ran and Explored cells by completion', () => {
+test('Codex history keeps mixed Ran and Explored blocks in creation order', () => {
   const use = (uuid, id, command, timestamp, input = {}) => ({
     uuid,
     type: 'assistant',
@@ -376,10 +378,10 @@ test('Codex history orders mixed Ran and Explored cells by completion', () => {
   assert.deepEqual(
     Array.from(document.querySelectorAll('.tool-desc')).map((node) => node.textContent),
     [
+      'node check-version.mjs',
+      'aws dynamodb scan',
       'printf local-version',
       'Search bridge_recovery_complete',
-      'aws dynamodb scan',
-      'node check-version.mjs',
     ],
   );
 });
@@ -447,6 +449,8 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.codex-explore-continuation\.codex-explore-group-connected::after \{[\s\S]*display: block !important;/);
   assert.match(css, /\.codex-explore-group-start\.tool-details-collapsed \{ padding-bottom: 1px; \}/);
   assert.match(css, /\.codex-explore-continuation\.tool-details-collapsed \{ padding-top: 1px; padding-bottom: 1px; \}/);
+  assert.match(css, /\.tool-header \{\s*display: flex; align-items: baseline;/);
+  assert.match(css, /\.tool-detail-chevron \{\s*display: inline-block; align-self: center;/);
 });
 
 test('tool detail policy collapses Codex history while realtime and Claude stay expanded', () => {
@@ -641,7 +645,7 @@ test('Codex Waited command expands from its truncated header', () => {
   assert.equal(header.getAttribute('aria-expanded'), 'false');
 });
 
-test('Codex background waits and completions follow the TUI transcript order', () => {
+test('Codex background waits and completions preserve block order', () => {
   const tool = (id, name, input, timestamp) => ({
     uuid: `message-${id}`,
     type: 'assistant',
@@ -742,22 +746,23 @@ test('Codex background waits and completions follow the TUI transcript order', (
     '',
     'Ran',
     'Ran',
-    'Ran',
-    'Ran',
     'Waited for background terminal',
+    'Ran',
+    'Ran',
+    'Ran',
     '',
     'Ran',
     'Waited for background terminal',
-    'Ran',
+    'Waited for background terminal',
   ]);
-  assert.match(timeline[2].text, /tail bridge\.log/);
-  assert.match(timeline[3].text, /git diff --stat/);
+  assert.match(timeline[2].text, /sleep 75; check fleet/);
   assert.match(timeline[4].text, /date; check versions/);
-  assert.match(timeline[5].text, /sleep 75; check fleet/);
-  assert.match(timeline[7].text, /sleep 75; check fleet/);
+  assert.match(timeline[5].text, /tail bridge\.log/);
+  assert.match(timeline[6].text, /git diff --stat/);
   assert.match(timeline[8].text, /sleep 35; check versions/);
   assert.match(timeline[9].text, /sleep 35; check versions/);
-  assert.equal(container.querySelectorAll('.codex-terminal-wait').length, 2);
+  assert.match(timeline[10].text, /sleep 35; check versions/);
+  assert.equal(container.querySelectorAll('.codex-terminal-wait').length, 3);
 });
 
 test('Codex non-empty terminal input remains visible', () => {

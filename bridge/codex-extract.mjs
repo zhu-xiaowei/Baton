@@ -3,7 +3,10 @@ import fs from 'fs';
 import {
   codexItemNativeId,
   codexItemLiveKey,
+  codexToolMessageNativeId,
+  codexToolUseId,
   codexTurnErrorLiveMessage,
+  codexTurnLiveKey,
   codexTurnUserLiveKey,
   codexTurnUserNativeId,
   codexUserLiveKey,
@@ -123,14 +126,6 @@ export function parseApplyPatchInput(raw) {
   });
 }
 
-function pairId(sessionId, callId, occurrence, suffix = '') {
-  const digest = crypto.createHash('sha1')
-    .update(`${sessionId}|${callId}|${occurrence}|${suffix}`)
-    .digest('hex')
-    .slice(0, 20);
-  return `codex_tool_${digest}`;
-}
-
 function timestampFor(entry) {
   return entry?.timestamp || '1970-01-01T00:00:00.000Z';
 }
@@ -191,7 +186,7 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
   const action = payload.action || {};
   const query = String(payload.query || action.query || action.url || '');
   const searchId = String(payload.id || `line-${line}`);
-  const toolUseId = pairId(sessionId, searchId, 1);
+  const toolUseId = codexToolUseId(sessionId, searchId, 1);
   const input = {
     action: action.type || 'search',
     query,
@@ -205,6 +200,7 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
   return [
     tagCodexLiveSource({
       uuid: stableId(sessionId, line, 'web_search_call', payload),
+      nativeId: codexToolMessageNativeId(searchId, 'tool-use'),
       type: 'assistant',
       content: [{
         type: 'tool_use',
@@ -217,6 +213,7 @@ function webSearchMessages(sessionId, line, payload, timestamp) {
     }, liveKey),
     tagCodexLiveSource({
       uuid: stableId(sessionId, line, 'web_search_result', payload),
+      nativeId: codexToolMessageNativeId(searchId, 'tool-result'),
       type: 'user',
       content: [{
         type: 'tool_result',
@@ -392,6 +389,15 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   let needsSessionScan = startLine === 0;
   let reviewPrompt = '';
   let reviewPromptSeen = false;
+  let activeTurnId = '';
+  const releaseOwnershipKeys = new Set();
+
+  const emit = (...items) => {
+    const liveKey = codexTurnLiveKey(activeTurnId);
+    for (const item of items) {
+      messages.push(liveKey ? tagCodexLiveSource(item, liveKey) : item);
+    }
+  };
 
   const enqueue = (callId, value) => {
     const queue = pending.get(callId) || [];
@@ -447,12 +453,20 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     )) {
       needsSessionScan = true;
     }
+    if (entry.type === 'event_msg' && payload.type === 'task_started') {
+      const nextTurnId = String(payload.turn_id || '');
+      if (activeTurnId && activeTurnId !== nextTurnId) {
+        releaseOwnershipKeys.add(codexTurnLiveKey(activeTurnId));
+      }
+      activeTurnId = nextTurnId;
+      continue;
+    }
 
     if (entry.type === 'event_msg' && payload.type === 'entered_review_mode') {
       reviewPrompt = String(payload.user_facing_hint || payload.target?.instructions || '');
       reviewPromptSeen = false;
       if (shouldEmit) {
-        messages.push(systemEvent(sessionId, line, 'Review started', payload, timestamp));
+        emit(systemEvent(sessionId, line, 'Review started', payload, timestamp));
       }
       continue;
     }
@@ -461,7 +475,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       reviewPrompt = '';
       reviewPromptSeen = false;
       if (shouldEmit) {
-        messages.push(systemEvent(sessionId, line, 'Review completed', payload, timestamp));
+        emit(systemEvent(sessionId, line, 'Review completed', payload, timestamp));
       }
       continue;
     }
@@ -472,7 +486,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     );
     if (contextCompacted) {
       if (shouldEmit) {
-        messages.push(systemEvent(sessionId, line, 'Context compacted', payload, timestamp));
+        emit(systemEvent(sessionId, line, 'Context compacted', payload, timestamp));
       }
       continue;
     }
@@ -483,7 +497,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
       if (isReviewPrompt) reviewPromptSeen = true;
       if (shouldEmit && text.trim() && !duplicateReviewPrompt) {
-        messages.push(tagCodexLiveSource({
+        emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'user', payload.message),
           nativeId: payload.client_id ? `codex:user:${payload.client_id}` : '',
           type: 'user',
@@ -517,7 +531,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         if (shouldEmit && text && !duplicateReviewPrompt) {
           const turnId = payload.internal_chat_message_metadata_passthrough?.turn_id;
           const clientId = userClientIdsByTurn.get(String(turnId || ''));
-          messages.push(tagCodexLiveSource({
+          emit(tagCodexLiveSource({
             uuid: stableId(sessionId, line, 'user', payload),
             nativeId: codexUserNativeId(clientId)
               || codexTurnUserNativeId(turnId)
@@ -534,7 +548,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       if (payload.role !== 'assistant') continue;
       const text = assistantText(payload);
       if (shouldEmit && text.trim()) {
-        messages.push(tagCodexLiveSource({
+        emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'assistant', payload),
           nativeId: codexItemNativeId(payload.id),
           type: 'assistant',
@@ -558,12 +572,12 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           uuid,
         );
         if (errorMessage) {
-          messages.push(tagCodexLiveSource(
+          emit(tagCodexLiveSource(
             errorMessage.message,
             errorMessage.liveKey,
           ));
         } else {
-          messages.push({
+          emit({
             uuid,
             type: 'assistant',
             content: [],
@@ -579,7 +593,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       && payload.type === 'item_completed'
       && payload.item?.type === 'WebSearch') {
       if (shouldEmit) {
-        messages.push(...webSearchMessages(sessionId, line, payload.item, timestamp));
+        emit(...webSearchMessages(sessionId, line, payload.item, timestamp));
       }
       continue;
     }
@@ -594,12 +608,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = (execPairs.get(callId) || [])[occurrence - 1];
       if (pair) pair.executionCompleted = true;
       if (shouldEmit && pair) {
-        messages.push(tagCodexLiveSource({
+        emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'command_execution', {
             id: callId,
             status: item.status,
             exitCode: item.exit_code,
           }),
+          nativeId: codexToolMessageNativeId(callId, 'tool-result'),
           type: 'user',
           content: pair.uses.map((use) => ({
             type: 'tool_result',
@@ -630,13 +645,14 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = (mcpPairs.get(callId) || [])[occurrence - 1];
       if (pair) pair.mcpCompleted = true;
       if (shouldEmit && pair) {
-        messages.push(tagCodexLiveSource({
+        emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'mcp_tool_call', {
             id: callId,
             server: item.server,
             tool: item.tool,
             status: item.status,
           }),
+          nativeId: codexToolMessageNativeId(callId, 'tool-result'),
           type: 'user',
           content: pair.uses.map((use) => ({
             type: 'tool_result',
@@ -653,7 +669,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
 
     if (entry.type === 'response_item' && payload.type === 'web_search_call') {
       if (shouldEmit && !completedWebSearchIds.has(String(payload.id || ''))) {
-        messages.push(...webSearchMessages(sessionId, line, payload, timestamp));
+        emit(...webSearchMessages(sessionId, line, payload, timestamp));
       }
       continue;
     }
@@ -670,7 +686,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         uses = (patchInputs.length ? patchInputs : [{ patch: String(payload.input || '') }])
           .map((input, index) => ({
             type: 'tool_use',
-            id: pairId(sessionId, callId, occurrence, String(index)),
+            id: codexToolUseId(sessionId, callId, occurrence, String(index)),
             name: 'Edit',
             input,
           }));
@@ -689,7 +705,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         if (mcpInfo) Object.assign(input, mcpToolMeta(mcpInfo.item));
         uses = [{
           type: 'tool_use',
-          id: pairId(sessionId, callId, occurrence),
+          id: codexToolUseId(sessionId, callId, occurrence),
           name: payload.type === 'tool_search_call'
             ? 'ToolSearch'
             : TOOL_NAMES.get(payload.name) || payload.name || 'Tool',
@@ -718,8 +734,9 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         mcpPairs.set(callId, calls);
       }
       if (shouldEmit) {
-        messages.push(tagCodexLiveSource({
+        emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'tool_call', payload),
+          nativeId: codexToolMessageNativeId(callId, 'tool-use'),
           type: 'assistant',
           content: uses,
           timestamp,
@@ -777,8 +794,9 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         resultMeta = { codexSuperseded: true };
       }
       if (!shouldEmit) continue;
-      messages.push(tagCodexLiveSource({
+      emit(tagCodexLiveSource({
         uuid: stableId(sessionId, line, 'tool_output', payload),
+        nativeId: codexToolMessageNativeId(pair.callId, 'tool-result-provisional'),
         type: 'user',
         content: pair.uses.map((use) => ({
           type: 'tool_result',
@@ -796,8 +814,9 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const pair = dequeue(String(payload.call_id || ''));
       if (!pair || !shouldEmit) continue;
       const identity = pair.fallbackOutput || { line, payload, timestamp };
-      messages.push(tagCodexLiveSource({
+      emit(tagCodexLiveSource({
         uuid: stableId(sessionId, identity.line, 'tool_output', identity.payload),
+        nativeId: codexToolMessageNativeId(pair.callId, 'tool-result'),
         type: 'user',
         content: pair.uses.map((use) => ({
           type: 'tool_result',
@@ -813,7 +832,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     if (entry.type === 'compacted') {
       const summary = String(payload.message || '');
       if (shouldEmit && summary.trim()) {
-        messages.push({
+        emit({
           uuid: stableId(sessionId, line, 'summary', payload),
           type: 'summary',
           content: summary,
@@ -826,12 +845,12 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     if (entry.type === 'event_msg' && payload.type === 'thread_rolled_back' && shouldEmit) {
       const turns = Math.max(1, Number(payload.num_turns) || 1);
       const content = `Conversation rolled back by ${turns} ${turns === 1 ? 'turn' : 'turns'}`;
-      messages.push(systemEvent(sessionId, line, content, payload, timestamp));
+      emit(systemEvent(sessionId, line, content, payload, timestamp));
       continue;
     }
 
     if (entry.type === 'event_msg' && payload.type === 'turn_aborted' && shouldEmit) {
-      messages.push({
+      emit({
         uuid: stableId(sessionId, line, 'interrupt', payload),
         type: 'user',
         content: [{ type: 'text', text: '[Request interrupted by user]' }],
@@ -840,7 +859,12 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     }
   }
 
-  return { messages, nextLine, needsSessionScan };
+  return {
+    messages,
+    nextLine,
+    needsSessionScan,
+    releaseOwnershipKeys: Array.from(releaseOwnershipKeys),
+  };
 }
 
 export async function syncCodexMessages(filePath, nativeSessionId, storageSessionId, options) {

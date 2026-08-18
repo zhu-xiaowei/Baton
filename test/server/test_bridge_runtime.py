@@ -160,7 +160,7 @@ def test_sync_sessions_writes_separate_runtime_keys(monkeypatch):
     assert by_runtime["codex"]["modelProvider"] == "openai"
 
 
-def test_sync_messages_uses_storage_partition(monkeypatch):
+def test_sync_messages_persists_only_message_fields(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
@@ -173,23 +173,27 @@ def test_sync_messages_uses_storage_partition(monkeypatch):
             "type": "user",
             "content": "hello",
             "timestamp": "2026-08-06T00:00:00.000Z",
+            "transient": "not-persisted",
         }],
     )
     asyncio.run(bridge_sync.sync_messages(request, FakeRequest()))
     assert messages.items[0]["sessionId"] == "codex:native-id"
     assert messages.items[0]["runtime"] == "codex"
     assert messages.items[0]["nativeId"] == "codex:user:client-1"
+    assert "transient" not in messages.items[0]
 
 
-def test_message_reads_preserve_native_identity():
+def test_message_reads_return_only_message_fields():
     parsed = bridge_read._parse_messages([{
         "uuid": "m1",
         "nativeId": "codex:user:client-1",
         "type": "user",
         "content": json.dumps("hello"),
         "timestamp": "2026-08-06T00:00:00.000Z",
+        "transient": "not-returned",
     }])
     assert parsed[0]["nativeId"] == "codex:user:client-1"
+    assert "transient" not in parsed[0]
 
 
 def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
@@ -500,7 +504,7 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
         {
             "body": json.dumps({
                 "action": "send_message_result",
-                "clientId": "send-1",
+                "turnId": "turn-1",
                 "ok": False,
                 "error": "already has an active writer",
                 "errorCode": "codex_active_writer",
@@ -520,7 +524,7 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
         "app-1",
         {
             "action": "send_message_result",
-            "clientId": "send-1",
+            "turnId": "turn-1",
             "ok": False,
             "error": "already has an active writer",
             "errorCode": "codex_active_writer",
@@ -534,7 +538,274 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
     )]
 
 
-def test_send_message_binding_relays_only_to_session_subscribers(monkeypatch):
+def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "app",
+                    "accountId": "account-1",
+                },
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_query_connections",
+        lambda account_id, role: [{
+            "connectionId": "bridge-1",
+            "deviceName": "Mac",
+        }] if account_id == "account-1" and role == "bridge" else [],
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_message(
+        {
+            "body": json.dumps({
+                "action": "send_message",
+                "projectHash": "-repo",
+                "requestId": "request-1",
+                "turnId": "turn-1",
+                "text": "hello",
+                "device": "Mac",
+                "runtime": "codex",
+            }),
+        },
+        "app-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [(
+        "bridge-1",
+        {
+            "action": "send_message",
+            "projectHash": "-repo",
+            "requestId": "request-1",
+            "turnId": "turn-1",
+            "text": "hello",
+            "runtime": "codex",
+            "replyConnectionId": "app-1",
+        },
+    )]
+
+
+def test_new_session_result_subscribes_origin_before_reply(monkeypatch):
+    events = []
+
+    class ConnectionTable:
+        def get_item(self, Key):
+            connection_id = Key["connectionId"]
+            role = "bridge" if connection_id == "bridge-1" else "app"
+            return {
+                "Item": {
+                    "connectionId": connection_id,
+                    "role": role,
+                    "accountId": "account-1",
+                    **({"deviceName": "Mac"} if role == "bridge" else {}),
+                },
+            }
+
+    class SubscriptionTable:
+        def put_item(self, Item):
+            events.append(("subscribe", Item))
+
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: events.append(
+            ("send", connection_id, data),
+        ),
+    )
+
+    response = bridge_ws._handle_message(
+        {
+            "body": json.dumps({
+                "action": "send_message_result",
+                "sessionId": "codex:thread-1",
+                "requestId": "request-1",
+                "turnId": "turn-1",
+                "replyConnectionId": "app-1",
+                "ok": True,
+            }),
+        },
+        "bridge-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert events[0][0] == "subscribe"
+    assert events[0][1]["sessionId"] == "codex:thread-1"
+    assert events[0][1]["connectionId"] == "app-1"
+    assert events[0][1]["accountId"] == "account-1"
+    assert events[1] == (
+        "send",
+        "app-1",
+        {
+            "action": "send_message_result",
+            "sessionId": "codex:thread-1",
+            "requestId": "request-1",
+            "turnId": "turn-1",
+            "ok": True,
+            "deviceName": "Mac",
+        },
+    )
+
+
+def test_subscribe_only_persists_the_connection(monkeypatch):
+    events = []
+
+    class SubscriptionTable:
+        def put_item(self, Item):
+            events.append(("put", Item))
+
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: events.append(("send", connection_id, data)),
+    )
+    response = bridge_ws._handle_subscribe(
+        {
+            "sessionId": "codex:thread-1",
+        },
+        "app-1",
+        "account-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert len(events) == 1
+    assert events[0][0] == "put"
+    assert events[0][1]["sessionId"] == "codex:thread-1"
+    assert events[0][1]["connectionId"] == "app-1"
+    assert events[0][1]["accountId"] == "account-1"
+    assert "requestId" not in events[0][1]
+
+
+def test_subscribe_write_failure_propagates(monkeypatch):
+    class SubscriptionTable:
+        def put_item(self, Item):
+            raise RuntimeError("write failed")
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    try:
+        bridge_ws._handle_subscribe(
+            {
+                "sessionId": "codex:thread-1",
+            },
+            "app-1",
+            "account-1",
+            "https://example.test/v1",
+        )
+        assert False, "subscription write failure must propagate"
+    except RuntimeError as error:
+        assert str(error) == "write failed"
+    assert sent == []
+
+
+def test_bridge_relay_uses_consistent_subscription_read(monkeypatch):
+    query_args = []
+
+    class SubscriptionTable:
+        def query(self, **kwargs):
+            query_args.append(kwargs)
+            return {
+                "Items": [
+                    {"connectionId": "app-1"},
+                    {"connectionId": "app-2"},
+                ],
+            }
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_bridge_relay(
+        {
+            "action": "stream_delta",
+            "sessionId": "codex:thread-1",
+            "turnId": "turn-1",
+            "seq": 2,
+        },
+        "bridge-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert query_args[0]["ConsistentRead"] is True
+    assert sent == [
+        ("app-1", {
+            "action": "stream_delta",
+            "sessionId": "codex:thread-1",
+            "turnId": "turn-1",
+            "seq": 2,
+        }),
+        ("app-2", {
+            "action": "stream_delta",
+            "sessionId": "codex:thread-1",
+            "turnId": "turn-1",
+            "seq": 2,
+        }),
+    ]
+
+
+def test_turn_event_validation_requires_turn_id_and_seq():
+    for action in (
+        "stream_turn_start",
+        "stream_block_start",
+        "stream_delta",
+        "stream_tool_input",
+        "stream_block_stop",
+        "stream_end",
+        "messages",
+        "permission_request",
+        "permission_resolved",
+    ):
+        valid = {
+            "action": action,
+            "sessionId": "codex:thread-1",
+            "turnId": "turn-1",
+            "seq": 0,
+        }
+        assert bridge_ws._requires_turn_sequence(valid)
+        assert bridge_ws._has_valid_turn_sequence(valid)
+        assert bridge_ws._requires_turn_sequence({**valid, "turnId": ""})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "turnId": ""})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "seq": None})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "seq": -1})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "seq": True})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "seq": 1.5})
+        assert not bridge_ws._has_valid_turn_sequence({**valid, "seq": "1"})
+
+    for action in (
+        "send_message_result",
+        "messages_ack",
+        "heartbeat",
+    ):
+        assert not bridge_ws._requires_turn_sequence({"action": action})
+
+
+def test_permission_resolved_uses_the_shared_turn_relay(monkeypatch):
     class ConnectionTable:
         def get_item(self, Key):
             return {
@@ -545,38 +816,139 @@ def test_send_message_binding_relays_only_to_session_subscribers(monkeypatch):
                 },
             }
 
-    class SubscriptionTable:
-        def query(self, **_):
-            return {
-                "Items": [
-                    {"connectionId": "app-1"},
-                    {"connectionId": "app-2"},
-                ],
-            }
-
-    sent = []
+    relayed = []
     monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
     monkeypatch.setattr(
         bridge_ws,
-        "_post_to_connection",
-        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+        "_handle_bridge_relay",
+        lambda body, connection_id, endpoint: (
+            relayed.append((body, connection_id, endpoint))
+            or {"statusCode": 200}
+        ),
     )
-
-    binding = {
-        "action": "send_message_binding",
+    body = {
+        "action": "permission_resolved",
         "sessionId": "codex:thread-1",
-        "clientId": "sent-1",
-        "streamId": "stream-1",
+        "turnId": "turn-1",
+        "seq": 4,
+        "requestId": "permission-1",
     }
+
     response = bridge_ws._handle_message(
-        {"body": json.dumps(binding)},
+        {"body": json.dumps(body)},
         "bridge-1",
         "https://example.test/v1",
     )
 
     assert response == {"statusCode": 200}
-    assert sent == [("app-1", binding), ("app-2", binding)]
+    assert relayed == [(body, "bridge-1", "https://example.test/v1")]
+
+
+def test_reveal_permission_subscribes_before_forwarding_to_bridge(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "app",
+                    "accountId": "account-1",
+                },
+            }
+
+    calls = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_persist_subscription",
+        lambda session_id, connection_id, account_id: calls.append(
+            ("subscribe", session_id, connection_id, account_id)
+        ),
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_handle_send_to_bridge",
+        lambda body, account_id, endpoint, action: (
+            calls.append(("forward", body, account_id, endpoint, action))
+            or {"statusCode": 200}
+        ),
+    )
+    body = {
+        "action": "reveal_permission",
+        "sessionId": "codex:thread-1",
+        "device": "test-ec2-ap",
+    }
+
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(body)},
+        "app-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert calls == [
+        ("subscribe", "codex:thread-1", "app-1", "account-1"),
+        (
+            "forward",
+            body,
+            "account-1",
+            "https://example.test/v1",
+            "reveal_permission",
+        ),
+    ]
+
+
+def test_reveal_turn_state_subscribes_before_forwarding_to_bridge(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {
+                "Item": {
+                    "connectionId": Key["connectionId"],
+                    "role": "app",
+                    "accountId": "account-1",
+                },
+            }
+
+    calls = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_persist_subscription",
+        lambda session_id, connection_id, account_id: calls.append(
+            ("subscribe", session_id, connection_id, account_id)
+        ),
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_handle_send_to_bridge",
+        lambda body, account_id, endpoint, action: (
+            calls.append(("forward", body, account_id, endpoint, action))
+            or {"statusCode": 200}
+        ),
+    )
+    body = {
+        "action": "reveal_turn_state",
+        "sessionId": "codex:thread-1",
+        "requestId": "state-1",
+        "device": "test-ec2-ap",
+    }
+
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(body)},
+        "app-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert calls == [
+        ("subscribe", "codex:thread-1", "app-1", "account-1"),
+        (
+            "forward",
+            body,
+            "account-1",
+            "https://example.test/v1",
+            "reveal_turn_state",
+        ),
+    ]
 
 
 def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
@@ -738,7 +1110,7 @@ def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch
         assert sent == []
 
 
-def test_bridge_messages_preserve_stream_and_client_identity(monkeypatch):
+def test_bridge_messages_preserve_turn_sequence(monkeypatch):
     class SubscriptionTable:
         def query(self, **_):
             return {"Items": [{"connectionId": "app-1"}]}
@@ -760,8 +1132,8 @@ def test_bridge_messages_preserve_stream_and_client_identity(monkeypatch):
     response = bridge_ws._handle_bridge_messages(
         {
             "sessionId": "codex:test",
-            "streamId": "stream-1",
-            "clientId": "sent-1",
+            "turnId": "turn-1",
+            "seq": 3,
             "messages": [message],
             "noCache": True,
         },
@@ -773,11 +1145,11 @@ def test_bridge_messages_preserve_stream_and_client_identity(monkeypatch):
     assert response == {"statusCode": 200}
     assert sent == [
         ("app-1", {
-            "action": "messages",
-            "sessionId": "codex:test",
-            "streamId": "stream-1",
-            "clientId": "sent-1",
-            "messages": [message],
+                "action": "messages",
+                "sessionId": "codex:test",
+                "turnId": "turn-1",
+                "seq": 3,
+                "messages": [message],
         }),
         ("bridge-1", {
             "action": "messages_ack",
@@ -786,7 +1158,7 @@ def test_bridge_messages_preserve_stream_and_client_identity(monkeypatch):
     ]
 
 
-def test_bridge_message_cache_preserves_native_identity(monkeypatch):
+def test_bridge_message_cache_persists_only_message_fields(monkeypatch):
     class SubscriptionTable:
         def query(self, **_):
             return {"Items": []}
@@ -810,6 +1182,7 @@ def test_bridge_message_cache_preserves_native_identity(monkeypatch):
                 "type": "user",
                 "content": "hello",
                 "timestamp": "2026-08-12T00:00:00.000Z",
+                "transient": "not-persisted",
             }],
         },
         "bridge-1",
@@ -819,7 +1192,58 @@ def test_bridge_message_cache_preserves_native_identity(monkeypatch):
 
     assert response == {"statusCode": 200}
     assert messages.items[0]["nativeId"] == "codex:user:client-1"
+    assert "transient" not in messages.items[0]
     assert sent == [(
         "bridge-1",
         {"action": "messages_ack", "sessionId": "codex:test"},
     )]
+
+
+def test_bridge_messages_echoes_delivery_id_only_to_bridge_ack(monkeypatch):
+    class SubscriptionTable:
+        def query(self, **_):
+            return {"Items": [{"connectionId": "app-1"}]}
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(bridge_ws, "_messages_table", FakeTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_bridge_messages(
+        {
+            "sessionId": "codex:test",
+            "deliveryId": "delivery-1",
+            "messages": [{
+                "uuid": "m1",
+                "type": "assistant",
+                "content": "hello",
+                "timestamp": "2026-08-12T00:00:00.000Z",
+            }],
+        },
+        "bridge-1",
+        "account-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [
+        ("app-1", {
+            "action": "messages",
+            "sessionId": "codex:test",
+            "messages": [{
+                "uuid": "m1",
+                "type": "assistant",
+                "content": "hello",
+                "timestamp": "2026-08-12T00:00:00.000Z",
+            }],
+        }),
+        ("bridge-1", {
+            "action": "messages_ack",
+            "sessionId": "codex:test",
+            "deliveryId": "delivery-1",
+        }),
+    ]

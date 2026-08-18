@@ -4,17 +4,21 @@ import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_I
 import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
+import { clearLiveMessage } from './live-message-registry.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import {
-  headlessPushed,
-  headlessStream,
+  headlessRoute,
   pendingInteractionDetail,
   poolOwns,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
+
+export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
+  return !!runtimeOwned || !!route?.pushed || !!route?.runtimeOwned;
+}
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
@@ -132,12 +136,15 @@ async function readAndSend(config, filename, sessionId) {
     const msg = await extractForApp(raw);
     if (!msg.uuid) continue;
 
-    // headless already broadcast this uuid live (stdout beats jsonl) → only persist to
-    // DDB, don't re-push WS. user prompts + terminal/VSCode-driven rows aren't in the set → still push.
-    if (headlessPushed(msg.uuid)) { await uploadMessages(sessionId, [msg]); continue; }
-
-    const streamId = headlessStream(msg.uuid);
-    await deliverRealtimeMessages(sessionId, [msg], streamId ? { streamId } : {});
+    // A managed headless turn is the sole realtime source. Its JSONL copy only
+    // persists; terminal/VS Code rows have no runtime ownership and still broadcast.
+    const route = headlessRoute(msg.uuid);
+    if (shouldPersistClaudeJsonlMessage(poolOwns(sessionId), route)) {
+      await uploadMessages(sessionId, [msg]);
+      clearLiveMessage('claude', msg.uuid);
+      continue;
+    }
+    await deliverRealtimeMessages(sessionId, [msg]);
   }
 
   synced.set(sessionId, lastParsedLine);

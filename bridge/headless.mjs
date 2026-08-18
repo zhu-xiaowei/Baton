@@ -142,14 +142,14 @@ class HeadlessProc {
 
     // Turn finished
     if (t === 'result') {
-      const finalSeq = this._framer.finish();
+      this._framer.finish();
       this.busy = false;
       this.pool._touch(this);
       const cb = this._cb;
       this._cb = null;
       const sid = this.streamId;
       this.streamId = null;
-      cb?.onResult?.(sid, o, finalSeq); // finalSeq = total frames sent this turn
+      cb?.onResult?.(sid, o);
       this._drainQueue();
       return;
     }
@@ -163,14 +163,13 @@ class HeadlessProc {
         frame.blockId,
         frame.kind,
         frame.name,
-        frame.seq,
       );
     } else if (frame.t === 'delta') {
-      this._cb?.onDelta?.(this.streamId, frame.chunk, frame.seq, frame.blockId);
+      this._cb?.onDelta?.(this.streamId, frame.chunk, frame.blockId);
     } else if (frame.t === 'input') {
-      this._cb?.onInputDelta?.(this.streamId, frame.chunk, frame.seq, frame.blockId);
+      this._cb?.onInputDelta?.(this.streamId, frame.chunk, frame.blockId);
     } else if (frame.t === 'stop') {
-      this._cb?.onBlockStop?.(this.streamId, frame.blockId, frame.seq);
+      this._cb?.onBlockStop?.(this.streamId, frame.blockId);
     }
   }
 
@@ -211,7 +210,7 @@ class HeadlessProc {
     this.streamId = streamId;
     this._cb = cb;
     this._blockId = -1;
-    this._framer.reset(); // seq is scoped to one streamId
+    this._framer.reset();
     this.pool._touch(this);
     const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
     try { this.stdin.write(JSON.stringify(msg) + '\n'); }
@@ -257,11 +256,16 @@ class HeadlessProc {
   // the partial content + [Request interrupted by user] to jsonl (verified CC 2.1.220). SIGINT
   // is the fallback (hard kill, no jsonl) when CC doesn't ack in 5s. Mirrors alleycat.
   async interrupt() {
-    if (this.dead || !this.proc || !this.busy) return;
+    if (this.dead || !this.proc || !this.busy) return false;
     try {
       await this.requestControl({ subtype: 'interrupt' }, 5000);
+      return true;
     } catch {
-      try { this.proc.kill('SIGINT'); } catch {}
+      try {
+        return this.proc.kill('SIGINT');
+      } catch {
+        return false;
+      }
     }
   }
 
@@ -403,7 +407,11 @@ export class ClaudePool {
     catch { return false; }
   }
 
-  interrupt(key) { this.procs.get(key)?.interrupt(); }
+  async interrupt(key) {
+    const proc = this.procs.get(key);
+    if (!proc || proc.dead || !proc.busy) return false;
+    return proc.interrupt();
+  }
 
   // True while a live process exists for this session.
   owns(key) { const p = this.procs.get(key); return !!p && !p.dead; }

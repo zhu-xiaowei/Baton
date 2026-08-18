@@ -162,7 +162,8 @@
     const displayText = slashCmd ? `/${slashCmd}${text.trim() ? ' ' + text.trim() : ''}` : text.trim();
 
     if (!displayText && !attachHtml) return '';
-    return `<div class="msg-user"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
+    const anchorAttr = msg.turnId ? ` data-anchor="${esc(msg.turnId)}"` : '';
+    return `<div class="msg-user"${anchorAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
       ${attachHtml}
       ${displayText ? `<div class="msg-text" onclick="toggleExpand(this)">${esc(displayText)}</div>` : ''}
       <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span></div>

@@ -18,10 +18,9 @@ import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
+  liveMessageRoute,
   liveMessagePushed,
-  liveMessageStream,
   markLiveMessagePushed,
-  registerLiveMessageStream,
 } from './live-message-registry.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -47,6 +46,15 @@ import {
 import { BRIDGE_VERSION } from './version.mjs';
 import { PermissionQueue } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
+import { ActiveTurnRegistry } from './active-turn-registry.mjs';
+import {
+  assertTurnEventEnvelope,
+  isPromptUserMessage,
+  LiveTurnStream,
+  prepareAuthoritativeMessage,
+  shouldCreateFinalInterrupt,
+} from './live-turn-stream.mjs';
+import { SessionAckQueue } from './session-ack-queue.mjs';
 import {
   CommandCatalogCache,
   commandCatalogPayload,
@@ -86,21 +94,19 @@ export async function shutdownInteractions() {
   );
 }
 
-// uuids headless already broadcast live (stdout always beats jsonl landing, measured
-// 100ms~several s). watcher checks this so the later jsonl copy only writes DDB, not WS.
-// Cap holds many turns' worth (one heavy multi-tool turn ≈ 25 rows) so no uuid is
-// evicted before its lagging jsonl copy arrives; a stale miss only costs a harmless
-// re-push (still app-side uuid-deduped).
-export function markHeadlessPushed(uuid, streamId = '') {
-  markLiveMessagePushed('claude', uuid, streamId);
+// The watcher clears each UUID after its JSONL copy is persisted. Until then this
+// ownership marker prevents a second realtime broadcast.
+export function markHeadlessPushed(uuid) {
+  markLiveMessagePushed('claude', uuid);
 }
 export function headlessPushed(uuid) { return liveMessagePushed('claude', uuid); }
-export function headlessStream(uuid) { return liveMessageStream('claude', uuid); }
+export function headlessRoute(uuid) { return liveMessageRoute('claude', uuid); }
 
 // Codex may issue several approvals in parallel. Match its TUI: keep the first
 // visible and process later requests newest-first.
 const _pendingControl = new PermissionQueue();
 const _statusSyncs = new Map();
+const _activeTurns = new ActiveTurnRegistry();
 const NEW_SESSION_FILE_WAIT_MS = 30_000;
 const SESSION_FILE_POLL_MS = 50;
 
@@ -233,9 +239,7 @@ function permissionKind(p) {
 }
 
 function sendPermissionRequest(sessionId, p) {
-  wsSend({
-    action: 'permission_request',
-    sessionId,
+  const payload = {
     kind: permissionKind(p),
     requestId: p.requestId,
     toolName: p.toolName,
@@ -243,24 +247,34 @@ function sendPermissionRequest(sessionId, p) {
     questions: p.input.questions,
     plan: p.input.plan,
     input: p.input,
-  });
+  };
+  if (p.liveTurn && !p.liveTurn.isEnded()) {
+    p.liveTurn.emit('permission_request', payload);
+  } else {
+    wsSend({ action: 'permission_request', sessionId, ...payload });
+  }
+}
+
+function sendPermissionResolved(sessionId, p) {
+  const payload = { requestId: p.requestId };
+  if (p.liveTurn && !p.liveTurn.isEnded()) {
+    p.liveTurn.emit('permission_resolved', payload);
+  } else {
+    wsSend({ action: 'permission_resolved', sessionId, ...payload });
+  }
 }
 
 function clearPendingControls(sessionId) {
   const cleared = _pendingControl.clear(sessionId);
   if (cleared?.current) {
-    wsSend({
-      action: 'permission_resolved',
-      sessionId,
-      requestId: cleared.current.requestId,
-    });
+    sendPermissionResolved(sessionId, cleared.current);
   }
 }
 
 function dismissPendingControl(sessionId, requestId) {
   const dismissed = _pendingControl.dismiss(sessionId, requestId);
   if (!dismissed || dismissed.current) return;
-  wsSend({ action: 'permission_resolved', sessionId, requestId });
+  sendPermissionResolved(sessionId, dismissed.resolved);
   if (dismissed.next) {
     sendPermissionRequest(sessionId, dismissed.next);
   }
@@ -273,6 +287,65 @@ function dismissPendingControl(sessionId, requestId) {
       statusTarget.runtime,
     );
   }
+}
+
+function queuePermissionRequest(sessionId, req, options = {}) {
+  const r = req.request || {};
+  const input = r.input || {};
+  const queued = _pendingControl.enqueue(sessionId, {
+    requestId: req.request_id,
+    toolName: r.tool_name,
+    input,
+    requiresInteraction: !!r.requires_user_interaction,
+    approvalType: r.approval_type || null,
+    runtime: options.runtime || 'claude',
+    nativeSessionId: options.nativeSessionId || sessionId,
+    syncStatus: true,
+    ...(options.liveTurn ? { liveTurn: options.liveTurn } : {}),
+  });
+  syncInteractionStatus(
+    sessionId,
+    'needs_input',
+    controlDetail(queued.current),
+    options.runtime,
+  );
+  if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
+  return queued;
+}
+
+function permissionObservationCallbacks(sessionId, identity) {
+  return {
+    onControlRequest: (req) => queuePermissionRequest(sessionId, req, {
+      runtime: identity.runtime,
+      nativeSessionId: identity.nativeSessionId,
+    }),
+    onControlResolved: (requestId) => {
+      dismissPendingControl(sessionId, requestId);
+    },
+  };
+}
+
+async function handleRevealPermission(sessionId) {
+  if (!sessionId) return;
+  const pending = _pendingControl.current(sessionId);
+  if (pending) {
+    syncInteractionStatus(
+      sessionId,
+      'needs_input',
+      controlDetail(pending),
+      pending.runtime,
+    );
+    sendPermissionRequest(sessionId, pending);
+    return;
+  }
+  const identity = parseStorageSessionId(sessionId);
+  const adapter = getRuntimeAdapter(identity.runtime);
+  if (typeof adapter.interaction?.observePermissions !== 'function') return;
+  await adapter.interaction.observePermissions({
+    sessionId: identity.sessionId,
+    nativeSessionId: identity.nativeSessionId,
+    callbacks: permissionObservationCallbacks(identity.sessionId, identity),
+  });
 }
 
 function handleClaudeHookRequest(input, reply) {
@@ -318,6 +391,7 @@ export function initWs(config) {
 }
 
 export function wsSend(data) {
+  assertTurnEventEnvelope(data);
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
     _ws.send(JSON.stringify(data));
@@ -333,16 +407,18 @@ export function wsSendWhenConnected(data) {
   return false;
 }
 
-// Ack-based send: resolves true if server acks within timeout, false otherwise
-const _pendingAcks = new Map(); // sessionId → { resolve, timer }
+// Each session keeps one persistence request in flight. The delivery id keeps
+// a late ack for a timed-out request from confirming the next request.
+const _messageAckQueue = new SessionAckQueue({ send: wsSend });
 
 export function wsSendWithAck(data, timeout = 5000) {
-  return new Promise((resolve) => {
-    const sid = data.sessionId;
-    if (_pendingAcks.has(sid) || !wsSend(data)) return resolve(false);
-    const timer = setTimeout(() => { _pendingAcks.delete(sid); resolve(false); }, timeout);
-    _pendingAcks.set(sid, { resolve, timer });
-  });
+  return _messageAckQueue.enqueue(data, timeout);
+}
+
+export function createTurnMessagesEvent(sessionId, turnId, messages) {
+  const liveTurn = _activeTurns.get(sessionId, turnId);
+  if (!liveTurn || !Array.isArray(messages) || !messages.length) return null;
+  return liveTurn.createMessagesEvent(messages);
 }
 
 function connect() {
@@ -460,14 +536,26 @@ async function handleMessage(msg) {
         msg.projectHash,
         msg.requestId,
         msg.asAgent,
-        msg.clientId,
+        msg.turnId,
         msg.runtime,
         msg.takeover,
         msg.expectedWriterPid,
+        msg.replyConnectionId,
       );
       break;
     case 'permission_reply':
       handlePermissionReply(msg);
+      break;
+    case 'reveal_permission':
+      await handleRevealPermission(msg.sessionId);
+      break;
+    case 'reveal_turn_state':
+      wsSend({
+        action: 'turn_state',
+        sessionId: msg.sessionId,
+        requestId: msg.requestId,
+        activeTurnIds: _activeTurns.turnIds(msg.sessionId),
+      });
       break;
     case 'create_project':
       await handleCreateProject(msg.projectPath, msg.asAgent);
@@ -477,13 +565,11 @@ async function handleMessage(msg) {
         const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
         const adapter = getRuntimeAdapter(identity.runtime);
         if (adapter.features.interrupt) {
-          if (adapter.interaction?.interrupt) adapter.interaction.interrupt(identity.nativeSessionId);
-          else _pool.interrupt(identity.nativeSessionId);
+          await (adapter.interaction?.interrupt
+            ? adapter.interaction.interrupt(identity.nativeSessionId)
+            : _pool.interrupt(identity.nativeSessionId));
         }
       }
-      break;
-    case 'reveal_agent':
-      await handleRevealAgent(msg.sessionId);
       break;
     case 'request_file':
       await handleRequestFile(msg);
@@ -498,8 +584,7 @@ async function handleMessage(msg) {
       await handleListCommandOptions(msg);
       break;
     case 'messages_ack': {
-      const p = _pendingAcks.get(msg.sessionId);
-      if (p) { clearTimeout(p.timer); _pendingAcks.delete(msg.sessionId); p.resolve(true); }
+      _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
       break;
     }
     case 'heartbeat':
@@ -548,10 +633,11 @@ async function handleSendMessage(
   projectHash,
   requestId,
   asAgent,
-  clientId,
+  turnId,
   runtime,
   takeover,
   expectedWriterPid,
+  replyConnectionId,
 ) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
@@ -567,10 +653,14 @@ async function handleSendMessage(
         ? `${adapter.displayName} sessions are read-only in this Bridge version.`
         : `${adapter.displayName} session creation is unavailable.`,
       requestId,
-      clientId,
+      turnId,
+      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
     return;
   }
+  const reservedTurnId = sessionId
+    ? resolveTurnId(identity.sessionId, turnId)
+    : null;
 
   const resolved = await resolveBridgeImages(text);
   let routedText = resolved;
@@ -592,7 +682,8 @@ async function handleSendMessage(
             ok: false,
             error: error.message,
             requestId,
-            clientId,
+            turnId,
+            ...(replyConnectionId ? { replyConnectionId } : {}),
           });
           return;
         }
@@ -603,11 +694,12 @@ async function handleSendMessage(
           adapter,
           identity,
           command,
-          clientId,
+          turnId,
           {
             cwd: projectCwd,
             takeover: !!takeover,
             expectedWriterPid,
+            reservedTurnId,
           },
         );
         return;
@@ -620,7 +712,8 @@ async function handleSendMessage(
             ? `Unsupported Codex command on mobile: /${command.name}`
             : `/${command.name} requires an existing Codex session.`,
           requestId,
-          clientId,
+          turnId,
+          ...(replyConnectionId ? { replyConnectionId } : {}),
         });
         return;
       }
@@ -641,8 +734,9 @@ async function handleSendMessage(
       await handleClaudeCommand(
         identity,
         command,
-        clientId,
+        turnId,
         projectHash,
+        reservedTurnId,
       );
       return;
     }
@@ -655,34 +749,69 @@ async function handleSendMessage(
         adapter,
         identity,
         routedText,
-        clientId,
+        turnId,
         {
           cwd: projectCwd,
           takeover: !!takeover,
           expectedWriterPid,
+          reservedTurnId,
         },
       )
-      : await handleHeadlessSend(identity.nativeSessionId, resolved, clientId, projectHash);
+      : await handleHeadlessSend(
+        identity.nativeSessionId,
+        resolved,
+        turnId,
+        projectHash,
+        reservedTurnId,
+      );
     if (handled) return;
-    wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', clientId });
+    wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', turnId });
     return;
   }
 
   // New session (projectHash only): dispatch creation through the selected runtime.
   const cwd = projectCwd || projectHashToPath(projectHash);
   if (!cwd) {
-    wsSend({ action: 'send_message_result', ok: false, error: 'Project path not found.', requestId, clientId });
+    wsSend({
+      action: 'send_message_result',
+      ok: false,
+      error: 'Project path not found.',
+      requestId,
+      turnId,
+      ...(replyConnectionId ? { replyConnectionId } : {}),
+    });
     return;
   }
   // Project dir deleted/never-existed → recreate so the runtime can spawn there.
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
   if (identity.runtime === 'claude' && asAgent) {
     const r = await newAgentSession(cwd, routedText);
-    wsSend({ action: 'send_message_result', ok: r.ok, sessionId: r.sessionId, error: r.error, requestId, clientId });
+    wsSend({
+      action: 'send_message_result',
+      ok: r.ok,
+      sessionId: r.sessionId,
+      error: r.error,
+      requestId,
+      turnId,
+      ...(replyConnectionId ? { replyConnectionId } : {}),
+    });
   } else if (adapter.interaction?.create) {
-    await newAdapterSession(adapter, cwd, routedText, requestId, clientId);
+    await newAdapterSession(
+      adapter,
+      cwd,
+      routedText,
+      requestId,
+      turnId,
+      replyConnectionId,
+    );
   } else {
-    await newRegularSession(cwd, routedText, requestId, clientId);
+    await newRegularSession(
+      cwd,
+      routedText,
+      requestId,
+      turnId,
+      replyConnectionId,
+    );
   }
 }
 
@@ -698,99 +827,109 @@ async function resolveBridgeImages(text) {
   return resolved;
 }
 
-const newStreamId = () => (crypto.randomUUID
+const newTurnId = () => (crypto.randomUUID
   ? crypto.randomUUID()
   : 'sd-' + Date.now() + '-' + Math.random().toString(36).slice(2));
 
-// Per-turn streaming callbacks shared by resume + new-regular sends (frames key off sessionId; streamId comes from each callback's `sid` arg).
-function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
-  const streamEnvelope = (sid) => ({
+function resolveTurnId(sessionId, requestedTurnId = '') {
+  if (!sessionId) throw new Error('sessionId is required');
+  return requestedTurnId || newTurnId();
+}
+
+// Create one strictly identified live turn before the runtime can emit frames.
+function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
+  const liveTurn = new LiveTurnStream({
     sessionId,
-    streamId: sid,
-    ...(options.clientId ? { clientId: options.clientId } : {}),
+    turnId,
+    send: wsSend,
   });
-  return {
-    // Increment-only chunks + turn-level seq → app reorders by seq (see web/js/reorder.js).
-    onDelta: (sid, chunk, seq, blockId) => {
-      wsSend({ action: 'stream_delta', ...streamEnvelope(sid), chunk, seq, blockId });
+  _activeTurns.register(sessionId, turnId, liveTurn);
+  const ownsUserPrompt = (options.runtime || 'claude') === 'claude'
+    && typeof options.userText === 'string'
+    && !!options.userText.trim();
+  if (ownsUserPrompt) {
+    liveTurn.sendTransientUser(options.userText);
+  }
+  const discardTurn = () => _activeTurns.discard(sessionId, turnId);
+  const finishTurn = (end = {}) => {
+    liveTurn.sendEnd(end);
+    _activeTurns.discard(sessionId, turnId);
+  };
+  let authorityQueue = Promise.resolve();
+  const publishAuthority = async (raw, meta = {}) => {
+    const msg = await prepareAuthoritativeMessage(raw, {
+      normalized: meta.normalized,
+      normalize: (message) => extractForApp(message, cwd),
+    });
+    if (!msg) return;
+    if (ownsUserPrompt && isPromptUserMessage(msg)) return;
+    let out = msg;
+    if (Buffer.byteLength(JSON.stringify({
+      action: 'messages',
+      ...liveTurn.envelope(),
+      messages: [msg],
+    })) > WS_FRAME_LIMIT) {
+      out = truncateToBytes(msg, WS_FRAME_LIMIT - 1024);
+      out.truncated = true;
+    }
+    if (meta.runtime && meta.liveKey) {
+      markLiveMessagePushed(meta.runtime, meta.liveKey);
+    } else {
+      markHeadlessPushed(msg.uuid);
+    }
+    liveTurn.start();
+    liveTurn.sendAuthoritative(out, { noCache: true });
+  };
+  const queueAuthority = (raw, meta = {}) => {
+    authorityQueue = authorityQueue
+      .then(() => publishAuthority(raw, meta))
+      .catch((error) => {
+        console.log(`[ws] live message extract failed: ${error.message}`);
+      });
+    return authorityQueue;
+  };
+  const callbacks = {
+    onDelta: (sid, chunk, blockId) => {
+      liveTurn.sendDelta({ chunk, blockId });
     },
-    onInputDelta: (sid, chunk, seq, blockId) => {
-      wsSend({ action: 'stream_tool_input', ...streamEnvelope(sid), chunk, seq, blockId });
+    onInputDelta: (sid, chunk, blockId) => {
+      liveTurn.sendToolInput({ chunk, blockId });
     },
-    onBlockStart: (sid, blockId, kind, name, seq) => {
-      wsSend({ action: 'stream_block_start', ...streamEnvelope(sid), blockId, kind, name, seq });
+    onBlockStart: (sid, blockId, kind, name) => {
+      liveTurn.sendBlockStart({ blockId, kind, name });
     },
-    onBlockStop: (sid, blockId, seq) => {
-      wsSend({ action: 'stream_block_stop', ...streamEnvelope(sid), blockId, seq });
+    onBlockStop: (sid, blockId) => {
+      liveTurn.sendBlockStop({ blockId });
     },
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
-    onMessage: async (sid, raw, meta = {}) => {
-      try {
-        if (!meta.runtime && raw?.uuid) {
-          registerLiveMessageStream('claude', raw.uuid, sid);
-        }
-        const msg = meta.normalized ? raw : await extractForApp(raw, cwd);
-        if (!msg.uuid) return;
-        let out = msg;
-        if (Buffer.byteLength(JSON.stringify({ action: 'messages', sessionId, messages: [msg] })) > WS_FRAME_LIMIT) {
-          out = truncateToBytes(msg, WS_FRAME_LIMIT - 512);
-          out.truncated = true;
-        }
-        // streamId ties this row (user echo + assistant) to its send → app places/dedupes by identity.
-        if (meta.runtime && meta.liveKey) {
-          markLiveMessagePushed(meta.runtime, meta.liveKey, sid);
-        } else {
-          markHeadlessPushed(msg.uuid, sid);
-        }
-        wsSend({
-          action: 'messages',
-          ...streamEnvelope(sid),
-          messages: [out],
-          noCache: true,
+    onMessage: (sid, raw, meta = {}) => queueAuthority(raw, meta),
+    onResult: (sid, result) => {
+      authorityQueue.finally(() => {
+        if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
+        const interrupted = shouldCreateFinalInterrupt(options.runtime, result);
+        finishTurn({
+          error: result.is_error ? (result.subtype || 'error') : undefined,
+          interrupted,
         });
-      } catch (e) {
-        console.log(`[ws] live message extract failed: ${e.message}`);
-      }
-    },
-    onResult: (sid, result, finalSeq) => {
-      wsSend({
-        action: 'stream_end',
-        ...streamEnvelope(sid),
-        finalSeq,
-        error: result.is_error ? (result.subtype || 'error') : undefined,
+        // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
+        if (options.syncStatus !== false) {
+          syncInteractionStatus(
+            sessionId,
+            _pendingControl.has(sessionId) ? 'needs_input' : 'completed',
+            controlDetail(_pendingControl.current(sessionId)),
+            options.runtime,
+          );
+        }
       });
-      if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
-      // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
-      if (options.syncStatus !== false) {
-        syncInteractionStatus(
-          sessionId,
-          _pendingControl.has(sessionId) ? 'needs_input' : 'completed',
-          controlDetail(_pendingControl.current(sessionId)),
-          options.runtime,
-        );
-      }
     },
     onControlRequest: (req) => {
-      const r = req.request || {};
-      const input = r.input || {};
-      // Surface to the app → permission_reply → handlePermissionReply (bypass mode never gets here).
-      const queued = _pendingControl.enqueue(sessionId, {
-        requestId: req.request_id, toolName: r.tool_name,
-        input, requiresInteraction: !!r.requires_user_interaction,
-        approvalType: r.approval_type || null,
+      // Permission state must update the list even when another runtime source
+      // owns ordinary running/completed status updates.
+      queuePermissionRequest(sessionId, req, {
         runtime: options.runtime || 'claude',
         nativeSessionId: options.nativeSessionId || sessionId,
-        syncStatus: options.syncStatus !== false,
+        liveTurn,
       });
-      if (options.syncStatus !== false) {
-        syncInteractionStatus(
-          sessionId,
-          'needs_input',
-          controlDetail(queued.current),
-          options.runtime,
-        );
-      }
-      if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
     },
     onControlResolved: (requestId) => {
       dismissPendingControl(sessionId, requestId);
@@ -798,19 +937,24 @@ function buildStreamCallbacks(sessionId, cwd, ack, options = {}) {
     onError: (sid, err) => {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
       if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
-      wsSend({ action: 'stream_end', ...streamEnvelope(sid), error: 'unavailable' });
+      finishTurn({ error: 'unavailable' });
       ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
   };
+  callbacks.failTurn = (error = 'unavailable') => finishTurn({ error });
+  callbacks.discardTurn = discardTurn;
+  return callbacks;
 }
 
-async function handleAdapterSend(adapter, identity, text, clientId, sendOptions = {}) {
+async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = {}) {
   const filePath = adapter.findSessionFile(identity.nativeSessionId);
   if (!synced.has(identity.sessionId) && filePath) {
     try { synced.set(identity.sessionId, countJsonlLines(filePath)); } catch {}
   }
 
-  const streamId = newStreamId();
+  const liveTurnId = sendOptions.reservedTurnId
+    || resolveTurnId(identity.sessionId, turnId);
+  let callbacks = null;
   let acked = false;
   const ack = (ok, error, meta = {}) => {
     if (acked) return;
@@ -820,31 +964,28 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
       sessionId: identity.sessionId,
       ok,
       error,
-      clientId,
-      streamId,
+      turnId,
       ...meta,
     });
   };
-  const callbacks = buildStreamCallbacks(identity.sessionId, '', ack, {
-    runtime: identity.runtime,
-    nativeSessionId: identity.nativeSessionId,
-    syncStatus: false,
-    clientId,
-  });
-  // Bind the optimistic bubble before Codex can emit any turn event. This is a
-  // separate action so older clients safely ignore it and still receive the
-  // final send_message_result below.
-  wsSend({
-    action: 'send_message_binding',
-    sessionId: identity.sessionId,
-    clientId,
-    streamId,
-  });
   try {
+    callbacks = createStreamCallbacks(
+      identity.sessionId,
+      liveTurnId,
+      '',
+      ack,
+      {
+        runtime: identity.runtime,
+        nativeSessionId: identity.nativeSessionId,
+        syncStatus: false,
+        userInitiated: true,
+        ...(identity.runtime === 'claude' ? { userText: text } : {}),
+      },
+    );
     await adapter.interaction.sendExisting({
       sessionId: identity.sessionId,
       nativeSessionId: identity.nativeSessionId,
-      streamId,
+      streamId: liveTurnId,
       text,
       cwd: sendOptions.cwd || '',
       callbacks,
@@ -854,6 +995,7 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
     ack(true);
     return true;
   } catch (error) {
+    callbacks?.failTurn('unavailable');
     const errorCode = {
       CODEX_ACTIVE_WRITER: 'codex_active_writer',
       CODEX_WRITER_CHANGED: 'codex_writer_changed',
@@ -868,8 +1010,10 @@ async function handleAdapterSend(adapter, identity, text, clientId, sendOptions 
   }
 }
 
-async function handleCodexCommand(adapter, identity, command, clientId, options = {}) {
-  const streamId = newStreamId();
+async function handleCodexCommand(adapter, identity, command, turnId, options = {}) {
+  const liveTurnId = options.reservedTurnId
+    || resolveTurnId(identity.sessionId, turnId);
+  let callbacks = null;
   let acked = false;
   const ack = (ok, error, meta = {}) => {
     if (acked) return;
@@ -879,21 +1023,27 @@ async function handleCodexCommand(adapter, identity, command, clientId, options 
       sessionId: identity.sessionId,
       ok,
       error,
-      clientId,
-      streamId,
+      turnId,
       ...meta,
     });
   };
-  const callbacks = buildStreamCallbacks(identity.sessionId, options.cwd || '', ack, {
-    runtime: 'codex',
-    nativeSessionId: identity.nativeSessionId,
-    syncStatus: false,
-  });
   try {
+    callbacks = createStreamCallbacks(
+      identity.sessionId,
+      liveTurnId,
+      options.cwd || '',
+      ack,
+      {
+        runtime: 'codex',
+        nativeSessionId: identity.nativeSessionId,
+        syncStatus: false,
+        userInitiated: true,
+      },
+    );
     const result = await adapter.interaction.runCommand({
       sessionId: identity.sessionId,
       nativeSessionId: identity.nativeSessionId,
-      streamId,
+      streamId: liveTurnId,
       name: command.name,
       args: command.args,
       cwd: options.cwd || '',
@@ -913,6 +1063,7 @@ async function handleCodexCommand(adapter, identity, command, clientId, options 
         ...(result?.action ? { commandAction: result.action } : {}),
       });
   } catch (error) {
+    callbacks?.failTurn('unavailable');
     const errorCode = {
       CODEX_ACTIVE_WRITER: 'codex_active_writer',
       CODEX_WRITER_CHANGED: 'codex_writer_changed',
@@ -926,7 +1077,13 @@ async function handleCodexCommand(adapter, identity, command, clientId, options 
   }
 }
 
-async function handleClaudeCommand(identity, command, clientId, projectHash) {
+async function handleClaudeCommand(
+  identity,
+  command,
+  turnId,
+  projectHash,
+  reservedTurnId = null,
+) {
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
   if (!cwd) cwd = cwdForSession(identity.nativeSessionId);
   if (!cwd) {
@@ -935,13 +1092,14 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
       sessionId: identity.sessionId,
       ok: false,
       error: 'Session unavailable.',
-      clientId,
+      turnId,
     });
     return;
   }
 
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
-  const streamId = newStreamId();
+  const liveTurnId = reservedTurnId
+    || resolveTurnId(identity.sessionId, turnId);
   const settingsTab = !command.args && {
     usage: 'usage',
     cost: 'usage',
@@ -966,8 +1124,7 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
         sessionId: identity.sessionId,
         ok: true,
         error: null,
-        clientId,
-        streamId,
+        turnId,
         commandOutput,
         commandPanel: panel,
         commandName: command.name,
@@ -978,8 +1135,7 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
         sessionId: identity.sessionId,
         ok: false,
         error: error.message || 'Claude Code settings are unavailable.',
-        clientId,
-        streamId,
+        turnId,
       });
     }
     return;
@@ -994,38 +1150,44 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
       sessionId: identity.sessionId,
       ok,
       error,
-      clientId,
-      streamId,
+      turnId,
       ...meta,
     });
   };
-  const callbacks = buildStreamCallbacks(identity.sessionId, cwd, ack);
-  // CC emits the same synthetic assistant row and result text for synchronous
-  // local commands. commandOutput below is the single rendered source.
-  callbacks.onMessage = () => {};
-  const onResult = callbacks.onResult;
-  callbacks.onResult = (sid, result, finalSeq) => {
-    const output = typeof result.result === 'string' ? result.result : '';
-    if (result.is_error) ack(false, output || result.subtype || 'Claude command failed.');
-    else {
-      ack(true, null, {
-        commandOutput: output,
-        commandName: command.name,
-      });
-    }
-    onResult(sid, result, finalSeq);
-  };
-
-  if (!_pool.owns(identity.nativeSessionId)
-    && getDaemonRunningSessionIds().has(identity.nativeSessionId)) {
-    _pool.stopDaemon(identity.nativeSessionId);
-  }
-  syncPoolStatus(identity.nativeSessionId, 'running');
+  let callbacks = null;
   try {
+    callbacks = createStreamCallbacks(
+      identity.sessionId,
+      liveTurnId,
+      cwd,
+      ack,
+      { userInitiated: true, userText: command.text },
+    );
+    // CC emits the same synthetic assistant row and result text for synchronous
+    // local commands. commandOutput below is the single rendered source.
+    callbacks.onMessage = () => {};
+    const onResult = callbacks.onResult;
+    callbacks.onResult = (sid, result) => {
+      const output = typeof result.result === 'string' ? result.result : '';
+      if (result.is_error) ack(false, output || result.subtype || 'Claude command failed.');
+      else {
+        ack(true, null, {
+          commandOutput: output,
+          commandName: command.name,
+        });
+      }
+      onResult(sid, result);
+    };
+
+    if (!_pool.owns(identity.nativeSessionId)
+      && getDaemonRunningSessionIds().has(identity.nativeSessionId)) {
+      _pool.stopDaemon(identity.nativeSessionId);
+    }
+    syncPoolStatus(identity.nativeSessionId, 'running');
     let res = await _pool.send(identity.nativeSessionId, command.text, {
       cwd,
       resumeId: identity.nativeSessionId,
-      streamId,
+      streamId: liveTurnId,
       ...callbacks,
     });
     if (res?.bgLocked) {
@@ -1033,17 +1195,26 @@ async function handleClaudeCommand(identity, command, clientId, projectHash) {
       res = await _pool.send(identity.nativeSessionId, command.text, {
         cwd,
         resumeId: identity.nativeSessionId,
-        streamId,
+        streamId: liveTurnId,
         ...callbacks,
       });
     }
   } catch (error) {
+    callbacks?.failTurn('unavailable');
     ack(false, error.message || 'Claude command failed.');
   }
 }
 
-async function newAdapterSession(adapter, cwd, text, requestId, clientId) {
-  const streamId = newStreamId();
+async function newAdapterSession(
+  adapter,
+  cwd,
+  text,
+  requestId,
+  turnId,
+  replyConnectionId,
+) {
+  const liveTurnId = turnId || newTurnId();
+  let callbacks = null;
   let acked = false;
   const ack = (ok, sessionId, error) => {
     if (acked) return;
@@ -1054,35 +1225,42 @@ async function newAdapterSession(adapter, cwd, text, requestId, clientId) {
       ok,
       error,
       requestId,
-      clientId,
-      streamId,
+      turnId: liveTurnId,
+      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
   };
   try {
     await adapter.interaction.create({
       cwd,
       text,
-      streamId,
-      onCreated: ({ nativeSessionId, sessionId }) => {
-        const callbacks = buildStreamCallbacks(sessionId, cwd, (_ok, error) => {
+      streamId: liveTurnId,
+      onCreated: async ({ nativeSessionId, sessionId }) => {
+        callbacks = createStreamCallbacks(sessionId, liveTurnId, cwd, (_ok, error) => {
           ack(false, sessionId, error);
         }, {
           runtime: adapter.runtime,
           nativeSessionId,
           syncStatus: false,
-          clientId,
+          userInitiated: true,
         });
         ack(true, sessionId);
         return callbacks;
       },
     });
   } catch (error) {
+    callbacks?.failTurn('unavailable');
     ack(false, '', error.message || 'Session creation failed.');
   }
 }
 
 // Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
-async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
+async function handleHeadlessSend(
+  sessionId,
+  text,
+  turnId,
+  projectHash,
+  reservedTurnId = null,
+) {
   // cwd from projectHash (works even if jsonl was deleted); fall back to jsonl reverse-lookup.
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
   if (!cwd) cwd = cwdForSession(sessionId);
@@ -1096,13 +1274,12 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
     if (fp) { try { synced.set(sessionId, countJsonlLines(fp)); } catch {} }
   }
 
-  const streamId = newStreamId();
+  const liveTurnId = reservedTurnId || resolveTurnId(sessionId, turnId);
   let acked = false;
   const ack = (ok, error) => {
     if (acked) return;
     acked = true;
-    // streamId lets the app bind this clientId to the turn's stream frames (which carry only streamId).
-    wsSend({ action: 'send_message_result', sessionId, ok, error, clientId, streamId });
+    wsSend({ action: 'send_message_result', sessionId, ok, error, turnId });
   };
 
   // Not in pool but daemon holds it → release so --resume can take over.
@@ -1112,18 +1289,35 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
 
   syncPoolStatus(sessionId, 'running');
 
-  const cb = buildStreamCallbacks(sessionId, cwd, ack, { clientId });
-  wsSend({
-    action: 'send_message_binding',
-    sessionId,
-    clientId,
-    streamId,
-  });
-  let res = await _pool.send(sessionId, text, { cwd, resumeId: sessionId, streamId, ...cb });
-  // Roster read was stale (raced a still-active daemon agent) → stop + retry once.
-  if (res && res.bgLocked) {
-    _pool.stopDaemon(sessionId);
-    res = await _pool.send(sessionId, text, { cwd, resumeId: sessionId, streamId, ...cb });
+  let cb = null;
+  try {
+    cb = createStreamCallbacks(
+      sessionId,
+      liveTurnId,
+      cwd,
+      ack,
+      { userInitiated: true, userText: text },
+    );
+    let res = await _pool.send(sessionId, text, {
+      cwd,
+      resumeId: sessionId,
+      streamId: liveTurnId,
+      ...cb,
+    });
+    // Roster read was stale (raced a still-active daemon agent) → stop + retry once.
+    if (res && res.bgLocked) {
+      _pool.stopDaemon(sessionId);
+      res = await _pool.send(sessionId, text, {
+        cwd,
+        resumeId: sessionId,
+        streamId: liveTurnId,
+        ...cb,
+      });
+    }
+  } catch (error) {
+    cb?.failTurn('unavailable');
+    ack(false, error.message || 'Session unavailable.');
+    return true;
   }
 
   ack(true);
@@ -1131,18 +1325,47 @@ async function handleHeadlessSend(sessionId, text, clientId, projectHash) {
 }
 
 // New regular session: mint sessionId upfront (--session-id), ack it FIRST so the app subscribes before deltas flow, then stream the first turn.
-async function newRegularSession(cwd, text, requestId, clientId) {
+async function newRegularSession(
+  cwd,
+  text,
+  requestId,
+  turnId,
+  replyConnectionId,
+) {
   const sessionId = crypto.randomUUID();
-  const streamId = newStreamId();
+  const liveTurnId = resolveTurnId(sessionId, turnId);
   // Ack sid before spawn → app subscribes; any pre-subscribe delta is corrected by the authoritative row + bufferAndFetch.
-  wsSend({ action: 'send_message_result', sessionId, ok: true, requestId, clientId, streamId });
+  wsSend({
+    action: 'send_message_result',
+    sessionId,
+    ok: true,
+    requestId,
+    turnId: liveTurnId,
+    ...(replyConnectionId ? { replyConnectionId } : {}),
+  });
   syncPoolStatus(sessionId, 'running', undefined, {
     waitForFile: true,
     registerNew: true,
     fileReady: (filePath) => !!getSessionMetadata(filePath).preview,
   });
-  const cb = buildStreamCallbacks(sessionId, cwd, () => {}, { clientId });
-  await _pool.send(sessionId, text, { cwd, createId: sessionId, streamId, ...cb });
+  const cb = createStreamCallbacks(
+    sessionId,
+    liveTurnId,
+    cwd,
+    () => {},
+    { userInitiated: true, userText: text },
+  );
+  try {
+    await _pool.send(sessionId, text, {
+      cwd,
+      createId: sessionId,
+      streamId: liveTurnId,
+      ...cb,
+    });
+  } catch (error) {
+    cb.failTurn('unavailable');
+    throw error;
+  }
 }
 
 // New agent: launch detached `claude --bg` (can't pool — conflicts with -p), parse its `backgrounded · <shortid>`, resolve full sid via `claude agents --json`. First task shows via agent poll + watcher; next message takes it over (handleHeadlessSend).
@@ -1213,37 +1436,6 @@ async function handleCreateProject(rawPath, asAgent) {
   } catch (err) {
     wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
   }
-}
-
-// App (re)subscribed: show a known prompt, or passively attach to an active
-// managed Codex thread so app-server can replay TUI-owned pending requests.
-async function handleRevealAgent(sessionId) {
-  const p = _pendingControl.current(sessionId);
-  if (p) {
-    if (p.syncStatus) {
-      syncInteractionStatus(sessionId, 'needs_input', controlDetail(p), p.runtime);
-    }
-    sendPermissionRequest(sessionId, p);
-    return;
-  }
-  const identity = parseStorageSessionId(sessionId);
-  const adapter = getRuntimeAdapter(identity.runtime);
-  if (typeof adapter.interaction?.observeExisting !== 'function') return;
-  const callbacks = buildStreamCallbacks(
-    identity.sessionId,
-    '',
-    () => {},
-    {
-      runtime: identity.runtime,
-      nativeSessionId: identity.nativeSessionId,
-      syncStatus: true,
-    },
-  );
-  await adapter.interaction.observeExisting({
-    sessionId: identity.sessionId,
-    nativeSessionId: identity.nativeSessionId,
-    callbacks,
-  });
 }
 
 // Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
@@ -1513,7 +1705,7 @@ function handlePermissionReply(msg) {
       );
     }
   } else {
-    wsSend({ action: 'permission_resolved', sessionId, requestId: pending.requestId });
+    sendPermissionResolved(sessionId, pending);
     if (pending.syncStatus) {
       syncInteractionStatus(sessionId, 'running', '', pending.runtime);
     }

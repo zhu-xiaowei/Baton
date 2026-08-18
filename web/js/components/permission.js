@@ -92,6 +92,7 @@ function renderPrompt(prompt) {
 
   var container = document.querySelector('.messages');
   if (!container) return;
+  container.classList.add('has-permission-prompt');
 
   var html = '<div class="permission-prompt" id="permission-prompt">';
   html += '<div class="permission-header"><div class="permission-title">'
@@ -110,11 +111,13 @@ function renderPrompt(prompt) {
     html += '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
       + 'data-has-input="' + (option.hasInput ? '1' : '0') + '" '
       + 'onclick="handlePermissionOption(this)">'
-      + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span> ' : '')
+      + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span>' : '')
+      + '<span class="permission-copy">'
       + '<span class="permission-label">' + esc(option.label) + '</span>'
       + (option.description
         ? '<span class="permission-desc-inline">' + esc(option.description) + '</span>'
         : '')
+      + '</span>'
       + '</button>';
     if (option.hasInput) {
       html += '<div class="permission-input-wrap" style="display:none">'
@@ -249,6 +252,8 @@ function dismissPermissionPrompt() {
   codexPermission.reset();
   var prompt = document.getElementById('permission-prompt');
   if (prompt) prompt.remove();
+  var container = document.querySelector('.messages');
+  if (container) container.classList.remove('has-permission-prompt');
   var inputBar = document.getElementById('input-bar');
   if (inputBar) {
     inputBar.querySelector('#msg-input').disabled = false;

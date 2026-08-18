@@ -47,14 +47,33 @@ export async function makeHarness() {
   // renderSingleMessage (incremental) also emits the inner tl-item with data-ts.
   const INTERRUPT_MAP = { '[Request interrupted by user]': 'Interrupted', '[Request interrupted by user for tool use]': 'Tool interrupted' };
   const isInterrupt = (m) => m.type === 'user' && Array.isArray(m.content) && m.content.length === 1 && m.content[0].type === 'text' && !!INTERRUPT_MAP[m.content[0].text];
-  G('renderUserBubble', (m) => '<div class="msg-user"' + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '') + '>' + textOf(m.content) + '</div>');
+  G('renderUserBubble', (m) => '<div class="msg-user"'
+    + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+    + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
+    + '>' + textOf(m.content) + '</div>');
   G('renderSingleMessage', (m) => {
-    if (isInterrupt(m)) return '<div class="tl-item msg-interrupt" data-ts="' + (m.timestamp || '') + '">' + INTERRUPT_MAP[m.content[0].text] + '</div>';
-    const t = textOf(m.content); return t ? '<div class="tl-item assistant-text" data-ts="' + (m.timestamp || '') + '">' + t + '</div>' : '';
+    if (isInterrupt(m)) return '<div class="tl-item msg-interrupt"'
+      + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+      + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+      + ' data-ts="' + (m.timestamp || '') + '">' + INTERRUPT_MAP[m.content[0].text] + '</div>';
+    const t = textOf(m.content); return t ? '<div class="tl-item assistant-text"'
+      + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+      + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+      + ' data-ts="' + (m.timestamp || '') + '">' + t + '</div>' : '';
   });
   G('renderMessages', (msgs) => msgs.map(m => {
-    if (m.type === 'user') return '<div class="msg-user"' + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '') + '>' + textOf(m.content) + '</div>';
-    if (m.type === 'assistant') { const t = textOf(m.content); return t ? '<div class="assistant-turn"><div class="tl-item assistant-text" data-ts="' + (m.timestamp || '') + '">' + t + '</div></div>' : ''; }
+    if (m.type === 'user') return '<div class="msg-user"'
+      + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+      + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
+      + '>' + textOf(m.content) + '</div>';
+    if (m.type === 'assistant') {
+      if (m._strictManaged) return '';
+      const t = textOf(m.content);
+      return t ? '<div class="assistant-turn"><div class="tl-item assistant-text"'
+        + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+        + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+        + ' data-ts="' + (m.timestamp || '') + '">' + t + '</div></div>' : '';
+    }
     return '';
   }).join(''));
   G('isInterruptMsg', isInterrupt); // real logic — an interrupt row must render as msg-interrupt, not be skipped
@@ -67,7 +86,9 @@ export async function makeHarness() {
   G('renderStreamMd', (el, t) => { el.textContent = t; });
   ['renderMermaidBlocks', 'renderKatexBlocks'].forEach(k => G(k, () => {}));
   G('renderToolNode', () => ''); G('summarizeToolInput', () => '');
-  G('api', async () => ({ messages: [], hasMore: false }));
+  let apiResponse = { messages: [], hasMore: false };
+  let apiHandler = async () => apiResponse;
+  G('api', (...args) => apiHandler(...args));
 
   const ws = await import(path.join(ROOT, 'web/js/ws.js'));
   const { state } = await import(path.join(ROOT, 'web/js/state.js'));
@@ -78,7 +99,17 @@ export async function makeHarness() {
     .map(el => ({ cls: el.className, text: (el.textContent || '').trim() }));
   const tick = (ms = 5) => new Promise(r => setTimeout(r, ms));
 
-  return { state, ws, hooks, window: w, document: w.document, dumpDom, tick };
+  return {
+    state,
+    ws,
+    hooks,
+    window: w,
+    document: w.document,
+    dumpDom,
+    tick,
+    setApiResponse: (value) => { apiResponse = value; },
+    setApiHandler: (handler) => { apiHandler = handler; },
+  };
 }
 
 // Reset harness state to a fresh session view. mode: 'new' (optimistic bubble present)
@@ -90,6 +121,7 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.wsSessionId = sessionId;
   state.wsAllMessages = []; state.wsMessageUuids = new Set(); state.wsRenderedCount = 0; state.wsMessageCount = 0;
   state._wsBuffer = null; state.wsRunning = mode === 'new';
+  state._syncedOnce = null;
   state.wsLastTimestamp = ''; state._titleTier = 0;
   state.pendingSentMessages = mode === 'new' && firstText
     ? [{ id: 'sent-1', seq: 0, text: firstText, fullText: firstText, images: [], sentAt: Date.now() }] : [];

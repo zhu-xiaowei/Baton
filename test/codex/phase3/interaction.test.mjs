@@ -4,7 +4,7 @@ import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
 import {
   clearLiveMessageRegistry,
-  liveMessageStream,
+  liveMessageRoute,
 } from '../../../bridge/live-message-registry.mjs';
 
 class FakeClient extends EventEmitter {
@@ -173,20 +173,20 @@ function callbacks() {
     controls,
     resolvedControls,
     value: {
-      onBlockStart: (_sid, blockId, kind, name, seq) => {
-        frames.push({ t: 'start', blockId, kind, name, seq });
+      onBlockStart: (_sid, blockId, kind, name) => {
+        frames.push({ t: 'start', blockId, kind, name });
       },
-      onDelta: (_sid, chunk, seq, blockId) => {
-        frames.push({ t: 'delta', blockId, chunk, seq });
+      onDelta: (_sid, chunk, blockId) => {
+        frames.push({ t: 'delta', blockId, chunk });
       },
-      onInputDelta: (_sid, chunk, seq, blockId) => {
-        frames.push({ t: 'input', blockId, chunk, seq });
+      onInputDelta: (_sid, chunk, blockId) => {
+        frames.push({ t: 'input', blockId, chunk });
       },
-      onBlockStop: (_sid, blockId, seq) => {
-        frames.push({ t: 'stop', blockId, seq });
+      onBlockStop: (_sid, blockId) => {
+        frames.push({ t: 'stop', blockId });
       },
       onMessage: (_sid, message, meta) => messages.push({ message, meta }),
-      onResult: (_sid, result, finalSeq) => results.push({ result, finalSeq }),
+      onResult: (_sid, result) => results.push({ result }),
       onControlRequest: (request) => controls.push(request),
       onControlResolved: (requestId) => resolvedControls.push(requestId),
     },
@@ -240,8 +240,10 @@ test('existing Codex session releases after completion and reuses CC stream fram
       content: [{ type: 'text', text: 'hello' }],
     },
   });
-  assert.equal(liveMessageStream('codex', 'user:stream-1'), 'stream-1');
-  assert.equal(liveMessageStream('codex', 'turn:turn-1:user'), 'stream-1');
+  assert.equal(
+    liveMessageRoute('codex', 'runtime-turn:turn-1')?.runtimeOwned,
+    true,
+  );
   notify(client, 'item/completed', {
     threadId: 'thread-1',
     turnId: 'turn-1',
@@ -287,18 +289,16 @@ test('existing Codex session releases after completion and reuses CC stream fram
     'delta',
     'stop',
   ]);
-  assert.deepEqual(cb.frames.map((frame) => frame.seq), [0, 1, 2, 3]);
   assert.equal(cb.frames.filter((frame) => frame.t === 'delta')
     .map((frame) => frame.chunk).join(''), 'hello');
   assert.deepEqual(cb.messages.map(({ message }) => message.type), ['user', 'assistant']);
-  assert.equal(cb.messages[0].meta.liveKey, 'user:stream-1');
+  assert.equal(cb.messages[0].meta.liveKey, 'runtime-turn:turn-1');
   assert.deepEqual(cb.messages.map(({ message }) => message.nativeId), [
     'codex:user:stream-1',
     'codex:item:agent-1',
   ]);
-  assert.equal(cb.messages[1].meta.liveKey, 'item:agent-1');
+  assert.equal(cb.messages[1].meta.liveKey, 'runtime-turn:turn-1');
   assert.equal(cb.messages[1].message.content[0].text, 'hello');
-  assert.equal(cb.results[0].finalSeq, 4);
   assert.equal(cb.results[0].result.is_error, false);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(client.stopCalls, 1);
@@ -578,7 +578,6 @@ test('turn completion reconciles a final agent item when intermediate notificati
 
   assert.deepEqual(cb.frames.map((frame) => frame.t), ['start', 'delta', 'stop']);
   assert.equal(cb.frames[1].chunk, 'complete text recovered from the turn');
-  assert.equal(cb.results[0].finalSeq, 3);
   assert.equal(cb.messages.length, 1);
   assert.equal(cb.messages[0].message.uuid, 'codex_live_agent_agent-reconciled');
   assert.equal(cb.messages[0].message.content[0].text, 'complete text recovered from the turn');
@@ -617,7 +616,7 @@ test('terminal Codex errors become visible assistant messages with the API detai
   });
 
   assert.equal(cb.messages.length, 1);
-  assert.equal(cb.messages[0].meta.liveKey, 'turn:turn-1:error');
+  assert.equal(cb.messages[0].meta.liveKey, 'runtime-turn:turn-1');
   assert.equal(cb.messages[0].message.nativeId, 'codex:turn:turn-1:error');
   assert.equal(
     cb.messages[0].message.content[0].text,
@@ -693,7 +692,6 @@ test('delta notifications from a different turn are ignored', async () => {
 
   assert.equal(cb.frames.filter((frame) => frame.t === 'delta')
     .map((frame) => frame.chunk).join(''), 'recovered');
-  assert.equal(cb.results[0].finalSeq, 3);
 });
 
 test('current client user item corrects a stale turn/start response id', async () => {
@@ -746,7 +744,6 @@ test('current client user item corrects a stale turn/start response id', async (
 
   assert.equal(cb.frames.filter((frame) => frame.t === 'delta')
     .map((frame) => frame.chunk).join(''), 'streamed');
-  assert.equal(cb.results[0].finalSeq, 3);
 });
 
 test('Codex commentary streams as visible progress text', async () => {
@@ -848,7 +845,6 @@ test('empty Codex reasoning items do not create preview blocks', async () => {
 
   assert.deepEqual(cb.frames.map((frame) => frame.t), ['start', 'delta', 'stop']);
   assert.deepEqual(cb.frames.map((frame) => frame.blockId), [0, 0, 0]);
-  assert.equal(cb.results[0].finalSeq, 3);
 });
 
 test('Codex command items use the shared tool preview contract', async () => {
@@ -884,6 +880,119 @@ test('Codex command items use the shared tool preview contract', async () => {
     cwd: '/tmp',
     codexCommandActions: [{ type: 'list_files', command: 'pwd', path: '/tmp' }],
   });
+});
+
+test('Codex completed commands publish authoritative IN and OUT before turn end', async () => {
+  clearLiveMessageRegistry();
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-command-authority',
+    nativeSessionId: 'thread-command-authority',
+    streamId: 'turn-command-authority',
+    text: 'run pwd',
+    callbacks: cb.value,
+  });
+
+  notify(client, 'item/started', {
+    threadId: 'thread-command-authority',
+    turnId: 'turn-1',
+    item: {
+      type: 'commandExecution',
+      id: 'command-authority-1',
+      command: 'pwd',
+      cwd: '/workspace',
+      status: 'inProgress',
+    },
+  });
+  notify(client, 'item/completed', {
+    threadId: 'thread-command-authority',
+    turnId: 'turn-1',
+    completedAtMs: Date.now(),
+    item: {
+      type: 'commandExecution',
+      id: 'command-authority-1',
+      command: 'pwd',
+      cwd: '/workspace',
+      status: 'completed',
+      aggregatedOutput: '/workspace\n',
+      exitCode: 0,
+    },
+  });
+  notify(client, 'turn/completed', {
+    threadId: 'thread-command-authority',
+    turn: {
+      id: 'turn-1',
+      status: 'completed',
+      items: [],
+    },
+  });
+
+  assert.deepEqual(
+    cb.messages.map(({ message }) => message.type),
+    ['assistant', 'user'],
+  );
+  const use = cb.messages[0].message.content[0];
+  const result = cb.messages[1].message.content[0];
+  assert.equal(use.type, 'tool_use');
+  assert.equal(use.name, 'Bash');
+  assert.equal(use.input.command, 'pwd');
+  assert.equal(result.type, 'tool_result');
+  assert.equal(result.tool_use_id, use.id);
+  assert.equal(result.content, '/workspace');
+  assert.equal(result.is_error, false);
+  assert.equal(cb.results.length, 1);
+});
+
+test('Codex interrupted turns complete unfinished tools before reporting the final status', async () => {
+  clearLiveMessageRegistry();
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-interrupted-command',
+    nativeSessionId: 'thread-interrupted-command',
+    streamId: 'turn-interrupted-command',
+    text: 'run a slow command',
+    callbacks: cb.value,
+  });
+
+  notify(client, 'item/started', {
+    threadId: 'thread-interrupted-command',
+    turnId: 'turn-1',
+    item: {
+      type: 'commandExecution',
+      id: 'command-interrupted-1',
+      command: 'sleep 30',
+      cwd: '/workspace',
+      status: 'inProgress',
+    },
+  });
+  notify(client, 'turn/completed', {
+    threadId: 'thread-interrupted-command',
+    turn: {
+      id: 'turn-1',
+      status: 'interrupted',
+      items: [],
+    },
+  });
+
+  assert.deepEqual(
+    cb.messages.map(({ message }) => message.type),
+    ['assistant', 'user'],
+  );
+  const use = cb.messages[0].message.content[0];
+  const result = cb.messages[1].message.content[0];
+  assert.equal(use.type, 'tool_use');
+  assert.equal(use.name, 'Bash');
+  assert.equal(result.type, 'tool_result');
+  assert.equal(result.tool_use_id, use.id);
+  assert.equal(result.content, 'Interrupted');
+  assert.equal(result.is_error, true);
+  assert.equal(cb.results.length, 1);
+  assert.equal(cb.results[0].result.status, 'interrupted');
+  assert.equal(cb.results[0].result.subtype, 'interrupted');
 });
 
 test('Codex approval requests preserve native ordered decisions', async () => {
@@ -1540,7 +1649,7 @@ test('Codex interrupt targets the active thread and turn', async () => {
     callbacks: callbacks().value,
   });
 
-  assert.equal(interaction.interrupt('thread-5'), true);
+  assert.equal(await interaction.interrupt('thread-5'), true);
   assert.deepEqual(client.requests.at(-1), {
     method: 'turn/interrupt',
     params: {
@@ -1548,6 +1657,13 @@ test('Codex interrupt targets the active thread and turn', async () => {
       turnId: 'turn-1',
     },
   });
+
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'turn/interrupt') throw new Error('interrupt failed');
+    return request(method, params);
+  };
+  assert.equal(await interaction.interrupt('thread-5'), false);
 });
 
 test('burst sends to one Codex thread start one turn and queue the next', async () => {
@@ -1677,204 +1793,6 @@ test('managed app-server resume adopts an active approval turn before queued sen
   assert.equal(client.stopCalls, 1);
 });
 
-test('passive observation replays a managed TUI approval without starting or terminating a turn', async () => {
-  const client = new FakeClient();
-  const request = client.request.bind(client);
-  client.request = async (method, params) => {
-    if (method === 'thread/loaded/list') {
-      client.requests.push({ method, params });
-      return { data: ['thread-observed'] };
-    }
-    if (method === 'thread/resume') {
-      client.emit('serverRequest', {
-        id: 31,
-        method: 'item/commandExecution/requestApproval',
-        params: {
-          threadId: 'thread-observed',
-          turnId: 'turn-external',
-          command: 'git commit -m test',
-          cwd: '/workspace/demo',
-          availableDecisions: ['accept', 'cancel'],
-        },
-      });
-      return {
-        thread: {
-          id: params.threadId,
-          status: {
-            type: 'active',
-            activeFlags: ['waitingOnApproval'],
-          },
-        },
-      };
-    }
-    return request(method, params);
-  };
-  const terminated = [];
-  const contexts = [];
-  const interaction = new CodexInteraction({
-    clientFactory(context) {
-      contexts.push(context);
-      return client;
-    },
-    writerController: {
-      describe: () => ({
-        pid: 77,
-        canTerminate: true,
-        status: 'completed',
-      }),
-      terminate: async (...args) => terminated.push(args),
-    },
-  });
-  const cb = callbacks();
-
-  assert.deepEqual(await interaction.observeExisting({
-    sessionId: 'codex:thread-observed',
-    nativeSessionId: 'thread-observed',
-    callbacks: cb.value,
-  }), { active: true, loaded: true });
-
-  assert.deepEqual(contexts, [{
-    nativeSessionId: 'thread-observed',
-    storageSessionId: 'codex:thread-observed',
-    managedOnly: true,
-  }]);
-  assert.equal(
-    client.requests.filter((entry) => entry.method === 'turn/start').length,
-    0,
-  );
-  assert.deepEqual(terminated, []);
-  assert.equal(cb.controls.length, 1);
-  assert.equal(cb.controls[0].request.input.command, 'git commit -m test');
-
-  assert.equal(interaction.replyControl(
-    'thread-observed',
-    cb.controls[0].request_id,
-    { decision: 'accept' },
-  ), true);
-  assert.deepEqual(client.responses, [{
-    id: 31,
-    result: { decision: 'accept' },
-  }]);
-
-  notify(client, 'turn/completed', {
-    threadId: 'thread-observed',
-    turn: { id: 'turn-external', status: 'completed' },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(client.stopCalls, 1);
-});
-
-test('passive observation ignores unloaded threads without resuming them', async () => {
-  const client = new FakeClient();
-  const request = client.request.bind(client);
-  client.request = async (method, params) => {
-    if (method === 'thread/loaded/list') {
-      client.requests.push({ method, params });
-      return { data: ['another-thread'] };
-    }
-    return request(method, params);
-  };
-  const interaction = new CodexInteraction({ client });
-
-  assert.deepEqual(await interaction.observeExisting({
-    sessionId: 'codex:thread-idle',
-    nativeSessionId: 'thread-idle',
-    callbacks: callbacks().value,
-  }), { active: false, loaded: false });
-  assert.equal(
-    client.requests.filter((entry) => entry.method === 'thread/resume').length,
-    0,
-  );
-  assert.equal(client.stopCalls, 1);
-});
-
-test('passive observation never terminates a conflicting standalone writer', async () => {
-  const client = new FakeClient();
-  const request = client.request.bind(client);
-  client.request = async (method, params) => {
-    if (method === 'thread/loaded/list') {
-      client.requests.push({ method, params });
-      return { data: ['thread-conflict-observed'] };
-    }
-    if (method === 'thread/resume') {
-      throw new Error('thread already has an active writer');
-    }
-    return request(method, params);
-  };
-  const terminated = [];
-  const interaction = new CodexInteraction({
-    client,
-    writerController: {
-      describe: () => ({
-        pid: 88,
-        canTerminate: true,
-        status: 'completed',
-      }),
-      terminate: async (...args) => terminated.push(args),
-    },
-  });
-
-  const observed = await interaction.observeExisting({
-    sessionId: 'codex:thread-conflict-observed',
-    nativeSessionId: 'thread-conflict-observed',
-    callbacks: callbacks().value,
-  });
-  assert.equal(observed.active, false);
-  assert.equal(observed.loaded, false);
-  assert.equal(observed.error.code, 'CODEX_ACTIVE_WRITER');
-  assert.deepEqual(terminated, []);
-  assert.equal(client.stopCalls, 1);
-});
-
-test('another app-server client resolving approval dismisses the passive prompt', async () => {
-  const client = new FakeClient();
-  const request = client.request.bind(client);
-  client.request = async (method, params) => {
-    if (method === 'thread/loaded/list') {
-      client.requests.push({ method, params });
-      return { data: ['thread-resolved'] };
-    }
-    if (method === 'thread/resume') {
-      client.emit('serverRequest', {
-        id: 41,
-        method: 'item/commandExecution/requestApproval',
-        params: {
-          threadId: 'thread-resolved',
-          turnId: 'turn-external',
-          command: 'pwd',
-        },
-      });
-      return {
-        thread: {
-          id: params.threadId,
-          status: { type: 'active', activeFlags: ['waitingOnApproval'] },
-        },
-      };
-    }
-    return request(method, params);
-  };
-  const interaction = new CodexInteraction({ client });
-  const cb = callbacks();
-
-  await interaction.observeExisting({
-    sessionId: 'codex:thread-resolved',
-    nativeSessionId: 'thread-resolved',
-    callbacks: cb.value,
-  });
-  const requestId = cb.controls[0].request_id;
-  notify(client, 'serverRequest/resolved', {
-    threadId: 'thread-resolved',
-    requestId: 41,
-  });
-
-  assert.deepEqual(cb.resolvedControls, [requestId]);
-  assert.equal(interaction.replyControl(
-    'thread-resolved',
-    requestId,
-    { decision: 'accept' },
-  ), false);
-});
-
 test('different Codex threads use independent ephemeral clients', async () => {
   const clients = [];
   const interaction = new CodexInteraction({
@@ -1911,6 +1829,132 @@ test('different Codex threads use independent ephemeral clients', async () => {
   assert.equal(clients[1].stopCalls, 0);
   assert.equal(interaction.owns('thread-a'), false);
   assert.equal(interaction.owns('thread-b'), true);
+});
+
+test('permission observation replays a managed TUI approval without starting a turn', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-observed'] };
+    }
+    if (method === 'thread/resume') {
+      client.requests.push({ method, params });
+      client.emit('serverRequest', {
+        id: 31,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: 'thread-observed',
+          turnId: 'turn-external',
+          command: 'git commit -m test',
+          cwd: '/workspace/demo',
+          availableDecisions: ['accept', 'cancel'],
+        },
+      });
+      return {
+        thread: {
+          id: params.threadId,
+          status: {
+            type: 'active',
+            activeFlags: ['waitingOnApproval'],
+          },
+        },
+      };
+    }
+    return request(method, params);
+  };
+  const contexts = [];
+  const interaction = new CodexInteraction({
+    clientFactory(context) {
+      contexts.push(context);
+      return client;
+    },
+  });
+  const cb = callbacks();
+
+  assert.deepEqual(await interaction.observePermissions({
+    sessionId: 'codex:thread-observed',
+    nativeSessionId: 'thread-observed',
+    callbacks: cb.value,
+  }), { active: true, loaded: true });
+
+  assert.deepEqual(contexts, [{
+    nativeSessionId: 'thread-observed',
+    storageSessionId: 'codex:thread-observed',
+    managedOnly: true,
+  }]);
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'turn/start').length,
+    0,
+  );
+  assert.equal(cb.frames.length, 0);
+  assert.equal(cb.messages.length, 0);
+  assert.equal(cb.controls.length, 1);
+  assert.equal(cb.controls[0].request.input.command, 'git commit -m test');
+});
+
+test('permission observation ignores unloaded Codex threads', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['another-thread'] };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+
+  assert.deepEqual(await interaction.observePermissions({
+    sessionId: 'codex:thread-idle',
+    nativeSessionId: 'thread-idle',
+    callbacks: callbacks().value,
+  }), { active: false, loaded: false });
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'thread/resume').length,
+    0,
+  );
+  assert.equal(client.stopCalls, 1);
+});
+
+test('permission observation never terminates a conflicting Codex writer', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-conflict-observed'] };
+    }
+    if (method === 'thread/resume') {
+      client.requests.push({ method, params });
+      throw new Error('thread already has an active writer');
+    }
+    return request(method, params);
+  };
+  const terminated = [];
+  const interaction = new CodexInteraction({
+    client,
+    writerController: {
+      describe: () => ({
+        pid: 88,
+        canTerminate: true,
+        status: 'completed',
+      }),
+      terminate: async (...args) => terminated.push(args),
+    },
+  });
+
+  const observed = await interaction.observePermissions({
+    sessionId: 'codex:thread-conflict-observed',
+    nativeSessionId: 'thread-conflict-observed',
+    callbacks: callbacks().value,
+  });
+  assert.equal(observed.active, false);
+  assert.equal(observed.loaded, false);
+  assert.equal(observed.error.code, 'CODEX_ACTIVE_WRITER');
+  assert.deepEqual(terminated, []);
+  assert.equal(client.stopCalls, 1);
 });
 
 test('send waits for an in-progress release before creating the next lease', async () => {

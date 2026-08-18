@@ -11,7 +11,7 @@
     "test:codex": "node --test test/codex/phase1/*.test.mjs test/codex/phase2/*.test.mjs test/codex/phase3/*.test.mjs",
     "test:codex:e2e": "node test/codex/phase2/e2e.mjs --run",
     "test:codex:stress": "node test/codex/phase2/parcel-stress.mjs --run",
-    "test:frontend": "node --test test/frontend/*.test.mjs && node test/frontend/run.mjs",
+    "test:frontend": "node --test test/frontend/*.test.mjs",
     "test:server": "python3 -m pytest test/server",
     "test:packaging": "node --test test/packaging/*.test.mjs",
     "preview": "vite preview",

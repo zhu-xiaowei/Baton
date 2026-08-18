@@ -41,7 +41,6 @@ export const state = {
   _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],
-  streamAnchors: {},          // streamId → clientId (from send_message_result); places a reply's live preview under its own question bubble
 
   // ---- Image staging (image.js) ----
   stagedImages: [],

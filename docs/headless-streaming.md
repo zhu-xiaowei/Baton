@@ -18,19 +18,19 @@
 一次会读文件的回合(`claude -p "Read sample.txt…" --output-format stream-json
 --include-partial-messages --verbose`)产出 34 行,分析后确认:
 
-1. **stream-json 的 `assistant`/`user` 行与 jsonl 同条消息 `uuid` 完全一致、`content[]` 结构等价。**
-   实测四条消息 uuid `6a9902ba/b9962950/5fc7bf11/d42ab640` 两边一一对应。→ 落地复用现有
-   `extract.mjs` 解析逻辑没问题。
+1. **stream-json 的完整 `assistant` 行，以及表示 tool_result 的 `user` 行，与 JSONL 同条
+   消息 `uuid` 一致、`content[]` 结构等价。**用户问题本身不会稳定从 headless stdout 回显；
+   Bridge 使用 Web 已提供的 `turnId + text` 立即生成仅实时的 user authority，JSONL 再以
+   Claude 的真实 UUID 负责持久化。
 
-2. **⭐(已更正)stream-json 的 `assistant`/`user` 完整行有 `uuid` + `timestamp` + 完整
-   `content`(含 tool_use / tool_result),与 jsonl 同条消息 uuid 一致。**
+2. **stream-json 的完整 runtime 行有 `uuid` + `timestamp` + 完整
+   `content`(含 assistant、tool_use、tool_result),与 JSONL 同条消息 uuid 一致。**
    顶层 keys:`type / message / parent_tool_use_id / session_id / uuid / timestamp`(user 行多
    `tool_use_result`)。实测 stream 的 uuid **全部**能在 jsonl 里找到(4/4 匹配)→ **stream 完整行
-   就是权威消息**,和 jsonl 是同一条消息的两次到达,靠 **uuid 去重**(现有 `bufferAndFetch`
-   的 `existing[uuid]` 逻辑)天然合并、不重不漏。
+   就是 assistant/tool 的实时权威消息**；相同 uuid 的 JSONL 行只负责持久化。
    缺的只有 `parentUuid`(有 `parent_tool_use_id`,语义是"属于哪个子 agent/工具",不是父消息链)。
    → **架构:stream 完整行当权威消息渲染(工具卡/tool_result 免费);`text_delta` 仅作"完整行到达前"
-   的打字机预览;jsonl 后到 uuid 命中即跳过 → 零闪烁。**
+   的打字机预览;runtime-owned JSONL 不再广播 → 零闪烁。**
    （早期本条曾误记为"stream 无 uuid/timestamp";实测 CC 2.1.204+ 均有,已更正。）
 
 3. **headless 会写 jsonl(新建写新文件,resume/多轮追加同一文件)。**
@@ -88,7 +88,7 @@ HeadlessProc = {
   busy,           // 当前是否有回合在生成(用于 UI 状态 / 串行)
   queue,          // busy 时到达的消息排队,回合结束后依次喂
   lastActiveAt,   // idle 回收用
-  streamId,       // 当前回合的预览累积 id
+  turnId,         // 当前回合的关联 id
 }
 ```
 
@@ -107,7 +107,7 @@ HeadlessProc = {
 | 发送路径 | headless 是唯一发送路径；`streamMode` 和 tmux fallback 已删除 |
 | 接管判据 | daemon agent 先 `claude stop` 再 resume；其他 session 直接复用或启动 headless |
 | 权限 | **默认 `--permission-prompt-tool stdio` 不加 bypass** — 用户配什么权限就什么权限(零侵入)。见第六·五节 |
-| 显示/落地 | stream 完整行=权威(渲染),`text_delta`=打字机预览,jsonl 后到 uuid 去重;DDB 只由 jsonl 写(见结论 2/8) |
+| 显示/落地 | stream 完整行=实时权威,`text_delta`=打字机预览;runtime-owned JSONL 只写 DDB |
 | 预览渲染 | 完整 markdown 容错重渲(见第五节) |
 | 按需启动 | **不预启动**;新消息到达且无进程时才 spawn(spawn→init 就绪约 ≤30s,之后同会话复用) |
 | idle 回收 | 周期 `reap`:`lastActiveAt` 超 **idleTTL(默认 10min)** 且非 busy → 关 stdin,进程干净退出(jsonl 保留) |
@@ -122,7 +122,7 @@ HeadlessProc = {
 
 ### 发送(App → CC),headless 路径
 ```
-App doSend()  ──WS send_message {sessionId|projectHash, text, clientId}──►
+App doSend()  ──WS send_message {sessionId|projectHash, text, turnId}──►
 Server _handle_send_to_bridge(原样透传,去掉 device) ──►
 Bridge handleSendMessage → pool.send(sessionId|新建, cwd, text, callbacks):
   ┌─ 进程已存在且空闲 → 直接往 stdin 写 user 消息
@@ -130,31 +130,42 @@ Bridge handleSendMessage → pool.send(sessionId|新建, cwd, text, callbacks):
   └─ 进程不存在 → spawn 常驻进程(新建不带 --resume;已有带 --resume <id>),stdin 保持打开
   逐行解析 stdout(见第六节):
     system/init                → 校验 session_id + cwd
-    content_block_delta/text   → onDelta(streamId, text) → WS stream_delta(打字机预览)
+    content_block_delta/text   → onDelta(turnId, text) → WS stream_delta(打字机预览)
     assistant / user 完整行     → onMessage → extractForApp(归一 tool_use_result)
                                   → WS messages {noCache:true}(权威消息,含工具卡/tool_result)
     result                     → 本回合结束:busy=false,喂 queue 下一条;WS stream_end
     进程 exit/error            → 从池移除;WS stream_end {error?};只读回退
-  回合受理后回 send_message_result {ok, sessionId, clientId}
+  回合受理后回 send_message_result {ok, sessionId, turnId}
 ```
 **关键**:stream 完整行(有 uuid+ts+content)当**权威消息**,走和 jsonl 相同的 `messages`→`updateLastTurn`
 渲染路径(工具卡/tool_result 免费复用)。`noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由
 jsonl watcher 独占写,避免同 uuid 双写)。
 
-### 双路 messages,uuid 去重(实时走 stream,持久走 jsonl)
+### 单一实时来源，JSONL 只负责持久化
 ```
-实时:stream 完整行 → WS messages{noCache} → App(先到,先渲染)
-持久:CC 写 jsonl → watcher → WS messages(+DDB 写) → App(后到,uuid 命中 → 跳过,不重渲)
+实时:Web send_message → user messages{noCache}
+     stream 完整行 → assistant/tool messages{noCache} → App
+持久:CC 写 jsonl → watcher → DDB
 ```
-- 两路是**同一条消息**(uuid 相同),现有 `bufferAndFetch`/`onmessage` 的 `existing[uuid]` 去重天然合并。
-- **stream 先到**:实时显示(含子 agent 过程);**jsonl 后到**:只补 DDB 持久化 + app 侧 uuid 命中跳过 → **零闪烁**。
+- Web/headless 管理的 turn 中，Web 请求是 user 实时来源，headless stdout 是 assistant/tool
+  实时来源；JSONL watcher 根据 busy
+  Session ownership 和精确 UUID ownership 只持久化，不重复广播。
+- Codex app-server 使用结构化 `runtime-turn:<turnId>` ownership 覆盖整个 JSONL turn。该
+  ownership 在 `turn_aborted/task_complete` 后仍保留，因为被中断工具的最终 OUT 可能继续写入；
+  直到下一条 `task_started` 建立新 turn 后才释放上一 turn。归属判断不依赖 Interrupted 文案。
+- CC headless 使用运行中 Session ownership，并以与 JSONL 相同的消息 UUID保留迟到行的精确
+  ownership；CC 的不同中断文案不会参与路由判断。
+- terminal/VS Code 自己产生、没有 headless ownership 的 JSONL 行仍以无 seq `messages`
+  实时广播并持久化。
 - **DDB 只由 jsonl 写**(决策:streaming 只做实时显示,不写 DDB)→ 刷新/历史/reconnect 读 DDB(jsonl 内容)。
 
 ### 预览 ↔ 权威衔接
-- `stream_delta` → App 按 `streamId` 累积全文 → marked 重渲打字机预览气泡(容错,见第五节)。
-- **完整 assistant 行经 `messages` 到达 → `updateLastTurn` 渲染真实消息 + 移除同 streamId 预览气泡**
-  (`clearStreamPreviews`)。因内容一致(实测),替换视觉无缝。
-- headless 异常:`stream_end{error}` → 只读回退;reconnect 后走初始化(`bufferAndFetch` 从 DDB 重建)。
+- `stream_delta` → App 按 `turnId + seq` 严格消费并更新当前文本节点。
+- **完整 assistant 行经 `messages` 到达 → 局部 reconcile 相同 turn 的预览节点**。内容一致时只标记
+  committed，不删除或重建正确 DOM。
+- 中断时 runtime 先完成未结束工具的权威 OUT，再发送唯一 Interrupted，最后发送
+  `stream_end{error:"interrupted"}`。Web 不根据 error 合成兼容节点。
+- headless 其他异常:`stream_end{error}` → 只读回退;reconnect 后走初始化(`bufferAndFetch` 从 DDB 重建)。
 
 ## 三·五、进程生命周期(按需启动 + idle 回收,实证自 litter ClaudePool)
 
@@ -220,7 +231,7 @@ jsonl watcher 独占写,避免同 uuid 双写)。
 | `stream_event` | `content_block_delta` + `input_json_delta` | 合并后发送 `stream_tool_input` |
 | `stream_event` | `content_block_stop` | flush 并发送 `stream_block_stop` |
 | `stream_event` | `message_delta` / `message_stop` | 忽略(回合结束标记) |
-| `assistant` / `user` 完整行 | — | **`onMessage`** → extractForApp → WS `messages{noCache}`(权威消息,有 uuid+ts+content) |
+| `assistant` / tool_result `user` 完整行 | — | **`onMessage`** → extractForApp → WS `messages{noCache}`(权威消息,有 uuid+ts+content) |
 | `result` | — | **本回合结束**:标 `busy=false`,若 queue 非空喂下一条;发 `stream_end`。**进程不退出**(持久管道) |
 
 spawn 参数(常驻进程,每会话一次):
@@ -318,40 +329,38 @@ bridge 回**出站 `control_response`**(wire-quirk:`request_id` 嵌在 `response
 | `result` | 每回合一条 | **判回合结束 + 成功/失败**;busy→false |
 | `control_request{can_use_tool}` | 每工具调用 | 普通工具→弹窗 allow/deny;requires_user_interaction→deny+answerText |
 | `control_response` | bridge 回 | allow(原样 input)/ deny |
-| `assistant`/`user` 完整行 | 每消息 | **权威消息**(uuid+ts+content):`onMessage`→`messages{noCache}`→app 渲染;jsonl 后到 uuid 去重 |
+| Web `send_message` | 每回合一次 | Bridge 立即生成带 seq 的 user `messages{noCache}`，同步给发送窗口和旁观窗口 |
+| `assistant`/tool_result `user` 完整行 | 每消息 | **实时权威消息**(uuid+ts+content):`onMessage`→带 seq 的 `messages{noCache}`→app 渲染；JSONL 只持久化 |
 
-## 七、WS 协议新增
+## 七、WS streaming 协议
 
 ```
-Bridge → Server → App:  { action: "stream_block_start", sessionId, streamId, blockId, kind, name?, seq } // 块开始
-Bridge → Server → App:  { action: "stream_delta",       sessionId, streamId, blockId, chunk, seq }        // 文本/思考增量
-Bridge → Server → App:  { action: "stream_tool_input",  sessionId, streamId, blockId, chunk, seq }        // 工具入参增量
-Bridge → Server → App:  { action: "stream_block_stop",  sessionId, streamId, blockId, seq }                // 块结束
-Bridge → Server → App:  { action: "stream_end",         sessionId, streamId, finalSeq, error? }            // 回合结束(finalSeq=总帧数)
-Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], noCache:true }                     // stream 完整行(权威)
+Web → Bridge:           { action: "send_message", sessionId, turnId, text }
+Bridge → Server → App:  { action: "stream_turn_start", sessionId, turnId, seq }
+Bridge → Server → App:  { action: "stream_block_start", sessionId, turnId, seq, kind, name? }
+Bridge → Server → App:  { action: "stream_delta", sessionId, turnId, seq, chunk }
+Bridge → Server → App:  { action: "stream_tool_input", sessionId, turnId, seq, chunk }
+Bridge → Server → App:  { action: "stream_block_stop", sessionId, turnId, seq }
+Bridge → Server → App:  { action: "messages", sessionId, turnId, seq, messages:[msg], noCache? }
+Bridge → Server → App:  { action: "stream_end", sessionId, turnId, seq, error? }
 ```
 
-### ⭐ 乱序保序:回合级 seq + 客户端 reorder buffer(web/js/reorder.js)
+### 乱序保序：turn 级统一 seq
 链路 bridge→Lambda→API GW→app 中,**每个 WS 帧是一次独立、时长不定的 Lambda 调用**,
 `post_to_connection` 落地顺序 ≠ 发送顺序。litter 是单条有序 TCP,天然无此问题;我们必须让接收端
-不依赖到达顺序。做法(实测 2800 随机投递 + 33 条真实 CC prompt 全通过):
-- **发送端**:bridge 对一个回合内**每一帧**(start/delta/input/stop)打**回合级单调 `seq`**(post-increment,
-  `_writeTurn` 每回合归零);delta/input 只带**增量 chunk**(不再是累积全文 → 流量 O(n²)→O(n));
-  `stream_end` 带 `finalSeq`(= 总帧数)。
-- **接收端(reorder buffer)**:`nextSeq` 有序区 + `pending: Map<seq,frame>` 空档缓存。
-  `seq < nextSeq` 丢弃(幂等,重复/迟到);`seq > nextSeq` 进 pending;`seq === nextSeq` 应用并把
-  pending 里连续的一并排空(头部满足即出队)。`end(finalSeq)`:只有 `nextSeq >= finalSeq` 才 `ended`
-  (有空洞则继续等缺帧)。消费侧(`tickStreams` 打字机)只读有序区的 `committed`/`inputJson`,逻辑不变;
-  `hasGap()` 为真时不让块提前 finalize(观感=还在打字,而非打完又续)。
-- **最终权威**:jsonl → watcher → 完整 assistant 行(带 uuid)按 uuid 去重替换预览(`clearStreamPreviews`)。
-  即使某帧被彻底吞掉、pending 永远补不上,权威行一到即整块覆盖成正确内容 → 空洞最坏"预览短暂缺一截",
-  永不脏最终态。
-- **straggler 复活防护**:`_streamEnded[streamId]` 跨 `clearStreamPreviews` 保留(streamId 每回合唯一),
-  仅在切会话时清空 → Lambda 迟到帧无法复活已结束的预览。
-- `stream_delta`/`stream_end`:纯实时预览,`_handle_bridge_relay` 订阅式转发,**不写 DDB**。
-- headless 的 `messages` 帧:带 `noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由 jsonl watcher 独占写);
-  app 侧靠 uuid 去重与 jsonl 后到的同 uuid 帧合并。
-- `streamId` 让 app 把打字机预览气泡关联到本回合,完整行到达时移除预览。
+不依赖到达顺序：
+- **发送端**：`LiveTurnStream` 对 turn 内所有共享渲染事件统一分配连续 `seq`。`messages`、
+  permission、stop 和 end 都不能绕过这套序列。
+- **接收端**：`TurnEventQueue` 按 `turnId + seq` 缓存，只消费从 0 开始的连续事件。遇到 gap 时，
+  后续事件零副作用。
+- **中途进入**：`seq=1 messages(user)` 可在本地补空 start 后继续 streaming；缺少当前
+  block start 时丢弃残缺 delta，收到完整 authority 后渲染该节点，并从下一个
+  `stream_block_start` 恢复 streaming；end 用整轮 authority 补齐。
+- **关联**：Web 在发送前生成 `turnId`，同一 ID 同时作为用户气泡 anchor 和所有回复事件归属。
+- **节点**：`stream_block_start.seq` 是节点内部 ID；后续有序事件作用于当前节点。
+- **权威消息**：authority 也按 seq 消费，只做确认或局部修正，不删除并重建正确 DOM。
+- **持久化**：DDB 只保存最终消息字段，不保存 `turnId/seq`。
+- **终止**：`stream_end` 是该 turn 最后一条共享事件，之后的 watcher 数据按普通历史消息处理。
 
 ## 八、涉及文件与改动
 
@@ -360,7 +369,8 @@ Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], noC
 | `bridge/headless.mjs` | **ClaudePool**:`Map<sessionId, HeadlessProc>`;`send(sessionId,cwd,text,cb)`(spawn/复用/queue)、`reapIdle()`(周期回收)、LRU 上限、崩溃移除;readline 分派 stdout(含 `control_request`);stdin 写 user 消息 + `control_response` |
 | `bridge/ws.mjs` | `handleSendMessage` 调 `pool.send(...)`;daemon agent 接管;`control_request` → permission_request;App 的 permission_reply → allow/deny(或 requires_user_interaction 的 deny+答案回);新建常规会话预生成 UUID 后用 `--session-id` 启动 |
 | `server/src/bridge_ws.py` | 加 `stream_delta`/`stream_end` → `_handle_bridge_relay`,不写 DDB(permission_request/reply 已有) |
-| `web/js/ws.js` | 处理 `stream_delta`/`stream_end`;按 streamId 重排并渲染预览;以 streamId→clientId 将回复放到对应问题下;权威 `messages` 到达时完成交接 |
+| `web/js/streaming.js` | `TurnEventQueue → StreamCoordinator → StreamingDomRenderer`，分别负责乱序、节点状态与 DOM |
+| `web/js/ws.js` | 将所有 active-turn 事件送入统一队列，并按 `turnId` 定位用户问题 |
 | `web/js/permission.js` | 展示工具权限、AskUserQuestion 和 ExitPlanMode，并回传 permission_reply |
 | `docs/api.md` | 补 `stream_delta`/`stream_end` 协议 |
 | `CLAUDE.md` | 记录 headless 进程池架构 + 生命周期 + 分流规则 + 单写者约束 + symlink cwd 坑 |
@@ -372,7 +382,7 @@ Bridge → Server → App:  { action: "messages", sessionId, messages:[msg], noC
 ### 发送流程(已存在 headless session 时)
 ```
 App doSend(text)
- └ WS send_message {sessionId, text, clientId, device}
+ └ WS send_message {sessionId, text, turnId, device}
    └ Server _handle_send_to_bridge(原样透传)
      └ Bridge handleSendMessage → pool.send(sessionId, cwd, text, cb)
         ├ 池里有该 sessionId 进程?
@@ -380,7 +390,7 @@ App doSend(text)
         │   └ busy → 入 queue,本回合 result 后再喂
         └ 无 → spawn 常驻进程(--resume sessionId),init 就绪后 stdin.write
         stdout 分派:text_delta → WS stream_delta;result → WS stream_end + busy=false
- └ 并行(与 headless 无关):CC 写 jsonl → watcher → WS messages → App 渲染权威消息(替换预览)
+ └ 并行:CC 写 jsonl → watcher → DDB；不重复广播 runtime 已实时发送的消息
 ```
 入口仍是 WS `send_message`；Bridge 内部使用 `pool.send → stdin`，前端接收
 `stream_delta`/`stream_end` 做预览。
@@ -498,8 +508,8 @@ tool_use/tool_result/toolUseResult 字段名一致 → **现有 extract.mjs / re
 
 - `ClaudePool` 在 session 进程 busy 时把新消息放入自己的 FIFO queue，上一回合结束后调用
   `_writeTurn`，因此每条消息都会进入正常 headless 输入和权威消息链路。
-- 每次发送都有独立 `clientId` 和 `streamId`。`send_message_result` 建立两者映射，预览及权威
-  assistant 行按身份放在对应问题下，不依赖文本或时间戳猜测。
+- 每次发送都有独立 `turnId`。用户气泡、预览及权威 assistant 行使用同一 ID，不依赖文本或
+  时间戳猜测，也不需要额外绑定事件。
 - 乐观 user 气泡原位升级并保留 `data-anchor`；真实 echo、后续确认 watermark 和 turn-end
   reconciliation 负责清理 pending，不会因缺失旧式 queue-operation echo 永久卡住。
 
