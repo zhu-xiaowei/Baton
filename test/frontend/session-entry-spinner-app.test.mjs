@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
-test('entering a running session shows the spinner after the skeleton is replaced', async () => {
+test('session entry replaces the skeleton with a stable message container', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
       + '<div class="top-bar"><div class="top-left"></div><div id="top-right"></div></div>'
@@ -54,20 +54,21 @@ test('entering a running session shows the spinner after the skeleton is replace
       return '<div class="msg-user">' + message.content + '</div>';
     }).join('');
   }
-  async function bufferAndFetch() {
-    state.wsAllMessages.push({
+  var fetchedMessages = [{
       uuid: 'user-1',
       type: 'user',
       content: 'hello',
       timestamp: '2026-08-19T00:00:00.000Z',
-    });
-    state.wsMessageCount = 1;
+  }];
+  async function bufferAndFetch() {
+    state.wsAllMessages.push(...fetchedMessages);
+    state.wsMessageCount = fetchedMessages.length;
     return {
-      added: 1,
+      added: fetchedMessages.length,
       hasMore: false,
       messages: state.wsAllMessages.slice(),
       needSync: false,
-      status: 'running',
+      status: fetchedMessages.length ? 'running' : 'idle',
       liveLifecycleChanged: false,
     };
   }
@@ -133,6 +134,13 @@ test('entering a running session shows the spinner after the skeleton is replace
       skeleton: false,
       messages: true,
     });
+
+    fetchedMessages = [];
+    await window.loadMessages('session-2', 'Empty Session');
+
+    assert.equal(document.querySelector('.skeleton-messages'), null);
+    assert.ok(document.querySelector('.messages:not(.skeleton-messages)'));
+    assert.equal(document.querySelector('.messages > .empty').textContent, 'No messages');
   } finally {
     await vite.close();
     dom.window.close();

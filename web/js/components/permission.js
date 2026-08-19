@@ -19,6 +19,26 @@ var codexPermission = createCodexPermissionController({
   buildToolSummary: buildToolSummary,
 });
 
+function getReadyMessageContainer() {
+  return document.querySelector('.messages:not(.skeleton-messages)');
+}
+
+function pinPermissionPromptToBottom() {
+  var promptEl = document.getElementById('permission-prompt');
+  var content = document.getElementById('content');
+  if (!promptEl || !promptEl.isConnected || !content) return;
+  function pin() {
+    if (!promptEl.isConnected) return;
+    if (typeof window.pinContentToBottom === 'function') {
+      window.pinContentToBottom(true);
+    } else {
+      content.scrollTop = content.scrollHeight;
+    }
+  }
+  pin();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pin);
+}
+
 function reply(payload) {
   var send = (typeof wsSendReliable === 'function') ? wsSendReliable : wsSend;
   send(Object.assign({
@@ -47,7 +67,7 @@ function revealDeferredPrompt() {
     stopPromptObserver();
     return false;
   }
-  if (!document.querySelector('.messages')) return false;
+  if (!getReadyMessageContainer()) return false;
   var message = _deferredPrompt;
   _deferredPrompt = null;
   stopPromptObserver();
@@ -65,7 +85,7 @@ function deferPermissionPrompt(msg) {
 }
 
 function showPermissionPrompt(msg) {
-  if (!document.querySelector('.messages')) {
+  if (!getReadyMessageContainer()) {
     deferPermissionPrompt(msg);
     return false;
   }
@@ -129,7 +149,7 @@ function renderPrompt(prompt) {
     });
   }
 
-  var container = document.querySelector('.messages');
+  var container = getReadyMessageContainer();
   if (!container) return;
   container.classList.add('has-permission-prompt');
 
@@ -172,18 +192,7 @@ function renderPrompt(prompt) {
 
   container.insertAdjacentHTML('beforeend', html);
   if (typeof updateSpinner === 'function') updateSpinner();
-  var content = document.getElementById('content');
-  var promptEl = document.getElementById('permission-prompt');
-  function pinPromptToBottom() {
-    if (!promptEl || !promptEl.isConnected) return;
-    if (typeof window.pinContentToBottom === 'function') {
-      window.pinContentToBottom(true);
-    } else {
-      content.scrollTop = content.scrollHeight;
-    }
-  }
-  pinPromptToBottom();
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pinPromptToBottom);
+  pinPermissionPromptToBottom();
 }
 
 function renderAskStep() {
@@ -219,6 +228,7 @@ function handlePermissionOption(button) {
       var visible = wrapper.style.display !== 'none';
       wrapper.style.display = visible ? 'none' : 'flex';
       if (!visible) wrapper.querySelector('input').focus();
+      pinPermissionPromptToBottom();
       return;
     }
   }

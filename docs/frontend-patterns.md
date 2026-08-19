@@ -328,9 +328,11 @@ render seq gets a short idempotent fallback dispatch. This can show or dismiss t
 advancing the strict stream queue; when the ordered copy is later consumed it is ignored as a
 duplicate. Content deltas and tool nodes never use this fallback.
 
-If a request arrives while the detail page still shows its skeleton, it stays deferred until
-`.messages` exists. A matching resolution during loading cancels it. Once rendered, the prompt is
-appended at the bottom and force-pinned in the current and next layout frame.
+If a request arrives while the detail page still shows its skeleton, it stays deferred until a
+non-skeleton `.messages` container exists. A matching resolution during loading cancels it. Empty
+sessions also render a real message container so a recovered prompt has a stable mount point. Once
+rendered, the prompt is appended at the bottom and force-pinned in the current and next layout
+frame.
 
 ### 11.1 Request Types
 

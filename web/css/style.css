@@ -537,6 +537,7 @@ body {
   display: flex;
   flex-direction: column;
 }
+.messages.has-permission-prompt > .empty { display: none; }
 .permission-prompt { width: 100%; min-width: 0; background: #1c2333; border: 1px solid #388bfd; border-radius: 10px; padding: 14px; margin-top: 12px; }
 .messages.has-permission-prompt > .permission-prompt { margin-top: auto; }
 .permission-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }

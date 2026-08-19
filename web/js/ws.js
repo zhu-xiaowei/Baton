@@ -117,7 +117,17 @@ function updateTitleFromMessages() {
 function showEmptyMessages() {
   if (state.pendingSentMessages.length || state.wsRunning) return;
   var content = document.getElementById('content');
-  if (content && !state.wsAllMessages.length) content.innerHTML = '<div class="empty">No messages</div>';
+  if (content && !state.wsAllMessages.length) {
+    var promptActive = typeof hasActivePermissionPrompt === 'function'
+      && hasActivePermissionPrompt();
+    if (!promptActive) {
+      content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
+        + '"><div class="empty">No messages</div></div>';
+    }
+    if (typeof revealDeferredPermissionPrompt === 'function') {
+      revealDeferredPermissionPrompt();
+    }
+  }
   state.wsRunning = false;
   updateSendBtn();
 }

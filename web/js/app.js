@@ -1253,9 +1253,13 @@ async function loadMessages(sessionId, preview) {
           ? skeletonMessages()
           : '<div class="empty">Bridge offline — no cached messages</div>';
       } else {
-        content.innerHTML = '<div class="empty">No messages</div>';
+        content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
+          + '"><div class="empty">No messages</div></div>';
       }
       showInputBar(true);
+      if (typeof revealDeferredPermissionPrompt === 'function') {
+        revealDeferredPermissionPrompt();
+      }
       saveNav();
       return;
     }
@@ -1265,6 +1269,9 @@ async function loadMessages(sessionId, preview) {
     if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
+    if (typeof revealDeferredPermissionPrompt === 'function') {
+      revealDeferredPermissionPrompt();
+    }
     if (typeof updateSpinner === 'function') updateSpinner();
 
     updateTitleFromMessages();
