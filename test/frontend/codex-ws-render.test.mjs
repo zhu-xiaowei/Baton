@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
@@ -88,6 +89,17 @@ test('Claude and Codex share the same collapsing spinner row', () => {
     assert.equal(hidden?.style.display, 'flex');
     assert.equal(hidden?.classList.contains('is-collapsed'), true);
   }
+});
+
+test('spinner appears immediately and only animates while collapsing', () => {
+  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const visibleRule = css.match(/\.cc-spinner\s*\{[^}]*\}/)?.[0] || '';
+  const collapsedRule = css.match(/\.cc-spinner\.is-collapsed\s*\{[^}]*\}/)?.[0] || '';
+
+  assert.match(visibleRule, /height:\s*32px/);
+  assert.match(visibleRule, /transition:\s*none/);
+  assert.match(collapsedRule, /height:\s*0/);
+  assert.match(collapsedRule, /transition:\s*height 250ms ease-out/);
 });
 
 function reset() {

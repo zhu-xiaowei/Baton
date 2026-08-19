@@ -1087,10 +1087,11 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
   flex-shrink: 0;
   height: 32px; min-height: 0;
   overflow: hidden; pointer-events: none;
-  transition: height 250ms ease-out;
+  transition: none;
 }
 .cc-spinner.is-collapsed {
   height: 0; visibility: hidden;
+  transition: height 250ms ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
   .cc-spinner { transition: none; }
