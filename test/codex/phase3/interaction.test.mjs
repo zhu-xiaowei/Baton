@@ -1831,7 +1831,9 @@ test('different Codex threads use independent ephemeral clients', async () => {
   assert.equal(interaction.owns('thread-b'), true);
 });
 
-test('permission observation replays a managed TUI approval without starting a turn', async () => {
+test('permission observation replays a managed TUI approval without starting a turn', async (t) => {
+  clearLiveMessageRegistry();
+  t.after(clearLiveMessageRegistry);
   const client = new FakeClient();
   const request = client.request.bind(client);
   client.request = async (method, params) => {
@@ -1892,6 +1894,8 @@ test('permission observation replays a managed TUI approval without starting a t
   assert.equal(cb.messages.length, 0);
   assert.equal(cb.controls.length, 1);
   assert.equal(cb.controls[0].request.input.command, 'git commit -m test');
+  assert.equal(interaction.owns('thread-observed'), false);
+  assert.equal(liveMessageRoute('codex', 'runtime-turn:turn-external'), null);
 });
 
 test('permission observation ignores unloaded Codex threads', async () => {

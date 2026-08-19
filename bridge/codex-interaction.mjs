@@ -606,6 +606,7 @@ export class CodexInteraction {
           text: '',
           callbacks: options.callbacks || {},
           external: true,
+          observerOnly: true,
         });
         session.active = observed;
         let result;
@@ -1462,10 +1463,12 @@ export class CodexInteraction {
     }
     turn.turnId = turnId;
     this.turns.set(this.#turnKey(turn.session.nativeSessionId, turnId), turn);
-    registerRuntimeOwnedMessage(
-      'codex',
-      codexTurnLiveKey(turnId),
-    );
+    if (!turn.observerOnly) {
+      registerRuntimeOwnedMessage(
+        'codex',
+        codexTurnLiveKey(turnId),
+      );
+    }
     return true;
   }
 
@@ -1916,7 +1919,8 @@ export class CodexInteraction {
   owns(nativeSessionId) {
     const session = this.sessions.get(nativeSessionId);
     return !!session?.client
-      && session.subscribedGeneration === session.client.generation;
+      && session.subscribedGeneration === session.client.generation
+      && !session.active?.observerOnly;
   }
 
   isBusy(nativeSessionId) {
