@@ -280,11 +280,11 @@ body {
   line-height: 21px;
 }
 .tool-detail-chevron {
-  display: inline-block; align-self: center; flex-shrink: 0; color: #8b949e;
+  display: inline-block; align-self: center; position: relative; top: -1px;
+  flex-shrink: 0; color: #8b949e;
   transition: transform 0.2s ease; transform: rotate(90deg);
   transform-origin: 45% 55%;
 }
-.codex-explore .tool-detail-chevron { position: relative; top: -1px; }
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body { display: none; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
