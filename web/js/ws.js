@@ -1106,7 +1106,7 @@ function activeTurnForInterrupt() {
 function markTurnAdjacency(container) {
   if (!container) return;
   if (state.appState.runtime === 'codex') {
-    window.markCodexExploreGroups?.(container);
+    window.normalizeCodexTimeline?.(container);
   }
   window.discardDetachedToolDetails?.();
   var kids = container.children;

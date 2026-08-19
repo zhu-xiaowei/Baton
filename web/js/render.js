@@ -61,6 +61,36 @@
     flushExploreRun();
   };
 
+  window.normalizeCodexTimeline = function (container) {
+    if (!container) return;
+    let previousWait = null;
+    for (const row of Array.from(container.children)) {
+      if (!row.classList?.contains('assistant-turn')) {
+        previousWait = null;
+        continue;
+      }
+      for (const item of Array.from(row.children)) {
+        const processId = item.classList?.contains('codex-terminal-wait')
+          ? String(item.dataset?.codexProcess || '')
+          : '';
+        if (!processId) {
+          previousWait = null;
+          continue;
+        }
+        if (previousWait?.dataset?.codexProcess === processId) {
+          const previousRow = previousWait.parentElement;
+          previousWait.remove();
+          if (previousRow?.classList.contains('assistant-turn')
+            && !previousRow.children.length) {
+            previousRow.remove();
+          }
+        }
+        previousWait = item;
+      }
+    }
+    window.markCodexExploreGroups(container);
+  };
+
   function buildToolMaps(messages) {
     const resultMap = {};
     for (const msg of messages) {

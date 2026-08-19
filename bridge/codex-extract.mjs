@@ -699,6 +699,11 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         const input = payload.type === 'tool_search_call'
           ? (payload.arguments || { execution: payload.execution || '' })
           : mapToolInput(payload.name, payload.arguments);
+        const namespace = String(payload.namespace || '');
+        if (namespace.startsWith('mcp__') && namespace.length > 5) {
+          input.codexMcpServer = namespace.slice(5);
+          input.codexMcpTool = payload.name || '';
+        }
         if (execution && payload.name === 'exec_command') {
           Object.assign(input, commandExecutionMeta(execution));
         }

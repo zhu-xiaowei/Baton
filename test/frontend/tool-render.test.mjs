@@ -745,7 +745,7 @@ test('Codex background waits and completions preserve block order', () => {
 
   document.body.innerHTML = `<div class="messages">${window.renderMessages(messages, 'codex')}</div>`;
   const container = document.querySelector('.messages');
-  window.markCodexExploreGroups(container);
+  window.normalizeCodexTimeline(container);
 
   const timeline = Array.from(container.querySelectorAll('.tl-item')).map((node) => ({
     label: node.querySelector('.tool-name')?.textContent || '',
@@ -762,7 +762,6 @@ test('Codex background waits and completions preserve block order', () => {
     '',
     'Ran',
     'Waited for background terminal',
-    'Waited for background terminal',
   ]);
   assert.match(timeline[2].text, /sleep 75; check fleet/);
   assert.match(timeline[4].text, /date; check versions/);
@@ -770,8 +769,7 @@ test('Codex background waits and completions preserve block order', () => {
   assert.match(timeline[6].text, /git diff --stat/);
   assert.match(timeline[8].text, /sleep 35; check versions/);
   assert.match(timeline[9].text, /sleep 35; check versions/);
-  assert.match(timeline[10].text, /sleep 35; check versions/);
-  assert.equal(container.querySelectorAll('.codex-terminal-wait').length, 3);
+  assert.equal(container.querySelectorAll('.codex-terminal-wait').length, 2);
 });
 
 test('Codex non-empty terminal input remains visible', () => {

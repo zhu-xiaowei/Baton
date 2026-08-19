@@ -222,7 +222,7 @@ test('Codex WS keeps parallel Ran nodes in creation order', () => {
       codexCommand: 'sleep 35; check fleet',
     }),
   ]);
-  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 2);
+  assert.equal(document.querySelectorAll('.codex-terminal-wait').length, 1);
 
   send([result('sleep-end', 'sleep', 'fleet checked', '2026-08-10T03:00:11.000Z', {
     codexBackground: 'complete',

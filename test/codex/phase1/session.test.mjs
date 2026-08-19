@@ -395,7 +395,7 @@ test('Codex extraction emits each completed web search once', () => {
   }
 });
 
-test('MCP completion supplies the Called identity and supersedes the generic wrapper', () => {
+test('MCP namespace supplies identity before completion and supersedes the generic wrapper', () => {
   const { root, target } = tempRollout();
   try {
     const callId = 'call-mcp-js';
@@ -406,6 +406,7 @@ test('MCP completion supplies the Called identity and supersedes the generic wra
         payload: {
           type: 'function_call',
           name: 'js',
+          namespace: 'mcp__node_repl',
           call_id: callId,
           arguments: JSON.stringify({
             code: 'nodeRepl.write("ok")',
@@ -441,6 +442,12 @@ test('MCP completion supplies the Called identity and supersedes the generic wra
         },
       },
     ];
+    fs.writeFileSync(target, `${JSON.stringify(entries[0])}\n`);
+    const started = extractCodexMessages(target, SESSION_ID);
+    const startedUse = started.messages[0].content[0];
+    assert.equal(startedUse.input.codexMcpServer, 'node_repl');
+    assert.equal(startedUse.input.codexMcpTool, 'js');
+
     fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
 
     const extracted = extractCodexMessages(target, SESSION_ID);
