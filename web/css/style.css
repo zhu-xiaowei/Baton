@@ -310,6 +310,11 @@ body {
 .tool-status, .tool-flag { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: #8b949e; }
 .tool-flag { color: #d29922; }
 
+@media (max-width: 600px) {
+  .codex-terminal-wait .tool-header { flex-wrap: wrap; row-gap: 0; }
+  .codex-terminal-wait .tool-desc { flex: 0 0 100%; min-width: 0; }
+}
+
 .tool-body {
   border: 0.8px solid #3d444d; border-radius: 6px; margin: 4px 0 0;
   overflow: hidden;

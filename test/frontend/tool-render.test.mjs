@@ -604,6 +604,10 @@ test('collapsed tool spacing keeps the original title baseline', () => {
     css,
     /\.tool-node\.tool-details-collapsed \{ padding-top: 6px; padding-bottom: 4px; \}/,
   );
+  assert.match(
+    css,
+    /@media \(max-width: 600px\) \{[\s\S]*\.codex-terminal-wait \.tool-desc \{ flex: 0 0 100%; min-width: 0; \}/,
+  );
 });
 
 test('Codex Waited command expands from its truncated header', () => {
