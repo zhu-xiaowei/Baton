@@ -162,6 +162,48 @@ rl.on('line', (line) => {
   }
 });
 
+test('ClaudePool sends the turn UUID as the durable prompt UUID', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-prompt-id-'));
+  const bin = path.join(root, 'fake-claude.mjs');
+  const inputFile = path.join(root, 'input.json');
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.type !== 'user') return;
+  fs.writeFileSync(process.env.INPUT_FILE, JSON.stringify(message));
+  process.stdout.write(JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    session_id: '11111111-1111-4111-8111-111111111111',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success' }) + '\\n');
+});
+`);
+  fs.chmodSync(bin, 0o755);
+
+  const pool = new ClaudePool({
+    bin,
+    env: { INPUT_FILE: inputFile },
+    initTimeout: 2000,
+  });
+  try {
+    const uuid = '12345678-1234-4234-8234-123456789abc';
+    await pool.send('new-session', 'hello', {
+      cwd: root,
+      createId: '11111111-1111-4111-8111-111111111111',
+      streamId: `sent-${uuid}`,
+    });
+    const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+    assert.equal(input.uuid, uuid);
+    assert.equal(input.message.content[0].text, 'hello');
+  } finally {
+    pool.shutdownAll();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('disk fallback keeps custom metadata and hides non-invocable skills', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-fallback-'));
   const home = path.join(root, 'home');

@@ -12,6 +12,7 @@ import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
 
 export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this long
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
@@ -212,7 +213,12 @@ class HeadlessProc {
     this._blockId = -1;
     this._framer.reset();
     this.pool._touch(this);
-    const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } };
+    const uuid = userMessageUuidForTurnId(streamId);
+    const msg = {
+      type: 'user',
+      ...(uuid ? { uuid } : {}),
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    };
     try { this.stdin.write(JSON.stringify(msg) + '\n'); }
     catch (err) { this._onClose(-1, err.message); }
   }

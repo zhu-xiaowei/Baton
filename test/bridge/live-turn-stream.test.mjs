@@ -9,6 +9,7 @@ import {
   prepareAuthoritativeMessage,
   shouldCreateFinalInterrupt,
   STREAM_EVENT_ACTIONS,
+  userMessageUuidForTurnId,
 } from '../../bridge/live-turn-stream.mjs';
 
 function createTurn() {
@@ -53,7 +54,13 @@ test('every shared turn event receives one contiguous seq', () => {
 });
 
 test('a transient user message is realtime-only and keeps end authority canonical', () => {
-  const { turn, sent } = createTurn();
+  const sent = [];
+  const turnId = 'sent-12345678-1234-4234-8234-123456789abc';
+  const turn = new LiveTurnStream({
+    sessionId: 'session-1',
+    turnId,
+    send: (event) => sent.push(event),
+  });
   turn.sendTransientUser('run the command', '2026-08-18T00:00:00.000Z');
   turn.sendAuthoritative({
     uuid: 'assistant-1',
@@ -74,12 +81,24 @@ test('a transient user message is realtime-only and keeps end authority canonica
     'assistant-1',
   ]);
   assert.deepEqual(sent[1].messages[0], {
-    uuid: 'live_user_turn-1',
-    nativeId: 'live:user:turn-1',
+    uuid: '12345678-1234-4234-8234-123456789abc',
+    nativeId: `live:user:${turnId}`,
     type: 'user',
     content: 'run the command',
     timestamp: '2026-08-18T00:00:00.000Z',
   });
+});
+
+test('user prompt identity is derived only from UUID turn ids', () => {
+  assert.equal(
+    userMessageUuidForTurnId('sent-12345678-1234-4234-8234-123456789abc'),
+    '12345678-1234-4234-8234-123456789abc',
+  );
+  assert.equal(
+    userMessageUuidForTurnId('12345678-1234-4234-8234-123456789abc'),
+    '12345678-1234-4234-8234-123456789abc',
+  );
+  assert.equal(userMessageUuidForTurnId('turn-1'), '');
 });
 
 test('an interrupted end closes the block and emits one interrupt before stream_end', () => {

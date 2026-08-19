@@ -44,13 +44,22 @@ function createTransientUserMessage(
   text,
   timestamp = new Date().toISOString(),
 ) {
+  const promptUuid = userMessageUuidForTurnId(turnId);
   return {
-    uuid: `live_user_${turnId}`,
+    uuid: promptUuid || `live_user_${turnId}`,
     nativeId: `live:user:${turnId}`,
     type: 'user',
     content: text,
     timestamp,
   };
+}
+
+export function userMessageUuidForTurnId(turnId) {
+  const candidate = String(turnId || '').replace(/^sent-/, '');
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    .test(candidate)
+    ? candidate
+    : '';
 }
 
 function createInterruptMessage(
