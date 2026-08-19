@@ -1,0 +1,140 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import test from 'node:test';
+import { JSDOM } from 'jsdom';
+import { createServer } from 'vite';
+
+const ROOT = path.resolve(import.meta.dirname, '../..');
+
+test('entering a running session shows the spinner after the skeleton is replaced', async () => {
+  const dom = new JSDOM(
+    '<!doctype html><body>'
+      + '<div class="top-bar"><div class="top-left"></div><div id="top-right"></div></div>'
+      + '<div id="breadcrumb"></div><div id="content"></div>'
+      + '<div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>'
+      + '<button id="scroll-bottom-btn"></button>'
+      + '</body>',
+    { url: 'https://baton.test/index.html', pretendToBeVisual: true },
+  );
+  const window = dom.window;
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    location: window.location,
+    history: window.history,
+    localStorage: window.localStorage,
+    sessionStorage: window.sessionStorage,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+    CSS: window.CSS,
+    getComputedStyle: window.getComputedStyle,
+    requestAnimationFrame: function (callback) { return setTimeout(callback, 0); },
+    cancelAnimationFrame: clearTimeout,
+  });
+  window.requestAnimationFrame = globalThis.requestAnimationFrame;
+  window.cancelAnimationFrame = globalThis.cancelAnimationFrame;
+  window.__homeLoadPromise = new Promise(function () {});
+  window.loadViewerLibs = async function () {};
+
+  var spinnerStates = [];
+  function updateSpinner() {
+    spinnerStates.push({
+      running: state.wsRunning,
+      skeleton: !!document.querySelector('.skeleton-messages'),
+      messages: !!document.querySelector('.messages:not(.skeleton-messages)'),
+    });
+  }
+  function skeletonMessages() {
+    return '<div class="messages skeleton-messages"></div>';
+  }
+  function renderMessages(messages) {
+    return messages.map(function (message) {
+      return '<div class="msg-user">' + message.content + '</div>';
+    }).join('');
+  }
+  async function bufferAndFetch() {
+    state.wsAllMessages.push({
+      uuid: 'user-1',
+      type: 'user',
+      content: 'hello',
+      timestamp: '2026-08-19T00:00:00.000Z',
+    });
+    state.wsMessageCount = 1;
+    return {
+      added: 1,
+      hasMore: false,
+      messages: state.wsAllMessages.slice(),
+      needSync: false,
+      status: 'running',
+      liveLifecycleChanged: false,
+    };
+  }
+
+  Object.assign(globalThis, {
+    bufferAndFetch,
+    clampOverflow: function () {},
+    dismissPermissionPrompt: function () {},
+    loadImages: function () {},
+    renderMessages,
+    resolveSessionRunningAfterFetch: function (result) {
+      return result.status === 'running';
+    },
+    showInputBar: function () {},
+    showStats: function () {},
+    skeletonMessages,
+    startWs: function () {},
+    updateSendBtn: function () {},
+    updateSpinner,
+    updateTitleFromMessages: function () {},
+  });
+  Object.assign(window, {
+    bufferAndFetch,
+    dismissPermissionPrompt: globalThis.dismissPermissionPrompt,
+    renderMessages,
+    resolveSessionRunningAfterFetch: globalThis.resolveSessionRunningAfterFetch,
+    skeletonMessages,
+    startWs: globalThis.startWs,
+    updateSendBtn: globalThis.updateSendBtn,
+    updateSpinner,
+    updateTitleFromMessages: globalThis.updateTitleFromMessages,
+  });
+
+  const vite = await createServer({
+    root: path.join(ROOT, 'web'),
+    logLevel: 'silent',
+    appType: 'custom',
+    server: { middlewareMode: true },
+  });
+
+  var state;
+  try {
+    await vite.ssrLoadModule('/js/app.js');
+    state = (await vite.ssrLoadModule('/js/state.js')).state;
+    state.appState = {
+      device: 'D',
+      project: { hash: 'P', name: 'Project' },
+      session: null,
+      sessionPreview: '',
+      runtime: 'claude',
+    };
+
+    await window.loadMessages('session-1', 'Session');
+
+    assert.equal(state.wsRunning, true);
+    assert.equal(document.querySelector('.skeleton-messages'), null);
+    assert.ok(
+      document.querySelector('.messages:not(.skeleton-messages)'),
+      document.getElementById('content').innerHTML,
+    );
+    assert.deepEqual(spinnerStates.at(-1), {
+      running: true,
+      skeleton: false,
+      messages: true,
+    });
+  } finally {
+    await vite.close();
+    dom.window.close();
+  }
+});

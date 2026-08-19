@@ -1290,6 +1290,7 @@ async function loadMessages(sessionId, preview) {
     if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
     if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
     showInputBar(true);
+    if (typeof updateSpinner === 'function') updateSpinner();
 
     updateTitleFromMessages();
 
