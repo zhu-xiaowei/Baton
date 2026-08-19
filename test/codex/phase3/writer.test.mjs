@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   describeCodexWriter,
+  restoreCodexTerminal,
   terminateCodexWriter,
 } from '../../../bridge/codex-writer.mjs';
 
@@ -56,7 +57,7 @@ test('writer adapter only marks standalone Codex TUI processes as terminable', (
 
 test('writer termination revalidates the expected PID and idle state before SIGTERM', async (t) => {
   const home = codexHome(t);
-  const killed = [];
+  const events = [];
   const describe = () => ({
     pid: 123,
     tty: 'ttys001',
@@ -69,9 +70,13 @@ test('writer termination revalidates the expected PID and idle state before SIGT
     codexHomes: [home],
     describe,
     requireIdle: true,
-    kill: (pid, signal) => killed.push({ pid, signal }),
+    kill: (pid, signal) => events.push({ type: 'kill', pid, signal }),
+    restoreTerminal: (tty) => events.push({ type: 'restore', tty }),
   });
-  assert.deepEqual(killed, [{ pid: 123, signal: 'SIGTERM' }]);
+  assert.deepEqual(events, [
+    { type: 'kill', pid: 123, signal: 'SIGTERM' },
+    { type: 'restore', tty: 'ttys001' },
+  ]);
 
   await assert.rejects(
     terminateCodexWriter('thread-1', 999, { describe, kill: () => {} }),
@@ -86,6 +91,30 @@ test('writer termination revalidates the expected PID and idle state before SIGT
     }),
     (error) => error.code === 'CODEX_ACTIVE_WRITER',
   );
+});
+
+test('Codex terminal restoration writes the normal TUI cleanup sequence to its character device', () => {
+  const writes = [];
+  const restored = restoreCodexTerminal('ttys001', {
+    platform: 'darwin',
+    stat: (devicePath) => {
+      assert.equal(devicePath, '/dev/ttys001');
+      return { isCharacterDevice: () => true };
+    },
+    writeFile: (devicePath, content) => writes.push({ devicePath, content }),
+  });
+
+  assert.equal(restored, true);
+  assert.deepEqual(writes, [{
+    devicePath: '/dev/ttys001',
+    content: '\x1b[<1u\x1b[<u\x1b[>4;0m\x1b[?2004l\x1b[?1004l\x1b[0 q\x1b[?25h',
+  }]);
+  assert.equal(restoreCodexTerminal('../tmp/not-a-tty', {
+    platform: 'darwin',
+    stat: () => {
+      throw new Error('unsafe paths must not be inspected');
+    },
+  }), false);
 });
 
 test('writer revalidation targets the expected PID without repeating a full lock scan', (t) => {

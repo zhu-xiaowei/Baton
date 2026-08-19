@@ -6,6 +6,15 @@ import { findExecutable } from './platform.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 
 const ACTIVE_WRITER_PATTERN = /already has an active writer/i;
+const CODEX_TUI_TERMINAL_RESET = [
+  '\x1b[<1u',
+  '\x1b[<u',
+  '\x1b[>4;0m',
+  '\x1b[?2004l',
+  '\x1b[?1004l',
+  '\x1b[0 q',
+  '\x1b[?25h',
+].join('');
 
 export function isCodexActiveWriterError(error) {
   return ACTIVE_WRITER_PATTERN.test(error?.message || '');
@@ -97,6 +106,20 @@ function safeStandaloneTui(info) {
   if (!info?.command || !info.tty || /^\?+$/.test(info.tty)) return false;
   if (!/(?:^|[\\/])codex(?:[.\s-]|$)/i.test(info.command)) return false;
   return !/\b(?:app-server|remote-control|mcp-server|exec-server)\b/i.test(info.command);
+}
+
+export function restoreCodexTerminal(tty, options = {}) {
+  if ((options.platform || process.platform) === 'win32' || typeof tty !== 'string') return false;
+  const devicePath = path.resolve('/dev', tty);
+  if (!devicePath.startsWith(`/dev${path.sep}`)) return false;
+  try {
+    const stat = (options.stat || fs.statSync)(devicePath);
+    if (!stat.isCharacterDevice()) return false;
+    (options.writeFile || fs.writeFileSync)(devicePath, CODEX_TUI_TERMINAL_RESET);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function standaloneTuiHolder(lockPath) {
@@ -203,6 +226,7 @@ export async function terminateCodexWriter(threadId, expectedPid, options = {}) 
     throw error;
   }
   (options.kill || process.kill)(writer.pid, 'SIGTERM');
+  (options.restoreTerminal || restoreCodexTerminal)(writer.tty);
   return writer;
 }
 
