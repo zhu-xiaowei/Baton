@@ -105,7 +105,6 @@ function reset() {
   state.wsRenderedCount = 0;
   state.wsMessageCount = 0;
   state.wsRunning = true;
-  state.wsOpenStatus = null;
   state.wsLastTimestamp = '';
   state.pendingSentMessages = [];
   state._wsBuffer = null;

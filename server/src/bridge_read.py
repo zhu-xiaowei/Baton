@@ -5,6 +5,7 @@ Usage: app.include_router(read_router) in main.py
 
 from fastapi import APIRouter, HTTPException, Request, Query, Response
 from boto3.dynamodb.conditions import Key
+import asyncio
 import base64
 import binascii
 import json
@@ -369,6 +370,24 @@ def _parse_messages(items):
     return messages
 
 
+def _message_session_status(request, sessions_table, session, device, project):
+    if not device or not project:
+        return ""
+    try:
+        item = sessions_table.get_item(
+            Key={
+                "accountId": _account_id(request),
+                "sk": f"SESS#{device}#{project}#{session}",
+            },
+            ConsistentRead=True,
+        ).get("Item", {})
+    except Exception as error:
+        print(f"message status read error: {error}")
+        return ""
+    status = item.get("status", "")
+    return status if status in ("running", "needs_input", "completed") else ""
+
+
 # Lambda invoke-response hard limit is 6MB (measured on the base64-encoded body
 # the Lambda Web Adapter produces). base64 inflates ~33% and gzip barely helps
 # image-heavy pages, so we cap the *uncompressed* JSON well under that: 4MB of
@@ -411,8 +430,26 @@ async def get_messages(
     before: str = Query(None),
     device: str = Query(None),
     limit: int = Query(None),
+    project: str = Query(None),
 ):
-    _, messages_table = _tables()
+    sessions_table, messages_table = _tables()
+    status_future = None
+    if device and project:
+        status_future = asyncio.get_running_loop().run_in_executor(
+            None,
+            _message_session_status,
+            request,
+            sessions_table,
+            session,
+            device,
+            project,
+        )
+
+    async def with_status(payload):
+        status = await status_future if status_future else ""
+        if status:
+            payload["status"] = status
+        return payload
 
     if after:
         # Forward query: used by WS reconnect recovery
@@ -421,7 +458,11 @@ async def get_messages(
             KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").gt(f"{after}#\xff"),
         )
         messages = _parse_messages(items)
-        return {"messages": messages, "hasMore": False, "needSync": False}
+        return await with_status({
+            "messages": messages,
+            "hasMore": False,
+            "needSync": False,
+        })
 
     page_limit = min(limit, 500) if limit else 100
 
@@ -439,7 +480,12 @@ async def get_messages(
         messages, trimmed = _trim_to_budget(messages)
         oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
         messages.reverse()
-        return {"messages": messages, "hasMore": has_more or trimmed, "oldestTimestamp": oldest_cursor, "needSync": False}
+        return await with_status({
+            "messages": messages,
+            "hasMore": has_more or trimmed,
+            "oldestTimestamp": oldest_cursor,
+            "needSync": False,
+        })
 
     # Default: fetch latest N messages (reverse scan, then flip).
     # ConsistentRead=True closes the eventual-consistency window after a bridge
@@ -470,7 +516,12 @@ async def get_messages(
         except Exception as e:
             print(f"needSync trigger error: {e}")
 
-    return {"messages": messages, "hasMore": has_more, "oldestTimestamp": oldest_cursor, "needSync": need_sync}
+    return await with_status({
+        "messages": messages,
+        "hasMore": has_more,
+        "oldestTimestamp": oldest_cursor,
+        "needSync": need_sync,
+    })
 
 
 def _powershell_literal(value):

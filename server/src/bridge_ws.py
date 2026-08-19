@@ -219,18 +219,6 @@ def _handle_message(event, connection_id, endpoint):
                 endpoint,
                 "reveal_permission",
             )
-    elif action == "reveal_turn_state":
-        if role == "app":
-            session_id = body.get("sessionId", "")
-            if not session_id:
-                return {"statusCode": 400}
-            _persist_subscription(session_id, connection_id, account_id)
-            return _handle_send_to_bridge(
-                body,
-                account_id,
-                endpoint,
-                "reveal_turn_state",
-            )
     elif action == "unsubscribe":
         return _handle_unsubscribe(body, connection_id)
     elif action == "messages":
@@ -242,7 +230,7 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "bridge_recovery_complete":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action in ("permission_request", "permission_resolved", "turn_state"):
+    elif action in ("permission_request", "permission_resolved"):
         if role == "bridge":
             return _handle_bridge_relay(body, connection_id, endpoint)
     elif action == "send_message_result":

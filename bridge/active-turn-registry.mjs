@@ -25,8 +25,4 @@ export class ActiveTurnRegistry {
   get(sessionId, turnId) {
     return this.sessions.get(sessionId)?.get(turnId) || null;
   }
-
-  turnIds(sessionId) {
-    return Array.from(this.sessions.get(sessionId)?.keys() || []);
-  }
 }

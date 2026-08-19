@@ -692,13 +692,13 @@ function openActiveSession(el) {
     isAgent: d.isagent === 'true',
     runtime: sessionRuntime(d.sid, d.runtime)
   };
-  loadMessages(d.sid, d.preview, d.status);
+  loadMessages(d.sid, d.preview);
 }
 
 function openSession(el) {
   state.appState.isAgent = el.dataset.isagent === 'true';
   state.appState.runtime = sessionRuntime(el.dataset.sid, el.dataset.runtime);
-  loadMessages(el.dataset.sid, el.dataset.preview, el.dataset.status);
+  loadMessages(el.dataset.sid, el.dataset.preview);
 }
 
 function shortModel(m) {
@@ -898,7 +898,7 @@ function sessionsHtml(device, projectHash, data, sel) {
       : '<span class="session-secondary-static">' + metadata + '</span>';
     // Nav onclick always baked; in select mode the capture click handler intercepts + toggles.
     var onclick = 'if(window.getSelection().toString())return false;openSession(this);return false;';
-    return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-status="' + esc(s.status || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
+    return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
       + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + statusBadge + '</span></div>'
@@ -1218,7 +1218,7 @@ async function startNewSession(projectHash) {
 }
 
 // ---- Messages ----
-async function loadMessages(sessionId, preview, status) {
+async function loadMessages(sessionId, preview) {
   deactivateList();
   prepareNavigation({
     device: state.appState.device,
@@ -1236,11 +1236,7 @@ async function loadMessages(sessionId, preview, status) {
   state.stickBottom = true; // open a session pinned to the latest message
   // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
-  state.wsRunning = (status === 'running');
-  // Bridge's pane-checked verdict at open time — authoritative for the ambiguous
-  // trailing-user case (see deriveRunning). Used by the initial render here and
-  // the sync_complete re-render; cleared once real-time frames take over.
-  state.wsOpenStatus = status;
+  state.wsRunning = false;
   updateBreadcrumb();
   // Skeleton before any await — loadViewerLibs can take a while and the old page would linger.
   var content = document.getElementById('content');
@@ -1268,6 +1264,12 @@ async function loadMessages(sessionId, preview, status) {
     var result = await bufferAndFetch(sessionId, '');
     if (_navVersion !== myNav) return;
     var latency = Math.round(performance.now() - t0);
+    state.wsRunning = resolveSessionRunningAfterFetch(
+      result,
+      state.wsAllMessages,
+      state.appState.runtime,
+    );
+    updateSendBtn();
 
     if (state.wsAllMessages.length === 0) {
       if (result.needSync) {
@@ -1290,11 +1292,6 @@ async function loadMessages(sessionId, preview, status) {
     showInputBar(true);
 
     updateTitleFromMessages();
-
-    // Derive running from the tail. The list `status` is the bridge's
-    // pane-checked verdict — authoritative for the ambiguous trailing-user case
-    state.wsRunning = deriveRunning(state.wsAllMessages, status, state.appState.runtime);
-    updateSendBtn();
 
     // Clamp before scrolling: clamp shrinks long messages, so scrolling first
     // would leave the viewport above the bottom. rAF re-scroll absorbs any

@@ -549,14 +549,6 @@ async function handleMessage(msg) {
     case 'reveal_permission':
       await handleRevealPermission(msg.sessionId);
       break;
-    case 'reveal_turn_state':
-      wsSend({
-        action: 'turn_state',
-        sessionId: msg.sessionId,
-        requestId: msg.requestId,
-        activeTurnIds: _activeTurns.turnIds(msg.sessionId),
-      });
-      break;
     case 'create_project':
       await handleCreateProject(msg.projectPath, msg.asAgent);
       break;
@@ -841,7 +833,7 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const liveTurn = new LiveTurnStream({
     sessionId,
     turnId,
-    send: wsSend,
+    send: wsSendWhenConnected,
   });
   _activeTurns.register(sessionId, turnId, liveTurn);
   const ownsUserPrompt = (options.runtime || 'claude') === 'claude'

@@ -31,7 +31,6 @@ export const state = {
   wsRequestId: null,          // unique ID per new-session creation flow
   wsRunning: false,           // active session still running (derived via deriveRunning)
   stickBottom: true,          // auto-scroll intent: true = follow new content; user up-scroll clears it, reaching bottom / tapping the button restores it
-  wsOpenStatus: null,         // bridge's pane-checked status at session open; authoritative for ambiguous trailing-user case, cleared once live frames arrive
   _titleTier: 0,              // 4=customTitle 3=ai-title 2=lastPrompt 1=firstUser; never downgrade
   wsRenderedCount: 0,
   wsHasMore: false,           // more older messages on server

@@ -18,9 +18,13 @@ var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
 var _reconnectingTurns = new Set();
 var _connectionRecovery = null;
-var _connectionRecoverySeq = 0;
-var _turnStateRecovery = null;
 var _wsReconnectTimer = null;
+var _bottomPinScheduled = false;
+var _controlEventTimers = new Map();
+var _handledControlEvents = new Set();
+var _controlRequestState = new Map();
+var CONTROL_EVENT_FALLBACK_MS = 120;
+var _appliedLifecycleVersion = 0;
 
 if (window.visualViewport && _isMobile) {
   var _wasKbUp = false;
@@ -201,7 +205,6 @@ function beginSessionConnectionRecovery() {
     if (_streamCoordinator.getTurn(pending.id)?.endReceived) continue;
     if (!turnIds.includes(pending.id)) turnIds.push(pending.id);
   }
-  _turnStateRecovery = null;
   _reconnectingTurns.clear();
   for (var turnId of turnIds) {
     _turnEventQueue.restartTurn(turnId);
@@ -209,14 +212,11 @@ function beginSessionConnectionRecovery() {
     _reconnectingTurns.add(turnId);
   }
   _connectionRecovery = {
-    id: ++_connectionRecoverySeq,
     sessionId: state.wsSessionId,
     turnIds: turnIds,
     events: [],
     started: false,
-    restDone: false,
-    stateDone: turnIds.length === 0,
-    activeTurnIds: new Set(),
+    sessionStatus: '',
   };
   return _connectionRecovery;
 }
@@ -228,21 +228,17 @@ function startSessionConnectionRecovery(recovery) {
     return false;
   }
   recovery.started = true;
-  recoverMissing().then(function () {
+  recoverMissing().then(function (result) {
     if (recovery !== _connectionRecovery) return;
-    recovery.restDone = true;
+    recovery.sessionStatus = result?.status || '';
     finishSessionConnectionRecovery(recovery);
   });
-  if (recovery.turnIds.length) {
-    requestTurnStateRecovery(recovery.turnIds, recovery.id);
-  }
   return true;
 }
 
-function settleInactiveRecoveredTurns(turnIds, activeTurnIds) {
+function settleRecoveredTurns(turnIds) {
   var settled = 0;
   for (var turnId of turnIds || []) {
-    if (activeTurnIds.has(turnId)) continue;
     if (_streamCoordinator.settleTurn(turnId)) settled++;
     _turnEventQueue.closeTurn(turnId);
     _checkpointResumedTurns.delete(turnId);
@@ -253,25 +249,22 @@ function settleInactiveRecoveredTurns(turnIds, activeTurnIds) {
 
 function finishSessionConnectionRecovery(recovery) {
   if (!recovery || recovery !== _connectionRecovery
-    || !recovery.restDone
     || recovery.sessionId !== state.wsSessionId) {
     return false;
   }
-  var activeLocalTurns = recovery.turnIds.slice();
-  if (recovery.stateDone) {
-    settleInactiveRecoveredTurns(recovery.turnIds, recovery.activeTurnIds);
-    activeLocalTurns = recovery.turnIds.filter(function (turnId) {
-      return recovery.activeTurnIds.has(turnId);
-    });
-  }
-  _streamCoordinator.prepareTurnsForReconnect(activeLocalTurns);
+  _streamCoordinator.prepareTurnsForReconnect(recovery.turnIds);
   drainStrictStreamOperations();
 
   var bufferedEvents = recovery.events.slice();
   _connectionRecovery = null;
-  if (recovery.stateDone) _turnStateRecovery = null;
   for (var event of bufferedEvents) routeTurnEvent(event);
-  state.wsRunning = hasOutstandingTurns();
+  if (recovery.sessionStatus === 'completed') {
+    settleRecoveredTurns(recovery.turnIds);
+    drainStrictStreamOperations();
+  }
+  state.wsRunning = recovery.sessionStatus === 'needs_input'
+    ? false
+    : hasOutstandingTurns();
   updateSendBtn();
   return true;
 }
@@ -285,6 +278,82 @@ function resumeSessionForeground() {
 
 function handleWsMessage(msg) {
     routeTurnEvent(msg);
+}
+
+function strictEventKey(message) {
+  return message?.turnId && Number.isInteger(message.seq)
+    ? message.turnId + ':' + message.seq
+    : '';
+}
+
+function isControlEvent(message) {
+  return message?.action === 'permission_request'
+    || message?.action === 'permission_resolved';
+}
+
+function dispatchControlEvent(message) {
+  var eventKey = strictEventKey(message);
+  if (eventKey && _handledControlEvents.has(eventKey)) return false;
+  if (eventKey) {
+    _handledControlEvents.add(eventKey);
+    var timer = _controlEventTimers.get(eventKey);
+    if (timer) clearTimeout(timer);
+    _controlEventTimers.delete(eventKey);
+  }
+
+  var requestId = message.requestId || '';
+  var requestState = requestId
+    ? (_controlRequestState.get(requestId) || {
+      requestSeq: -1,
+      resolvedSeq: -1,
+    })
+    : null;
+  var seq = Number.isInteger(message.seq) ? message.seq : Number.MAX_SAFE_INTEGER;
+
+  if (message.action === 'permission_request') {
+    if (requestState) {
+      requestState.requestSeq = Math.max(requestState.requestSeq, seq);
+      _controlRequestState.set(requestId, requestState);
+      if (requestState.resolvedSeq >= seq) return true;
+    }
+    if (message.sessionId === state.wsSessionId) {
+      state.wsRunning = false;
+      _appliedLifecycleVersion++;
+      updateSendBtn();
+      if (typeof showPermissionPrompt === 'function') {
+        showPermissionPrompt(message);
+      }
+    }
+    return true;
+  }
+
+  if (requestState) {
+    requestState.resolvedSeq = Math.max(requestState.resolvedSeq, seq);
+    _controlRequestState.set(requestId, requestState);
+  }
+  if (message.sessionId === state.wsSessionId) {
+    if (typeof resolvePermissionPrompt === 'function') {
+      resolvePermissionPrompt(requestId);
+    }
+    state.wsRunning = hasOutstandingTurns();
+    _appliedLifecycleVersion++;
+    updateSendBtn();
+  }
+  return true;
+}
+
+function scheduleControlEventFallback(message) {
+  var eventKey = strictEventKey(message);
+  if (!eventKey || _handledControlEvents.has(eventKey)
+    || _controlEventTimers.has(eventKey)) {
+    return;
+  }
+  var timer = setTimeout(function () {
+    _controlEventTimers.delete(eventKey);
+    if (message.sessionId === state.wsSessionId) dispatchControlEvent(message);
+  }, CONTROL_EVENT_FALLBACK_MS);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  _controlEventTimers.set(eventKey, timer);
 }
 
 function routeTurnEvent(message) {
@@ -307,6 +376,10 @@ function routeTurnEvent(message) {
     completeLateJoinTurn(message.turnId);
   } else if (_turnEventQueue.isResumeCandidate(message.turnId)) {
     resumeLateJoinAtCheckpoint(message.turnId);
+  }
+  if (isControlEvent(message)
+    && !_handledControlEvents.has(strictEventKey(message))) {
+    scheduleControlEventFallback(message);
   }
 }
 
@@ -362,15 +435,9 @@ function dispatchWsMessage(msg) {
       }
       updateLastTurn();
       showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
-    } else if (msg.action === 'permission_request') {
-      if (msg.sessionId === state.wsSessionId) showPermissionPrompt(msg);
-    } else if (msg.action === 'permission_resolved') {
-      if (msg.sessionId === state.wsSessionId
-        && typeof resolvePermissionPrompt === 'function') {
-        resolvePermissionPrompt(msg.requestId);
-      }
-    } else if (msg.action === 'turn_state') {
-      handleTurnStateRecovery(msg);
+    } else if (msg.action === 'permission_request'
+      || msg.action === 'permission_resolved') {
+      dispatchControlEvent(msg);
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -531,11 +598,27 @@ function getStrictStreamRenderer() {
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }
-      var content = document.getElementById('content');
-      if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
+      pinContentToBottom();
     },
   });
   return _strictStreamRenderer;
+}
+
+function pinContentToBottom(force) {
+  var content = document.getElementById('content');
+  if (!content) return false;
+  if (force) state.stickBottom = true;
+  if (!state.stickBottom) return false;
+  content.scrollTop = content.scrollHeight;
+  if (!_bottomPinScheduled && typeof requestAnimationFrame === 'function') {
+    _bottomPinScheduled = true;
+    requestAnimationFrame(function () {
+      _bottomPinScheduled = false;
+      if (!state.stickBottom || content !== document.getElementById('content')) return;
+      content.scrollTop = content.scrollHeight;
+    });
+  }
+  return true;
 }
 
 window.rebindStrictStreamDom = function () {
@@ -601,6 +684,7 @@ function handleStrictTurnStart(message) {
   _streamCoordinator.startTurn(message);
   drainStrictStreamOperations();
   state.wsRunning = true;
+  _appliedLifecycleVersion++;
   updateSendBtn();
 }
 
@@ -641,6 +725,7 @@ function handleStrictTurnEnd(message) {
   _checkpointResumedTurns.delete(message.turnId);
   _reconnectingTurns.delete(message.turnId);
   state.wsRunning = hasOutstandingTurns();
+  _appliedLifecycleVersion++;
   updateSendBtn();
 }
 
@@ -772,7 +857,12 @@ function resetStreamSessionState() {
   _checkpointResumedTurns.clear();
   _reconnectingTurns.clear();
   _connectionRecovery = null;
-  _turnStateRecovery = null;
+  for (var timer of _controlEventTimers.values()) clearTimeout(timer);
+  _controlEventTimers.clear();
+  _handledControlEvents.clear();
+  _controlRequestState.clear();
+  _bottomPinScheduled = false;
+  _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _lastStreamEndAt = 0;
 }
@@ -795,55 +885,6 @@ function subscribeSession(sessionId) {
     sessionId: sessionId,
     device: state.appState.device || '',
   });
-}
-
-function requestTurnStateRecovery(turnIds, recoveryId) {
-  turnIds = Array.isArray(turnIds)
-    ? turnIds.slice()
-    : _streamCoordinator.activeTurnIds();
-  if (!state.wsSessionId || !turnIds.length) return '';
-  var requestId = crypto.randomUUID
-    ? crypto.randomUUID()
-    : 'turn-state-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  _turnStateRecovery = {
-    requestId: requestId,
-    sessionId: state.wsSessionId,
-    turnIds: turnIds,
-    recoveryId: recoveryId || null,
-  };
-  wsSend({
-    action: 'reveal_turn_state',
-    sessionId: state.wsSessionId,
-    requestId: requestId,
-    device: state.appState.device || '',
-  });
-  return requestId;
-}
-
-function handleTurnStateRecovery(message) {
-  var recovery = _turnStateRecovery;
-  if (!recovery
-    || message?.requestId !== recovery.requestId
-    || message.sessionId !== recovery.sessionId
-    || state.wsSessionId !== recovery.sessionId) {
-    return false;
-  }
-  _turnStateRecovery = null;
-  var active = new Set(Array.isArray(message.activeTurnIds)
-    ? message.activeTurnIds
-    : []);
-  var connectionRecovery = _connectionRecovery;
-  if (connectionRecovery
-    && connectionRecovery.id === recovery.recoveryId
-    && connectionRecovery.sessionId === recovery.sessionId) {
-    connectionRecovery.activeTurnIds = active;
-    connectionRecovery.stateDone = true;
-    return finishSessionConnectionRecovery(connectionRecovery);
-  }
-  settleInactiveRecoveredTurns(recovery.turnIds, active);
-  state.wsRunning = hasOutstandingTurns();
-  updateSendBtn();
-  return true;
 }
 
 // The first send creates a native session while its stream is already active.
@@ -971,8 +1012,7 @@ function insertAssistantItemForTurn(container, html, turnId) {
   if (!turn) return;
   turn.insertAdjacentHTML('beforeend', html);
   markTurnAdjacency(container);
-  var content = document.getElementById('content');
-  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
+  pinContentToBottom();
 }
 
 function compareMessageOrder(left, right) {
@@ -1120,8 +1160,6 @@ function updateLastTurn(explicitMessages) {
   state.wsRenderedCount = state.wsAllMessages.length;
   if (!newMessages.length) return;
 
-  var el = document.getElementById('content');
-
   if (newMessages.length > 1) {
     newMessages.sort(compareMessageOrder);
   }
@@ -1260,9 +1298,6 @@ function updateLastTurn(explicitMessages) {
   var hasTurnFrame = newMessages.some(function (m) {
     return m.type === 'assistant' || m.type === 'user';
   });
-  // A real turn frame supersedes the open-time snapshot — from here the live
-  // stream is authoritative (per the "initial load only" trust decision).
-  if (hasTurnFrame) state.wsOpenStatus = null;
   // A fresh stream_end means the turn is over; don't let stop=null trailing rows re-light the spinner.
   var streamEndFresh = _lastStreamEndAt && (Date.now() - _lastStreamEndAt < 4000);
   if (hasOutstandingTurns()) state.wsRunning = true;
@@ -1287,9 +1322,7 @@ function updateLastTurn(explicitMessages) {
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (window.renderKatexBlocks) renderKatexBlocks(container);
-  if (state.stickBottom) {
-    el.scrollTop = el.scrollHeight;
-  }
+  pinContentToBottom();
   showStats(state.wsMessageCount + ' messages (live)');
 }
 
@@ -1321,11 +1354,15 @@ function trackMessageUuid(message) {
  * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
  */
 async function bufferAndFetch(sessionId, after) {
+  var lifecycleVersion = _appliedLifecycleVersion;
   state._wsBuffer = [];
   try {
     var params = { session: sessionId };
     if (after) params.after = after;
     if (state.appState.device) params.device = state.appState.device;
+    if (state.appState.project?.hash) {
+      params.project = state.appState.project.hash;
+    }
     var data = await api('/api/bridge/messages', params);
     // User navigated to another session while this was in flight — drop the stale response.
     if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
@@ -1351,8 +1388,22 @@ async function bufferAndFetch(sessionId, after) {
       state.wsHasMore = data.hasMore;
       state.wsOldestTimestamp = data.oldestTimestamp || '';
     }
-    return { added: added, messages: addedMessages, needSync: data.needSync };
+    return {
+      added: added,
+      messages: addedMessages,
+      needSync: data.needSync,
+      status: data.status || '',
+      liveLifecycleChanged: _appliedLifecycleVersion !== lifecycleVersion,
+    };
   } catch (e) { state._wsBuffer = null; throw e; }
+}
+
+function resolveSessionRunningAfterFetch(result, messages, runtime) {
+  // A lifecycle event applied while REST was in flight is causally newer than
+  // the REST snapshot. Preserve the state established by start/end/permission.
+  if (result?.liveLifecycleChanged) return state.wsRunning;
+  if (result?.status) return result.status === 'running';
+  return deriveRunning(messages, '', runtime);
 }
 
 /**
@@ -1700,7 +1751,7 @@ function doSend(fullText, displayText, images) {
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
     state.stickBottom = true; // sending a message = follow the incoming reply
-    document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
+    pinContentToBottom();
   }
   scheduleSendTimeout(msgId);
 }
@@ -2000,10 +2051,12 @@ Object.assign(window, {
   connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
   resumeSessionForeground,
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
+  resolveSessionRunningAfterFetch,
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   extractMsgText, tryDedup, retryPendingSend,
+  pinContentToBottom,
 });
 
 // Test-only hook for replaying the real WS dispatcher.
@@ -2012,11 +2065,9 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     handleWsMessage: handleWsMessage,
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
-    requestTurnStateRecovery: requestTurnStateRecovery,
-    handleTurnStateRecovery: handleTurnStateRecovery,
     beginSessionConnectionRecovery: beginSessionConnectionRecovery,
     startSessionConnectionRecovery: startSessionConnectionRecovery,
-    finishSessionConnectionRecovery: finishSessionConnectionRecovery,
     updateLastTurn: updateLastTurn,
+    pinContentToBottom: pinContentToBottom,
   };
 }

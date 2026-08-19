@@ -155,6 +155,55 @@ test('resolved events only dismiss the matching permission prompt', () => {
   assert.equal(document.getElementById('msg-input').disabled, false);
 });
 
+test('permission waits for the message container before becoming active', async () => {
+  reset();
+  document.getElementById('content').innerHTML =
+    '<div class="skeleton-messages"></div>';
+
+  window.showPermissionPrompt({
+    sessionId: 'codex:thread-1',
+    requestId: 'deferred-approval',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: { command: 'pwd' },
+  });
+
+  assert.equal(window.hasActivePermissionPrompt(), false);
+  assert.equal(document.getElementById('permission-prompt'), null);
+  assert.equal(document.getElementById('msg-input').disabled, false);
+
+  document.getElementById('content').innerHTML = '<div class="messages"></div>';
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(window.hasActivePermissionPrompt(), true);
+  assert.ok(document.getElementById('permission-prompt'));
+  assert.equal(document.getElementById('msg-input').disabled, true);
+});
+
+test('a deferred permission resolved during loading never appears later', async () => {
+  reset();
+  document.getElementById('content').innerHTML =
+    '<div class="skeleton-messages"></div>';
+
+  window.showPermissionPrompt({
+    sessionId: 'codex:thread-1',
+    requestId: 'resolved-before-render',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: { command: 'pwd' },
+  });
+  assert.equal(
+    window.resolvePermissionPrompt('resolved-before-render'),
+    true,
+  );
+
+  document.getElementById('content').innerHTML = '<div class="messages"></div>';
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(window.hasActivePermissionPrompt(), false);
+  assert.equal(document.getElementById('permission-prompt'), null);
+});
+
 test('Claude tool approvals keep the legacy Yes and No decisions', () => {
   reset();
   const content = document.getElementById('content');

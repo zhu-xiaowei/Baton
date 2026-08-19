@@ -61,7 +61,7 @@ async function startIncompleteTurn(h, sessionId, turnId) {
   await h.tick(20);
 }
 
-test('foreground recovery settles only turns that Bridge no longer owns', async () => {
+test('foreground recovery settles completed turns from message status', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-complete';
   const turnId = 'turn-complete';
@@ -69,10 +69,9 @@ test('foreground recovery settles only turns that Bridge no longer owns', async 
   await startIncompleteTurn(h, sessionId, turnId);
   assert.equal(h.state.wsRunning, true);
 
-  const sent = [];
   h.state.ws = {
     readyState: WebSocket.OPEN,
-    send(payload) { sent.push(JSON.parse(payload)); },
+    send() {},
   };
   h.setApiResponse({
     messages: [{
@@ -84,18 +83,11 @@ test('foreground recovery settles only turns that Bridge no longer owns', async 
       stopReason: 'end_turn',
     }],
     hasMore: false,
+    status: 'completed',
   });
 
   const completedRecovery = h.hooks.beginSessionConnectionRecovery();
   h.hooks.startSessionConnectionRecovery(completedRecovery);
-  const requestId = sent.at(-1).requestId;
-  assert.equal(sent.at(-1).action, 'reveal_turn_state');
-  h.hooks.handleWsMessage({
-    action: 'turn_state',
-    sessionId,
-    requestId,
-    activeTurnIds: [],
-  });
   await h.tick(40);
 
   assert.equal(h.state.wsRunning, false);
@@ -108,16 +100,9 @@ test('foreground recovery settles only turns that Bridge no longer owns', async 
 
   const runningTurnId = 'turn-running';
   await startIncompleteTurn(h, sessionId, runningTurnId);
-  h.setApiResponse({ messages: [], hasMore: false });
+  h.setApiResponse({ messages: [], hasMore: false, status: 'running' });
   const runningRecovery = h.hooks.beginSessionConnectionRecovery();
   h.hooks.startSessionConnectionRecovery(runningRecovery);
-  const runningRequestId = sent.at(-1).requestId;
-  h.hooks.handleWsMessage({
-    action: 'turn_state',
-    sessionId,
-    requestId: runningRequestId,
-    activeTurnIds: [runningTurnId],
-  });
   await h.tick(20);
 
   assert.equal(h.state.wsRunning, true);
@@ -127,4 +112,16 @@ test('foreground recovery settles only turns that Bridge no longer owns', async 
     true,
   );
   assert.equal(h.state.wsRunning, true);
+
+  h.setApiResponse({ messages: [], hasMore: false, status: 'needs_input' });
+  const inputRecovery = h.hooks.beginSessionConnectionRecovery();
+  h.hooks.startSessionConnectionRecovery(inputRecovery);
+  await h.tick(20);
+
+  assert.equal(h.state.wsRunning, false);
+  assert.equal(
+    h.document.querySelector(`[data-turn-id="${runningTurnId}"]`)
+      ?.classList.contains('stream-preview'),
+    true,
+  );
 });

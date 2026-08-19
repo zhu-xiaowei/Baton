@@ -9,6 +9,8 @@ var _req = null;
 var _askQuestions = null;
 var _askIndex = 0;
 var _askAnswers = [];
+var _deferredPrompt = null;
+var _promptObserver = null;
 
 var codexPermission = createCodexPermissionController({
   renderPrompt: renderPrompt,
@@ -32,7 +34,43 @@ function resetClaudeState() {
   _askAnswers = [];
 }
 
+function stopPromptObserver() {
+  if (_promptObserver) _promptObserver.disconnect();
+  _promptObserver = null;
+}
+
+function revealDeferredPrompt() {
+  if (!_deferredPrompt) return false;
+  if (_deferredPrompt.sessionId && state.wsSessionId
+    && _deferredPrompt.sessionId !== state.wsSessionId) {
+    _deferredPrompt = null;
+    stopPromptObserver();
+    return false;
+  }
+  if (!document.querySelector('.messages')) return false;
+  var message = _deferredPrompt;
+  _deferredPrompt = null;
+  stopPromptObserver();
+  showPermissionPrompt(message);
+  return true;
+}
+
+function deferPermissionPrompt(msg) {
+  _deferredPrompt = msg;
+  if (_promptObserver || typeof window.MutationObserver !== 'function') return;
+  var content = document.getElementById('content');
+  if (!content) return;
+  _promptObserver = new window.MutationObserver(revealDeferredPrompt);
+  _promptObserver.observe(content, { childList: true, subtree: true });
+}
+
 function showPermissionPrompt(msg) {
+  if (!document.querySelector('.messages')) {
+    deferPermissionPrompt(msg);
+    return false;
+  }
+  _deferredPrompt = null;
+  stopPromptObserver();
   _req = {
     requestId: msg.requestId,
     kind: msg.kind || 'tool',
@@ -42,14 +80,14 @@ function showPermissionPrompt(msg) {
 
   if (isCodexPermissionRequest(msg)) {
     codexPermission.show(msg);
-    return;
+    return true;
   }
   if (msg.kind === 'ask') {
     _askQuestions = (msg.questions && msg.questions.length)
       ? msg.questions
       : [msg.input || {}];
     renderAskStep();
-    return;
+    return true;
   }
   if (msg.kind === 'plan') {
     renderPrompt({
@@ -65,7 +103,7 @@ function showPermissionPrompt(msg) {
         },
       ],
     });
-    return;
+    return true;
   }
   var summary = buildToolSummary(msg.toolName, msg.input || {});
   renderPrompt({
@@ -76,6 +114,7 @@ function showPermissionPrompt(msg) {
       { label: 'No', act: 'deny', key: '2' },
     ],
   });
+  return true;
 }
 
 function renderPrompt(prompt) {
@@ -136,7 +175,12 @@ function renderPrompt(prompt) {
   var content = document.getElementById('content');
   var promptEl = document.getElementById('permission-prompt');
   function pinPromptToBottom() {
-    if (promptEl && promptEl.isConnected) content.scrollTop = content.scrollHeight;
+    if (!promptEl || !promptEl.isConnected) return;
+    if (typeof window.pinContentToBottom === 'function') {
+      window.pinContentToBottom(true);
+    } else {
+      content.scrollTop = content.scrollHeight;
+    }
   }
   pinPromptToBottom();
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pinPromptToBottom);
@@ -248,6 +292,8 @@ function cancelPermissionPrompt() {
 
 function dismissPermissionPrompt() {
   _req = null;
+  _deferredPrompt = null;
+  stopPromptObserver();
   resetClaudeState();
   codexPermission.reset();
   var prompt = document.getElementById('permission-prompt');
@@ -265,6 +311,12 @@ function dismissPermissionPrompt() {
 }
 
 function resolvePermissionPrompt(requestId) {
+  if (_deferredPrompt
+    && (!requestId || _deferredPrompt.requestId === requestId)) {
+    _deferredPrompt = null;
+    stopPromptObserver();
+    return true;
+  }
   if (!_req || (requestId && _req.requestId !== requestId)) return false;
   dismissPermissionPrompt();
   return true;
@@ -308,4 +360,5 @@ Object.assign(window, {
   dismissPermissionPrompt: dismissPermissionPrompt,
   resolvePermissionPrompt: resolvePermissionPrompt,
   hasActivePermissionPrompt: hasActivePermissionPrompt,
+  revealDeferredPermissionPrompt: revealDeferredPrompt,
 });

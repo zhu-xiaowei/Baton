@@ -7,7 +7,7 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('stream end closes a reconnected turn without waiting for turn state', async () => {
+test('stream end closes a reconnected turn before REST recovery finishes', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-end';
   const turnId = 'turn-foreground-end';

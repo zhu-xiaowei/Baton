@@ -34,18 +34,15 @@ test('reconnect preserves a partial block until authority replaces it in place',
     `[data-turn-id="${turnId}"] [data-block-id="2"]`,
   );
   assert.ok(partialBlock);
-  const sent = [];
   h.state.ws = {
     readyState: WebSocket.OPEN,
-    send(payload) { sent.push(JSON.parse(payload)); },
+    send() {},
   };
   let resolveRest;
   h.setApiHandler(() => new Promise((resolve) => { resolveRest = resolve; }));
   const recovery = h.hooks.beginSessionConnectionRecovery();
   assert.ok(recovery);
   assert.equal(h.hooks.startSessionConnectionRecovery(recovery), true);
-  const turnStateRequest = sent.find((message) =>
-    message.action === 'reveal_turn_state');
 
   h.hooks.handleWsMessage(event(sessionId, turnId, 4, 'stream_delta', {
     chunk: ' lost continuation',
@@ -90,12 +87,6 @@ test('reconnect preserves a partial block until authority replaces it in place',
       timestamp: '2026-08-18T13:58:45.000Z',
     }],
   }));
-  h.hooks.handleTurnStateRecovery({
-    action: 'turn_state',
-    sessionId,
-    requestId: turnStateRequest.requestId,
-    activeTurnIds: [turnId],
-  });
   await h.tick(20);
 
   // REST is still pending: keep the old DOM and do not release new WS events.
@@ -114,6 +105,7 @@ test('reconnect preserves a partial block until authority replaces it in place',
       timestamp: '2026-08-18T13:58:44.000Z',
     }],
     hasMore: false,
+    status: 'completed',
   });
   await h.tick(50);
 

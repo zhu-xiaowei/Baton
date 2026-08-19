@@ -7,7 +7,7 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('REST releases reconnect events before turn state and late state still settles the turn', async () => {
+test('REST status releases reconnect events and settles the turn', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-rest-first';
   const turnId = 'turn-foreground-rest-first';
@@ -29,10 +29,9 @@ test('REST releases reconnect events before turn state and late state still sett
   ]) h.hooks.handleWsMessage(item);
   await h.tick(20);
 
-  const sent = [];
   h.state.ws = {
     readyState: WebSocket.OPEN,
-    send(payload) { sent.push(JSON.parse(payload)); },
+    send() {},
   };
   let resolveRest;
   h.setApiHandler(() => new Promise((resolve) => { resolveRest = resolve; }));
@@ -63,27 +62,13 @@ test('REST releases reconnect events before turn state and late state still sett
     false,
   );
 
-  const request = sent.find((message) =>
-    message.action === 'reveal_turn_state');
-  resolveRest({ messages: [], hasMore: false });
+  resolveRest({ messages: [], hasMore: false, status: 'completed' });
   await h.tick(40);
 
-  // Turn state has not returned, but REST completion must release live events.
+  // The REST snapshot and status release live events and settle the turn.
   var text = h.document.querySelector('.messages').textContent;
   assert.equal(text.includes('partial draft'), false);
   assert.equal((text.match(/complete history/g) || []).length, 1);
-  assert.match(text, /new block after reconnect/);
-  assert.equal(h.state.wsRunning, true);
-
-  h.hooks.handleTurnStateRecovery({
-    action: 'turn_state',
-    sessionId,
-    requestId: request.requestId,
-    activeTurnIds: [],
-  });
-  await h.tick(30);
-
-  text = h.document.querySelector('.messages').textContent;
-  assert.equal((text.match(/complete history/g) || []).length, 1);
+  assert.equal(text.includes('new block after reconnect'), false);
   assert.equal(h.state.wsRunning, false);
 });

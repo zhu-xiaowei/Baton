@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -332,6 +333,44 @@ def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):
     assert first["oldestTimestamp"] == f"{timestamp}#b"
     assert [item["uuid"] for item in first["messages"]] == ["b", "c"]
     assert [item["uuid"] for item in second["messages"]] == ["a"]
+
+
+def test_messages_include_strong_session_status(monkeypatch):
+    status_started = threading.Event()
+
+    class StatusTable(FakeTable):
+        def get_item(self, Key, ConsistentRead=False, **kwargs):
+            assert ConsistentRead is True
+            status_started.set()
+            return super().get_item(Key, **kwargs)
+
+    class ConcurrentMessageTable(FakeMessageTable):
+        def query(self, **kwargs):
+            assert status_started.wait(1)
+            return super().query(**kwargs)
+
+    sessions = StatusTable()
+    sessions.items.append({
+        "accountId": bridge_read._account_id(FakeRequest()),
+        "sk": "SESS#MacBook-Pro#-workspace#session",
+        "status": "needs_input",
+    })
+    messages = ConcurrentMessageTable([])
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (sessions, messages))
+
+    result = asyncio.run(
+        bridge_read.get_messages(
+            FakeRequest(),
+            "session",
+            after="2026-08-19T00:00:00.000Z",
+            before=None,
+            device="MacBook-Pro",
+            limit=None,
+            project="-workspace",
+        )
+    )
+
+    assert result["status"] == "needs_input"
 
 
 def test_windows_installer_runs_without_an_interactive_logon():
@@ -893,60 +932,6 @@ def test_reveal_permission_subscribes_before_forwarding_to_bridge(monkeypatch):
             "account-1",
             "https://example.test/v1",
             "reveal_permission",
-        ),
-    ]
-
-
-def test_reveal_turn_state_subscribes_before_forwarding_to_bridge(monkeypatch):
-    class ConnectionTable:
-        def get_item(self, Key):
-            return {
-                "Item": {
-                    "connectionId": Key["connectionId"],
-                    "role": "app",
-                    "accountId": "account-1",
-                },
-            }
-
-    calls = []
-    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
-    monkeypatch.setattr(
-        bridge_ws,
-        "_persist_subscription",
-        lambda session_id, connection_id, account_id: calls.append(
-            ("subscribe", session_id, connection_id, account_id)
-        ),
-    )
-    monkeypatch.setattr(
-        bridge_ws,
-        "_handle_send_to_bridge",
-        lambda body, account_id, endpoint, action: (
-            calls.append(("forward", body, account_id, endpoint, action))
-            or {"statusCode": 200}
-        ),
-    )
-    body = {
-        "action": "reveal_turn_state",
-        "sessionId": "codex:thread-1",
-        "requestId": "state-1",
-        "device": "test-ec2-ap",
-    }
-
-    response = bridge_ws._handle_message(
-        {"body": json.dumps(body)},
-        "app-1",
-        "https://example.test/v1",
-    )
-
-    assert response == {"statusCode": 200}
-    assert calls == [
-        ("subscribe", "codex:thread-1", "app-1", "account-1"),
-        (
-            "forward",
-            body,
-            "account-1",
-            "https://example.test/v1",
-            "reveal_turn_state",
         ),
     ]
 
