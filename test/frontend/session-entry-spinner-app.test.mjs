@@ -39,6 +39,7 @@ test('session entry replaces the skeleton with a stable message container', asyn
   window.loadViewerLibs = async function () {};
 
   var spinnerStates = [];
+  var forcedPins = [];
   function updateSpinner() {
     spinnerStates.push({
       running: state.wsRunning,
@@ -78,6 +79,7 @@ test('session entry replaces the skeleton with a stable message container', asyn
     clampOverflow: function () {},
     dismissPermissionPrompt: function () {},
     loadImages: function () {},
+    pinContentToBottom: function (force) { forcedPins.push(force); },
     renderMessages,
     resolveSessionRunningAfterFetch: function (result) {
       return result.status === 'running';
@@ -93,6 +95,7 @@ test('session entry replaces the skeleton with a stable message container', asyn
   Object.assign(window, {
     bufferAndFetch,
     dismissPermissionPrompt: globalThis.dismissPermissionPrompt,
+    pinContentToBottom: globalThis.pinContentToBottom,
     renderMessages,
     resolveSessionRunningAfterFetch: globalThis.resolveSessionRunningAfterFetch,
     skeletonMessages,
@@ -134,6 +137,7 @@ test('session entry replaces the skeleton with a stable message container', asyn
       skeleton: false,
       messages: true,
     });
+    assert.deepEqual(forcedPins, [true]);
 
     fetchedMessages = [];
     await window.loadMessages('session-2', 'Empty Session');
@@ -141,6 +145,7 @@ test('session entry replaces the skeleton with a stable message container', asyn
     assert.equal(document.querySelector('.skeleton-messages'), null);
     assert.ok(document.querySelector('.messages:not(.skeleton-messages)'));
     assert.equal(document.querySelector('.messages > .empty').textContent, 'No messages');
+    assert.deepEqual(forcedPins, [true]);
   } finally {
     await vite.close();
     dom.window.close();

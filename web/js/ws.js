@@ -20,6 +20,7 @@ var _reconnectingTurns = new Set();
 var _connectionRecovery = null;
 var _wsReconnectTimer = null;
 var _bottomPinScheduled = false;
+var _bottomLayoutObserver = null;
 var _controlEventTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
@@ -506,7 +507,7 @@ function dispatchWsMessage(msg) {
       // and re-triggers needSync, causing a render-loop with title flicker.
       bufferAndFetch(msg.sessionId, '').then(function (result) {
         if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
-        updateLastTurn(result.messages);
+        updateLastTurn(result.messages, true);
         updateTitleFromMessages();
         updateSendBtn();
       }).catch(function () {});
@@ -619,14 +620,32 @@ function pinContentToBottom(force) {
   if (!content) return false;
   if (force) state.stickBottom = true;
   if (!state.stickBottom) return false;
+  var sessionId = state.wsSessionId;
   content.scrollTop = content.scrollHeight;
   if (!_bottomPinScheduled && typeof requestAnimationFrame === 'function') {
     _bottomPinScheduled = true;
     requestAnimationFrame(function () {
       _bottomPinScheduled = false;
-      if (!state.stickBottom || content !== document.getElementById('content')) return;
+      if (!state.stickBottom || content !== document.getElementById('content')
+        || sessionId !== state.wsSessionId) return;
       content.scrollTop = content.scrollHeight;
     });
+  }
+  if (force && typeof window.ResizeObserver === 'function') {
+    if (_bottomLayoutObserver) _bottomLayoutObserver.disconnect();
+    var target = content.querySelector('.messages') || content;
+    var layoutObserver = new window.ResizeObserver(function () {
+      layoutObserver.disconnect();
+      if (_bottomLayoutObserver === layoutObserver) {
+        _bottomLayoutObserver = null;
+      }
+      if (content !== document.getElementById('content')
+        || sessionId !== state.wsSessionId) return;
+      state.stickBottom = true;
+      content.scrollTop = content.scrollHeight;
+    });
+    _bottomLayoutObserver = layoutObserver;
+    layoutObserver.observe(target);
   }
   return true;
 }
@@ -871,6 +890,8 @@ function resetStreamSessionState() {
   _controlEventTimers.clear();
   _handledControlEvents.clear();
   _controlRequestState.clear();
+  if (_bottomLayoutObserver) _bottomLayoutObserver.disconnect();
+  _bottomLayoutObserver = null;
   _bottomPinScheduled = false;
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
@@ -1160,7 +1181,7 @@ function applyThinkSecs(html) {
   return html.replace(/(<div class="thinking-toggle"[^>]*>)Thinking( <span)/, '$1Thought for ' + _lastThinkSecs + 's$2');
 }
 
-function updateLastTurn(explicitMessages) {
+function updateLastTurn(explicitMessages, forceBottom) {
   var container = document.querySelector('.messages');
   if (!container) return;
 
@@ -1168,7 +1189,10 @@ function updateLastTurn(explicitMessages) {
     ? explicitMessages.slice()
     : state.wsAllMessages.slice(state.wsRenderedCount);
   state.wsRenderedCount = state.wsAllMessages.length;
-  if (!newMessages.length) return;
+  if (!newMessages.length) {
+    if (forceBottom) pinContentToBottom(true);
+    return;
+  }
 
   if (newMessages.length > 1) {
     newMessages.sort(compareMessageOrder);
@@ -1332,7 +1356,7 @@ function updateLastTurn(explicitMessages) {
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (window.renderKatexBlocks) renderKatexBlocks(container);
-  pinContentToBottom();
+  pinContentToBottom(forceBottom === true);
   showStats(state.wsMessageCount + ' messages (live)');
 }
 

@@ -31,6 +31,40 @@ test('bottom following re-pins after the next layout frame', async () => {
   assert.equal(content.scrollTop, 240);
 });
 
+test('forced bottom following re-pins after the final layout is observed', async () => {
+  resetSession(h, { sessionId: 'codex:layout-follow' });
+  const content = h.document.getElementById('content');
+  let height = 640;
+  let onResize = null;
+  let observed = null;
+  Object.defineProperty(content, 'scrollHeight', {
+    configurable: true,
+    get: () => height,
+  });
+  h.window.ResizeObserver = class {
+    constructor(callback) {
+      onResize = callback;
+    }
+    observe(element) {
+      observed = element;
+    }
+    disconnect() {}
+  };
+
+  content.scrollTop = 0;
+  assert.equal(h.hooks.pinContentToBottom(true), true);
+  assert.equal(content.scrollTop, 640);
+  assert.equal(observed, h.document.querySelector('.messages'));
+
+  height = 980;
+  onResize();
+  assert.equal(content.scrollTop, 980);
+  assert.equal(h.state.stickBottom, true);
+
+  await h.tick(10);
+  delete h.window.ResizeObserver;
+});
+
 test('an OUT update on an earlier tool still keeps the whole view at the bottom', async () => {
   resetSession(h, { sessionId: 'codex:out-follow' });
   const content = h.document.getElementById('content');

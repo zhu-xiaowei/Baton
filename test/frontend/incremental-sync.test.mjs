@@ -29,6 +29,7 @@ test('sync_complete merges new rows without rebuilding live tool DOM', async () 
   h.state.wsMessageUuids = new Set(['assistant-1']);
   h.state.wsRenderedCount = 1;
   h.state.wsMessageCount = 1;
+  h.state.stickBottom = false;
   h.setApiResponse({
     messages: [{
       uuid: 'title-1',
@@ -49,4 +50,5 @@ test('sync_complete merges new rows without rebuilding live tool DOM', async () 
 
   assert.equal(container.querySelector('[data-tool-id="tool-1"]'), tool);
   assert.equal(tool.querySelector('.tool-body-content').classList.contains('open'), true);
+  assert.equal(h.state.stickBottom, true);
 });

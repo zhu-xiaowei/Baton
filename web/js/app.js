@@ -1283,11 +1283,15 @@ async function loadMessages(sessionId, preview) {
     clampOverflow(content.querySelector('.messages'));
     if (window.renderMermaidBlocks) renderMermaidBlocks(content);
     if (window.renderKatexBlocks) renderKatexBlocks(content);
-    content.scrollTop = content.scrollHeight;
-    requestAnimationFrame(function () {
-      if (_navVersion !== myNav) return;
+    if (typeof window.pinContentToBottom === 'function') {
+      window.pinContentToBottom(true);
+    } else {
       content.scrollTop = content.scrollHeight;
-    });
+      requestAnimationFrame(function () {
+        if (_navVersion !== myNav) return;
+        content.scrollTop = content.scrollHeight;
+      });
+    }
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
