@@ -8,6 +8,7 @@ from boto3.dynamodb.conditions import Key
 import asyncio
 import base64
 import binascii
+from datetime import datetime, timedelta, timezone
 import json
 import os
 
@@ -18,6 +19,7 @@ _sessions_table = None
 _messages_table = None
 _connections_table = None
 LIST_INDEX_NAME = "listPk-listSk-index"
+NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
 
 
 def _tables():
@@ -79,6 +81,52 @@ def _query_all(table, **kwargs):
     return items
 
 
+def _parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        text = str(value)
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _active_session_visible(item, online_devices, now=None):
+    status = item.get("status", "")
+    if status not in ("running", "needs_input"):
+        return False
+    if online_devices is not None and item.get("deviceName", "") not in online_devices:
+        return False
+    if status != "needs_input":
+        return True
+
+    status_time = _parse_timestamp(item.get("lastActive"))
+    if status_time is None:
+        return True
+    current_time = now or datetime.now(timezone.utc)
+    return status_time >= current_time - NEEDS_INPUT_ACTIVE_WINDOW
+
+
+def _online_bridge_devices(account_id):
+    if _connections_table is None:
+        return None
+    try:
+        rows = _query_all(
+            _connections_table,
+            IndexName="accountId-role-index",
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("role").eq("bridge"),
+            ProjectionExpression="deviceName",
+        )
+        return {row.get("deviceName", "") for row in rows if row.get("deviceName")}
+    except Exception:
+        return None
+
+
 def _project_list_pk(account_id, device):
     return f"{account_id}#PROJ#{device}"
 
@@ -138,12 +186,13 @@ async def get_active_sessions(request: Request):
     import asyncio
 
     loop = asyncio.get_running_loop()
-    active_items, done_items = await asyncio.gather(
+    active_items, done_items, online_devices = await asyncio.gather(
         loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
             ScanIndexForward=False, Limit=20).get("Items", [])),
+        loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
     )
 
     def _to_session(item):
@@ -165,7 +214,11 @@ async def get_active_sessions(request: Request):
             s["agentDetail"] = item.get("agentDetail", "")
         return s
 
-    sessions = [_to_session(i) for i in active_items if i.get("status") in ("running", "needs_input")]
+    sessions = [
+        _to_session(item)
+        for item in active_items
+        if _active_session_visible(item, online_devices)
+    ]
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 
     recent_sessions = [_to_session(i) for i in done_items]

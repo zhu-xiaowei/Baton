@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import sys
@@ -113,6 +114,51 @@ def test_old_device_gets_claude_capability():
     capabilities = bridge_read._runtime_capabilities({})
     assert list(capabilities) == ["claude"]
     assert capabilities["claude"]["canCreate"] is True
+
+
+def test_active_session_visibility_filters_offline_and_stale_needs_input():
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
+    online = {"Mac"}
+
+    assert bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "running",
+        "lastActive": (now - timedelta(days=30)).isoformat(),
+    }, online, now)
+    assert not bridge_read._active_session_visible({
+        "deviceName": "OfflineMac",
+        "status": "running",
+        "lastActive": now.isoformat(),
+    }, online, now)
+    assert bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "needs_input",
+        "lastActive": (now - timedelta(days=7)).isoformat(),
+    }, online, now)
+    assert not bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "needs_input",
+        "lastActive": (now - timedelta(days=7, seconds=1)).isoformat(),
+    }, online, now)
+
+
+def test_active_session_visibility_falls_back_to_last_active_and_keeps_unknown_time():
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
+
+    assert not bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "needs_input",
+        "lastActive": "2026-08-01T00:00:00.000Z",
+    }, {"Mac"}, now)
+    assert bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "needs_input",
+        "lastActive": "not-a-time",
+    }, {"Mac"}, now)
+    assert bridge_read._active_session_visible({
+        "deviceName": "Mac",
+        "status": "running",
+    }, None, now)
 
 
 def test_ws_sync_payload_decodes_storage_id():
