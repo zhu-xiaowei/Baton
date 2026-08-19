@@ -54,14 +54,16 @@ loadMessages(sessionId):
   1. wsAllMessages = [], wsMessageUuids = Set(), reset state
   2. startWs(sessionId) → subscribe → reveal_permission
   3. _wsBuffer = []          ← buffer no-seq JSONL/TUI messages
-  4. GET /api/bridge/messages?session=X  ← pull history from DDB
-  5. merged = ddbMessages.concat(_wsBuffer)
+  4. GET /api/bridge/messages?session=X&device=D&project=P
+                                ← pull history + current Session status
+  5. merged = _wsBuffer.concat(ddbMessages)
   6. _wsBuffer = null         ← disable buffer, subsequent WS messages render directly
   7. Deduplicate by uuid/nativeId
   8. Sort by timestamp
-  9. renderMessages(wsAllMessages)  ← full render
-  10. Rebind any active strict-stream preview by turnId
-  11. scrollToBottom
+  9. Resolve state: newer applied WS lifecycle → response status → message-tail fallback
+  10. renderMessages(wsAllMessages)  ← full render
+  11. Rebind any active strict-stream preview by turnId
+  12. pinContentToBottom
 ```
 
 No-seq `messages` are historical JSONL/TUI updates and use the REST buffer above. Events carrying
@@ -78,9 +80,11 @@ When a window joins an active turn, `seq=0` starts normal streaming and `seq=1 m
 synthesize the payload-free start. If the first available seq is greater than 1, the frontend does
 not display a block whose start is missing. Complete authority renders missed nodes, the next
 `stream_block_start` resumes streaming, and `stream_end` supplies complete deduplicated authority
-for any remaining nodes. No time-based grace is used.
+for any remaining nodes. No time-based grace is used to expose partial stream content.
 
-**`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show loading state. Wait for `sync_complete` WS event, then re-run loadMessages.
+**`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show
+loading state. Wait for `sync_complete`, then use the same `bufferAndFetch` merge path without
+resetting the live DOM or Session navigation state.
 
 ## 4. Real-time Message Handling (WS)
 
@@ -91,7 +95,7 @@ for any remaining nodes. No time-based grace is used.
 | `messages` | Server → App | New messages arrived, incremental render |
 | `permission_request` | Server → App | Permission confirmation popup (server-side detection) |
 | `send_message_result` | Server → App | Send confirmation + new session's sessionId |
-| `sync_complete` | Server → App | Bridge sync complete, re-run loadMessages |
+| `sync_complete` | Server → App | Bridge sync complete, re-run `bufferAndFetch` and incrementally reconcile |
 | `interrupt` | App → Server → Bridge | Interrupt current run (equivalent to Ctrl+C) |
 
 ### 4.2 Message Classification
@@ -171,34 +175,41 @@ findInsertBefore(container, timestamp):
 
 ## 6. Auto-scroll
 
-**Check before DOM insertion** whether near-bottom, then decide whether to scroll after insertion:
+`state.stickBottom` records user intent. Opening a Session or sending a message enables it; manually
+scrolling away from the bottom disables it. Every insertion uses the same bottom pin:
 
 ```javascript
-// Before insertion
-var wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
-
-// ... DOM insertion ...
-
-// After insertion
-if (wasNearBottom) {
-  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  setTimeout(() => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }), 150); // compensate after clampOverflow
+function pinContentToBottom(force) {
+  if (force) state.stickBottom = true;
+  if (!state.stickBottom) return;
+  content.scrollTop = content.scrollHeight;
+  requestAnimationFrame(() => {
+    if (state.stickBottom) content.scrollTop = content.scrollHeight;
+  });
 }
 ```
 
-**Why not check after insertion**: large messages (e.g. CC final result 10+ lines) increase scrollHeight beyond the threshold, causing a false "user is not at bottom" judgment that prevents scrolling.
+The immediate scroll follows the DOM mutation. The animation-frame scroll absorbs layout changes
+from OUT replacement, markdown, and clamping. Streaming does not use smooth scrolling because it
+races continuously arriving content. Permission prompts force-enable bottom following.
 
 ## 7. wsRunning State + Send/Stop Button
 
-`wsRunning` controls the input bar button appearance, updated from 4 sources:
+`wsRunning` controls the input bar button appearance:
 
 ```
 wsRunning updates:
-  loadMessages(_, _, status)     → wsRunning = (status === 'running')
-  Receive assistant message      → wsRunning = (stopReason !== 'end_turn')
-  doSend()                       → wsRunning = true
+  initial/recovery REST status   → running=true; needs_input/completed=false
+  stream_turn_start              → true
   stream_end                     → recompute from outstanding turns
+  permission_request             → false, while preserving the live turn
+  permission_resolved            → recompute from outstanding turns
+  doSend()                       → true
 ```
+
+During initial loading, only applied WS lifecycle events override the returned status. Fragments
+such as deltas, tool input, or authority messages do not independently prove whether a turn ended.
+The old message-tail `deriveRunning()` logic is used only when the REST response has no status.
 
 ### Button State Machine
 
@@ -233,12 +244,13 @@ ws.onclose:
 
 ws.onopen (on reconnect):
   1. Re-subscribe to current sessionId
-  2. Start incremental REST recovery and active-turn lookup in parallel
-  3. Buffer new strict turn events until both requests complete
-  4. Merge REST history first
-  5. Close turns no longer active; preserve active-turn DOM, including partial blocks
-  6. Release buffered WS events through the normal checkpoint/late-join queue
-  7. Replace an old partial block in place when its authoritative messages arrive
+  2. Start one incremental REST request; the response includes Session status
+  3. Buffer new strict turn events until REST completes
+  4. Merge REST history, then release buffered WS events through the normal queue
+  5. completed → settle recovered turns
+  6. running → preserve outstanding turns and spinner
+  7. needs_input → preserve the turn but hide spinner/Stop state
+  8. Replace an old partial block in place when its authoritative messages arrive
 
 recoverMissing():
   1. bufferAndFetch(sessionId, after=wsLastTimestamp)  ← only pull incremental during disconnect
@@ -253,6 +265,10 @@ The old socket is intentionally replaced, but its partial DOM remains visible un
 the matching authoritative message replaces it. `stream_block_stop` only closes the
 input stream; it does not contain full content. Navigation away from the detail page
 still disconnects and clears the whole streaming state.
+
+There is no online inactivity timer and no separate `reveal_turn_state` request. A healthy
+connection trusts ordered WS lifecycle events; foreground/reconnect recovery uses the status
+returned by the required incremental message request.
 
 ## 9. New Session Creation
 
@@ -306,6 +322,15 @@ frontend treats that request as a safe resume checkpoint, so the subsequent
 `permission_resolved`, tool result, and later nodes continue without waiting for the missed prefix.
 External TUI permission state has no live turn and remains a standalone control event. Both paths
 update the Session row to `needs_input` with the current permission detail.
+
+Because permission is control-plane UI, a sequenced permission event blocked behind a missing
+render seq gets a short idempotent fallback dispatch. This can show or dismiss the prompt without
+advancing the strict stream queue; when the ordered copy is later consumed it is ignored as a
+duplicate. Content deltas and tool nodes never use this fallback.
+
+If a request arrives while the detail page still shows its skeleton, it stays deferred until
+`.messages` exists. A matching resolution during loading cancels it. Once rendered, the prompt is
+appended at the bottom and force-pinned in the current and next layout frame.
 
 ### 11.1 Request Types
 
@@ -435,7 +460,7 @@ After every DOM update (full render / incremental updateLastTurn / reconnect rec
 ```
 1. loadImages(container)    — register IntersectionObserver for lazy-loading images
 2. clampOverflow(container) — detect overflow, add collapse buttons
-3. auto-scroll judgment     — wasNearBottom → scrollToBottom
+3. pinContentToBottom       — immediate + next-frame pin when stickBottom=true
 ```
 
 ## 19. Runtime Presentation

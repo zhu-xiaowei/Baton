@@ -139,8 +139,8 @@ Server 对 Bridge 发来的 active-turn 事件重复执行相同校验。非法�
 Server 的职责只有：
 
 1. 把共享事件广播给该 Session 的所有已订阅窗口。
-2. 将 `messages` 中的最终消息字段写入 DDB。
-3. 对成功持久化的 `messages` 返回 `messages_ack`。
+2. 对普通 watcher `messages` 写入 DDB，并返回 `messages_ack`。
+3. 对 runtime-owned `messages{noCache:true}` 只广播；对应 JSONL watcher 负责最终持久化。
 
 DDB 不保存 streaming 传输字段：
 
@@ -255,14 +255,17 @@ Bridge 和 Server 原样使用该 `turnId`。Streaming renderer 只通过精确�
 后台回前台和意外 WS 断线使用同一条恢复链：
 
 1. 立即废弃旧连接的 turn seq 缓冲，但不修改现有 DOM。
-2. 新 WS 订阅后，并行请求增量 REST 历史和 Bridge active turn 状态。
-3. 两个请求完成前，新连接的 strict turn 事件只缓存，不渲染。
-4. REST 历史先按 UUID/nativeId 合并。
-5. Bridge 已结束的 turn 收口 spinner；仍运行的 turn 保留全部现有 DOM，包括残缺 block。
-6. 最后释放新 WS 缓冲，从下一个完整 block/permission checkpoint 恢复 streaming。
+2. 新 WS 订阅后请求增量 REST 历史；同一响应并行强一致读取 Session status。
+3. REST 完成前，新连接的 strict turn 事件只缓存，不渲染。
+4. REST 历史先按 UUID/nativeId 合并，再按统一队列释放缓存的 WS 事件。
+5. `completed` 收口重连前的 turn；`running` 保留 outstanding turn；`needs_input`
+   保留 turn 但关闭 spinner。
+6. 从下一个完整 block/permission checkpoint 恢复 streaming。
 7. 重连前的残缺 block 收到完整 authority 后原位替换；重连后新建的 block 仍按正常逐步 reveal。
 
 离开详情页仍会完全断开并清理 Session 状态；只有同一详情页的连接恢复使用上述增量流程。
+恢复链不再发送 `reveal_turn_state`，也没有在线静默超时探针。正常连接只信任严格有序的
+WS 生命周期事件；前台/重连边界复用本来就必须执行的 messages 请求完成状态校准。
 
 `stream_block_stop` 只表示该 block 不会再有 delta，不携带完整内容。完整覆盖只能由
 对应的 authority `messages` 或 `stream_end.messages` 触发。
@@ -289,8 +292,12 @@ Web 先发送 `subscribe`，同时拉取 REST 历史。两类 WS 消息分别处
 
 紧接 `subscribe` 的 `reveal_permission` 只恢复当前权限状态。它不会请求或回放 streaming
 snapshot。CC 使用 Bridge 已保存的 hook/runtime pending request；Codex TUI 使用
-permission-only app-server observation 发现尚未回答的审批。恢复事件没有 seq，原始 live
-turn 中的 `permission_request/permission_resolved` 仍使用统一 seq。
+permission-only app-server observation 发现尚未回答的审批。仍属于未结束 live turn 的请求
+会分配新的统一 seq；没有 live turn 的 hook/TUI 请求作为 standalone control event，不带 seq。
+
+权限是控制面 UI：若 sequenced permission 被缺失的前序渲染事件阻塞，Web 会做一次短延迟、
+幂等的 fallback dispatch，只负责显示/关闭弹窗，不推进 `TurnEventQueue`。之后严格队列消费
+到同一 `turnId + seq` 时会被去重。普通 delta、工具节点和 authority 不使用此旁路。
 
 ### 10.1 带 `turnId + seq` 的 live turn
 
@@ -308,6 +315,19 @@ turn 中的 `permission_request/permission_resolved` 仍使用统一 seq。
 - 无 seq 消息不进入 turn queue，也不能关闭或改变 active streaming turn。
 
 REST 与 WS 谁先到达都不能导致重复节点、覆盖 preview 或改变工具展开状态。
+
+### 10.3 初次加载的状态权威
+
+`bufferAndFetch` 记录 REST 请求期间是否实际应用过以下生命周期事件：
+
+- `stream_turn_start`：running
+- `stream_end`：按剩余 outstanding turns 计算
+- `permission_request`：保留 turn，但 spinner 关闭
+- `permission_resolved`：按剩余 outstanding turns 计算
+
+有生命周期事件时，WS 状态比 REST 快照更新；没有时使用 `/messages.status`。普通 delta、
+tool input、block start/stop 或 authority 消息片段不能独立证明 turn 是否结束，因此不会覆盖
+REST status。只有接口未返回 status 时，才按合并后的消息尾部做兼容推导。
 
 ## 11. 测试不变量
 

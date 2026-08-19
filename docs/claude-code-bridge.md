@@ -195,8 +195,8 @@ GET /api/bridge/projects?device=MacBook-Pro
 GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-...
 → { sessions: [{ sessionId, nativeSessionId, runtime, preview, lastActive, size, model, status }] }
 
-GET /api/bridge/messages?session=abc&after=<timestamp>
-→ { messages: [{ uuid, type, content, timestamp }] }
+GET /api/bridge/messages?session=abc&after=<timestamp>&device=D&project=P
+→ { messages: [{ uuid, type, content, timestamp }], status: "running|needs_input|completed" }
 ```
 
 ## WebSocket Protocol
@@ -332,22 +332,29 @@ App taps session "abc":
    WS: { action: "subscribe", sessionId: "abc" }
 
 2. bufferAndFetch(sessionId, '') → REST load from DDB
-   GET /api/bridge/messages?session=abc
+   GET /api/bridge/messages?session=abc&device=D&project=P
    → DDB has cached messages → return instantly (<100ms)
    → DDB empty → return empty (bridge hasn't synced this session yet)
+   → Session status is read in parallel and returned with the message page
 
 3. Merge: DDB results + _wsBuffer, dedup by uuid, sort by timestamp
 
-4. _wsBuffer = null → switch to real-time mode. Render merged result.
+4. Resolve running state:
+   → applied WS lifecycle during REST wins
+   → otherwise use response status
+   → message-tail inference only if status is missing
+
+5. _wsBuffer = null → switch to real-time mode. Render merged result.
    Track wsLastTimestamp for reconnect recovery.
 
-5. Subsequent WS messages → append directly via updateLastTurn().
+6. Subsequent WS messages → append directly via updateLastTurn().
 
-6. WS reconnect → subscribe + recoverMissing():
+7. WS reconnect → subscribe + recoverMissing():
    _wsBuffer = [] → bufferAndFetch(sessionId, wsLastTimestamp)
-   Same buffer+fetch+merge pattern, dedup + sort + full re-render.
+   Same buffer+fetch+merge pattern, dedup + sort + incremental DOM reconciliation.
+   The returned status replaces the former active-turn state request.
 
-7. App leaves session:
+8. App leaves session:
    WS: { action: "unsubscribe", sessionId: "abc" }
 ```
 
@@ -457,7 +464,8 @@ baton/
 - Server WS relay: send_message, permission_reply, interrupt
 - Bridge: `_pool.send` → headless `claude -p --resume` (was tmux findTarget/sendKeys/auto-launch)
 - Viewer: message sending + optimistic rendering + dedup, permission prompt + user interaction, image sending via S3
-- WS reconnect recovery: track wsLastTimestamp → recoverMissing() on reconnect
+- WS reconnect recovery: track wsLastTimestamp → recoverMissing() returns incremental messages plus
+  Session status; no separate active-turn lookup or online inactivity probe
 - Device routing
 - Permission: bridge relays CC's `control_request` → app prompt → `permission_reply` (was client-side scan + capture-pane)
 

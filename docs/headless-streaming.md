@@ -165,7 +165,8 @@ jsonl watcher 独占写,避免同 uuid 双写)。
   committed，不删除或重建正确 DOM。
 - 中断时 runtime 先完成未结束工具的权威 OUT，再发送唯一 Interrupted，最后发送
   `stream_end{error:"interrupted"}`。Web 不根据 error 合成兼容节点。
-- headless 其他异常:`stream_end{error}` → 只读回退;reconnect 后走初始化(`bufferAndFetch` 从 DDB 重建)。
+- headless 其他异常:`stream_end{error}` → 只读回退；reconnect 后由 `bufferAndFetch` 从 DDB
+  增量重建，并使用同一 `/messages` 响应中的 Session status 收口 spinner。
 
 ## 三·五、进程生命周期(按需启动 + idle 回收,实证自 litter ClaudePool)
 
@@ -368,11 +369,11 @@ Bridge → Server → App:  { action: "stream_end", sessionId, turnId, seq, erro
 |---|---|
 | `bridge/headless.mjs` | **ClaudePool**:`Map<sessionId, HeadlessProc>`;`send(sessionId,cwd,text,cb)`(spawn/复用/queue)、`reapIdle()`(周期回收)、LRU 上限、崩溃移除;readline 分派 stdout(含 `control_request`);stdin 写 user 消息 + `control_response` |
 | `bridge/ws.mjs` | `handleSendMessage` 调 `pool.send(...)`;daemon agent 接管;`control_request` → permission_request;App 的 permission_reply → allow/deny(或 requires_user_interaction 的 deny+答案回);新建常规会话预生成 UUID 后用 `--session-id` 启动 |
-| `server/src/bridge_ws.py` | 加 `stream_delta`/`stream_end` → `_handle_bridge_relay`,不写 DDB(permission_request/reply 已有) |
+| `server/src/bridge_ws.py` | 校验并广播完整 turn 事件序列；runtime `messages{noCache}` 不写 DDB |
 | `web/js/streaming.js` | `TurnEventQueue → StreamCoordinator → StreamingDomRenderer`，分别负责乱序、节点状态与 DOM |
 | `web/js/ws.js` | 将所有 active-turn 事件送入统一队列，并按 `turnId` 定位用户问题 |
-| `web/js/permission.js` | 展示工具权限、AskUserQuestion 和 ExitPlanMode，并回传 permission_reply |
-| `docs/api.md` | 补 `stream_delta`/`stream_end` 协议 |
+| `web/js/components/permission.js` | 展示/延迟恢复权限请求，并回传 permission_reply |
+| `docs/api.md` | 记录完整 turn 序列、权限与恢复协议 |
 | `CLAUDE.md` | 记录 headless 进程池架构 + 生命周期 + 分流规则 + 单写者约束 + symlink cwd 坑 |
 
 ## 九、实施状态

@@ -413,6 +413,9 @@ Codex 的中间进度和最终正文都使用 `response_item/message(role=assist
 `stopReason=end_turn` lifecycle。该 lifecycle 参与状态计算但不产生额外时间线节点。
 前端状态判断通过 runtime status adapter 分离：Claude 保留原有错误结果/交互工具规则；
 Codex 的普通工具失败仍属于运行中的回合，只有 `task_complete` 或 `turn_aborted` 才结束。
+首次进入和前台/重连恢复时，`/api/bridge/messages` 同时返回 Session status；请求期间若已
+应用更新的 `stream_turn_start/end` 或权限生命周期事件，则 WS 状态优先。runtime status
+adapter 只在接口缺少 status 或处理普通实时消息尾部时作为兜底。
 
 工具通过 `call_id + occurrence` 配对，支持同一 Session 重用 call ID；消息 UUID 与工具
 配对 ID 分离。未完成或中断的工具允许只有 IN，不能制造不存在的 OUT。

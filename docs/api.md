@@ -525,16 +525,18 @@ Get messages for a specific session, supports incremental loading.
 | `before` | No | Opaque `oldestTimestamp` cursor returned by the previous page |
 | `limit` | No | Page size; default 100, maximum 500 |
 | `device` | No | Target device for routing a `needSync` request to the matching Bridge |
+| `project` | No | Project hash; together with `device`, returns the latest Session `status` |
 
 **Examples**:
-- Full load: `GET /api/bridge/messages?session=a1ca0870-xxxx`
-- Incremental: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z`
+- Full load: `GET /api/bridge/messages?session=a1ca0870-xxxx&device=MacBook-Pro&project=-workspace`
+- Incremental: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z&device=MacBook-Pro&project=-workspace`
 
 **Logic**:
 - Default: consistently read the newest page, then return it in ascending order
 - With `before`: fetch the preceding page
 - With `after`: fetch all rows after the timestamp, used for reconnect recovery
 - DDB empty: return `needSync: true`, simultaneously notify bridge via WS to sync this session
+- With `device` and `project`: strongly read Session status in parallel with the message query
 
 **Response** `200` — has messages:
 ```json
@@ -542,7 +544,8 @@ Get messages for a specific session, supports incremental loading.
   "messages": [...],
   "hasMore": true,
   "oldestTimestamp": "2026-03-27T10:30:00.000Z#msg_abc123",
-  "needSync": false
+  "needSync": false,
+  "status": "running"
 }
 ```
 
@@ -550,9 +553,15 @@ Get messages for a specific session, supports incremental loading.
 ```json
 {
   "messages": [],
-  "needSync": true
+  "needSync": true,
+  "status": "needs_input"
 }
 ```
+
+The Web uses this status when no newer WS lifecycle event was applied while the request was in
+flight. Applied `stream_turn_start`, `stream_end`, `permission_request`, and
+`permission_resolved` events take precedence. Message-tail inference is only a fallback when the
+response omits `status`.
 
 **needSync triggered flow**:
 ```

@@ -46,7 +46,9 @@ Brand name "Baton" is only in user-facing places. Internal code uses generic nam
   Sessions use `thread/start` + `turn/start`. A resumed active turn is adopted so pending approvals
   and later deltas keep streaming; a new user turn waits in the same per-session queue.
 - Codex and Claude share `StreamFramer`: first delta is immediate, later deltas use the same 50ms
-  batch window, turn-level `seq`, authoritative-row handoff, and frontend reorder/chase rendering.
+  batch window, while `LiveTurnStream` assigns the turn-level `seq`. The frontend uses
+  `TurnEventQueue → StreamCoordinator → StreamingDomRenderer` for ordered consumption,
+  authority reconciliation, and progressive reveal.
 - Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
   rows without rebroadcast and remains the fallback when no live row was observed.
 - Codex command/file/permissions/MCP approval variants are implemented. Automatic pending-request
@@ -88,17 +90,20 @@ Done:
 - `projectHashToPath` moved into `session.mjs` (pure path util, not tmux). `getClaudeProcesses` was tmux-only and dropped — `getRunningInfo` in `session.mjs` has its own `ps aux` parser.
 - Server bridge-install script (`/api/install`) no longer auto-installs tmux.
 - Existing-session send → headless streaming (`handleHeadlessSend` → `_pool.send`), the primary happy path. Works today.
-- **Stream ordering** — shared `stream-framer.mjs` stamps every Claude/Codex preview frame with a
-  **turn-level monotonic `seq`** and sends **increment-only** chunks; the first delta is immediate
-  and later deltas are coalesced over 50ms. `stream_end` carries `finalSeq`. The app reorders by
-  `seq` in a client-side reorder buffer (`web/js/reorder.js` `ReorderBuffer`) because
-  bridge→Lambda→API GW delivers frames through independent, variable-duration Lambda invocations.
-  **Authoritative-row handoff**: `clearStreamPreviews(coverCount)` →
-  `ReorderBuffer.softReset(coverCount)` supersedes only the blocks covered by the authoritative
-  row. Validated: 1000 randomized-delivery turns + multi-block/double-flush. See
-  `docs/headless-streaming.md` §七.
-- **Reply placement by identity (streamId → clientId)** — a reply is placed under its OWN question by identity, not by timestamp/text guessing (which mis-orders bursts: a queued send's timestamp is newer than the reply being generated). Bridge mints one `streamId` per turn and puts it on BOTH `send_message_result` (with the app's `clientId`) AND every stream frame + the authoritative `messages` envelope (`onMessage`, `sid`). Lambda `_handle_bridge_messages` must forward `streamId` (it rebuilds the payload — stream frames/results pass through verbatim, so only `messages` needed the fix). App: `send_message_result` binds `streamAnchors[streamId]=clientId`; the optimistic bubble carries a **durable `data-anchor=clientId`** (survives echo promotion — `tryDedup` promotes IN PLACE, never remove+re-insert, or the anchor is lost); `anchorForStream()` resolves streamId→clientId→`[data-anchor]` for both the live preview (`tickStreams`) and the authoritative row (`updateLastTurn`). No streamId (external/terminal/other-device reply) → timestamp fallback. **Race fixed**: `stream_end` must NOT delete `streamAnchors[streamId]` — the authoritative row arrives ~1ms AFTER `stream_end` and still needs the anchor; cleared wholesale on session switch instead. `replyPlacement` (old structural firstPending/last-echoed guess) deleted. Validated: `test/frontend/run.mjs` `burst-1-5-real-log` (faithful wire-order replay).
-- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_agent`). Frontend `permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
+- **Stream ordering** — `stream-framer.mjs` only batches UTF-8-safe incremental chunks and block
+  boundaries. `LiveTurnStream` is the single shared-event outlet and assigns one contiguous,
+  turn-local `seq` across user authority, blocks, deltas, tool input, permission events, authority
+  messages, and terminal `stream_end`. `TurnEventQueue` consumes only contiguous `turnId + seq`;
+  `StreamCoordinator` owns turn/block state and authority reconciliation; `StreamingDomRenderer`
+  applies operations without rebuilding correct DOM. Late join resumes at `seq=1 messages(user)`,
+  the next complete block/permission checkpoint, or terminal authority. See
+  `docs/streaming-render-design.md`.
+- **Reply placement by turn identity** — Web generates `turnId` before send and stores it directly
+  on the optimistic user bubble as `data-anchor`. Bridge and Server preserve the same `turnId` on
+  every shared event and `send_message_result`; the renderer locates the exact anchor without
+  `clientId/streamId` binding, text matching, timestamp ownership, or nearest-pending heuristics.
+  Authority uses UUID/native ID to confirm or patch nodes inside that same turn.
+- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_permission`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
 - **New Session / new agent / create project DONE** — regular sessions mint a UUID, acknowledge
   it before spawning headless with `--session-id`, and then stream the first turn. Background
   agents launch through `claude --bg`. Creating a project seeds an empty PROJ row and enters the
@@ -163,7 +168,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     agents and busy pool-owned sessions. Precedence: busy pool-owned > roster-active daemon >
     external/jsonl.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
-  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_agent`.
+  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_permission`.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
 - Slash commands are runtime-aware. Claude's primary catalog comes from the current CLI's
   no-persistence `initialize` control response, including environment-filtered commands, descriptions,
@@ -201,11 +206,13 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 
 ### Message Flow (WS single path + DDB cache)
 - Claude watcher normally pushes new messages through WS; startup, fallback, oversized authoritative copies, and on-demand history use HTTP
-- Lambda receives message → parallel: post_to_connection to app (priority) + write DDB (cache)
+- Lambda broadcasts ordinary watcher messages and writes their final fields to DDB. Runtime-owned
+  `messages{noCache:true}` are broadcast only; the later JSONL watcher copy owns persistence.
 - Bridge extracts: uuid, parentUuid, type, content, timestamp, toolUseResult (drops model/usage/cwd/version, ~40-60% smaller)
 - Content blocks preserved: text, image (compressed), document, thinking, tool_use, tool_result
 - App opens session → REST from DDB (instant, <100ms) + WS subscribe for real-time
-- WS buffer during REST load → merge by timestamp → render → subsequent WS direct append
+- WS subscribe + buffer during REST load → merge/dedup → resolve running state from newer applied
+  WS lifecycle or `/messages.status` → render → subsequent WS direct append
 - Server broadcasts to ALL app connections subscribed to a sessionId (multi-device)
 - See `docs/claude-code-bridge.md` for full protocol and flow diagrams
 
@@ -254,7 +261,7 @@ GET  /api/bridge/devices                    — device list (projectCount/sessio
 GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
 GET  /api/bridge/active-sessions            — homepage: active (running+needs_input) + 20 most-recent completed (recentSessions)
-GET  /api/bridge/messages?session=X&after=ts — messages (incremental, ts=ISO timestamp)
+GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (sets up always-on service)
@@ -293,10 +300,13 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ### Reliable WS Delivery (app side, `web/js/ws.js`)
 - **Sends must survive a dead socket.** User actions (`send_message`/`interrupt`/`create_project`) use `wsSendReliable`, not bare `wsSend` (which drops frames when not OPEN): queues to `_wsSendQueue` (array, ordered) + reconnects, flushed on `onopen` after re-subscribe. iOS suspends the socket in background into a zombie (reads OPEN, frames vanish, no `close`) — `handleForegroundResume` (`visibilitychange`/`pageshow`/`focus`) forces reconnect + `recoverMissing()` when a real session is active. This kills the "agent 2nd message fails / Retry dead until re-enter" bug.
+- **Bridge turn frames must survive reconnect too.** `LiveTurnStream` sends through
+  `wsSendWhenConnected`, which queues frames while the Bridge socket is not OPEN and flushes them
+  in order after reconnect. A frame may not consume a turn `seq` and then disappear.
 - **No duplicate/stuck bubbles.** Each optimistic bubble carries a monotonic send `seq`. `reconcileEchoedPending()` (end of `updateLastTurn`) retires a pending when (1) its echo is present (covers echoes that arrived via `bufferAndFetch`, which `tryDedup` skips), or (2) `seq < lastDeliveredSeq` — a later send was already confirmed, so this earlier one was swallowed by a busy-CC send and never reached jsonl (echo never comes). `lastDeliveredSeq` is a persistent watermark bumped in `tryDedup`/`resolvePending(ok)`/echo-match, so orphan detection survives the confirmed pending being removed; reset with `pendingSentMessages` on every session switch. `isImage` bubbles are never auto-orphaned (attachments, no matchable text). Without this an orphan has no `data-ts` and sticks to the bottom forever. New-session banner: `body.new-session #content` is flex-centered, so `.ws-banner` is pinned `position:absolute; top:0` instead of being pulled to the middle.
 
 ### Scroll-to-bottom on session open (no flash / no "差一截")
-- **Order matters: clamp BEFORE scroll.** `clampOverflow` collapses long messages (adds `.clamped` → max-height 4.5em), shrinking total height. If you scroll first then clamp, the collapse pulls the viewport off the bottom → visible correction jump. Both the initial render (`app.js` `loadMessages`) and the live-append path (`ws.js`) call `loadImages` + `clampOverflow` and only then set `scrollTop = scrollHeight`. Removed the old `setTimeout(...,500)` correction jump (it was the visible "flash then snap"). Initial render also re-scrolls in `requestAnimationFrame` (runs after layout settles, before paint) to absorb sync reflow without a visible jump.
+- **Order matters: clamp BEFORE scroll.** `clampOverflow` collapses long messages (adds `.clamped` → max-height 4.5em), shrinking total height. Initial render clamps before scrolling. Live insertions, earlier-tool OUT replacement, sends, and permission prompts use `pinContentToBottom`: set `scrollTop = scrollHeight` immediately and once again in `requestAnimationFrame`. `state.stickBottom` preserves user intent, so deliberate upward scrolling is not overridden. Streaming never uses smooth scrolling because continuously arriving frames would compete with the animation.
 - **diff2html height is async & unknowable at render time.** `tool.js` `renderEdit` injects the diff via `setTimeout` (Diff2HtmlUI draws line-by-line later), so `scrollHeight` at scroll time doesn't include it → scroll lands short ("差一截"). Do NOT try to read the rendered height. Fix (方案 B): the `.diff-container` ships with an **estimated `min-height`** (`(oldLines+newLines)*18 + 12`, capped at 240 because taller diffs get collapsed) so the initial scroll lands near the true bottom; the estimate is **cleared after `ui.draw()`, and that clear must happen BEFORE the `scrollHeight > 240` collapse check** or an over-estimate falsely triggers collapse. Small residual (estimate vs real) is absorbed by the browser's default `overflow-anchor` — never set `overflow-anchor: none` on `#content`/`.messages`.
 - **Watch-outs (observing):** estimate over-counts for large replace-diffs (diff2html shows changed+context, not old+new summed) → brief shrink after draw, hidden by anchor; iOS/WKWebView `overflow-anchor` support is weaker than Chrome — if residual reappears on iOS it's this. Both degrade to "barely visible", not back to the original bug, because min-height already killed the large reflow.
 
@@ -304,8 +314,8 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Bridge `onControlRequest` (CC's `control_request`, precise — no client-side heuristic) → app `permission_request {kind, requestId, questions?/plan?/input}`. App replies `permission_reply {requestId, decision:allow|deny|answer, answerText?}`.
 - Ordinary tools (Bash/Edit/Write/MCP): allow → `control_response{allow, updatedInput}`; deny → `{deny, message}`. (`defaultMode:bypassPermissions` → CC never asks, no prompt.)
 - AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`** — CC's only answer channel on `--permission-prompt-tool stdio` (a structured `control_response` answer is force-converted to deny, verified CC 2.1.211). Multi-question wizard sends `question → answer` per line. Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
-- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (`reveal_agent` → bridge re-push).
-- `permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
+- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (`reveal_permission` → bridge re-push).
+- `web/js/components/permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 
 ### Image Sending
 - S3 upload + `![](baton-bridge:key)` protocol
