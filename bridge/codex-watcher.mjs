@@ -76,13 +76,6 @@ function canonicalPath(filePath) {
   }
 }
 
-export function isStorageOnlyLifecycleMessage(message) {
-  return message?.type === 'assistant'
-    && message.stopReason === 'end_turn'
-    && Array.isArray(message.content)
-    && message.content.length === 0;
-}
-
 export class CodexWatcher {
   constructor(config, options = {}) {
     this.config = config;
@@ -523,10 +516,10 @@ export class CodexWatcher {
         const runtimeOwned = this.runtimeOwnsFn(nativeSessionId);
         for (const message of messages) {
           const liveKey = codexLiveSource(message);
-          const route = runtimeOwned || isStorageOnlyLifecycleMessage(message)
+          const route = runtimeOwned
             ? null
             : liveMessageRoute('codex', liveKey);
-          if (runtimeOwned || isStorageOnlyLifecycleMessage(message)) {
+          if (runtimeOwned) {
             persistedOnly.push(message);
             continue;
           }

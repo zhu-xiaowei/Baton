@@ -5,7 +5,6 @@ import path from 'path';
 import test from 'node:test';
 import {
   CodexWatcher,
-  isStorageOnlyLifecycleMessage,
 } from '../../../bridge/codex-watcher.mjs';
 import { deliverRealtimeMessages } from '../../../bridge/realtime-delivery.mjs';
 import {
@@ -111,24 +110,6 @@ function watcherHarness(homes, options = {}) {
   return { watcher, delivered, uploaded, posts, watermarks };
 }
 
-test('only an empty successful turn-complete row is storage-only', () => {
-  assert.equal(isStorageOnlyLifecycleMessage({
-    type: 'assistant',
-    content: [],
-    stopReason: 'end_turn',
-  }), true);
-  assert.equal(isStorageOnlyLifecycleMessage({
-    type: 'assistant',
-    content: [{ type: 'text', text: 'Error: failed' }],
-    stopReason: 'end_turn',
-  }), false);
-  assert.equal(isStorageOnlyLifecycleMessage({
-    type: 'assistant',
-    content: [],
-    stopReason: 'tool_use',
-  }), false);
-});
-
 test('Codex watcher sends new lines once and preserves a partial trailing line', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[0]);
@@ -141,8 +122,9 @@ test('Codex watcher sends new lines once and preserves a partial trailing line',
   assert.deepEqual(h.delivered.flatMap((batch) => batch.messages).map((message) => message.type), [
     'user',
     'assistant',
+    'assistant',
   ]);
-  const lifecycle = h.uploaded[0].messages.at(-1);
+  const lifecycle = h.delivered[0].messages.at(-1);
   assert.deepEqual(lifecycle.content, []);
   assert.equal(lifecycle.stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[0])), lines.length);
@@ -197,8 +179,8 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
 
   fail = false;
   await h.watcher.processFile(filePath);
-  assert.equal(delivered.length, 2);
-  assert.equal(h.uploaded.at(-1).messages.at(-1).stopReason, 'end_turn');
+  assert.equal(delivered.length, 3);
+  assert.equal(delivered.at(-1).stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[1])), 6);
 });
 
@@ -788,8 +770,12 @@ test('Codex watcher rescans changes immediately after a watcher retry', async (t
   assert.deepEqual(h.delivered.flatMap((batch) => batch.messages).map((message) => message.type), [
     'user',
     'assistant',
+    'assistant',
   ]);
-  assert.equal(h.uploaded.flatMap((batch) => batch.messages).at(-1).stopReason, 'end_turn');
+  assert.equal(
+    h.delivered.flatMap((batch) => batch.messages).at(-1).stopReason,
+    'end_turn',
+  );
 });
 
 test('Codex watcher handles rename, multiple homes, and running to completed status', async (t) => {
