@@ -14,7 +14,7 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for foreground refresh');
 }
 
-test('foreground refresh updates the current list/home or resumes the open session', async () => {
+test('foreground visibility reuses current navigation loaders or resumes the open session', async () => {
   var visibility = 'visible';
   const dom = new JSDOM(
     '<!doctype html><body>'
@@ -153,7 +153,7 @@ test('foreground refresh updates the current list/home or resumes the open sessi
     window.document.dispatchEvent(new window.Event('visibilitychange'));
     await waitFor(function () { return projectFetches === 2; });
     assert.match(content.textContent, /1 running/);
-    assert.equal(content.scrollTop, 75);
+    assert.equal(content.scrollTop, 0);
 
     await window.loadSessions('D', 'P', 'Project');
     assert.match(content.textContent, /Done/);

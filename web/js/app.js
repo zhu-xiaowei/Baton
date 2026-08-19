@@ -749,45 +749,23 @@ async function loadDevices() {
   // instead of launching a second request/render pipeline.
   if (window.__homeLoadPromise && wasHome) {
     window.__preload = null;
-    window.__homeLoadPromise.then(function (fresh) {
+    return window.__homeLoadPromise.then(function (fresh) {
       if (_navVersion !== myNav || !fresh || !fresh[1]) return;
       rememberDevices(fresh[1]);
     });
-    return;
   }
 
   var preload = window.__preload;
   if (preload) window.__preload = null;
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
-  window.__loadHome(activePromise, devicesPromise, {
+  return window.__loadHome(activePromise, devicesPromise, {
     resetScroll: true,
     onFresh: function (_activeData, devData) {
       rememberDevices(devData);
       showStats(devData.devices.length + ' device(s)');
     }
   });
-}
-
-function refreshHomeForeground() {
-  var navVersion = _navVersion;
-  return window.__loadHome(
-    api('/api/bridge/active-sessions'),
-    api('/api/bridge/devices'),
-    {
-      resetScroll: false,
-      isCurrent: function () {
-        return _navVersion === navVersion
-          && !state.appState.device
-          && !state.appState.project
-          && !state.appState.session;
-      },
-      onFresh: function (_activeData, devData) {
-        rememberDevices(devData);
-        showStats(devData.devices.length + ' device(s)');
-      },
-    },
-  );
 }
 
 function refreshForegroundView() {
@@ -799,11 +777,15 @@ function refreshForegroundView() {
         ? window.resumeSessionForeground()
         : false;
     }
-    if (_activeListOptions) {
-      rememberActiveListScroll();
-      return loadPagedList(_activeListOptions, _navVersion);
+    if (state.appState.project && state.appState.device) {
+      return loadSessions(
+        state.appState.device,
+        state.appState.project.hash,
+        state.appState.project.name,
+      );
     }
-    return refreshHomeForeground();
+    if (state.appState.device) return loadProjects(state.appState.device);
+    return loadDevices();
   }).finally(function () {
     _foregroundRefresh = null;
   });
@@ -820,14 +802,7 @@ function handleVisibilityChange() {
   refreshForegroundView();
 }
 
-function handlePageShow(event) {
-  if (!event.persisted) return;
-  _pageWasHidden = false;
-  refreshForegroundView();
-}
-
 document.addEventListener('visibilitychange', handleVisibilityChange);
-window.addEventListener('pageshow', handlePageShow);
 
 // ---- Projects ----
 function projectsHtml(device, data, sel) {
