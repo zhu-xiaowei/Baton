@@ -74,6 +74,24 @@ body {
 /* === Content === */
 /* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
 #content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* The native WKWebView root stays fixed for keyboard stability. Give its iOS
+   content scroller a 1px range so short lists still get native rubber-banding. */
+@supports (-webkit-touch-callout: none) {
+  html.native-mobile #content {
+    position: relative;
+    overflow-y: scroll;
+    -webkit-overflow-scrolling: touch;
+  }
+  html.native-mobile #content::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+  }
+}
 
 /* === List items === */
 .list { padding: 4px 0 var(--sab, env(safe-area-inset-bottom, 0px)); }
