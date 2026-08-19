@@ -535,7 +535,10 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
+  const originalPinContentToBottom = window.pinContentToBottom;
   let loads = 0;
+  let bottomPins = 0;
+  window.pinContentToBottom = () => { bottomPins++; };
   window.loadDiffViewer = async () => {
     loads++;
     window.Diff = {
@@ -581,6 +584,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     assert.equal(loads, 1);
     assert.equal(diff.dataset.diffState, 'ready');
     assert.match(diff.textContent, /rendered diff/);
+    assert.equal(bottomPins, 1);
 
     window.toggleToolDetails(node.querySelector('.tool-header'));
     window.toggleToolDetails(node.querySelector('.tool-header'));
@@ -590,6 +594,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;
     window.Diff2HtmlUI = originalUi;
+    window.pinContentToBottom = originalPinContentToBottom;
   }
 });
 

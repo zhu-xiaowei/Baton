@@ -383,6 +383,7 @@
         el.dataset.diffState = 'ready';
         pendingDiffJobs.delete(diffId);
         window.clampOverflow?.(el.closest('.tool-node'));
+        window.pinContentToBottom?.();
       }
     })();
     return job.promise;
