@@ -683,6 +683,16 @@ function maybeLoadNextListPage() {
   if (distance < LIST_PRELOAD_PX) loadNextListPage();
 }
 
+function toggleActiveSessions() {
+  var grid = document.getElementById('active-section');
+  var title = grid && grid.previousElementSibling;
+  if (!grid) return;
+  var show = grid.style.display === 'none';
+  grid.style.display = show ? '' : 'none';
+  if (title) title.classList.toggle('expanded', show);
+  sessionStorage.setItem('apeek_activeCollapsed', show ? '0' : '1');
+}
+
 function toggleRecentAgents() {
   var grid = document.getElementById('recent-agents-grid');
   var title = grid && grid.previousElementSibling;
@@ -1498,7 +1508,7 @@ Object.assign(window, {
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
-  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleRecentAgents,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions, toggleRecentAgents,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });
 
