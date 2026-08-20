@@ -514,7 +514,7 @@ Codex TUI 的 `N background terminal(s) running` 属于未落 JSONL 的内存状
 
 本地自动化合计 175 项。
 
-BatonTest 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
+Baton 实际升级后发现 18 个 Codex Session，最近或运行中的 Session 共写入 4281 条
 唯一消息；REST 分页返回 4281 条，缺失 0、重复 0。
 
 Phase 2 真实链路验证使用隔离 `CODEX_HOME` 并发启动 2 个 Codex Session：

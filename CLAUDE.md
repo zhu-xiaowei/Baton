@@ -29,7 +29,7 @@ Brand name "Baton" is only in user-facing places. Internal code uses generic nam
 ### Phase 1: COMPLETE ✅
 - bridge.mjs syncs session metadata to DDB via HTTP POST
 - bridge.mjs watches .jsonl files, detects new messages in real-time
-- Deployed to ap-northeast-1 (BatonTest), verified 300+ sessions
+- Deployed to ap-northeast-1 (Baton), verified 300+ sessions
 
 ### Codex Phase 1 + Phase 2: COMPLETE
 - Runtime adapters discover Claude Code and Codex into one Device → Project → Session catalog.
@@ -113,7 +113,7 @@ Done:
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 
-## Deployed Test Environment
+## Deployed Environment
 
 **API URL and API key live in `.env.local` (gitignored). When you need them,
 read that file** — do not hardcode them in committed code. Variables:
@@ -122,9 +122,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 `server/install.sh` from the stack name + `aws sts get-caller-identity`.
 
 - **Region**: ap-northeast-1
-- **Stack**: BatonTest
-- **DDB Tables**: `BatonTest-bridge-sessions`, `BatonTest-bridge-messages`
-- **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack BatonTest`
+- **Stack**: Baton
+- **DDB Tables**: `Baton-bridge-sessions`, `Baton-bridge-messages`
+- **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack Baton`
 
 ## Key Technical Decisions
 

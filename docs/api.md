@@ -497,7 +497,7 @@ idempotent backfill once to include rows belonging to offline devices:
 
 ```bash
 python3 server/backfill-list-index.py \
-  --table BatonTest-bridge-sessions \
+  --table Baton-bridge-sessions \
   --region ap-northeast-1 \
   --dry-run
 ```

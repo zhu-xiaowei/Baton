@@ -448,7 +448,7 @@ baton/
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
 - Periodic check (1min) only detects disappeared CC processes
-- Deployed to ap-northeast-1 (BatonTest), verified
+- Deployed to ap-northeast-1 (Baton), verified
 
 ### Phase 2A: Backend + API Validation ✅ Complete
 

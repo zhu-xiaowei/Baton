@@ -19,7 +19,7 @@ What it does:
 Safe to re-run: idempotent (already-migrated items are skipped).
 
 Usage:
-  python3 migrate-sessions-table.py --table BatonTest-bridge-sessions --region us-west-2
+  python3 migrate-sessions-table.py --table Baton-bridge-sessions --region us-west-2
   python3 migrate-sessions-table.py ... --dry-run
 """
 
