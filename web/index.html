@@ -473,7 +473,7 @@
 </script>
 </head>
 <body>
-<script>if(window.__TAURI_INTERNALS__ && /Mac/.test(navigator.platform))document.body.classList.add('is-macos');</script>
+<script>if(/Mac/.test(navigator.platform)&&navigator.maxTouchPoints<2)document.body.classList.add('is-macos');</script>
 
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">

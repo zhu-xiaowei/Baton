@@ -3,6 +3,10 @@
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #3a4049; border-radius: 3px; }
+body.is-macos,
+body.is-macos #slash-list { scrollbar-color: auto; }
+body.is-macos ::-webkit-scrollbar,
+body.is-macos #slash-list::-webkit-scrollbar { width: 8px; height: 8px; }
 @media (hover: hover) and (pointer: fine) {
   ::-webkit-scrollbar-thumb:hover { background: #4a5059; }
 }
