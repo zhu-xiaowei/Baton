@@ -690,17 +690,22 @@ function renderStrictToolBlock(element, block) {
 function drainStrictStreamOperations() {
   var operations = _streamCoordinator.takeOperations();
   if (!operations.length) return;
+  var completedTurn = false;
   getStrictStreamRenderer().applyOperations(operations);
   for (var operation of operations) {
     if (operation.type === 'createTurn') {
       state.wsRunning = true;
     } else if (operation.type === 'completeTurn') {
+      completedTurn = true;
       _lastStreamEndAt = Date.now();
       _checkpointResumedTurns.delete(operation.turnId);
       _reconnectingTurns.delete(operation.turnId);
     }
   }
   state.wsRunning = hasOutstandingTurns();
+  if (completedTurn && !state.wsRunning && typeof window.markSpinnerTurnEnd === 'function') {
+    window.markSpinnerTurnEnd();
+  }
   updateSendBtn();
 }
 

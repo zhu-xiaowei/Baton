@@ -102,6 +102,26 @@ test('spinner appears immediately and only animates while collapsing', () => {
   assert.match(collapsedRule, /transition:\s*height 250ms ease-out/);
 });
 
+test('short output keeps the spinner visible for at least 500ms', async () => {
+  reset();
+  state.wsRunning = true;
+  window.updateSpinner();
+
+  document.querySelector('.messages').insertAdjacentHTML(
+    'beforeend',
+    '<div class="assistant-turn stream-preview"><div data-block-id="1">Hi</div></div>',
+  );
+  window.updateSpinner();
+  window.markSpinnerTurnEnd();
+  state.wsRunning = false;
+  window.updateSpinner();
+
+  const spinner = document.getElementById('cc-spinner');
+  assert.equal(spinner?.classList.contains('is-collapsed'), false);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  assert.equal(spinner?.classList.contains('is-collapsed'), true);
+});
+
 function reset() {
   document.querySelector('.messages').innerHTML = '';
   state.appState = {

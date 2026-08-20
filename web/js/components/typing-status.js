@@ -21,6 +21,8 @@ import { state } from '../state.js';
   var _glyphIv = null, _typingIv = null, _pauseTimer = null;
   var _currentVerb = '';
   var _currentRuntime = '';
+  var _outputShownAt = 0, _hideTimer = null, _wasRunning = false, _turnEnded = false;
+  var MIN_OUTPUT_VISIBLE_MS = 500;
 
   function pick() {
     var v;
@@ -54,6 +56,10 @@ import { state } from '../state.js';
     }, frameMs);
   }
 
+  window.markSpinnerTurnEnd = function () {
+    _turnEnded = true;
+  };
+
   window.updateSpinner = function () {
     var el = document.getElementById('cc-spinner');
     // Hide the spinner while a permission prompt is up — the user is answering, not waiting.
@@ -63,7 +69,34 @@ import { state } from '../state.js';
     var shouldShow = state.wsRunning && !promptUp && !skeleton;
     var runtime = state.appState.runtime === 'codex' ? 'codex' : 'claude';
 
+    if (state.wsRunning && !_wasRunning) {
+      clearTimeout(_hideTimer);
+      _hideTimer = null;
+      _outputShownAt = 0;
+      _turnEnded = false;
+    }
+    if (state.wsRunning && !_outputShownAt
+      && document.querySelector('.assistant-turn.stream-preview [data-block-id]')) {
+      _outputShownAt = Date.now();
+    }
+    _wasRunning = state.wsRunning;
+
     if (!shouldShow) {
+      var remaining = !state.wsRunning && _turnEnded && _outputShownAt
+        ? MIN_OUTPUT_VISIBLE_MS - (Date.now() - _outputShownAt)
+        : 0;
+      if (el && remaining > 0) {
+        if (!_hideTimer) {
+          _hideTimer = setTimeout(function () {
+            _hideTimer = null;
+            window.updateSpinner();
+          }, remaining);
+        }
+        return;
+      }
+      clearTimeout(_hideTimer);
+      _hideTimer = null;
+      _turnEnded = false;
       if (el) {
         // Collapse the status row instead of removing it from layout in one
         // frame. This avoids a bottom-scroll jump without leaving an idle gap.
