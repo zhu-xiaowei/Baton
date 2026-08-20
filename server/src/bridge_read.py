@@ -769,7 +769,7 @@ async def get_install(
             '  EXISTING_NAME=$(python3 -c "import json; print(json.load(open(\'$DIR/config.json\')).get(\'deviceName\',\'\'))" 2>/dev/null || true)\n'
             'fi\n'
             'DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"\n'
-            'if [ -t 0 ] && [ -e /dev/tty ]; then\n'
+            'if tty -s 2>/dev/null < /dev/tty; then\n'
             '  printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
             '  read -r NAME < /dev/tty\n'
             '  NAME="${NAME:-$DEFAULT_NAME}"\n'

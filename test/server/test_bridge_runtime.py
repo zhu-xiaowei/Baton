@@ -465,9 +465,11 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     monkeypatch.setenv("BRIDGE_IMAGES_BUCKET", "bridge-bucket")
     monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: S3())
 
-    response = asyncio.run(bridge_read.get_install(request, name="Linux", platform=""))
+    response = asyncio.run(bridge_read.get_install(request, name=None, platform=""))
     script = response.body.decode()
 
+    assert "if tty -s 2>/dev/null < /dev/tty; then" in script
+    assert 'printf "Device name [$DEFAULT_NAME]: " > /dev/tty' in script
     assert "Requires >= 20.9" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script
