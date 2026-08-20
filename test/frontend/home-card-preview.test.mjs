@@ -30,7 +30,12 @@ test('inline home cards preserve quoted session previews for detail navigation',
     }],
     recentSessions: [],
   };
-  const devices = { devices: [] };
+  const devices = {
+    devices: [{
+      deviceName: 'MacBook-Pro',
+      deviceDisplayName: 'Office Mac',
+    }],
+  };
   const dom = new JSDOM(indexHtml, {
     url: 'http://baton.test/index.html',
     runScripts: 'dangerously',
@@ -56,6 +61,11 @@ test('inline home cards preserve quoted session previews for detail navigation',
       dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.preview,
       preview,
     );
+    assert.equal(
+      dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.device,
+      'MacBook-Pro',
+    );
+    assert.equal(dom.window.document.querySelector('.card-device').textContent, 'Office Mac');
   } finally {
     dom.window.close();
   }

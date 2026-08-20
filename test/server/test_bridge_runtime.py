@@ -38,6 +38,7 @@ class FakeTable:
     def __init__(self):
         self.items = []
         self.deleted = []
+        self.updates = []
 
     def batch_writer(self):
         return FakeBatch(self)
@@ -51,6 +52,9 @@ class FakeTable:
             if item.get("accountId") == Key["accountId"] and item.get("sk") == Key["sk"]
         ), None)
         return {"Item": item} if item else {}
+
+    def update_item(self, **kwargs):
+        self.updates.append(kwargs)
 
 
 class FakeRequest:
@@ -114,6 +118,19 @@ def test_old_device_gets_claude_capability():
     capabilities = bridge_read._runtime_capabilities({})
     assert list(capabilities) == ["claude"]
     assert capabilities["claude"]["canCreate"] is True
+
+
+def test_device_name_validation():
+    devices = [
+        {"deviceName": "Mac", "deviceDisplayName": "Office-Mac"},
+        {"deviceName": "Linux"},
+    ]
+    assert bridge_read._check_device_name(devices, "dev-01", "identity") == ("dev-01", "")
+    assert bridge_read._check_device_name(devices, "bad name", "identity")[1] == bridge_read.INVALID_INTERNAL_NAME
+    assert bridge_read._check_device_name(devices, "office-mac", "identity")[1] == bridge_read.DUPLICATE_DEVICE_NAME
+    assert bridge_read._check_device_name(devices, " 小伟的 Mac ", "display", "Mac") == ("小伟的 Mac", "")
+    assert bridge_read._check_device_name(devices, "Linux", "display", "Mac")[1] == bridge_read.DUPLICATE_DEVICE_NAME
+    assert bridge_read._check_device_name(devices, "x" * 33, "display")[1] == bridge_read.INVALID_DISPLAY_NAME
 
 
 def test_active_session_visibility_filters_offline_and_stale_needs_input():
@@ -249,6 +266,7 @@ def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
     request = bridge_sync.SyncSessionsRequest(
         deviceName="Mac",
+        deviceDisplayName="Office Mac",
         sessions=[],
         device=bridge_sync.DeviceAggregate(
             runtimeCapabilities={
@@ -269,6 +287,7 @@ def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
     assert len(devices) == 1
     device = devices[0]
     assert device["sk"] == "DEV#Mac"
+    assert device["deviceDisplayName"] == "Office Mac"
     assert device["runtimeCapabilities"]["claude"]["canCreate"] is True
     assert device["runtimeCapabilities"]["codex"]["canRead"] is True
     assert device["runtimeCapabilities"]["codex"]["canCreate"] is False
@@ -323,6 +342,7 @@ def test_incomplete_catalog_preserves_existing_device_aggregates(monkeypatch):
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
     request = bridge_sync.SyncSessionsRequest(
         deviceName="Windows",
+        deviceDisplayName="Office Windows",
         os="win32",
         catalogComplete=False,
         sessions=[],
@@ -337,6 +357,7 @@ def test_incomplete_catalog_preserves_existing_device_aggregates(monkeypatch):
 
     devices = [item for item in sessions.items if item.get("sk") == "DEV#Windows"]
     assert devices == [existing_device]
+    assert sessions.updates[0]["ExpressionAttributeValues"][":name"] == "Office Windows"
     assert not any(item.get("sk") == "PROJ#Windows#partial" for item in sessions.items)
 
 
@@ -450,9 +471,10 @@ def test_windows_installer_prompts_for_device_name():
         "test-key",
         None,
     )
-    assert "if (-not $isSystemContext)" in script
     assert 'Read-Host "Device name [$defaultName]"' in script
-    assert "$deviceName = $defaultName" in script
+    assert "/api/bridge/device-name/validate" in script
+    assert "deviceDisplayName = $deviceDisplayName" in script
+    assert "Write-Host $result.error" in script
 
 
 def test_unix_installer_validates_runtime_dependencies(monkeypatch):
@@ -469,7 +491,9 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     script = response.body.decode()
 
     assert "if tty -s 2>/dev/null < /dev/tty; then" in script
-    assert 'printf "Device name [$DEFAULT_NAME]: " > /dev/tty' in script
+    assert 'printf "Device name [%s]: " "$DEFAULT_NAME" > /dev/tty' in script
+    assert "/api/bridge/device-name/validate" in script
+    assert "deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME" in script
     assert "Requires >= 20.9" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script

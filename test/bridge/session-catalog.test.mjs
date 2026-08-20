@@ -51,7 +51,7 @@ test('catalog batching sends authoritative aggregates only in the first request'
   const aggregates = buildCatalogAggregates(sessions);
   const requests = [];
   await uploadCatalog(
-    { deviceName: 'Mac' },
+    { deviceName: 'Mac', deviceDisplayName: 'Office Mac' },
     sessions,
     aggregates,
     true,
@@ -59,6 +59,7 @@ test('catalog batching sends authoritative aggregates only in the first request'
   );
   assert.equal(requests.length, 2);
   assert.equal(requests[0].body.sessions.length, 5000);
+  assert.equal(requests[0].body.deviceDisplayName, 'Office Mac');
   assert.equal(requests[0].body.catalogComplete, true);
   assert.ok(requests[0].body.device);
   assert.ok(requests[0].body.projects);

@@ -11,6 +11,7 @@ export const state = {
   // ---- Navigation / device list (app.js) ----
   appState: { device: null, project: null, session: null, sessionPreview: '' },
   deviceOnlineMap: {},
+  deviceDisplayNameMap: {},
   deviceRuntimeCapabilities: {},
   newSessionRuntimes: [],
 

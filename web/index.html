@@ -221,6 +221,15 @@
   function renderInline(activeData, devData) {
     var content = document.getElementById('content');
     if (!content) return;
+    var devs = (devData && devData.devices) || [];
+    var deviceDisplayNames = {};
+    devs.forEach(function (device) {
+      deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
+    });
+    window.__deviceDisplayNames = deviceDisplayNames;
+    var displayDeviceName = function (deviceName) {
+      return deviceDisplayNames[deviceName] || deviceName;
+    };
     var html = '';
     var actives = (activeData && activeData.sessions) || [];
     if (actives.length) {
@@ -243,7 +252,7 @@
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
           + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
-          + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
       }).join('');
       html += '</div>';
@@ -268,12 +277,11 @@
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
           + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + '<span class="badge stopped">Done</span></span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
-          + '<div class="card-bottom"><span class="card-device">' + esc(s.deviceName) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
       }).join('');
       html += '</div></div>';
     }
-    var devs = (devData && devData.devices) || [];
     if (devs.length) {
       html += '<div class="section-title">Devices (' + devs.length + ')</div>';
       html += '<div id="devices-section" class="list">';
@@ -281,7 +289,7 @@
         var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
         return '<div class="item device-item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
           + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</div>';
       }).join('');

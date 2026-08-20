@@ -281,11 +281,17 @@ function navHref(view, params) {
   return '#/';
 }
 
+function displayDeviceName(deviceName) {
+  return state.deviceDisplayNameMap[deviceName]
+    || window.__deviceDisplayNames?.[deviceName]
+    || deviceName;
+}
+
 function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
-    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(state.appState.device) + '</a>');
+    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
   }
   if (state.appState.project) {
     parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
@@ -715,10 +721,12 @@ function shortModel(m) {
 function rememberDevices(data) {
   (data?.devices || []).forEach(function (device) {
     state.deviceOnlineMap[device.deviceName] = device.online;
+    state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName || device.deviceName;
     state.deviceRuntimeCapabilities[device.deviceName] = device.runtimeCapabilities || {
       claude: { canCreate: true },
     };
   });
+  window.__deviceDisplayNames = state.deviceDisplayNameMap;
 }
 
 async function runtimeCapabilitiesForDevice(device) {
@@ -1427,6 +1435,14 @@ async function loadOlderAndPrepend() {
   if (!state.KEY) return; // auth guard in index.html handles redirect
   // Inline shell already painted + replayed navigation — skip to avoid clearing its state.
   if (window.__inlineRendered) return;
+
+  if (window.__preload?.devices) {
+    Promise.resolve(window.__preload.devices).then(function (data) {
+      if (!data) return;
+      rememberDevices(data);
+      if (state.appState.device) updateBreadcrumb();
+    });
+  }
 
   // Route immediately so skeleton shows without waiting for any network call
   var nav = sessionStorage.getItem('baton-nav');

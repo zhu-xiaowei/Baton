@@ -11,6 +11,7 @@ import binascii
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -279,6 +280,7 @@ async def get_devices(request: Request):
         lc = live_dev.get(name, {})
         devices.append({
             "deviceName": name,
+            "deviceDisplayName": item.get("deviceDisplayName") or name,
             "os": item.get("os", ""),
             "projectCount": int(item.get("projectCount", 0)),
             "sessionCount": int(item.get("sessionCount", 0)),
@@ -581,11 +583,129 @@ def _powershell_literal(value):
     return "'" + str(value or "").replace("'", "''") + "'"
 
 
+def _shell_literal(value):
+    return "'" + str(value or "").replace("'", "'\"'\"'") + "'"
+
+
+INVALID_INTERNAL_NAME = (
+    "Invalid device name. Use 1-32 characters: letters, numbers, '.', '_' or '-', "
+    "starting with a letter or number."
+)
+INVALID_DISPLAY_NAME = "Invalid device name. Use 1-32 visible characters with no line breaks."
+DUPLICATE_DEVICE_NAME = "That device name is already in use. Choose another."
+DEVICE_NAME_CHECK_FAILED = "Could not validate device name. Check your connection and try again."
+
+
+def _check_device_name(items, name, mode, current=""):
+    name = str(name or "").strip()
+    if mode == "identity":
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}", name):
+            return "", INVALID_INTERNAL_NAME
+    elif mode == "display":
+        if not 1 <= len(name) <= 32 or not all(char.isprintable() for char in name):
+            return "", INVALID_DISPLAY_NAME
+    else:
+        return "", "Invalid validation mode."
+
+    candidate = name.casefold()
+    current = str(current or "").casefold()
+    for item in items:
+        identity = str(item.get("deviceName", ""))
+        if current and identity.casefold() == current:
+            continue
+        display = str(item.get("deviceDisplayName") or identity)
+        values = (identity, display) if mode == "identity" else (display,)
+        if any(value.strip().casefold() == candidate for value in values):
+            return "", DUPLICATE_DEVICE_NAME
+    return name, ""
+
+
+@read_router.get("/device-name/validate")
+async def validate_device_name(
+    request: Request,
+    name: str = Query(...),
+    mode: str = Query("identity"),
+    current: str = Query(""),
+):
+    sessions_table, _ = _tables()
+    items = _query_all(
+        sessions_table,
+        KeyConditionExpression=Key("accountId").eq(_account_id(request)) & Key("sk").begins_with("DEV#"),
+        ProjectionExpression="deviceName, deviceDisplayName",
+    )
+    normalized, error = _check_device_name(items, name, mode, current)
+    return {"ok": not error, "name": normalized, "error": error}
+
+
+def _unix_device_name_block(server, api_key, name):
+    return f"""# Preserve the original deviceName as the stable identity; only the display name changes.
+REQUESTED_NAME={_shell_literal(name)}
+EXISTING_NAME=""
+EXISTING_DISPLAY_NAME=""
+if [ -f "$DIR/config.json" ]; then
+  EXISTING_NAME=$(python3 -c "import json; print(json.load(open('$DIR/config.json')).get('deviceName',''))" 2>/dev/null || true)
+  EXISTING_DISPLAY_NAME=$(python3 -c "import json; print(json.load(open('$DIR/config.json')).get('deviceDisplayName',''))" 2>/dev/null || true)
+fi
+VALIDATION_URL={_shell_literal(f"{server}/api/bridge/device-name/validate")}
+VALIDATION_KEY={_shell_literal(api_key)}
+validate_name() {{
+  VALIDATION_URL="$VALIDATION_URL" VALIDATION_KEY="$VALIDATION_KEY" node -e '
+    const [name, mode, current] = process.argv.slice(1);
+    const url = new URL(process.env.VALIDATION_URL);
+    url.searchParams.set("name", name);
+    url.searchParams.set("mode", mode);
+    if (current) url.searchParams.set("current", current);
+    fetch(url, {{headers: {{"x-api-key": process.env.VALIDATION_KEY}}}})
+      .then(async response => {{
+        if (!response.ok) throw new Error();
+        const result = await response.json();
+        if (!result.ok) {{ console.error(result.error); process.exitCode = 1; return; }}
+        process.stdout.write(result.name);
+      }})
+      .catch(() => {{ console.error("{DEVICE_NAME_CHECK_FAILED}"); process.exitCode = 2; }});
+  ' -- "$1" "$2" "$3"
+}}
+if [ -n "$EXISTING_NAME" ]; then
+  NAME="$EXISTING_NAME"
+  DEFAULT_NAME="${{EXISTING_DISPLAY_NAME:-$EXISTING_NAME}}"
+  if tty -s 2>/dev/null < /dev/tty; then
+    while true; do
+      printf "Device name [%s]: " "$DEFAULT_NAME" > /dev/tty
+      read -r ENTERED_NAME < /dev/tty
+      if DEVICE_DISPLAY_NAME=$(validate_name "${{ENTERED_NAME:-$DEFAULT_NAME}}" display "$NAME"); then
+        break
+      else
+        [ $? -eq 2 ] && exit 1
+      fi
+    done
+  else
+    DEVICE_DISPLAY_NAME="$DEFAULT_NAME"
+  fi
+else
+  DEFAULT_NAME="${{REQUESTED_NAME:-$(hostname)}}"
+  if tty -s 2>/dev/null < /dev/tty; then
+    while true; do
+      printf "Device name [%s]: " "$DEFAULT_NAME" > /dev/tty
+      read -r ENTERED_NAME < /dev/tty
+      if NAME=$(validate_name "${{ENTERED_NAME:-$DEFAULT_NAME}}" identity ""); then
+        break
+      else
+        [ $? -eq 2 ] && exit 1
+      fi
+    done
+  else
+    NAME=$(validate_name "$DEFAULT_NAME" identity "") || exit 1
+  fi
+  DEVICE_DISPLAY_NAME="$NAME"
+fi"""
+
+
 def _windows_install_script(url, server, api_key, name):
     package = _powershell_literal(url)
     server_value = _powershell_literal(server)
     key_value = _powershell_literal(api_key)
     name_value = _powershell_literal(name)
+    validation_uri = _powershell_literal(f"{server}/api/bridge/device-name/validate")
     return "\n".join([
         "$ErrorActionPreference = 'Stop'",
         "$task = Get-ScheduledTask -TaskName 'Baton Bridge' -ErrorAction SilentlyContinue",
@@ -648,18 +768,50 @@ def _windows_install_script(url, server, api_key, name):
         "$dir = Join-Path $targetHome '.baton-bridge'",
         "$configPath = Join-Path $dir 'config.json'",
         "$existingName = ''",
+        "$existingDisplayName = ''",
         "if (Test-Path $configPath) {",
-        "  try { $existingName = (Get-Content $configPath -Raw | ConvertFrom-Json).deviceName } catch {}",
+        "  try {",
+        "    $existingConfig = Get-Content $configPath -Raw | ConvertFrom-Json",
+        "    $existingName = [string]$existingConfig.deviceName",
+        "    $existingDisplayName = [string]$existingConfig.deviceDisplayName",
+        "  } catch {}",
         "}",
-        f"$deviceName = {name_value}",
-        "$defaultName = $existingName",
-        "if ([string]::IsNullOrWhiteSpace($defaultName)) { $defaultName = $env:COMPUTERNAME }",
-        "if ([string]::IsNullOrWhiteSpace($deviceName)) {",
-        "  if (-not $isSystemContext) {",
-        "    $enteredName = Read-Host \"Device name [$defaultName]\"",
-        "    $deviceName = if ([string]::IsNullOrWhiteSpace($enteredName)) { $defaultName } else { $enteredName }",
+        f"$requestedName = {name_value}",
+        f"$validationUri = {validation_uri}",
+        f"$headers = @{{ 'x-api-key' = {key_value} }}",
+        "function Test-DeviceName([string]$candidate, [string]$mode, [string]$current = '') {",
+        "  $uri = $validationUri + '?name=' + [uri]::EscapeDataString($candidate) + '&mode=' + $mode",
+        "  if ($current) { $uri += '&current=' + [uri]::EscapeDataString($current) }",
+        "  try { return Invoke-RestMethod -UseBasicParsing -Uri $uri -Headers $headers } catch {",
+        f"    throw { _powershell_literal(DEVICE_NAME_CHECK_FAILED) }",
+        "  }",
+        "}",
+        "if ([string]::IsNullOrWhiteSpace($existingName)) {",
+        "  $defaultName = if ([string]::IsNullOrWhiteSpace($requestedName)) { $env:COMPUTERNAME } else { $requestedName }",
+        "  while ($true) {",
+        "    if ($isSystemContext) { $candidate = $defaultName } else {",
+        "      $enteredName = Read-Host \"Device name [$defaultName]\"",
+        "      $candidate = if ([string]::IsNullOrWhiteSpace($enteredName)) { $defaultName } else { $enteredName }",
+        "    }",
+        "    $result = Test-DeviceName $candidate 'identity'",
+        "    if ($result.ok) { $deviceName = [string]$result.name; break }",
+        "    if ($isSystemContext) { throw $result.error }",
+        "    Write-Host $result.error",
+        "  }",
+        "  $deviceDisplayName = $deviceName",
+        "} else {",
+        "  $deviceName = $existingName",
+        "  $defaultName = if ([string]::IsNullOrWhiteSpace($existingDisplayName)) { $existingName } else { $existingDisplayName }",
+        "  if ($isSystemContext) {",
+        "    $deviceDisplayName = $defaultName",
         "  } else {",
-        "    $deviceName = $defaultName",
+        "    while ($true) {",
+        "      $enteredName = Read-Host \"Device name [$defaultName]\"",
+        "      $candidate = if ([string]::IsNullOrWhiteSpace($enteredName)) { $defaultName } else { $enteredName }",
+        "      $result = Test-DeviceName $candidate 'display' $deviceName",
+        "      if ($result.ok) { $deviceDisplayName = [string]$result.name; break }",
+        "      Write-Host $result.error",
+        "    }",
         "  }",
         "}",
         "if ($task) { Stop-ScheduledTask -TaskName 'Baton Bridge' -ErrorAction SilentlyContinue }",
@@ -692,7 +844,7 @@ def _windows_install_script(url, server, api_key, name):
         "  }",
         "} finally { Pop-Location }",
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
-        f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName }}",
+        f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
         "$utf8 = New-Object System.Text.UTF8Encoding($false)",
         "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
         "$bridge = Join-Path $dir 'bridge-launcher.mjs'",
@@ -759,24 +911,7 @@ async def get_install(
             content=_windows_install_script(url, server, api_key, name),
             media_type="text/plain",
         )
-    if name:
-        name_block = f'NAME="{name}"'
-    else:
-        name_block = (
-            '# Read existing name from config, fall back to hostname\n'
-            'EXISTING_NAME=""\n'
-            'if [ -f "$DIR/config.json" ]; then\n'
-            '  EXISTING_NAME=$(python3 -c "import json; print(json.load(open(\'$DIR/config.json\')).get(\'deviceName\',\'\'))" 2>/dev/null || true)\n'
-            'fi\n'
-            'DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"\n'
-            'if tty -s 2>/dev/null < /dev/tty; then\n'
-            '  printf "Device name [$DEFAULT_NAME]: " > /dev/tty\n'
-            '  read -r NAME < /dev/tty\n'
-            '  NAME="${NAME:-$DEFAULT_NAME}"\n'
-            'else\n'
-            '  NAME="$DEFAULT_NAME"\n'
-            'fi'
-        )
+    name_block = _unix_device_name_block(server, api_key, name)
     script = (
         '#!/bin/bash\n'
         'set -e\n'
@@ -805,6 +940,12 @@ async def get_install(
         '    node verify-dependencies.mjs\n'
         '}\n'
         'install_bridge_dependencies || { sleep 2; install_bridge_dependencies; }\n'
+        f'BATON_SERVER={_shell_literal(server)} BATON_API_KEY={_shell_literal(api_key)} '
+        'BATON_DEVICE_NAME="$NAME" BATON_DEVICE_DISPLAY_NAME="$DEVICE_DISPLAY_NAME" '
+        'node -e \'const fs=require("fs");const p=process.argv[1];'
+        'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
+        'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
+        'fs.writeFileSync(p,JSON.stringify(config,null,2));\' "$DIR/config.json"\n'
         '\n'
         '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n'
         'if [ -n "$WSL_DISTRO_NAME" ]; then\n'

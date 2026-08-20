@@ -108,6 +108,7 @@ class StatusDelta(BaseModel):
 
 class SyncSessionsRequest(BaseModel):
     deviceName: str
+    deviceDisplayName: str = ""
     os: str = ""
     sessions: List[SessionItem]
     # Complete catalogs overwrite aggregates. Incomplete catalogs only bootstrap
@@ -287,6 +288,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             "sk": f"DEV#{req.deviceName}",
             "entityType": "device",
             "deviceName": req.deviceName,
+            "deviceDisplayName": req.deviceDisplayName or req.deviceName,
             "os": req.os,
             "sessionCount": req.device.sessionCount,
             "projectCount": req.device.projectCount,
@@ -318,6 +320,12 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                     "listSk": _list_sk(p.lastActive, p.projectHash),
                     "updatedAt": now,
                 })
+    elif req.deviceDisplayName:
+        sessions_table.update_item(
+            Key={"accountId": key_hash, "sk": f"DEV#{req.deviceName}"},
+            UpdateExpression="SET deviceDisplayName = :name, updatedAt = :now",
+            ExpressionAttributeValues={":name": req.deviceDisplayName, ":now": now},
+        )
 
     # 2b. Incremental path: ADD counters delta.
     deltas = []

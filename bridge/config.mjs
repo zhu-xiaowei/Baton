@@ -50,18 +50,27 @@ export function saveConfig(config) {
 
 export function loadConfig() {
   const cliArgs = parseArgs();
+  let existing = null;
+  if (fs.existsSync(CONFIG_PATH)) {
+    try { existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {}
+  }
   let config;
   if (cliArgs.server && cliArgs.apiKey) {
+    const deviceName = existing?.deviceName || cliArgs.deviceName || os.hostname();
     config = {
       server: cliArgs.server,
       apiKey: cliArgs.apiKey,
-      deviceName: cliArgs.deviceName || os.hostname(),
+      deviceName,
+      deviceDisplayName: existing?.deviceDisplayName || deviceName,
     };
-    fs.mkdirSync(BRIDGE_HOME, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    saveConfig(config);
     console.log(`Config saved to ${CONFIG_PATH}`);
-  } else if (fs.existsSync(CONFIG_PATH)) {
-    config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  } else if (existing) {
+    config = existing;
+    if (!config.deviceDisplayName) {
+      config.deviceDisplayName = config.deviceName;
+      saveConfig(config);
+    }
     if (cliArgs.skipInit) config.skipInit = true;
   } else {
     console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');

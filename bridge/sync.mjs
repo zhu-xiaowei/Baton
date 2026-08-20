@@ -71,6 +71,7 @@ export async function uploadCatalog(config, sessions, aggregates, catalogComplet
   for (let i = 0; i < sessions.length; i += BATCH) {
     const body = {
       deviceName: config.deviceName,
+      deviceDisplayName: config.deviceDisplayName || config.deviceName,
       os: process.platform,
       sessions: sessions.slice(i, i + BATCH).map(publicSession),
       catalogComplete,
@@ -84,6 +85,7 @@ export async function uploadCatalog(config, sessions, aggregates, catalogComplet
   if (sessions.length === 0) {
     const body = {
       deviceName: config.deviceName,
+      deviceDisplayName: config.deviceDisplayName || config.deviceName,
       os: process.platform,
       sessions: [],
       catalogComplete,
