@@ -221,7 +221,7 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     });
 
     assert.equal(content.querySelectorAll('.item[data-id]').length, TWO_PAGES + 1);
-    assert.equal(content.scrollTop, 3900);
+    assert.equal(content.scrollTop, 0);
     assert.equal(calls.filter(function (call) {
       return call.pathname === '/api/bridge/sessions' && call.params.cursor === 'page-2';
     }).length, 1);

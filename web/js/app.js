@@ -585,6 +585,9 @@ async function loadPagedList(options, navVersion) {
   var entry = _listPages.get(options.key);
   var hadMemory = entry.loaded;
   var cached = hadMemory ? null : readListCache(options.key);
+  var previousOrder = hadMemory
+    ? entry.items.slice(0, LIST_PAGE_SIZE).map(function (item) { return item[options.idKey]; })
+    : null;
   _activeListKey = options.key;
   _activeListOptions = options;
 
@@ -616,7 +619,10 @@ async function loadPagedList(options, navVersion) {
     entry = _listPages.applyFirst(
       options.key, fresh, options.itemsKey, options.idKey, preserveLoaded
     );
-    renderListEntry(options, entry, keepScroll, anchor);
+    var orderChanged = previousOrder && previousOrder.some(function (id, index) {
+      return !entry.items[index] || entry.items[index][options.idKey] !== id;
+    });
+    renderListEntry(options, entry, orderChanged ? 0 : keepScroll, orderChanged ? null : anchor);
     refreshed = true;
   } catch (e) {
     if (_navVersion === navVersion && _activeListKey === options.key && !entry.loaded) {
