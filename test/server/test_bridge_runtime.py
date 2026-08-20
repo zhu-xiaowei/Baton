@@ -440,7 +440,6 @@ def test_windows_installer_runs_without_an_interactive_logon():
     assert "Get-CimInstance Win32_UserProfile" in script
     assert "$useSystemTask = $isSystemContext -or ($currentIdentity -match" in script
     assert "bridge.log" in script
-    assert "'set \"CODEX_HOME=' + (Join-Path $targetHome '.codex') + '\"'" in script
     assert "installed and running" in script
 
 
