@@ -7,6 +7,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Populate env that interactive shells (.zshrc) provide but /package, CI, cron do not.
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"                    # Android needs cargo on PATH
+export LANG="${LANG:-en_US.UTF-8}" LC_ALL="${LC_ALL:-en_US.UTF-8}"   # makensis std::bad_alloc under C locale
+export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+export JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+if [ -z "${NDK_HOME:-}" ] && [ -d "${ANDROID_HOME}/ndk" ]; then       # newest installed NDK
+  export NDK_HOME="${ANDROID_HOME}/ndk/$(ls "${ANDROID_HOME}/ndk" | sort -V | tail -1)"
+fi
+
 VERSION="$(node -p "require('./package.json').version")"
 DEST="release/${VERSION}"
 mkdir -p "${DEST}"
