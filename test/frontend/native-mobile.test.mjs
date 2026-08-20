@@ -107,6 +107,15 @@ test('mobile readability styles are scoped to the native mobile class', () => {
   );
 });
 
+test('short iOS browse lists reserve horizontal drags for edge-back navigation', () => {
+  const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+
+  assert.match(
+    css,
+    /html\.native-mobile body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
+  );
+});
+
 test('file preview uses one circled close icon across desktop and native mobile', () => {
   const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');

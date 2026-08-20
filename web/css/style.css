@@ -85,6 +85,7 @@ body {
     position: relative;
     overflow-y: scroll;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
   html.native-mobile body.browse-view #content::after {
     content: "";
