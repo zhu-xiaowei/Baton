@@ -63,7 +63,7 @@ loadMessages(sessionId):
   9. Resolve state: newer applied WS lifecycle → response status → message-tail fallback
   10. renderMessages(wsAllMessages)  ← full render
   11. Rebind any active strict-stream preview by turnId
-  12. pinContentToBottom
+  12. place the rendered history at the bottom
 ```
 
 No-seq `messages` are historical JSONL/TUI updates and use the REST buffer above. Events carrying
@@ -83,8 +83,8 @@ not display a block whose start is missing. Complete authority renders missed no
 for any remaining nodes. No time-based grace is used to expose partial stream content.
 
 **`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show
-loading state. Wait for `sync_complete`, then use the same `bufferAndFetch` merge path without
-resetting the live DOM or Session navigation state.
+loading state. Wait for `sync_complete`, then use the same `bufferAndFetch` merge path. Replace the
+skeleton with complete history; if real message DOM already exists, reconcile incrementally.
 
 ## 4. Real-time Message Handling (WS)
 
@@ -95,7 +95,7 @@ resetting the live DOM or Session navigation state.
 | `messages` | Server → App | New messages arrived, incremental render |
 | `permission_request` | Server → App | Permission confirmation popup (server-side detection) |
 | `send_message_result` | Server → App | Send confirmation + new session's sessionId |
-| `sync_complete` | Server → App | Bridge sync complete, re-run `bufferAndFetch` and incrementally reconcile |
+| `sync_complete` | Server → App | Bridge sync complete; replace a skeleton or reconcile existing message DOM |
 | `interrupt` | App → Server → Bridge | Interrupt current run (equivalent to Ctrl+C) |
 
 ### 4.2 Message Classification
@@ -176,22 +176,15 @@ findInsertBefore(container, timestamp):
 ## 6. Auto-scroll
 
 `state.stickBottom` records user intent. Opening a Session or sending a message enables it; manually
-scrolling away from the bottom disables it. Every insertion uses the same bottom pin:
+scrolling away from the bottom disables it. Live insertions synchronously set
+`scrollTop = scrollHeight` only while that flag is true. Session entry performs one immediate and
+one next-frame placement after the final message DOM is rendered. Sending an optimistic user bubble
+uses the existing smooth scroll. Permission prompts position only their own newly inserted content.
 
-```javascript
-function pinContentToBottom(force) {
-  if (force) state.stickBottom = true;
-  if (!state.stickBottom) return;
-  content.scrollTop = content.scrollHeight;
-  requestAnimationFrame(() => {
-    if (state.stickBottom) content.scrollTop = content.scrollHeight;
-  });
-}
-```
-
-The immediate scroll follows the DOM mutation. The animation-frame scroll absorbs layout changes
-from OUT replacement, markdown, and clamping. Streaming does not use smooth scrolling because it
-races continuously arriving content. Permission prompts force-enable bottom following.
+Background synchronization does not re-enable following, and no shared layout observer owns the
+scroll position. When the mobile viewport shrinks, a message list that was physically at the bottom
+is placed at its new bottom on the next frame. Viewport growth remains native; keyboard handling
+does not change `state.stickBottom` or replace the message list.
 
 ## 7. wsRunning State + Send/Stop Button
 
@@ -331,7 +324,7 @@ duplicate. Content deltas and tool nodes never use this fallback.
 If a request arrives while the detail page still shows its skeleton, it stays deferred until a
 non-skeleton `.messages` container exists. A matching resolution during loading cancels it. Empty
 sessions also render a real message container so a recovered prompt has a stable mount point. Once
-rendered, the prompt is appended at the bottom and force-pinned in the current and next layout
+rendered, the prompt is appended at the bottom and positioned there in the current and next layout
 frame.
 
 ### 11.1 Request Types
@@ -462,7 +455,7 @@ After every DOM update (full render / incremental updateLastTurn / reconnect rec
 ```
 1. loadImages(container)    — register IntersectionObserver for lazy-loading images
 2. clampOverflow(container) — detect overflow, add collapse buttons
-3. pinContentToBottom       — immediate + next-frame pin when stickBottom=true
+3. bottom-following         — synchronous placement when stickBottom=true
 ```
 
 ## 19. Runtime Presentation

@@ -15,7 +15,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 // Build a jsdom window, mock ws.js's render/util globals, load real ws.js + state.
 // Returns { state, ws, hooks, document, dumpDom, tick }.
-export async function makeHarness() {
+export async function makeHarness(options = {}) {
   const dom = new JSDOM(
     '<!DOCTYPE html><body><div id="content"><div class="messages"></div></div>' +
     '<div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>' +
@@ -25,6 +25,32 @@ export async function makeHarness() {
     { url: 'https://test/', pretendToBeVisual: true }
   );
   const w = dom.window;
+  if (options.userAgent) {
+    Object.defineProperty(w.navigator, 'userAgent', {
+      configurable: true,
+      value: options.userAgent,
+    });
+  }
+  let visualViewport = null;
+  if (options.visualViewport) {
+    const listeners = new Map();
+    visualViewport = {
+      height: options.visualViewport.height,
+      offsetTop: options.visualViewport.offsetTop || 0,
+      addEventListener(type, listener) {
+        const handlers = listeners.get(type) || [];
+        handlers.push(listener);
+        listeners.set(type, handlers);
+      },
+      dispatch(type) {
+        for (const listener of listeners.get(type) || []) listener();
+      },
+    };
+    Object.defineProperty(w, 'visualViewport', {
+      configurable: true,
+      value: visualViewport,
+    });
+  }
   globalThis.window = w; globalThis.document = w.document; globalThis.navigator = w.navigator;
   globalThis.WebSocket = function () {}; globalThis.WebSocket.OPEN = 1;
   // Synchronous-ish rAF (bounded to avoid the self-scheduling tickStreams loop spinning).
@@ -107,6 +133,7 @@ export async function makeHarness() {
     document: w.document,
     dumpDom,
     tick,
+    visualViewport,
     setApiResponse: (value) => { apiResponse = value; },
     setApiHandler: (handler) => { apiHandler = handler; },
   };

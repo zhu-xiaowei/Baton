@@ -3,66 +3,103 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-const h = await makeHarness();
-
-test('bottom following re-pins after the next layout frame', async () => {
-  resetSession(h, { sessionId: 'codex:scroll-follow' });
-  const content = h.document.getElementById('content');
-  let height = 640;
-  Object.defineProperty(content, 'scrollHeight', {
-    configurable: true,
-    get: () => height,
-  });
-
-  h.state.stickBottom = true;
-  content.scrollTop = 0;
-  assert.equal(h.hooks.pinContentToBottom(), true);
-  assert.equal(content.scrollTop, 640);
-
-  height = 920;
-  await h.tick(10);
-  assert.equal(content.scrollTop, 920);
-
-  h.state.stickBottom = false;
-  content.scrollTop = 240;
-  height = 1200;
-  assert.equal(h.hooks.pinContentToBottom(), false);
-  await h.tick(10);
-  assert.equal(content.scrollTop, 240);
+const h = await makeHarness({
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile',
+  visualViewport: { height: 844, offsetTop: 0 },
 });
 
-test('forced bottom following re-pins after the final layout is observed', async () => {
-  resetSession(h, { sessionId: 'codex:layout-follow' });
+test('keyboard opening follows the physical bottom while closing remains native', async (t) => {
+  await h.tick(10);
+  resetSession(h, { sessionId: 'codex:keyboard-stability' });
   const content = h.document.getElementById('content');
-  let height = 640;
-  let onResize = null;
-  let observed = null;
+  t.after(() => {
+    delete content.clientHeight;
+    delete content.scrollHeight;
+    delete content.scrollTop;
+  });
+  const container = h.document.querySelector('.messages');
+  container.innerHTML = '<div class="msg-user">unchanged</div>';
+  const message = container.firstElementChild;
+
+  let clientHeight = 300;
+  let scrollTop = 600;
+  let scrollWrites = 0;
+  Object.defineProperty(content, 'clientHeight', {
+    configurable: true,
+    get: () => clientHeight,
+  });
   Object.defineProperty(content, 'scrollHeight', {
     configurable: true,
-    get: () => height,
+    value: 900,
   });
-  h.window.ResizeObserver = class {
-    constructor(callback) {
-      onResize = callback;
-    }
-    observe(element) {
-      observed = element;
-    }
-    disconnect() {}
-  };
+  Object.defineProperty(content, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value) => {
+      scrollWrites += 1;
+      scrollTop = Math.min(value, 900 - clientHeight);
+    },
+  });
+  h.state.stickBottom = true;
 
-  content.scrollTop = 0;
-  assert.equal(h.hooks.pinContentToBottom(true), true);
-  assert.equal(content.scrollTop, 640);
-  assert.equal(observed, h.document.querySelector('.messages'));
+  h.visualViewport.height = 420;
+  h.visualViewport.offsetTop = 40;
+  h.visualViewport.dispatch('resize');
+  clientHeight = 100;
+  await h.tick(20);
 
-  height = 980;
-  onResize();
-  assert.equal(content.scrollTop, 980);
+  assert.equal(h.document.body.style.height, '420px');
+  assert.equal(h.document.querySelector('.messages'), container);
+  assert.equal(container.firstElementChild, message);
+  assert.equal(content.scrollTop, 800);
+  assert.equal(scrollWrites, 1);
   assert.equal(h.state.stickBottom, true);
 
-  await h.tick(10);
-  delete h.window.ResizeObserver;
+  clientHeight = 300;
+  scrollTop = 600; // Native layout clamp as the keyboard closes.
+  scrollWrites = 0;
+  h.visualViewport.height = 844;
+  h.visualViewport.offsetTop = 0;
+  h.visualViewport.dispatch('resize');
+  await h.tick(20);
+
+  assert.equal(h.document.body.style.height, '844px');
+  assert.equal(h.document.querySelector('.messages'), container);
+  assert.equal(container.firstElementChild, message);
+  assert.equal(content.scrollTop, 600);
+  assert.equal(scrollWrites, 0);
+  assert.equal(h.state.stickBottom, true);
+
+  scrollTop = 120;
+  scrollWrites = 0;
+  h.state.stickBottom = false;
+  h.visualViewport.height = 420;
+  h.visualViewport.offsetTop = 40;
+  h.visualViewport.dispatch('resize');
+  clientHeight = 100;
+  await h.tick(20);
+
+  assert.equal(content.scrollTop, 120);
+  assert.equal(scrollWrites, 0);
+  assert.equal(h.state.stickBottom, false);
+  assert.equal(h.document.querySelector('.messages'), container);
+  assert.equal(container.firstElementChild, message);
+});
+
+test('sending a user message restores bottom following with a smooth scroll', () => {
+  resetSession(h, { sessionId: 'codex:send-follow' });
+  const content = h.document.getElementById('content');
+  let scrollOptions = null;
+  content.scrollTo = (options) => {
+    scrollOptions = options;
+  };
+  h.state.stickBottom = false;
+
+  h.window.doSend('hello', 'hello', []);
+
+  assert.equal(h.state.stickBottom, true);
+  assert.deepEqual(scrollOptions, { top: 99999, behavior: 'smooth' });
+  assert.match(h.document.querySelector('.msg-user[data-pending="1"]').textContent, /hello/);
 });
 
 test('an OUT update on an earlier tool still keeps the whole view at the bottom', async () => {
@@ -123,5 +160,5 @@ test('an OUT update on an earlier tool still keeps the whole view at the bottom'
 
   height = 1040;
   await h.tick(10);
-  assert.equal(content.scrollTop, 1040);
+  assert.equal(content.scrollTop, 980);
 });

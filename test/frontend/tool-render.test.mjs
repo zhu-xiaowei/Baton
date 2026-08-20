@@ -535,10 +535,8 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
-  const originalPinContentToBottom = window.pinContentToBottom;
   let loads = 0;
-  let bottomPins = 0;
-  window.pinContentToBottom = () => { bottomPins++; };
+  let contentHeight = 600;
   window.loadDiffViewer = async () => {
     loads++;
     window.Diff = {
@@ -549,6 +547,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
         this.element = element;
       }
       draw() {
+        contentHeight = 900;
         this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
       }
       highlightCode() {}
@@ -571,9 +570,19 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
       }],
       timestamp: '2026-08-10T05:32:00.000Z',
     };
-    document.body.innerHTML = `<div class="messages">${
+    document.body.innerHTML = `<div id="content"><div class="messages">${
       window.renderMessages([message], 'codex')
-    }</div>`;
+    }</div></div>`;
+    const content = document.getElementById('content');
+    Object.defineProperty(content, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    Object.defineProperty(content, 'clientHeight', {
+      configurable: true,
+      value: 500,
+    });
+    content.scrollTop = 100;
     const node = document.querySelector('.tool-node');
     const diff = node.querySelector('.diff-container');
     assert.equal(loads, 0);
@@ -584,7 +593,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     assert.equal(loads, 1);
     assert.equal(diff.dataset.diffState, 'ready');
     assert.match(diff.textContent, /rendered diff/);
-    assert.equal(bottomPins, 1);
+    assert.equal(content.scrollTop, 900);
 
     window.toggleToolDetails(node.querySelector('.tool-header'));
     window.toggleToolDetails(node.querySelector('.tool-header'));
@@ -594,7 +603,6 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;
     window.Diff2HtmlUI = originalUi;
-    window.pinContentToBottom = originalPinContentToBottom;
   }
 });
 

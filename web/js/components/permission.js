@@ -29,11 +29,7 @@ function pinPermissionPromptToBottom() {
   if (!promptEl || !promptEl.isConnected || !content) return;
   function pin() {
     if (!promptEl.isConnected) return;
-    if (typeof window.pinContentToBottom === 'function') {
-      window.pinContentToBottom(true);
-    } else {
-      content.scrollTop = content.scrollHeight;
-    }
+    content.scrollTop = content.scrollHeight;
   }
   pin();
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pin);

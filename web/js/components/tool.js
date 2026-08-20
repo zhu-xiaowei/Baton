@@ -315,6 +315,9 @@
     if (!job || !el || el.dataset.diffState === 'ready') return;
     if (job.promise) return job.promise;
     job.promise = (async () => {
+      const content = document.getElementById('content');
+      const followBottom = !!content
+        && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
       el.dataset.diffState = 'loading';
       el.style.minHeight = `${job.estimatedHeight}px`;
       try {
@@ -383,7 +386,10 @@
         el.dataset.diffState = 'ready';
         pendingDiffJobs.delete(diffId);
         window.clampOverflow?.(el.closest('.tool-node'));
-        window.pinContentToBottom?.();
+        if (followBottom && el.isConnected
+          && content === document.getElementById('content')) {
+          content.scrollTop = content.scrollHeight;
+        }
       }
     })();
     return job.promise;

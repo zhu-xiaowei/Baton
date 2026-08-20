@@ -368,6 +368,7 @@
     setSync(true);
     whenContentReady(function () {
       if (!isCurrent()) return;
+      document.body.classList.add('browse-view');
       setSync(true);
       var restoredPreview = usePagePreview
         && (window.__homePreviewRestored || restoreReturningHomePreview());

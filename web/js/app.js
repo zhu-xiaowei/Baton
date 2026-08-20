@@ -831,6 +831,7 @@ function renderProjects(device, data) {
 
 async function loadProjects(device) {
   rememberActiveListScroll();
+  document.body.classList.add('browse-view');
   var restoreLoadedPages = state.appState.device === device && !!state.appState.project;
   var options = projectListOptions(device);
   if (!restoreLoadedPages) _listPages.invalidate(options.key);
@@ -916,6 +917,7 @@ function renderSessions(device, projectHash, data) {
 
 async function loadSessions(device, projectHash, projectName) {
   rememberActiveListScroll();
+  document.body.classList.add('browse-view');
   var restoreLoadedPages = state.appState.device === device
     && !!state.appState.session
     && !!state.appState.project
@@ -1123,6 +1125,7 @@ function toggleNewSessionRuntime() {
 
 async function startNewSession(projectHash) {
   deactivateList();
+  document.body.classList.remove('browse-view');
   var myNav = ++_navVersion;
   prepareNavigation({
     device: state.appState.device,
@@ -1195,6 +1198,7 @@ async function startNewSession(projectHash) {
 // ---- Messages ----
 async function loadMessages(sessionId, preview) {
   deactivateList();
+  document.body.classList.remove('browse-view');
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
@@ -1283,15 +1287,11 @@ async function loadMessages(sessionId, preview) {
     clampOverflow(content.querySelector('.messages'));
     if (window.renderMermaidBlocks) renderMermaidBlocks(content);
     if (window.renderKatexBlocks) renderKatexBlocks(content);
-    if (typeof window.pinContentToBottom === 'function') {
-      window.pinContentToBottom(true);
-    } else {
+    content.scrollTop = content.scrollHeight;
+    requestAnimationFrame(function () {
+      if (_navVersion !== myNav) return;
       content.scrollTop = content.scrollHeight;
-      requestAnimationFrame(function () {
-        if (_navVersion !== myNav) return;
-        content.scrollTop = content.scrollHeight;
-      });
-    }
+    });
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {

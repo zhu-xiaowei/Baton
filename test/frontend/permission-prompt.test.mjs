@@ -254,32 +254,27 @@ test('Claude AskUserQuestion keeps the answerText reply contract', () => {
   });
 });
 
-test('expanding the typed answer keeps the permission prompt pinned to the bottom', () => {
+test('expanding the typed answer keeps the permission prompt at the bottom', () => {
   reset();
-  const calls = [];
-  window.pinContentToBottom = (force) => calls.push(force);
-  try {
-    window.showPermissionPrompt({
-      sessionId: 'claude-session',
-      requestId: 'ask-typed',
-      kind: 'ask',
-      toolName: 'AskUserQuestion',
-      questions: [{
-        question: 'Describe the deployment',
-        options: [],
-      }],
-      input: {},
-    });
-    const callsAfterRender = calls.length;
+  const content = document.getElementById('content');
+  content.scrollTop = 0;
+  window.showPermissionPrompt({
+    sessionId: 'claude-session',
+    requestId: 'ask-typed',
+    kind: 'ask',
+    toolName: 'AskUserQuestion',
+    questions: [{
+      question: 'Describe the deployment',
+      options: [],
+    }],
+    input: {},
+  });
+  content.scrollTop = 0;
 
-    window.handlePermissionOption(document.querySelector('.permission-btn'));
+  window.handlePermissionOption(document.querySelector('.permission-btn'));
 
-    assert.equal(document.querySelector('.permission-input-wrap').style.display, 'flex');
-    assert.equal(calls.length, callsAfterRender + 2);
-    assert.deepEqual(calls.slice(-2), [true, true]);
-  } finally {
-    delete window.pinContentToBottom;
-  }
+  assert.equal(document.querySelector('.permission-input-wrap').style.display, 'flex');
+  assert.equal(content.scrollTop, content.scrollHeight);
 });
 
 test('Claude plan and prompt dismissal keep their legacy reply values', () => {

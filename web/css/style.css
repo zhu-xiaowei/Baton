@@ -74,15 +74,15 @@ body {
 /* === Content === */
 /* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
 #content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-/* The native WKWebView root stays fixed for keyboard stability. Give its iOS
-   content scroller a 1px range so short lists still get native rubber-banding. */
+/* Native iOS browse pages keep a 1px scroll range so short lists can rubber-band.
+   Session and new-session views never receive the browse-view class. */
 @supports (-webkit-touch-callout: none) {
-  html.native-mobile #content {
+  html.native-mobile body.browse-view #content {
     position: relative;
     overflow-y: scroll;
     -webkit-overflow-scrolling: touch;
   }
-  html.native-mobile #content::after {
+  html.native-mobile body.browse-view #content::after {
     content: "";
     position: absolute;
     top: 100%;
@@ -538,7 +538,19 @@ body {
   flex-direction: column;
 }
 .messages.has-permission-prompt > .empty { display: none; }
-.permission-prompt { width: 100%; min-width: 0; background: #1c2333; border: 1px solid #388bfd; border-radius: 10px; padding: 14px; margin-top: 12px; }
+.permission-prompt {
+  width: 100%; min-width: 0; background: #1c2333; border: 1px solid #388bfd;
+  border-radius: 10px; padding: 14px; margin-top: 12px;
+  transform-origin: bottom center;
+  animation: permission-prompt-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes permission-prompt-in {
+  from { transform: translateY(18px) scale(0.985); }
+  to { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .permission-prompt { animation: none; }
+}
 .messages.has-permission-prompt > .permission-prompt { margin-top: auto; }
 .permission-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
 .permission-title { font-size: 14px; font-weight: 600; color: #e6edf3; }

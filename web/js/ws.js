@@ -8,6 +8,9 @@ import {
 } from './streaming.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
+var _keyboardOpenFrame = null;
+var _followKeyboardOpen = false;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
@@ -19,8 +22,6 @@ var _checkpointResumedTurns = new Set();
 var _reconnectingTurns = new Set();
 var _connectionRecovery = null;
 var _wsReconnectTimer = null;
-var _bottomPinScheduled = false;
-var _bottomLayoutObserver = null;
 var _controlEventTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
@@ -28,9 +29,18 @@ var CONTROL_EVENT_FALLBACK_MS = 120;
 var _appliedLifecycleVersion = 0;
 
 if (window.visualViewport && _isMobile) {
-  var _wasKbUp = false;
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
+    var previousHeight = _lastMobileViewportHeight;
+    var viewportShrinking = vv.height < previousHeight;
+    var viewportGrowing = vv.height > previousHeight;
+    _lastMobileViewportHeight = vv.height;
+    var content = document.getElementById('content');
+    var wasAtBottom = state.appState.session && state.appState.session !== '__new__' && content
+      && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
+    if (viewportShrinking && wasAtBottom) _followKeyboardOpen = true;
+    if (viewportGrowing) _followKeyboardOpen = false;
+
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
     var kbUp = vv.height < _vpBaseHeight * 0.75;
     var chromeHeight = 0;
@@ -51,16 +61,15 @@ if (window.visualViewport && _isMobile) {
       if (bar) bar.classList.toggle('kb-up', kbUp);
     }
     if (window.positionScrollBtn) window.positionScrollBtn();
-    if (kbUp !== _wasKbUp) {
-      var c = document.getElementById('content');
-      [50, 200, 400].forEach(function (d) {
-        setTimeout(function () {
-          if (window.positionScrollBtn) window.positionScrollBtn();
-          if (c && state.appState.session) c.scrollTop = c.scrollHeight;
-        }, d);
+    if (_followKeyboardOpen && _keyboardOpenFrame === null) {
+      _keyboardOpenFrame = requestAnimationFrame(function () {
+        _keyboardOpenFrame = null;
+        if (!_followKeyboardOpen) return;
+        _followKeyboardOpen = false;
+        var currentContent = document.getElementById('content');
+        if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
       });
     }
-    _wasKbUp = kbUp;
   };
   window.visualViewport.addEventListener('resize', syncMobileViewport);
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
@@ -507,7 +516,27 @@ function dispatchWsMessage(msg) {
       // and re-triggers needSync, causing a render-loop with title flicker.
       bufferAndFetch(msg.sessionId, '').then(function (result) {
         if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
-        updateLastTurn(result.messages, true);
+        var content = document.getElementById('content');
+        var skeleton = content?.querySelector('.skeleton-messages');
+        if (skeleton) {
+          content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
+            + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
+          var container = content.querySelector('.messages');
+          state.wsRenderedCount = state.wsAllMessages.length;
+          if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
+          markTurnAdjacency(container);
+          loadImages(container);
+          clampOverflow(container);
+          if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+          if (window.renderKatexBlocks) renderKatexBlocks(container);
+          if (typeof revealDeferredPermissionPrompt === 'function') {
+            revealDeferredPermissionPrompt();
+          }
+          if (typeof updateSpinner === 'function') updateSpinner();
+          content.scrollTop = content.scrollHeight;
+        } else {
+          updateLastTurn(result.messages);
+        }
         updateTitleFromMessages();
         updateSendBtn();
       }).catch(function () {});
@@ -609,45 +638,11 @@ function getStrictStreamRenderer() {
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }
-      pinContentToBottom();
+      var content = document.getElementById('content');
+      if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
     },
   });
   return _strictStreamRenderer;
-}
-
-function pinContentToBottom(force) {
-  var content = document.getElementById('content');
-  if (!content) return false;
-  if (force) state.stickBottom = true;
-  if (!state.stickBottom) return false;
-  var sessionId = state.wsSessionId;
-  content.scrollTop = content.scrollHeight;
-  if (!_bottomPinScheduled && typeof requestAnimationFrame === 'function') {
-    _bottomPinScheduled = true;
-    requestAnimationFrame(function () {
-      _bottomPinScheduled = false;
-      if (!state.stickBottom || content !== document.getElementById('content')
-        || sessionId !== state.wsSessionId) return;
-      content.scrollTop = content.scrollHeight;
-    });
-  }
-  if (force && typeof window.ResizeObserver === 'function') {
-    if (_bottomLayoutObserver) _bottomLayoutObserver.disconnect();
-    var target = content.querySelector('.messages') || content;
-    var layoutObserver = new window.ResizeObserver(function () {
-      layoutObserver.disconnect();
-      if (_bottomLayoutObserver === layoutObserver) {
-        _bottomLayoutObserver = null;
-      }
-      if (content !== document.getElementById('content')
-        || sessionId !== state.wsSessionId) return;
-      state.stickBottom = true;
-      content.scrollTop = content.scrollHeight;
-    });
-    _bottomLayoutObserver = layoutObserver;
-    layoutObserver.observe(target);
-  }
-  return true;
 }
 
 window.rebindStrictStreamDom = function () {
@@ -890,9 +885,6 @@ function resetStreamSessionState() {
   _controlEventTimers.clear();
   _handledControlEvents.clear();
   _controlRequestState.clear();
-  if (_bottomLayoutObserver) _bottomLayoutObserver.disconnect();
-  _bottomLayoutObserver = null;
-  _bottomPinScheduled = false;
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _lastStreamEndAt = 0;
@@ -1043,7 +1035,8 @@ function insertAssistantItemForTurn(container, html, turnId) {
   if (!turn) return;
   turn.insertAdjacentHTML('beforeend', html);
   markTurnAdjacency(container);
-  pinContentToBottom();
+  var content = document.getElementById('content');
+  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
 }
 
 function compareMessageOrder(left, right) {
@@ -1181,7 +1174,7 @@ function applyThinkSecs(html) {
   return html.replace(/(<div class="thinking-toggle"[^>]*>)Thinking( <span)/, '$1Thought for ' + _lastThinkSecs + 's$2');
 }
 
-function updateLastTurn(explicitMessages, forceBottom) {
+function updateLastTurn(explicitMessages) {
   var container = document.querySelector('.messages');
   if (!container) return;
 
@@ -1189,11 +1182,9 @@ function updateLastTurn(explicitMessages, forceBottom) {
     ? explicitMessages.slice()
     : state.wsAllMessages.slice(state.wsRenderedCount);
   state.wsRenderedCount = state.wsAllMessages.length;
-  if (!newMessages.length) {
-    if (forceBottom) pinContentToBottom(true);
-    return;
-  }
+  if (!newMessages.length) return;
 
+  var content = document.getElementById('content');
   if (newMessages.length > 1) {
     newMessages.sort(compareMessageOrder);
   }
@@ -1356,7 +1347,7 @@ function updateLastTurn(explicitMessages, forceBottom) {
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (window.renderKatexBlocks) renderKatexBlocks(container);
-  pinContentToBottom(forceBottom === true);
+  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
   showStats(state.wsMessageCount + ' messages (live)');
 }
 
@@ -1785,7 +1776,7 @@ function doSend(fullText, displayText, images) {
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
     state.stickBottom = true; // sending a message = follow the incoming reply
-    pinContentToBottom();
+    document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
   scheduleSendTimeout(msgId);
 }
@@ -2090,7 +2081,6 @@ Object.assign(window, {
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   extractMsgText, tryDedup, retryPendingSend,
-  pinContentToBottom,
 });
 
 // Test-only hook for replaying the real WS dispatcher.
@@ -2102,6 +2092,5 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     beginSessionConnectionRecovery: beginSessionConnectionRecovery,
     startSessionConnectionRecovery: startSessionConnectionRecovery,
     updateLastTurn: updateLastTurn,
-    pinContentToBottom: pinContentToBottom,
   };
 }
