@@ -116,6 +116,20 @@ test('short iOS browse lists reserve horizontal drags for edge-back navigation',
   );
 });
 
+test('mobile edge-back owns the left edge and accepts drags within 45 degrees', () => {
+  const js = readFileSync(new URL('../../web/js/edge-back.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../web/css/edge-back.css', import.meta.url), 'utf8');
+
+  assert.match(js, /if \(!window\.__BATON_NATIVE_MOBILE__\) return;/);
+  assert.match(js, /if \(e\.target !== edgeGuard\) return;/);
+  assert.match(js, /dx > 10 && dx >= Math\.abs\(dy\)/);
+  assert.match(js, /settleSwipe\(dx >= Math\.abs\(dy\)/);
+  assert.match(
+    css,
+    /\.edge-back-guard\s*\{[^}]*width:\s*24px;[^}]*touch-action:\s*none;/s,
+  );
+});
+
 test('file preview uses one circled close icon across desktop and native mobile', () => {
   const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');

@@ -145,9 +145,7 @@ export function takePreviousNavigation() {
 export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   options = options || {};
   var pageMode = !!options.pageMode;
-  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
-    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!isIOS) return;
+  if (!window.__BATON_NATIVE_MOBILE__) return;
 
   var tracking = false;
   var claimed = false;
@@ -269,7 +267,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
 
   document.addEventListener('pointerdown', function (e) {
     if (settling || e.pointerType === 'mouse' || e.clientX > 24 || hasOpenOverlay()) return;
-    if (pageMode && e.target !== edgeGuard) return;
+    if (e.target !== edgeGuard) return;
     if (!pageMode && !state.selectMode && !state.appState.device) return;
     tracking = true;
     claimed = false;
@@ -290,7 +288,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
       tracking = false;
       return;
     }
-    if (!claimed && dx > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+    if (!claimed && dx > 10 && dx >= Math.abs(dy)) {
       var previous = navigationStack[navigationStack.length - 1];
       var snapshot = !selectionOnly && previous && previous.snapshot;
       if (!selectionOnly && !snapshot) {
@@ -326,11 +324,12 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     e.preventDefault();
     suppressClickUntil = performance.now() + 400;
     if (selectionOnly || hierarchyOnly) {
-      if (dx >= 72 && Math.abs(dx) >= Math.abs(dy) * 1.4) navigateUp();
+      if (dx >= 72 && dx >= Math.abs(dy)) navigateUp();
       return;
     }
     if (e.timeStamp - lastTime > 80) velocityX = 0;
-    settleSwipe(dx > window.innerWidth * 0.32 || (dx > 44 && velocityX > 0.45));
+    settleSwipe(dx >= Math.abs(dy)
+      && (dx > window.innerWidth * 0.32 || (dx > 44 && velocityX > 0.45)));
   }, true);
 
   document.addEventListener('pointercancel', function () {
@@ -345,11 +344,9 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     e.stopPropagation();
   }, true);
 
-  if (pageMode) {
-    edgeGuard = document.createElement('div');
-    edgeGuard.className = 'edge-back-guard';
-    document.body.appendChild(edgeGuard);
-  }
+  edgeGuard = document.createElement('div');
+  edgeGuard.className = 'edge-back-guard';
+  document.body.appendChild(edgeGuard);
 }
 
 export function attachPageEdgeBackGesture(navigateBack, foregroundSelectors) {
