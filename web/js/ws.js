@@ -753,6 +753,7 @@ function handleStrictTurnEnd(message) {
   _turnEventQueue.closeTurn(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
   _reconnectingTurns.delete(message.turnId);
+  settlePendingAtTurnEnd(message.turnId);
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
@@ -1959,6 +1960,13 @@ function reconcileEchoedPending() {
     if (!echoed) continue;
     promoteEchoedBubble(pending, echoed);
   }
+}
+
+function settlePendingAtTurnEnd(turnId) {
+  var pending = findPending(turnId);
+  if (!pending || pending.failed) return false;
+  promoteEchoedBubble(pending, {});
+  return true;
 }
 
 function markPendingTime(pending) {
