@@ -703,6 +703,7 @@ def _windows_install_script(url, server, api_key, name):
         "  '@echo off',",
         "  ('set \"USERPROFILE=' + $targetHome + '\"'),",
         "  ('set \"HOME=' + $targetHome + '\"'),",
+        "  ('set \"CODEX_HOME=' + (Join-Path $targetHome '.codex') + '\"'),",
         "  ('set \"PATH=' + (Split-Path $nodePath) + ';%PATH%\"'),",
         "  ('\"' + $nodePath + '\" \"' + $bridge + '\" >> \"' + $logPath + '\" 2>&1')",
         ")",
