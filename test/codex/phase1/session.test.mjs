@@ -89,6 +89,10 @@ test('subagent metadata keeps the native parent and thread identity', () => {
     }, {
       timestamp: '2026-08-21T12:00:01.000Z',
       type: 'event_msg',
+      payload: { type: 'user_message', message: 'Parent request' },
+    }, {
+      timestamp: '2026-08-21T12:00:02.000Z',
+      type: 'event_msg',
       payload: { type: 'user_message', message: 'Delegated work' },
     }];
     fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
@@ -104,6 +108,7 @@ test('subagent metadata keeps the native parent and thread identity', () => {
     assert.equal(result.session.agentPath, '/root/worker');
     assert.equal(result.session.agentDepth, 2);
     assert.equal(result.session.canSend, true);
+    assert.equal(result.session.preview, 'Delegated work');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -188,6 +193,19 @@ test('response-only user messages provide metadata preview without exposing inte
           type: 'message',
           role: 'user',
           content: [{ type: 'input_text', text: 'Why is this session missing?' }],
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<subagent_notification>\n'
+              + '{"agent_path":"child-id","status":{"completed":"/tmp/result"}}\n'
+              + '</subagent_notification>',
+          }],
         },
       },
       {

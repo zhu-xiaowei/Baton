@@ -518,7 +518,9 @@ body {
   scrollbar-gutter: stable;
 }
 .agent-thread-row {
-  width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid transparent;
+  width: 100%; min-width: 0;
+  padding: 9px 10px 9px calc(10px + var(--agent-indent, 0) * 12px);
+  border: 1px solid transparent;
   border-radius: 7px; display: block; color: #c9d1d9; background: transparent;
   text-align: left; cursor: pointer;
 }

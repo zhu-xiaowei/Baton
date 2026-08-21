@@ -70,6 +70,23 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });
 
+test('Sessions table declares the root-thread lookup index', () => {
+  const template = JSON.parse(read('server/template/Baton.template'));
+  const table = template.Resources.BridgeSessionsTable.Properties;
+  const attributes = new Set(table.AttributeDefinitions.map((item) => item.AttributeName));
+  assert.equal(attributes.has('threadRootPk'), true);
+  assert.equal(attributes.has('threadRootSk'), true);
+
+  const index = table.GlobalSecondaryIndexes.find(
+    (item) => item.IndexName === 'threadRootPk-threadRootSk-index',
+  );
+  assert.deepEqual(index.KeySchema, [
+    { AttributeName: 'threadRootPk', KeyType: 'HASH' },
+    { AttributeName: 'threadRootSk', KeyType: 'RANGE' },
+  ]);
+  assert.equal(index.Projection.ProjectionType, 'ALL');
+});
+
 test('web and Tauri builds consume web sources and dist only', () => {
   const vite = read('vite.config.js');
   assert.match(vite, /root:\s*['"]web['"]/);

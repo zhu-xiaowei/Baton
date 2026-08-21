@@ -23,3 +23,16 @@ test('user bubbles preserve and wrap long unbroken text', () => {
   assert.match(css, /\.msg-user \.msg-text \{[\s\S]*overflow-wrap: anywhere;/);
   assert.match(css, /\.msg-user \.msg-text \{[\s\S]*word-break: break-word;/);
 });
+
+test('Codex subagent notifications stay hidden from the user timeline', () => {
+  const message = {
+    type: 'user',
+    content: '<subagent_notification>\n'
+      + '{"agent_path":"child-id","status":{"completed":"/tmp/result"}}\n'
+      + '</subagent_notification>',
+    timestamp: '2026-08-21T13:12:08.665Z',
+  };
+
+  assert.equal(window.isSubagentNotificationMsg(message), true);
+  assert.equal(window.renderUserBubble(message), '');
+});

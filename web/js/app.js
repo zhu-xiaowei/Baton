@@ -243,6 +243,21 @@ function activeSessionThread() {
   }) || null;
 }
 
+function agentThreadShortId(thread) {
+  var value = String(thread.nativeSessionId || thread.sessionId || '');
+  var marker = ':subagent:';
+  var markerIndex = value.indexOf(marker);
+  if (markerIndex >= 0) {
+    var childId = value.slice(markerIndex + marker.length).replace(/^agent-/, '');
+    return childId.slice(-8) || childId;
+  }
+  return shortSessionId(
+    thread.sessionId,
+    thread.nativeSessionId,
+    thread.runtime || state.appState.runtime,
+  );
+}
+
 function agentThreadStatus(threads) {
   var agents = threads.filter(function (thread) {
     return thread.sessionId !== state.rootSessionId;
@@ -438,32 +453,45 @@ function renderAgentThreadsModal() {
     var isMain = thread.sessionId === state.rootSessionId;
     var nickname = String(thread.agentName || '').trim();
     var role = String(thread.agentRole || '').trim();
+    var identity = '';
+    if (nickname && role) identity = nickname + ' [' + role + ']';
+    else if (nickname) identity = nickname;
+    else if (role) identity = '[' + role + ']';
+    else identity = 'Agent';
+    var pathName = String(thread.agentPath || '').split('/').filter(Boolean).pop() || '';
+    pathName = pathName.replace(/[_-]+/g, ' ');
     var name = thread.preview || state.rootSessionPreview || 'Main';
     if (!isMain) {
-      if (nickname && role) name = nickname + ' [' + role + ']';
-      else if (nickname) name = nickname;
-      else if (role) name = '[' + role + ']';
-      else name = 'Agent';
+      var inheritedPreview = thread.preview === state.rootSessionPreview;
+      name = (!inheritedPreview && thread.preview) || pathName || identity;
     }
-    var meta = '';
+    var metaParts = [];
+    if (!isMain && identity && identity !== name) metaParts.push(identity);
+    if (!isMain) {
+      metaParts.push(agentThreadShortId(thread));
+    }
     if (Number.isFinite(Number(thread.size))) {
-      meta = formatSize(Number(thread.size));
-    } else {
-      meta = shortSessionId(
+      metaParts.push(formatSize(Number(thread.size)));
+    } else if (isMain) {
+      metaParts.push(shortSessionId(
         thread.sessionId,
         thread.nativeSessionId,
         thread.runtime || state.appState.runtime,
-      );
+      ));
     }
     var selected = thread.sessionId === state.activeThreadId;
+    var indent = isMain
+      ? 0
+      : Math.min(4, Math.max(0, (Number(thread.agentDepth) || 1) - 1));
     return '<button class="agent-thread-row' + (selected ? ' selected' : '') + '"'
       + ' type="button" data-session-id="' + esc(thread.sessionId) + '"'
+      + ' style="--agent-indent:' + indent + '"'
       + ' onclick="switchAgentThread(this.dataset.sessionId)">'
       + '<span class="agent-thread-copy"><span class="agent-thread-title">'
       + '<strong>' + esc(name) + '</strong>'
       + '<span class="badge ' + statusClass(thread.status) + '">'
       + esc(statusLabel(thread.status)) + '</span></span>'
-      + '<span class="agent-thread-meta"><small>' + esc(meta) + '</small>'
+      + '<span class="agent-thread-meta"><small>' + esc(metaParts.join(' · ')) + '</small>'
       + (thread.lastActive ? '<time>' + esc(timeAgo(thread.lastActive)) + '</time>' : '')
       + '</span>'
       + '</span></button>';

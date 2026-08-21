@@ -45,6 +45,12 @@
     return '';
   }
 
+  window.isSubagentNotificationMsg = function (msg) {
+    return msg.type === 'user'
+      && /^\s*<subagent_notification>[\s\S]*<\/subagent_notification>\s*$/i
+        .test(userText(msg));
+  };
+
   // CC writes a local command's stdout back as a user message wrapped in
   // <local-command-stdout> (e.g. /compact's "Compacted" summary). It's command
   // output, not a user turn — render it like captured command output, not a bubble.
@@ -88,6 +94,7 @@
 
   // Render user text bubble
   window.renderUserBubble = function (msg) {
+    if (window.isSubagentNotificationMsg(msg)) return '';
     let text = '';
     if (typeof msg.content === 'string') text = msg.content;
     else if (Array.isArray(msg.content)) {

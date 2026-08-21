@@ -36,8 +36,10 @@ function previewText(value) {
 }
 
 function isInternalUserContext(text) {
-  return /^<(?:environment_context|turn_aborted)>[\s\S]*<\/(?:environment_context|turn_aborted)>$/i
-    .test(text.trim());
+  const value = text.trim();
+  return /^<environment_context>[\s\S]*<\/environment_context>$/i.test(value)
+    || /^<turn_aborted>[\s\S]*<\/turn_aborted>$/i.test(value)
+    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/i.test(value);
 }
 
 export function codexResponseUserText(payload) {
@@ -97,8 +99,8 @@ export function scanCodexRollout(filePath, options = {}) {
   let onlyMetadata = null;
   let matchingMetadata = null;
   let activeTurnId = '';
-  let eventPreview = '';
-  let responsePreview = '';
+  const eventPreviews = [];
+  const responsePreviews = [];
   let model = '';
   let malformedLines = 0;
   let lastMalformedLine = -1;
@@ -122,12 +124,14 @@ export function scanCodexRollout(filePath, options = {}) {
         if (metadataId(payload) === nativeSessionId) matchingMetadata = payload;
       }
       if (entry.type === 'turn_context' && payload.model) model = String(payload.model);
-      if (!responsePreview && entry.type === 'response_item') {
-        responsePreview = previewText(codexResponseUserText(payload));
+      if (entry.type === 'response_item') {
+        const candidate = previewText(codexResponseUserText(payload));
+        if (candidate && !responsePreviews.includes(candidate)) responsePreviews.push(candidate);
       }
       if (entry.type !== 'event_msg') return;
-      if (!eventPreview && payload.type === 'user_message') {
-        eventPreview = previewText(payload.message);
+      if (payload.type === 'user_message') {
+        const candidate = previewText(payload.message);
+        if (candidate && !eventPreviews.includes(candidate)) eventPreviews.push(candidate);
       }
       if (payload.type === 'task_started' && payload.turn_id) {
         activeTurnId = payload.turn_id;
@@ -142,8 +146,6 @@ export function scanCodexRollout(filePath, options = {}) {
   }
 
   const trailingMalformed = lastMalformedLine === lineCount - 1;
-  const preview = eventPreview || responsePreview;
-  if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
   const meta = matchingMetadata || (metadataCount === 1 ? onlyMetadata : null);
   if (!meta?.cwd) {
     return { session: null, malformedLines, trailingMalformed, reason: 'missing_metadata' };
@@ -176,6 +178,17 @@ export function scanCodexRollout(filePath, options = {}) {
     || spawn.agent_type
     || '',
   );
+  const prompts = [...eventPreviews];
+  for (const candidate of responsePreviews) {
+    if (!prompts.includes(candidate)) prompts.push(candidate);
+  }
+  const pathTitle = previewText(
+    agentPath.split('/').filter(Boolean).pop()?.replace(/[_-]+/g, ' ') || '',
+  );
+  const preview = visibleSubagent
+    ? (prompts[1] || pathTitle || prompts[0] || '')
+    : (prompts[0] || '');
+  if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
 
   const runningInfo = options.runningInfo || { projects: new Set(), sessions: new Set() };
   const now = options.now ?? Date.now();

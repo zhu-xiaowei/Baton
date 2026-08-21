@@ -65,6 +65,7 @@ class SessionItem(BaseModel):
     agentDepth: int = 0
     canSend: bool = True
     agentCount: Optional[int] = None
+    threadRootId: Optional[str] = None
 
 
 class AgentCountUpdate(BaseModel):
@@ -165,6 +166,10 @@ def _session_list_pk(account_id: str, device: str, project: str) -> str:
     return f"{account_id}#SESS#{device}#{project}"
 
 
+def _thread_root_pk(account_id: str, device: str, project: str, root_session_id: str) -> str:
+    return f"{account_id}#THREAD#{device}#{project}#{root_session_id}"
+
+
 def _list_sk(last_active: str, stable_id: str) -> str:
     return f"{last_active or '0000'}#{stable_id}"
 
@@ -241,17 +246,18 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     key_hash = _hash_key(raw.headers.get("x-api-key", ""))
     now = datetime.utcnow().isoformat()
 
-    preserved_agent_counts = {}
+    preserved_session_fields = {}
     for s in req.sessions:
-        if s.parentSessionId or s.agentCount is not None:
+        needs_agent_count = not s.parentSessionId and s.agentCount is None
+        needs_thread_root = s.threadRootId is None
+        if not needs_agent_count and not needs_thread_root:
             continue
         _, _, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
         existing = sessions_table.get_item(Key={
             "accountId": key_hash,
             "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
         }).get("Item", {})
-        if "agentCount" in existing:
-            preserved_agent_counts[(s.project, storage_id)] = existing["agentCount"]
+        preserved_session_fields[(s.project, storage_id)] = existing
 
     # 1. Write SESS# items (always).
     with sessions_table.batch_writer() as batch:
@@ -306,9 +312,22 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             if not s.parentSessionId and s.agentCount is not None:
                 item["agentCount"] = max(0, s.agentCount)
             elif not s.parentSessionId:
-                preserved_count = preserved_agent_counts.get((s.project, storage_id))
+                preserved_count = preserved_session_fields.get(
+                    (s.project, storage_id), {}
+                ).get("agentCount")
                 if preserved_count is not None:
                     item["agentCount"] = preserved_count
+            thread_root_id = s.threadRootId
+            if thread_root_id is None:
+                thread_root_id = preserved_session_fields.get(
+                    (s.project, storage_id), {}
+                ).get("threadRootId")
+            if thread_root_id:
+                item["threadRootId"] = thread_root_id
+                item["threadRootPk"] = _thread_root_pk(
+                    key_hash, req.deviceName, s.project, thread_root_id
+                )
+                item["threadRootSk"] = storage_id
             batch.put_item(Item=item)
 
     for update in req.agentCountUpdates or []:

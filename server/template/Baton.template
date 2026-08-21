@@ -533,7 +533,9 @@
           { "AttributeName": "sk", "AttributeType": "S" },
           { "AttributeName": "activeStatus", "AttributeType": "S" },
           { "AttributeName": "listPk", "AttributeType": "S" },
-          { "AttributeName": "listSk", "AttributeType": "S" }
+          { "AttributeName": "listSk", "AttributeType": "S" },
+          { "AttributeName": "threadRootPk", "AttributeType": "S" },
+          { "AttributeName": "threadRootSk", "AttributeType": "S" }
         ],
         "KeySchema": [
           { "AttributeName": "accountId", "KeyType": "HASH" },
@@ -553,6 +555,14 @@
             "KeySchema": [
               { "AttributeName": "listPk", "KeyType": "HASH" },
               { "AttributeName": "listSk", "KeyType": "RANGE" }
+            ],
+            "Projection": { "ProjectionType": "ALL" }
+          },
+          {
+            "IndexName": "threadRootPk-threadRootSk-index",
+            "KeySchema": [
+              { "AttributeName": "threadRootPk", "KeyType": "HASH" },
+              { "AttributeName": "threadRootSk", "KeyType": "RANGE" }
             ],
             "Projection": { "ProjectionType": "ALL" }
           }

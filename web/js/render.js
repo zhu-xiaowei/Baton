@@ -211,6 +211,7 @@
 
     for (const msg of messages) {
       if (isToolResultOnly(msg)) continue;
+      if (window.isSubagentNotificationMsg?.(msg)) continue;
 
       if (isInterruptMsg(msg)) {
         turnItems.push({

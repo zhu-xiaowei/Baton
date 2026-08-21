@@ -20,6 +20,7 @@ _sessions_table = None
 _messages_table = None
 _connections_table = None
 LIST_INDEX_NAME = "listPk-listSk-index"
+THREAD_ROOT_INDEX_NAME = "threadRootPk-threadRootSk-index"
 NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
 
 
@@ -149,6 +150,41 @@ def _project_list_pk(account_id, device):
 
 def _session_list_pk(account_id, device, project):
     return f"{account_id}#SESS#{device}#{project}"
+
+
+def _thread_root_pk(account_id, device, project, root_session_id):
+    return f"{account_id}#THREAD#{device}#{project}#{root_session_id}"
+
+
+def _ordered_thread_items(items, root_session_id):
+    roots = [item for item in items if item.get("sessionId") == root_session_id]
+    children_by_parent = {}
+    for item in items:
+        if item.get("threadKind", "main") != "subagent":
+            continue
+        parent_id = item.get("parentSessionId", "")
+        if parent_id:
+            children_by_parent.setdefault(parent_id, []).append(item)
+
+    descendants = []
+    seen = {root_session_id}
+
+    def append_children(parent_id):
+        children = sorted(
+            children_by_parent.get(parent_id, []),
+            key=lambda item: (item.get("lastActive", ""), item.get("sessionId", "")),
+            reverse=True,
+        )
+        for child in children:
+            child_id = child.get("sessionId", "")
+            if not child_id or child_id in seen:
+                continue
+            seen.add(child_id)
+            descendants.append(child)
+            append_children(child_id)
+
+    append_children(root_session_id)
+    return roots + descendants
 
 
 def _encode_list_cursor(key):
@@ -433,19 +469,28 @@ async def get_session_threads(
 ):
     sessions_table, _ = _tables()
     account_id = _account_id(request)
-    items = _query_all(
-        sessions_table,
-        KeyConditionExpression=Key("accountId").eq(account_id)
-        & Key("sk").begins_with(f"SESS#{device}#{project}#"),
-    )
-    selected = [
-        item for item in items
-        if item.get("sessionId") == session
-        or (
-            item.get("parentSessionId") == session
-            and item.get("threadKind", "subagent") == "subagent"
+    items = []
+    try:
+        items = _query_all(
+            sessions_table,
+            IndexName=THREAD_ROOT_INDEX_NAME,
+            KeyConditionExpression=Key("threadRootPk").eq(
+                _thread_root_pk(account_id, device, project, session)
+            ),
         )
-    ]
+    except Exception:
+        items = []
+
+    ordered_items = _ordered_thread_items(items, session)
+    root_item = ordered_items[0] if ordered_items else None
+    expected_count = int(root_item.get("agentCount", 0)) if root_item else 0
+    if not root_item or len(ordered_items) - 1 < expected_count:
+        project_items = _query_all(
+            sessions_table,
+            KeyConditionExpression=Key("accountId").eq(account_id)
+            & Key("sk").begins_with(f"SESS#{device}#{project}#"),
+        )
+        ordered_items = _ordered_thread_items(project_items, session)
 
     def to_thread(item):
         thread = {
@@ -461,13 +506,7 @@ async def get_session_threads(
         }
         return thread
 
-    threads = [to_thread(item) for item in selected]
-    threads.sort(key=lambda item: (
-        item.get("threadKind") == "subagent",
-        item.get("agentDepth", 0),
-        item.get("lastActive", ""),
-        item.get("sessionId", ""),
-    ))
+    threads = [to_thread(item) for item in ordered_items]
     return {"rootSessionId": session, "threads": threads}
 
 

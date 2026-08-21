@@ -62,6 +62,8 @@ test('catalog aggregates count root sessions but still upload child threads', as
   assert.equal(aggregates.deviceAggregate.sessionCount, 1);
   assert.equal(aggregates.projectAggregates[0].sessionCount, 1);
   assert.equal(root.agentCount, 1);
+  assert.equal(root.threadRootId, 'codex:0001');
+  assert.equal(child.threadRootId, 'codex:0001');
 
   const requests = [];
   await uploadCatalog(
@@ -73,6 +75,8 @@ test('catalog aggregates count root sessions but still upload child threads', as
   );
   assert.equal(requests[0].sessions.length, 2);
   assert.equal(requests[0].sessions[0].agentCount, 1);
+  assert.equal(requests[0].sessions[0].threadRootId, 'codex:0001');
+  assert.equal(requests[0].sessions[1].threadRootId, 'codex:0001');
   assert.equal(requests[0].sessions[1].parentSessionId, 'codex:0001');
 });
 
@@ -93,13 +97,27 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
     parentSessionId: 'codex:0001',
     threadKind: 'internal',
   };
+  const grandchild = {
+    ...session(5, 'codex'),
+    parentSessionId: 'codex:0002',
+    threadKind: 'subagent',
+  };
 
-  rebuildAgentCounts([root, first, second, guardian]);
-  assert.equal(root.agentCount, 2);
+  rebuildAgentCounts([root, first, second, guardian, grandchild]);
+  assert.equal(root.agentCount, 3);
+  assert.equal(root.threadRootId, 'codex:0001');
+  assert.equal(first.threadRootId, 'codex:0001');
+  assert.equal(grandchild.threadRootId, 'codex:0001');
+  assert.equal(guardian.threadRootId, '');
   assert.deepEqual(trackAgentSession(first), [{
     sessionId: 'codex:0001',
     project: '-repo',
-    agentCount: 2,
+    agentCount: 3,
+  }]);
+  assert.deepEqual(trackAgentSession(grandchild), [{
+    sessionId: 'codex:0001',
+    project: '-repo',
+    agentCount: 3,
   }]);
   assert.deepEqual(trackAgentSession({ ...first, threadKind: 'internal' }), [{
     sessionId: 'codex:0001',

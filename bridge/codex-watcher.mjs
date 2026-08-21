@@ -617,11 +617,8 @@ export class CodexWatcher {
       to: session.status,
       lastActive: session.lastActive,
     } : null;
-    const { _filePath, _lineCount, ...publicSession } = session;
     const agentCountUpdates = trackAgentSession(session);
-    if (session.agentCount !== undefined) {
-      publicSession.agentCount = session.agentCount;
-    }
+    const { _filePath, _lineCount, ...publicSession } = session;
     await this.postFn('/api/bridge/sync-sessions', {
       deviceName: this.config.deviceName,
       os: process.platform,

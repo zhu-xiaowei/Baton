@@ -1306,6 +1306,10 @@ function updateLastTurn(explicitMessages) {
       continue;
     }
 
+    // Codex injects child completion into the parent as a user-role protocol
+    // message. It is internal context, not a user prompt or visible timeline row.
+    if (window.isSubagentNotificationMsg?.(msg)) continue;
+
     // User message
     if (msg.type === 'user' && !isInterruptMsg(msg)) {
       if (tryDedup(msg)) {
@@ -1367,7 +1371,8 @@ function updateLastTurn(explicitMessages) {
   // downgrade a running spinner; metadata-only batches keep the current state.
   var derived = deriveRunning(state.wsAllMessages, null, state.appState.runtime);
   var hasTurnFrame = newMessages.some(function (m) {
-    return m.type === 'assistant' || m.type === 'user';
+    return m.type === 'assistant'
+      || (m.type === 'user' && !window.isSubagentNotificationMsg?.(m));
   });
   // A fresh stream_end means the turn is over; don't let stop=null trailing rows re-light the spinner.
   var streamEndFresh = _lastStreamEndAt && (Date.now() - _lastStreamEndAt < 4000);

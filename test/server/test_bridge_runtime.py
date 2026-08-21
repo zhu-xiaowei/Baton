@@ -244,6 +244,7 @@ def test_sync_sessions_persists_subagent_relationship(monkeypatch):
             agentPath="/root/worker",
             agentDepth=1,
             canSend=True,
+            threadRootId="codex:parent",
         )],
     )
     asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
@@ -255,6 +256,9 @@ def test_sync_sessions_persists_subagent_relationship(monkeypatch):
     assert child["agentPath"] == "/root/worker"
     assert child["agentDepth"] == 1
     assert child["canSend"] is True
+    assert child["threadRootId"] == "codex:parent"
+    assert child["threadRootPk"].endswith("#THREAD#Linux#-repo#codex:parent")
+    assert child["threadRootSk"] == "codex:child"
     assert "listPk" not in child
     assert "listSk" not in child
     assert "activeStatus" not in child
@@ -275,11 +279,16 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
     asyncio.run(bridge_sync.sync_sessions(
         bridge_sync.SyncSessionsRequest(
             deviceName="Linux",
-            sessions=[bridge_sync.SessionItem(**root, agentCount=2)],
+            sessions=[bridge_sync.SessionItem(
+                **root,
+                agentCount=2,
+                threadRootId="codex:parent",
+            )],
         ),
         FakeRequest(),
     ))
     assert sessions.items[-1]["agentCount"] == 2
+    assert sessions.items[-1]["threadRootId"] == "codex:parent"
 
     asyncio.run(bridge_sync.sync_sessions(
         bridge_sync.SyncSessionsRequest(
@@ -294,6 +303,8 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
         FakeRequest(),
     ))
     assert sessions.items[-1]["agentCount"] == 2
+    assert sessions.items[-1]["threadRootId"] == "codex:parent"
+    assert sessions.items[-1]["threadRootSk"] == "codex:parent"
     assert sessions.updates[-1]["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
     assert sessions.updates[-1]["ExpressionAttributeValues"][":count"] == 1
     assert "ADD" not in sessions.updates[-1]["UpdateExpression"]
@@ -309,6 +320,7 @@ def test_session_threads_returns_root_and_children(monkeypatch):
         "status": "running",
         "lastActive": "2026-08-21T00:00:00.000Z",
         "size": 2048,
+        "agentCount": 3,
     }, {
         "accountId": "account",
         "sessionId": "codex:child",
@@ -326,6 +338,32 @@ def test_session_threads_returns_root_and_children(monkeypatch):
         "canSend": True,
     }, {
         "accountId": "account",
+        "sessionId": "codex:recent-child",
+        "nativeSessionId": "recent-child",
+        "runtime": "codex",
+        "preview": "Recent child",
+        "status": "completed",
+        "lastActive": "2026-08-21T00:00:02.000Z",
+        "threadKind": "subagent",
+        "parentSessionId": "codex:root",
+        "agentName": "Recent worker",
+        "agentDepth": 1,
+        "canSend": True,
+    }, {
+        "accountId": "account",
+        "sessionId": "codex:grandchild",
+        "nativeSessionId": "grandchild",
+        "runtime": "codex",
+        "preview": "Grandchild",
+        "status": "running",
+        "lastActive": "2026-08-21T00:00:03.000Z",
+        "threadKind": "subagent",
+        "parentSessionId": "codex:child",
+        "agentName": "Nested worker",
+        "agentDepth": 2,
+        "canSend": True,
+    }, {
+        "accountId": "account",
         "sessionId": "codex:guardian",
         "nativeSessionId": "guardian",
         "runtime": "codex",
@@ -336,8 +374,14 @@ def test_session_threads_returns_root_and_children(monkeypatch):
         "parentSessionId": "codex:root",
         "canSend": False,
     }]
+    query_calls = []
+
+    def query_all(*_args, **kwargs):
+        query_calls.append(kwargs)
+        return items
+
     monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), FakeTable()))
-    monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: items)
+    monkeypatch.setattr(bridge_read, "_query_all", query_all)
 
     result = asyncio.run(bridge_read.get_session_threads(
         FakeRequest(),
@@ -347,12 +391,67 @@ def test_session_threads_returns_root_and_children(monkeypatch):
     ))
     assert [thread["sessionId"] for thread in result["threads"]] == [
         "codex:root",
+        "codex:recent-child",
         "codex:child",
+        "codex:grandchild",
     ]
     assert result["threads"][0]["size"] == 2048
     assert result["threads"][1]["parentSessionId"] == "codex:root"
-    assert result["threads"][1]["agentRole"] == "explorer"
-    assert result["threads"][1]["canSend"] is True
+    assert result["threads"][2]["parentSessionId"] == "codex:root"
+    assert result["threads"][2]["agentRole"] == "explorer"
+    assert result["threads"][2]["canSend"] is True
+    assert result["threads"][3]["parentSessionId"] == "codex:child"
+    assert result["threads"][3]["agentDepth"] == 2
+    assert len(query_calls) == 1
+    assert query_calls[0]["IndexName"] == bridge_read.THREAD_ROOT_INDEX_NAME
+
+
+def test_session_threads_falls_back_while_root_index_is_incomplete(monkeypatch):
+    root = {
+        "accountId": "account",
+        "sessionId": "codex:root",
+        "nativeSessionId": "root",
+        "runtime": "codex",
+        "preview": "Root",
+        "status": "completed",
+        "lastActive": "2026-08-21T00:00:00.000Z",
+        "agentCount": 1,
+    }
+    child = {
+        "accountId": "account",
+        "sessionId": "codex:child",
+        "nativeSessionId": "child",
+        "runtime": "codex",
+        "preview": "Child",
+        "status": "completed",
+        "lastActive": "2026-08-21T00:00:01.000Z",
+        "threadKind": "subagent",
+        "parentSessionId": "codex:root",
+        "agentDepth": 1,
+    }
+    query_calls = []
+
+    def query_all(*_args, **kwargs):
+        query_calls.append(kwargs)
+        return [root] if kwargs.get("IndexName") else [root, child]
+
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), FakeTable()))
+    monkeypatch.setattr(bridge_read, "_query_all", query_all)
+
+    result = asyncio.run(bridge_read.get_session_threads(
+        FakeRequest(),
+        device="Linux",
+        project="-repo",
+        session="codex:root",
+    ))
+
+    assert [item["sessionId"] for item in result["threads"]] == [
+        "codex:root",
+        "codex:child",
+    ]
+    assert len(query_calls) == 2
+    assert query_calls[0]["IndexName"] == bridge_read.THREAD_ROOT_INDEX_NAME
+    assert "IndexName" not in query_calls[1]
 
 
 def test_sync_messages_persists_only_message_fields(monkeypatch):
