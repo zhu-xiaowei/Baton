@@ -4,7 +4,10 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, CLAUDE_DAEMON_ROSTER, IS_WSL, AGENTS_JSON_TTL_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
-import { resolveClaudeBinForCapability } from './runtime-capabilities.mjs';
+import {
+  claudeLauncherError,
+  resolveClaudeBinForCapability,
+} from './runtime-capabilities.mjs';
 import { runExecutable } from './platform.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
@@ -408,6 +411,12 @@ export function resolveClaudeBin() {
   if (_claudeBin !== undefined) return _claudeBin;
   _claudeBin = resolveClaudeBinForCapability();
   return _claudeBin;
+}
+
+export function requireClaudeBin() {
+  const binary = resolveClaudeBin();
+  if (binary) return binary;
+  throw claudeLauncherError();
 }
 
 let _agentsCache = { at: 0, map: new Map() };

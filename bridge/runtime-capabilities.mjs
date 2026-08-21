@@ -3,6 +3,20 @@ import path from 'path';
 import os from 'os';
 import { DEFAULT_CODEX_HOME } from './config.mjs';
 import { findExecutable, runExecutable } from './platform.mjs';
+import {
+  resolveRuntimeLauncher,
+  runtimeLauncherError,
+} from './runtime-launcher.mjs';
+
+function claudeCandidates(home) {
+  return [
+    path.join(home, '.local/bin/claude'),
+    path.join(home, 'AppData/Roaming/npm/claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    '/usr/bin/claude',
+  ];
+}
 
 export function existingDirectory(value) {
   try { return fs.statSync(value).isDirectory(); } catch { return false; }
@@ -36,15 +50,18 @@ export function resolveCodexBin(options = {}) {
   ]);
 }
 
-export function resolveClaudeBinForCapability() {
-  const home = os.homedir();
-  return findExecutable('claude', [
-    path.join(home, '.local/bin/claude'),
-    path.join(home, 'AppData/Roaming/npm/claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-    '/usr/bin/claude',
-  ]);
+export function resolveClaudeBinForCapability(options = {}) {
+  const home = options.home || os.homedir();
+  return resolveRuntimeLauncher(
+    'claude',
+    claudeCandidates(home),
+    { allowShellFallback: true, ...options },
+  );
+}
+
+export function claudeLauncherError(options = {}) {
+  const home = options.home || os.homedir();
+  return runtimeLauncherError('claude', claudeCandidates(home), options);
 }
 
 export function binaryVersion(binary) {

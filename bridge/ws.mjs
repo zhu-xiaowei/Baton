@@ -11,6 +11,7 @@ import {
   getAgentsJson,
   getSessionMetadata,
   normalizeProjectHash,
+  requireClaudeBin,
   resolveClaudeBin,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
@@ -1373,7 +1374,12 @@ async function newRegularSession(
 
 // New agent: launch detached `claude --bg` (can't pool — conflicts with -p), parse its `backgrounded · <shortid>`, resolve full sid via `claude agents --json`. First task shows via agent poll + watcher; next message takes it over (handleHeadlessSend).
 async function newAgentSession(cwd, text) {
-  const bin = resolveClaudeBin() || 'claude';
+  let bin;
+  try {
+    bin = requireClaudeBin();
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
   let out = '';
   try {
     out = await new Promise((resolve, reject) => {

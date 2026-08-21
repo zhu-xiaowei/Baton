@@ -10,7 +10,7 @@
 
 import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
-import { resolveClaudeBin } from './session.mjs';
+import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
 
@@ -46,7 +46,7 @@ class HeadlessProc {
   }
 
   spawn() {
-    const bin = this.pool.bin || resolveClaudeBin() || 'claude';
+    const bin = this.pool.bin || requireClaudeBin();
     const args = [
       '-p',
       '--input-format', 'stream-json',
@@ -306,6 +306,7 @@ export class ClaudePool {
   // guard (caller then stopDaemon + retries). resumeId → --resume; createId → new
   // session via --session-id (sessionId known upfront, no init wait needed to return it).
   async send(key, text, opts = {}) {
+    if (!this.bin) requireClaudeBin();
     const streamId = opts.streamId || null;
     const cb = {
       onDelta: opts.onDelta,
@@ -353,6 +354,7 @@ export class ClaudePool {
   }
 
   async _inspect(cwd) {
+    if (!this.bin) requireClaudeBin();
     const key = 'inspect-' + Date.now() + '-' + Math.random().toString(36).slice(2);
     const proc = new HeadlessProc(this, key, cwd, null, null, { noPersistence: true });
     this._inspectProcs.add(proc);
@@ -366,6 +368,7 @@ export class ClaudePool {
   }
 
   async inspectSession(key, cwd, subtypes) {
+    if (!this.bin) requireClaudeBin();
     let proc = this.procs.get(key);
     let temporary = false;
     if (!proc || proc.dead) {
