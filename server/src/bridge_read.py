@@ -54,6 +54,21 @@ def _runtime_fields(item):
     }
 
 
+def _thread_fields(item):
+    fields = {
+        "threadKind": item.get("threadKind", "main"),
+        "canSend": item.get("canSend", True),
+    }
+    if item.get("parentSessionId"):
+        fields.update({
+            "parentSessionId": item["parentSessionId"],
+            "agentRole": item.get("agentRole", ""),
+            "agentPath": item.get("agentPath", ""),
+            "agentDepth": item.get("agentDepth", 1),
+        })
+    return fields
+
+
 def _runtime_capabilities(item):
     capabilities = item.get("runtimeCapabilities")
     if isinstance(capabilities, dict) and capabilities:
@@ -192,7 +207,7 @@ async def get_active_sessions(request: Request):
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=20).get("Items", [])),
+            ScanIndexForward=False, Limit=100).get("Items", [])),
         loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
     )
 
@@ -206,11 +221,14 @@ async def get_active_sessions(request: Request):
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "lastActive": item.get("lastActive", ""),
+            "agentCount": item.get("agentCount", 0),
             **_runtime_fields(item),
+            **_thread_fields(item),
         }
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
+            s["agentRole"] = item.get("agentRole", "")
         if item.get("agentDetail"):
             s["agentDetail"] = item.get("agentDetail", "")
         return s
@@ -218,11 +236,16 @@ async def get_active_sessions(request: Request):
     sessions = [
         _to_session(item)
         for item in active_items
-        if _active_session_visible(item, online_devices)
+        if not item.get("parentSessionId")
+        and _active_session_visible(item, online_devices)
     ]
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 
-    recent_sessions = [_to_session(i) for i in done_items]
+    recent_sessions = [
+        _to_session(item)
+        for item in done_items
+        if not item.get("parentSessionId")
+    ][:20]
 
     return {"sessions": sessions, "recentSessions": recent_sessions}
 
@@ -235,6 +258,8 @@ def _live_active_counts(sessions_table, account_id):
     dev = {}   # deviceName -> {running, needs_input}
     proj = {}  # (deviceName, projectHash) -> {running, needs_input}
     for r in rows:
+        if r.get("parentSessionId"):
+            continue
         st = r.get("status", "")
         if st not in ("running", "needs_input"):
             continue
@@ -365,6 +390,7 @@ async def get_sessions(
         items, next_cursor = _query_list_page(
             sessions_table, account_id, _session_list_pk(account_id, device, project), limit, cursor
         )
+    items = [item for item in items if not item.get("parentSessionId")]
 
     sessions = []
     for item in items:
@@ -375,7 +401,9 @@ async def get_sessions(
             "size": item.get("size", 0),
             "model": item.get("model", ""),
             "status": item.get("status", "completed"),
+            "agentCount": item.get("agentCount", 0),
             **_runtime_fields(item),
+            **_thread_fields(item),
         }
         if item.get("modelProvider"):
             s["modelProvider"] = item["modelProvider"]
@@ -394,6 +422,53 @@ async def get_sessions(
     if limit is not None:
         result.update({"hasMore": next_cursor is not None, "nextCursor": next_cursor})
     return result
+
+
+@read_router.get("/session-threads")
+async def get_session_threads(
+    request: Request,
+    device: str = Query(...),
+    project: str = Query(...),
+    session: str = Query(...),
+):
+    sessions_table, _ = _tables()
+    account_id = _account_id(request)
+    items = _query_all(
+        sessions_table,
+        KeyConditionExpression=Key("accountId").eq(account_id)
+        & Key("sk").begins_with(f"SESS#{device}#{project}#"),
+    )
+    selected = [
+        item for item in items
+        if item.get("sessionId") == session
+        or (
+            item.get("parentSessionId") == session
+            and item.get("threadKind", "subagent") == "subagent"
+        )
+    ]
+
+    def to_thread(item):
+        thread = {
+            "sessionId": item.get("sessionId", ""),
+            "preview": item.get("preview", ""),
+            "status": item.get("status", "completed"),
+            "lastActive": item.get("lastActive", ""),
+            "size": item.get("size", 0),
+            "agentName": item.get("agentName", ""),
+            "agentRole": item.get("agentRole", ""),
+            **_runtime_fields(item),
+            **_thread_fields(item),
+        }
+        return thread
+
+    threads = [to_thread(item) for item in selected]
+    threads.sort(key=lambda item: (
+        item.get("threadKind") == "subagent",
+        item.get("agentDepth", 0),
+        item.get("lastActive", ""),
+        item.get("sessionId", ""),
+    ))
+    return {"rootSessionId": session, "threads": threads}
 
 
 def _parse_messages(items):

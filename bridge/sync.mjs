@@ -7,6 +7,7 @@ import {
   runtimeAdapters,
 } from './runtime-registry.mjs';
 import { pendingInteractionDetail, poolOwns } from './ws.mjs';
+import { rebuildAgentCounts } from './agent-counts.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
 
@@ -20,6 +21,7 @@ export const lastKnownStatus = new Map();
 export const knownProjects = new Set();
 
 export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
+  sessions = sessions.filter((session) => !session.parentSessionId);
   const projects = new Map();
   let deviceLastActive = '';
   let runningCount = 0;
@@ -110,6 +112,7 @@ export async function syncSessions(config, opts = {}) {
     }),
   }));
   const sessions = catalogs.flatMap(({ catalog }) => catalog.sessions);
+  rebuildAgentCounts(sessions);
   const catalogComplete = catalogs.every(({ catalog }) => catalog.complete);
   const runtimeCapabilities = opts.runtimeCapabilities
     || detectRegisteredRuntimeCapabilities(runtimeOptions);

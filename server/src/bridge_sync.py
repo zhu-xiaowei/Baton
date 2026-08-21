@@ -57,7 +57,20 @@ class SessionItem(BaseModel):
     status: str = "completed"  # "running" | "needs_input" | "completed"
     isAgent: bool = False
     agentName: str = ""
+    agentRole: str = ""
     agentDetail: str = ""
+    threadKind: str = "main"
+    parentSessionId: str = ""
+    agentPath: str = ""
+    agentDepth: int = 0
+    canSend: bool = True
+    agentCount: Optional[int] = None
+
+
+class AgentCountUpdate(BaseModel):
+    sessionId: str
+    project: str
+    agentCount: int = 0
 
 
 class RuntimeCapability(BaseModel):
@@ -120,6 +133,7 @@ class SyncSessionsRequest(BaseModel):
     statusDelta: Optional[StatusDelta] = None
     # Bulk incremental (checkStopped): multiple status changes at once.
     statusDeltas: Optional[List[StatusDelta]] = None
+    agentCountUpdates: Optional[List[AgentCountUpdate]] = None
 
 
 class SyncMessagesRequest(BaseModel):
@@ -227,6 +241,18 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     key_hash = _hash_key(raw.headers.get("x-api-key", ""))
     now = datetime.utcnow().isoformat()
 
+    preserved_agent_counts = {}
+    for s in req.sessions:
+        if s.parentSessionId or s.agentCount is not None:
+            continue
+        _, _, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
+        existing = sessions_table.get_item(Key={
+            "accountId": key_hash,
+            "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
+        }).get("Item", {})
+        if "agentCount" in existing:
+            preserved_agent_counts[(s.project, storage_id)] = existing["agentCount"]
+
     # 1. Write SESS# items (always).
     with sessions_table.batch_writer() as batch:
         for s in req.sessions:
@@ -243,8 +269,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "nativeSessionId": native_id,
                 "runtime": runtime,
                 "lastActive": s.lastActive,
-                "listPk": _session_list_pk(key_hash, req.deviceName, s.project),
-                "listSk": _list_sk(s.lastActive, storage_id),
                 "preview": s.preview,
                 "model": s.model,
                 "status": s.status,
@@ -257,20 +281,48 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["clientSource"] = s.clientSource
             if s.cliVersion:
                 item["cliVersion"] = s.cliVersion
-            # GSI accountId-activeStatus-index: active (running/needs_input) as bare
-            # status; every completed session as done#<lastActive> (any type, for the
-            # recent-completed list + live device/project count groupby).
-            if s.status in ("running", "needs_input"):
-                item["activeStatus"] = s.status
-            elif s.status == "completed":
-                item["activeStatus"] = f"done#{s.lastActive}"
+            # Only root sessions belong in outer list/active indexes. Child
+            # threads stay queryable through the base-table project prefix.
+            if not s.parentSessionId:
+                item["listPk"] = _session_list_pk(key_hash, req.deviceName, s.project)
+                item["listSk"] = _list_sk(s.lastActive, storage_id)
+                if s.status in ("running", "needs_input"):
+                    item["activeStatus"] = s.status
+                elif s.status == "completed":
+                    item["activeStatus"] = f"done#{s.lastActive}"
             # Agent metadata (sparse — only written when isAgent=True)
             if s.isAgent:
                 item["isAgent"] = True
                 item["agentName"] = s.agentName
+                item["agentRole"] = s.agentRole
             if s.agentDetail:
                 item["agentDetail"] = s.agentDetail
+            if s.parentSessionId:
+                item["threadKind"] = s.threadKind or "subagent"
+                item["parentSessionId"] = s.parentSessionId
+                item["agentPath"] = s.agentPath
+                item["agentDepth"] = s.agentDepth
+                item["canSend"] = s.canSend
+            if not s.parentSessionId and s.agentCount is not None:
+                item["agentCount"] = max(0, s.agentCount)
+            elif not s.parentSessionId:
+                preserved_count = preserved_agent_counts.get((s.project, storage_id))
+                if preserved_count is not None:
+                    item["agentCount"] = preserved_count
             batch.put_item(Item=item)
+
+    for update in req.agentCountUpdates or []:
+        sessions_table.update_item(
+            Key={
+                "accountId": key_hash,
+                "sk": f"SESS#{req.deviceName}#{update.project}#{update.sessionId}",
+            },
+            UpdateExpression="SET agentCount = :count, updatedAt = :now",
+            ExpressionAttributeValues={
+                ":count": max(0, update.agentCount),
+                ":now": now,
+            },
+        )
 
     # 2a. Complete catalogs authoritatively overwrite aggregates. An incomplete
     # first scan may bootstrap a missing device, but never clobbers an existing one.

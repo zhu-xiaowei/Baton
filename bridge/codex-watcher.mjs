@@ -31,6 +31,7 @@ import {
   reconcile,
 } from './sync.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
+import { trackAgentSession } from './agent-counts.mjs';
 
 function walkJsonl(root) {
   const files = [];
@@ -60,6 +61,13 @@ function metadataSignature(session) {
     session.modelProvider,
     session.clientSource,
     session.cliVersion,
+    session.threadKind,
+    session.parentSessionId,
+    session.agentName,
+    session.agentRole,
+    session.agentPath,
+    session.agentDepth,
+    session.canSend,
   ]);
 }
 
@@ -126,6 +134,12 @@ export class CodexWatcher {
       .map((session) => [
         storageSessionId('codex', session.nativeSessionId || session.id),
         metadataSignature(session),
+      ]));
+    this.threadKinds = new Map((options.initialSessions || [])
+      .filter((session) => session.runtime === 'codex')
+      .map((session) => [
+        storageSessionId('codex', session.nativeSessionId || session.id),
+        session.threadKind || 'main',
       ]));
     this.timers = [];
     this.stopped = false;
@@ -508,6 +522,27 @@ export class CodexWatcher {
     const sessionId = storageSessionId('codex', nativeSessionId);
     const processedStat = fs.statSync(filePath);
     this.rememberPath(filePath, processedStat);
+    let scannedSession = null;
+    if (!this.threadKinds.has(sessionId)) {
+      scannedSession = this.scanRollout(filePath, {
+        nativeSessionId,
+        ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
+      }).session;
+      if (scannedSession) {
+        await this.syncMetadata(scannedSession);
+      }
+    }
+    if (this.threadKinds.get(sessionId) === 'internal') {
+      // Advance the watermark without persisting internal reviewer transcripts.
+      this.watermarks.set(sessionId, countJsonlLines(filePath));
+      let fileChanged = false;
+      try {
+        const currentStat = fs.statSync(filePath);
+        fileChanged = currentStat.size !== processedStat.size
+          || currentStat.mtimeMs !== processedStat.mtimeMs;
+      } catch {}
+      return { messages: [], fileChanged };
+    }
     const extracted = await syncCodexMessages(filePath, nativeSessionId, sessionId, {
       watermarks: this.watermarks,
       uploader: async (id, messages, identity) => {
@@ -543,13 +578,13 @@ export class CodexWatcher {
       || extracted.needsSessionScan
       || !this.metadataSignatures.has(sessionId);
     if (needsSessionScan) {
-      const result = this.scanRollout(filePath, {
+      const session = scannedSession || this.scanRollout(filePath, {
         nativeSessionId,
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
-      });
-      if (result.session) {
-        await this.syncMetadata(result.session);
-        this.scheduleStatusRecheck(result.session, filePath);
+      }).session;
+      if (session) {
+        await this.syncMetadata(session);
+        this.scheduleStatusRecheck(session, filePath);
       }
     } else if (this.statuses.get(sessionId) === 'running') {
       this.scheduleStatusRecheck({ nativeSessionId, status: 'running' }, filePath);
@@ -574,7 +609,7 @@ export class CodexWatcher {
     if (!isNew && !metadataChanged && !statusChanged) return;
 
     const projectWasKnown = this.projects.has(session.project);
-    const statusDelta = isNew || statusChanged ? {
+    const statusDelta = !session.parentSessionId && (isNew || statusChanged) ? {
       deviceName: this.config.deviceName,
       projectHash: session.project,
       projectName: session.projectName,
@@ -583,10 +618,15 @@ export class CodexWatcher {
       lastActive: session.lastActive,
     } : null;
     const { _filePath, _lineCount, ...publicSession } = session;
+    const agentCountUpdates = trackAgentSession(session);
+    if (session.agentCount !== undefined) {
+      publicSession.agentCount = session.agentCount;
+    }
     await this.postFn('/api/bridge/sync-sessions', {
       deviceName: this.config.deviceName,
       os: process.platform,
       sessions: [publicSession],
+      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
       ...(statusDelta ? { statusDelta } : {}),
     });
 
@@ -594,6 +634,7 @@ export class CodexWatcher {
     this.recent.add(sessionId);
     this.projects.add(session.project);
     this.metadataSignatures.set(sessionId, signature);
+    this.threadKinds.set(sessionId, session.threadKind || 'main');
     this.refreshFileWatchers();
     if (!projectWasKnown) await this.reconcileFn(this.config);
   }

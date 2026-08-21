@@ -14,6 +14,12 @@ export const state = {
   deviceDisplayNameMap: {},
   deviceRuntimeCapabilities: {},
   newSessionRuntimes: [],
+  rootSessionId: null,
+  rootSessionPreview: '',
+  activeThreadId: null,
+  activeThreadCanSend: true,
+  sessionThreads: [],
+  threadRequestVersion: 0,
 
   // ---- Batch-delete selection (app.js) ----
   selectMode: false,

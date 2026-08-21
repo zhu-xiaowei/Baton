@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
-import { projectHashFromCwd } from './session-identity.mjs';
+import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
 import { readableProjectName } from './session.mjs';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
@@ -151,6 +151,31 @@ export function scanCodexRollout(filePath, options = {}) {
 
   const project = projectHashFromCwd(String(meta.cwd), options.claudeProjectsRoot || CLAUDE_PROJECTS);
   if (!project) return { session: null, malformedLines, trailingMalformed, reason: 'missing_project' };
+  const parentNativeSessionId = String(
+    meta.parent_thread_id || meta.forked_from_id || '',
+  );
+  const structuredSubagent = meta.source && typeof meta.source === 'object'
+    ? meta.source.subagent
+    : undefined;
+  const spawn = structuredSubagent?.thread_spawn || {};
+  // Structured non-spawn sources (guardian/review/compact/etc.) are Codex
+  // implementation threads, not user-switchable agents. Legacy rollouts did
+  // not have a structured source, so keep their parented threads visible.
+  const visibleSubagent = !!parentNativeSessionId
+    && (structuredSubagent === undefined || !!structuredSubagent?.thread_spawn);
+  const agentPath = String(meta.agent_path || spawn.agent_path || '');
+  const agentName = String(
+    meta.agent_nickname
+    || spawn.agent_nickname
+    || '',
+  );
+  const agentRole = String(
+    meta.agent_role
+    || meta.agent_type
+    || spawn.agent_role
+    || spawn.agent_type
+    || '',
+  );
 
   const runningInfo = options.runningInfo || { projects: new Set(), sessions: new Set() };
   const now = options.now ?? Date.now();
@@ -174,9 +199,24 @@ export function scanCodexRollout(filePath, options = {}) {
       preview,
       model,
       modelProvider: String(meta.model_provider || ''),
-      clientSource: String(meta.originator || meta.source || meta.thread_source || ''),
+      clientSource: String(
+        meta.originator
+        || (typeof meta.source === 'string' ? meta.source : '')
+        || meta.thread_source
+        || '',
+      ),
       cliVersion: String(meta.cli_version || ''),
       status: isRunning ? 'running' : 'completed',
+      ...(parentNativeSessionId ? {
+        isAgent: visibleSubagent,
+        threadKind: visibleSubagent ? 'subagent' : 'internal',
+        parentSessionId: storageSessionId('codex', parentNativeSessionId),
+        agentName,
+        agentRole,
+        agentPath,
+        agentDepth: Number.isInteger(spawn.depth) ? spawn.depth : 1,
+        canSend: visibleSubagent,
+      } : {}),
       _filePath: filePath,
       _lineCount: lineCount,
     },

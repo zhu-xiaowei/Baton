@@ -13,6 +13,11 @@ import {
   poolOwns,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
+import { trackAgentSession } from './agent-counts.mjs';
+import {
+  claudeSubagentSessionId,
+  readClaudeSubagentMeta,
+} from './claude-subagent.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 
@@ -33,8 +38,14 @@ export function startWatcher(config) {
   } else {
     fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
       if (!filename?.endsWith('.jsonl')) return;
-      if (filename.includes('subagents')) return;
-      const sessionId = path.basename(filename, '.jsonl');
+      const parts = String(filename).split(path.sep);
+      const subagentIndex = parts.indexOf('subagents');
+      const sessionId = subagentIndex >= 2
+        ? claudeSubagentSessionId(
+          parts[subagentIndex - 1],
+          path.basename(filename, '.jsonl'),
+        )
+        : path.basename(filename, '.jsonl');
 
       const state = busy.get(sessionId);
       if (state) { state.pending = true; return; }
@@ -82,30 +93,85 @@ function pollProjects(config, busy, mtimes, retries) {
       const projectDir = path.join(CLAUDE_PROJECTS, project);
       try { if (!fs.statSync(projectDir).isDirectory()) continue; } catch { continue; }
       for (const file of fs.readdirSync(projectDir)) {
+        const entryPath = path.join(projectDir, file);
+        let entryStat;
+        try { entryStat = fs.statSync(entryPath); } catch { continue; }
+        if (entryStat.isDirectory()) {
+          const subagentsDir = path.join(entryPath, 'subagents');
+          let subagentFiles = [];
+          try {
+            subagentFiles = fs.readdirSync(subagentsDir)
+              .filter((name) => name.endsWith('.jsonl'));
+          } catch {}
+          for (const subagentFile of subagentFiles) {
+            const filePath = path.join(subagentsDir, subagentFile);
+            const filename = path.join(project, file, 'subagents', subagentFile);
+            const sessionId = claudeSubagentSessionId(
+              file,
+              path.basename(subagentFile, '.jsonl'),
+            );
+            queuePolledClaudeFile(
+              config,
+              busy,
+              mtimes,
+              retries,
+              filePath,
+              filename,
+              sessionId,
+            );
+          }
+          continue;
+        }
         if (!file.endsWith('.jsonl') || file.startsWith('.')) continue;
-        const filePath = path.join(projectDir, file);
+        const filePath = entryPath;
         try {
-          const mtime = fs.statSync(filePath).mtimeMs;
-          const prev = mtimes.get(filePath);
-          if (prev === mtime) continue;
-          mtimes.set(filePath, mtime);
-          if (prev === undefined) continue; // first scan, don't trigger
-
           const filename = path.join(project, file);
           const sessionId = path.basename(file, '.jsonl');
-          const state = busy.get(sessionId);
-          if (state) { state.pending = true; continue; }
-          busy.set(sessionId, { pending: false });
-          processClaudeLoop(config, busy, retries, filename, sessionId);
+          queuePolledClaudeFile(
+            config,
+            busy,
+            mtimes,
+            retries,
+            filePath,
+            filename,
+            sessionId,
+          );
         } catch {}
       }
     }
   } catch {}
 }
 
+function queuePolledClaudeFile(
+  config,
+  busy,
+  mtimes,
+  retries,
+  filePath,
+  filename,
+  sessionId,
+) {
+  let mtime;
+  try { mtime = fs.statSync(filePath).mtimeMs; } catch { return; }
+  const prev = mtimes.get(filePath);
+  if (prev === mtime) return;
+  mtimes.set(filePath, mtime);
+  if (prev === undefined) return;
+  const state = busy.get(sessionId);
+  if (state) {
+    state.pending = true;
+    return;
+  }
+  busy.set(sessionId, { pending: false });
+  processClaudeLoop(config, busy, retries, filename, sessionId);
+}
+
 async function readAndSend(config, filename, sessionId) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
+  if (String(filename).split(path.sep).includes('subagents')) {
+    return readAndSendSubagent(config, filename, filePath, sessionId);
+  }
 
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
@@ -187,6 +253,79 @@ async function readAndSend(config, filename, sessionId) {
   }
 }
 
+async function readAndSendSubagent(config, filename, filePath, sessionId) {
+  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  const lastLine = synced.get(sessionId) ?? 0;
+  if (lines.length <= lastLine) return;
+  let lastParsedLine = lastLine;
+  let lastStatus = null;
+  for (let i = lastLine; i < lines.length; i++) {
+    if (!lines[i].trim()) {
+      lastParsedLine = i + 1;
+      continue;
+    }
+    let raw;
+    try { raw = JSON.parse(lines[i]); } catch { break; }
+    lastParsedLine = i + 1;
+    const status = statusFromEntry(raw);
+    if (status) lastStatus = status;
+    if (!VALID_TYPES.has(raw.type)) continue;
+    const message = await extractForApp(raw);
+    if (!message.uuid) continue;
+    await deliverRealtimeMessages(sessionId, [message]);
+  }
+  synced.set(sessionId, lastParsedLine);
+
+  const parts = String(filename).split(path.sep);
+  const subagentIndex = parts.indexOf('subagents');
+  if (subagentIndex < 2) return;
+  const projectHash = normalizeProjectHash(parts[0]);
+  const parentSessionId = parts[subagentIndex - 1];
+  const agentId = path.basename(filename, '.jsonl');
+  const meta = readClaudeSubagentMeta(filePath);
+  const parentFile = path.join(
+    CLAUDE_PROJECTS,
+    parts[0],
+    `${parentSessionId}.jsonl`,
+  );
+  const parentMetadata = fs.existsSync(parentFile)
+    ? getSessionMetadata(parentFile)
+    : {};
+  const stat = fs.statSync(filePath);
+  const status = lastStatus
+    ? resolveStatus(parentSessionId, lastStatus)
+    : (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
+  lastKnownStatus.set(sessionId, status);
+  recentSessions.add(sessionId);
+  const sessionMeta = {
+    id: sessionId,
+    nativeSessionId: sessionId,
+    runtime: 'claude',
+    project: projectHash,
+    projectName: readableProjectName(projectHash),
+    lastActive: stat.mtime.toISOString(),
+    size: stat.size,
+    preview: meta.description || agentId,
+    model: parentMetadata.model || '',
+    status,
+    isAgent: true,
+    threadKind: 'subagent',
+    parentSessionId,
+    agentName: meta.description || meta.agentType || agentId,
+    agentPath: agentId,
+    agentDepth: Number.isInteger(meta.spawnDepth) ? meta.spawnDepth : 1,
+    canSend: false,
+  };
+  const agentCountUpdates = trackAgentSession(sessionMeta);
+  await post('/api/bridge/sync-sessions', {
+    deviceName: config.deviceName,
+    os: process.platform,
+    sessions: [sessionMeta],
+    ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
+  });
+}
+
 // Post session metadata + counter delta when status changed, is new, or title arrived.
 async function postSessionMeta(
   config,
@@ -238,6 +377,7 @@ async function postSessionMeta(
   if (newStatus === 'needs_input' && interactionDetail !== null) {
     sessionMeta.agentDetail = interactionDetail;
   }
+  trackAgentSession(sessionMeta);
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
@@ -315,22 +455,24 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
   lastKnownStatus.set(sessionId, e.status);
+  const sessionMeta = {
+    id: sessionId,
+    project: projectHash,
+    projectName: readableProjectName(projectHash),
+    lastActive: stat.mtime.toISOString(),
+    size: stat.size,
+    preview,
+    model,
+    status: e.status,
+    isAgent: true,
+    agentName: e.agentName,
+    agentDetail: e.agentDetail,
+  };
+  trackAgentSession(sessionMeta);
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
-    sessions: [{
-      id: sessionId,
-      project: projectHash,
-      projectName: readableProjectName(projectHash),
-      lastActive: stat.mtime.toISOString(),
-      size: stat.size,
-      preview,
-      model,
-      status: e.status,
-      isAgent: true,
-      agentName: e.agentName,
-      agentDetail: e.agentDetail,
-    }],
+    sessions: [sessionMeta],
   });
 }
 

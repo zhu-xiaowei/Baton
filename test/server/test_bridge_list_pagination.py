@@ -76,6 +76,13 @@ class FakeWriteTable:
     def put_item(self, Item, **_):
         self.items.append(Item)
 
+    def get_item(self, Key, **_):
+        item = next((
+            item for item in reversed(self.items)
+            if item.get("accountId") == Key["accountId"] and item.get("sk") == Key["sk"]
+        ), None)
+        return {"Item": item} if item else {}
+
     def update_item(self, **kwargs):
         self.updates.append(kwargs)
 
@@ -189,6 +196,7 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
     ]
     items[1]["status"] = "needs_input"
     items[1]["agentDetail"] = "Choose environment"
+    items[1]["agentCount"] = 3
     monkeypatch.setattr(bridge_read, "_tables", lambda: (object(), None))
     monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: items)
 
@@ -197,6 +205,7 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
     assert list(result) == ["sessions"]
     assert [item["sessionId"] for item in result["sessions"]] == ["new", "old"]
     assert result["sessions"][0]["agentDetail"] == "Choose environment"
+    assert result["sessions"][0]["agentCount"] == 3
 
 
 def test_cursor_is_bound_to_account_and_list(monkeypatch):

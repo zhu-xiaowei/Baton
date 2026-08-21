@@ -53,9 +53,10 @@ export const codexRuntime = defineRuntimeAdapter({
     return codexInteraction.owns(nativeSessionId);
   },
 
-  shouldSkipInitial() {
-    // Startup closes the gap before the watcher attaches.
-    return false;
+  shouldSkipInitial(session) {
+    // Internal Guardian/compact/review threads are catalogued only so a full
+    // sync can overwrite older rows that were mistakenly exposed as agents.
+    return session.threadKind === 'internal';
   },
 
   baselineToEnd(session, context) {
@@ -153,7 +154,7 @@ export const codexRuntime = defineRuntimeAdapter({
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [publicSession(session)],
-      ...(statusChanged ? {
+      ...(statusChanged && !session.parentSessionId ? {
         statusDeltas: [{
           deviceName: config.deviceName,
           projectHash: session.project,

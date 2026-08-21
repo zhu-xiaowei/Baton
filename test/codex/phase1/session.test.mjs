@@ -55,6 +55,97 @@ test('metadata scan selects matching session_meta and ignores injected previews'
   assert.equal(result.trailingMalformed, true);
 });
 
+test('subagent metadata keeps the native parent and thread identity', () => {
+  const { root, target } = tempRollout();
+  try {
+    const parentId = '11111111-1111-4111-8111-111111111111';
+    const entries = [{
+      timestamp: '2026-08-21T12:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: SESSION_ID,
+        session_id: parentId,
+        parent_thread_id: parentId,
+        forked_from_id: parentId,
+        cwd: '/tmp/baton-codex-target',
+        cli_version: '0.146.1',
+        model_provider: 'amazon-bedrock',
+        thread_source: 'subagent',
+        agent_path: '/root/worker',
+        agent_nickname: 'Worker',
+        agent_role: 'explorer',
+        source: {
+          subagent: {
+            thread_spawn: {
+              parent_thread_id: parentId,
+              depth: 2,
+              agent_path: '/root/worker',
+              agent_nickname: 'Worker',
+              agent_role: 'explorer',
+            },
+          },
+        },
+      },
+    }, {
+      timestamp: '2026-08-21T12:00:01.000Z',
+      type: 'event_msg',
+      payload: { type: 'user_message', message: 'Delegated work' },
+    }];
+    fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
+
+    const result = scanCodexRollout(target, {
+      now: Date.parse('2026-08-21T12:00:02.000Z'),
+      runningInfo: { projects: new Set(), sessions: new Set() },
+    });
+    assert.equal(result.session.threadKind, 'subagent');
+    assert.equal(result.session.parentSessionId, `codex:${parentId}`);
+    assert.equal(result.session.agentName, 'Worker');
+    assert.equal(result.session.agentRole, 'explorer');
+    assert.equal(result.session.agentPath, '/root/worker');
+    assert.equal(result.session.agentDepth, 2);
+    assert.equal(result.session.canSend, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('internal Codex children are not exposed as user-switchable agents', () => {
+  const { root, target } = tempRollout();
+  try {
+    const parentId = '33333333-3333-4333-8333-333333333333';
+    const entries = [{
+      timestamp: '2026-08-21T12:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: SESSION_ID,
+        session_id: parentId,
+        parent_thread_id: parentId,
+        cwd: '/tmp/baton-codex-target',
+        thread_source: 'subagent',
+        source: { subagent: { other: 'guardian' } },
+      },
+    }, {
+      timestamp: '2026-08-21T12:00:01.000Z',
+      type: 'event_msg',
+      payload: { type: 'user_message', message: 'Review this action' },
+    }];
+    fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
+
+    const result = scanCodexRollout(target, {
+      now: Date.parse('2026-08-21T12:00:02.000Z'),
+      runningInfo: { projects: new Set(), sessions: new Set() },
+    });
+    assert.equal(result.session.threadKind, 'internal');
+    assert.equal(result.session.parentSessionId, `codex:${parentId}`);
+    assert.equal(result.session.isAgent, false);
+    assert.equal(result.session.canSend, false);
+    assert.equal(result.session.agentName, '');
+    assert.equal(result.session.agentRole, '');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('shared session inspection returns the same status used by runtime and writer checks', () => {
   const session = inspectCodexSession(SESSION_ID, {
     filePath: FIXTURE,

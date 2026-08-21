@@ -224,6 +224,137 @@ def test_sync_sessions_writes_separate_runtime_keys(monkeypatch):
     assert by_runtime["codex"]["modelProvider"] == "openai"
 
 
+def test_sync_sessions_persists_subagent_relationship(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    request = bridge_sync.SyncSessionsRequest(
+        deviceName="Linux",
+        sessions=[bridge_sync.SessionItem(
+            id="codex:child",
+            nativeSessionId="child",
+            runtime="codex",
+            project="-repo",
+            lastActive="2026-08-21T00:00:00.000Z",
+            isAgent=True,
+            agentName="Worker",
+            agentRole="explorer",
+            threadKind="subagent",
+            parentSessionId="codex:parent",
+            agentPath="/root/worker",
+            agentDepth=1,
+            canSend=True,
+        )],
+    )
+    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
+    child = sessions.items[0]
+    assert child["parentSessionId"] == "codex:parent"
+    assert child["threadKind"] == "subagent"
+    assert child["agentName"] == "Worker"
+    assert child["agentRole"] == "explorer"
+    assert child["agentPath"] == "/root/worker"
+    assert child["agentDepth"] == 1
+    assert child["canSend"] is True
+    assert "listPk" not in child
+    assert "listSk" not in child
+    assert "activeStatus" not in child
+
+
+def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    root = dict(
+        id="codex:parent",
+        nativeSessionId="parent",
+        runtime="codex",
+        project="-repo",
+        lastActive="2026-08-21T00:00:00.000Z",
+    )
+
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[bridge_sync.SessionItem(**root, agentCount=2)],
+        ),
+        FakeRequest(),
+    ))
+    assert sessions.items[-1]["agentCount"] == 2
+
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[bridge_sync.SessionItem(**root, status="running")],
+            agentCountUpdates=[bridge_sync.AgentCountUpdate(
+                sessionId="codex:parent",
+                project="-repo",
+                agentCount=1,
+            )],
+        ),
+        FakeRequest(),
+    ))
+    assert sessions.items[-1]["agentCount"] == 2
+    assert sessions.updates[-1]["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
+    assert sessions.updates[-1]["ExpressionAttributeValues"][":count"] == 1
+    assert "ADD" not in sessions.updates[-1]["UpdateExpression"]
+
+
+def test_session_threads_returns_root_and_children(monkeypatch):
+    items = [{
+        "accountId": "account",
+        "sessionId": "codex:root",
+        "nativeSessionId": "root",
+        "runtime": "codex",
+        "preview": "Root",
+        "status": "running",
+        "lastActive": "2026-08-21T00:00:00.000Z",
+        "size": 2048,
+    }, {
+        "accountId": "account",
+        "sessionId": "codex:child",
+        "nativeSessionId": "child",
+        "runtime": "codex",
+        "preview": "Child",
+        "status": "completed",
+        "lastActive": "2026-08-21T00:00:01.000Z",
+        "threadKind": "subagent",
+        "parentSessionId": "codex:root",
+        "agentName": "Worker",
+        "agentRole": "explorer",
+        "agentPath": "/root/worker",
+        "agentDepth": 1,
+        "canSend": True,
+    }, {
+        "accountId": "account",
+        "sessionId": "codex:guardian",
+        "nativeSessionId": "guardian",
+        "runtime": "codex",
+        "preview": "Internal review",
+        "status": "completed",
+        "lastActive": "2026-08-21T00:00:02.000Z",
+        "threadKind": "internal",
+        "parentSessionId": "codex:root",
+        "canSend": False,
+    }]
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), FakeTable()))
+    monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: items)
+
+    result = asyncio.run(bridge_read.get_session_threads(
+        FakeRequest(),
+        device="Linux",
+        project="-repo",
+        session="codex:root",
+    ))
+    assert [thread["sessionId"] for thread in result["threads"]] == [
+        "codex:root",
+        "codex:child",
+    ]
+    assert result["threads"][0]["size"] == 2048
+    assert result["threads"][1]["parentSessionId"] == "codex:root"
+    assert result["threads"][1]["agentRole"] == "explorer"
+    assert result["threads"][1]["canSend"] is True
+
+
 def test_sync_messages_persists_only_message_fields(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()

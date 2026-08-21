@@ -201,6 +201,65 @@ test('startup discovery does not resurrect needs_input after headless takeover',
   }
 });
 
+test('Claude inline subagents are discovered as child threads', () => {
+  const parentId = '65656565-6565-4656-8656-656565656565';
+  const fixture = sessionFixture(parentId);
+  try {
+    const subagentsDir = path.join(
+      path.dirname(fixture.filePath),
+      parentId,
+      'subagents',
+    );
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    const childFile = path.join(subagentsDir, 'agent-a1b2c3.jsonl');
+    writeRows(childFile, [{
+      type: 'user',
+      uuid: 'child-user',
+      sessionId: parentId,
+      timestamp: '2026-08-10T00:00:02.000Z',
+      message: { content: 'Inspect the tests' },
+    }, {
+      type: 'assistant',
+      uuid: 'child-assistant',
+      sessionId: parentId,
+      timestamp: '2026-08-10T00:00:03.000Z',
+      message: {
+        model: 'claude-test',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Inspection complete' }],
+      },
+    }]);
+    fs.writeFileSync(
+      childFile.replace(/\.jsonl$/, '.meta.json'),
+      JSON.stringify({
+        agentType: 'Explore',
+        description: 'Inspect test coverage',
+        toolUseId: 'tool-1',
+        spawnDepth: 2,
+      }),
+    );
+
+    const catalog = discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: noProcesses(),
+      daemonMeta: new Map(),
+      now: Date.parse('2026-08-10T00:01:00.000Z'),
+    });
+    assert.equal(catalog.sessions.length, 2);
+    const child = catalog.sessions.find((session) => session.parentSessionId);
+    assert.ok(child);
+    assert.equal(child.threadKind, 'subagent');
+    assert.equal(child.parentSessionId, parentId);
+    assert.equal(child.agentName, 'Inspect test coverage');
+    assert.equal(child.agentPath, 'agent-a1b2c3');
+    assert.equal(child.agentDepth, 2);
+    assert.equal(child.canSend, false);
+    assert.equal(child.status, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('stopped polling settles an inactive historical agent without dropping its identity', () => {
   const sessionId = '67676767-6767-4676-8676-676767676767';
   const fixture = sessionFixture(sessionId, 'running');

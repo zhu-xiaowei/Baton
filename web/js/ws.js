@@ -26,6 +26,7 @@ var _controlEventTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
 var _preAdoptionTurnEvents = new Map();
+var _agentThreadRefreshTimer = null;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var _appliedLifecycleVersion = 0;
 
@@ -700,6 +701,7 @@ function renderStrictToolBlock(element, block) {
     var exploreClass = isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : '';
     element.className = 'tl-item tool-node ' + toolState + exploreClass;
     if (block.toolUseId) element.dataset.toolId = block.toolUseId;
+    scheduleAgentThreadRefresh(toolUse.name);
     return;
   }
   var label = block.name || 'Tool';
@@ -711,6 +713,15 @@ function renderStrictToolBlock(element, block) {
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
     + esc(description) + '</span><span class="tool-status">running</span></div>';
+}
+
+function scheduleAgentThreadRefresh(toolName) {
+  if (toolName !== 'spawn_agent' && toolName !== 'Agent') return;
+  clearTimeout(_agentThreadRefreshTimer);
+  _agentThreadRefreshTimer = setTimeout(function () {
+    _agentThreadRefreshTimer = null;
+    window.refreshSessionThreads?.().catch(function () {});
+  }, 1000);
 }
 
 function drainStrictStreamOperations() {
@@ -918,6 +929,8 @@ function resetStreamSessionState() {
   _handledControlEvents.clear();
   _controlRequestState.clear();
   _preAdoptionTurnEvents.clear();
+  clearTimeout(_agentThreadRefreshTimer);
+  _agentThreadRefreshTimer = null;
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _lastStreamEndAt = 0;
@@ -1527,6 +1540,7 @@ function sendMessage() {
   var images = state.stagedImages.slice();
 
   if (!text && !images.length) return;
+  if (!state.activeThreadCanSend) return;
   if (!images.length && handleCodexClientCommand(text, input)) return;
   if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
@@ -1640,13 +1654,15 @@ function updateSendBtn() {
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
   var hasText = textLen >= (isNewAgent ? 4 : 1);
-  var cls = hasText ? 'has-text' : (state.wsRunning ? 'is-stop' : '');
+  var cls = !state.activeThreadCanSend
+    ? ''
+    : (hasText ? 'has-text' : (state.wsRunning ? 'is-stop' : ''));
   var icon = cls === 'is-stop' ? 'stop' : 'send';
   // Only rewrite innerHTML when the icon actually changes. Rewriting it every stream frame
   // detaches the SVG mid-tap, dropping a click that landed on it (had to tap 2-3×).
   if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
   if (btn.className !== cls) btn.className = cls;
-  btn.disabled = !hasText && !state.wsRunning;
+  btn.disabled = !state.activeThreadCanSend || (!hasText && !state.wsRunning);
   if (typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }

@@ -11,6 +11,10 @@ import {
   uploadCatalog,
 } from '../../bridge/sync.mjs';
 import { synced } from '../../bridge/extract.mjs';
+import {
+  rebuildAgentCounts,
+  trackAgentSession,
+} from '../../bridge/agent-counts.mjs';
 
 const CODEX_FIXTURE = fileURLToPath(new URL(
   '../codex/phase1/fixtures/codex/rollout-2026-08-06T00-00-00-22222222-2222-4222-8222-222222222222.jsonl',
@@ -44,6 +48,65 @@ test('mixed runtime catalog aggregates into the same project', () => {
   assert.equal(aggregates.deviceAggregate.runningCount, 1);
   assert.equal(aggregates.deviceAggregate.runtimeCapabilities, capabilities);
   assert.equal(aggregates.projectAggregates.find((p) => p.projectHash === '-repo').sessionCount, 2);
+});
+
+test('catalog aggregates count root sessions but still upload child threads', async () => {
+  const root = session(1, 'codex');
+  const child = {
+    ...session(2, 'codex'),
+    parentSessionId: 'codex:0001',
+    threadKind: 'subagent',
+  };
+  rebuildAgentCounts([root, child]);
+  const aggregates = buildCatalogAggregates([root, child]);
+  assert.equal(aggregates.deviceAggregate.sessionCount, 1);
+  assert.equal(aggregates.projectAggregates[0].sessionCount, 1);
+  assert.equal(root.agentCount, 1);
+
+  const requests = [];
+  await uploadCatalog(
+    { deviceName: 'Mac' },
+    [root, child],
+    aggregates,
+    true,
+    async (_url, body) => requests.push(body),
+  );
+  assert.equal(requests[0].sessions.length, 2);
+  assert.equal(requests[0].sessions[0].agentCount, 1);
+  assert.equal(requests[0].sessions[1].parentSessionId, 'codex:0001');
+});
+
+test('agent count tracking overwrites exact Set size across duplicates and internal migration', () => {
+  const root = session(1, 'codex');
+  const first = {
+    ...session(2, 'codex'),
+    parentSessionId: 'codex:0001',
+    threadKind: 'subagent',
+  };
+  const second = {
+    ...session(3, 'codex'),
+    parentSessionId: 'codex:0001',
+    threadKind: 'subagent',
+  };
+  const guardian = {
+    ...session(4, 'codex'),
+    parentSessionId: 'codex:0001',
+    threadKind: 'internal',
+  };
+
+  rebuildAgentCounts([root, first, second, guardian]);
+  assert.equal(root.agentCount, 2);
+  assert.deepEqual(trackAgentSession(first), [{
+    sessionId: 'codex:0001',
+    project: '-repo',
+    agentCount: 2,
+  }]);
+  assert.deepEqual(trackAgentSession({ ...first, threadKind: 'internal' }), [{
+    sessionId: 'codex:0001',
+    project: '-repo',
+    agentCount: 1,
+  }]);
+  assert.deepEqual(trackAgentSession(guardian), []);
 });
 
 test('catalog batching sends authoritative aggregates only in the first request', async () => {

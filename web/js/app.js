@@ -29,6 +29,8 @@ var _activeListOptions = null;
 var LIST_PRELOAD_PX = 1200;
 var _pageWasHidden = document.visibilityState === 'hidden';
 var _foregroundRefresh = null;
+var _agentThreadsCache = new Map();
+var AGENT_THREADS_CACHE_LIMIT = 32;
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -235,6 +237,53 @@ function runtimeIcon(sessionId, runtime) {
     + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
 }
 
+function activeSessionThread() {
+  return state.sessionThreads.find(function (thread) {
+    return thread.sessionId === state.activeThreadId;
+  }) || null;
+}
+
+function agentThreadStatus(threads) {
+  var agents = threads.filter(function (thread) {
+    return thread.sessionId !== state.rootSessionId;
+  });
+  if (agents.some(function (thread) { return thread.status === 'needs_input'; })) return 'needs-input';
+  if (agents.some(function (thread) { return thread.status === 'running'; })) return 'running';
+  return 'completed';
+}
+
+function cachedSessionThreads(rootSessionId) {
+  var entry = _agentThreadsCache.get(rootSessionId);
+  if (!entry) return [];
+  _agentThreadsCache.delete(rootSessionId);
+  _agentThreadsCache.set(rootSessionId, entry);
+  return entry.map(function (thread) { return { ...thread }; });
+}
+
+function rememberSessionThreads(rootSessionId, threads) {
+  _agentThreadsCache.delete(rootSessionId);
+  _agentThreadsCache.set(
+    rootSessionId,
+    threads.map(function (thread) { return { ...thread }; }),
+  );
+  while (_agentThreadsCache.size > AGENT_THREADS_CACHE_LIMIT) {
+    _agentThreadsCache.delete(_agentThreadsCache.keys().next().value);
+  }
+}
+
+function sessionRuntimeControl() {
+  var mark = runtimeIcon(
+    state.rootSessionId || state.appState.session,
+    state.appState.runtime,
+  );
+  if (state.sessionThreads.length <= 1) return mark;
+  return '<button class="agent-thread-trigger" type="button"'
+    + ' onclick="openAgentThreadsModal()" aria-label="Show agent threads"'
+    + ' title="Agent threads">' + mark
+    + '<span class="agent-thread-dot ' + agentThreadStatus(state.sessionThreads)
+    + '" aria-hidden="true"></span></button>';
+}
+
 function runtimeLabel(runtime) {
   return runtime === 'codex' ? 'Codex' : 'Claude Code';
 }
@@ -313,7 +362,7 @@ function updateBreadcrumb() {
   } else if (state.appState.project) {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
-      : (state.appState.session ? runtimeIcon(state.appState.session, state.appState.runtime) : '');
+      : (state.appState.session ? sessionRuntimeControl() : '');
     topRight.innerHTML = runtimeMark + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -323,8 +372,13 @@ function updateBreadcrumb() {
   var titleHtml = '';
   if (state.appState.session) {
     parts.pop();
-    var titleText = esc(state.appState.sessionPreview
-      || shortSessionId(state.appState.session, '', state.appState.runtime) + '...');
+    var titleText = esc(state.rootSessionPreview
+      || state.appState.sessionPreview
+      || shortSessionId(
+        state.rootSessionId || state.appState.session,
+        '',
+        state.appState.runtime,
+      ) + '...');
     var agentMark = state.appState.isAgent ? ' <span class="badge agent">Agent</span>' : '';
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + agentMark + '</span>';
   }
@@ -338,10 +392,153 @@ function toggleBreadcrumbExpand(nav) {
   nav.classList.toggle('expanded');
 }
 
+async function refreshSessionThreads() {
+  if (!state.rootSessionId || !state.appState.project || !state.appState.device) {
+    state.sessionThreads = [];
+    return [];
+  }
+  var rootSessionId = state.rootSessionId;
+  var requestVersion = state.threadRequestVersion;
+  var data = await api('/api/bridge/session-threads', {
+    device: state.appState.device,
+    project: state.appState.project.hash,
+    session: rootSessionId,
+  });
+  if (requestVersion !== state.threadRequestVersion
+    || rootSessionId !== state.rootSessionId) {
+    return state.sessionThreads;
+  }
+  var threads = Array.isArray(data.threads) ? data.threads : [];
+  if (!threads.some(function (thread) {
+    return thread.sessionId === state.rootSessionId;
+  })) {
+    threads.unshift({
+      sessionId: state.rootSessionId,
+      preview: state.rootSessionPreview,
+      status: state.wsRunning ? 'running' : 'completed',
+      threadKind: 'main',
+      canSend: true,
+      runtime: state.appState.runtime,
+    });
+  }
+  state.sessionThreads = threads;
+  rememberSessionThreads(rootSessionId, threads);
+  var active = activeSessionThread();
+  state.activeThreadCanSend = active ? active.canSend !== false : true;
+  applyThreadInputState();
+  updateBreadcrumb();
+  updateSendBtn();
+  return threads;
+}
+
+function renderAgentThreadsModal() {
+  var list = document.getElementById('agentThreadsList');
+  if (!list) return;
+  list.innerHTML = state.sessionThreads.map(function (thread) {
+    var isMain = thread.sessionId === state.rootSessionId;
+    var nickname = String(thread.agentName || '').trim();
+    var role = String(thread.agentRole || '').trim();
+    var name = thread.preview || state.rootSessionPreview || 'Main';
+    if (!isMain) {
+      if (nickname && role) name = nickname + ' [' + role + ']';
+      else if (nickname) name = nickname;
+      else if (role) name = '[' + role + ']';
+      else name = 'Agent';
+    }
+    var meta = '';
+    if (Number.isFinite(Number(thread.size))) {
+      meta = formatSize(Number(thread.size));
+    } else {
+      meta = shortSessionId(
+        thread.sessionId,
+        thread.nativeSessionId,
+        thread.runtime || state.appState.runtime,
+      );
+    }
+    var selected = thread.sessionId === state.activeThreadId;
+    return '<button class="agent-thread-row' + (selected ? ' selected' : '') + '"'
+      + ' type="button" data-session-id="' + esc(thread.sessionId) + '"'
+      + ' onclick="switchAgentThread(this.dataset.sessionId)">'
+      + '<span class="agent-thread-copy"><span class="agent-thread-title">'
+      + '<strong>' + esc(name) + '</strong>'
+      + '<span class="badge ' + statusClass(thread.status) + '">'
+      + esc(statusLabel(thread.status)) + '</span></span>'
+      + '<span class="agent-thread-meta"><small>' + esc(meta) + '</small>'
+      + (thread.lastActive ? '<time>' + esc(timeAgo(thread.lastActive)) + '</time>' : '')
+      + '</span>'
+      + '</span></button>';
+  }).join('');
+}
+
+function renderAgentThreadsSkeleton() {
+  var list = document.getElementById('agentThreadsList');
+  if (!list) return;
+  list.innerHTML = Array.from({ length: 3 }, function () {
+    return '<div class="agent-thread-row agent-thread-skeleton">'
+      + '<span class="agent-thread-copy">'
+      + '<span class="agent-thread-title"><i class="skel agent-thread-skel-name"></i>'
+      + '<i class="skel agent-thread-skel-status"></i></span>'
+      + '<span class="agent-thread-meta"><i class="skel agent-thread-skel-detail"></i>'
+      + '<i class="skel agent-thread-skel-time"></i></span></span></div>';
+  }).join('');
+}
+
+async function openAgentThreadsModal() {
+  var modal = document.getElementById('agentThreadsModal');
+  if (!modal) return;
+  var rootSessionId = state.rootSessionId;
+  modal.style.display = 'flex';
+  requestAnimationFrame(function () { modal.classList.add('open'); });
+  if (state.sessionThreads.length > 1) renderAgentThreadsModal();
+  else renderAgentThreadsSkeleton();
+  try {
+    await refreshSessionThreads();
+  } catch (error) {
+    if (rootSessionId !== state.rootSessionId) return;
+    var list = document.getElementById('agentThreadsList');
+    if (list && state.sessionThreads.length <= 1) {
+      list.innerHTML = '<div class="agent-thread-empty">Unable to load agents</div>';
+    }
+    return;
+  }
+  if (rootSessionId !== state.rootSessionId
+    || !modal.classList.contains('open')) return;
+  renderAgentThreadsModal();
+}
+
+function closeAgentThreadsModal() {
+  var modal = document.getElementById('agentThreadsModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  setTimeout(function () {
+    if (!modal.classList.contains('open')) modal.style.display = 'none';
+  }, 160);
+}
+
+function switchAgentThread(sessionId) {
+  var thread = state.sessionThreads.find(function (candidate) {
+    return candidate.sessionId === sessionId;
+  });
+  if (!thread || sessionId === state.activeThreadId) {
+    closeAgentThreadsModal();
+    return;
+  }
+  closeAgentThreadsModal();
+  loadMessages(sessionId, thread.preview || thread.agentName || '', {
+    rootSessionId: state.rootSessionId,
+    rootSessionPreview: state.rootSessionPreview,
+    preserveThreads: true,
+    canSend: thread.canSend !== false,
+  });
+}
+
 function showInputBar(visible) {
   var bar = document.getElementById('input-bar');
   bar.style.display = visible ? 'flex' : 'none';
-  if (visible && typeof initVoiceButton === 'function') initVoiceButton();
+  if (visible) {
+    applyThreadInputState();
+    if (typeof initVoiceButton === 'function') initVoiceButton();
+  }
   if (!visible) {
     if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
     if (typeof window.closeSlashPopup === 'function') window.closeSlashPopup();
@@ -352,6 +549,30 @@ function showInputBar(visible) {
     state.wsRunning = false;
     updateSpinner();
   }
+}
+
+function applyThreadInputState() {
+  var input = document.getElementById('msg-input');
+  if (!input) return;
+  input.readOnly = !state.activeThreadCanSend;
+  input.setAttribute('aria-disabled', String(!state.activeThreadCanSend));
+  if (!state.activeThreadCanSend) {
+    input.value = '';
+    input.style.height = 'auto';
+  }
+  if (typeof updateSendBtn === 'function') updateSendBtn();
+}
+
+function resetSessionThreads() {
+  closeAgentThreadsModal();
+  state.threadRequestVersion++;
+  state.rootSessionId = null;
+  state.rootSessionPreview = '';
+  state.activeThreadId = null;
+  state.activeThreadCanSend = true;
+  state.sessionThreads = [];
+  var list = document.getElementById('agentThreadsList');
+  if (list) list.innerHTML = '';
 }
 
 function saveNav() {
@@ -740,6 +961,7 @@ function rememberDevices(data) {
 }
 
 async function loadDevices() {
+  resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
   prepareNavigation({ device: null, project: null, session: null });
@@ -838,6 +1060,7 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
+  resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
   var restoreLoadedPages = state.appState.device === device && !!state.appState.project;
@@ -865,6 +1088,10 @@ function sessionsHtml(device, projectHash, data, sel) {
     + data.sessions.map(function (s) {
     var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
     var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
+    var agentCount = Math.max(0, Number(s.agentCount) || 0);
+    var childAgentsBadge = agentCount
+      ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>'
+      : '';
     var sLabel = statusLabel(s.status);
     var sClass = statusClass(s.status);
     var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
@@ -885,7 +1112,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
-      + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + statusBadge + '</span></div>'
+      + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + childAgentsBadge + statusBadge + '</span></div>'
       + '<div class="item-bottom session-item-bottom"><span class="session-secondary-slot">' + secondary + '</span>'
       + '<span class="item-time">' + timeAgo(s.lastActive) + '</span></div></div>'
       + '</a>';
@@ -924,6 +1151,7 @@ function renderSessions(device, projectHash, data) {
 }
 
 async function loadSessions(device, projectHash, projectName) {
+  resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
   var restoreLoadedPages = state.appState.device === device
@@ -1132,6 +1360,7 @@ function toggleNewSessionRuntime() {
 }
 
 async function startNewSession(projectHash) {
+  resetSessionThreads();
   deactivateList();
   document.body.classList.remove('browse-view');
   var myNav = ++_navVersion;
@@ -1201,20 +1430,37 @@ async function startNewSession(projectHash) {
 }
 
 // ---- Messages ----
-async function loadMessages(sessionId, preview) {
+async function loadMessages(sessionId, preview, options) {
+  options = options || {};
+  var rootSessionId = options.rootSessionId || sessionId;
+  var rootSessionPreview = options.rootSessionPreview
+    || (rootSessionId === sessionId ? preview : state.rootSessionPreview)
+    || '';
   deactivateList();
   document.body.classList.remove('browse-view');
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
-    session: sessionId
+    session: rootSessionId
   });
   // Update state + breadcrumb before any await — a fast follow-up nav must not be
   // overwritten when this call resumes.
   document.body.classList.remove('new-session');
   var myNav = ++_navVersion;
-  state.appState.session = sessionId;
-  state.appState.sessionPreview = preview || '';
+  state.rootSessionId = rootSessionId;
+  state.rootSessionPreview = rootSessionPreview;
+  state.activeThreadId = sessionId;
+  state.activeThreadCanSend = options.canSend !== false;
+  applyThreadInputState();
+  if (!options.preserveThreads) {
+    state.threadRequestVersion++;
+    state.sessionThreads = cachedSessionThreads(rootSessionId);
+    var threadList = document.getElementById('agentThreadsList');
+    if (threadList) threadList.innerHTML = '';
+    closeAgentThreadsModal();
+  }
+  state.appState.session = rootSessionId;
+  state.appState.sessionPreview = rootSessionPreview;
   state.appState.runtime = sessionRuntime(sessionId, state.appState.runtime);
   markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
@@ -1242,6 +1488,9 @@ async function loadMessages(sessionId, preview) {
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
   startWs(sessionId);
+  if (!options.preserveThreads) {
+    refreshSessionThreads().catch(function () {});
+  }
 
   try {
     var t0 = performance.now();
@@ -1490,6 +1739,7 @@ Object.assign(window, {
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions, toggleRecentAgents,
+  refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });
 
@@ -1502,5 +1752,6 @@ if (window.__APEEK_TEST__) {
     pageSize: LIST_PAGE_SIZE,
     select: enterSelectMode,
     refreshForeground: refreshForegroundView,
+    agentStatus: agentThreadStatus,
   };
 }

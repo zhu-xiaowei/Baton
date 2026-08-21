@@ -184,6 +184,38 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[1])), 6);
 });
 
+test('Codex watcher catalogs internal children without uploading their transcript', async (t) => {
+  const home = createHome(t);
+  const childId = IDS[0];
+  const parentId = IDS[1];
+  const filePath = rolloutPath(home, childId);
+  const lines = [
+    json('session_meta', {
+      id: childId,
+      session_id: parentId,
+      parent_thread_id: parentId,
+      cwd: home,
+      model_provider: 'test-provider',
+      originator: 'codex-tui',
+      thread_source: 'subagent',
+      source: { subagent: { other: 'guardian' } },
+    }),
+    json('event_msg', { type: 'user_message', message: 'Review this action' }, 1),
+  ];
+  writeLines(filePath, lines);
+  const h = watcherHarness([home]);
+  t.after(() => h.watcher.stop());
+
+  await h.watcher.scanNow({ initial: true });
+
+  assert.equal(h.delivered.length, 0);
+  assert.equal(h.uploaded.length, 0);
+  assert.equal(h.posts.length, 1);
+  assert.equal(h.posts[0].body.sessions[0].threadKind, 'internal');
+  assert.equal(h.posts[0].body.sessions[0].parentSessionId, `codex:${parentId}`);
+  assert.equal(h.watermarks.get(storageSessionId('codex', childId)), lines.length);
+});
+
 test('Codex watcher persists live user and assistant rows without broadcasting them again', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[2]);

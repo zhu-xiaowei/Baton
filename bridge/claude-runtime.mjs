@@ -21,6 +21,15 @@ import {
   existingDirectory,
   resolveClaudeBinForCapability,
 } from './runtime-capabilities.mjs';
+import {
+  discoverClaudeSubagents,
+  findClaudeSubagentFile,
+  parseClaudeSubagentSessionId,
+} from './claude-subagent.mjs';
+
+function findClaudeSessionFile(nativeSessionId) {
+  return findClaudeSubagentFile(nativeSessionId) || findSessionFile(nativeSessionId);
+}
 
 export function discoverClaudeSessions(options = {}) {
   const projectsRoot = options.claudeProjectsRoot || CLAUDE_PROJECTS;
@@ -64,7 +73,7 @@ export function discoverClaudeSessions(options = {}) {
       if (!metadata.preview) continue;
       const nativeSessionId = file.slice(0, -'.jsonl'.length);
       const projectHash = normalizeProjectHash(project);
-      sessions.push({
+      const session = {
         id: nativeSessionId,
         nativeSessionId,
         runtime: 'claude',
@@ -77,7 +86,11 @@ export function discoverClaudeSessions(options = {}) {
         status: getSessionStatus(nativeSessionId, filePath, runningInfo),
         _filePath: filePath,
         _lineCount: metadata.lineCount,
-      });
+      };
+      sessions.push(session);
+      sessions.push(...discoverClaudeSubagents(projectDir, session, {
+        now: options.now,
+      }));
     }
   }
 
@@ -161,7 +174,7 @@ export const claudeRuntime = defineRuntimeAdapter({
       version: options.skipVersions ? '' : binaryVersion(binary),
     };
   },
-  findSessionFile,
+  findSessionFile: findClaudeSessionFile,
 
   shouldSkipInitial(_session, context) {
     return context.watermarks.has(context.storageSessionId);
@@ -182,7 +195,8 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   deleteSessionHistory(nativeSessionId, context = {}) {
-    const filePath = findSessionFile(nativeSessionId);
+    if (parseClaudeSubagentSessionId(nativeSessionId)) return false;
+    const filePath = findClaudeSessionFile(nativeSessionId);
     if (!filePath) return false;
     const deleted = removeInsideRoot(filePath, CLAUDE_PROJECTS);
     if (deleted) context.watermarks?.delete(nativeSessionId);
@@ -211,7 +225,7 @@ export const claudeRuntime = defineRuntimeAdapter({
 
   inspectActiveSession(active, context) {
     const nativeSessionId = active.nativeSessionId || active.sessionId;
-    const filePath = (context.findSessionFile || findSessionFile)(nativeSessionId);
+    const filePath = (context.findSessionFile || findClaudeSessionFile)(nativeSessionId);
     const gone = !filePath || !fs.existsSync(filePath);
     const daemon = context.daemonMeta.get(nativeSessionId);
     if (!gone && ((context.daemonRunning || new Set()).has(nativeSessionId) || context.poolOwns(nativeSessionId))) {

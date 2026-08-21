@@ -24,6 +24,7 @@ function session(id) {
     size: id,
     model: 'test-model',
     status: 'completed',
+    agentCount: id === TWO_PAGES ? 3 : 0,
   };
 }
 
@@ -168,6 +169,20 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     await vite.ssrLoadModule('/js/app.js');
     const stateModule = await vite.ssrLoadModule('/js/state.js');
     const state = stateModule.state;
+    state.rootSessionId = 'root';
+    assert.equal(window.__listTest.agentStatus([
+      { sessionId: 'root', status: 'running' },
+      { sessionId: 'child', status: 'completed' },
+    ]), 'completed');
+    assert.equal(window.__listTest.agentStatus([
+      { sessionId: 'root', status: 'completed' },
+      { sessionId: 'child', status: 'running' },
+    ]), 'running');
+    assert.equal(window.__listTest.agentStatus([
+      { sessionId: 'root', status: 'running' },
+      { sessionId: 'child-a', status: 'running' },
+      { sessionId: 'child-b', status: 'needs_input' },
+    ]), 'needs-input');
 
     await window.loadSessions('D', 'P', 'Project');
     assert.equal(content.querySelectorAll('.item[data-id]').length, LIST_PAGE_SIZE);
@@ -175,6 +190,10 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     assert.equal(
       content.querySelector(`[data-id="s${TWO_PAGES}"]`).dataset.preview,
       '{"action":"send_message","text":"quoted title"}',
+    );
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES}"] .badge.agent`).textContent,
+      '3 agents',
     );
 
     content.scrollTop = 1700;
