@@ -8,6 +8,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 
 await import('../../web/js/components/tool.js');
+const { state } = await import('../../web/js/state.js');
 globalThis.renderToolNode = window.renderToolNode;
 globalThis.renderAssistantText = (text) => text;
 globalThis.renderThinking = () => '';
@@ -535,6 +536,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
+  const originalStickBottom = state.stickBottom;
   let loads = 0;
   let contentHeight = 600;
   window.loadDiffViewer = async () => {
@@ -547,6 +549,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
         this.element = element;
       }
       draw() {
+        assert.equal(this.element.isConnected, false);
         contentHeight = 900;
         this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
       }
@@ -582,7 +585,8 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
       configurable: true,
       value: 500,
     });
-    content.scrollTop = 100;
+    state.stickBottom = true;
+    content.scrollTop = 0;
     const node = document.querySelector('.tool-node');
     const diff = node.querySelector('.diff-container');
     assert.equal(loads, 0);
@@ -603,6 +607,73 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;
     window.Diff2HtmlUI = originalUi;
+    state.stickBottom = originalStickBottom;
+  }
+});
+
+test('Edit hydration does not reclaim scroll after the user leaves the bottom', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  const originalStickBottom = state.stickBottom;
+  let releaseLoader;
+  let contentHeight = 600;
+  const loaderReady = new Promise((resolve) => { releaseLoader = resolve; });
+  window.loadDiffViewer = async () => {
+    await loaderReady;
+    window.Diff = { createTwoFilesPatch: () => 'patch' };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        contentHeight = 900;
+        this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    document.body.innerHTML = '<div id="content"><div class="messages">'
+      + '<div class="tool-node"></div></div></div>';
+    const content = document.getElementById('content');
+    Object.defineProperty(content, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    Object.defineProperty(content, 'clientHeight', {
+      configurable: true,
+      value: 500,
+    });
+    content.scrollTop = 100;
+    state.stickBottom = true;
+
+    const node = document.querySelector('.tool-node');
+    node.innerHTML = window.renderToolNode({
+      type: 'tool_use',
+      id: 'edit-user-scroll',
+      name: 'Edit',
+      input: {
+        file_path: 'src/user-scroll.js',
+        old_string: 'before',
+        new_string: 'after',
+      },
+    }, null, 'codex');
+    const hydration = window.afterToolDomMutation(node);
+
+    state.stickBottom = false;
+    content.scrollTop = 25;
+    releaseLoader();
+    await hydration;
+
+    assert.equal(content.scrollTop, 25);
+    assert.match(node.querySelector('.diff-container').textContent, /rendered diff/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+    state.stickBottom = originalStickBottom;
   }
 });
 
@@ -666,6 +737,88 @@ test('Edit replacement during lazy loading hydrates the new element only', async
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;
     window.Diff2HtmlUI = originalUi;
+  }
+});
+
+test('concurrent Edit hydration keeps DOM order when the later diff finishes first', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  const originalStickBottom = state.stickBottom;
+  const releases = [];
+  let loadIndex = 0;
+  window.resetToolDetails();
+  window.loadDiffViewer = async () => {
+    const index = loadIndex++;
+    await new Promise((resolve) => { releases[index] = resolve; });
+    window.Diff = {
+      createTwoFilesPatch: (file) => file,
+    };
+    window.Diff2HtmlUI = class {
+      constructor(element, patch) {
+        this.element = element;
+        this.patch = patch;
+      }
+      draw() {
+        this.element.innerHTML = `<div class="d2h-file-wrapper">${this.patch}</div>`;
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    state.stickBottom = false;
+    document.body.innerHTML = '<div id="content"><div class="messages">'
+      + '<div class="tool-node" data-order="first"></div>'
+      + '<div class="tool-node" data-order="second"></div>'
+      + '</div></div>';
+    const nodes = Array.from(document.querySelectorAll('.tool-node'));
+    nodes[0].innerHTML = window.renderToolNode({
+      type: 'tool_use',
+      id: 'edit-first',
+      name: 'Edit',
+      input: {
+        file_path: 'src/first.js',
+        old_string: 'before first',
+        new_string: 'after first',
+      },
+    }, null, 'codex');
+    nodes[1].innerHTML = window.renderToolNode({
+      type: 'tool_use',
+      id: 'edit-second',
+      name: 'Edit',
+      input: {
+        file_path: 'src/second.js',
+        old_string: 'before second',
+        new_string: 'after second',
+      },
+    }, null, 'codex');
+
+    const hydration = window.afterToolDomMutation(document.querySelector('.messages'));
+    assert.equal(loadIndex, 2);
+
+    releases[1]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(nodes[0].querySelector('.diff-container').dataset.diffState, 'loading');
+    assert.equal(nodes[1].querySelector('.diff-container').dataset.diffState, 'ready');
+    assert.deepEqual(
+      Array.from(document.querySelectorAll('.tool-node')).map((node) => node.dataset.order),
+      ['first', 'second'],
+    );
+
+    releases[0]();
+    await hydration;
+    assert.deepEqual(
+      Array.from(document.querySelectorAll('.tool-node')).map((node) => node.dataset.order),
+      ['first', 'second'],
+    );
+    assert.match(nodes[0].textContent, /first\.js/);
+    assert.match(nodes[1].textContent, /second\.js/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+    state.stickBottom = originalStickBottom;
   }
 });
 

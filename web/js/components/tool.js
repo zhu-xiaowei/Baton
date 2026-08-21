@@ -1,3 +1,5 @@
+import { state } from '../state.js';
+
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
   // On cancel, the bridge denies the ask/plan with interrupt:true; CC overwrites the tool_result with this rejection text.
@@ -352,10 +354,7 @@
     diffInstances.set(element, instance);
     instance.promise = (async () => {
       const content = document.getElementById('content');
-      const followBottom = !!content
-        && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
       element.dataset.diffState = 'loading';
-      element.style.minHeight = `${spec.estimatedHeight}px`;
       try {
         await window.loadDiffViewer?.();
         if (!isCurrentDiffInstance(element, token, key)) return;
@@ -365,7 +364,8 @@
         const patch = window.Diff.createTwoFilesPatch(
           spec.file, spec.file, a, b, '', '', { context: 3 },
         );
-        const ui = new window.Diff2HtmlUI(element, patch, {
+        const staging = document.createElement('div');
+        const ui = new window.Diff2HtmlUI(staging, patch, {
           drawFileList: false,
           fileListToggle: false,
           fileContentToggle: false,
@@ -376,26 +376,26 @@
           highlight: true,
         });
         ui.draw();
-        element.querySelectorAll(
+        staging.querySelectorAll(
           '.d2h-file-wrapper, .d2h-file-diff, .d2h-code-wrapper, .d2h-diff-table, .d2h-diff-tbody',
         ).forEach((node) => {
           node.style.backgroundColor = 'transparent';
         });
         const lang = detectLang(spec.fullPath);
         if (lang) {
-          element.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+          staging.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
             node.classList.add('language-' + lang, lang);
           });
-          element.querySelectorAll('.d2h-file-wrapper').forEach((node) => {
+          staging.querySelectorAll('.d2h-file-wrapper').forEach((node) => {
             node.dataset.lang = lang;
           });
-          element.querySelectorAll('code').forEach((node) => {
+          staging.querySelectorAll('code').forEach((node) => {
             node.classList.add('language-' + lang, lang);
           });
         }
         ui.highlightCode();
         if (lang && window.hljs) {
-          element.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+          staging.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
             if (!node.textContent.trim() || node.querySelector('[class*="hljs-"]')) return;
             const delIns = node.querySelectorAll('del, ins');
             if (delIns.length) {
@@ -416,6 +416,8 @@
             }
           });
         }
+        if (!isCurrentDiffInstance(element, token, key)) return;
+        element.replaceChildren(...Array.from(staging.childNodes));
         element.dataset.diffState = 'ready';
       } catch (e) {
         if (!isCurrentDiffInstance(element, token, key)) return;
@@ -423,9 +425,8 @@
         element.dataset.diffState = 'fallback';
       } finally {
         if (!isCurrentDiffInstance(element, token, key)) return;
-        element.style.minHeight = '';
         window.clampOverflow?.(element.closest('.tool-node'));
-        if (followBottom
+        if (state.stickBottom && content
           && content === document.getElementById('content')) {
           content.scrollTop = content.scrollHeight;
         }
@@ -462,15 +463,12 @@
   function registerDiffSpec(file, fullPath, oldStr, newStr) {
     const key = diffSpecKey(fullPath || file, oldStr, newStr);
     if (!diffSpecs.has(key)) {
-      const oldLines = oldStr ? oldStr.split('\n').length : 0;
-      const newLines = newStr ? newStr.split('\n').length : 0;
       diffSpecs.set(key, {
         key,
         file,
         fullPath,
         oldStr,
         newStr,
-        estimatedHeight: Math.min((oldLines + newLines) * 18 + 12, 240),
       });
     }
     return key;
@@ -486,7 +484,7 @@
     let diffHtml = '';
     if (oldStr || newStr) {
       const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
-      diffHtml = `<div class="diff-container" data-lazy-diff="true" data-diff-key="${diffKey}"></div>`;
+      diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
 
     const status = resultText(result);
