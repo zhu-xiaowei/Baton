@@ -103,10 +103,11 @@ test('New Session switches available runtimes and remembers the last per-device 
       codex: { canCreate: true },
     };
     await window.startNewSession('codex-project');
+    assert.equal(state.appState.runtime, 'claude');
+    assert.ok(document.querySelector('.runtime-switch'));
+    assert.equal(document.querySelector('.runtime-switch img').src.endsWith('/assets/claude-code.svg'), true);
+    window.toggleNewSessionRuntime();
     assert.equal(state.appState.runtime, 'codex');
-    assert.equal(document.querySelector('.runtime-switch'), null);
-    assert.equal(document.querySelector('#top-right .runtime-mark img').src.endsWith('/assets/codex.svg'), true);
-    assert.equal(getComputedStyle(document.querySelector('#top-right .runtime-mark')).width, '20px');
   } finally {
     await vite.close();
     dom.window.close();

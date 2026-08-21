@@ -1,9 +1,7 @@
 const RUNTIME_ORDER = ['claude', 'codex'];
 
-export function creatableRuntimes(capabilities) {
-  return RUNTIME_ORDER.filter(function (runtime) {
-    return capabilities?.[runtime]?.canCreate === true;
-  });
+export function creatableRuntimes() {
+  return RUNTIME_ORDER.slice();
 }
 
 export function preferredNewSessionRuntime(runtimes, savedRuntime) {

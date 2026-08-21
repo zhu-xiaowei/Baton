@@ -8,14 +8,14 @@ import {
 } from '../../web/js/new-session-runtime.js';
 import { makeHarness } from './harness.mjs';
 
-test('single creatable runtime is selected without requiring a choice', () => {
+test('new sessions always expose both supported runtimes', () => {
   const runtimes = creatableRuntimes({
     claude: { canCreate: false },
     codex: { canCreate: true },
   });
-  assert.deepEqual(runtimes, ['codex']);
-  assert.equal(preferredNewSessionRuntime(runtimes, 'claude'), 'codex');
-  assert.equal(nextNewSessionRuntime(runtimes, 'codex'), 'codex');
+  assert.deepEqual(runtimes, ['claude', 'codex']);
+  assert.equal(preferredNewSessionRuntime(runtimes, 'claude'), 'claude');
+  assert.equal(nextNewSessionRuntime(runtimes, 'codex'), 'claude');
 });
 
 test('multiple runtimes prefer the last valid per-device choice and cycle', () => {

@@ -739,22 +739,6 @@ function rememberDevices(data) {
   window.__deviceDisplayNames = state.deviceDisplayNameMap;
 }
 
-async function runtimeCapabilitiesForDevice(device) {
-  if (Object.prototype.hasOwnProperty.call(state.deviceRuntimeCapabilities, device)) {
-    return state.deviceRuntimeCapabilities[device];
-  }
-  var data = null;
-  try {
-    data = window.__preload?.devices
-      ? await window.__preload.devices
-      : await api('/api/bridge/devices');
-  } catch (e) {}
-  if (data) rememberDevices(data);
-  return state.deviceRuntimeCapabilities[device] || {
-    claude: { canCreate: true },
-  };
-}
-
 async function loadDevices() {
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
@@ -1156,12 +1140,9 @@ async function startNewSession(projectHash) {
     project: state.appState.project,
     session: '__new__'
   });
-  var results = await Promise.all([
-    window.loadViewerLibs(),
-    runtimeCapabilitiesForDevice(state.appState.device),
-  ]);
+  await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = creatableRuntimes(results[1]);
+  var runtimes = creatableRuntimes();
   state.newSessionRuntimes = runtimes;
   var savedRuntime = '';
   try {
