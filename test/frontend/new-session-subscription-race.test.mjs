@@ -26,6 +26,16 @@ test('new-session REST and live user authority promote one optimistic bubble', a
   const request = deferred();
   h.setApiHandler(() => request.promise);
 
+  h.hooks.handleWsMessage(turnEvent('codex:new-thread', 'sent-1', 1, 'messages', {
+    messages: [{
+      uuid: 'live-user',
+      nativeId: 'codex:user:sent-1',
+      type: 'user',
+      content: 'same prompt',
+      timestamp: '2026-08-18T04:41:47.000Z',
+    }],
+  }));
+
   h.hooks.handleWsMessage({
     action: 'send_message_result',
     sessionId: 'codex:new-thread',
@@ -56,15 +66,6 @@ test('new-session REST and live user authority promote one optimistic bubble', a
 
   for (const event of [
     turnEvent('codex:new-thread', 'sent-1', 0, 'stream_turn_start'),
-    turnEvent('codex:new-thread', 'sent-1', 1, 'messages', {
-      messages: [{
-        uuid: 'live-user',
-        nativeId: 'codex:user:sent-1',
-        type: 'user',
-        content: 'same prompt',
-        timestamp: '2026-08-18T04:41:47.000Z',
-      }],
-    }),
     turnEvent('codex:new-thread', 'sent-1', 2, 'stream_block_start', {
       kind: 'text',
     }),

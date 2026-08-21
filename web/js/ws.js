@@ -25,6 +25,7 @@ var _wsReconnectTimer = null;
 var _controlEventTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
+var _preAdoptionTurnEvents = new Map();
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var _appliedLifecycleVersion = 0;
 
@@ -376,7 +377,31 @@ function scheduleControlEventFallback(message) {
   _controlEventTimers.set(eventKey, timer);
 }
 
+function bufferPreAdoptionTurnEvent(message) {
+  if (state.appState.session !== '__new__'
+    || state.wsSessionId
+    || !message?.sessionId
+    || !message.turnId
+    || !Number.isInteger(message.seq)
+    || !findPending(message.turnId)) {
+    return false;
+  }
+  var events = _preAdoptionTurnEvents.get(message.turnId) || [];
+  events.push(message);
+  _preAdoptionTurnEvents.set(message.turnId, events);
+  return true;
+}
+
+function drainPreAdoptionTurnEvents(sessionId, turnId) {
+  var events = _preAdoptionTurnEvents.get(turnId) || [];
+  _preAdoptionTurnEvents.delete(turnId);
+  for (var event of events) {
+    if (event.sessionId === sessionId) routeTurnEvent(event);
+  }
+}
+
 function routeTurnEvent(message) {
+  if (bufferPreAdoptionTurnEvent(message)) return;
   if (!isStrictTurnEvent(message)) {
     dispatchWsMessage(message);
     return;
@@ -433,7 +458,7 @@ function drainLateJoinUpdates() {
   }
 }
 
-// WS message dispatch — extracted from onmessage so the jsdom test harness can replay a captured WS sequence through the exact same handling (test/README.md).
+// WS message dispatch — extracted from onmessage for the jsdom test harness.
 function dispatchWsMessage(msg) {
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
       var remainingMessages = handleStrictMessages(msg);
@@ -493,6 +518,7 @@ function dispatchWsMessage(msg) {
         saveNav();
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
+        drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
         // Fold fetched rows in incrementally (updateLastTurn), never innerHTML-rebuild — a rebuild renders only wsAllMessages and wipes other in-flight optimistic bubbles.
         bufferAndFetch(msg.sessionId, '').then(function () {
           var container = document.querySelector('.messages');
@@ -891,6 +917,7 @@ function resetStreamSessionState() {
   _controlEventTimers.clear();
   _handledControlEvents.clear();
   _controlRequestState.clear();
+  _preAdoptionTurnEvents.clear();
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _lastStreamEndAt = 0;

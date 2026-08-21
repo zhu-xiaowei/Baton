@@ -101,6 +101,7 @@ export class LiveTurnStream {
   constructor(options) {
     this.sessionId = options.sessionId;
     this.turnId = options.turnId;
+    this.replyConnectionId = options.replyConnectionId || '';
     this.send = options.send;
     this.started = false;
     this.ended = false;
@@ -227,6 +228,9 @@ export class LiveTurnStream {
     return {
       sessionId: this.sessionId,
       turnId: this.turnId,
+      ...(this.replyConnectionId
+        ? { replyConnectionId: this.replyConnectionId }
+        : {}),
     };
   }
 

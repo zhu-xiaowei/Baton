@@ -830,21 +830,27 @@ def test_subscribe_write_failure_propagates(monkeypatch):
     assert sent == []
 
 
-def test_bridge_relay_uses_consistent_subscription_read(monkeypatch):
+def test_bridge_relay_reaches_origin_before_subscription(monkeypatch):
     query_args = []
 
     class SubscriptionTable:
         def query(self, **kwargs):
             query_args.append(kwargs)
-            return {
-                "Items": [
-                    {"connectionId": "app-1"},
-                    {"connectionId": "app-2"},
-                ],
-            }
+            return {"Items": []}
+
+    class ConnectionTable:
+        def get_item(self, Key, ConsistentRead=False):
+            assert Key == {"connectionId": "app-1"}
+            assert ConsistentRead is True
+            return {"Item": {
+                "connectionId": "app-1",
+                "role": "app",
+                "accountId": "account-1",
+            }}
 
     sent = []
     monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
     monkeypatch.setattr(
         bridge_ws,
         "_post_to_connection",
@@ -857,27 +863,21 @@ def test_bridge_relay_uses_consistent_subscription_read(monkeypatch):
             "sessionId": "codex:thread-1",
             "turnId": "turn-1",
             "seq": 2,
+            "replyConnectionId": "app-1",
         },
+        "account-1",
         "bridge-1",
         "https://example.test/v1",
     )
 
     assert response == {"statusCode": 200}
     assert query_args[0]["ConsistentRead"] is True
-    assert sent == [
-        ("app-1", {
-            "action": "stream_delta",
-            "sessionId": "codex:thread-1",
-            "turnId": "turn-1",
-            "seq": 2,
-        }),
-        ("app-2", {
-            "action": "stream_delta",
-            "sessionId": "codex:thread-1",
-            "turnId": "turn-1",
-            "seq": 2,
-        }),
-    ]
+    assert sent == [("app-1", {
+        "action": "stream_delta",
+        "sessionId": "codex:thread-1",
+        "turnId": "turn-1",
+        "seq": 2,
+    })]
 
 
 def test_turn_event_validation_requires_turn_id_and_seq():
@@ -932,8 +932,8 @@ def test_permission_resolved_uses_the_shared_turn_relay(monkeypatch):
     monkeypatch.setattr(
         bridge_ws,
         "_handle_bridge_relay",
-        lambda body, connection_id, endpoint: (
-            relayed.append((body, connection_id, endpoint))
+        lambda body, account_id, connection_id, endpoint: (
+            relayed.append((body, account_id, connection_id, endpoint))
             or {"statusCode": 200}
         ),
     )
@@ -952,7 +952,12 @@ def test_permission_resolved_uses_the_shared_turn_relay(monkeypatch):
     )
 
     assert response == {"statusCode": 200}
-    assert relayed == [(body, "bridge-1", "https://example.test/v1")]
+    assert relayed == [(
+        body,
+        "account-1",
+        "bridge-1",
+        "https://example.test/v1",
+    )]
 
 
 def test_reveal_permission_subscribes_before_forwarding_to_bridge(monkeypatch):

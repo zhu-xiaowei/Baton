@@ -102,6 +102,65 @@ def _post_to_connection(endpoint, connection_id, data):
         return False
 
 
+def _log_turn_delivery(event, body, **fields):
+    print("[turn-delivery] " + json.dumps({
+        "event": event,
+        "sessionId": body.get("sessionId", ""),
+        "turnId": body.get("turnId", ""),
+        "seq": body.get("seq"),
+        "action": body.get("action", ""),
+        **fields,
+    }, separators=(",", ":")))
+
+
+def _turn_event_targets(body, account_id, bridge_connection_id):
+    session_id = body.get("sessionId", "")
+    targets = set()
+    subs = _subscriptions_table.query(
+        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
+        ConsistentRead=True,
+    ).get("Items", [])
+    for sub in subs:
+        connection_id = sub.get("connectionId", "")
+        if connection_id and connection_id != bridge_connection_id:
+            targets.add(connection_id)
+
+    reply_connection_id = body.get("replyConnectionId", "")
+    if reply_connection_id \
+            and reply_connection_id != bridge_connection_id \
+            and reply_connection_id not in targets:
+        reply_connection = _connections_table.get_item(
+            Key={"connectionId": reply_connection_id},
+            ConsistentRead=True,
+        ).get("Item")
+        if reply_connection \
+                and reply_connection.get("role") == "app" \
+                and reply_connection.get("accountId") == account_id:
+            targets.add(reply_connection_id)
+    return targets
+
+
+def _relay_turn_event(body, account_id, bridge_connection_id, endpoint):
+    payload = {
+        key: value for key, value in body.items()
+        if key not in ("replyConnectionId", "deliveryId", "noCache")
+    }
+    targets = _turn_event_targets(body, account_id, bridge_connection_id)
+    gone = 0
+    for connection_id in targets:
+        if _post_to_connection(endpoint, connection_id, payload) is False:
+            gone += 1
+
+    if gone or body.get("action") == "stream_end":
+        _log_turn_delivery(
+            "relayed",
+            body,
+            targets=len(targets),
+            gone=gone,
+        )
+    return payload
+
+
 def handler(event, context):
     _init()
     route = event.get("requestContext", {}).get("routeKey", "")
@@ -232,7 +291,12 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action in ("permission_request", "permission_resolved"):
         if role == "bridge":
-            return _handle_bridge_relay(body, connection_id, endpoint)
+            return _handle_bridge_relay(
+                body,
+                account_id,
+                connection_id,
+                endpoint,
+            )
     elif action == "send_message_result":
         if role == "bridge":
             return _handle_send_message_result(
@@ -267,7 +331,12 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action in ("file_ready", "file_progress"):
         if role == "bridge":
-            return _handle_bridge_relay(body, connection_id, endpoint)
+            return _handle_bridge_relay(
+                body,
+                account_id,
+                connection_id,
+                endpoint,
+            )
     elif action == "list_commands":
         if role == "app":
             return _handle_send_to_bridge(
@@ -303,7 +372,12 @@ def _handle_message(event, connection_id, endpoint):
         # Headless streaming preview — relay to subscribed apps, never write DDB
         # (authoritative message still lands via the `messages` action).
         if role == "bridge":
-            return _handle_bridge_relay(body, connection_id, endpoint)
+            return _handle_bridge_relay(
+                body,
+                account_id,
+                connection_id,
+                endpoint,
+            )
     elif action == "create_project":
         if role == "app":
             if not body.get("projectPath"):
@@ -369,25 +443,27 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     if not session_id or not messages:
         return {"statusCode": 400}
 
-    # 1. Relay to subscribed apps (priority — low latency)
-    subs = _subscriptions_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-        ConsistentRead=True,
-    ).get("Items", [])
-
-    for sub in subs:
-        cid = sub.get("connectionId", "")
-        if cid and cid != bridge_connection_id:
-            payload = {
-                "action": "messages",
-                "sessionId": session_id,
-                "messages": messages,
-            }
-            if body.get("turnId"):
-                payload["turnId"] = body["turnId"]
-            if body.get("seq") is not None:
-                payload["seq"] = body["seq"]
-            _post_to_connection(endpoint, cid, payload)
+    # 1. Relay to subscribed apps (priority — low latency).
+    if body.get("turnId") and body.get("seq") is not None:
+        _relay_turn_event(
+            {**body, "action": "messages"},
+            account_id,
+            bridge_connection_id,
+            endpoint,
+        )
+    else:
+        subs = _subscriptions_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
+            ConsistentRead=True,
+        ).get("Items", [])
+        for sub in subs:
+            cid = sub.get("connectionId", "")
+            if cid and cid != bridge_connection_id:
+                _post_to_connection(endpoint, cid, {
+                    "action": "messages",
+                    "sessionId": session_id,
+                    "messages": messages,
+                })
 
     # 2. Write to DDB (cache) with one retry.
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
@@ -469,21 +545,13 @@ def _handle_sync_complete(body, account_id, endpoint):
     return {"statusCode": 200}
 
 
-def _handle_bridge_relay(body, bridge_connection_id, endpoint):
+def _handle_bridge_relay(body, account_id, bridge_connection_id, endpoint):
     """Bridge pushes a notification (e.g. permission_request) — relay to subscribed apps."""
     session_id = body.get("sessionId", "")
     if not session_id:
         return {"statusCode": 400}
 
-    subs = _subscriptions_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-        ConsistentRead=True,
-    ).get("Items", [])
-
-    for sub in subs:
-        cid = sub.get("connectionId", "")
-        if cid and cid != bridge_connection_id:
-            _post_to_connection(endpoint, cid, dict(body))
+    _relay_turn_event(body, account_id, bridge_connection_id, endpoint)
 
     return {"statusCode": 200}
 
@@ -539,7 +607,7 @@ def _handle_send_message(body, account_id, endpoint, connection_id=""):
     if (not session_id and not project_hash) or not text:
         return {"statusCode": 400}
     payload = dict(body)
-    if not session_id and connection_id:
+    if connection_id:
         payload["replyConnectionId"] = connection_id
     return _handle_send_to_bridge(
         payload,

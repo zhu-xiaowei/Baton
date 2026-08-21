@@ -692,6 +692,7 @@ async function handleSendMessage(
             takeover: !!takeover,
             expectedWriterPid,
             reservedTurnId,
+            replyConnectionId,
           },
         );
         return;
@@ -729,6 +730,7 @@ async function handleSendMessage(
         turnId,
         projectHash,
         reservedTurnId,
+        replyConnectionId,
       );
       return;
     }
@@ -747,6 +749,7 @@ async function handleSendMessage(
           takeover: !!takeover,
           expectedWriterPid,
           reservedTurnId,
+          replyConnectionId,
         },
       )
       : await handleHeadlessSend(
@@ -755,6 +758,7 @@ async function handleSendMessage(
         turnId,
         projectHash,
         reservedTurnId,
+        replyConnectionId,
       );
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', turnId });
@@ -833,6 +837,7 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const liveTurn = new LiveTurnStream({
     sessionId,
     turnId,
+    replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
   });
   _activeTurns.register(sessionId, turnId, liveTurn);
@@ -971,6 +976,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
         nativeSessionId: identity.nativeSessionId,
         syncStatus: false,
         userInitiated: true,
+        replyConnectionId: sendOptions.replyConnectionId,
         ...(identity.runtime === 'claude' ? { userText: text } : {}),
       },
     );
@@ -1030,6 +1036,7 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
         nativeSessionId: identity.nativeSessionId,
         syncStatus: false,
         userInitiated: true,
+        replyConnectionId: options.replyConnectionId,
       },
     );
     const result = await adapter.interaction.runCommand({
@@ -1075,6 +1082,7 @@ async function handleClaudeCommand(
   turnId,
   projectHash,
   reservedTurnId = null,
+  replyConnectionId = '',
 ) {
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
   if (!cwd) cwd = cwdForSession(identity.nativeSessionId);
@@ -1153,7 +1161,7 @@ async function handleClaudeCommand(
       liveTurnId,
       cwd,
       ack,
-      { userInitiated: true, userText: command.text },
+      { userInitiated: true, userText: command.text, replyConnectionId },
     );
     // CC emits the same synthetic assistant row and result text for synchronous
     // local commands. commandOutput below is the single rendered source.
@@ -1234,6 +1242,7 @@ async function newAdapterSession(
           nativeSessionId,
           syncStatus: false,
           userInitiated: true,
+          replyConnectionId,
         });
         ack(true, sessionId);
         return callbacks;
@@ -1252,6 +1261,7 @@ async function handleHeadlessSend(
   turnId,
   projectHash,
   reservedTurnId = null,
+  replyConnectionId = '',
 ) {
   // cwd from projectHash (works even if jsonl was deleted); fall back to jsonl reverse-lookup.
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
@@ -1288,7 +1298,7 @@ async function handleHeadlessSend(
       liveTurnId,
       cwd,
       ack,
-      { userInitiated: true, userText: text },
+      { userInitiated: true, userText: text, replyConnectionId },
     );
     let res = await _pool.send(sessionId, text, {
       cwd,
@@ -1316,7 +1326,7 @@ async function handleHeadlessSend(
   return true;
 }
 
-// New regular session: mint sessionId upfront (--session-id), ack it FIRST so the app subscribes before deltas flow, then stream the first turn.
+// New regular session: mint the session id upfront and stream the first turn.
 async function newRegularSession(
   cwd,
   text,
@@ -1326,7 +1336,8 @@ async function newRegularSession(
 ) {
   const sessionId = crypto.randomUUID();
   const liveTurnId = resolveTurnId(sessionId, turnId);
-  // Ack sid before spawn → app subscribes; any pre-subscribe delta is corrected by the authoritative row + bufferAndFetch.
+  // The server routes sequenced events directly to this originating connection,
+  // so the result and early stream frames may safely arrive in either order.
   wsSend({
     action: 'send_message_result',
     sessionId,
@@ -1345,7 +1356,7 @@ async function newRegularSession(
     liveTurnId,
     cwd,
     () => {},
-    { userInitiated: true, userText: text },
+    { userInitiated: true, userText: text, replyConnectionId },
   );
   try {
     await _pool.send(sessionId, text, {
