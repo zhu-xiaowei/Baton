@@ -43,19 +43,27 @@ let apiResponse = { messages: [], hasMore: false };
 expose('api', async () => apiResponse);
 for (const name of [
   'clampOverflow',
-  'dismissPermissionPrompt',
   'loadImages',
   'saveNav',
   'showStats',
   'updateBreadcrumb',
   'updateSendBtn',
 ]) expose(name, () => {});
+expose('esc', (value) => String(value));
+expose('wsSendReliable', () => {});
 
 await import('../../web/js/components/message.js');
 await import('../../web/js/runtime-status.js');
 expose('deriveRunning', window.deriveRunning);
 await import('../../web/js/components/tool.js');
 expose('renderToolNode', window.renderToolNode);
+await import('../../web/js/components/permission.js');
+for (const name of [
+  'dismissPermissionPrompt',
+  'hasActivePermissionPrompt',
+  'resolvePermissionPrompt',
+  'showPermissionPrompt',
+]) expose(name, window[name]);
 await import('../../web/js/render.js');
 expose('renderMessages', window.renderMessages);
 expose('renderSingleMessage', window.renderSingleMessage);
@@ -123,6 +131,7 @@ test('short output keeps the spinner visible for at least 500ms', async () => {
 });
 
 function reset() {
+  window.dismissPermissionPrompt();
   document.querySelector('.messages').innerHTML = '';
   state.appState = {
     device: 'D',
@@ -143,6 +152,49 @@ function reset() {
   state.stickBottom = false;
   apiResponse = { messages: [], hasMore: false };
 }
+
+test('unrelated tool results do not dismiss the active permission prompt', () => {
+  reset();
+  state.appState.runtime = 'claude';
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: state.wsSessionId,
+    requestId: 'write-approval',
+    kind: 'tool',
+    toolName: 'Write',
+    input: { file_path: 'src/pending.js' },
+  });
+
+  assert.equal(window.hasActivePermissionPrompt(), true);
+  send([{
+    uuid: 'unrelated-result',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'another-tool',
+      content: 'completed',
+    }],
+    timestamp: '2026-08-21T09:45:00.000Z',
+  }]);
+
+  assert.equal(window.hasActivePermissionPrompt(), true);
+  assert.ok(document.getElementById('permission-prompt'));
+
+  window.__wsTest.handleWsMessage({
+    action: 'permission_resolved',
+    sessionId: state.wsSessionId,
+    requestId: 'another-approval',
+  });
+  assert.equal(window.hasActivePermissionPrompt(), true);
+
+  window.__wsTest.handleWsMessage({
+    action: 'permission_resolved',
+    sessionId: state.wsSessionId,
+    requestId: 'write-approval',
+  });
+  assert.equal(window.hasActivePermissionPrompt(), false);
+  assert.equal(document.getElementById('permission-prompt'), null);
+});
 
 function send(messages) {
   window.__wsTest.handleWsMessage({
@@ -354,6 +406,55 @@ test('Codex WS keeps historical detail state and expands new realtime tools', ()
   const realtime = container.querySelector('[data-tool-id="realtime"]');
   assert.equal(realtime.classList.contains('tool-details-collapsed'), false);
   assert.equal(realtime.querySelector('.tool-header').getAttribute('aria-expanded'), 'true');
+});
+
+test('Codex WS hydrates a realtime Edit after the timeline insertion', async () => {
+  reset();
+  window.resetToolDetails();
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  window.loadDiffViewer = async () => {
+    window.Diff = { createTwoFilesPatch: () => 'patch' };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        this.element.innerHTML = '<div class="d2h-file-wrapper">live diff</div>';
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    send([{
+      uuid: 'live-edit-use',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'live-edit',
+        name: 'Edit',
+        input: {
+          file_path: 'src/live.js',
+          old_string: 'old live',
+          new_string: 'new live',
+        },
+      }],
+      timestamp: '2026-08-21T01:10:00.000Z',
+    }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const node = document.querySelector('[data-tool-id="live-edit"]');
+    const diff = node.querySelector('.diff-container');
+    assert.equal(node.classList.contains('tool-details-collapsed'), false);
+    assert.equal(diff.dataset.diffState, 'ready');
+    assert.match(diff.textContent, /live diff/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+  }
 });
 
 test('Codex WS preserves a flushed wait when the background Ran completes later', () => {

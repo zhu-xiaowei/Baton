@@ -926,6 +926,7 @@ function resetStreamSessionState() {
 function selectWsSession(sessionId) {
   if (state.wsSessionId === sessionId) return;
   if (state.wsSessionId) wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
+  window.resetToolDetails?.();
   resetStreamSessionState();
   state.wsSessionId = sessionId;
 }
@@ -997,6 +998,7 @@ function disconnectWs() {
   }
   state.wsSessionId = null;
   state.wsRunning = false;
+  window.resetToolDetails?.();
   resetStreamSessionState();
   updateSpinner();
   setWsStatus('');
@@ -1165,7 +1167,7 @@ function markTurnAdjacency(container) {
   if (state.appState.runtime === 'codex') {
     window.normalizeCodexTimeline?.(container);
   }
-  window.discardDetachedToolDetails?.();
+  window.afterToolDomMutation?.(container);
   var kids = container.children;
   for (var i = 0; i < kids.length; i++) {
     var el = kids[i];
@@ -1222,7 +1224,6 @@ function updateLastTurn(explicitMessages) {
     newMessages.sort(compareMessageOrder);
   }
 
-  var sawToolResult = false;
   var hasToolResults = newMessages.some(isToolResultOnly);
   var toolIndexes = hasToolResults
     ? buildToolIndexes(state.wsAllMessages)
@@ -1232,7 +1233,6 @@ function updateLastTurn(explicitMessages) {
     if (msg._strictManaged) continue;
     // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
-      sawToolResult = true;
       if (Array.isArray(msg.content)) {
         for (var ri = 0; ri < msg.content.length; ri++) {
           var rb = msg.content[ri];
@@ -1367,8 +1367,6 @@ function updateLastTurn(explicitMessages) {
   var promptEl = document.getElementById('permission-prompt');
   if (promptEl && !(typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt())) {
     dismissPermissionPrompt();
-  } else if (promptEl && sawToolResult) {
-    dismissPermissionPrompt(); // OUT arrived → another device (or this turn) answered; drop our stale prompt
   } else if (promptEl && promptEl !== container.lastElementChild) {
     container.appendChild(promptEl); // keep the prompt pinned below the AskUserQuestion card that just landed
   }

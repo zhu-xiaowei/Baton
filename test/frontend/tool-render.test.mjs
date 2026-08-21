@@ -606,6 +606,180 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   }
 });
 
+test('Edit replacement during lazy loading hydrates the new element only', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  let releaseLoader;
+  let draws = 0;
+  const loaderReady = new Promise((resolve) => { releaseLoader = resolve; });
+  window.loadDiffViewer = async () => {
+    await loaderReady;
+    window.Diff = { createTwoFilesPatch: () => 'patch' };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        draws++;
+        this.element.innerHTML = '<div class="d2h-file-wrapper">current diff</div>';
+      }
+      highlightCode() {}
+    };
+  };
+
+  const toolUse = {
+    type: 'tool_use',
+    id: 'edit-replaced',
+    name: 'Edit',
+    input: {
+      file_path: 'src/replaced.js',
+      old_string: 'const oldValue = 1;',
+      new_string: 'const newValue = 2;',
+    },
+  };
+
+  try {
+    document.body.innerHTML = '<div id="content"><div class="messages">'
+      + '<div class="tool-node"></div></div></div>';
+    const node = document.querySelector('.tool-node');
+    node.innerHTML = window.renderToolNode(toolUse, null, 'codex');
+    const oldDiff = node.querySelector('.diff-container');
+    const oldHydration = window.afterToolDomMutation(node);
+    assert.equal(oldDiff.dataset.diffState, 'loading');
+
+    node.innerHTML = window.renderToolNode(toolUse, null, 'codex');
+    const newDiff = node.querySelector('.diff-container');
+    const newHydration = window.afterToolDomMutation(node);
+    assert.notEqual(newDiff, oldDiff);
+    assert.equal(newDiff.dataset.diffKey, oldDiff.dataset.diffKey);
+
+    releaseLoader();
+    await Promise.all([oldHydration, newHydration]);
+
+    assert.equal(oldDiff.isConnected, false);
+    assert.equal(oldDiff.textContent, '');
+    assert.equal(newDiff.dataset.diffState, 'ready');
+    assert.match(newDiff.textContent, /current diff/);
+    assert.equal(draws, 1);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+  }
+});
+
+test('an adopted expanded Edit hydrates without another user toggle', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  window.loadDiffViewer = async () => {
+    window.Diff = { createTwoFilesPatch: () => 'patch' };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        this.element.innerHTML = '<div class="d2h-file-wrapper">adopted diff</div>';
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    const message = {
+      uuid: 'edit-adopted',
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'edit-adopted',
+        name: 'Edit',
+        input: {
+          file_path: 'src/adopted.js',
+          old_string: 'before',
+          new_string: 'after',
+        },
+      }],
+      timestamp: '2026-08-21T01:00:00.000Z',
+    };
+    document.body.innerHTML = `<div class="messages">${
+      window.renderMessages([message], 'codex')
+    }</div>`;
+    const node = document.querySelector('.tool-node');
+    const diff = node.querySelector('.diff-container');
+    assert.equal(node.classList.contains('tool-details-collapsed'), true);
+    assert.equal(diff.dataset.diffState, undefined);
+
+    window.setToolDetailsCollapsed(node, false);
+    await window.afterToolDomMutation(node);
+
+    assert.equal(diff.dataset.diffState, 'ready');
+    assert.match(diff.textContent, /adopted diff/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+  }
+});
+
+test('Edit loader failure renders fallback content instead of an empty border', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  window.loadDiffViewer = async () => {
+    throw new Error('viewer failed');
+  };
+  delete window.Diff;
+  delete window.Diff2HtmlUI;
+
+  try {
+    document.body.innerHTML = '<div class="tool-node"></div>';
+    const node = document.querySelector('.tool-node');
+    node.innerHTML = window.renderToolNode({
+      type: 'tool_use',
+      id: 'edit-fallback',
+      name: 'Edit',
+      input: {
+        file_path: 'src/fallback.js',
+        old_string: 'old line',
+        new_string: 'new line',
+      },
+    }, null, 'codex');
+
+    await window.afterToolDomMutation(node);
+    const diff = node.querySelector('.diff-container');
+    assert.equal(diff.dataset.diffState, 'fallback');
+    assert.match(diff.textContent, /old line/);
+    assert.match(diff.textContent, /new line/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
+  }
+});
+
+test('resetting tool details clears session-scoped diff specifications', async () => {
+  document.body.innerHTML = '<div class="tool-node"></div>';
+  const node = document.querySelector('.tool-node');
+  node.innerHTML = window.renderToolNode({
+    type: 'tool_use',
+    id: 'edit-reset',
+    name: 'Edit',
+    input: {
+      file_path: 'src/reset.js',
+      old_string: 'old',
+      new_string: 'new',
+    },
+  }, null, 'codex');
+
+  window.resetToolDetails();
+  await window.afterToolDomMutation(node);
+
+  const diff = node.querySelector('.diff-container');
+  assert.equal(diff.dataset.diffState, 'error');
+  assert.match(diff.textContent, /Diff unavailable/);
+});
+
 test('collapsed tool spacing keeps the original title baseline', () => {
   const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   assert.match(

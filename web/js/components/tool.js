@@ -297,7 +297,20 @@
     return map[ext] || null;
   }
 
-  const pendingDiffJobs = new Map();
+  const diffSpecs = new Map();
+  let diffInstances = new WeakMap();
+
+  function diffSpecKey(file, oldStr, newStr) {
+    const source = `${file}\0${oldStr}\0${newStr}`;
+    let first = 2166136261;
+    let second = 5381;
+    for (let index = 0; index < source.length; index++) {
+      const code = source.charCodeAt(index);
+      first = Math.imul(first ^ code, 16777619);
+      second = Math.imul(second, 33) ^ code;
+    }
+    return `diff-${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}-${source.length.toString(36)}`;
+  }
 
   function fallbackDiff(oldStr, newStr) {
     return '<pre style="color:#e6edf3;padding:8px;font-size:12px">'
@@ -309,26 +322,50 @@
       + '</pre>';
   }
 
-  async function initializeDiffById(diffId) {
-    const job = pendingDiffJobs.get(diffId);
-    const el = document.getElementById(diffId);
-    if (!job || !el || el.dataset.diffState === 'ready') return;
-    if (job.promise) return job.promise;
-    job.promise = (async () => {
+  function isCurrentDiffInstance(element, token, key) {
+    return element.isConnected
+      && element.dataset.diffKey === key
+      && diffInstances.get(element)?.token === token;
+  }
+
+  async function initializeDiffElement(element) {
+    if (!element) return;
+    const key = element.dataset.diffKey || '';
+    if (!key) return;
+    const existing = diffInstances.get(element);
+    if (existing?.promise) return existing.promise;
+    if (element.dataset.diffState === 'ready'
+      || element.dataset.diffState === 'fallback'
+      || element.dataset.diffState === 'error') {
+      return;
+    }
+
+    const spec = diffSpecs.get(key);
+    if (!spec) {
+      element.innerHTML = '<div class="diff-unavailable">Diff unavailable</div>';
+      element.dataset.diffState = 'error';
+      return;
+    }
+
+    const token = {};
+    const instance = { token, promise: null };
+    diffInstances.set(element, instance);
+    instance.promise = (async () => {
       const content = document.getElementById('content');
       const followBottom = !!content
         && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
-      el.dataset.diffState = 'loading';
-      el.style.minHeight = `${job.estimatedHeight}px`;
+      element.dataset.diffState = 'loading';
+      element.style.minHeight = `${spec.estimatedHeight}px`;
       try {
         await window.loadDiffViewer?.();
+        if (!isCurrentDiffInstance(element, token, key)) return;
         if (!window.Diff || !window.Diff2HtmlUI) throw new Error('Diff viewer unavailable');
-        const a = job.oldStr.endsWith('\n') ? job.oldStr : job.oldStr + '\n';
-        const b = job.newStr.endsWith('\n') ? job.newStr : job.newStr + '\n';
+        const a = spec.oldStr.endsWith('\n') ? spec.oldStr : spec.oldStr + '\n';
+        const b = spec.newStr.endsWith('\n') ? spec.newStr : spec.newStr + '\n';
         const patch = window.Diff.createTwoFilesPatch(
-          job.file, job.file, a, b, '', '', { context: 3 },
+          spec.file, spec.file, a, b, '', '', { context: 3 },
         );
-        const ui = new window.Diff2HtmlUI(el, patch, {
+        const ui = new window.Diff2HtmlUI(element, patch, {
           drawFileList: false,
           fileListToggle: false,
           fileContentToggle: false,
@@ -339,26 +376,26 @@
           highlight: true,
         });
         ui.draw();
-        el.querySelectorAll(
+        element.querySelectorAll(
           '.d2h-file-wrapper, .d2h-file-diff, .d2h-code-wrapper, .d2h-diff-table, .d2h-diff-tbody',
         ).forEach((node) => {
           node.style.backgroundColor = 'transparent';
         });
-        const lang = detectLang(job.fullPath);
+        const lang = detectLang(spec.fullPath);
         if (lang) {
-          el.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+          element.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
             node.classList.add('language-' + lang, lang);
           });
-          el.querySelectorAll('.d2h-file-wrapper').forEach((node) => {
+          element.querySelectorAll('.d2h-file-wrapper').forEach((node) => {
             node.dataset.lang = lang;
           });
-          el.querySelectorAll('code').forEach((node) => {
+          element.querySelectorAll('code').forEach((node) => {
             node.classList.add('language-' + lang, lang);
           });
         }
         ui.highlightCode();
         if (lang && window.hljs) {
-          el.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
+          element.querySelectorAll('.d2h-code-line-ctn').forEach((node) => {
             if (!node.textContent.trim() || node.querySelector('[class*="hljs-"]')) return;
             const delIns = node.querySelectorAll('del, ins');
             if (delIns.length) {
@@ -379,36 +416,68 @@
             }
           });
         }
+        element.dataset.diffState = 'ready';
       } catch (e) {
-        el.innerHTML = fallbackDiff(job.oldStr, job.newStr);
+        if (!isCurrentDiffInstance(element, token, key)) return;
+        element.innerHTML = fallbackDiff(spec.oldStr, spec.newStr);
+        element.dataset.diffState = 'fallback';
       } finally {
-        el.style.minHeight = '';
-        el.dataset.diffState = 'ready';
-        pendingDiffJobs.delete(diffId);
-        window.clampOverflow?.(el.closest('.tool-node'));
-        if (followBottom && el.isConnected
+        if (!isCurrentDiffInstance(element, token, key)) return;
+        element.style.minHeight = '';
+        window.clampOverflow?.(element.closest('.tool-node'));
+        if (followBottom
           && content === document.getElementById('content')) {
           content.scrollTop = content.scrollHeight;
         }
       }
     })();
-    return job.promise;
+    return instance.promise;
   }
 
   window.initializeToolDetails = function (node) {
     if (!node) return Promise.resolve();
-    return Promise.all(Array.from(node.querySelectorAll('.diff-container[data-lazy-diff]'))
-      .map((element) => initializeDiffById(element.id)));
+    return Promise.all(Array.from(node.querySelectorAll('.diff-container[data-diff-key]'))
+      .map((element) => initializeDiffElement(element)));
   };
 
-  window.discardDetachedToolDetails = function () {
-    for (const diffId of pendingDiffJobs.keys()) {
-      if (!document.getElementById(diffId)) pendingDiffJobs.delete(diffId);
-    }
+  window.hydrateVisibleToolDetails = function (root) {
+    if (!root) return Promise.resolve();
+    const nodes = [];
+    if (root.matches?.('.tool-node:not(.tool-details-collapsed)')) nodes.push(root);
+    root.querySelectorAll?.('.tool-node:not(.tool-details-collapsed)').forEach((node) => {
+      nodes.push(node);
+    });
+    return Promise.all(nodes.map((node) => window.initializeToolDetails(node)));
   };
+
+  window.resetToolDetails = function () {
+    diffSpecs.clear();
+    diffInstances = new WeakMap();
+  };
+
+  window.afterToolDomMutation = function (root) {
+    return window.hydrateVisibleToolDetails(root);
+  };
+
+  function registerDiffSpec(file, fullPath, oldStr, newStr) {
+    const key = diffSpecKey(fullPath || file, oldStr, newStr);
+    if (!diffSpecs.has(key)) {
+      const oldLines = oldStr ? oldStr.split('\n').length : 0;
+      const newLines = newStr ? newStr.split('\n').length : 0;
+      diffSpecs.set(key, {
+        key,
+        file,
+        fullPath,
+        oldStr,
+        newStr,
+        estimatedHeight: Math.min((oldLines + newLines) * 18 + 12, 240),
+      });
+    }
+    return key;
+  }
 
   // Render Edit tool with Diff2HtmlUI
-  function renderEdit(input, result, options = {}) {
+  function renderEdit(input, result) {
     const file = shortPath(input.file_path || '');
     const fullPath = input.file_path || file;
     const oldStr = input.old_string || '';
@@ -416,20 +485,8 @@
 
     let diffHtml = '';
     if (oldStr || newStr) {
-      const diffId = 'diff-' + Math.random().toString(36).slice(2, 8);
-      const _oldLines = oldStr ? oldStr.split('\n').length : 0;
-      const _newLines = newStr ? newStr.split('\n').length : 0;
-      const _estH = Math.min((_oldLines + _newLines) * 18 + 12, 240);
-      pendingDiffJobs.set(diffId, {
-        file,
-        fullPath,
-        oldStr,
-        newStr,
-        estimatedHeight: _estH,
-        promise: null,
-      });
-      diffHtml = `<div id="${diffId}" class="diff-container" data-lazy-diff="true"></div>`;
-      if (!options.defer) setTimeout(() => initializeDiffById(diffId), 0);
+      const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
+      diffHtml = `<div class="diff-container" data-lazy-diff="true" data-diff-key="${diffKey}"></div>`;
     }
 
     const status = resultText(result);
@@ -728,7 +785,7 @@
     const dispatchers = {
       Bash: () => renderBash(input, toolResult),
       Read: () => renderRead(input, toolResult),
-      Edit: () => renderEdit(input, toolResult, { defer: requestedDetailsCollapsed }),
+      Edit: () => renderEdit(input, toolResult),
       Write: () => renderWrite(input, toolResult),
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
