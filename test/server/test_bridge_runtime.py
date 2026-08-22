@@ -330,7 +330,15 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
 def test_child_status_summary_updates_root_active_status_and_counters(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
+    notifications = []
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    monkeypatch.setattr(
+        bridge_sync,
+        "_broadcast_session_thread_changes",
+        lambda account_id, device_name, roots: notifications.append(
+            (account_id, device_name, roots)
+        ),
+    )
     account_id = bridge_sync._hash_key("test-key")
     sessions.items.append({
         "accountId": account_id,
@@ -377,6 +385,65 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
         if update["UpdateExpression"].startswith("ADD runningCount")
     ]
     assert counter_updates[0]["ExpressionAttributeValues"][":dr"] == 1
+    assert notifications == [(
+        account_id,
+        "Linux",
+        [{
+            "projectHash": "-repo",
+            "rootSessionId": "codex:parent",
+            "agentCount": 1,
+            "runningAgentCount": 1,
+            "needsInputAgentCount": 0,
+        }],
+    )]
+
+
+def test_session_thread_notification_broadcasts_to_account_apps(monkeypatch):
+    delivered = []
+    monkeypatch.setattr(bridge_ws, "_init", lambda: None)
+    monkeypatch.setattr(
+        bridge_ws,
+        "_query_connections",
+        lambda account_id, role: [
+            {"connectionId": "app-1"},
+            {"connectionId": "app-2"},
+        ] if account_id == "account" and role == "app" else [],
+    )
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, payload: delivered.append(
+            (endpoint, connection_id, payload)
+        ) or True,
+    )
+
+    roots = [{
+        "projectHash": "-repo",
+        "rootSessionId": "codex:parent",
+        "agentCount": 2,
+        "runningAgentCount": 1,
+        "needsInputAgentCount": 1,
+    }]
+    count = bridge_ws.notify_session_threads_changed(
+        "account",
+        "https://ws.example/v1",
+        "Linux",
+        roots,
+    )
+
+    assert count == 2
+    assert delivered == [
+        ("https://ws.example/v1", "app-1", {
+            "action": "session_threads_changed",
+            "deviceName": "Linux",
+            "roots": roots,
+        }),
+        ("https://ws.example/v1", "app-2", {
+            "action": "session_threads_changed",
+            "deviceName": "Linux",
+            "roots": roots,
+        }),
+    ]
 
 
 def test_effective_status_prioritizes_needs_input_across_main_and_children():

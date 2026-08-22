@@ -27,6 +27,7 @@ var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
 var _preAdoptionTurnEvents = new Map();
 var _agentThreadRefreshTimer = null;
+var _agentThreadRefreshVersion = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var _appliedLifecycleVersion = 0;
 
@@ -462,6 +463,11 @@ function drainLateJoinUpdates() {
 // WS message dispatch — extracted from onmessage for the jsdom test harness.
 function dispatchWsMessage(msg) {
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
+      if (msg.messages?.some(function (message) {
+        return window.isSubagentNotificationMsg?.(message);
+      })) {
+        queueAgentThreadRefresh({ delays: [100, 800, 2000] });
+      }
       var remainingMessages = handleStrictMessages(msg);
       if (!remainingMessages.length) return;
       msg = Object.assign({}, msg, { messages: remainingMessages });
@@ -567,8 +573,20 @@ function dispatchWsMessage(msg) {
         updateTitleFromMessages();
         updateSendBtn();
       }).catch(function () {});
+    } else if (msg.action === 'session_threads_changed') {
+      if (msg.deviceName && msg.deviceName !== state.appState.device) return;
+      var rootChange = (msg.roots || []).find(function (root) {
+        return root.rootSessionId === state.rootSessionId
+          && root.projectHash === state.appState.project?.hash;
+      });
+      if (!rootChange) return;
+      queueAgentThreadRefresh({
+        expected: rootChange,
+        delays: [150, 900, 2200],
+      });
     } else if (msg.action === 'bridge_recovery_complete') {
       if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
+      queueAgentThreadRefresh({ delays: [150, 1000] });
       recoverMissing('');
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);
@@ -717,11 +735,52 @@ function renderStrictToolBlock(element, block) {
 
 function scheduleAgentThreadRefresh(toolName) {
   if (toolName !== 'spawn_agent' && toolName !== 'Agent') return;
+  queueAgentThreadRefresh({ delays: [500, 1500, 3500] });
+}
+
+function agentThreadSummaryMatches(threads, expected) {
+  if (!expected) return false;
+  var agents = (threads || []).filter(function (thread) {
+    return thread.sessionId !== state.rootSessionId;
+  });
+  var running = agents.filter(function (thread) {
+    return thread.status === 'running';
+  }).length;
+  var needsInput = agents.filter(function (thread) {
+    return thread.status === 'needs_input';
+  }).length;
+  return agents.length === Number(expected.agentCount || 0)
+    && running === Number(expected.runningAgentCount || 0)
+    && needsInput === Number(expected.needsInputAgentCount || 0);
+}
+
+function queueAgentThreadRefresh(options) {
+  options = options || {};
+  if (!state.rootSessionId) return;
+  var rootSessionId = state.rootSessionId;
+  var delays = options.delays || [250];
+  var expected = options.expected || null;
+  var version = ++_agentThreadRefreshVersion;
   clearTimeout(_agentThreadRefreshTimer);
-  _agentThreadRefreshTimer = setTimeout(function () {
-    _agentThreadRefreshTimer = null;
-    window.refreshSessionThreads?.().catch(function () {});
-  }, 1000);
+
+  function schedule(index) {
+    if (index >= delays.length) return;
+    _agentThreadRefreshTimer = setTimeout(async function () {
+      _agentThreadRefreshTimer = null;
+      if (version !== _agentThreadRefreshVersion
+        || rootSessionId !== state.rootSessionId) return;
+      var threads = null;
+      try {
+        threads = await window.refreshSessionThreads?.();
+      } catch (error) {}
+      if (version !== _agentThreadRefreshVersion
+        || rootSessionId !== state.rootSessionId) return;
+      if (expected && agentThreadSummaryMatches(threads, expected)) return;
+      schedule(index + 1);
+    }, delays[index]);
+  }
+
+  schedule(0);
 }
 
 function drainStrictStreamOperations() {
@@ -931,6 +990,7 @@ function resetStreamSessionState() {
   _preAdoptionTurnEvents.clear();
   clearTimeout(_agentThreadRefreshTimer);
   _agentThreadRefreshTimer = null;
+  _agentThreadRefreshVersion++;
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _lastStreamEndAt = 0;

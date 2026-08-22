@@ -442,6 +442,8 @@ async function refreshSessionThreads() {
   state.activeThreadCanSend = active ? active.canSend !== false : true;
   applyThreadInputState();
   updateBreadcrumb();
+  var modal = document.getElementById('agentThreadsModal');
+  if (modal && modal.classList.contains('open')) renderAgentThreadsModal();
   updateSendBtn();
   return threads;
 }

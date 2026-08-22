@@ -563,6 +563,23 @@ def _handle_bridge_broadcast(body, account_id, bridge_connection_id, endpoint):
     return {"statusCode": 200}
 
 
+def notify_session_threads_changed(account_id, endpoint, device_name, roots):
+    """Push an authoritative thread-cache invalidation after REST persistence."""
+    if not endpoint or not roots:
+        return 0
+    _init()
+    payload = {
+        "action": "session_threads_changed",
+        "deviceName": device_name,
+        "roots": roots,
+    }
+    delivered = 0
+    for item in _query_connections(account_id, "app"):
+        if _post_to_connection(endpoint, item["connectionId"], payload):
+            delivered += 1
+    return delivered
+
+
 def _handle_send_message_result(
     body,
     bridge_connection,

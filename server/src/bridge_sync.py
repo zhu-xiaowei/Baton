@@ -271,6 +271,17 @@ def _bump_last_active(account_id: str, sk: str, ts: str, list_pk: str = "", list
         pass
 
 
+def _broadcast_session_thread_changes(account_id: str, device_name: str, roots: List[dict]):
+    endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    if not endpoint or not roots:
+        return
+    try:
+        from bridge_ws import notify_session_threads_changed
+        notify_session_threads_changed(account_id, endpoint, device_name, roots)
+    except Exception as e:
+        print(f"session thread notification failed: {e}")
+
+
 @bridge_router.post("/sync-sessions")
 async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     sessions_table, _ = _tables()
@@ -399,6 +410,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["threadRootSk"] = storage_id
             batch.put_item(Item=item)
 
+    thread_changes = {}
     for update in req.agentCountUpdates or []:
         root_key = {
             "accountId": key_hash,
@@ -450,6 +462,13 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 to=new_effective_status,
                 lastActive=root.get("lastActive", ""),
             ))
+        thread_changes[(update.project, update.sessionId)] = {
+            "projectHash": update.project,
+            "rootSessionId": update.sessionId,
+            "agentCount": max(0, update.agentCount),
+            "runningAgentCount": running_agent_count,
+            "needsInputAgentCount": needs_input_agent_count,
+        }
 
     # 2a. Complete catalogs authoritatively overwrite aggregates. An incomplete
     # first scan may bootstrap a missing device, but never clobbers an existing one.
@@ -522,6 +541,13 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             _bump_last_active(key_hash, f"DEV#{d.deviceName}", d.lastActive)
         except Exception as e:
             print(f"statusDelta apply failed: {e}")
+
+    if thread_changes:
+        _broadcast_session_thread_changes(
+            key_hash,
+            req.deviceName,
+            list(thread_changes.values()),
+        )
 
     return {"synced": len(req.sessions)}
 
