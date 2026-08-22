@@ -121,6 +121,9 @@ function updateTitleFromMessages() {
   var title = customTitle || aiTitle || lastPrompt || firstUser;
   if (title === state.appState.sessionPreview) return;
   state.appState.sessionPreview = title;
+  if (state.activeThreadId === state.rootSessionId) {
+    state.rootSessionPreview = title;
+  }
   state._titleTier = tier;
   updateBreadcrumb();
   saveNav();
@@ -521,6 +524,19 @@ function dispatchWsMessage(msg) {
       if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
         state.appState.session = msg.sessionId;
         state.appState.sessionPreview = 'New Session';
+        state.rootSessionId = msg.sessionId;
+        state.rootSessionPreview = state.appState.sessionPreview;
+        state.activeThreadId = msg.sessionId;
+        state.activeThreadCanSend = true;
+        state.threadRequestVersion++;
+        state.sessionThreads = [{
+          sessionId: msg.sessionId,
+          preview: state.rootSessionPreview,
+          status: 'running',
+          threadKind: 'main',
+          canSend: true,
+          runtime: state.appState.runtime,
+        }];
         updateBreadcrumb();
         saveNav();
         state.wsRequestId = null;

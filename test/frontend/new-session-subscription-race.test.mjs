@@ -45,6 +45,11 @@ test('new-session REST and live user authority promote one optimistic bubble', a
   });
   await h.tick(0);
 
+  assert.equal(h.state.rootSessionId, 'codex:new-thread');
+  assert.equal(h.state.activeThreadId, 'codex:new-thread');
+  assert.equal(h.state.sessionThreads.length, 1);
+  assert.equal(h.state.sessionThreads[0].sessionId, 'codex:new-thread');
+
   request.resolve({
     messages: [{
       uuid: 'rest-user',
