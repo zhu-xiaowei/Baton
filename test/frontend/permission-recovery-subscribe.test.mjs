@@ -6,6 +6,7 @@ import { makeHarness, resetSession } from './harness.mjs';
 test('entering an existing session subscribes before requesting pending permission state', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: '' });
+  h.state.rootSessionId = 'codex:thread-root';
   const sent = [];
   h.state.ws = {
     readyState: WebSocket.OPEN,
@@ -20,6 +21,7 @@ test('entering an existing session subscribes before requesting pending permissi
     {
       action: 'subscribe',
       sessionId: 'codex:thread-approval',
+      rootSessionId: 'codex:thread-root',
     },
     {
       action: 'reveal_permission',

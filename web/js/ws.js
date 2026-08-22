@@ -103,6 +103,29 @@ function extractFirstPromptFromMsg(msg) {
   return '';
 }
 
+function shouldHideSessionMessage(message, messages) {
+  if (state.appState.runtime !== 'codex'
+    || !state.rootSessionId
+    || state.activeThreadId === state.rootSessionId
+    || message?.type !== 'user') {
+    return false;
+  }
+  var active = state.sessionThreads.find(function (thread) {
+    return thread.sessionId === state.activeThreadId;
+  });
+  var activePreview = String(active?.preview || '').replace(/\n/g, ' ').trim();
+  if (!activePreview) return false;
+  var prompts = [];
+  for (var candidate of messages || []) {
+    var prompt = extractFirstPromptFromMsg(candidate);
+    if (prompt) prompts.push({ message: candidate, prompt: prompt });
+  }
+  if (prompts.length < 2 || prompts[0].message !== message) return false;
+  return prompts.slice(1).some(function (entry) {
+    return entry.prompt === activePreview;
+  });
+}
+
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
   for (var i = 0; i < state.wsAllMessages.length; i++) {
@@ -1013,11 +1036,20 @@ function resetStreamSessionState() {
 }
 
 function selectWsSession(sessionId) {
-  if (state.wsSessionId === sessionId) return;
-  if (state.wsSessionId) wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
+  var rootSessionId = state.rootSessionId || sessionId || '';
+  if (state.wsSessionId === sessionId
+    && state.wsRootSessionId === rootSessionId) return;
+  if (state.wsSessionId) {
+    wsSend({
+      action: 'unsubscribe',
+      sessionId: state.wsSessionId,
+      rootSessionId: state.wsRootSessionId || state.wsSessionId,
+    });
+  }
   window.resetToolDetails?.();
   resetStreamSessionState();
   state.wsSessionId = sessionId;
+  state.wsRootSessionId = rootSessionId;
 }
 
 function subscribeSession(sessionId) {
@@ -1025,6 +1057,7 @@ function subscribeSession(sessionId) {
   wsSend({
     action: 'subscribe',
     sessionId: sessionId,
+    rootSessionId: state.wsRootSessionId || sessionId,
   });
   wsSend({
     action: 'reveal_permission',
@@ -1037,12 +1070,18 @@ function subscribeSession(sessionId) {
 // Adopt that server id without resetting the buffer and anchor for the same turn.
 function adoptNewSession(sessionId) {
   if (state.wsSessionId && state.wsSessionId !== sessionId) {
-    wsSend({ action: 'unsubscribe', sessionId: state.wsSessionId });
+    wsSend({
+      action: 'unsubscribe',
+      sessionId: state.wsSessionId,
+      rootSessionId: state.wsRootSessionId || state.wsSessionId,
+    });
   }
   state.wsSessionId = sessionId;
+  state.wsRootSessionId = state.rootSessionId || sessionId;
   wsSend({
     action: 'subscribe',
     sessionId: sessionId,
+    rootSessionId: state.wsRootSessionId,
   });
   wsSend({
     action: 'reveal_permission',
@@ -1086,6 +1125,7 @@ function disconnectWs() {
     state.ws = null;
   }
   state.wsSessionId = null;
+  state.wsRootSessionId = null;
   state.wsRunning = false;
   window.resetToolDetails?.();
   resetStreamSessionState();
@@ -1320,6 +1360,7 @@ function updateLastTurn(explicitMessages) {
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
     if (msg._strictManaged) continue;
+    if (shouldHideSessionMessage(msg, state.wsAllMessages)) continue;
     // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
       if (Array.isArray(msg.content)) {
@@ -2215,7 +2256,7 @@ Object.assign(window, {
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
-  extractMsgText, tryDedup, retryPendingSend,
+  extractMsgText, tryDedup, retryPendingSend, shouldHideSessionMessage,
 });
 
 // Test-only hook for replaying the real WS dispatcher.

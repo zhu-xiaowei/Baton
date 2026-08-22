@@ -398,17 +398,22 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
     )]
 
 
-def test_session_thread_notification_broadcasts_to_account_apps(monkeypatch):
+def test_session_thread_notification_targets_root_subscribers(monkeypatch):
     delivered = []
+
+    class SubscriptionTable:
+        def query(self, **kwargs):
+            expression = kwargs["KeyConditionExpression"].get_expression()
+            root_key = expression["values"][1]
+            assert root_key == "ROOT#codex:parent"
+            return {"Items": [
+                {"connectionId": "app-1", "accountId": "account"},
+                {"connectionId": "other-account", "accountId": "other"},
+                {"connectionId": "app-2", "accountId": "account"},
+            ]}
+
     monkeypatch.setattr(bridge_ws, "_init", lambda: None)
-    monkeypatch.setattr(
-        bridge_ws,
-        "_query_connections",
-        lambda account_id, role: [
-            {"connectionId": "app-1"},
-            {"connectionId": "app-2"},
-        ] if account_id == "account" and role == "app" else [],
-    )
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
     monkeypatch.setattr(
         bridge_ws,
         "_post_to_connection",
@@ -1291,6 +1296,37 @@ def test_subscribe_only_persists_the_connection(monkeypatch):
     assert events[0][1]["connectionId"] == "app-1"
     assert events[0][1]["accountId"] == "account-1"
     assert "requestId" not in events[0][1]
+
+
+def test_subscribe_and_unsubscribe_track_the_root_session(monkeypatch):
+    events = []
+
+    class SubscriptionTable:
+        def put_item(self, Item):
+            events.append(("put", Item["sessionId"], Item["connectionId"]))
+
+        def delete_item(self, Key):
+            events.append(("delete", Key["sessionId"], Key["connectionId"]))
+
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    body = {
+        "sessionId": "codex:child",
+        "rootSessionId": "codex:root",
+    }
+
+    assert bridge_ws._handle_subscribe(
+        body,
+        "app-1",
+        "account-1",
+        "https://example.test/v1",
+    ) == {"statusCode": 200}
+    assert bridge_ws._handle_unsubscribe(body, "app-1") == {"statusCode": 200}
+    assert events == [
+        ("put", "codex:child", "app-1"),
+        ("put", "ROOT#codex:root", "app-1"),
+        ("delete", "codex:child", "app-1"),
+        ("delete", "ROOT#codex:root", "app-1"),
+    ]
 
 
 def test_subscribe_write_failure_propagates(monkeypatch):

@@ -24,6 +24,12 @@ _STRICT_STREAM_ACTIONS = {
     "stream_end",
 }
 
+_ROOT_SUBSCRIPTION_PREFIX = "ROOT#"
+
+
+def _root_subscription_id(root_session_id):
+    return f"{_ROOT_SUBSCRIPTION_PREFIX}{root_session_id}"
+
 
 def _requires_turn_sequence(body):
     action = body.get("action", "")
@@ -407,6 +413,13 @@ def _handle_subscribe(body, connection_id, account_id, endpoint):
         return {"statusCode": 400}
 
     _persist_subscription(session_id, connection_id, account_id)
+    root_session_id = body.get("rootSessionId", "")
+    if root_session_id:
+        _persist_subscription(
+            _root_subscription_id(root_session_id),
+            connection_id,
+            account_id,
+        )
 
     return {"statusCode": 200}
 
@@ -432,6 +445,12 @@ def _handle_unsubscribe(body, connection_id):
         "sessionId": session_id,
         "connectionId": connection_id,
     })
+    root_session_id = body.get("rootSessionId", "")
+    if root_session_id:
+        _subscriptions_table.delete_item(Key={
+            "sessionId": _root_subscription_id(root_session_id),
+            "connectionId": connection_id,
+        })
 
     return {"statusCode": 200}
 
@@ -568,14 +587,41 @@ def notify_session_threads_changed(account_id, endpoint, device_name, roots):
     if not endpoint or not roots:
         return 0
     _init()
-    payload = {
-        "action": "session_threads_changed",
-        "deviceName": device_name,
-        "roots": roots,
-    }
+    from boto3.dynamodb.conditions import Key
+    roots_by_connection = {}
+    for root in roots:
+        root_session_id = root.get("rootSessionId", "")
+        if not root_session_id:
+            continue
+        kwargs = {
+            "KeyConditionExpression": Key("sessionId").eq(
+                _root_subscription_id(root_session_id)
+            ),
+            "ConsistentRead": True,
+        }
+        response = _subscriptions_table.query(**kwargs)
+        subscriptions = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = _subscriptions_table.query(
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+                **kwargs,
+            )
+            subscriptions.extend(response.get("Items", []))
+        for subscription in subscriptions:
+            if subscription.get("accountId") != account_id:
+                continue
+            connection_id = subscription.get("connectionId", "")
+            if connection_id:
+                roots_by_connection.setdefault(connection_id, []).append(root)
+
     delivered = 0
-    for item in _query_connections(account_id, "app"):
-        if _post_to_connection(endpoint, item["connectionId"], payload):
+    for connection_id, subscribed_roots in roots_by_connection.items():
+        payload = {
+            "action": "session_threads_changed",
+            "deviceName": device_name,
+            "roots": subscribed_roots,
+        }
+        if _post_to_connection(endpoint, connection_id, payload):
             delivered += 1
     return delivered
 

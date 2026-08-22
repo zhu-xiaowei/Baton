@@ -29,6 +29,7 @@ export const state = {
   // ---- WebSocket connection + message state (ws.js) ----
   ws: null,
   wsSessionId: null,
+  wsRootSessionId: null,
   wsMessageCount: 0,
   wsStatusText: '',
   wsAllMessages: [],          // all messages for the active session, sorted ascending

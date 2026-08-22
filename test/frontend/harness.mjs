@@ -146,6 +146,7 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.WS_URL = 'wss://test'; state.KEY = 'k';
   state.appState = { session: mode === 'new' ? '__new__' : sessionId, device: 'D', project: { hash: '-h' } };
   state.wsSessionId = sessionId;
+  state.wsRootSessionId = sessionId;
   state.wsAllMessages = []; state.wsMessageUuids = new Set(); state.wsRenderedCount = 0; state.wsMessageCount = 0;
   state._wsBuffer = null; state.wsRunning = mode === 'new';
   state._syncedOnce = null;
