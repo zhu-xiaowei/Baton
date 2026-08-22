@@ -387,13 +387,7 @@ function updateBreadcrumb() {
   var titleHtml = '';
   if (state.appState.session) {
     parts.pop();
-    var activeThread = activeSessionThread();
-    var activeThreadTitle = activeThread
-      && activeThread.sessionId !== state.rootSessionId
-      ? (activeThread.preview || activeThread.agentName || '')
-      : '';
-    var titleText = esc(activeThreadTitle
-      || state.rootSessionPreview
+    var titleText = esc(state.rootSessionPreview
       || state.appState.sessionPreview
       || shortSessionId(
         state.rootSessionId || state.appState.session,

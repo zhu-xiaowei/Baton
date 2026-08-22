@@ -103,27 +103,18 @@ function extractFirstPromptFromMsg(msg) {
   return '';
 }
 
-function shouldHideSessionMessage(message, messages) {
+function isInheritedAgentContext(message, messages) {
   if (state.appState.runtime !== 'codex'
     || !state.rootSessionId
     || state.activeThreadId === state.rootSessionId
     || message?.type !== 'user') {
     return false;
   }
-  var active = state.sessionThreads.find(function (thread) {
-    return thread.sessionId === state.activeThreadId;
-  });
-  var activePreview = String(active?.preview || '').replace(/\n/g, ' ').trim();
-  if (!activePreview) return false;
-  var prompts = [];
   for (var candidate of messages || []) {
-    var prompt = extractFirstPromptFromMsg(candidate);
-    if (prompt) prompts.push({ message: candidate, prompt: prompt });
+    if (!extractFirstPromptFromMsg(candidate)) continue;
+    return candidate === message;
   }
-  if (prompts.length < 2 || prompts[0].message !== message) return false;
-  return prompts.slice(1).some(function (entry) {
-    return entry.prompt === activePreview;
-  });
+  return false;
 }
 
 function updateTitleFromMessages() {
@@ -1360,7 +1351,6 @@ function updateLastTurn(explicitMessages) {
   for (var i = 0; i < newMessages.length; i++) {
     var msg = newMessages[i];
     if (msg._strictManaged) continue;
-    if (shouldHideSessionMessage(msg, state.wsAllMessages)) continue;
     // tool_result → update matching tool_use node
     if (isToolResultOnly(msg)) {
       if (Array.isArray(msg.content)) {
@@ -1434,7 +1424,10 @@ function updateLastTurn(explicitMessages) {
         updateTitleFromMessages();
         continue;
       }
-      var userHtml = renderUserBubble(msg);
+      var userHtml = renderUserBubble(
+        msg,
+        isInheritedAgentContext(msg, state.wsAllMessages) ? 'agent-context' : '',
+      );
       if (userHtml) {
         insertAtTimestamp(container, userHtml, msg.timestamp);
         if (msg.turnId) _strictStreamRenderer?.attachTurnToAnchor(msg.turnId);
@@ -2256,7 +2249,7 @@ Object.assign(window, {
   findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
-  extractMsgText, tryDedup, retryPendingSend, shouldHideSessionMessage,
+  extractMsgText, tryDedup, retryPendingSend, isInheritedAgentContext,
 });
 
 // Test-only hook for replaying the real WS dispatcher.

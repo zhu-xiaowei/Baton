@@ -212,7 +212,6 @@
     for (const msg of messages) {
       if (isToolResultOnly(msg)) continue;
       if (window.isSubagentNotificationMsg?.(msg)) continue;
-      if (window.shouldHideSessionMessage?.(msg, messages)) continue;
 
       if (isInterruptMsg(msg)) {
         turnItems.push({
@@ -235,7 +234,10 @@
       // User text message → flush current turn, render as bubble
       if (msg.type === 'user') {
         flushTurn();
-        html.push(renderUserBubble(msg));
+        html.push(renderUserBubble(
+          msg,
+          window.isInheritedAgentContext?.(msg, messages) ? 'agent-context' : '',
+        ));
         continue;
       }
 

@@ -93,7 +93,7 @@
   }
 
   // Render user text bubble
-  window.renderUserBubble = function (msg) {
+  window.renderUserBubble = function (msg, extraClass) {
     if (window.isSubagentNotificationMsg(msg)) return '';
     let text = '';
     if (typeof msg.content === 'string') text = msg.content;
@@ -170,7 +170,8 @@
 
     if (!displayText && !attachHtml) return '';
     const anchorAttr = msg.turnId ? ` data-anchor="${esc(msg.turnId)}"` : '';
-    return `<div class="msg-user"${anchorAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
+    const className = `msg-user${extraClass ? ` ${extraClass}` : ''}`;
+    return `<div class="${className}"${anchorAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
       ${attachHtml}
       ${displayText ? `<div class="msg-text" onclick="toggleExpand(this)">${esc(displayText)}</div>` : ''}
       <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span></div>

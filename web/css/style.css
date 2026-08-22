@@ -173,12 +173,17 @@ body {
 
 /* === User message === */
 .msg-user { background: #2d333b; padding: 10px 14px; margin-top: 24px; margin-bottom: 8px; border-radius: 12px; }
+.msg-user.agent-context {
+  background: #292f37;
+  box-shadow: inset 2px 0 rgba(88, 166, 255, .5);
+}
 .msg-user .msg-text {
   min-width: 0; max-width: 100%; font-size: 13px; line-height: 1.5;
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; position: relative;
 }
 .msg-user .msg-text.clamped { max-height: 4.5em; overflow: hidden; }
 .msg-user .msg-text.clamped::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2em; background: linear-gradient(transparent, #2d333b); pointer-events: none; }
+.msg-user.agent-context .msg-text.clamped::after { background: linear-gradient(transparent, #292f37); }
 .msg-user .msg-text.expanded { max-height: none; }
 .msg-user .msg-text.expanded::after { display: none; }
 .msg-user .msg-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
