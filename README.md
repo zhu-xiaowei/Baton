@@ -65,15 +65,14 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ## Multi-agent Sessions
 
-Baton keeps a multi-agent task grouped under its main session instead of adding every worker to the outer session list. Open the runtime icon from a session to inspect its **Subagents**:
+Baton groups a multi-agent task under its main session instead of listing every worker separately. Open a session's runtime icon to inspect its **Subagents**:
 
-- nested agents are displayed as a parent-child tree, including multi-level delegation when the runtime provides parent metadata
-- each thread shows its task, native identity, size, last activity, and running, needs input, or done state
-- the runtime status dot is green while any subagent is running, yellow when one needs input, and gray after all subagents finish
-- selecting a subagent reuses the session page while keeping the main session as the shared entry point
-- agent creation and status changes update through a root-session WebSocket subscription, so the list and status dot refresh without reloading
+- nested agents form a parent-child tree, including multi-level delegation when the runtime exposes parent metadata
+- each thread shows its task, identity, size, last activity, and running / needs input / done state
+- the status dot is green while any subagent runs, yellow when one needs input, gray once all finish
+- updates arrive over a root-session WebSocket subscription, so the list and status refresh without reloading
 
-Claude Code and Codex use the same aggregated UI. The available nesting depth depends on the runtime version and configuration; for example, Codex controls recursive delegation with `agents.max_depth`.
+Claude Code and Codex share this UI. Nesting depth depends on the runtime; Codex, for example, controls recursive delegation with `agents.max_depth`.
 
 ---
 
