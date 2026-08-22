@@ -56,6 +56,9 @@ class FakeTable:
     def update_item(self, **kwargs):
         self.updates.append(kwargs)
 
+    def query(self, **_kwargs):
+        return {"Items": []}
+
 
 class FakeRequest:
     headers = {"x-api-key": "test-key"}
@@ -282,32 +285,223 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
             sessions=[bridge_sync.SessionItem(
                 **root,
                 agentCount=2,
+                runningAgentCount=1,
+                needsInputAgentCount=0,
                 threadRootId="codex:parent",
             )],
         ),
         FakeRequest(),
     ))
     assert sessions.items[-1]["agentCount"] == 2
+    assert sessions.items[-1]["runningAgentCount"] == 1
+    assert sessions.items[-1]["activeStatus"] == "running"
     assert sessions.items[-1]["threadRootId"] == "codex:parent"
 
     asyncio.run(bridge_sync.sync_sessions(
         bridge_sync.SyncSessionsRequest(
             deviceName="Linux",
-            sessions=[bridge_sync.SessionItem(**root, status="running")],
-            agentCountUpdates=[bridge_sync.AgentCountUpdate(
-                sessionId="codex:parent",
-                project="-repo",
-                agentCount=1,
+            sessions=[bridge_sync.SessionItem(**root, status="needs_input")],
+            statusDeltas=[bridge_sync.StatusDelta(
+                deviceName="Linux",
+                projectHash="-repo",
+                from_="completed",
+                to="needs_input",
+                lastActive=root["lastActive"],
             )],
         ),
         FakeRequest(),
     ))
     assert sessions.items[-1]["agentCount"] == 2
+    assert sessions.items[-1]["runningAgentCount"] == 1
+    assert sessions.items[-1]["needsInputAgentCount"] == 0
+    assert sessions.items[-1]["status"] == "needs_input"
+    assert sessions.items[-1]["activeStatus"] == "needs_input"
     assert sessions.items[-1]["threadRootId"] == "codex:parent"
     assert sessions.items[-1]["threadRootSk"] == "codex:parent"
-    assert sessions.updates[-1]["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
-    assert sessions.updates[-1]["ExpressionAttributeValues"][":count"] == 1
-    assert "ADD" not in sessions.updates[-1]["UpdateExpression"]
+    counter_updates = [
+        update for update in sessions.updates
+        if update["UpdateExpression"].startswith("ADD runningCount")
+    ]
+    assert counter_updates
+    assert counter_updates[0]["ExpressionAttributeValues"][":dr"] == -1
+    assert counter_updates[0]["ExpressionAttributeValues"][":di"] == 1
+
+
+def test_child_status_summary_updates_root_active_status_and_counters(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    account_id = bridge_sync._hash_key("test-key")
+    sessions.items.append({
+        "accountId": account_id,
+        "sk": "SESS#Linux#-repo#codex:parent",
+        "entityType": "session",
+        "deviceName": "Linux",
+        "projectHash": "-repo",
+        "projectName": "repo",
+        "sessionId": "codex:parent",
+        "status": "completed",
+        "activeStatus": "done#2026-08-21T00:00:00.000Z",
+        "lastActive": "2026-08-21T00:00:00.000Z",
+        "agentCount": 0,
+        "runningAgentCount": 0,
+        "needsInputAgentCount": 0,
+    })
+
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[],
+            agentCountUpdates=[bridge_sync.AgentCountUpdate(
+                sessionId="codex:parent",
+                project="-repo",
+                agentCount=1,
+                runningAgentCount=1,
+                needsInputAgentCount=0,
+            )],
+        ),
+        FakeRequest(),
+    ))
+
+    root_update = next(
+        update for update in sessions.updates
+        if update["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
+    )
+    values = root_update["ExpressionAttributeValues"]
+    assert values[":count"] == 1
+    assert values[":running"] == 1
+    assert values[":needs"] == 0
+    assert values[":active"] == "running"
+    counter_updates = [
+        update for update in sessions.updates
+        if update["UpdateExpression"].startswith("ADD runningCount")
+    ]
+    assert counter_updates[0]["ExpressionAttributeValues"][":dr"] == 1
+
+
+def test_effective_status_prioritizes_needs_input_across_main_and_children():
+    assert bridge_sync._effective_status("completed", 0, 0) == "completed"
+    assert bridge_sync._effective_status("completed", 2, 0) == "running"
+    assert bridge_sync._effective_status("completed", 2, 1) == "needs_input"
+    assert bridge_sync._effective_status("running", 0, 1) == "needs_input"
+    assert bridge_sync._effective_status("needs_input", 3, 0) == "needs_input"
+
+
+def test_new_root_session_updates_device_and_project_once(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[bridge_sync.SessionItem(
+                id="codex:new-root",
+                nativeSessionId="new-root",
+                runtime="codex",
+                project="-repo",
+                projectName="repo",
+                lastActive="2026-08-21T00:00:00.000Z",
+                status="running",
+                agentCount=0,
+                runningAgentCount=0,
+                needsInputAgentCount=0,
+                threadRootId="codex:new-root",
+            )],
+            statusDeltas=[bridge_sync.StatusDelta(
+                deviceName="Linux",
+                projectHash="-repo",
+                projectName="repo",
+                from_="new",
+                to="running",
+                lastActive="2026-08-21T00:00:00.000Z",
+            )],
+        ),
+        FakeRequest(),
+    ))
+
+    root = sessions.items[-1]
+    assert root["status"] == "running"
+    assert root["activeStatus"] == "running"
+    counter_updates = [
+        update for update in sessions.updates
+        if update["UpdateExpression"].startswith("ADD runningCount")
+    ]
+    assert len(counter_updates) == 2
+    assert all(update["ExpressionAttributeValues"][":dr"] == 1 for update in counter_updates)
+    assert all(update["ExpressionAttributeValues"][":ds"] == 1 for update in counter_updates)
+
+
+def test_live_counts_use_root_effective_status_and_ignore_children(monkeypatch):
+    rows = [{
+        "deviceName": "Linux",
+        "projectHash": "-repo",
+        "status": "completed",
+        "activeStatus": "running",
+    }, {
+        "deviceName": "Linux",
+        "projectHash": "-repo",
+        "status": "running",
+        "activeStatus": "needs_input",
+    }, {
+        "deviceName": "Linux",
+        "projectHash": "-repo",
+        "status": "running",
+        "activeStatus": "running",
+        "parentSessionId": "root",
+    }]
+    monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: rows)
+
+    device_counts, project_counts = bridge_read._live_active_counts(object(), "account")
+
+    assert device_counts["Linux"] == {"running": 1, "needs_input": 1}
+    assert project_counts[("Linux", "-repo")] == {"running": 1, "needs_input": 1}
+
+
+def test_reconcile_counts_only_root_effective_statuses(monkeypatch):
+    sessions = FakeTable()
+    account_id = bridge_sync._hash_key("test-key")
+    rows = [{
+        "accountId": account_id,
+        "sk": "SESS#Linux#-repo#root-running",
+        "sessionId": "root-running",
+        "projectHash": "-repo",
+        "projectName": "repo",
+        "lastActive": "2026-08-21T00:00:00.000Z",
+        "status": "completed",
+        "activeStatus": "running",
+    }, {
+        "accountId": account_id,
+        "sk": "SESS#Linux#-repo#root-needs",
+        "sessionId": "root-needs",
+        "projectHash": "-repo",
+        "projectName": "repo",
+        "lastActive": "2026-08-21T00:00:01.000Z",
+        "status": "needs_input",
+        "activeStatus": "needs_input",
+    }, {
+        "accountId": account_id,
+        "sk": "SESS#Linux#-repo#child",
+        "sessionId": "child",
+        "projectHash": "-repo",
+        "lastActive": "2026-08-21T00:00:02.000Z",
+        "status": "running",
+        "parentSessionId": "root-running",
+        "activeStatus": "running",
+    }]
+    monkeypatch.setattr(bridge_sync, "_query_all", lambda *_args, **_kwargs: rows)
+
+    result = bridge_sync._reconcile_device(
+        sessions, account_id, "Linux", "linux", prune=True
+    )
+
+    project = next(item for item in sessions.items if item.get("entityType") == "project")
+    assert project["sessionCount"] == 2
+    assert project["runningCount"] == 1
+    assert project["idleCount"] == 1
+    assert result["sessionCount"] == 2
+    assert result["runningCount"] == 1
+    assert result["idleCount"] == 1
 
 
 def test_session_threads_returns_root_and_children(monkeypatch):

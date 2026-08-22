@@ -65,6 +65,8 @@ class SessionItem(BaseModel):
     agentDepth: int = 0
     canSend: bool = True
     agentCount: Optional[int] = None
+    runningAgentCount: Optional[int] = None
+    needsInputAgentCount: Optional[int] = None
     threadRootId: Optional[str] = None
 
 
@@ -72,6 +74,8 @@ class AgentCountUpdate(BaseModel):
     sessionId: str
     project: str
     agentCount: int = 0
+    runningAgentCount: Optional[int] = None
+    needsInputAgentCount: Optional[int] = None
 
 
 class RuntimeCapability(BaseModel):
@@ -174,6 +178,33 @@ def _list_sk(last_active: str, stable_id: str) -> str:
     return f"{last_active or '0000'}#{stable_id}"
 
 
+def _effective_status(main_status: str, running_agents: int = 0, needs_input_agents: int = 0) -> str:
+    if main_status == "needs_input" or needs_input_agents > 0:
+        return "needs_input"
+    if main_status == "running" or running_agents > 0:
+        return "running"
+    return "completed"
+
+
+def _active_status_value(status: str, last_active: str) -> str:
+    return status if status in ("running", "needs_input") else f"done#{last_active}"
+
+
+def _status_from_active_value(value: str) -> str:
+    return value if value in ("running", "needs_input") else "completed"
+
+
+def _effective_status_from_item(item: dict) -> str:
+    value = item.get("activeStatus", "")
+    if value:
+        return _status_from_active_value(value)
+    return _effective_status(
+        item.get("status", "completed"),
+        int(item.get("runningAgentCount", 0) or 0),
+        int(item.get("needsInputAgentCount", 0) or 0),
+    )
+
+
 def _counter_delta(from_: str, to: str):
     """Map a status transition to (running_delta, idle_delta, session_delta).
     'new' from-state means this is a brand-new session (sessionCount += 1).
@@ -246,11 +277,23 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     key_hash = _hash_key(raw.headers.get("x-api-key", ""))
     now = datetime.utcnow().isoformat()
 
+    incoming_status_deltas = []
+    if req.statusDelta is not None:
+        incoming_status_deltas.append(req.statusDelta)
+    if req.statusDeltas:
+        incoming_status_deltas.extend(req.statusDeltas)
+    has_status_deltas = bool(incoming_status_deltas)
+
     preserved_session_fields = {}
     for s in req.sessions:
-        needs_agent_count = not s.parentSessionId and s.agentCount is None
+        needs_agent_summary = not s.parentSessionId and (
+            s.agentCount is None
+            or s.runningAgentCount is None
+            or s.needsInputAgentCount is None
+        )
         needs_thread_root = s.threadRootId is None
-        if not needs_agent_count and not needs_thread_root:
+        needs_previous_status = not s.parentSessionId and has_status_deltas
+        if not needs_agent_summary and not needs_thread_root and not needs_previous_status:
             continue
         _, _, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
         existing = sessions_table.get_item(Key={
@@ -258,6 +301,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
         }).get("Item", {})
         preserved_session_fields[(s.project, storage_id)] = existing
+
+    effective_status_deltas = []
 
     # 1. Write SESS# items (always).
     with sessions_table.batch_writer() as batch:
@@ -292,10 +337,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             if not s.parentSessionId:
                 item["listPk"] = _session_list_pk(key_hash, req.deviceName, s.project)
                 item["listSk"] = _list_sk(s.lastActive, storage_id)
-                if s.status in ("running", "needs_input"):
-                    item["activeStatus"] = s.status
-                elif s.status == "completed":
-                    item["activeStatus"] = f"done#{s.lastActive}"
             # Agent metadata (sparse — only written when isAgent=True)
             if s.isAgent:
                 item["isAgent"] = True
@@ -309,14 +350,42 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["agentPath"] = s.agentPath
                 item["agentDepth"] = s.agentDepth
                 item["canSend"] = s.canSend
-            if not s.parentSessionId and s.agentCount is not None:
-                item["agentCount"] = max(0, s.agentCount)
-            elif not s.parentSessionId:
-                preserved_count = preserved_session_fields.get(
-                    (s.project, storage_id), {}
-                ).get("agentCount")
-                if preserved_count is not None:
-                    item["agentCount"] = preserved_count
+            if not s.parentSessionId:
+                existing = preserved_session_fields.get((s.project, storage_id), {})
+                agent_count = s.agentCount
+                if agent_count is None:
+                    agent_count = existing.get("agentCount", 0)
+                running_agent_count = s.runningAgentCount
+                if running_agent_count is None:
+                    running_agent_count = existing.get("runningAgentCount", 0)
+                needs_input_agent_count = s.needsInputAgentCount
+                if needs_input_agent_count is None:
+                    needs_input_agent_count = existing.get("needsInputAgentCount", 0)
+                agent_count = max(0, int(agent_count or 0))
+                running_agent_count = max(0, int(running_agent_count or 0))
+                needs_input_agent_count = max(0, int(needs_input_agent_count or 0))
+                item["agentCount"] = agent_count
+                item["runningAgentCount"] = running_agent_count
+                item["needsInputAgentCount"] = needs_input_agent_count
+                effective_status = _effective_status(
+                    s.status,
+                    running_agent_count,
+                    needs_input_agent_count,
+                )
+                item["activeStatus"] = _active_status_value(effective_status, s.lastActive)
+                if has_status_deltas:
+                    old_status = (
+                        _effective_status_from_item(existing)
+                        if existing else "new"
+                    )
+                    effective_status_deltas.append(StatusDelta(
+                        deviceName=req.deviceName,
+                        projectHash=s.project,
+                        projectName=s.projectName or s.project,
+                        from_=old_status,
+                        to=effective_status,
+                        lastActive=s.lastActive,
+                    ))
             thread_root_id = s.threadRootId
             if thread_root_id is None:
                 thread_root_id = preserved_session_fields.get(
@@ -331,17 +400,56 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             batch.put_item(Item=item)
 
     for update in req.agentCountUpdates or []:
+        root_key = {
+            "accountId": key_hash,
+            "sk": f"SESS#{req.deviceName}#{update.project}#{update.sessionId}",
+        }
+        root = sessions_table.get_item(Key=root_key, ConsistentRead=True).get("Item")
+        if not root:
+            continue
+        old_effective_status = _effective_status_from_item(root)
+        running_agent_count = (
+            update.runningAgentCount
+            if update.runningAgentCount is not None
+            else root.get("runningAgentCount", 0)
+        )
+        needs_input_agent_count = (
+            update.needsInputAgentCount
+            if update.needsInputAgentCount is not None
+            else root.get("needsInputAgentCount", 0)
+        )
+        running_agent_count = max(0, int(running_agent_count or 0))
+        needs_input_agent_count = max(0, int(needs_input_agent_count or 0))
+        new_effective_status = _effective_status(
+            root.get("status", "completed"),
+            running_agent_count,
+            needs_input_agent_count,
+        )
         sessions_table.update_item(
-            Key={
-                "accountId": key_hash,
-                "sk": f"SESS#{req.deviceName}#{update.project}#{update.sessionId}",
-            },
-            UpdateExpression="SET agentCount = :count, updatedAt = :now",
+            Key=root_key,
+            UpdateExpression=(
+                "SET agentCount = :count, runningAgentCount = :running, "
+                "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
+            ),
             ExpressionAttributeValues={
                 ":count": max(0, update.agentCount),
+                ":running": running_agent_count,
+                ":needs": needs_input_agent_count,
+                ":active": _active_status_value(
+                    new_effective_status, root.get("lastActive", "")
+                ),
                 ":now": now,
             },
         )
+        if old_effective_status != new_effective_status:
+            _apply_status_delta(key_hash, StatusDelta(
+                deviceName=req.deviceName,
+                projectHash=update.project,
+                projectName=root.get("projectName", update.project),
+                from_=old_effective_status,
+                to=new_effective_status,
+                lastActive=root.get("lastActive", ""),
+            ))
 
     # 2a. Complete catalogs authoritatively overwrite aggregates. An incomplete
     # first scan may bootstrap a missing device, but never clobbers an existing one.
@@ -398,12 +506,9 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             ExpressionAttributeValues={":name": req.deviceDisplayName, ":now": now},
         )
 
-    # 2b. Incremental path: ADD counters delta.
-    deltas = []
-    if req.statusDelta is not None:
-        deltas.append(req.statusDelta)
-    if req.statusDeltas:
-        deltas.extend(req.statusDeltas)
+    # 2b. Incremental path: root counters follow the effective Main+agents
+    # status. Fall back to legacy deltas only when no root session was included.
+    deltas = effective_status_deltas or incoming_status_deltas
     for d in deltas:
         try:
             _apply_status_delta(key_hash, d)
@@ -443,14 +548,30 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
     now = datetime.utcnow().isoformat()
     sess = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
                       & Key("sk").begins_with(f"SESS#{device}#"))
+    roots = [session for session in sess if not session.get("parentSessionId")]
     proj = {}  # projectHash -> {count, name, lastActive}
     device_last = ""
-    for s in sess:
+    device_running = 0
+    device_needs_input = 0
+    for s in roots:
         ph = s.get("projectHash", "")
         if not ph:
             continue
-        p = proj.setdefault(ph, {"count": 0, "name": s.get("projectName", ph), "lastActive": ""})
+        p = proj.setdefault(ph, {
+            "count": 0,
+            "running": 0,
+            "needs_input": 0,
+            "name": s.get("projectName", ph),
+            "lastActive": "",
+        })
         p["count"] += 1
+        active_status = _effective_status_from_item(s)
+        if active_status == "running":
+            p["running"] += 1
+            device_running += 1
+        elif active_status == "needs_input":
+            p["needs_input"] += 1
+            device_needs_input += 1
         la = s.get("lastActive", "")
         if la > p["lastActive"]:
             p["lastActive"] = la
@@ -471,7 +592,10 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
                 "accountId": key_hash, "sk": f"PROJ#{device}#{ph}",
                 "entityType": "project", "deviceName": device,
                 "projectHash": ph, "projectName": p["name"],
-                "sessionCount": p["count"], "lastActive": p["lastActive"], "updatedAt": now,
+                "sessionCount": p["count"],
+                "runningCount": p["running"],
+                "idleCount": p["needs_input"],
+                "lastActive": p["lastActive"], "updatedAt": now,
                 "listPk": _project_list_pk(key_hash, device),
                 "listSk": _list_sk(p["lastActive"], ph),
             })
@@ -479,6 +603,8 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
             batch.delete_item(Key={"accountId": key_hash, "sk": it["sk"]})
         for it in to_keep:
             it["sessionCount"] = 0  # keep the project in the list, now empty
+            it["runningCount"] = 0
+            it["idleCount"] = 0
             it["updatedAt"] = now
             it["listPk"] = _project_list_pk(key_hash, device)
             it["listSk"] = _list_sk(it.get("lastActive", ""), it["projectHash"])
@@ -488,14 +614,21 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
     project_count = len(proj) + len(to_keep)
     sessions_table.update_item(
         Key={"accountId": key_hash, "sk": f"DEV#{device}"},
-        UpdateExpression=("SET sessionCount = :sc, projectCount = :pc, entityType = :et, "
+        UpdateExpression=("SET sessionCount = :sc, projectCount = :pc, "
+                          "runningCount = :rc, idleCount = :ic, entityType = :et, "
                           "deviceName = :dn, os = if_not_exists(os, :os), lastActive = :la"),
         ExpressionAttributeValues={
-            ":sc": len(sess), ":pc": project_count, ":et": "device",
+            ":sc": len(roots), ":pc": project_count,
+            ":rc": device_running, ":ic": device_needs_input, ":et": "device",
             ":dn": device, ":os": os_, ":la": device_last,
         },
     )
-    return {"sessionCount": len(sess), "projectCount": project_count}
+    return {
+        "sessionCount": len(roots),
+        "projectCount": project_count,
+        "runningCount": device_running,
+        "idleCount": device_needs_input,
+    }
 
 
 @bridge_router.post("/reconcile")

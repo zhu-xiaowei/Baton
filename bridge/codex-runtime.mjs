@@ -17,6 +17,7 @@ import {
   resolveCodexHomes,
 } from './runtime-capabilities.mjs';
 import { storageSessionId } from './session-identity.mjs';
+import { trackAgentSession } from './agent-counts.mjs';
 
 function publicSession(session) {
   const { _filePath, _lineCount, ...item } = session;
@@ -150,10 +151,12 @@ export const codexRuntime = defineRuntimeAdapter({
     session.status = newStatus;
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
     const statusChanged = previousStatus !== newStatus;
+    const agentCountUpdates = trackAgentSession(session);
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [publicSession(session)],
+      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
       ...(statusChanged && !session.parentSessionId ? {
         statusDeltas: [{
           deviceName: config.deviceName,

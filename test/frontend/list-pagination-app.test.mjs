@@ -15,7 +15,7 @@ function deferred() {
 }
 
 function session(id) {
-  return {
+  var item = {
     sessionId: `s${id}`,
     preview: id === TWO_PAGES
       ? '{"action":"send_message","text":"quoted title"}'
@@ -24,8 +24,19 @@ function session(id) {
     size: id,
     model: 'test-model',
     status: 'completed',
+    activeStatus: id === TWO_PAGES ? 'running' : 'completed',
     agentCount: id === TWO_PAGES ? 3 : 0,
   };
+  if (id === TWO_PAGES - 1) {
+    item.activeStatus = 'needs_input';
+    item.agentDetail = 'Child detail must stay hidden';
+  }
+  if (id === TWO_PAGES - 2) {
+    item.status = 'needs_input';
+    item.activeStatus = 'needs_input';
+    item.agentDetail = 'Approve Main request';
+  }
+  return item;
 }
 
 function project(id) {
@@ -194,6 +205,22 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     assert.equal(
       content.querySelector(`[data-id="s${TWO_PAGES}"] .badge.agent`).textContent,
       '3 agents',
+    );
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES}"] .badge.running`).textContent,
+      'Running',
+    );
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES - 1}"] .badge.idle`).textContent,
+      'Needs input',
+    );
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES - 1}"] .session-detail-view`),
+      null,
+    );
+    assert.equal(
+      content.querySelector(`[data-id="s${TWO_PAGES - 2}"] .session-detail-view`).textContent,
+      'Approve Main request',
     );
 
     content.scrollTop = 1700;

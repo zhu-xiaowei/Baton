@@ -1120,8 +1120,9 @@ function sessionsHtml(device, projectHash, data, sel) {
     var childAgentsBadge = agentCount
       ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>'
       : '';
-    var sLabel = statusLabel(s.status);
-    var sClass = statusClass(s.status);
+    var displayStatus = s.activeStatus || s.status;
+    var sLabel = statusLabel(displayStatus);
+    var sClass = statusClass(displayStatus);
     var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
     var runtime = sessionRuntime(s.sessionId, s.runtime);
     var nativeId = nativeSessionId(s.sessionId, s.nativeSessionId, runtime);

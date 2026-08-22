@@ -26,6 +26,7 @@ import {
   findClaudeSubagentFile,
   parseClaudeSubagentSessionId,
 } from './claude-subagent.mjs';
+import { trackAgentSession } from './agent-counts.mjs';
 
 function findClaudeSessionFile(nativeSessionId) {
   return findClaudeSubagentFile(nativeSessionId) || findSessionFile(nativeSessionId);
@@ -300,6 +301,7 @@ export const claudeRuntime = defineRuntimeAdapter({
     session.agentDetail = newStatus === 'needs_input'
       ? (detail !== undefined ? detail : daemon?.agentDetail || '')
       : '';
+    trackAgentSession(session);
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,

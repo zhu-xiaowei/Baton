@@ -113,8 +113,21 @@ def _parse_timestamp(value):
         return None
 
 
+def _public_active_status(item):
+    value = item.get("activeStatus", "")
+    if value in ("running", "needs_input"):
+        return value
+    if str(value).startswith("done#"):
+        return "completed"
+    if item.get("status") == "needs_input" or int(item.get("needsInputAgentCount", 0) or 0) > 0:
+        return "needs_input"
+    if item.get("status") == "running" or int(item.get("runningAgentCount", 0) or 0) > 0:
+        return "running"
+    return "completed"
+
+
 def _active_session_visible(item, online_devices, now=None):
-    status = item.get("status", "")
+    status = _public_active_status(item)
     if status not in ("running", "needs_input"):
         return False
     if online_devices is not None and item.get("deviceName", "") not in online_devices:
@@ -253,6 +266,7 @@ async def get_active_sessions(request: Request):
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
             "status": item.get("status", "completed"),
+            "activeStatus": _public_active_status(item),
             "deviceName": item.get("deviceName", ""),
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
@@ -296,7 +310,7 @@ def _live_active_counts(sessions_table, account_id):
     for r in rows:
         if r.get("parentSessionId"):
             continue
-        st = r.get("status", "")
+        st = _public_active_status(r)
         if st not in ("running", "needs_input"):
             continue
         dn, ph = r.get("deviceName", ""), r.get("projectHash", "")
@@ -437,6 +451,7 @@ async def get_sessions(
             "size": item.get("size", 0),
             "model": item.get("model", ""),
             "status": item.get("status", "completed"),
+            "activeStatus": _public_active_status(item),
             "agentCount": item.get("agentCount", 0),
             **_runtime_fields(item),
             **_thread_fields(item),

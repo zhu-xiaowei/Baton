@@ -54,6 +54,7 @@ test('catalog aggregates count root sessions but still upload child threads', as
   const root = session(1, 'codex');
   const child = {
     ...session(2, 'codex'),
+    status: 'running',
     parentSessionId: 'codex:0001',
     threadKind: 'subagent',
   };
@@ -61,7 +62,11 @@ test('catalog aggregates count root sessions but still upload child threads', as
   const aggregates = buildCatalogAggregates([root, child]);
   assert.equal(aggregates.deviceAggregate.sessionCount, 1);
   assert.equal(aggregates.projectAggregates[0].sessionCount, 1);
+  assert.equal(aggregates.deviceAggregate.runningCount, 1);
+  assert.equal(aggregates.projectAggregates[0].runningCount, 1);
   assert.equal(root.agentCount, 1);
+  assert.equal(root.runningAgentCount, 1);
+  assert.equal(root.activeStatus, 'running');
   assert.equal(root.threadRootId, 'codex:0001');
   assert.equal(child.threadRootId, 'codex:0001');
 
@@ -105,6 +110,9 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
 
   rebuildAgentCounts([root, first, second, guardian, grandchild]);
   assert.equal(root.agentCount, 3);
+  assert.equal(root.runningAgentCount, 1);
+  assert.equal(root.needsInputAgentCount, 0);
+  assert.equal(root.activeStatus, 'running');
   assert.equal(root.threadRootId, 'codex:0001');
   assert.equal(first.threadRootId, 'codex:0001');
   assert.equal(grandchild.threadRootId, 'codex:0001');
@@ -113,16 +121,33 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
     sessionId: 'codex:0001',
     project: '-repo',
     agentCount: 3,
+    runningAgentCount: 1,
+    needsInputAgentCount: 0,
+    activeStatus: 'running',
   }]);
   assert.deepEqual(trackAgentSession(grandchild), [{
     sessionId: 'codex:0001',
     project: '-repo',
     agentCount: 3,
+    runningAgentCount: 1,
+    needsInputAgentCount: 0,
+    activeStatus: 'running',
+  }]);
+  assert.deepEqual(trackAgentSession({ ...grandchild, status: 'needs_input' }), [{
+    sessionId: 'codex:0001',
+    project: '-repo',
+    agentCount: 3,
+    runningAgentCount: 1,
+    needsInputAgentCount: 1,
+    activeStatus: 'needs_input',
   }]);
   assert.deepEqual(trackAgentSession({ ...first, threadKind: 'internal' }), [{
     sessionId: 'codex:0001',
     project: '-repo',
     agentCount: 1,
+    runningAgentCount: 1,
+    needsInputAgentCount: 0,
+    activeStatus: 'running',
   }]);
   assert.deepEqual(trackAgentSession(guardian), []);
 });

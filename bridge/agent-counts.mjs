@@ -2,7 +2,9 @@ import { storageSessionId } from './session-identity.mjs';
 
 const parentChildren = new Map();
 const childParents = new Map();
+const childStatuses = new Map();
 const parentProjects = new Map();
+const rootStatuses = new Map();
 
 function sessionStorageId(session) {
   return storageSessionId(
@@ -36,30 +38,54 @@ function rootFor(sessionId) {
   return current;
 }
 
-function descendantCount(rootSessionId) {
-  let count = 0;
+function normalizedStatus(status) {
+  return status === 'running' || status === 'needs_input' ? status : 'completed';
+}
+
+function summaryForRoot(rootSessionId) {
+  let agentCount = 0;
+  let runningAgentCount = 0;
+  let needsInputAgentCount = 0;
   for (const childSessionId of childParents.keys()) {
-    if (rootFor(childSessionId) === rootSessionId) count++;
+    if (rootFor(childSessionId) !== rootSessionId) continue;
+    agentCount++;
+    const status = childStatuses.get(childSessionId);
+    if (status === 'running') runningAgentCount++;
+    else if (status === 'needs_input') needsInputAgentCount++;
   }
-  return count;
+  const mainStatus = normalizedStatus(rootStatuses.get(rootSessionId));
+  const activeStatus = mainStatus === 'needs_input' || needsInputAgentCount > 0
+    ? 'needs_input'
+    : (mainStatus === 'running' || runningAgentCount > 0 ? 'running' : 'completed');
+  return {
+    agentCount,
+    runningAgentCount,
+    needsInputAgentCount,
+    activeStatus,
+  };
 }
 
 function countUpdate(rootSessionId, fallbackProject = '') {
+  const summary = summaryForRoot(rootSessionId);
   return {
     sessionId: rootSessionId,
     project: parentProjects.get(rootSessionId) || fallbackProject,
-    agentCount: descendantCount(rootSessionId),
+    ...summary,
   };
 }
 
 export function rebuildAgentCounts(sessions) {
   parentChildren.clear();
   childParents.clear();
+  childStatuses.clear();
   parentProjects.clear();
+  rootStatuses.clear();
 
   for (const session of sessions) {
     if (session.parentSessionId) continue;
-    parentProjects.set(sessionStorageId(session), session.project || '');
+    const sessionId = sessionStorageId(session);
+    parentProjects.set(sessionId, session.project || '');
+    rootStatuses.set(sessionId, normalizedStatus(session.status));
   }
   for (const session of sessions) {
     const parentSessionId = visibleParent(session);
@@ -67,12 +93,13 @@ export function rebuildAgentCounts(sessions) {
     const childSessionId = sessionStorageId(session);
     childrenFor(parentSessionId).add(childSessionId);
     childParents.set(childSessionId, parentSessionId);
+    childStatuses.set(childSessionId, normalizedStatus(session.status));
   }
   for (const session of sessions) {
     const sessionId = sessionStorageId(session);
     if (!session.parentSessionId) {
       session.threadRootId = sessionId;
-      session.agentCount = descendantCount(sessionId);
+      Object.assign(session, summaryForRoot(sessionId));
     } else {
       session.threadRootId = visibleParent(session) ? rootFor(sessionId) : '';
     }
@@ -84,8 +111,9 @@ export function trackAgentSession(session) {
   const sessionId = sessionStorageId(session);
   if (!session.parentSessionId) {
     parentProjects.set(sessionId, session.project || '');
+    rootStatuses.set(sessionId, normalizedStatus(session.status));
     session.threadRootId = sessionId;
-    session.agentCount = descendantCount(sessionId);
+    Object.assign(session, summaryForRoot(sessionId));
     return [];
   }
 
@@ -98,10 +126,12 @@ export function trackAgentSession(session) {
     if (children && !children.size) parentChildren.delete(previousParent);
   }
   childParents.delete(sessionId);
+  childStatuses.delete(sessionId);
 
   if (nextParent) {
     childrenFor(nextParent).add(sessionId);
     childParents.set(sessionId, nextParent);
+    childStatuses.set(sessionId, normalizedStatus(session.status));
   }
 
   const nextRoot = nextParent ? rootFor(sessionId) : '';
