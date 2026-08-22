@@ -446,10 +446,57 @@ async function refreshSessionThreads() {
   return threads;
 }
 
+function updateAgentThreadsMainButton() {
+  var mainButton = document.getElementById('agentThreadsMain');
+  if (!mainButton) return;
+  var isMain = state.activeThreadId === state.rootSessionId;
+  mainButton.dataset.sessionId = state.rootSessionId || '';
+  mainButton.textContent = 'Main Agent';
+  mainButton.setAttribute('aria-current', isMain ? 'true' : 'false');
+  mainButton.setAttribute(
+    'aria-label',
+    isMain ? 'Close agent list; currently viewing main agent' : 'Return to main agent',
+  );
+  mainButton.title = isMain ? 'Close agent list' : 'Return to main agent';
+}
+
 function renderAgentThreadsModal() {
   var list = document.getElementById('agentThreadsList');
   if (!list) return;
-  list.innerHTML = state.sessionThreads.map(function (thread) {
+  updateAgentThreadsMainButton();
+  var byId = new Map(state.sessionThreads.map(function (thread) {
+    return [thread.sessionId, thread];
+  }));
+  var childrenByParent = new Map();
+  state.sessionThreads.forEach(function (thread) {
+    if (thread.sessionId === state.rootSessionId) return;
+    var parentId = byId.has(thread.parentSessionId)
+      ? thread.parentSessionId
+      : state.rootSessionId;
+    var children = childrenByParent.get(parentId) || [];
+    children.push(thread);
+    childrenByParent.set(parentId, children);
+  });
+
+  function connectorHtml(depth, ancestorOpen, isLast, hasChildren) {
+    if (!depth && !hasChildren) return '';
+    var parts = [];
+    ancestorOpen.forEach(function (open, index) {
+      if (!open) return;
+      var left = -((depth - index - 1) * 24) - 12;
+      parts.push('<i class="agent-thread-rail" style="left:' + left + 'px"></i>');
+    });
+    if (depth) {
+      parts.push('<i class="agent-thread-rail current'
+        + (isLast ? ' last' : '') + '"></i>');
+      parts.push('<i class="agent-thread-elbow"></i>');
+    }
+    if (hasChildren) parts.push('<i class="agent-thread-child-stem"></i>');
+    return '<span class="agent-thread-connectors" aria-hidden="true">'
+      + parts.join('') + '</span>';
+  }
+
+  function rowHtml(thread, depth, ancestorOpen, isLast, hasChildren) {
     var isMain = thread.sessionId === state.rootSessionId;
     var nickname = String(thread.agentName || '').trim();
     var role = String(thread.agentRole || '').trim();
@@ -480,13 +527,12 @@ function renderAgentThreadsModal() {
       ));
     }
     var selected = thread.sessionId === state.activeThreadId;
-    var indent = isMain
-      ? 0
-      : Math.min(4, Math.max(0, (Number(thread.agentDepth) || 1) - 1));
+    var indent = isMain ? 0 : Math.min(4, Math.max(0, depth));
     return '<button class="agent-thread-row' + (selected ? ' selected' : '') + '"'
       + ' type="button" data-session-id="' + esc(thread.sessionId) + '"'
       + ' style="--agent-indent:' + indent + '"'
       + ' onclick="switchAgentThread(this.dataset.sessionId)">'
+      + connectorHtml(indent, ancestorOpen.slice(0, indent - 1), isLast, hasChildren)
       + '<span class="agent-thread-copy"><span class="agent-thread-title">'
       + '<strong>' + esc(name) + '</strong>'
       + '<span class="badge ' + statusClass(thread.status) + '">'
@@ -495,7 +541,28 @@ function renderAgentThreadsModal() {
       + (thread.lastActive ? '<time>' + esc(timeAgo(thread.lastActive)) + '</time>' : '')
       + '</span>'
       + '</span></button>';
-  }).join('');
+  }
+
+  function childHtml(parentId, ancestorOpen, depth) {
+    var children = childrenByParent.get(parentId) || [];
+    return children.map(function (thread, index) {
+      var isLast = index === children.length - 1;
+      var grandchildren = childrenByParent.get(thread.sessionId) || [];
+      return rowHtml(thread, depth, ancestorOpen, isLast, grandchildren.length > 0)
+        + childHtml(
+          thread.sessionId,
+          depth === 0 ? [] : ancestorOpen.concat(!isLast),
+          depth + 1,
+        );
+    }).join('');
+  }
+
+  var root = byId.get(state.rootSessionId) || state.sessionThreads[0];
+  if (!root) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = childHtml(root.sessionId, [], 0);
 }
 
 function renderAgentThreadsSkeleton() {
@@ -515,6 +582,7 @@ async function openAgentThreadsModal() {
   var modal = document.getElementById('agentThreadsModal');
   if (!modal) return;
   var rootSessionId = state.rootSessionId;
+  updateAgentThreadsMainButton();
   modal.style.display = 'flex';
   requestAnimationFrame(function () { modal.classList.add('open'); });
   if (state.sessionThreads.length > 1) renderAgentThreadsModal();

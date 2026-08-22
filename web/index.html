@@ -571,8 +571,13 @@
 </div>
 
 <div id="agentThreadsModal" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAgentThreadsModal()">
-  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Agent threads">
-    <div class="modal-title">Agents</div>
+  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Subagents">
+    <div class="agent-threads-header">
+      <div class="modal-title">Subagents</div>
+      <button id="agentThreadsMain" class="agent-main-thread-btn" type="button"
+        aria-label="Return to main agent" title="Return to main agent"
+        onclick="switchAgentThread(this.dataset.sessionId)">Main Agent</button>
+    </div>
     <div id="agentThreadsList" class="agent-threads-list"></div>
   </div>
 </div>
