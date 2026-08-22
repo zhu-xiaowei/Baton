@@ -10,6 +10,15 @@ export function claudeSubagentSessionId(parentSessionId, agentId) {
   return `${parentSessionId}${MARKER}${agentId}`;
 }
 
+export function claudeSubagentParentSessionId(rootSessionId, meta = {}) {
+  const parentAgentId = String(meta.parentAgentId || '').trim();
+  if (!parentAgentId) return rootSessionId;
+  const normalizedParentId = parentAgentId.startsWith('agent-')
+    ? parentAgentId
+    : `agent-${parentAgentId}`;
+  return claudeSubagentSessionId(rootSessionId, normalizedParentId);
+}
+
 export function parseClaudeSubagentSessionId(sessionId) {
   const value = String(sessionId || '');
   const index = value.indexOf(MARKER);
@@ -74,7 +83,10 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
         : 'completed',
       isAgent: true,
       threadKind: 'subagent',
-      parentSessionId: parentSession.nativeSessionId,
+      parentSessionId: claudeSubagentParentSessionId(
+        parentSession.nativeSessionId,
+        meta,
+      ),
       agentName: meta.description || meta.agentType || agentId,
       agentPath: agentId,
       agentDepth: Number.isInteger(meta.spawnDepth) ? meta.spawnDepth : 1,

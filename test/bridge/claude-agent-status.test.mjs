@@ -211,6 +211,23 @@ test('Claude inline subagents are discovered as child threads', () => {
       'subagents',
     );
     fs.mkdirSync(subagentsDir, { recursive: true });
+    const parentAgentFile = path.join(subagentsDir, 'agent-parent.jsonl');
+    writeRows(parentAgentFile, [{
+      type: 'user',
+      uuid: 'parent-agent-user',
+      sessionId: parentId,
+      timestamp: '2026-08-10T00:00:01.000Z',
+      message: { content: 'Coordinate child work' },
+    }]);
+    fs.writeFileSync(
+      parentAgentFile.replace(/\.jsonl$/, '.meta.json'),
+      JSON.stringify({
+        agentType: 'general-purpose',
+        description: 'Parent agent',
+        toolUseId: 'tool-parent',
+        spawnDepth: 1,
+      }),
+    );
     const childFile = path.join(subagentsDir, 'agent-a1b2c3.jsonl');
     writeRows(childFile, [{
       type: 'user',
@@ -235,6 +252,7 @@ test('Claude inline subagents are discovered as child threads', () => {
         agentType: 'Explore',
         description: 'Inspect test coverage',
         toolUseId: 'tool-1',
+        parentAgentId: 'parent',
         spawnDepth: 2,
       }),
     );
@@ -245,11 +263,21 @@ test('Claude inline subagents are discovered as child threads', () => {
       daemonMeta: new Map(),
       now: Date.parse('2026-08-10T00:01:00.000Z'),
     });
-    assert.equal(catalog.sessions.length, 2);
-    const child = catalog.sessions.find((session) => session.parentSessionId);
+    assert.equal(catalog.sessions.length, 3);
+    const parentAgent = catalog.sessions.find(
+      (session) => session.agentPath === 'agent-parent',
+    );
+    const child = catalog.sessions.find(
+      (session) => session.agentPath === 'agent-a1b2c3',
+    );
+    assert.ok(parentAgent);
     assert.ok(child);
     assert.equal(child.threadKind, 'subagent');
-    assert.equal(child.parentSessionId, parentId);
+    assert.equal(parentAgent.parentSessionId, parentId);
+    assert.equal(
+      child.parentSessionId,
+      `${parentId}:subagent:agent-parent`,
+    );
     assert.equal(child.agentName, 'Inspect test coverage');
     assert.equal(child.agentPath, 'agent-a1b2c3');
     assert.equal(child.agentDepth, 2);

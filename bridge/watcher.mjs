@@ -15,6 +15,7 @@ import {
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
 import {
+  claudeSubagentParentSessionId,
   claudeSubagentSessionId,
   readClaudeSubagentMeta,
 } from './claude-subagent.mjs';
@@ -281,20 +282,20 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
   const subagentIndex = parts.indexOf('subagents');
   if (subagentIndex < 2) return;
   const projectHash = normalizeProjectHash(parts[0]);
-  const parentSessionId = parts[subagentIndex - 1];
+  const rootSessionId = parts[subagentIndex - 1];
   const agentId = path.basename(filename, '.jsonl');
   const meta = readClaudeSubagentMeta(filePath);
   const parentFile = path.join(
     CLAUDE_PROJECTS,
     parts[0],
-    `${parentSessionId}.jsonl`,
+    `${rootSessionId}.jsonl`,
   );
   const parentMetadata = fs.existsSync(parentFile)
     ? getSessionMetadata(parentFile)
     : {};
   const stat = fs.statSync(filePath);
   const status = lastStatus
-    ? resolveStatus(parentSessionId, lastStatus)
+    ? resolveStatus(rootSessionId, lastStatus)
     : (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
   lastKnownStatus.set(sessionId, status);
   recentSessions.add(sessionId);
@@ -311,7 +312,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
     status,
     isAgent: true,
     threadKind: 'subagent',
-    parentSessionId,
+    parentSessionId: claudeSubagentParentSessionId(rootSessionId, meta),
     agentName: meta.description || meta.agentType || agentId,
     agentPath: agentId,
     agentDepth: Number.isInteger(meta.spawnDepth) ? meta.spawnDepth : 1,
