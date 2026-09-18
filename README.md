@@ -51,8 +51,10 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Real-time streaming and rendering** — follow responses, tool activity, diffs, Mermaid diagrams, and LaTeX as they arrive
 - **Non-intrusive workflow** — keep using Claude Code and Codex normally while a lightweight local Bridge observes and relays sessions
 - **Claude Code and Codex** — browse and control both runtimes through one Device → Project → Session catalog
+- **Recent projects** — browse projects across devices, with Claude Code and Codex sessions grouped by project
 - **Multi-device session control** — track running, needs input, and done states, then continue work from any connected device
 - **Remote interaction** — send follow-ups, interrupt running turns, answer questions, and approve or deny tool calls
+- **Project terminals** — open and switch between up to five shells per project, share live terminals across devices, and restore their screens when returning (macOS / Linux Bridge)
 - **Multi-agent session aggregation** — keep one main session in the catalog while viewing and switching between its nested Claude Code or Codex subagents
 - **Live agent status** — follow running, needs input, and completed subagents through a real-time status indicator and hierarchical thread list
 - **Sessions and agents** — create Claude Code, Codex, or Claude background-agent sessions and monitor them after detaching
@@ -62,6 +64,8 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Claude usage insights** — view status, settings, rate limits, token history, and model usage charts
 - **Execution timeline** — inspect collapsible tool calls and results with runtime-specific states
 - **Project and artifact viewer** — browse source with line highlighting and preview HTML, Markdown, images, files, and videos
+- **Git changes** — review project Git status and file diffs without leaving the app
+- **Inline HTML previews** — view interactive HTML directly in conversations and expand previews to full screen without losing their state
 
 ---
 
