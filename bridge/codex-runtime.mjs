@@ -18,6 +18,10 @@ import {
 } from './runtime-capabilities.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
+import { codexArchives } from './codex-archive.mjs';
+import { codexArchiveRecords } from './codex-archive-index.mjs';
+import { canInspectCodexArchiveWriters } from './codex-writer.mjs';
+import { codexSessionStatus, rememberCodexStatus } from './codex-status.mjs';
 
 function publicSession(session) {
   const { _filePath, _lineCount, ...item } = session;
@@ -34,18 +38,22 @@ export const codexRuntime = defineRuntimeAdapter({
     statusPolling: true,
   },
   interaction: codexInteraction,
+  archive: codexArchives,
 
   discover: discoverCodexSessions,
   detectCapability(options = {}) {
     const homes = options.codexHomes || resolveCodexHomes();
     const binary = options.codexBin === undefined ? resolveCodexBin() : options.codexBin;
-    const historyAvailable = homes.some((home) => existingDirectory(path.join(home, 'sessions')));
+    const historyAvailable = homes.some((home) => existingDirectory(path.join(home, 'sessions')))
+      || codexArchiveRecords().some((record) => !!record.path);
     return {
       installed: !!binary,
       historyAvailable,
       canRead: historyAvailable,
       canCreate: !!binary,
       canSend: !!binary,
+      canArchive: !!binary && codexArchives.supported && canInspectCodexArchiveWriters(),
+      canUnarchive: !!binary && codexArchives.supported && canInspectCodexArchiveWriters(),
       version: options.skipVersions ? '' : binaryVersion(binary),
     };
   },
@@ -103,6 +111,8 @@ export const codexRuntime = defineRuntimeAdapter({
     const filePath = findCodexSessionFile(nativeSessionId);
     let session;
     if (!filePath || !fs.existsSync(filePath)) {
+      const observed = codexSessionStatus(nativeSessionId);
+      if (!observed.status) return null;
       session = {
         id: nativeSessionId,
         nativeSessionId,
@@ -113,7 +123,7 @@ export const codexRuntime = defineRuntimeAdapter({
         size: 0,
         preview: active.preview || '',
         model: '',
-        status: 'completed',
+        ...observed,
       };
     } else {
       session = inspectCodexSession(nativeSessionId, {
@@ -150,6 +160,7 @@ export const codexRuntime = defineRuntimeAdapter({
     });
     if (!session) return;
     session.status = newStatus;
+    Object.assign(session, rememberCodexStatus(nativeSessionId, newStatus, filePath));
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
     const statusChanged = previousStatus !== newStatus;
     const agentCountUpdates = trackAgentSession(session);

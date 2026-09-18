@@ -127,7 +127,7 @@ test('legacy prompts are discovered after builtins in name order', (t) => {
   assert.equal(prompts[0].description, 'First prompt');
   assert.equal(prompts[0].argumentHint, 'NAME=value');
 
-  const catalog = codexCommandCatalog({ codexHomes: [home] });
+  const catalog = codexCommandCatalog({ codexHomes: [home], platform: 'darwin' });
   assert.deepEqual(
     catalog.slice(0, CODEX_MOBILE_COMMANDS.length).map((command) => command.name),
     CODEX_MOBILE_COMMANDS.map((command) => command.name),

@@ -236,3 +236,48 @@ export const codexWriterController = {
   describe: describeCodexWriter,
   terminate: terminateCodexWriter,
 };
+
+export function inspectCodexArchiveWriter(threadId, home, client, thread) {
+  // An idle thread loaded by a shared server may still have an external writer.
+  if (!canInspectCodexArchiveWriters()) return { verified: false, occupied: true };
+  const lockPath = lockPathForThread(threadId, [home]);
+  if (!lockPath) return { verified: true, occupied: false };
+  if (process.platform === 'win32') return { verified: false, occupied: true };
+  const lsof = findExecutable('lsof', ['/usr/sbin/lsof', '/usr/bin/lsof']);
+  if (lsof) {
+    try {
+      const output = execFileSync(lsof, ['-t', '--', lockPath], {
+        encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { verified: true, occupied: !!output.trim() };
+    } catch (error) {
+      return { verified: error.status === 1 && !String(error.stderr || '').trim(), occupied: false };
+    }
+  }
+  if (process.platform !== 'linux') return { verified: false, occupied: true };
+  try {
+    for (const name of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue;
+      try {
+        if (fs.statSync(`/proc/${name}`).uid !== process.getuid()) continue;
+        for (const fd of fs.readdirSync(`/proc/${name}/fd`)) {
+          try {
+            if (fs.readlinkSync(`/proc/${name}/fd/${fd}`) === lockPath) return { verified: true, occupied: true };
+          } catch (error) {
+            if (error.code !== 'ENOENT') return { verified: false, occupied: true };
+          }
+        }
+      } catch (error) {
+        if (error.code !== 'ENOENT' && error.code !== 'ESRCH') return { verified: false, occupied: true };
+      }
+    }
+    return { verified: true, occupied: false };
+  } catch {
+    return { verified: false, occupied: true };
+  }
+}
+
+export function canInspectCodexArchiveWriters() {
+  return process.platform === 'linux'
+    || (process.platform === 'darwin' && !!findExecutable('lsof', ['/usr/sbin/lsof', '/usr/bin/lsof']));
+}

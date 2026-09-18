@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { codexSessionStatus } from './codex-status.mjs';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
 import { readableProjectName } from './session.mjs';
+import { codexArchiveRecord, codexArchiveRecords, safeCodexArchivePath } from './codex-archive-index.mjs';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const codexFileIndex = new Map();
@@ -210,6 +212,7 @@ export function scanCodexRollout(filePath, options = {}) {
   let onlyMetadata = null;
   let matchingMetadata = null;
   let activeTurnId = '';
+  let terminalAt = 0;
   const eventPreviews = [];
   const responsePreviews = [];
   let model = '';
@@ -250,6 +253,7 @@ export function scanCodexRollout(filePath, options = {}) {
       if ((payload.type === 'task_complete' || payload.type === 'turn_aborted')
         && payload.turn_id === activeTurnId) {
         activeTurnId = '';
+        terminalAt = Date.parse(entry.timestamp) || 0;
       }
     });
   } catch (error) {
@@ -337,7 +341,9 @@ export function scanCodexRollout(filePath, options = {}) {
         || '',
       ),
       cliVersion: String(meta.cli_version || ''),
-      status: isRunning ? 'running' : 'completed',
+      ...codexSessionStatus(nativeSessionId, isRunning ? 'running' : 'completed', filePath, activeTurnId ? 0 : terminalAt),
+      archiveState: codexArchiveRecord(nativeSessionId, filePath)?.archiveState || 'unknown',
+      archiveVersion: codexArchiveRecord(nativeSessionId, filePath)?.archiveVersion || 0,
       ...(parentNativeSessionId ? {
         isAgent: visibleSubagent,
         threadKind: visibleSubagent ? 'subagent' : 'internal',
@@ -365,6 +371,11 @@ export function discoverCodexSessions(options = {}) {
   for (const home of homes) {
     const homeFiles = [];
     walkJsonl(path.join(home, 'sessions'), homeFiles, errors);
+    for (const record of codexArchiveRecords()) {
+      if (record.home !== path.resolve(home)) continue;
+      const filePath = safeCodexArchivePath(home, record.path);
+      if (filePath && !homeFiles.includes(filePath)) homeFiles.push(filePath);
+    }
     for (const filePath of homeFiles) files.push({ filePath, home });
     try {
       threadNames.set(home, readCodexThreadNames(home));
@@ -421,12 +432,20 @@ export function discoverCodexSessions(options = {}) {
 
 export function findCodexSessionFile(nativeSessionId, options = {}) {
   if (!nativeSessionId) return null;
+  const records = codexArchiveRecords().filter((record) => record.id === nativeSessionId
+    && (!options.codexHomes || options.codexHomes.some((home) => path.resolve(home) === record.home)));
+  if (records.length > 1) return null;
+  const record = records[0];
+  if (record) {
+    const archivedPath = safeCodexArchivePath(record.home, record.path);
+    if (archivedPath) return archivedPath;
+  }
   if (!options.codexHomes) {
     const indexed = codexFileIndex.get(nativeSessionId);
-    if (indexed && fs.existsSync(indexed)) return indexed;
+    if (indexed && (!record || safeCodexArchivePath(record.home, indexed)) && fs.existsSync(indexed)) return indexed;
     codexFileIndex.delete(nativeSessionId);
   }
-  const homes = options.codexHomes || resolveCodexHomes();
+  const homes = record ? [record.home] : (options.codexHomes || resolveCodexHomes());
   const files = [];
   const errors = [];
   for (const home of homes) walkJsonl(path.join(home, 'sessions'), files, errors);

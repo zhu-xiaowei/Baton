@@ -91,7 +91,8 @@ function routeKey(appState) {
   if (!appState.device) return 'devices';
   if (!appState.project) return 'projects:' + encodeURIComponent(appState.device);
   if (!appState.session) {
-    return 'sessions:' + encodeURIComponent(appState.device) + ':' + encodeURIComponent(appState.project.hash);
+    return 'sessions:' + encodeURIComponent(appState.device) + ':' + encodeURIComponent(appState.project.hash)
+      + (appState.archiveFilter === 'archived' ? ':archived' : '');
   }
   return 'session:' + encodeURIComponent(appState.device) + ':'
     + encodeURIComponent(appState.project.hash) + ':' + encodeURIComponent(appState.session);
@@ -105,7 +106,8 @@ function cloneNavState(appState) {
       : null,
     session: appState.session || null,
     sessionPreview: appState.sessionPreview || '',
-    isAgent: !!appState.isAgent
+    isAgent: !!appState.isAgent,
+    archiveFilter: appState.archiveFilter || 'sessions',
   };
 }
 
@@ -160,7 +162,8 @@ function ancestorStates(appState) {
       device: appState.device,
       project: { hash: appState.project.hash, name: appState.project.name },
       session: null,
-      sessionPreview: ''
+      sessionPreview: '',
+      archiveFilter: appState.archiveFilter || 'sessions',
     });
   }
   return ancestors;

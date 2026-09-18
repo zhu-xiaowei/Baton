@@ -17,6 +17,7 @@ sys.path.insert(
 import bridge_sync
 import bridge_read
 import bridge_ws
+from dynamo_fake_updates import apply_metadata_update
 
 
 class FakeBatch:
@@ -57,6 +58,7 @@ class FakeTable:
 
     def update_item(self, **kwargs):
         self.updates.append(kwargs)
+        apply_metadata_update(self, kwargs)
 
     def query(self, **_kwargs):
         return {"Items": []}
@@ -417,6 +419,7 @@ def test_devices_projects_only_home_list_fields(monkeypatch):
         "needsInputCount": 2,
         "lastActive": "2026-09-01T00:00:00.000Z",
         "online": False,
+        "runtimeCapabilities": {"codex": {"canCreate": True}},
     }]}
     assert table.query_calls[0]["ProjectionExpression"] == bridge_read.DEVICE_LIST_PROJECTION
     assert table.query_calls[0]["ExpressionAttributeNames"] == bridge_read.DEVICE_LIST_ATTRIBUTE_NAMES

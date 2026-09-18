@@ -45,8 +45,12 @@ class HomeTable:
         assert kwargs["Limit"] == 100
         assert kwargs["ScanIndexForward"] is False
         rows = sorted(self.done, key=lambda s: s["activeStatus"], reverse=True)
-        # A cursor must not trigger additional queries to fill the recent window.
-        return {"Items": rows[:kwargs["Limit"]], "LastEvaluatedKey": {"sk": "more"}}
+        start = kwargs.get("ExclusiveStartKey", {}).get("offset", 0)
+        end = start + kwargs["Limit"]
+        return {
+            "Items": rows[start:end],
+            **({"LastEvaluatedKey": {"offset": end}} if end < len(rows) else {}),
+        }
 
 
 @pytest.fixture

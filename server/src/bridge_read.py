@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
+from session_archive import archive_context, archive_fields, is_archived
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -27,6 +28,10 @@ RECENT_PROJECT_LIMIT = 5
 RECENT_PROJECT_EXPANDED_LIMIT = 15
 RECENT_PROJECT_SESSION_LIMIT = 5
 SESSION_LIST_ATTRIBUTE_NAMES = {
+    "#archive": "archiveState",
+    "#archive_version": "archiveVersion",
+    "#runtime": "runtime",
+    "#can_send": "canSend",
     "#sid": "sessionId",
     "#preview": "preview",
     "#last": "lastActive",
@@ -48,6 +53,7 @@ LEGACY_SESSION_LIST_ATTRIBUTE_NAMES = {
 }
 LEGACY_SESSION_LIST_PROJECTION = ", ".join(LEGACY_SESSION_LIST_ATTRIBUTE_NAMES)
 ACTIVE_HOME_ATTRIBUTE_NAMES = {
+    "#archive": "archiveState",
     "#sid": "sessionId",
     "#preview": "preview",
     "#status": "status",
@@ -66,6 +72,8 @@ ACTIVE_HOME_ATTRIBUTE_NAMES = {
 }
 ACTIVE_HOME_PROJECTION = ", ".join(ACTIVE_HOME_ATTRIBUTE_NAMES)
 ACTIVE_COUNT_ATTRIBUTE_NAMES = {
+    "#archive": "archiveState",
+    "#sid": "sessionId",
     "#status": "status",
     "#active": "activeStatus",
     "#device": "deviceName",
@@ -76,6 +84,7 @@ ACTIVE_COUNT_ATTRIBUTE_NAMES = {
 }
 ACTIVE_COUNT_PROJECTION = ", ".join(ACTIVE_COUNT_ATTRIBUTE_NAMES)
 DEVICE_LIST_ATTRIBUTE_NAMES = {
+    "#capabilities": "runtimeCapabilities",
     "#device": "deviceName",
     "#display": "deviceDisplayName",
     "#os": "os",
@@ -171,6 +180,8 @@ def _public_active_status(item):
 
 
 def _active_session_visible(item, online_devices, now=None):
+    if is_archived(item):
+        return False
     status = _public_active_status(item)
     if status not in ("running", "needs_input"):
         return False
@@ -289,6 +300,28 @@ def _query_list_page(
     return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
 
 
+def _query_session_list_page(table, account_id, list_pk, limit, cursor, archived):
+    if cursor:
+        key = _decode_list_cursor(cursor, account_id, list_pk)
+        raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if raw.get("archived", False) is not archived:
+            raise HTTPException(status_code=400, detail="Pagination cursor belongs to another archive filter")
+        cursor = _encode_list_cursor(key)
+    items = []
+    while True:
+        page, cursor = _query_list_page(
+            table, account_id, list_pk, limit - len(items), cursor,
+            SESSION_LIST_PROJECTION, SESSION_LIST_ATTRIBUTE_NAMES,
+        )
+        items.extend(item for item in page if not item.get("parentSessionId") and is_archived(item) == archived)
+        if len(items) >= limit or not cursor:
+            break
+    if cursor:
+        key = _decode_list_cursor(cursor, account_id, list_pk)
+        cursor = _encode_list_cursor({**key, "archived": archived})
+    return items, cursor
+
+
 @read_router.get("/config")
 async def get_config():
     """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
@@ -331,6 +364,23 @@ def _recent_projects(active_sessions, completed_sessions):
     return list(projects.values())
 
 
+def _recent_unarchived(sessions_table, account_id):
+    items = []
+    kwargs = {
+        "IndexName": "accountId-activeStatus-index",
+        "KeyConditionExpression": Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
+        "ScanIndexForward": False, "Limit": 100,
+        "ProjectionExpression": ACTIVE_HOME_PROJECTION,
+        "ExpressionAttributeNames": ACTIVE_HOME_ATTRIBUTE_NAMES,
+    }
+    while True:
+        response = sessions_table.query(**kwargs)
+        items.extend(item for item in response.get("Items", []) if not item.get("parentSessionId") and not is_archived(item))
+        if len(items) >= RECENT_SESSION_LIMIT or "LastEvaluatedKey" not in response:
+            return items[:RECENT_SESSION_LIMIT]
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+
 @read_router.get("/active-sessions")
 async def get_active_sessions(request: Request, allProjects: bool = False):
     """Return active sessions, 20 completed sessions, and recent project groups.
@@ -346,11 +396,7 @@ async def get_active_sessions(request: Request, allProjects: bool = False):
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"),
             ProjectionExpression=ACTIVE_HOME_PROJECTION,
             ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES)),
-        loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=RECENT_SESSION_LIMIT,
-            ProjectionExpression=ACTIVE_HOME_PROJECTION,
-            ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES).get("Items", [])),
+        loop.run_in_executor(None, lambda: _recent_unarchived(sessions_table, account_id)),
         loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
     )
 
@@ -385,13 +431,13 @@ async def get_active_sessions(request: Request, allProjects: bool = False):
     recent_sessions = [
         _to_session(item, False)
         for item in done_items
-        if not item.get("parentSessionId")
+        if not item.get("parentSessionId") and not is_archived(item)
     ][:20]
 
     completed_sessions = [
         _to_session(item, True)
         for item in done_items
-        if not item.get("parentSessionId")
+        if not item.get("parentSessionId") and not is_archived(item)
     ]
     projects = _recent_projects(sessions, completed_sessions)
     return {
@@ -416,7 +462,7 @@ def _live_active_counts(sessions_table, account_id):
     dev = {}   # deviceName -> {running, needs_input}
     proj = {}  # (deviceName, projectHash) -> {running, needs_input}
     for r in rows:
-        if r.get("parentSessionId"):
+        if r.get("parentSessionId") or is_archived(r):
             continue
         st = _public_active_status(r)
         if st not in ("running", "needs_input"):
@@ -472,6 +518,7 @@ async def get_devices(request: Request):
             "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
             "online": name in online_devices,
+            **({"runtimeCapabilities": item["runtimeCapabilities"]} if item.get("runtimeCapabilities") else {}),
         })
     devices.sort(key=lambda x: x["lastActive"], reverse=True)
     return {"devices": devices}
@@ -532,6 +579,7 @@ async def get_sessions(
     project: str = Query(...),
     limit: int = Query(None, ge=1, le=100),
     cursor: str = Query(None),
+    archived: bool = False,
 ):
     sessions_table, _ = _tables()
     account_id = _account_id(request)
@@ -547,16 +595,15 @@ async def get_sessions(
             ExpressionAttributeNames=LEGACY_SESSION_LIST_ATTRIBUTE_NAMES,
         )
     else:
-        items, next_cursor = _query_list_page(
+        items, next_cursor = _query_session_list_page(
             sessions_table,
             account_id,
             _session_list_pk(account_id, device, project),
             limit,
             cursor,
-            SESSION_LIST_PROJECTION,
-            SESSION_LIST_ATTRIBUTE_NAMES,
+            archived,
         )
-    items = [item for item in items if not item.get("parentSessionId")]
+    items = [item for item in items if not item.get("parentSessionId") and is_archived(item) == archived]
 
     sessions = []
     for item in items:
@@ -568,6 +615,7 @@ async def get_sessions(
             "model": item.get("model", ""),
             "status": _public_active_status(item),
             "agentCount": item.get("agentCount", 0),
+            **archive_fields(item),
         }
         if item.get("isAgent"):
             s["isAgent"] = True
@@ -607,12 +655,22 @@ async def get_session_threads(
     root_item = ordered_items[0] if ordered_items else None
     expected_count = int(root_item.get("agentCount", 0)) if root_item else 0
     if not root_item or len(ordered_items) - 1 < expected_count:
-        project_items = _query_all(
+        items = _query_all(
             sessions_table,
             KeyConditionExpression=Key("accountId").eq(account_id)
             & Key("sk").begins_with(f"SESS#{device}#{project}#"),
+            ConsistentRead=True,
         )
-        ordered_items = _ordered_thread_items(project_items, session)
+        ordered_items = _ordered_thread_items(items, session)
+    items_by_id = {item["sessionId"]: item for item in items}
+
+    def get_parent(parent_id):
+        if parent_id not in items_by_id:
+            items_by_id[parent_id] = sessions_table.get_item(
+                Key={"accountId": account_id, "sk": f"SESS#{device}#{project}#{parent_id}"},
+                ConsistentRead=True,
+            ).get("Item", {})
+        return items_by_id[parent_id]
 
     def to_thread(item):
         thread = {
@@ -625,11 +683,13 @@ async def get_session_threads(
             "agentRole": item.get("agentRole", ""),
             **_runtime_fields(item),
             **_thread_fields(item),
+            **archive_context(item, get_parent),
         }
         return thread
 
     threads = [to_thread(item) for item in ordered_items]
-    return {"rootSessionId": session, "threads": threads}
+    root_session_id = (threads[0].get("rootSessionId") or session) if threads else session
+    return {"rootSessionId": root_session_id, "threads": threads}
 
 
 def _parse_messages(items):
@@ -662,8 +722,12 @@ def _parse_messages(items):
 
 
 def _message_session_status(request, sessions_table, session, device, project):
+    return _message_session_metadata(request, sessions_table, session, device, project).get("status", "")
+
+
+def _message_session_metadata(request, sessions_table, session, device, project):
     if not device or not project:
-        return ""
+        return {}
     try:
         item = sessions_table.get_item(
             Key={
@@ -674,9 +738,14 @@ def _message_session_status(request, sessions_table, session, device, project):
         ).get("Item", {})
     except Exception as error:
         print(f"message status read error: {error}")
-        return ""
+        return {}
     status = item.get("status", "")
-    return status if status in ("running", "needs_input", "completed") else ""
+    result = {"status": status} if status in ("running", "needs_input", "completed") else {}
+    def get_parent(parent):
+        return sessions_table.get_item(Key={
+            "accountId": _account_id(request), "sk": f"SESS#{device}#{project}#{parent}",
+        }, ConsistentRead=True).get("Item", {})
+    return {**result, **archive_context(item, get_parent)}
 
 
 # Lambda invoke-response hard limit is 6MB (measured on the base64-encoded body
@@ -728,7 +797,7 @@ async def get_messages(
     if device and project:
         status_future = asyncio.get_running_loop().run_in_executor(
             None,
-            _message_session_status,
+            _message_session_metadata,
             request,
             sessions_table,
             session,
@@ -737,9 +806,8 @@ async def get_messages(
         )
 
     async def with_status(payload):
-        status = await status_future if status_future else ""
-        if status:
-            payload["status"] = status
+        metadata = await status_future if status_future else {}
+        payload.update(metadata)
         return payload
 
     if after:

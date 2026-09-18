@@ -25,6 +25,8 @@ import {
   installStagedBridge,
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
+import { startCodexArchives } from './codex-archive-sync.mjs';
+import { codexArchives } from './codex-archive.mjs';
 
 // Ensure single instance via PID lock file (cross-platform, works on WSL too)
 const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
@@ -43,6 +45,7 @@ let shuttingDown = false;
 async function shutdownBridge(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  await codexArchives.stop();
   await shutdownInteractions();
   process.exit(exitCode);
 }
@@ -77,6 +80,7 @@ if (CONFIG.wsUrl) {
 // Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
 // --skip-init only skips replaying historical messages — metadata is cheap and required
 // for the periodic checkStopped() to detect disappeared CC processes.
+await startCodexArchives(CONFIG).catch((error) => console.warn(`[archive] initialization: ${error.message}`));
 const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {

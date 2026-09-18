@@ -14,6 +14,7 @@ sys.path.insert(
 
 import bridge_read
 import bridge_sync
+from dynamo_fake_updates import apply_metadata_update
 
 
 class FakeRequest:
@@ -85,6 +86,7 @@ class FakeWriteTable:
 
     def update_item(self, **kwargs):
         self.updates.append(kwargs)
+        apply_metadata_update(self, kwargs)
 
 
 def session_item(account_id, device, project, session_id, last_active):
@@ -257,6 +259,12 @@ def test_sessions_response_contains_only_frontend_list_fields(monkeypatch):
     assert result["sessions"] == [{
         "sessionId": "codex:native-id",
         "preview": "Review changes",
+        "archiveState": "unknown",
+        "archiveVersion": 0,
+        "rootSessionId": "codex:native-id",
+        "rootArchiveState": "unknown",
+        "rootArchiveVersion": 0,
+        "canSend": True,
         "lastActive": "2026-08-10T00:00:00.000Z",
         "size": 42,
         "model": "gpt-5",

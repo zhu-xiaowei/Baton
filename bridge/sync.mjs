@@ -29,8 +29,6 @@ export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
   for (const s of sessions) {
     const activeStatus = s.activeStatus || s.status;
     if (s.lastActive > deviceLastActive) deviceLastActive = s.lastActive;
-    if (activeStatus === 'running') runningCount++;
-    else if (activeStatus === 'needs_input') idleCount++;
     let p = projects.get(s.project);
     if (!p) {
       p = {
@@ -41,6 +39,9 @@ export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
       };
       projects.set(s.project, p);
     }
+    if (s.archiveState === 'archived') continue;
+    if (activeStatus === 'running') runningCount++;
+    else if (activeStatus === 'needs_input') idleCount++;
     p.sessionCount++;
     // idleCount stores needs_input for the existing DDB field.
     if (activeStatus === 'running') p.runningCount++;
@@ -49,7 +50,7 @@ export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
   }
   const projectAggregates = Array.from(projects.values());
   const deviceAggregate = {
-    sessionCount: sessions.length,
+    sessionCount: sessions.filter((session) => session.archiveState !== 'archived').length,
     projectCount: projectAggregates.length,
     runningCount,
     idleCount,

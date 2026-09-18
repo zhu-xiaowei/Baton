@@ -66,11 +66,13 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       window.updateBreadcrumb();
     }
 
-    await context.test('runtime and Agent capsules follow the title, leaving three header actions', () => {
+    await context.test('runtime and Agent capsules follow the title without losing header actions', () => {
       for (const runtime of ['codex', 'claude']) {
         showSession(runtime);
-        assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
-          'Git changes', 'Terminal', 'New Session',
+        assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(
+          button => button.classList.contains('archive-action') ? button.textContent : button.title,
+        ), [
+          'Git changes', 'Terminal', 'New Session', ...(runtime === 'codex' ? ['Archive'] : []),
         ]);
         const meta = document.querySelector('.session-title-meta');
         assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
@@ -148,6 +150,23 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         assert.equal(document.getElementById('content').textContent, 'Existing conversation');
       }
       assert.deepEqual(window.__terminalOpenCalls[0], { device: 'Mac', projectHash: 'project', projectName: 'Project' });
+    });
+
+    await context.test('archived metadata keeps runtime and Agent capsules and offers Restore', async () => {
+      const { rememberArchiveMetadata } = await vite.ssrLoadModule('/js/session-archive.js');
+      showSession();
+      rememberArchiveMetadata({ sessionId: 'codex:root', archiveState: 'archived', archiveVersion: 1 });
+      window.updateBreadcrumb();
+      assert.deepEqual([...document.querySelectorAll('.session-title-meta .badge')].map(badge => badge.textContent), [
+        'Codex', 'Agent', 'Archived',
+      ]);
+      assert.equal(document.querySelector('#top-right .archive-action').textContent, 'Restore');
+      assert.ok(document.querySelector('.project-terminal-entry'));
+
+      rememberArchiveMetadata({ sessionId: 'codex:root', archiveState: 'unarchived', archiveVersion: 2 });
+      window.updateBreadcrumb();
+      assert.equal(document.querySelector('.session-title-meta .archived'), null);
+      assert.equal(document.querySelector('#top-right .archive-action').textContent, 'Archive');
     });
   } finally {
     await vite.close();

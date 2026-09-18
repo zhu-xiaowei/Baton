@@ -32,9 +32,16 @@ import {
   initComposerDrafts,
 } from './drafts/composer-draft.js';
 
+import {
+  archiveInfo, archiveSelectionReason, currentArchiveReadOnly, initSessionArchive, archiveOperationInProgress,
+  openArchiveDialog, rememberArchiveMetadata,
+} from './session-archive.js';
+
 initComposerDrafts();
+initSessionArchive({ refreshInput: refreshArchiveInput, changed: archiveMetadataChanged, results: archiveOperationResults });
 
 var _navVersion = 0;
+var _archiveListItems = new Map();
 var _listPrefetches = {};
 var _listPages = createListPageStore(12);
 var _activeListKey = null;
@@ -47,6 +54,115 @@ var AGENT_THREADS_CACHE_LIMIT = 32;
 var _navPointer = null;
 var _breadcrumbUpdatePending = false;
 var _gitStatusModulePromise = null;
+
+function sessionArchiveBlocksInput() {
+  return currentArchiveReadOnly() || (state.archiveCheckRequired && !state.archiveMetadataReady);
+}
+
+function archiveActionItems() {
+  if (state.selectMode && state.selectType === 'session') {
+    return [...state.selected].map(function (id) { return _archiveListItems.get(id) || { sessionId: id }; });
+  }
+  var activeId = state.activeThreadId || state.appState.session;
+  var archiveRootId = archiveInfo(activeId).rootSessionId || state.rootSessionId;
+  var id = archiveInfo(archiveRootId).archiveState === 'archived' ? archiveRootId : activeId;
+  var thread = state.sessionThreads.find(function (item) { return item.sessionId === id; });
+  return id && id !== '__new__'
+    ? [Object.assign({ sessionId: id, status: state.wsRunning ? 'running' : 'completed' }, thread, archiveInfo(id))]
+    : [];
+}
+
+function archiveActionButton() {
+  var items = archiveActionItems();
+  if (!state.selectMode && !items[0]?.sessionId?.startsWith('codex:')) return '';
+  var archived = state.selectMode
+    ? state.appState.archiveFilter !== 'archived'
+    : items[0]?.archiveState !== 'archived';
+  var reason = archiveSelectionReason(items, state.deviceRuntimeCapabilities[state.appState.device]?.codex,
+    state.deviceOnlineMap[state.appState.device] === true && navigator.onLine !== false, archived);
+  return '<button type="button" class="text-btn archive-action" onclick="openSessionArchiveAction()"'
+    + (reason ? ' disabled title="' + esc(reason) + '" aria-label="' + esc(reason) + '"' : '')
+    + '>' + (archived ? 'Archive' : 'Restore') + '</button>'
+    + (reason && state.selectMode ? '<span class="archive-selection-reason" role="status">' + esc(reason) + '</span>' : '');
+}
+
+function openSessionArchiveAction() {
+  var items = archiveActionItems();
+  openArchiveDialog(items, state.selectMode
+    ? state.appState.archiveFilter !== 'archived' : items[0]?.archiveState !== 'archived');
+}
+
+function renderArchiveBanner(bar, archived) {
+  var banner = document.getElementById('session-archive-banner');
+  if (!archived || !state.appState.session) {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'session-archive-banner';
+    banner.className = 'session-archive-banner';
+    bar.insertAdjacentElement('beforebegin', banner);
+  }
+  banner.innerHTML = '<span>Archived — history is read-only.</span>' + archiveActionButton();
+}
+
+function refreshArchiveInput() {
+  applyThreadInputState();
+  updateBreadcrumb();
+  if (state.archiveMetadataReady && !sessionArchiveBlocksInput()
+    && state.wsSessionId && state.archivePermissionObservedSid !== state.wsSessionId) {
+    state.archivePermissionObservedSid = state.wsSessionId;
+    window.wsSend?.({ action: 'reveal_permission', sessionId: state.wsSessionId, device: state.appState.device });
+  }
+}
+
+function setSessionArchiveFilter(archived) {
+  if (!state.appState.project || archiveOperationInProgress()) return;
+  loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name, archived ? 'archived' : 'sessions');
+}
+
+function invalidateArchiveLists(device, project) {
+  invalidatePagedList('sessions:' + device + ':' + project);
+  invalidatePagedList('sessions:' + device + ':' + project + ':archived');
+  invalidatePagedList('projects:' + device);
+  try { localStorage.removeItem('apeek_home_cache'); } catch (_) {}
+}
+
+function archiveMetadataChanged(message) {
+  var projects = new Set((message.changes || []).map(function (change) { return change.projectHash; }));
+  projects.forEach(function (project) { invalidateArchiveLists(message.deviceName, project); });
+  if (message.deviceName !== state.appState.device || !projects.has(state.appState.project?.hash)) return;
+  if (state.appState.session) refreshSessionThreads().catch(function () {});
+  else if (!state.selectMode && !archiveOperationInProgress()) refreshForegroundView().catch(function () {});
+}
+
+async function archiveOperationResults(operation, results) {
+  invalidateArchiveLists(operation.device, operation.projectHash);
+  if (state.appState.device !== operation.device || state.appState.project?.hash !== operation.projectHash) return;
+  if (state.appState.session) {
+    await refreshSessionThreads();
+    return;
+  }
+  var failed = results.filter(function (result) { return !result.ok; }).map(function (result) { return result.sessionId; });
+  await loadSessions(operation.device, operation.projectHash, state.appState.project.name, state.appState.archiveFilter);
+  if (failed.length) {
+    state.selectMode = true;
+    state.selectType = 'session';
+    state.selected = new Set(failed);
+    applySelectModeDom();
+    updateBreadcrumb();
+  }
+}
+
+Object.assign(window, { sessionArchiveBlocksInput, openSessionArchiveAction, setSessionArchiveFilter });
+var archiveRefreshTimer = setInterval(function () {
+  if (document.visibilityState === 'visible' && !state.appState.session && !state.projectFilesOpen && !state.gitStatusOpen
+    && !state.selectMode && !archiveOperationInProgress()) refreshForegroundView().catch(function () {});
+}, 30_000);
+archiveRefreshTimer.unref?.();
+window.addEventListener('online', refreshArchiveInput);
+window.addEventListener('offline', refreshArchiveInput);
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -468,6 +584,9 @@ function updateBreadcrumb() {
   } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
   }
+  if ((state.selectMode && state.selectType === 'session') || (state.appState.session && state.appState.session !== '__new__')) {
+    topRight.insertAdjacentHTML('beforeend', archiveActionButton());
+  }
   var titleHtml = '';
   var titleMeta = '';
   if (state.appState.session) {
@@ -482,7 +601,8 @@ function updateBreadcrumb() {
     var agentMark = state.appState.isAgent ? '<span class="badge agent">Agent</span>' : '';
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
     if (state.appState.session !== '__new__') {
-      titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark + '</div>';
+      titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark
+        + (currentArchiveReadOnly() ? '<span class="badge archived">Archived</span>' : '') + '</div>';
     }
   }
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
@@ -541,6 +661,20 @@ async function refreshSessionThreads() {
     return state.sessionThreads;
   }
   var threads = Array.isArray(data.threads) ? data.threads : [];
+  if (data.rootSessionId && data.rootSessionId !== rootSessionId) {
+    state.rootSessionId = data.rootSessionId;
+    state.rootSessionPreview = threads.find(function (thread) { return thread.sessionId === data.rootSessionId; })?.preview || '';
+    state.appState.session = data.rootSessionId;
+    state.appState.sessionPreview = state.rootSessionPreview;
+    if (state.wsSessionId) {
+      window.wsSend?.({ action: 'unsubscribe', sessionId: state.wsSessionId, rootSessionId: state.wsRootSessionId || rootSessionId });
+      state.wsRootSessionId = data.rootSessionId;
+      window.wsSend?.({ action: 'subscribe', sessionId: state.wsSessionId, rootSessionId: data.rootSessionId });
+    }
+    rootSessionId = data.rootSessionId;
+    markCurrentRoute(state.appState);
+    saveNav();
+  }
   if (!threads.some(function (thread) {
     return thread.sessionId === state.rootSessionId;
   })) {
@@ -553,12 +687,14 @@ async function refreshSessionThreads() {
       runtime: state.appState.runtime,
     });
   }
+  threads.forEach(function (thread) { rememberArchiveMetadata(thread); });
+  state.archiveMetadataReady = true;
   state.sessionThreads = threads;
   rememberSessionThreads(rootSessionId, threads);
   var active = activeSessionThread();
-  state.activeThreadCanSend = active ? active.canSend !== false : true;
-  applyThreadInputState();
-  updateBreadcrumb();
+  state.activeThreadCanSend = active
+    ? (archiveInfo(active.sessionId).canSend ?? state.activeThreadCanSend) : true;
+  refreshArchiveInput();
   var modal = document.getElementById('agentThreadsModal');
   if (modal && modal.classList.contains('open')) renderAgentThreadsModal();
   updateSendBtn();
@@ -790,11 +926,14 @@ function applyThreadInputState() {
   var bar = document.getElementById('input-bar');
   var input = document.getElementById('msg-input');
   if (!bar || !input) return;
-  var blocked = !state.activeThreadCanSend;
+  var archived = currentArchiveReadOnly();
+  var blocked = !state.activeThreadCanSend || sessionArchiveBlocksInput();
+  renderArchiveBanner(bar, archived);
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = archived ? 'Archived — restore to send a message'
+    : (sessionArchiveBlocksInput() ? 'Checking session…' : (blocked ? 'Subagent is read-only' : 'Send a message...'));
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -810,6 +949,10 @@ function resetSessionThreads() {
   state.activeThreadId = null;
   state.activeThreadCanSend = true;
   state.sessionThreads = [];
+  state.archiveMetadataReady = false;
+  state.archiveCheckRequired = false;
+  state.archivePermissionObservedSid = null;
+  document.getElementById('session-archive-banner')?.remove();
   var list = document.getElementById('agentThreadsList');
   if (list) list.innerHTML = '';
 }
@@ -831,7 +974,7 @@ function navigateUp() {
       state.appState = previous;
       loadMessages(previous.session, previous.sessionPreview);
     } else if (previous.project && previous.device) {
-      loadSessions(previous.device, previous.project.hash, previous.project.name);
+      loadSessions(previous.device, previous.project.hash, previous.project.name, previous.archiveFilter);
     } else if (previous.device) {
       loadProjects(previous.device);
     } else {
@@ -873,16 +1016,16 @@ function projectListOptions(device) {
   };
 }
 
-function sessionListOptions(device, projectHash) {
+function sessionListOptions(device, projectHash, archiveFilter = state.appState.archiveFilter || 'sessions') {
   return {
-    key: 'sessions:' + device + ':' + projectHash,
+    key: 'sessions:' + device + ':' + projectHash + (archiveFilter === 'archived' ? ':archived' : ''),
     itemsKey: 'sessions',
     idKey: 'sessionId',
     skeleton: '<div class="list">' + skeletonItems(5, 'session') + '</div>',
-    html: function (data) { return sessionsHtml(device, projectHash, data, false); },
-    render: function (data) { renderSessions(device, projectHash, data); },
+    html: function (data) { return sessionsHtml(device, projectHash, data, false, archiveFilter); },
+    render: function (data) { renderSessions(device, projectHash, data, archiveFilter); },
     fetchPage: function (cursor) {
-      var params = { device: device, project: projectHash, limit: LIST_PAGE_SIZE };
+      var params = { device: device, project: projectHash, limit: LIST_PAGE_SIZE, archived: archiveFilter === 'archived' };
       if (cursor) params.cursor = cursor;
       return api('/api/bridge/sessions', params);
     }
@@ -914,7 +1057,7 @@ function listTarget(targetState) {
   if (!targetState.session) {
     return Object.assign(
       { state: targetState },
-      sessionListOptions(targetState.device, targetState.project.hash)
+      sessionListOptions(targetState.device, targetState.project.hash, targetState.archiveFilter || state.appState.archiveFilter || 'sessions')
     );
   }
   return null;
@@ -1142,6 +1285,41 @@ async function loadNextListPage() {
   }
 }
 
+async function refreshLoadedListPages() {
+  var options = _activeListOptions;
+  var previous = options && _listPages.peek(options.key);
+  if (!previous?.loaded || previous.loading) return false;
+  var navVersion = _navVersion;
+  var requestId = _listPages.begin(options.key, true);
+  var pages = [];
+  var cursor = null;
+  var count = 0;
+  try {
+    do {
+      var page = await options.fetchPage(cursor);
+      if (!isCurrentList(options, navVersion, requestId)) return false;
+      pages.push(page);
+      count += (page[options.itemsKey] || []).length;
+      if (page.nextCursor && page.nextCursor === cursor) throw new Error('Repeated list cursor');
+      cursor = page.hasMore ? page.nextCursor : null;
+    } while (cursor && count < previous.items.length);
+    await waitForListPointer();
+    if (!isCurrentList(options, navVersion, requestId) || state.selectMode || archiveOperationInProgress()) return false;
+    var content = document.getElementById('content');
+    var anchor = captureListAnchor(content);
+    var scrollTop = content.scrollTop;
+    var entry = _listPages.applyFirst(options.key, pages[0], options.itemsKey, options.idKey, false);
+    pages.slice(1).forEach(function (page) {
+      entry = _listPages.append(options.key, page, options.itemsKey, options.idKey);
+    });
+    writeListCache(options.key, pages[0]);
+    renderListEntry(options, entry, scrollTop, anchor);
+    return true;
+  } finally {
+    _listPages.finish(options.key, requestId);
+  }
+}
+
 function maybeLoadNextListPage() {
   if (!_activeListOptions || state.appState.session) return;
   var content = document.getElementById('content');
@@ -1187,6 +1365,7 @@ function shortModel(m) {
 function rememberDevices(data) {
   (data?.devices || []).forEach(function (device) {
     state.deviceOnlineMap[device.deviceName] = device.online;
+    state.deviceRuntimeCapabilities[device.deviceName] = device.runtimeCapabilities || {};
     state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName || device.deviceName;
   });
   window.__deviceDisplayNames = state.deviceDisplayNameMap;
@@ -1251,6 +1430,11 @@ function refreshForegroundView() {
       return typeof window.resumeSessionForeground === 'function'
         ? window.resumeSessionForeground()
         : false;
+    }
+    if (state.selectMode || archiveOperationInProgress() || state.projectFilesOpen) return false;
+    if (_activeListOptions && _listPages.peek(_activeListOptions.key)?.loaded) {
+      api('/api/bridge/devices').then(function (data) { rememberDevices(data); updateBreadcrumb(); }).catch(function () {});
+      return refreshLoadedListPages();
     }
     if (state.appState.project && state.appState.device) {
       return loadSessions(
@@ -1327,12 +1511,17 @@ async function loadProjects(device) {
 }
 
 // ---- Sessions ----
-function sessionsHtml(device, projectHash, data, sel) {
+function sessionsHtml(device, projectHash, data, sel, archiveFilter = state.appState.archiveFilter || 'sessions') {
+  var archived = archiveFilter === 'archived';
+  var filter = '<div class="session-archive-filter" role="group" aria-label="Session archive filter">'
+    + '<button type="button" aria-pressed="' + !archived + '" onclick="setSessionArchiveFilter(false)">Sessions</button>'
+    + '<button type="button" aria-pressed="' + archived + '" onclick="setSessionArchiveFilter(true)">Archived</button></div>';
   if (!data.sessions.length) {
-    return '<div class="empty">No sessions yet<br><br>'
+    if (archived) return filter + '<div class="empty">No archived Codex sessions</div>';
+    return filter + '<div class="empty">No sessions yet<br><br>'
       + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
   }
-  return '<div class="list' + (sel ? ' select-mode' : '') + '">'
+  return filter + '<div class="list' + (sel ? ' select-mode' : '') + '">'
     + data.sessions.map(function (s) {
     var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
     var agentCount = Math.max(0, Number(s.agentCount) || 0);
@@ -1343,7 +1532,8 @@ function sessionsHtml(device, projectHash, data, sel) {
     var displayStatus = s.status;
     var sLabel = statusLabel(displayStatus);
     var sClass = statusClass(displayStatus);
-    var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
+    var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>'
+      + (s.archiveState === 'archived' ? '<span class="badge archived">Archived</span>' : '');
     var runtime = sessionRuntime(s.sessionId);
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
@@ -1384,11 +1574,13 @@ function attachSessionSecondaryToggles(container) {
   });
 }
 
-function renderSessions(device, projectHash, data) {
+function renderSessions(device, projectHash, data, archiveFilter = state.appState.archiveFilter || 'sessions') {
+  _archiveListItems = new Map(data.sessions.map(function (item) { return [item.sessionId, item]; }));
+  data.sessions.forEach(function (item) { rememberArchiveMetadata(item, item.sessionId, device, projectHash); });
   var content = document.getElementById('content');
   var sel = state.selectMode && state.selectType === 'session';
   detachLongPress(content);
-  content.innerHTML = sessionsHtml(device, projectHash, data, sel);
+  content.innerHTML = sessionsHtml(device, projectHash, data, sel, archiveFilter);
   if (!data.sessions.length) {
     showStats('0 session(s)');
     return;
@@ -1399,27 +1591,30 @@ function renderSessions(device, projectHash, data) {
   showStats(data.sessions.length + ' session(s)');
 }
 
-async function loadSessions(device, projectHash, projectName) {
+async function loadSessions(device, projectHash, projectName, archiveFilter) {
   window.deactivateProjectTerminal?.();
+  archiveFilter = archiveFilter || (state.appState.device === device && state.appState.project?.hash === projectHash
+    ? state.appState.archiveFilter : 'sessions') || 'sessions';
+  api('/api/bridge/devices').then(function (data) { rememberDevices(data); updateBreadcrumb(); }).catch(function () {});
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
   var restoreLoadedPages = state.appState.device === device
-    && !!state.appState.session
     && !!state.appState.project
     && state.appState.project.hash === projectHash;
-  var options = sessionListOptions(device, projectHash);
+  var options = sessionListOptions(device, projectHash, archiveFilter);
   if (!restoreLoadedPages) _listPages.invalidate(options.key);
   prepareNavigation({
     device: device,
     project: { hash: projectHash, name: projectName || projectHash },
-    session: null
+    session: null,
+    archiveFilter: archiveFilter,
   });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
-  state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '' };
+  state.appState = { device: device, project: { hash: projectHash, name: projectName || projectHash }, session: null, sessionPreview: '', archiveFilter: archiveFilter };
   markCurrentRoute(state.appState);
   disconnectWs();
   showInputBar(false);
@@ -1564,13 +1759,12 @@ async function submitDelete() {
         projectHash: projectHash,
       });
     }));
-    invalidatePagedList('projects:' + device);
     ids.forEach(function (projectHash) {
-      invalidatePagedList('sessions:' + device + ':' + projectHash);
+      invalidateArchiveLists(device, projectHash);
     });
     loadProjects(device);
   } else {
-    invalidatePagedList('sessions:' + state.appState.device + ':' + state.appState.project.hash);
+    invalidateArchiveLists(state.appState.device, state.appState.project.hash);
     loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
   }
   // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
@@ -1700,6 +1894,9 @@ async function startNewSession(projectHash) {
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
   window.deactivateProjectTerminal?.();
+  if (sessionId.startsWith('codex:') && !state.deviceRuntimeCapabilities[state.appState.device]) {
+    api('/api/bridge/devices').then(function (data) { rememberDevices(data); updateBreadcrumb(); }).catch(function () {});
+  }
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   options = options || {};
@@ -1712,7 +1909,8 @@ async function loadMessages(sessionId, preview, options) {
   prepareNavigation({
     device: state.appState.device,
     project: state.appState.project,
-    session: rootSessionId
+    session: rootSessionId,
+    archiveFilter: state.appState.archiveFilter || 'sessions',
   });
   // Update state + breadcrumb before any await — a fast follow-up nav must not be
   // overwritten when this call resumes.
@@ -1721,7 +1919,10 @@ async function loadMessages(sessionId, preview, options) {
   state.rootSessionId = rootSessionId;
   state.rootSessionPreview = rootSessionPreview;
   state.activeThreadId = sessionId;
-  state.activeThreadCanSend = options.canSend !== false;
+  state.archiveCheckRequired = sessionId.startsWith('codex:');
+  state.archiveMetadataReady = false;
+  state.archivePermissionObservedSid = null;
+  state.activeThreadCanSend = archiveInfo(sessionId).canSend ?? (options.canSend !== false);
   if (state.activeThreadCanSend) activateComposerDraft(sessionId);
   else deactivateComposerDraft();
   applyThreadInputState();
@@ -2095,7 +2296,7 @@ async function loadOlderAndPrepend() {
     try {
       var s = JSON.parse(nav);
       if (s.session && s.session !== '__new__') {
-        state.appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
+        state.appState = { device: s.device, project: s.project, session: null, sessionPreview: '', archiveFilter: s.archiveFilter || 'sessions' };
         loadMessages(s.session, s.sessionPreview, {
           restoreGitStatus: shouldRestoreGitStatus({
             device: s.device,
@@ -2104,7 +2305,7 @@ async function loadOlderAndPrepend() {
           }),
         });
       } else if (s.project) {
-        loadSessions(s.device, s.project.hash, s.project.name);
+        loadSessions(s.device, s.project.hash, s.project.name, s.archiveFilter);
       } else if (s.device) {
         loadProjects(s.device);
       } else {

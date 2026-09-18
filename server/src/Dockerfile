@@ -17,6 +17,7 @@ COPY main.py .
 COPY bridge_sync.py .
 COPY bridge_read.py .
 COPY bridge_ws.py .
+COPY session_archive.py .
 COPY terminal_ws.py terminal_direct_ws.py ./
 COPY project/ project/
 COPY --from=web-builder /build/dist web/

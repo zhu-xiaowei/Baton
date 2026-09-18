@@ -1582,3 +1582,13 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 .mermaid-fs-stage > svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; overflow: hidden; shape-rendering: geometricPrecision; text-rendering: geometricPrecision; }
 .mermaid-fs-close { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mermaid-fs-close:hover { background: rgba(48,54,61,0.95); color: #fff; } }
+/* Session archive controls */
+.session-archive-filter { display: flex; gap: 4px; padding: 8px 12px; }
+.session-archive-filter button { min-height: 40px; padding: 8px 16px; border: 1px solid #30363d; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.session-archive-filter button[aria-pressed="true"] { background: var(--bg-elevated, #292b32); font-weight: 600; }
+.badge.archived { background: var(--bg-elevated, #292b32); color: var(--text-secondary, #aaa); }
+.session-archive-banner { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid #30363d; font-size: 13px; }
+.archive-action { min-height: 40px; }
+.archive-errors { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto; }
+.archive-selection-reason { position: absolute; right: 12px; top: 100%; max-width: min(90vw, 420px); padding: 8px; background: var(--bg, #161b22); font-size: 12px; z-index: 2; }
+.session-archive-filter button:focus-visible, .archive-action:focus-visible { outline: 2px solid var(--accent, #8b9fff); outline-offset: 2px; }

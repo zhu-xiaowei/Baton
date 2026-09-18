@@ -116,9 +116,25 @@ test('session and project lists paginate, cache page one, and restore loaded pag
   const staleSessions = deferred();
   var mainFirstPageCalls = 0;
   var deferNextProjectRefresh = false;
+  var archiveHidden = new Set();
 
   async function api(pathname, params) {
+    if (pathname === '/api/bridge/devices') return { devices: [] };
     calls.push({ pathname, params: { ...params } });
+    if (pathname === '/api/bridge/sessions' && params.project === 'PA') {
+      if (!params.archived) return {
+        sessions: [{ ...session(1), sessionId: 'codex:open' }, { ...session(2), sessionId: 'claude-old' }],
+        hasMore: false, nextCursor: null,
+      };
+      const archivedSessions = Array.from({ length: 55 }, (_, i) => ({
+          ...session(55 - i), sessionId: `codex:archived-${55 - i}`,
+          archiveState: 'archived', archiveVersion: 10,
+        })).filter((item) => !archiveHidden.has(item.sessionId));
+      return {
+        sessions: params.cursor ? archivedSessions.slice(LIST_PAGE_SIZE) : archivedSessions.slice(0, LIST_PAGE_SIZE),
+        hasMore: !params.cursor, nextCursor: params.cursor ? null : 'archive-page-2',
+      };
+    }
     if (pathname === '/api/bridge/sessions' && params.project === 'P') {
       if (params.cursor === 'page-2') {
         return {
@@ -212,7 +228,7 @@ test('session and project lists paginate, cache page one, and restore loaded pag
 
     await window.loadSessions('D', 'P', 'Project');
     assert.equal(content.querySelectorAll('.item[data-id]').length, LIST_PAGE_SIZE);
-    assert.deepEqual(calls[0].params, { device: 'D', project: 'P', limit: LIST_PAGE_SIZE });
+    assert.deepEqual(calls[0].params, { device: 'D', project: 'P', limit: LIST_PAGE_SIZE, archived: false });
     assert.equal(
       content.querySelector(`[data-id="s${TWO_PAGES}"]`).dataset.preview,
       '{"action":"send_message","text":"quoted title"}',
@@ -384,6 +400,42 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     assert.equal(state.appState.project, null);
     assert.equal(content.querySelector('[data-id="s999"]'), null);
     assert.ok(content.querySelector('[data-id="p60"]'));
+
+    await window.loadSessions('D', 'PA', 'Archive project');
+    state.deviceOnlineMap.D = true;
+    state.deviceRuntimeCapabilities.D = { codex: { canArchive: true, canUnarchive: true } };
+    window.__listTest.select('session', 'claude-old');
+    window.toggleSelected('codex:open');
+    assert.equal(window.document.querySelector('.archive-action').disabled, true);
+    assert.match(window.document.querySelector('.archive-selection-reason').textContent, /Only Codex/);
+    window.exitSelectMode();
+    await window.loadSessions('D', 'PA', 'Archive project', 'archived');
+    assert.equal(window.__listTest.activeKey(), 'sessions:D:PA:archived');
+    assert.equal(content.querySelector('.session-archive-filter button[aria-pressed="true"]').textContent, 'Archived');
+    await window.__listTest.loadNext();
+    assert.equal(content.querySelectorAll('.item[data-id]').length, 55);
+    content.scrollTop = 1700;
+    content.dispatchEvent(new window.Event('scroll'));
+    window.__listTest.select('session', 'codex:archived-5');
+    assert.equal(window.document.querySelector('.archive-action').textContent, 'Restore');
+    assert.equal(window.document.querySelector('.archive-action').disabled, false);
+    window.exitSelectMode();
+    window.openSession(content.querySelector('[data-id="codex:archived-5"]'));
+    assert.equal(window.sessionArchiveBlocksInput(), true);
+    await window.loadSessions('D', 'PA', 'Archive project');
+    assert.equal(state.appState.archiveFilter, 'archived');
+    assert.equal(content.scrollTop, 1700);
+    assert.equal(content.querySelectorAll('.item[data-id]').length, 55);
+    await window.loadSessions('D', 'PA', 'Archive project', 'sessions');
+    assert.ok(content.querySelector('[data-id="codex:open"]'));
+    assert.equal(content.querySelector('[data-id="codex:archived-5"]'), null);
+    await window.loadSessions('D', 'PA', 'Archive project', 'archived');
+    assert.equal(content.scrollTop, 1700);
+    assert.equal(content.querySelectorAll('.item[data-id]').length, 55);
+    archiveHidden.add('codex:archived-4');
+    await window.refreshForegroundView();
+    assert.equal(content.querySelector('[data-id="codex:archived-4"]'), null);
+    assert.equal(content.querySelectorAll('.item[data-id]').length, 54);
   } finally {
     await vite.close();
     dom.window.close();

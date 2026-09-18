@@ -104,6 +104,7 @@ export class CodexAppServerClient extends EventEmitter {
     super();
     this.bin = options.bin || null;
     this.cwd = options.cwd || os.homedir();
+    this.env = options.env;
     this.spawnFn = options.spawnFn;
     this.runtime = {
       platform: options.platform || process.platform,
@@ -186,6 +187,7 @@ export class CodexAppServerClient extends EventEmitter {
 
     const proc = spawnExecutable(bin, ['app-server', '--stdio'], {
       cwd: this.cwd,
+      ...(this.env ? { env: this.env } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     }, this.spawnFn, this.runtime);

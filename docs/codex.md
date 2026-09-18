@@ -1,6 +1,6 @@
 # Codex 接入设计与实施状态
 
-> 最后更新：2026-08-12
+> 最后更新：2026-09-18
 > 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成 Session 创建与交互主链路
 > API 与 WS 完整契约见 [api.md](api.md)
 
@@ -8,6 +8,91 @@
 
 Baton 将 Codex 作为第二种本地 agent runtime 接入，并继续使用统一的
 Device → Project → Session 信息架构。
+
+### 原生运行状态校准
+
+`codex-status.mjs` 与归档服务共享每个 Home 的只读原生快照和连接，不另启会话。
+managed App Server 的 `active` 映射为 `running`，等待审批或用户输入映射为
+`needs_input`，`idle` 映射为 `completed`。独立 stdio reader 的 idle 不能证明外部
+客户端已停止；`notLoaded`、未知状态和读取失败也不直接等同于完成或归档。
+日志出现更新的明确终止事件时，可以校准已卸载 thread 的最后确认状态。
+
+启动、重连、`thread/status/changed` 和 60 秒完整分页快照使用同一状态缓存。
+周期发现不限于 Server 的 Active 列表，因此误标 completed 的原生活跃项也能重新出现。
+watcher、startup 和 checkStopped 都使用同一原生状态覆盖层，不再让进程 cwd、
+resume 参数或 15 分钟日志新鲜度覆盖已确认的原生状态。没有原生观察的旧 CLI
+保留原启发式兜底；查不到日志不再被单独视为完成证据。
+
+`statusVersion` 与 `agentSummaryVersion` 分别保护主状态和后代汇总，独立于归档版本。
+Server 保留较新的版本，拒绝旧观察及无版本写入覆盖已版本化状态，同时允许名称等独立
+元数据更新。归档同步会发布主子状态；reconcile 在子树记录完整时重算 Codex 根汇总，
+不再只复用可能残留的 activeStatus。缺少子记录时不擅自清零，归档祖先下的后代不贡献活跃数。
+
+仅重建 Web 不会启用以上 Bridge/Server 修复。先在隔离环境运行
+`test/codex/phase3/status*.test.mjs` 和 `test/server/test_codex_status_roundtrip.py`，
+再验证真实前端。跨语言回归覆盖“5 个原生活跃根 + 已归档根及 11 个后代”，
+以真实同步请求验证 Active、Recent、普通列表排除归档项，Archived 保留它且详情只读。
+测试使用合成日志、模拟原生读取及 Moto；不连接生产 DynamoDB，也不修改真实原生会话。
+
+### 原生归档：实现与运维边界
+
+运行状态仍是现有三态，归档另存为 `archiveState` 和 `archiveVersion`。普通列表保留
+`unknown` 旧记录，仅排除明确归档的根 Session；Archived 页仅显示 Codex 归档根。
+主会话归档后详情整体只读；恢复主会话只恢复它自己，仍归档的子 agent 可在详情单独恢复。
+批量操作确认原生后代影响，保留失败项供重试，不回滚成功项。Claude 和删除语义不变。
+
+归档生命周期集中在 `codex-archive.mjs`，列表、详情和 `/archive` 都走同一服务：
+
+- 每个 Home 绑定独立 App Server client、查询范围和安全校验过的日志路径。
+  交互 client 也沿该 Home 路由，重复 ID 归属冲突时拒绝修改。
+- 用只读 `generate-ts` 检查安装协议；不执行真实归档来探测功能。当前最低启用版本及
+  隔离验证版本为 `codex-cli 0.154.0`，更老版本须另行验证安全契约后才能放开。
+  探测超时、临时文件失败或版本读取失败视为未知而非不支持；未知期间阻止现有会话写操作，
+  在请求前及 60 秒校准时重试。明确不支持的旧版本仍保持原有发送兼容性。
+  Linux 可检查 `/proc`，macOS 需 `lsof`；原生 Windows
+  暂不开放归档／恢复修改能力，仍可读取和同步已确认状态。
+- 分页查询 `thread/list` 的 `archived:false/true` 两个集合，显式包含交互及所有子 agent
+  source kinds，并设置 `modelProviders: []` 覆盖全部 provider。缺项、文件消失、
+  单边查询失败都不是新的归档证据。
+- 启动、重连、原生操作后刷新；消费归档／恢复通知，另每 60 秒完整校准。
+  事件使进行中的旧快照失效，最多重查三次；不完整快照保留最后确认值。
+- 将快照、待同步观察、版本及待重查记录写入 Bridge Home 的 `codex-archives.json`
+  （临时文件替换，文件权限 0600）。重启后从缓存恢复并重新验证；失败同步继续重试。
+- `thread/archive` 前读取目标和后代状态，检查 Baton active/queue 与原生 writer。
+  同时读取本 Home 活动／归档日志中的身份和父关系，补查尚未进入原生列表的后代；
+  日志只作为拓扑证据，不据文件位置推断归档状态。目录不可读、身份／父关系不明、
+  后代未列出或待执行任务归属无法确认时拒绝归档。
+  `active`（含等待输入／审批）、`systemError`、未知状态或外部持锁均拒绝。
+  `notLoaded` 本身不证明无外部 writer。共享 App Server 上的 idle 也不跳过持锁检查。
+- 归档服务用串行门保护归档与 Baton 的发送、命令及权限观察。当前实现保守地在所有
+  Codex 会话间串行这些检查／启动步骤，活跃回合流式处理不持有这个门。
+- 归档路径不调用 `thread/resume`、`turn/start`、interrupt 或 writer 终止逻辑。
+  正常发送原有的接管流程不复用于归档；旧页面的发送／命令／权限观察也先检查归档状态。
+- `thread/unarchive` 只处理所选 thread。父归档后重新读取实际集合，按事实记录成功后代，
+  不把整棵树无条件标归档。日志路径进入原文件索引，按需历史回填继续使用稳定 Session ID
+  和消息身份，不依赖旧文件位置。
+- 原生成功但服务器未确认观察落库，返回“原生操作已完成，正在同步”。服务器拒绝旧版本
+  时，以服务端版本作为下次观察的下限，重新查询原生状态后再同步；不把旧快照改成新版本直接提交。
+  重试时即使父会话已到目标状态，也要确认后代观察已同步并返回实际部分结果，不重复原生修改。
+
+**并发边界**：公开原生归档方法没有条件状态参数；Baton 的串行门不能锁住其他原生客户端。
+执行前重查和外部 writer 检查降低风险，但不承诺跨客户端原子互斥。未知执行模式应保持禁用。
+HTTP 同步的 API-key 身份边界与既有 Bridge 同步一致，详见 API 文档的 Trust boundary。
+
+**发布**：Server → Bridge → Web/App。无需破坏性迁移；首次完整原生快照回填旧行。
+不得对真实用户会话做集成探测。自动化原生测试只在临时 Home 生成合成 rollout，
+验证归档／恢复、外部客户端操作、writer 拒绝和日志可读性，不请求模型执行。
+Bridge/Server/Frontend 另覆盖分页、多 Home、过期观察、部分失败、重启重试及只读保护。
+
+本地验证（Node 22 旧前端测试需禁用实验性全局 navigator）：
+
+```bash
+NODE_OPTIONS=--no-experimental-global-navigator npm test
+npm run build
+```
+
+`npm test` 包含 Bridge、Codex、Frontend、Server 与 packaging；Server 需先安装现有
+Python 测试依赖。若共享临时目录配额不足，可设置 `TMPDIR` 到专用临时测试目录。
 
 当前已完成：
 
@@ -28,9 +113,11 @@ Device → Project → Session 信息架构。
   app-server；没有 daemon 或连接失败时才回退到独立 `app-server --stdio`。
 - 复用 daemon 后，已加载的 active turn 会被接管为当前流并重放 pending approval；
   新发送的消息排队到该 turn 完成后启动，后续 delta 仍走完整 streaming 链路。
-- 打开已有 Codex Session 时，Bridge 会对 managed daemon 中仍加载的 thread 执行 passive
+- 打开未归档的 Codex Session 时，Bridge 会对 managed daemon 中仍加载的 thread 执行 passive
   `thread/resume`：只订阅现有 turn 并重放 TUI pending approval，不调用 `turn/start`，
   不终止 writer。Web 或 TUI 任一端回答后，另一端的弹窗会同步关闭或继续显示队列下一项。
+- Codex 原生归档及恢复已接入：独立归档字段、Sessions / Archived 列表、单选／批量操作、
+  归档详情只读、外部操作校准。打开归档历史不会执行上述 passive resume。
 - app-server delta 复用 Claude 的首包立即发送、50ms 合批、turn 级 `seq`、前端重排和追赶渲染。
 - app-server 完整 user/assistant item 作为 live 权威行；rollout watcher 只持久化匹配行并负责漏事件兜底。
 - interrupt 和 command/file/permissions/MCP elicitation/user-input 已接入现有 WS

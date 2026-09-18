@@ -405,6 +405,16 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "delete_files":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "delete_files")
+    elif action == "set_session_archive":
+        if role == "app":
+            return _handle_set_session_archive(body, connection_id, account_id, endpoint)
+    elif action == "set_session_archive_result":
+        if role == "bridge" and body.get("deviceName") == conn.get("deviceName"):
+            target = body.get("replyConnectionId", "")
+            reply = _connections_table.get_item(Key={"connectionId": target}, ConsistentRead=True).get("Item", {})
+            if reply.get("role") == "app" and reply.get("accountId") == account_id:
+                _post_to_connection(endpoint, target, {k: v for k, v in body.items() if k != "replyConnectionId"})
+            return {"statusCode": 200}
     elif action == "delete_files_result":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
@@ -795,6 +805,41 @@ def _handle_send_to_bridge(
                 "errorCode": "bridge_offline",
             })
     return {"statusCode": 200}
+
+
+def _handle_set_session_archive(body, connection_id, account_id, endpoint):
+    ids = body.get("sessionIds")
+    device = body.get("device")
+    if not device or not body.get("projectHash") or not body.get("requestId") \
+            or not isinstance(body.get("archived"), bool) \
+            or not isinstance(ids, list) or not 1 <= len(ids) <= 25 \
+            or any(not isinstance(sid, str) or not sid.startswith("codex:") for sid in ids):
+        return {"statusCode": 400}
+    payload = {
+        "action": "set_session_archive", "device": device,
+        "projectHash": body["projectHash"], "sessionIds": list(dict.fromkeys(ids)),
+        "archived": body["archived"], "requestId": body["requestId"],
+        "replyConnectionId": connection_id,
+    }
+    bridges = [row for row in _query_connections(account_id, "bridge") if row.get("deviceName") == device]
+    if len(bridges) == 1 and _post_to_connection(endpoint, bridges[0]["connectionId"], payload) is not False:
+        return {"statusCode": 200}
+    _post_to_connection(endpoint, connection_id, {
+        "action": "set_session_archive_result", "requestId": body["requestId"],
+        "deviceName": device, "projectHash": body["projectHash"],
+        "results": [{"sessionId": sid, "ok": False, "errorCode": "bridge_offline",
+                     "error": "Bridge unavailable or duplicate device connections. Reconnect before retrying."} for sid in ids],
+    })
+    return {"statusCode": 200}
+
+
+def notify_session_archives_changed(account_id, endpoint, device_name, changes):
+    _init()
+    apps = _query_connections(account_id, "app")
+    for offset in range(0, len(changes), 25):
+        payload = {"action": "session_archives_changed", "deviceName": device_name, "changes": changes[offset:offset + 25]}
+        for app in apps:
+            _post_to_connection(endpoint, app["connectionId"], payload)
 
 
 def notify_bridge_sync(session_id, account_id, endpoint, device=None):

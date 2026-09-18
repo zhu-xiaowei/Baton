@@ -784,6 +784,10 @@ function resumeLateJoinAtCheckpoint(turnId) {
 
 // WS message dispatch — extracted from onmessage for the jsdom test harness.
 function dispatchWsMessage(msg) {
+    if (msg.action === 'set_session_archive_result' || msg.action === 'session_archives_changed') {
+      window.handleArchiveMessage?.(msg);
+      return;
+    }
     if (msg.action === 'messages' && msg.sessionId === state.wsSessionId) {
       if (msg.messages?.some(function (message) {
         return window.isSubagentNotificationMsg?.(message);
@@ -1605,11 +1609,13 @@ function subscribeSession(sessionId) {
     sessionId: sessionId,
     rootSessionId: state.wsRootSessionId || sessionId,
   });
-  wsSend({
-    action: 'reveal_permission',
-    sessionId: sessionId,
-    device: state.appState.device || '',
-  });
+  if (!window.sessionArchiveBlocksInput?.()) {
+    wsSend({
+      action: 'reveal_permission',
+      sessionId: sessionId,
+      device: state.appState.device || '',
+    });
+  }
 }
 
 // The first send creates a native session while its stream is already active.
@@ -2162,6 +2168,7 @@ async function bufferAndFetch(sessionId, after, options) {
       state.wsOldestTimestamp = data.oldestTimestamp || '';
     }
 
+    if (restOk) window.applyArchiveMetadata?.(data, sessionId);
     var useAuthoritative = !!options.authoritative
       && (!options.requireCompleted
         || (data.status === 'completed' && committed.activity === 'completed'));
@@ -2266,7 +2273,7 @@ function sendMessage() {
   var images = state.stagedImages.slice();
 
   if (!text && !images.length) return;
-  if (!state.activeThreadCanSend) return;
+  if (!state.activeThreadCanSend || window.sessionArchiveBlocksInput?.()) return;
   if (!images.length && handleCodexClientCommand(text, input)) return;
   if (!text && images.length) text = 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
@@ -2387,7 +2394,8 @@ function updateSendBtn(options) {
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
   var hasText = textLen >= (isNewAgent ? 4 : 1);
-  var cls = !state.activeThreadCanSend
+  var archiveBlocked = window.sessionArchiveBlocksInput?.();
+  var cls = !state.activeThreadCanSend || archiveBlocked
     ? ''
     : (hasText ? 'has-text' : (state.wsRunning ? 'is-stop' : ''));
   var icon = cls === 'is-stop' ? 'stop' : 'send';
@@ -2395,7 +2403,7 @@ function updateSendBtn(options) {
   // detaches the SVG mid-tap, dropping a click that landed on it (had to tap 2-3×).
   if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
   if (btn.className !== cls) btn.className = cls;
-  btn.disabled = !state.activeThreadCanSend || (!hasText && !state.wsRunning);
+  btn.disabled = !state.activeThreadCanSend || archiveBlocked || (!hasText && !state.wsRunning);
   if (!options.skipSpinner && typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }

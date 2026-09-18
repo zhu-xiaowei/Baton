@@ -20,9 +20,170 @@
 
 ## REST API — Bridge → Server
 
+### Codex archive contract
+
+Archive state is independent of `running / needs_input / completed`. Claude sessions
+are unchanged. Codex session, message and thread responses include:
+
+```json
+{
+  "archiveState": "archived",
+  "archiveVersion": 1789516800000,
+  "rootSessionId": "codex:root",
+  "rootArchiveState": "archived",
+  "rootArchiveVersion": 1789516800000,
+  "canSend": false
+}
+```
+
+`archiveState` is `archived | unarchived | unknown`; legacy missing values read as
+`unknown`, with version `0`, and remain visible. `archiveVersion` is a positive,
+monotonically ordered Bridge observation version, persisted across restarts.
+`rootSessionId` identifies the actual ancestor root, including child deep links.
+`canSend` also respects native thread restrictions and archived ancestors; missing
+or inconsistent ancestry is read-only. Restoring a root does not restore children.
+
+Device `runtimeCapabilities.codex` adds `canArchive` and `canUnarchive`. Both default
+to false for older Bridges; the Bridge checks the installed read-only generated
+protocol and the availability of its writer-inspection mode.
+
+**GET /api/bridge/sessions** adds `archived`:
+
+| Value | Result |
+| --- | --- |
+| omitted / `false` | Normal root-session list, excluding explicitly archived Codex sessions |
+| `true` | Only explicitly archived Codex root sessions |
+
+Pagination cursors bind account, device, project and archive filter. Do not reuse a
+cursor across filters. The server continues reading underlying pages until enough
+matching rows are found or the query is exhausted. Active/recent lists and normal
+session counts exclude archived roots. A project containing only archives remains
+available with a normal session count of zero.
+
+**POST /api/bridge/sync-archives** is the Bridge observation-upload path, not a
+user archive command:
+
+```json
+{
+  "deviceName": "MacBook-Pro",
+  "observations": [
+    {
+      "sessionId": "codex:root",
+      "projectHash": "-workspace-project",
+      "archiveState": "archived",
+      "archiveVersion": 1789516800000
+    }
+  ]
+}
+```
+
+At most 100 observations per request. The Session metadata row must already exist.
+Observations atomically update only the archive fields on that existing row.
+Equal-version, equal-state retries are acknowledged; conflicting equal versions
+or missing rows return HTTP 409. Older versions are returned in `ignored` with
+`currentArchiveState` and `currentArchiveVersion`. The response includes `synced`,
+`acknowledged` (the exact persisted observations) and `ignored`.
+
+Metadata uploads do not overwrite archive fields. Archive synchronization recounts
+aggregates and publishes `session_archives_changed` only after persistence. It does
+not delete logs, add tables/indexes, or change message TTL. Native success followed
+by a persistence failure is retried in the Bridge; it never triggers compensating
+native restore/archive operations.
+
+**WebSocket user operation** (App → Server → designated Bridge):
+
+```json
+{
+  "action": "set_session_archive",
+  "device": "MacBook-Pro",
+  "projectHash": "-workspace-project",
+  "sessionIds": ["codex:root"],
+  "archived": true,
+  "requestId": "unique-request-id"
+}
+```
+
+The server accepts 1–25 Codex IDs per frame. The UI splits larger selections into
+25-item requests. `archived: false` restores only each selected thread. An offline
+or ambiguous device route returns per-item failure; user mutations are not queued
+offline. Mixed-runtime selections are rejected in the UI rather than silently
+skipping Claude items.
+
+Result (Bridge → Server → requesting App only):
+
+```json
+{
+  "action": "set_session_archive_result",
+  "requestId": "unique-request-id",
+  "deviceName": "MacBook-Pro",
+  "projectHash": "-workspace-project",
+  "results": [
+    { "sessionId": "codex:root", "ok": true, "archiveState": "archived",
+      "partial": ["codex:child-not-archived"] }
+  ]
+}
+```
+
+`partial` is optional and lists descendants the native archive did not archive.
+Each item succeeds independently; failures do not roll back successful items.
+Failure items include `errorCode`, `error`, and, when relevant, `nativeApplied`.
+Important codes:
+
+- `session_active`: target/descendant active or waiting, or Baton work queued.
+- `archive_writer_busy`: external writer present or inspection inconclusive.
+- `archive_state_unknown`, `archive_home_conflict`, `archive_project_mismatch`:
+  native ownership/state cannot be safely established. Unknown also covers a
+  failed protocol probe or incomplete descendant discovery; these never authorize
+  writes based on stale cached state.
+- `archive_unsupported`, `bridge_offline`: unavailable runtime capability/device.
+- `archive_sync_pending` with `nativeApplied: true`: native operation completed,
+  but synchronization is pending. Refresh/retry confirmation, not native rollback.
+- `archive_verification_pending`: native result could not yet be confirmed.
+
+After a timeout the Bridge reads actual native state before considering another
+mutation. Duplicate in-flight request IDs share their operation; after restart the
+native target-state check provides retry safety. An already-archived parent does
+not bypass descendant persistence confirmation or suppress `partial` results.
+
+Connected account clients receive:
+
+```json
+{
+  "action": "session_archives_changed",
+  "deviceName": "MacBook-Pro",
+  "changes": [
+    { "sessionId": "codex:root", "projectHash": "-workspace-project",
+      "archiveState": "archived", "archiveVersion": 1789516800000 }
+  ]
+}
+```
+
+Consumers ignore older observation versions and invalidate affected lists and
+thread metadata. List browsing remains REST-based, refreshing every 30 seconds
+while visible and again on foreground return; selection/in-flight operations defer
+refresh to preserve user intent.
+
+**Trust boundary:** WS operations/results enforce the existing account, connection
+role and device-routing checks; App result frames cannot assert native success.
+The HTTP sync path retains the existing account API-key trust model used by other
+Bridge sync routes. App and Bridge holding the same key are not independent security
+principals: a key holder can declare a Bridge role. `acknowledged` proves persistence
+of an observation, not native execution. Native execution is confirmed by the
+Bridge's native reads; stronger separation would require a separate authentication
+change.
+
 ### POST /api/bridge/sync-sessions
 
 Bridge uploads session metadata to DDB.
+
+Codex metadata may include positive safe-integer `statusVersion` and
+`agentSummaryVersion` observations. They are independent of `archiveVersion`:
+the former orders `status`/permission detail; the latter orders `agentCount`,
+`runningAgentCount`, and `needsInputAgentCount` (also accepted on `agentCountUpdates`).
+Older or unversioned updates cannot overwrite a newer versioned observation.
+Unrelated metadata still merges atomically. Concurrent summary writes return HTTP 409
+for retry rather than publishing an index derived from an outdated root status.
+Legacy Claude and unversioned records retain their existing behavior.
 
 **Request**
 ```json

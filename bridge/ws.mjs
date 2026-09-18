@@ -40,6 +40,9 @@ import {
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
 import { inspectCodexSession } from './codex-session.mjs';
+import { codexArchives } from './codex-archive.mjs';
+import { projectHashFromCwd } from './session-identity.mjs';
+import { CLAUDE_PROJECTS } from './config.mjs';
 import {
   updateSessionStatus,
   knownProjects,
@@ -421,8 +424,12 @@ function permissionObservationCallbacks(sessionId, identity) {
   };
 }
 
-async function handleRevealPermission(sessionId) {
+async function handleRevealPermission(sessionId, archiveChecked = false) {
   if (!sessionId) return;
+  if (sessionId.startsWith('codex:') && !archiveChecked) {
+    return codexArchives.withWritable(sessionId.slice(6), () => handleRevealPermission(sessionId, true))
+      .catch((error) => console.warn(`[archive] permission observation skipped: ${error.message}`));
+  }
   const pending = _pendingControl.current(sessionId);
   if (pending) {
     if (pending.syncStatus) {
@@ -442,6 +449,7 @@ async function handleRevealPermission(sessionId) {
   await adapter.interaction.observePermissions({
     sessionId: identity.sessionId,
     nativeSessionId: identity.nativeSessionId,
+    archiveChecked,
     callbacks: permissionObservationCallbacks(identity.sessionId, identity),
   });
 }
@@ -652,6 +660,7 @@ function connect() {
   }, CONNECT_TIMEOUT);
 
   _ws.on('open', () => {
+    if (codexArchives.enabled) codexArchives.refresh().catch((error) => console.warn(`[archive] reconnect: ${error.message}`));
     if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
     console.log('[ws] connected');
     _consecutiveFailures = 0;
@@ -740,6 +749,8 @@ async function handleMessage(msg) {
         break;
       }
       _clientTurnsInFlight.add(msg.turnId);
+      const releaseArchiveSend = String(msg.sessionId).startsWith('codex:') && String(msg.text).trim() !== '/archive'
+        ? codexArchives.trackPendingSend(msg.sessionId.slice(6)) : null;
       try {
         await _clientTurnOrder.run(msg, () => handleSendMessage(
           msg.sessionId,
@@ -768,11 +779,15 @@ async function handleMessage(msg) {
             : {}),
         });
       } finally {
+        releaseArchiveSend?.();
         _clientTurnsInFlight.delete(msg.turnId);
       }
       break;
     case 'permission_reply':
-      handlePermissionReply(msg);
+      if (String(msg.sessionId).startsWith('codex:')) {
+        await codexArchives.withWritable(msg.sessionId.slice(6), () => handlePermissionReply(msg))
+          .catch((error) => console.warn(`[archive] permission reply rejected: ${error.message}`));
+      } else handlePermissionReply(msg);
       break;
     case 'reveal_permission':
       await handleRevealPermission(msg.sessionId);
@@ -811,6 +826,9 @@ async function handleMessage(msg) {
     case 'delete_files':
       handleDeleteFiles(msg);
       break;
+    case 'set_session_archive':
+      await handleSetSessionArchive(msg);
+      break;
     case 'list_commands':
       await handleListCommands(msg);
       break;
@@ -827,6 +845,46 @@ async function handleMessage(msg) {
     default:
       console.log(`[ws] unknown action: ${msg.action}`);
   }
+}
+
+const archiveRequests = new Map();
+
+async function handleSetSessionArchive(msg) {
+  const ids = msg.sessionIds;
+  if (!msg.requestId || !Array.isArray(ids) || !ids.length || ids.length > 100
+    || typeof msg.archived !== 'boolean' || !msg.projectHash || msg.device !== _config.deviceName) return;
+  const signature = JSON.stringify([msg.device, msg.projectHash, ids, msg.archived]);
+  const existing = archiveRequests.get(msg.requestId);
+  if (existing && existing.signature !== signature) return;
+  const operation = existing?.operation || (async () => {
+    const results = [];
+    for (const sessionId of [...new Set(ids)]) {
+      if (typeof sessionId !== 'string' || !sessionId.startsWith('codex:')) {
+        results.push({ sessionId, ok: false, errorCode: 'archive_unsupported', error: 'Only Codex sessions support archiving.' });
+        continue;
+      }
+      try {
+        const record = codexArchives.lookup(sessionId.slice(6));
+        if (!record || projectHashFromCwd(record.cwd, CLAUDE_PROJECTS) !== msg.projectHash) {
+          results.push({ sessionId, ok: false, errorCode: 'archive_project_mismatch', error: 'Session is not available in this project.' });
+          continue;
+        }
+        results.push(await codexArchives.setArchived(sessionId.slice(6), msg.archived, { cwd: record.cwd }));
+      } catch (error) {
+        results.push({ sessionId, ok: false, errorCode: error.code || 'archive_failed', error: error.message });
+      }
+    }
+    return results;
+  })();
+  archiveRequests.set(msg.requestId, { signature, operation });
+  if (archiveRequests.size > 128) archiveRequests.delete(archiveRequests.keys().next().value);
+  const results = await operation;
+  if (results.some((result) => !result.ok)) archiveRequests.delete(msg.requestId);
+  wsSendWhenConnected({
+    action: 'set_session_archive_result', requestId: msg.requestId,
+    deviceName: _config.deviceName, projectHash: msg.projectHash,
+    results, replyConnectionId: msg.replyConnectionId,
+  });
 }
 
 async function handleSyncSession(sessionId, runtime, nativeSessionId) {

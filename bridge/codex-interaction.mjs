@@ -20,6 +20,7 @@ import {
 } from './codex-plan.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { codexArchives } from './codex-archive.mjs';
 
 const CODEX_GOAL_RESUME_APPROVAL_TYPE = 'codex-goal-resume';
 const RESUMABLE_GOAL_STATUSES = new Set(['paused', 'blocked', 'usageLimited']);
@@ -372,12 +373,17 @@ function mcpElicitationResponse(pending, response) {
 export class CodexInteraction {
   constructor(options = {}) {
     this.runtime = 'codex';
+    this.archives = options.archives || codexArchives;
     this.clientFactory = options.clientFactory
       || (options.client
         ? () => options.client
         : (context = {}) => new CodexAppServerClient({
           ...options.clientOptions,
           ...(context.cwd ? { cwd: context.cwd } : {}),
+          ...(context.codexHome ? {
+            codexHomes: [context.codexHome],
+            env: { ...process.env, CODEX_HOME: context.codexHome },
+          } : {}),
           ...(context.managedOnly ? { managedOnly: true } : {}),
         }));
     this.writerController = options.writerController || codexWriterController;
@@ -415,10 +421,12 @@ export class CodexInteraction {
 
   #client(session, options = {}) {
     if (session.client) return session.client;
+    const archiveRecord = this.archives.lookup(session.nativeSessionId);
     const client = this.clientFactory({
       nativeSessionId: session.nativeSessionId,
       storageSessionId: session.storageSessionId,
       ...(session.cwd ? { cwd: session.cwd } : {}),
+      ...(archiveRecord ? { codexHome: archiveRecord.home } : {}),
       ...(options.managedOnly ? { managedOnly: true } : {}),
     });
     if (!client) throw new Error('Codex interaction client factory returned no client');
@@ -554,6 +562,9 @@ export class CodexInteraction {
   }
 
   async sendExisting(options) {
+    if (!options.archiveChecked) {
+      return this.archives.withWritable(options.nativeSessionId, () => this.sendExisting({ ...options, archiveChecked: true }));
+    }
     const session = this.#session(options.nativeSessionId, options.sessionId);
     if (options.cwd) session.cwd = options.cwd;
     const turn = {
@@ -584,6 +595,13 @@ export class CodexInteraction {
   }
 
   async observePermissions(options) {
+    if (!options.archiveChecked) {
+      return this.archives.withWritable(options.nativeSessionId, () => this.observePermissions({ ...options, archiveChecked: true }))
+        .catch((error) => {
+          if (['session_archived', 'archive_state_unknown', 'archive_home_conflict'].includes(error.code)) return { active: false, loaded: false };
+          throw error;
+        });
+    }
     const session = this.#session(options.nativeSessionId, options.sessionId);
     const operation = session.sendLock.then(async () => {
       if (session.active) return { active: true, loaded: true };
@@ -1001,6 +1019,15 @@ export class CodexInteraction {
   }
 
   async runCommand(options) {
+    if (options.name === 'archive') {
+      if (String(options.args || '').trim()) throw new Error('Usage: /archive');
+      const result = await this.archives.setArchived(options.nativeSessionId, true, { cwd: options.cwd });
+      if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+      return { output: result.partial?.length ? 'Session archived. Some subagents could not be archived.' : 'Session archived.', action: { type: 'leave-session' } };
+    }
+    if (!options.archiveChecked) {
+      return this.archives.withWritable(options.nativeSessionId, () => this.runCommand({ ...options, archiveChecked: true }));
+    }
     const session = this.#session(options.nativeSessionId, options.sessionId);
     if (options.cwd) session.cwd = options.cwd;
     const operation = session.sendLock.then(async () => {
@@ -1077,15 +1104,6 @@ export class CodexInteraction {
               name: args,
             });
             return { output: `Renamed thread to **${args}**.` };
-          case 'archive':
-            if (args) throw new Error('Usage: /archive');
-            await session.client.request('thread/archive', {
-              threadId: session.nativeSessionId,
-            });
-            return {
-              output: 'Session archived.',
-              action: { type: 'leave-session' },
-            };
           case 'delete':
             if (args) throw new Error('Usage: /delete');
             await session.client.request('thread/delete', {
@@ -2073,7 +2091,10 @@ export class CodexInteraction {
     return true;
   }
 
-  async interrupt(nativeSessionId) {
+  async interrupt(nativeSessionId, archiveChecked = false) {
+    if (!archiveChecked) {
+      return this.archives.withWritable(nativeSessionId, () => this.interrupt(nativeSessionId, true));
+    }
     const turn = this.sessions.get(nativeSessionId)?.active;
     if (!turn?.turnId) return false;
     try {
@@ -2095,7 +2116,8 @@ export class CodexInteraction {
   }
 
   isBusy(nativeSessionId) {
-    return !!this.sessions.get(nativeSessionId)?.active;
+    const session = this.sessions.get(nativeSessionId);
+    return !!session?.active || !!session?.queue.length;
   }
 
   async shutdown() {
