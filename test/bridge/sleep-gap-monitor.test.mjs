@@ -5,6 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { SleepGapMonitor } from '../../bridge/sleep-gap-monitor.mjs';
+import { RealtimeSender } from '../../bridge/realtime-direct.mjs';
 
 function harness() {
   let now = 100_000;
@@ -114,7 +115,7 @@ function connectionHarness() {
     send() {}
   }
   const context = vm.createContext({
-    WebSocket: FakeSocket, SleepGapMonitor,
+    WebSocket: FakeSocket, SleepGapMonitor, RealtimeSender,
     console: { log() {}, error() {} }, process: { platform: process.platform }, BRIDGE_VERSION: 'test',
     _terminalRemote: null, _sharedTerminals: null,
     setTimeout: (callback, delay) => { const id = timerId++; timers.set(id, { callback, delay }); return id; },

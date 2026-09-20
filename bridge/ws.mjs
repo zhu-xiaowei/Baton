@@ -70,8 +70,10 @@ import {
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { SleepGapMonitor } from './sleep-gap-monitor.mjs';
+import { RealtimeSender } from './realtime-direct.mjs';
 
 let _ws = null;
+let _realtime = null;
 let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
@@ -181,6 +183,7 @@ async function gitStatusModule() {
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 export async function shutdownInteractions() {
+  _realtime?.dispose();
   _resumeMonitor.stop();
   _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
@@ -590,7 +593,7 @@ export function wsSend(data) {
       console.error(`[ws] oversized ${data.action || 'event'} could not be compacted`);
       return false;
     }
-    _ws.send(payload);
+    if (!_realtime?.enqueue(outgoing)) _ws.send(payload);
     if (data.action === 'stream_end' && data.turnId) {
       _turnPayloadRecovery.delete(data.turnId);
     }
@@ -622,6 +625,8 @@ export function createTurnMessagesEvent(sessionId, turnId, messages) {
 
 function connect() {
   if (!_config) return;
+  _realtime?.dispose();
+  _realtime = null;
   _terminalRemote?.closeAll();
   _sharedTerminals?.detachAll();
 
@@ -644,7 +649,7 @@ function connect() {
     _ws = null;
   }
 
-  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge`
+  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&realtime=1`
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
     + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2&terminalStartup=1' : '');
@@ -669,6 +674,14 @@ function connect() {
   _ws.on('open', () => {
     if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
     console.log('[ws] connected');
+    const socket = _ws;
+    const send = payload => {
+      if (socket !== _ws || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 1024 * 1024) return false;
+      socket.send(payload);
+      return true;
+    };
+    _realtime = new RealtimeSender({ send, fallback: event => send(JSON.stringify(event)) });
+    _realtime.start();
     _consecutiveFailures = 0;
     _heartbeatTimer = setInterval(() => {
       if (_ws?.readyState === WebSocket.OPEN) {
@@ -715,6 +728,8 @@ function connect() {
 }
 
 function scheduleReconnect() {
+  _realtime?.dispose();
+  _realtime = null;
   _terminalRemote?.closeAll();
   _sharedTerminals?.detachAll();
   if (_reconnectTimer) return;
@@ -731,6 +746,7 @@ function scheduleReconnect() {
 }
 
 async function handleMessage(msg) {
+  if (_realtime?.handle(msg)) return;
   switch (msg.action) {
     case 'terminal_direct':
       await handleSharedTerminalMessage(msg);

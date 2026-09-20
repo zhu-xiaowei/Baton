@@ -30,6 +30,7 @@ import {
   TurnEventQueue,
 } from './streaming.js';
 import { handleWsRpcMessage } from './ws-rpc.js';
+import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
@@ -48,6 +49,7 @@ var _checkpointResumedTurns = new Set();
 var _queuedTurnIds = new Set();
 var _wsReconnectTimer = null;
 var _wsConfigRequest = null;
+var _realtimeReceiver = null;
 var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
@@ -335,9 +337,12 @@ function connectWs(_, projectHash) {
     state.ws.close();
     state.ws = null;
   }
-  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app');
+  _realtimeReceiver?.dispose();
+  _realtimeReceiver = null;
+  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
 
   state.ws.onopen = function () {
+    _realtimeReceiver = new RealtimeReceiver({ control: state.ws, key: state.KEY, receive: handleWsMessage });
     setWsStatus('connected');
     recoverSubscribedSession();
     if (_wsSendQueue.length) {
@@ -347,14 +352,18 @@ function connectWs(_, projectHash) {
     }
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
+    _realtimeReceiver.start();
   };
 
   state.ws.onmessage = function (e) {
     var message = JSON.parse(e.data);
+    if (_realtimeReceiver?.handle(message)) return;
     handleWsMessage(message);
   };
 
   state.ws.onclose = function () {
+    _realtimeReceiver?.dispose();
+    _realtimeReceiver = null;
     if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
     if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
@@ -1425,6 +1434,8 @@ function setWsStatus(status) {
 }
 
 function disconnectWs() {
+  _realtimeReceiver?.dispose();
+  _realtimeReceiver = null;
   _wsConnectionGeneration++;
   if (window.resetCommandRequest) window.resetCommandRequest();
   if (_wsReconnectTimer) {

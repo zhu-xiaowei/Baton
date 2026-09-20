@@ -12,12 +12,14 @@ from project.files_ws import handle_project_files
 from project.git_ws import handle_git_status
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
+from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
 
 _ddb = None
 _connections_table = None
 _subscriptions_table = None
 _messages_table = None
 _apigw = None
+_apigw_endpoint = None
 
 _STRICT_STREAM_ACTIONS = {
     "stream_turn_start",
@@ -63,10 +65,16 @@ def _init():
 
 
 def _apigw_client(endpoint):
-    global _apigw
-    if _apigw is None:
+    global _apigw, _apigw_endpoint
+    if _apigw is None or (_apigw_endpoint is not None and _apigw_endpoint != endpoint):
         _apigw = boto3.client("apigatewaymanagementapi", endpoint_url=endpoint)
+        _apigw_endpoint = endpoint
     return _apigw
+
+
+def _realtime_service(endpoint):
+    return RealtimeDirect(_connections_table, _query_connections, _post_to_connection,
+        _disconnect_terminal_data, _turn_event_targets, endpoint)
 
 
 def _account_id(api_key):
@@ -158,9 +166,12 @@ def _turn_event_targets(body, account_id, bridge_connection_id):
 def _relay_turn_event(body, account_id, bridge_connection_id, endpoint):
     payload = {
         key: value for key, value in body.items()
-        if key not in ("replyConnectionId", "deliveryId", "noCache")
+        if key not in ("replyConnectionId", "deliveryId", "noCache", "directDeliveredTo")
     }
     targets = _turn_event_targets(body, account_id, bridge_connection_id)
+    delivered = body.get("directDeliveredTo", [])
+    if isinstance(delivered, list):
+        targets.difference_update(value for value in delivered if isinstance(value, str))
     gone = 0
     for connection_id in targets:
         if _post_to_connection(endpoint, connection_id, payload) is False:
@@ -208,7 +219,9 @@ def _handle_connect(event, connection_id):
     context = event.get("requestContext", {})
     connected_endpoint = f"https://{context.get('domainName', '')}/{context.get('stage', '')}"
     data_endpoint = os.environ.get("TERMINAL_DIRECT_ENDPOINT")
-    if (role == "terminal_data") != (bool(data_endpoint) and connected_endpoint == data_endpoint):
+    if (role in ("terminal_data", "realtime_data")) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
+        return {"statusCode": 403}
+    if role == "realtime_data" and not realtime_enabled():
         return {"statusCode": 403}
 
     account_id = _account_id(api_key)
@@ -229,8 +242,10 @@ def _handle_connect(event, connection_id):
         item["terminalProtocol"] = 2
         if qs.get("terminalStartup") == "1":
             item["terminalStartup"] = 1
-    if role == "terminal_data":
+    if role in ("terminal_data", "realtime_data"):
         item["terminalDataEndpoint"] = connected_endpoint
+    if role in ("app", "bridge") and qs.get("realtime") == "1":
+        item["realtimeVersion"] = 1
     _connections_table.put_item(Item=item)
 
     return {"statusCode": 200}
@@ -245,6 +260,15 @@ def _disconnect_terminal_data(endpoint, connection_id):
 
 def _handle_disconnect(connection_id, endpoint=None):
     """Remove connection + any subscriptions."""
+    realtime_connection = None
+    if endpoint and realtime_enabled():
+        try:
+            realtime_connection = _connections_table.get_item(
+                Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
+            _realtime_service(endpoint).close(realtime_connection,
+                publish=not realtime_connection or realtime_connection.get("role") != "app")
+        except Exception:
+            print("Realtime connection cleanup failed")
     try:
         if endpoint:
             connection = _connections_table.get_item(Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
@@ -278,6 +302,13 @@ def _handle_disconnect(connection_id, endpoint=None):
     except Exception:
         pass
 
+    if realtime_connection and realtime_connection.get("role") == "app":
+        try:
+            _realtime_service(endpoint).invalidate(realtime_connection["accountId"],
+                realtime_connection.get("realtimeSessions", set()))
+        except Exception:
+            print("Realtime subscription cleanup notification failed")
+
     return {"statusCode": 200}
 
 
@@ -304,10 +335,12 @@ def _handle_message(event, connection_id, endpoint):
 
     role = conn.get("role", "app")
     account_id = conn.get("accountId", "")
+    if action == "realtime_direct":
+        return handle_realtime_direct(body, conn, connection_id, _realtime_service(endpoint))
     if action == "terminal_direct":
         return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
             query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
-    if role == "terminal_data":
+    if role in ("terminal_data", "realtime_data"):
         return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \
             and not _has_valid_turn_sequence(body):
@@ -329,6 +362,8 @@ def _handle_message(event, connection_id, endpoint):
             if not session_id:
                 return {"statusCode": 400}
             _persist_subscription(session_id, connection_id, account_id)
+            if realtime_enabled():
+                _realtime_service(endpoint).subscription(connection_id, account_id, session_id)
             return _handle_send_to_bridge(
                 body,
                 account_id,
@@ -336,7 +371,7 @@ def _handle_message(event, connection_id, endpoint):
                 "reveal_permission",
             )
     elif action == "unsubscribe":
-        return _handle_unsubscribe(body, connection_id)
+        return _handle_unsubscribe(body, connection_id, account_id, endpoint)
     elif action == "messages":
         if role == "bridge":
             return _handle_bridge_messages(body, connection_id, account_id, endpoint)
@@ -494,6 +529,9 @@ def _handle_subscribe(body, connection_id, account_id, endpoint):
             account_id,
         )
 
+    if realtime_enabled():
+        _realtime_service(endpoint).subscription(connection_id, account_id, session_id)
+
     return {"statusCode": 200}
 
 
@@ -508,7 +546,7 @@ def _persist_subscription(session_id, connection_id, account_id):
     _subscriptions_table.put_item(Item=item)
 
 
-def _handle_unsubscribe(body, connection_id):
+def _handle_unsubscribe(body, connection_id, account_id=None, endpoint=None):
     """App unsubscribes from a session."""
     session_id = body.get("sessionId", "")
     if not session_id:
@@ -524,6 +562,9 @@ def _handle_unsubscribe(body, connection_id):
             "sessionId": _root_subscription_id(root_session_id),
             "connectionId": connection_id,
         })
+
+    if endpoint and realtime_enabled():
+        _realtime_service(endpoint).subscription(connection_id, account_id, session_id, remove=True)
 
     return {"statusCode": 200}
 

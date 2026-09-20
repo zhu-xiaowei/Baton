@@ -455,6 +455,37 @@
         }]
       }
     },
+    "RealtimeDirectIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "HTTP", "IntegrationMethod": "POST",
+        "IntegrationUri": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1/@connections/{connectionId}" },
+        "RequestParameters": {
+          "integration.request.path.connectionId": "route.request.body.target",
+          "integration.request.header.Authorization": "route.request.body.authorization",
+          "integration.request.header.X-Amz-Date": "route.request.body.date",
+          "integration.request.header.X-Amz-Security-Token": "route.request.body.token"
+        },
+        "RequestTemplates": { "application/json": "$input.path('$.body')" },
+        "TemplateSelectionExpression": "application/json", "PassthroughBehavior": "NEVER", "TimeoutInMillis": 5000
+      }
+    },
+    "RealtimeDirectIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "RealtimeDirectIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "application/json",
+        "ResponseTemplates": { "application/json": "{}" }
+      }
+    },
+    "RealtimeDirectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["RealtimeDirectIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_direct_data",
+        "Target": { "Fn::Sub": "integrations/${RealtimeDirectIntegration}" }
+      }
+    },
     "TerminalDirectIntegration": {
       "Type": "AWS::ApiGatewayV2::Integration",
       "Properties": {
@@ -512,6 +543,7 @@
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
+            "REALTIME_DIRECT_ENABLED": "1",
             "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
           }
         },

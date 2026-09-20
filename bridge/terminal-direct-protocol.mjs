@@ -30,7 +30,7 @@ export async function authenticateFrame(payload, key) {
   return { payload, mac: hex(await hmac(key, payload)) };
 }
 
-async function verifyFrame(frame, key) {
+export async function verifyFrame(frame, key) {
   if (typeof frame?.payload !== 'string' || !/^[0-9a-f]{64}$/.test(frame.mac || '')) return false;
   const imported = await crypto.subtle.importKey('raw', encoder.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
   const signature = Uint8Array.from(frame.mac.match(/../g), value => parseInt(value, 16));
@@ -42,7 +42,7 @@ function encodePath(path) {
     value => `%${value.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
 }
 
-export function createHeaderSigner({ endpoint, region, target, credentials }) {
+export function createHeaderSigner({ endpoint, region, target, credentials, action = 'terminal_direct_data' }) {
   const base = new URL(endpoint);
   if (base.protocol !== 'https:' || base.search || base.hash || base.username || base.password
     || !CONNECTION.test(target) || !/^[a-z0-9-]+$/.test(region)
@@ -65,7 +65,7 @@ export function createHeaderSigner({ endpoint, region, target, credentials }) {
     const canonical = ['POST', encodePath(path), '', headers, signedHeaders, await digest(body)].join('\n');
     const scope = `${date}/${region}/execute-api/aws4_request`;
     const signature = hex(await hmac(await cachedKey, `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await digest(canonical)}`));
-    const frame = JSON.stringify({ action: 'terminal_direct_data', target, body, date: stamp,
+    const frame = JSON.stringify({ action, target, body, date: stamp,
       token: credentials.sessionToken,
       authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` });
     if (encoder.encode(frame).length > MAX_FRAME) throw new Error('Signed frame exceeds 28 KiB');
