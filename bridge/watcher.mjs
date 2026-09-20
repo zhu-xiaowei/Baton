@@ -60,7 +60,6 @@ export function correlateClaudeInterruptMessage(
   if (!turnId) return message;
   return {
     ...message,
-    uuid: `live_interrupt_${turnId}`,
     nativeId: `live:interrupt:${turnId}`,
     turnId,
   };

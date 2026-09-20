@@ -1011,7 +1011,7 @@ export class StreamingDomRenderer {
       element = this.document.createElement('div');
       element.className = classForBlock(operation.block.kind);
       element.dataset.blockId = String(operation.blockId);
-      turn.appendChild(element);
+      turn.insertBefore(element, turn.querySelector(':scope > .msg-interrupt'));
     }
     element.dataset.kind = operation.block.kind;
     var view = {

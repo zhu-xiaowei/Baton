@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import {
+  clearLiveMessageRegistry,
+  registerClaudeInterruptTurn,
+} from '../../bridge/live-message-registry.mjs';
+import { correlateClaudeInterruptMessage } from '../../bridge/watcher.mjs';
 import { makeHarness, resetSession } from './harness.mjs';
 
 function turnEvent(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('a watcher rebroadcast four milliseconds later keeps one interrupt row', async () => {
+test('live, watcher and full-sync copies of one interrupt keep one row', async context => {
+  context.after(clearLiveMessageRegistry);
   const h = await makeHarness();
   const sessionId = 'claude:interrupt-watcher-rebroadcast';
   const turnId = 'sent-interrupted';
@@ -47,20 +53,20 @@ test('a watcher rebroadcast four milliseconds later keeps one interrupt row', as
   }
   await h.tick(30);
 
+  const nativeInterrupt = {
+    uuid: 'native-interrupt',
+    type: 'user',
+    content: [{
+      type: 'text',
+      text: '[Request interrupted by user]',
+    }],
+    timestamp: '2026-09-01T09:18:42.101Z',
+  };
+  registerClaudeInterruptTurn(sessionId, turnId);
   h.hooks.handleWsMessage({
     action: 'messages',
     sessionId,
-    messages: [{
-      uuid: interruptId,
-      nativeId: `live:interrupt:${turnId}`,
-      turnId,
-      type: 'user',
-      content: [{
-        type: 'text',
-        text: '[Request interrupted by user]',
-      }],
-      timestamp: '2026-09-01T09:18:42.101Z',
-    }],
+    messages: [correlateClaudeInterruptMessage(sessionId, nativeInterrupt)],
   });
   await h.tick(30);
 
@@ -72,5 +78,18 @@ test('a watcher rebroadcast four milliseconds later keeps one interrupt row', as
   assert.equal(
     h.document.querySelector('.msg-interrupt')?.dataset.messageId,
     interruptId,
+  );
+
+  h.hooks.handleWsMessage({
+    action: 'messages',
+    sessionId,
+    messages: [nativeInterrupt],
+  });
+  await h.tick(30);
+
+  assert.equal(h.document.querySelectorAll('.msg-interrupt').length, 1);
+  assert.equal(
+    h.state.wsAllMessages.filter(message => h.window.isInterruptMsg(message)).length,
+    1,
   );
 });

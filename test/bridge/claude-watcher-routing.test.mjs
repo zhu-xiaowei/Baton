@@ -37,7 +37,7 @@ test('empty non-daemon Claude sessions are skipped regardless of running status'
   assert.equal(shouldSkipClaudeSession('', { agentName: 'worker' }), false);
 });
 
-test('watcher gives the authoritative Claude interrupt its live turn identity', () => {
+test('watcher preserves the native UUID while linking the Claude interrupt to its live turn', () => {
   registerClaudeInterruptTurn('session-1', 'sent-turn-1', 1_000);
   const message = correlateClaudeInterruptMessage('session-1', {
     uuid: 'claude-jsonl-uuid',
@@ -47,7 +47,7 @@ test('watcher gives the authoritative Claude interrupt its live turn identity', 
   }, 1_001);
 
   assert.deepEqual(message, {
-    uuid: 'live_interrupt_sent-turn-1',
+    uuid: 'claude-jsonl-uuid',
     nativeId: 'live:interrupt:sent-turn-1',
     turnId: 'sent-turn-1',
     type: 'user',
@@ -77,7 +77,7 @@ test('unrelated rows do not consume a pending Claude interrupt turn', () => {
         text: '[Request interrupted by user for tool use]',
       }],
     }, 1_002).uuid,
-    'live_interrupt_sent-turn-1',
+    'claude-jsonl-uuid',
   );
 });
 

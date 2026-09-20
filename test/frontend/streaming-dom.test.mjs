@@ -78,6 +78,26 @@ test('ordered delta operations append each character exactly once', () => {
   assert.deepEqual(h.revealed, [['turn-1', 1]]);
 });
 
+test('blocks arriving after an interrupt remain before the turn footer', () => {
+  const harness = createRenderer();
+  createText(harness.renderer);
+  const turn = harness.document.querySelector('[data-turn-id="turn-1"]');
+  const interrupt = harness.document.createElement('div');
+  interrupt.className = 'tl-item msg-interrupt';
+  interrupt.textContent = 'Interrupted';
+  turn.appendChild(interrupt);
+
+  createText(harness.renderer, 'turn-1', 2);
+  createText(harness.renderer, 'turn-1', 3);
+
+  assert.deepEqual(
+    [...turn.children].map(child => child.dataset.blockId || child.textContent),
+    ['1', '2', '3', 'Interrupted'],
+  );
+  assert.equal(turn.lastElementChild, interrupt);
+  assert.equal(turn.querySelectorAll('.msg-interrupt').length, 1);
+});
+
 test('live thinking uses the collapsible Thinking component from its first frame', () => {
   const h = createRenderer();
   h.ensureAnchor('turn-thinking');
