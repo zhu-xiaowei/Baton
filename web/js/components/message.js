@@ -197,9 +197,11 @@ import { extractAttachments, fileAttachmentHtml } from './attachment.js';
   window.renderThinking = function (block) {
     const secs = Math.round((block.duration_ms || 0) / 1000);
     const label = secs > 0 ? `Thought for ${secs}s` : 'Thinking';
+    const duration = Number.isFinite(block.duration_ms)
+      ? ` data-thinking-duration-ms="${Math.max(0, block.duration_ms)}"` : '';
     const id = 'think-' + Math.random().toString(36).slice(2, 8);
-    return `<div class="thinking-block">
-      <div class="thinking-toggle" onclick="this.classList.toggle('open');var b=document.getElementById('${id}');b.style.display=b.style.display==='block'?'none':'block'">${label} <span class="thinking-chevron">&#8250;</span></div>
+    return `<div class="thinking-block"${duration}>
+      <div class="thinking-toggle" onclick="var b=document.getElementById('${id}');if(!b.textContent.trim())return;this.classList.toggle('open');b.style.display=b.style.display==='block'?'none':'block'"><span class="thinking-label">${label}</span> <span class="thinking-chevron">&#8250;</span></div>
       <div class="thinking-body" id="${id}">${esc(block.thinking || '')}</div>
     </div>`;
   };

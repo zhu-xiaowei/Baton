@@ -1,3 +1,5 @@
+import { refreshThinkingGroups } from './thinking.js';
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
@@ -310,7 +312,7 @@ class BlockState {
   }
 
   isRenderable() {
-    return this.isTool() || this.text.length > 0;
+    return this.isTool() || this.kind === 'thinking' || this.text.length > 0;
   }
 
   snapshot() {
@@ -641,7 +643,7 @@ export class StreamCoordinator {
     var block = turn.blocks.get(blockId);
     if (!block) return;
     if (frame.type === 'start') {
-      if (block.isTool()) this.showVisibleBlock(turn);
+      if (block.isTool() || block.kind === 'thinking') this.showVisibleBlock(turn);
       return;
     }
     if (frame.type === 'delta') {
@@ -712,7 +714,8 @@ export class StreamCoordinator {
 
   finishVisibleBlockInput(turn, block) {
     if (block.displayComplete) return;
-    if (block.isTool() || !block.isRenderable()) {
+    if (block.isTool() || !block.isRenderable()
+      || (block.kind === 'thinking' && !block.text)) {
       this.commitVisibleBlock(turn, block);
       return;
     }
@@ -875,7 +878,10 @@ export class StreamingDomRenderer {
       block.className = 'thinking-block';
       var label = this.document.createElement('div');
       label.className = 'thinking-toggle';
-      label.append('Thinking ');
+      var title = this.document.createElement('span');
+      title.className = 'thinking-label';
+      title.textContent = 'Thinking';
+      label.append(title, ' ');
       var chevron = this.document.createElement('span');
       chevron.className = 'thinking-chevron';
       chevron.innerHTML = '&#8250;';
@@ -883,6 +889,7 @@ export class StreamingDomRenderer {
       var body = this.document.createElement('div');
       body.className = 'thinking-body';
       label.addEventListener('click', function () {
+        if (!body.textContent.trim()) return;
         label.classList.toggle('open');
         body.style.display = body.style.display === 'block' ? 'none' : 'block';
       });
@@ -899,6 +906,10 @@ export class StreamingDomRenderer {
     this.turnElements = new Map();
     this.blockViews = new Map();
     this.frameId = null;
+    this.now = options.now || Date.now;
+    this.scheduleTimer = options.scheduleTimer || ((callback) => setTimeout(callback, 1000));
+    this.cancelTimer = options.cancelTimer || clearTimeout;
+    this.thinkingTimer = null;
   }
 
   applyOperations(operations) {
@@ -915,6 +926,7 @@ export class StreamingDomRenderer {
     for (var key of Array.from(this.blockViews.keys())) {
       if (key.startsWith(turnId + ':')) this.blockViews.delete(key);
     }
+    this.refreshThinking();
     return !!turn;
   }
 
@@ -1028,6 +1040,7 @@ export class StreamingDomRenderer {
     };
     this.blockViews.set(key, view);
     if (!adopted) this.renderBlock(view);
+    this.updateThinking(view);
     this.onMutation(element, { structureChanged: !adopted });
     return element;
   }
@@ -1051,6 +1064,7 @@ export class StreamingDomRenderer {
     var view = this.blockView(operation);
     if (!view) return;
     view.inputFinished = true;
+    this.updateThinking(view, true);
     if (view.adopted) {
       if (!view.revealReported) {
         view.revealReported = true;
@@ -1066,6 +1080,7 @@ export class StreamingDomRenderer {
     if (!view) return;
     view.committed = true;
     view.element.classList.add('stream-block-committed');
+    this.updateThinking(view, true);
   }
 
   adoptToolHistoryNode(view, block) {
@@ -1107,6 +1122,7 @@ export class StreamingDomRenderer {
     if (view.block.toolUseId) view.element.dataset.toolId = view.block.toolUseId;
     if (view.block.messageId) view.element.dataset.messageId = view.block.messageId;
     if (view.block.nativeId) view.element.dataset.nativeId = view.block.nativeId;
+    this.updateThinking(view);
     this.onMutation(view.element);
   }
 
@@ -1141,6 +1157,7 @@ export class StreamingDomRenderer {
       'stream-block-authoritative',
       !!view.block.authoritative,
     );
+    this.updateThinking(view);
     this.onMutation(view.element);
   }
 
@@ -1151,6 +1168,7 @@ export class StreamingDomRenderer {
     var turn = view.element.parentElement;
     view.element.remove();
     this.blockViews.delete(key);
+    this.refreshThinking();
     if (turn && !turn.children.length) {
       turn.remove();
       this.turnElements.delete(operation.turnId);
@@ -1161,6 +1179,9 @@ export class StreamingDomRenderer {
   completeTurn(operation) {
     var turn = this.turnElements.get(operation.turnId);
     if (!turn) return;
+    for (var view of this.blockViews.values()) {
+      if (view.turnId === operation.turnId) this.updateThinking(view, true);
+    }
     if (!turn.children.length) {
       turn.remove();
       this.turnElements.delete(operation.turnId);
@@ -1230,6 +1251,7 @@ export class StreamingDomRenderer {
     if (view.block.kind === 'thinking') {
       var body = view.element.querySelector('.thinking-body');
       if (body) body.textContent = text;
+      this.refreshThinking();
       return;
     }
     this.renderMarkdown(view.element, text);
@@ -1239,9 +1261,51 @@ export class StreamingDomRenderer {
     return this.blockViews.get(blockViewKey(operation.turnId, operation.blockId)) || null;
   }
 
+  updateThinking(view, finished = false) {
+    var block = view.element.querySelector('.thinking-block');
+    if (view.block.kind !== 'thinking' || !block) {
+      return;
+    }
+    var stopped = finished || view.inputFinished || view.block.stopped
+      || view.block.displayComplete || view.adopted;
+    if (!stopped && view.thinkingStartedAt == null) {
+      view.thinkingStartedAt = this.now();
+    }
+    if (stopped) {
+      if (view.thinkingStartedAt != null && !block.hasAttribute('data-thinking-duration-ms')) {
+        block.dataset.thinkingDurationMs = String(Math.max(0, this.now() - view.thinkingStartedAt));
+      }
+      delete block.dataset.thinkingStartedAt;
+    } else {
+      block.dataset.thinkingStartedAt = String(view.thinkingStartedAt);
+    }
+    this.refreshThinking();
+  }
+
+  refreshThinking() {
+    refreshThinkingGroups(this.getContainer?.(), this.now());
+    var running = Array.from(this.blockViews.values()).some((view) =>
+      view.element.isConnected
+      && view.element.querySelector('[data-thinking-started-at]'));
+    if (!running && this.thinkingTimer != null) {
+      this.cancelTimer(this.thinkingTimer);
+      this.thinkingTimer = null;
+    } else if (running && this.thinkingTimer == null) {
+      this.thinkingTimer = this.scheduleTimer(() => {
+        this.thinkingTimer = null;
+        this.refreshThinking();
+      });
+    }
+  }
+
   reset(options = {}) {
+    if (options.remove === false) {
+      for (var view of this.blockViews.values()) this.updateThinking(view, true);
+    }
     if (this.frameId != null) this.cancelFrame(this.frameId);
     this.frameId = null;
+    if (this.thinkingTimer != null) this.cancelTimer(this.thinkingTimer);
+    this.thinkingTimer = null;
     if (options.remove !== false) {
       for (var turn of this.turnElements.values()) turn.remove();
     }

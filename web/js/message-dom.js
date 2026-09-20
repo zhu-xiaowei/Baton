@@ -72,8 +72,18 @@ function syncUserIdentity(current, expected) {
 
 function inheritUiState(current, expected) {
   if (!current || !expected) return;
+  if (current.classList.contains('thinking-tl')
+    && expected.classList.contains('thinking-tl')) {
+    var currentThinking = current.querySelector('.thinking-block');
+    var expectedThinking = expected.querySelector('.thinking-block');
+    if (currentThinking?.hasAttribute('data-thinking-duration-ms')
+      && expectedThinking && !expectedThinking.hasAttribute('data-thinking-duration-ms')) {
+      expectedThinking.dataset.thinkingDurationMs = currentThinking.dataset.thinkingDurationMs;
+    }
+  }
   if (current.classList.contains('tool-node')
-    && expected.classList.contains('tool-node')) {
+    && expected.classList.contains('tool-node')
+    && current.querySelector(':scope > .tool-header.tool-details-toggle')) {
     var collapsed = current.classList.contains('tool-details-collapsed');
     expected.classList.toggle('tool-details-collapsed', collapsed);
     var header = expected.querySelector(':scope > .tool-header');

@@ -8,6 +8,9 @@ function createRenderer() {
   const dom = new JSDOM('<div class="messages"></div>');
   const frames = [];
   const revealed = [];
+  const timers = new Map();
+  let now = 10000;
+  let timerId = 0;
   const renderer = new StreamingDomRenderer({
     document: dom.window.document,
     getContainer: () => dom.window.document.querySelector('.messages'),
@@ -20,6 +23,12 @@ function createRenderer() {
       return frames.length;
     },
     cancelFrame: () => {},
+    now: () => now,
+    scheduleTimer: (callback) => {
+      timers.set(++timerId, callback);
+      return timerId;
+    },
+    cancelTimer: (id) => timers.delete(id),
     revealMinimum: 1,
     onBlockRevealComplete: (turnId, blockId) => {
       revealed.push([turnId, blockId]);
@@ -30,6 +39,13 @@ function createRenderer() {
     frames,
     revealed,
     renderer,
+    timers,
+    advanceTime(milliseconds) {
+      now += milliseconds;
+      const callbacks = Array.from(timers.values());
+      timers.clear();
+      callbacks.forEach((callback) => callback());
+    },
     ensureAnchor(turnId) {
       const container = dom.window.document.querySelector('.messages');
       if (!container.querySelector(`[data-anchor="${turnId}"]`)) {
@@ -122,7 +138,7 @@ test('live thinking uses the collapsible Thinking component from its first frame
   const toggle = block.querySelector('.thinking-toggle');
   const body = block.querySelector('.thinking-body');
   assert.ok(block);
-  assert.equal(toggle.textContent, 'Thinking ›');
+  assert.equal(toggle.textContent, 'Thinking 0s ›');
   assert.ok(toggle.querySelector('.thinking-chevron'));
   assert.equal(body.textContent, 'reasoning');
 
@@ -130,6 +146,85 @@ test('live thinking uses the collapsible Thinking component from its first frame
   assert.equal(toggle.classList.contains('open'), true);
   assert.equal(body.style.display, 'block');
 });
+
+test('consecutive empty thinking rows share one live timer and keep their identities', () => {
+  const harness = createRenderer();
+  const turnId = 'thinking-timer';
+  harness.ensureAnchor(turnId);
+  const start = (blockId) => harness.renderer.createBlock({
+    turnId, blockId, block: { kind: 'thinking', text: '' },
+  });
+  const first = start(1);
+  assert.equal(first.querySelector('.thinking-label').textContent, 'Thinking 0s');
+  harness.advanceTime(2000);
+  assert.equal(first.querySelector('.thinking-label').textContent, 'Thinking 2s');
+  harness.renderer.commitBlock({ turnId, blockId: 1 });
+  assert.equal(first.querySelector('.thinking-label').textContent, 'Thought for 2s');
+  assert.equal(harness.timers.size, 0);
+
+  const second = start(2);
+  assert.equal(second.classList.contains('thinking-group-hidden'), true);
+  harness.advanceTime(3000);
+  assert.equal(first.querySelector('.thinking-label').textContent, 'Thinking 5s');
+  assert.equal(harness.document.querySelectorAll('.thinking-tl').length, 2);
+  harness.renderer.finishBlockInput({ turnId, blockId: 2 });
+  harness.advanceTime(10000);
+  assert.equal(first.querySelector('.thinking-label').textContent, 'Thought for 5s');
+  assert.equal(harness.timers.size, 0);
+});
+
+test('thinking with text separates from its empty group and remains expandable', () => {
+  const harness = createRenderer();
+  const turnId = 'thinking-content';
+  harness.ensureAnchor(turnId);
+  const first = harness.renderer.createBlock({
+    turnId, blockId: 1, block: { kind: 'thinking', text: '' },
+  });
+  harness.renderer.commitBlock({ turnId, blockId: 1 });
+  const second = harness.renderer.createBlock({
+    turnId, blockId: 2, block: { kind: 'thinking', text: '' },
+  });
+  assert.ok(second.classList.contains('thinking-group-hidden'));
+  harness.renderer.appendText({ turnId, blockId: 2, chunk: 'visible reasoning' });
+  harness.flushFrames();
+  assert.equal(second.classList.contains('thinking-group-hidden'), false);
+  assert.equal(second.classList.contains('thinking-empty'), false);
+  assert.ok(first.classList.contains('thinking-empty'));
+  second.querySelector('.thinking-toggle').click();
+  assert.equal(second.querySelector('.thinking-body').style.display, 'block');
+});
+
+test('thinking starts from zero again after resetting the session view', () => {
+  const harness = createRenderer();
+  const turnId = 'thinking-reentry';
+  harness.ensureAnchor(turnId);
+  const start = () => harness.renderer.createBlock({
+    turnId, blockId: 1, block: { kind: 'thinking', text: '' },
+  });
+  const previous = start();
+  harness.advanceTime(7000);
+  assert.equal(previous.querySelector('.thinking-label').textContent, 'Thinking 7s');
+  harness.renderer.reset();
+  const current = start();
+  assert.equal(current.querySelector('.thinking-label').textContent, 'Thinking 0s');
+  harness.advanceTime(1000);
+  assert.equal(current.querySelector('.thinking-label').textContent, 'Thinking 1s');
+});
+
+for (const cleanup of ['completeTurn', 'discardTurn', 'discardBlock', 'reset']) {
+  test(`${cleanup} cancels an active thinking timer`, () => {
+    const harness = createRenderer();
+    const turnId = 'thinking-cleanup';
+    harness.ensureAnchor(turnId);
+    harness.renderer.createBlock({
+      turnId, blockId: 1, block: { kind: 'thinking', text: '' },
+    });
+    assert.equal(harness.timers.size, 1);
+    if (cleanup === 'discardTurn') harness.renderer.discardTurn(turnId);
+    else harness.renderer[cleanup]({ turnId, blockId: 1 });
+    assert.equal(harness.timers.size, 0);
+  });
+}
 
 test('authority patches the existing block instead of creating a duplicate', () => {
   const h = createRenderer();

@@ -66,17 +66,19 @@ test('later block input is buffered while the previous text is revealing', () =>
     operation.type === 'createBlock' && operation.blockId === 4));
 });
 
-test('empty thinking block commits without blocking the following text', () => {
+test('empty thinking starts immediately and commits without blocking the following text', () => {
   const coordinator = new StreamCoordinator();
   coordinator.startTurn(event('stream_turn_start', 0));
   frame(coordinator, 'stream_block_start', 1, { kind: 'thinking' });
+  assert.ok(coordinator.takeOperations().some((operation) =>
+    operation.type === 'createBlock' && operation.blockId === 1));
   frame(coordinator, 'stream_block_stop', 2);
   frame(coordinator, 'stream_block_start', 3, { kind: 'text' });
   frame(coordinator, 'stream_delta', 4, { chunk: 'answer' });
 
   const operations = coordinator.takeOperations();
-  assert.equal(operations.some((operation) =>
-    operation.type === 'createBlock' && operation.blockId === 1), false);
+  assert.ok(operations.some((operation) =>
+    operation.type === 'commitBlock' && operation.blockId === 1));
   assert.ok(operations.some((operation) =>
     operation.type === 'createBlock' && operation.blockId === 3));
 });

@@ -20,6 +20,7 @@ import {
   reconcilePendingMessages,
 } from './message-state.js';
 import { createMessageDom } from './message-dom.js';
+import { refreshThinkingGroups } from './thinking.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -911,7 +912,7 @@ function getStrictStreamRenderer() {
 }
 
 function renderStrictToolBlock(element, block) {
-  var collapsed = element.querySelector(':scope > .tool-header')
+  var collapsed = element.querySelector(':scope > .tool-header.tool-details-toggle')
     ? element.classList.contains('tool-details-collapsed')
     : !!window.getToolDetailPolicy?.(state.appState.runtime)?.realtimeCollapsed;
   var raw = block.inputJson || '';
@@ -1004,7 +1005,9 @@ function applyToolResultMessages(messages) {
           ? { _agentMeta: resultMessage.toolUseResult }
           : {}),
       };
-      var collapsed = node.classList.contains('tool-details-collapsed');
+      var collapsed = node.querySelector(':scope > .tool-header.tool-details-toggle')
+        ? node.classList.contains('tool-details-collapsed')
+        : !!window.getToolDetailPolicy?.(state.appState.runtime)?.realtimeCollapsed;
       var committed = node.classList.contains('stream-block-committed');
       window._lastToolState = '';
       node.innerHTML = renderToolNode(
@@ -1554,6 +1557,7 @@ function activeTurnForInterrupt() {
 // Cross-turn connector adjacency via explicit classes — replaces :has(+)/+ which WebKit (Safari) won't re-invalidate on live inserts. Call only when a turn is added/removed, never per frame.
 function markTurnAdjacency(container) {
   if (!container) return;
+  refreshThinkingGroups(container);
   if (state.appState.runtime === 'codex') {
     window.normalizeCodexTimeline?.(container);
   } else {

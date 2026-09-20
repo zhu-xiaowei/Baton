@@ -317,6 +317,9 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 
 /* === Thinking === */
 .thinking-block { padding: 0; margin: 0; line-height: 21px; }
+.thinking-group-hidden { display: none; }
+.thinking-empty .thinking-toggle { cursor: default; }
+.thinking-empty .thinking-chevron, .thinking-empty .thinking-body { display: none; }
 .thinking-toggle { cursor: pointer; color: #8b949e; font-size: 12px; user-select: none; }
 @media (hover: hover) and (pointer: fine) {
   .thinking-toggle:hover { color: #e6edf3; }
