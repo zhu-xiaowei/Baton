@@ -885,9 +885,10 @@ function getStrictStreamRenderer() {
       _streamCoordinator.completeBlockReveal(turnId, blockId);
       drainStrictStreamOperations();
     },
-    onMutation: function (element) {
+    onMutation: function (element, mutation) {
       var container = document.querySelector('.messages');
-      if (element?.classList.contains('assistant-turn')
+      if (mutation?.structureChanged
+        || element?.classList.contains('assistant-turn')
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }

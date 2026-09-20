@@ -785,6 +785,97 @@ test('Codex realtime Ran group keeps a manual expansion as new commands arrive',
   assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, '×3');
 });
 
+for (const runtime of ['codex', 'claude']) {
+  for (const collapsed of [true, false]) {
+    test(`${runtime} ${collapsed ? 'collapsed' : 'expanded'} Bash group connects to a streaming summary before completion`, (context) => {
+      window.disconnectWs();
+      context.after(() => window.disconnectWs());
+      reset();
+      state.appState.runtime = runtime;
+      state.wsSessionId = `${runtime}:test`;
+      const turnId = `turn-summary-${runtime}-${collapsed}`;
+      const container = document.querySelector('.messages');
+      container.innerHTML = `<div class="msg-user" data-anchor="${turnId}">run tools</div>`;
+      const frames = [];
+      context.mock.method(globalThis, 'requestAnimationFrame', (callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      const flushFrames = () => {
+        while (frames.length) frames.shift()();
+      };
+      let sequence = 0;
+      const dispatch = (action, extra = {}) => window.__wsTest.handleWsMessage({
+        action,
+        sessionId: state.wsSessionId,
+        turnId,
+        seq: sequence++,
+        ...extra,
+      });
+      const messages = [];
+      dispatch('stream_turn_start');
+      for (const index of [1, 2]) {
+        const id = `${turnId}-tool-${index}`;
+        const input = { command: `printf ${index}` };
+        const use = {
+          uuid: `${id}-use`, type: 'assistant',
+          content: [{ type: 'tool_use', id, name: 'Bash', input }],
+        };
+        const output = {
+          uuid: `${id}-result`, type: 'user',
+          content: [{ type: 'tool_result', tool_use_id: id, content: String(index) }],
+        };
+        dispatch('stream_block_start', { kind: 'tool_use', name: 'Bash' });
+        dispatch('stream_tool_input', { chunk: JSON.stringify(input) });
+        dispatch('stream_block_stop');
+        dispatch('messages', { messages: [use, output] });
+        messages.push(use, output);
+        flushFrames();
+      }
+
+      const tools = Array.from(container.querySelectorAll('.tool-node'));
+      assert.equal(tools.length, 2);
+      assert.ok(tools[0].classList.contains('tool-run-group-start'));
+      assert.ok(tools.every((node) => !node.classList.contains('tool-run-group-connected')));
+      if (!collapsed) window.toggleToolDetails(tools[0].querySelector('.tool-header'));
+      const markGroups = context.mock.method(window,
+        runtime === 'codex' ? 'normalizeCodexTimeline' : 'markToolRunGroups');
+
+      dispatch('stream_block_start', { kind: 'text' });
+      dispatch('stream_delta', { chunk: 'Summary:' });
+      const summary = container.querySelector('.assistant-text');
+      assert.ok(summary);
+      assert.ok(tools.every((node) => node.classList.contains('tool-run-group-connected')));
+      const structuralUpdates = markGroups.mock.callCount();
+      assert.equal(structuralUpdates, 1);
+
+      for (const chunk of [' ', 'both commands finished.']) {
+        dispatch('stream_delta', { chunk });
+        flushFrames();
+        assert.ok(summary.textContent.length > 0);
+        assert.equal(state.wsRunning, true);
+        assert.ok(summary.parentElement.classList.contains('stream-preview'));
+        assert.equal(summary.classList.contains('stream-block-committed'), false);
+        assert.ok(tools.every((node) => node.classList.contains('tool-run-group-connected')));
+        assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, collapsed ? 1 : 0);
+        assert.equal(markGroups.mock.callCount(), structuralUpdates);
+      }
+
+      dispatch('stream_block_stop');
+      flushFrames();
+      const answer = {
+        uuid: `${turnId}-summary`, type: 'assistant',
+        content: [{ type: 'text', text: summary.textContent }],
+      };
+      dispatch('messages', { messages: [answer] });
+      dispatch('stream_end', { messages: [...messages, answer] });
+      flushFrames();
+      assert.equal(container.querySelector('.assistant-text'), summary);
+      assert.ok(tools.every((node) => node.classList.contains('tool-run-group-connected')));
+    });
+  }
+}
+
 test('Codex strict MCP calls reuse Ran grouping and retain manual state through results and recovery', () => {
   reset();
   const turnId = 'turn-called-group';

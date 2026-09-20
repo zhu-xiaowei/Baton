@@ -1028,7 +1028,7 @@ export class StreamingDomRenderer {
     };
     this.blockViews.set(key, view);
     if (!adopted) this.renderBlock(view);
-    this.onMutation(element);
+    this.onMutation(element, { structureChanged: !adopted });
     return element;
   }
 
