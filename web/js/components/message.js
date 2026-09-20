@@ -1,3 +1,5 @@
+import { extractAttachments, fileAttachmentHtml } from './attachment.js';
+
 // Message bubble components
 (function () {
   function esc(str) {
@@ -144,7 +146,9 @@
     });
 
     // Build attachments row (file badges + images)
-    const badges = [];
+    const attachments = extractAttachments(text);
+    text = attachments.text;
+    const badges = attachments.files.map(fileAttachmentHtml);
     ideFiles.forEach(p => {
       const name = p.split('/').pop();
       badges.push(fileBadge(name, p, p));

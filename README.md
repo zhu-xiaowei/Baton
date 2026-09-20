@@ -59,7 +59,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Live agent status** — follow running, needs input, and completed subagents through a real-time status indicator and hierarchical thread list
 - **Sessions and agents** — create Claude Code, Codex, or Claude background-agent sessions and monitor them after detaching
 - **Runtime-aware commands** — `/` autocomplete for Claude Code and Codex, including Codex Skills and saved prompts
-- **Image and voice input** — send compressed images and dictate messages from the iOS app
+- **File, image and voice input** — upload files directly to S3, send compressed images, and dictate messages from the iOS app
 - **QR sign-in** — scan a Start URL directly from the native app
 - **Claude usage insights** — view status, settings, rate limits, token history, and model usage charts
 - **Execution timeline** — inspect collapsible tool calls and results with runtime-specific states
@@ -68,6 +68,34 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Inline HTML previews** — view interactive HTML directly in conversations and expand previews to full screen without losing their state
 
 ---
+
+## File Attachments
+
+The composer accepts files up to 512 MiB each. Images keep the existing compressed-image
+flow; other files upload as original bytes with a presigned S3 PUT, not through Lambda.
+Word, Excel and PowerPoint use the same Material Icon Theme icons as Project Files.
+Files appear as small icon/name badges below image thumbnails, with progress, retry and removal.
+Sending waits for every attachment to finish, and works without accompanying text.
+
+Clicking an uploaded file reuses the file preview overlay, even before sending it.
+Text uses the existing source viewer (preview reads are capped at 5 MiB); PDF and supported
+media use browser previews. Office and other binary files offer **Download / open** in that
+overlay. Office content rendering is not included, and no files are sent to a third-party viewer.
+The Bridge streams attachments to `~/.baton-bridge/attachments/` and passes local file paths
+to the runtime; parsing still depends on the agent's tools and filesystem permissions.
+
+Deploy the updated Server, Bridge and frontend together. `server/install.sh` configures the
+dedicated bucket's browser CORS policy and attempts to enable S3 Transfer Acceleration.
+Acceleration can incur extra AWS transfer charges; use `S3_UPLOAD_ACCELERATE=false` when
+running the installer to use standard S3 only. Uploads also retry the standard S3 URL if
+the accelerated endpoint fails. Signing is account-scoped, expires after one hour, and
+binds the upload size and metadata. Bucket objects remain private. This does not add multipart
+uploads or resumable transfers, and removed/orphaned uploads are not automatically deleted.
+
+Attachment checks: `node --test test/bridge/attachments.test.mjs test/frontend/attachments.test.mjs`,
+`python3 -m pytest test/server/test_attachments.py`, and `node test/browser/attachments-chrome.mjs`.
+The Chrome check uses isolated local S3-like endpoints (no AWS account), uploads an 8 MiB file,
+and saves desktop/mobile screenshots in `.test-runs/`.
 
 ## Multi-agent Sessions
 

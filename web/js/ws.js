@@ -1,5 +1,6 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
+import { attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
   clearComposerDraft,
   rekeyComposerDraft,
@@ -1876,9 +1877,11 @@ function sendMessage() {
   var images = state.stagedImages.slice();
 
   if (!text && !images.length) return;
+  if (images.some(function (file) { return !file.uploaded || !file.key; })) return;
   if (!state.activeThreadCanSend) return;
   if (!images.length && handleCodexClientCommand(text, input)) return;
-  if (!text && images.length) text = 'Please review the attached image';
+  if (!text && images.length) text = images.some(function (file) { return file.kind === 'file'; })
+    ? 'Please review the attached files' : 'Please review the attached image';
   // Allow sending without wsSessionId for new sessions (projectHash is used)
   if (!state.wsSessionId && state.appState.session !== '__new__') return;
   // Agent sessions require at least 4 characters for the task description
@@ -1890,7 +1893,9 @@ function sendMessage() {
   // at line start triggers Ink's shell-out mode in CC, causing bash syntax errors.
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
   if (readyImages.length) {
-    var refs = readyImages.map(function (img) { return '![](baton-bridge:' + img.key + ')'; }).join(' ');
+    var refs = readyImages.map(function (img) {
+      return img.kind === 'file' ? attachmentRef(img) : '![](baton-bridge:' + img.key + ')';
+    }).join(' ');
     doSend(text + ' ' + refs, text, readyImages);
   } else {
     doSend(text, text, []);
@@ -1997,15 +2002,17 @@ function updateSendBtn(options) {
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
   var hasText = textLen >= (isNewAgent ? 4 : 1);
+  var hasInput = hasText || state.stagedImages.length > 0;
+  var filesPending = state.stagedImages.some(function (file) { return !file.uploaded || !file.key; });
   var cls = !state.activeThreadCanSend
     ? ''
-    : (hasText ? 'has-text' : (state.wsRunning ? 'is-stop' : ''));
+    : (hasInput ? 'has-text' : (state.wsRunning ? 'is-stop' : ''));
   var icon = cls === 'is-stop' ? 'stop' : 'send';
   // Only rewrite innerHTML when the icon actually changes. Rewriting it every stream frame
   // detaches the SVG mid-tap, dropping a click that landed on it (had to tap 2-3×).
   if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
   if (btn.className !== cls) btn.className = cls;
-  btn.disabled = !state.activeThreadCanSend || (!hasText && !state.wsRunning);
+  btn.disabled = !state.activeThreadCanSend || (hasInput ? filesPending : !state.wsRunning);
   if (!options.skipSpinner && typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }
@@ -2016,7 +2023,7 @@ function onSendBtnClick() {
   // New-session first send: dismiss keyboard before the centered→bottom swap
   var isFirstNewSessionSend = document.body.classList.contains('new-session');
 
-  if (input.value.trim()) {
+  if (input.value.trim() || state.stagedImages.length) {
     if (isMobile && kbWasUp && isFirstNewSessionSend) {
       input.blur();
       var doSendAfterKbDown = function () { sendMessage(); updateSendBtn(); };
@@ -2200,6 +2207,7 @@ function doSend(fullText, displayText, images) {
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
+      if (img.kind === 'file') return fileAttachmentHtml(img);
       return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" onclick="viewImage(this.src)" /></div>';
     }).join('');
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';

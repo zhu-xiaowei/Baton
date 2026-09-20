@@ -3,7 +3,7 @@ Bridge sync routes — receives session metadata and messages from bridge client
 Usage: app.include_router(bridge_router) in main.py
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
 from boto3.dynamodb.conditions import Key
@@ -13,6 +13,11 @@ import json
 import hashlib
 from datetime import datetime
 import time
+import re
+import uuid
+from urllib.parse import quote, unquote
+from botocore.config import Config
+from botocore.exceptions import ClientError
 
 MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
 
@@ -838,6 +843,89 @@ async def upload_image(req: UploadImageRequest):
 class UploadFileRequest(BaseModel):
     key: str
     data: str      # base64 encoded file content
+
+
+class FilePrepareRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=0, le=512 * 1024 * 1024)
+    contentType: str = Field(default="application/octet-stream", max_length=255)
+
+
+def _attachment_bucket():
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        raise HTTPException(status_code=503, detail="File storage is not configured")
+    return bucket
+
+
+def _attachment_key(key: str, request: Request):
+    if not re.fullmatch(r"[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?", key):
+        raise HTTPException(status_code=400, detail="Invalid file key")
+    return f"attachments/{_hash_key(request.headers.get('x-api-key', ''))}/{key}"
+
+
+def _attachment_client(accelerated=False):
+    return boto3.client(
+        "s3", region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        config=Config(signature_version="s3v4", s3={"use_accelerate_endpoint": accelerated}),
+    )
+
+
+@bridge_router.post("/file-prepare")
+async def file_prepare(req: FilePrepareRequest, request: Request, response: Response):
+    bucket = _attachment_bucket()
+    name = req.name.replace("\\", "/").rsplit("/", 1)[-1]
+    if not name or any(ord(character) < 32 for character in name):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    extension = re.search(r"\.[a-z0-9]{1,16}$", name.lower())
+    key = uuid.uuid4().hex + (extension.group() if extension else "")
+    params = {
+        "Bucket": bucket, "Key": _attachment_key(key, request),
+        "ContentType": "application/octet-stream", "ContentLength": req.size,
+        "Metadata": {"filename": quote(name, safe=""), "content-type": quote(req.contentType, safe="")},
+    }
+    headers = {
+        "Content-Type": params["ContentType"],
+        **{f"x-amz-meta-{key}": value for key, value in params["Metadata"].items()},
+    }
+    standard = _attachment_client().generate_presigned_url("put_object", Params=params, ExpiresIn=3600)
+    url = standard
+    if os.environ.get("S3_UPLOAD_ACCELERATE", "false").lower() == "true":
+        url = _attachment_client(True).generate_presigned_url("put_object", Params=params, ExpiresIn=3600)
+    response.headers["Cache-Control"] = "no-store"
+    return {"key": key, "url": url, "fallbackUrl": standard, "headers": headers}
+
+
+@bridge_router.get("/file-url/{key}")
+async def attachment_url(key: str, request: Request, response: Response):
+    bucket = _attachment_bucket()
+    storage_key = _attachment_key(key, request)
+    client = _attachment_client()
+    try:
+        obj = client.head_object(Bucket=bucket, Key=storage_key)
+    except ClientError as error:
+        if error.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound", "403", "AccessDenied"):
+            raise HTTPException(status_code=404, detail="File not found") from error
+        raise
+    name = unquote(obj.get("Metadata", {}).get("filename", key))
+    content_type = unquote(obj.get("Metadata", {}).get("content-type", "application/octet-stream"))
+    params = {
+        "Bucket": bucket, "Key": storage_key,
+        "ResponseContentDisposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}",
+    }
+    url = client.generate_presigned_url("get_object", Params=params, ExpiresIn=3600)
+    preview_type = {
+        "pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
+        "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "ogg": "audio/ogg",
+    }.get(key.rsplit(".", 1)[-1], "application/octet-stream")
+    preview_url = client.generate_presigned_url("get_object", Params={
+        **params, "ResponseContentDisposition": "inline", "ResponseContentType": preview_type,
+    }, ExpiresIn=3600)
+    response.headers["Cache-Control"] = "no-store"
+    return {"key": key, "name": name, "size": obj["ContentLength"], "contentType": content_type,
+            "url": url, "previewUrl": preview_url, "previewType": preview_type}
 
 
 COMMAND_DESCRIPTION_MAX_BYTES = 256

@@ -77,6 +77,48 @@ test.afterEach(() => {
   window.updateSpinner();
 });
 
+test('send waits for uploading or failed attachments without clearing the composer', () => {
+  const previous = state.stagedImages;
+  const input = document.getElementById('msg-input');
+  const oldText = input.value;
+  try {
+    input.value = 'Review this deck';
+    const attachment = { kind: 'file', key: 'a'.repeat(32) + '.pptx', uploaded: false };
+    state.stagedImages = [attachment];
+    window.sendMessage();
+    assert.deepEqual(state.stagedImages, [attachment]);
+    assert.equal(input.value, 'Review this deck');
+    attachment.error = 'Upload failed';
+    window.sendMessage();
+    assert.equal(state.stagedImages.length, 1);
+  } finally {
+    state.stagedImages = previous;
+    input.value = oldText;
+  }
+});
+
+test('attachment-only sends enable the button only after upload completes', () => {
+  const previous = state.stagedImages;
+  const canSend = state.activeThreadCanSend;
+  const input = document.getElementById('msg-input');
+  const oldText = input.value;
+  try {
+    input.value = '';
+    state.activeThreadCanSend = true;
+    state.stagedImages = [{ kind: 'file', key: 'a'.repeat(32) + '.pptx', uploaded: false }];
+    window.updateSendBtn();
+    assert.equal(document.getElementById('send-btn').disabled, true);
+    state.stagedImages[0].uploaded = true;
+    window.updateSendBtn();
+    assert.equal(document.getElementById('send-btn').disabled, false);
+    assert.equal(document.getElementById('send-btn').dataset.icon, 'send');
+  } finally {
+    state.stagedImages = previous;
+    state.activeThreadCanSend = canSend;
+    input.value = oldText;
+  }
+});
+
 test('Claude and Codex share the same collapsing spinner row', () => {
   for (const runtime of ['claude', 'codex']) {
     reset();

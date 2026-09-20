@@ -24,6 +24,15 @@ test('common project file types map to the vendored SVG subset', () => {
   assert.equal(fileIconName('sound.mp3'), 'audio');
   assert.equal(fileIconName('movie.mkv'), 'video');
   assert.equal(fileIconName('archive.7z'), 'zip');
+  for (const extension of ['doc', 'DOCX', 'docm', 'dotx', 'odt']) {
+    assert.equal(fileIconName('document.' + extension), 'word');
+  }
+  for (const extension of ['xls', 'XLSX', 'xlsm', 'xlsb', 'csv', 'tsv', 'ods']) {
+    assert.equal(fileIconName('spreadsheet.' + extension), 'table');
+  }
+  for (const extension of ['ppt', 'PPTX', 'pptm', 'ppsx', 'potx', 'odp']) {
+    assert.equal(fileIconName('slides.' + extension), 'powerpoint');
+  }
   assert.equal(fileIconName('Cargo.toml'), 'rust');
   assert.equal(fileIconName('Dockerfile'), 'docker');
   assert.equal(fileIconName('settings.properties'), 'document');
@@ -46,7 +55,7 @@ test('every mapped icon is a small local SVG and the list fixes its display size
     'audio', 'console', 'css', 'database', 'docker', 'document', 'git', 'go',
     'html', 'image', 'java', 'javascript', 'json', 'markdown', 'pdf', 'python',
     'react', 'rust', 'svg', 'swift', 'toml', 'typescript', 'video', 'xml',
-    'yaml', 'zip',
+    'yaml', 'zip', 'word', 'table', 'powerpoint',
   ]);
   for (const icon of mapped) {
     const file = path.join(ROOT, 'web/public/assets/file-icons', `${icon}.svg`);

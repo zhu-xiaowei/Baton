@@ -5,6 +5,8 @@ import { loadingSpinner } from '../components/loading.js';
 import { currentProjectHash } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
+import { fileIconHtml } from '../components/file-icon.js';
+import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -220,7 +222,45 @@ function openFile(absPath, displayName, lineHint, matchId) {
   o.style.display = 'flex';
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
-  sendFileRequest(absPath, lineHint || '', matchId ? snippetForTool(matchId) : '', 1);
+  if (absPath.startsWith('baton-file:')) showAttachment(absPath.slice('baton-file:'.length));
+  else sendFileRequest(absPath, lineHint || '', matchId ? snippetForTool(matchId) : '', 1);
+}
+
+async function showAttachment(key) {
+  const token = ++_fileRequestToken;
+  try {
+    if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
+    const file = await window.api('/api/bridge/file-url/' + key);
+    if (token !== _fileRequestToken) return;
+    document.getElementById('fileOverlayTitle').textContent = file.name;
+    const info = '<div class="attachment-preview-info">' + fileIconHtml(file.name)
+      + '<span>' + escapeAttachment(file.name) + '</span><span>'
+      + (file.size / (1024 * 1024)).toFixed(2) + ' MB</span><a class="ext-link" href="' + escapeAttachment(file.url)
+      + '" target="_blank" rel="noopener noreferrer">Download / open</a></div>';
+    if (isTextAttachment(file)) {
+      const content = await readAttachmentText(file.url);
+      if (token !== _fileRequestToken) return;
+      if (!content.text.includes('\0')) {
+        render(file.name, content.text, content.truncated, '', '');
+        document.getElementById('fileOverlayBody').insertAdjacentHTML('afterbegin', info);
+        return;
+      }
+    }
+    let preview = '<div class="attachment-preview-note">No inline preview for this file type. Download to open it.</div>';
+    const url = escapeAttachment(file.previewUrl);
+    if (file.previewType === 'application/pdf') {
+      preview = '<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>';
+    } else if (file.previewType?.startsWith('image/')) {
+      preview = '<img class="file-image" alt="" src="' + url + '">';
+    } else if (file.previewType?.startsWith('video/')) {
+      preview = '<video class="file-video" controls playsinline preload="metadata" src="' + url + '"></video>';
+    } else if (file.previewType?.startsWith('audio/')) {
+      preview = '<audio controls preload="metadata" src="' + url + '"></audio>';
+    }
+    setBody(info + preview);
+  } catch (error) {
+    if (token === _fileRequestToken) setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
+  }
 }
 
 // Find the Edit/Write tool_use by id and return the text it wrote (new_string / content).

@@ -1,5 +1,11 @@
 {
   "Parameters": {
+    "FileUploadAcceleration": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["true", "false"],
+      "Description": "Use S3 Transfer Acceleration after it has been enabled on the uploads bucket"
+    },
     "ContainerImageUri": {
       "Type": "String",
       "Description": "The ECR image URI for the Lambda function"
@@ -92,6 +98,7 @@
             "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
+            "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },

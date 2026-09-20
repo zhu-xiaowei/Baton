@@ -3,6 +3,9 @@ import { FILE_ICON_SVG } from './icons.js';
 const ICON_ROOT = './assets/file-icons/';
 
 const CATEGORY_EXTENSIONS = Object.freeze({
+  word: new Set(['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'rtf', 'odt']),
+  table: new Set(['xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 'csv', 'tsv', 'ods']),
+  powerpoint: new Set(['ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm', 'odp']),
   audio: new Set(['aac', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav']),
   image: new Set([
     'avif', 'bmp', 'gif', 'heic', 'heif', 'icns', 'ico', 'jpeg', 'jpg',

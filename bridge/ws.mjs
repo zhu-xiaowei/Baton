@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { resolveBridgeAttachments } from './attachments.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -896,7 +897,17 @@ async function handleSendMessage(
     ? resolveTurnId(identity.sessionId, turnId)
     : null;
 
-  const resolved = await resolveBridgeImages(text);
+  let resolved;
+  try {
+    resolved = await resolveBridgeImages(await resolveBridgeAttachments(text, _config));
+  } catch (error) {
+    wsSend({
+      action: 'send_message_result', ok: false, sessionId, requestId, turnId,
+      error: error.message,
+      ...(replyConnectionId ? { replyConnectionId } : {}),
+    });
+    return;
+  }
   let routedText = resolved;
   const projectCwd = typeof projectHash === 'string' && projectHash
     ? projectHashToPath(projectHash)

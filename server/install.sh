@@ -183,6 +183,19 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 # Ensure S3 bucket exists (shared for build artifacts, bridge package, images)
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
+aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
+  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type"],"MaxAgeSeconds":3600}]}'
+UPLOAD_ACCELERATION=false
+if [ "${S3_UPLOAD_ACCELERATE:-true}" = "true" ]; then
+  echo "Enabling S3 upload acceleration (AWS transfer acceleration charges may apply)..."
+  if aws s3api put-bucket-accelerate-configuration --bucket "$S3_BUCKET" --region "$REGION" \
+      --accelerate-configuration Status=Enabled; then
+    UPLOAD_ACCELERATION=true
+  else
+    echo "S3 acceleration unavailable; using standard S3 direct uploads."
+  fi
+fi
+
 # App version: semantic from package.json + short git hash (e.g. "1.0.0-92144c3").
 # Git hash auto-bumps every commit — bridge auto-update triggers on each redeploy.
 SEMANTIC=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/package.json" | head -1)
@@ -424,6 +437,7 @@ if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
     --parameters \
       "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
       "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
+      "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
       "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
       "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
     --capabilities CAPABILITY_NAMED_IAM >/dev/null
@@ -435,6 +449,7 @@ else
        --parameters \
          "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
          "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
+         "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
          "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
          "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
        --capabilities CAPABILITY_NAMED_IAM 2>&1); then
