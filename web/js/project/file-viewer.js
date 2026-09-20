@@ -7,6 +7,7 @@ import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { fileIconHtml } from '../components/file-icon.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
+import { browserCanShare, downloadFile, prepareSharedFile } from './download.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -15,6 +16,77 @@ function esc(s) {
 }
 
 var _current = null;
+var _downloadTarget = null;
+
+function downloadStatus(text) {
+  const status = document.getElementById('file-download-status');
+  if (status) status.textContent = text;
+}
+
+async function prepareViewedDownload(target) {
+  if (!target.key) {
+    const result = await requestProjectFiles('download', {
+      projectHash: target.projectHash, path: target.path,
+    }, { timeout: 30 * 60_000 });
+    target.key = result.key;
+  }
+  return window.api('/api/bridge/file-url/' + target.key);
+}
+
+async function downloadViewedFile() {
+  const target = _downloadTarget;
+  if (!target || target.busy) return;
+  const button = document.getElementById('file-download-btn');
+  target.busy = true;
+  if (button) button.disabled = true;
+  downloadStatus('Preparing download…');
+  try {
+    const file = await prepareViewedDownload(target);
+    if (_downloadTarget !== target) return;
+    downloadStatus('Downloading…');
+    const result = await downloadFile(file);
+    if (_downloadTarget === target) downloadStatus({
+      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
+      shared: 'Shared.', cancelled: '', started: 'Download started.',
+    }[result.status] || 'Download started.');
+  } catch (error) {
+    if (_downloadTarget === target) downloadStatus(String(error.message || error));
+  } finally {
+    target.busy = false;
+    if (_downloadTarget === target && button) button.disabled = false;
+  }
+}
+
+async function shareViewedFile() {
+  const target = _downloadTarget;
+  if (!target || target.busy) return;
+  const button = document.getElementById('file-share-btn');
+  if (target.sharedFile) {
+    try {
+      await navigator.share({ files: [target.sharedFile] });
+      if (_downloadTarget === target) downloadStatus('Shared.');
+    } catch (error) {
+      if (_downloadTarget === target && error.name !== 'AbortError') downloadStatus(error.message);
+    }
+    return;
+  }
+  target.busy = true;
+  if (button) button.disabled = true;
+  downloadStatus('Preparing file for sharing…');
+  try {
+    const file = await prepareViewedDownload(target);
+    if (_downloadTarget !== target) return;
+    target.sharedFile = await prepareSharedFile(file);
+    if (_downloadTarget !== target) return;
+    if (button) button.textContent = 'Share file';
+    downloadStatus('File ready. Tap Share file to open the system share sheet.');
+  } catch (error) {
+    if (_downloadTarget === target) downloadStatus(error.message);
+  } finally {
+    target.busy = false;
+    if (_downloadTarget === target && button) button.disabled = false;
+  }
+}
 var _previewToken = 0;
 var _fileRequestToken = 0;
 var _edgeBack = registerEdgeBackLayer({
@@ -166,6 +238,8 @@ function closeFileViewer(options) {
   var o = overlay();
   if (o) o.style.display = 'none';
   _current = null;
+  _downloadTarget = null;
+  downloadStatus('');
   _fileRequestToken++;
   showTabs(false);
   if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
@@ -212,6 +286,13 @@ function openFile(absPath, displayName, lineHint, matchId) {
   if (!absPath) return;
   var o = overlay();
   if (!o) return;
+  _downloadTarget = { path: absPath, projectHash: currentProjectHash(),
+    key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '' };
+  downloadStatus('');
+  const downloadButton = document.getElementById('file-download-btn');
+  if (downloadButton) downloadButton.disabled = false;
+  const shareButton = document.getElementById('file-share-btn');
+  if (shareButton) { shareButton.hidden = !browserCanShare(); shareButton.disabled = false; shareButton.textContent = 'Share'; }
   var titleEl = document.getElementById('fileOverlayTitle');
   titleEl.textContent = displayName || absPath;
   titleEl.title = absPath;
@@ -235,8 +316,7 @@ async function showAttachment(key) {
     document.getElementById('fileOverlayTitle').textContent = file.name;
     const info = '<div class="attachment-preview-info">' + fileIconHtml(file.name)
       + '<span>' + escapeAttachment(file.name) + '</span><span>'
-      + (file.size / (1024 * 1024)).toFixed(2) + ' MB</span><a class="ext-link" href="' + escapeAttachment(file.url)
-      + '" target="_blank" rel="noopener noreferrer">Download / open</a></div>';
+      + (file.size / (1024 * 1024)).toFixed(2) + ' MB</span><button type="button" class="file-action" onclick="downloadViewedFile()">Download / share</button></div>';
     if (isTextAttachment(file)) {
       const content = await readAttachmentText(file.url);
       if (token !== _fileRequestToken) return;
@@ -356,4 +436,6 @@ Object.assign(window, {
   openFile: openFile,
   closeFileViewer: closeFileViewer,
   setFileViewMode: setFileViewMode,
+  downloadViewedFile,
+  shareViewedFile,
 });

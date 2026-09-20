@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-file-download"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-file-download"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
+serde_json = "1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }

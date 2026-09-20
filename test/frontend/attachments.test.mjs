@@ -10,9 +10,11 @@ import {
 const dom = new JSDOM('<!doctype html><body><div id="img-preview-row"></div>'
   + '<div id="imgOverlay"><img id="imgOverlayImg"></div><div id="content"></div>'
   + '<div id="fileOverlay"><span id="fileOverlayTitle"></span><div id="fileOverlayTabs"></div>'
+  + '<button id="file-download-btn"></button><button id="file-share-btn"></button><div id="file-download-status"></div>'
   + '<div id="fileOverlayBody"></div></div></body>', { url: 'https://app.test/' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+globalThis.navigator = dom.window.navigator;
 globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = () => {};
 const originalFetch = globalThis.fetch;
@@ -58,7 +60,13 @@ test.beforeEach(() => {
   window.api = async () => ({ key, name: 'deck.pptx', size: 5, previewType: 'application/octet-stream',
     url: 'https://bucket.s3.test/download', previewUrl: 'https://bucket.s3.test/preview' });
 });
-test.afterEach(() => { globalThis.fetch = originalFetch; window.closeFileViewer(); });
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+  delete window.__TAURI_INTERNALS__;
+  delete navigator.share;
+  delete navigator.canShare;
+  window.closeFileViewer();
+});
 test.after(async () => { await vite.close(); dom.window.close(); });
 
 test('raw files use direct PUT with progress and standard-S3 fallback', async () => {
@@ -162,7 +170,7 @@ test('Office uses the existing preview overlay without sharing files with a thir
   assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
   assert.equal(document.getElementById('fileOverlayTitle').textContent, 'deck.pptx');
   assert.match(document.getElementById('fileOverlayBody').textContent, /No inline preview/);
-  assert.equal(document.querySelector('.attachment-preview-info a.ext-link').href, 'https://bucket.s3.test/download');
+  assert.equal(document.querySelector('.attachment-preview-info button').getAttribute('onclick'), 'downloadViewedFile()');
   assert.equal(document.querySelector('iframe'), null);
 });
 
@@ -202,4 +210,40 @@ test('text preview cancels at its limit instead of buffering an entire large fil
   }));
   assert.deepEqual(await readAttachmentText('https://bucket.test/large', 5), { text: '01234', truncated: true });
   assert.equal(cancelled, true);
+});
+
+test('the shared download button invokes the native download plugin with the original name', async () => {
+  const calls = [];
+  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  await window.downloadViewedFile();
+  assert.equal(calls[0].command, 'plugin:file-download|download');
+  assert.equal(calls[0].args.name, 'deck.pptx');
+  assert.equal(calls[0].args.url, 'https://bucket.s3.test/download');
+  assert.equal(document.getElementById('file-download-status').textContent, 'Saved to Downloads.');
+  assert.equal(document.getElementById('file-download-btn').disabled, false);
+});
+
+test('browser sharing separates file preparation from the fresh user activation', async () => {
+  const shared = [];
+  navigator.canShare = () => true;
+  navigator.share = async value => shared.push(value);
+  globalThis.fetch = async () => new Response('12345');
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  await window.shareViewedFile();
+  assert.equal(shared.length, 0);
+  assert.equal(document.getElementById('file-share-btn').textContent, 'Share file');
+  await window.shareViewedFile();
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].files[0].name, 'deck.pptx');
+  assert.equal(await shared[0].files[0].text(), '12345');
+});
+
+test('download errors keep the preview and restore its controls', async () => {
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  window.api = async () => { throw new Error('Bridge offline'); };
+  await window.downloadViewedFile();
+  assert.match(document.getElementById('file-download-status').textContent, /Bridge offline/);
+  assert.equal(document.getElementById('file-download-btn').disabled, false);
+  assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
 });

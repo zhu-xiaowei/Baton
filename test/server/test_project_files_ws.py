@@ -10,6 +10,12 @@ sys.path.insert(
 import bridge_ws
 
 
+def test_download_is_a_valid_project_file_operation():
+    from project.files_ws import _valid_request
+    assert _valid_request({"operation": "download", "projectHash": "project", "requestId": REQUEST_ID})
+    assert not _valid_request({"operation": "delete", "projectHash": "project", "requestId": REQUEST_ID})
+
+
 REQUEST_ID = "550e8400-e29b-41d4-a716-446655440000"
 
 

@@ -1,7 +1,7 @@
 import uuid
 
 
-ALLOWED_OPERATIONS = {"list", "read"}
+ALLOWED_OPERATIONS = {"list", "read", "download"}
 
 
 def _valid_request(body):

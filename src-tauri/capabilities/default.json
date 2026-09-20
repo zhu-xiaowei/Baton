@@ -8,6 +8,7 @@
   ],
   "permissions": [
     "core:default",
+    "file-download:default",
     "core:webview:allow-create-webview-window",
     { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
   ]

@@ -58,6 +58,7 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_file_download::init())
     .invoke_handler(tauri::generate_handler![ios_build_number])
     .setup(|app| {
       if cfg!(debug_assertions) {

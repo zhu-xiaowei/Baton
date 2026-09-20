@@ -44,9 +44,78 @@ async function request(root, message, options = {}) {
     resolveProjectRoot: () => root,
     send: (payload) => sent.push(payload),
     postFn: options.postFn,
+    fetchFn: options.fetchFn,
   });
   return sent;
 }
+
+test('download exports original binary files over 6 MB with accelerated upload fallback', async () => {
+  const { root } = fixture();
+  const content = Buffer.alloc(8 * 1024 * 1024, 0x84);
+  const key = 'f'.repeat(32) + '.pptx';
+  fs.writeFileSync(path.join(root, 'slides.pptx'), content);
+  const uploads = [];
+  let preparations = 0;
+  const options = {
+    postFn: async (endpoint, body) => {
+      preparations++;
+      assert.equal(endpoint, '/api/bridge/file-prepare');
+      assert.equal(body.name, 'slides.pptx');
+      assert.equal(body.size, content.length);
+      assert.equal(body.data, undefined);
+      return Response.json({ key, url: 'https://accelerated.test', fallbackUrl: 'https://standard.test', headers: { 'Content-Type': 'application/octet-stream' } });
+    },
+    fetchFn: async (url, init) => {
+      assert.equal(init.headers['Content-Length'], String(content.length));
+      const chunks = [];
+      for await (const chunk of init.body) chunks.push(chunk);
+      uploads.push({ url, bytes: Buffer.concat(chunks) });
+      return new Response('', { status: url.includes('accelerated') ? 503 : 200 });
+    },
+  };
+  try {
+    const result = await request(root, { operation: 'download', path: 'slides.pptx' }, options);
+    assert.equal(result.at(-1).key, key);
+    assert.equal(result.at(-1).size, content.length);
+    assert.equal(result[0].progress, true);
+    assert.equal(uploads.length, 2);
+    assert.deepEqual(uploads[1].bytes, content);
+    await request(root, { operation: 'download', path: 'slides.pptx' }, options);
+    assert.equal(preparations, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('downloads reject traversal and oversized files before requesting S3 access', async () => {
+  const { root } = fixture();
+  const large = path.join(root, 'large.pptx');
+  fs.writeFileSync(large, '');
+  fs.truncateSync(large, 512 * 1024 * 1024 + 1);
+  const options = { postFn: async () => { assert.fail('must not request upload access'); } };
+  try {
+    for (const filePath of ['../secret.txt', 'large.pptx']) {
+      const [result] = await request(root, { operation: 'download', path: filePath }, options);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /outside the project|512 MB/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed exports are retried instead of caching an unusable download', async () => {
+  const { root } = fixture();
+  let attempts = 0;
+  const options = {
+    postFn: async () => { attempts++; return Response.json({ key: 'a'.repeat(32), url: 'https://s3.test', headers: {} }); },
+    fetchFn: async () => { throw new Error('offline'); },
+  };
+  try {
+    for (let index = 0; index < 2; index++) {
+      const result = await request(root, { operation: 'download', path: 'small.md' }, options);
+      assert.equal(result.at(-1).ok, false);
+      assert.match(result.at(-1).error, /upload failed/);
+    }
+    assert.equal(attempts, 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('project file listing returns folders before files', async () => {
   const { root } = fixture();

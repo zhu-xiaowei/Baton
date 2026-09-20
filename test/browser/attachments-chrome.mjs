@@ -34,11 +34,13 @@ const storage = createServer(async (request, response) => {
     response.writeHead(200).end();
   } else {
     response.setHeader('Content-Type', 'application/octet-stream');
+    response.setHeader('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(file.name));
     response.end(file.bytes);
   }
 });
 await new Promise(resolve => storage.listen(0, '127.0.0.1', resolve));
 const storageUrl = 'http://127.0.0.1:' + storage.address().port;
+const fileOverlay = (await readFile(path.resolve('web/index.html'), 'utf8')).split('<!-- File overlay -->')[1].split('</body>')[0];
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/file-icons.css"></head><body>
 <div id="content"><div class="messages"></div></div><div id="input-bar"><div id="img-preview-row"></div>
@@ -46,9 +48,7 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
 <button class="img-btn" onclick="document.getElementById('img-picker').click()">+</button>
 <textarea id="msg-input" placeholder="Send a message..."></textarea><button id="send-btn" onclick="onSendBtnClick()">Send</button></div></div>
 <div id="imgOverlay" style="display:none"><img id="imgOverlayImg"></div>
-<div id="fileOverlay" class="file-overlay" style="display:none"><div class="file-modal"><div class="file-modal-header">
-<span id="fileOverlayTitle"></span><div id="fileOverlayTabs"></div><button onclick="closeFileViewer()">Close</button></div>
-<div id="fileOverlayBody" class="file-modal-body"></div></div></div>
+${fileOverlay}
 <script type="module">
 window.api = async url => { const response = await fetch(url); if (!response.ok) throw Error('API ' + response.status); return response.json(); };
 window.apiPost = async (url, body) => (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
@@ -115,25 +115,29 @@ try {
   socket = new WebSocket(pages.find(page => page.type === 'page').webSocketDebuggerUrl);
   await new Promise(resolve => socket.once('open', resolve));
   let sequence = 0;
-  const pending = new Map(), errors = [];
+  const pending = new Map(), errors = [], completedDownloads = new Set();
   socket.on('message', raw => {
     const packet = JSON.parse(raw);
     if (packet.id) {
       const entry = pending.get(packet.id); pending.delete(packet.id);
       if (packet.error) entry.reject(new Error(JSON.stringify(packet.error))); else entry.resolve(packet.result);
     } else if (packet.method === 'Runtime.exceptionThrown') errors.push(packet.params.exceptionDetails);
+    else if (packet.method.endsWith('.downloadProgress') && packet.params.state === 'completed') completedDownloads.add(packet.params.guid);
   });
   const call = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++sequence; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params }));
   });
   const evaluate = async expression => {
-    const result = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    const result = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
   const screenshot = async name => writeFile(path.join(directory, name + '.png'),
     Buffer.from((await call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
   await call('Runtime.enable'); await call('Page.enable');
+  const downloadPath = path.join(directory, 'downloads');
+  await mkdir(downloadPath);
+  await call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath, eventsEnabled: true });
   await call('Page.navigate', { url: 'http://127.0.0.1:' + vite.httpServer.address().port + '/__attachment_test' });
   await waitFor(() => evaluate('window.ready'));
   await evaluate(`(()=>{const input=document.getElementById('img-picker');const transfer=new DataTransfer();
@@ -160,7 +164,16 @@ try {
   await evaluate('document.querySelector(".staged-files .attachment-file").click()');
   await waitFor(() => evaluate('!!document.querySelector(".attachment-preview-info")'));
   assert.equal(await evaluate('document.querySelector("#fileOverlayTitle").textContent'), '路线图 [2026].pptx');
+  assert.equal(await evaluate('document.getElementById("fileOverlay").scrollWidth <= innerWidth'), true);
   await screenshot('office-preview');
+  await evaluate('document.getElementById("file-download-btn").click()');
+  const downloaded = path.join(downloadPath, '路线图 [2026].pptx');
+  await waitFor(async () => { try { return (await readFile(downloaded)).equals(deck.bytes); } catch { return false; } });
+  assert.equal(await evaluate('document.getElementById("file-download-status").textContent'), 'Download started.');
+  assert.match(await evaluate('location.pathname'), /__attachment_test/);
+  await evaluate('document.getElementById("file-download-btn").click()');
+  await waitFor(() => completedDownloads.size === 2);
+  assert.deepEqual(await readFile(downloaded), deck.bytes);
   await evaluate('closeFileViewer(); document.getElementById("send-btn").click()');
   assert.equal(await evaluate('sent.length'), 1);
   assert.match(await evaluate('sent[0].text'), /Please review the attached files/);
@@ -172,7 +185,8 @@ try {
   await writeFile(path.join(directory, 'results.json'), JSON.stringify({
     ok: true, uploadedBytes: deck.bytes.length, putRequests: uploads.length,
     checks: ['cross-origin raw PUT', 'acceleration fallback', 'Office icons', 'mobile second row',
-      'shared preview overlay', 'attachment-only send', 'historical filename rendering'],
+      'shared preview overlay', '8 MiB original download', 'Chinese filename', 'duplicate download',
+      'attachment-only send', 'historical filename rendering'],
   }, null, 2));
   console.log('Browser verification passed: ' + directory);
 } finally {
