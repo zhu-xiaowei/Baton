@@ -755,7 +755,7 @@ async def get_messages(
             "needSync": False,
         })
 
-    page_limit = min(limit, 500) if limit else 100
+    page_limit = min(limit, 500) if limit else 200
 
     if before:
         # Reverse query: fetch messages before the opaque DDB sort-key cursor.

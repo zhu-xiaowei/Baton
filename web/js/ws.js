@@ -56,6 +56,7 @@ var _historyFetchBarriers = new FetchBarrierCoordinator();
 var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
+var MESSAGE_PAGE_SIZE = 200;
 var _appliedLifecycleVersion = 0;
 var _bottomFollowFrame = null;
 
@@ -66,15 +67,18 @@ function placeFollowedContentAtBottom(content, container, sessionId) {
     || container !== content.querySelector('.messages')) {
     return;
   }
-  content.scrollTop = content.scrollHeight;
+  var height = content.scrollHeight;
+  if (height - content.clientHeight - content.scrollTop > 1) {
+    content.scrollTop = height;
+  }
 }
 
 function followBottomAfterLayout() {
   var content = document.getElementById('content');
   var container = content?.querySelector('.messages');
   var sessionId = state.appState.session;
-  if (!content || !container || content.querySelector('.skeleton-messages')) return;
-  placeFollowedContentAtBottom(content, container, sessionId);
+  if (!state.stickBottom || !content || !container
+    || content.querySelector('.skeleton-messages')) return;
   if (_bottomFollowFrame !== null) cancelAnimationFrame(_bottomFollowFrame);
   _bottomFollowFrame = requestAnimationFrame(function () {
     _bottomFollowFrame = null;
@@ -1072,6 +1076,8 @@ function getStrictStreamRenderer() {
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }
+      if (element?.classList.contains('tool-run-group-hidden')
+        || element?.classList.contains('tool-run-row-hidden')) return;
       followBottomAfterLayout();
     },
   });
@@ -1084,6 +1090,9 @@ window.rebindStrictStreamDom = function () {
 };
 
 function renderStrictToolBlock(element, block) {
+  var collapsed = element.querySelector(':scope > .tool-header')
+    ? element.classList.contains('tool-details-collapsed')
+    : !!window.getToolDetailPolicy?.(state.appState.runtime)?.realtimeCollapsed;
   var raw = block.inputJson || '';
   var input = {};
   var parsed = false;
@@ -1102,16 +1111,20 @@ function renderStrictToolBlock(element, block) {
     };
     window._lastToolState = '';
     element.innerHTML = renderToolNode(toolUse, null, state.appState.runtime, {
-      collapsed: false,
+      collapsed: collapsed,
     });
     var toolState = window._lastToolState || 'tool-running';
     var commandClass = '';
-    if (toolUse.name === 'Bash') {
+    if (state.appState.runtime === 'codex'
+      && window.isCodexMcpTool?.(toolUse)) {
+      commandClass = ' codex-called';
+    } else if (toolUse.name === 'Bash') {
       commandClass = state.appState.runtime === 'codex'
         ? (isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : ' codex-ran')
         : ' claude-bash';
     }
     element.className = 'tl-item tool-node ' + toolState + commandClass;
+    window.setToolDetailsCollapsed?.(element, !!window._lastToolHasDetails && collapsed);
     if (block.toolUseId) element.dataset.toolId = block.toolUseId;
     if (toolUse.name === 'TodoWrite') {
       element.dataset.codexPlan = '1';
@@ -1131,6 +1144,7 @@ function renderStrictToolBlock(element, block) {
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
     + esc(description) + '</span><span class="tool-status">running</span></div>';
+  window.setToolDetailsCollapsed?.(element, collapsed);
 }
 
 function applyToolResultMessages(messages) {
@@ -1182,6 +1196,9 @@ function applyToolResultMessages(messages) {
       var classes = ['tl-item', 'tool-node'];
       if (committed) classes.push('stream-block-committed');
       if (state.appState.runtime === 'codex'
+        && window.isCodexMcpTool?.(toolUse, result)) {
+        classes.push('codex-called');
+      } else if (state.appState.runtime === 'codex'
         && window.isCodexExploreTool?.(toolUse, result)) {
         classes.push('codex-explore');
       } else if (state.appState.runtime === 'codex'
@@ -1903,9 +1920,26 @@ function prepareCompleteMessages(messages) {
   ));
 }
 
+function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
+  return Array.isArray(messages) && messages.length > 0
+    && messages.every(function (message) {
+      return Array.isArray(message.content) && message.content.length > 0
+        && message.content.every(function (block) {
+          if (block.type !== 'tool_use' && block.type !== 'tool_result') return false;
+          var toolId = block.type === 'tool_use' ? block.id : block.tool_use_id;
+          var node = document.querySelector('.messages [data-tool-id="' + toolId + '"]');
+          return node?.classList.contains('tool-run-group-hidden')
+            || (includeCollapsedResults && block.type === 'tool_result'
+              && node?.classList.contains('tool-details-collapsed')
+              && !!node.querySelector('.tool-body'));
+        });
+    });
+}
+
 function commitAuthorityMessages(messages, options) {
   options = options || {};
   var wasFollowingBottom = state.stickBottom;
+  var hiddenOnlyUpdate = onlyHiddenToolUpdates(messages, true);
   var fetched = mergeFetchWindow({
     restMessages: prepareCompleteMessages(messages),
     historyBuffer: [],
@@ -1974,7 +2008,8 @@ function commitAuthorityMessages(messages, options) {
     adapter: adapter,
   });
   applyToolResultMessages(messages);
-  if (options.restoreBottom !== false) {
+  if (options.restoreBottom !== false && !hiddenOnlyUpdate
+    && !onlyHiddenToolUpdates(messages)) {
     restoreBottomAfterRecovery(wasFollowingBottom);
   }
   return {
@@ -2075,6 +2110,7 @@ async function bufferAndFetch(sessionId, after, options) {
   barrier.promise = (async function () {
     var params = { session: sessionId };
     if (after) params.after = after;
+    else params.limit = MESSAGE_PAGE_SIZE;
     if (state.appState.device) params.device = state.appState.device;
     if (state.appState.project?.hash) params.project = state.appState.project.hash;
 
@@ -2212,7 +2248,7 @@ async function loadOlderMessages(sessionId) {
     var data = await api('/api/bridge/messages', {
       session: sessionId,
       before: state.wsOldestTimestamp,
-      limit: 200,
+      limit: MESSAGE_PAGE_SIZE,
     });
     if (generation !== _messagePaginationGeneration
       || state.wsSessionId !== sessionId) {

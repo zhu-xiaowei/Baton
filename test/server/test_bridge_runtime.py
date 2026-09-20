@@ -1167,6 +1167,49 @@ def test_incomplete_catalog_preserves_existing_device_aggregates(monkeypatch):
     assert not any(item.get("sk") == "PROJ#Windows#partial" for item in sessions.items)
 
 
+def test_messages_default_to_200_and_preserve_explicit_limits(monkeypatch):
+    timestamp = "2026-09-20T00:00:00.000Z"
+    messages = FakeMessageTable([
+        {
+            "sessionId": "session",
+            "sk": f"{timestamp}#row-{index:04d}",
+            "uuid": f"row-{index:04d}",
+            "type": "user",
+            "content": json.dumps(str(index)),
+            "timestamp": timestamp,
+        }
+        for index in range(600)
+    ])
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), messages))
+
+    def page(limit=None, before=None):
+        return asyncio.run(bridge_read.get_messages(
+            FakeRequest(),
+            "session",
+            after=None,
+            before=before,
+            device=None,
+            limit=limit,
+            project=None,
+        ))
+
+    latest = page()
+    assert len(latest["messages"]) == 200
+    assert latest["messages"][0]["uuid"] == "row-0400"
+    assert latest["messages"][-1]["uuid"] == "row-0599"
+    assert latest["hasMore"] is True
+
+    older = page(before=latest["oldestTimestamp"])
+    assert len(older["messages"]) == 200
+    assert older["messages"][0]["uuid"] == "row-0200"
+    assert older["messages"][-1]["uuid"] == "row-0399"
+
+    explicit = page(limit=100)
+    assert len(explicit["messages"]) == 100
+    assert explicit["messages"][0]["uuid"] == "row-0500"
+    assert len(page(limit=999)["messages"]) == 500
+
+
 def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):
     timestamp = "2026-08-06T00:00:00.000Z"
     messages = FakeMessageTable([

@@ -286,7 +286,7 @@ test('an OUT update on an earlier tool still keeps the whole view at the bottom'
     container.querySelector('[data-tool-id="tool-1"]').textContent,
     'completed output',
   );
-  assert.equal(content.scrollTop, 980);
+  assert.equal(content.scrollTop, 400);
 
   height = 1040;
   await h.tick(10);

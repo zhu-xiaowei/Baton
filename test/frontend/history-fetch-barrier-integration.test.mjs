@@ -15,6 +15,27 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+test('initial history requests 200 messages while forward recovery remains unlimited', async () => {
+  const sessionId = 'history-default-page-size';
+  resetSession(h, { sessionId });
+  const calls = [];
+  h.setApiHandler(async (endpoint, params) => {
+    calls.push({ endpoint, params });
+    return { messages: [], hasMore: false };
+  });
+
+  await h.window.bufferAndFetch(sessionId, '');
+  await h.window.bufferAndFetch(sessionId, '2026-09-20T00:00:00.000Z');
+
+  assert.deepEqual(calls, [{
+    endpoint: '/api/bridge/messages',
+    params: { session: sessionId, limit: 200, device: 'D', project: '-h' },
+  }, {
+    endpoint: '/api/bridge/messages',
+    params: { session: sessionId, after: '2026-09-20T00:00:00.000Z', device: 'D', project: '-h' },
+  }]);
+});
+
 test('REST failure still commits complete watcher history and releases the barrier', async () => {
   const sessionId = 'history-rest-failure';
   resetSession(h, { sessionId });
@@ -110,6 +131,8 @@ test('history recovery restores physical bottom only when follow intent remains 
   });
 
   await h.window.bufferAndFetch(sessionId, '');
+  assert.equal(content.scrollTop, 100);
+  await h.tick(10);
   assert.equal(content.scrollTop, 1000);
 
   content.scrollTop = 100;
@@ -130,5 +153,6 @@ test('history recovery restores physical bottom only when follow intent remains 
   });
 
   await h.window.bufferAndFetch(sessionId, '');
+  await h.tick(10);
   assert.equal(content.scrollTop, 100);
 });

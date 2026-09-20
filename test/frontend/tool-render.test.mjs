@@ -83,6 +83,101 @@ test('Codex MCP calls render Calling or Called while Claude keeps the tool name'
   assert.doesNotMatch(claude, />Calling</);
 });
 
+test('ToolRunGroup folds adjacent Codex MCP calls across tools but leaves Claude unchanged', () => {
+  const messages = [
+    { server: 'node_repl', name: 'js' },
+    { server: 'workspace', name: 'search' },
+    { server: 'remote', name: 'Bash' },
+  ].flatMap(({ server, name }, index) => {
+    const id = `called-group-${index}`;
+    const metadata = { codexMcpServer: server, codexMcpTool: name };
+    return [{
+      uuid: `${id}-use`,
+      type: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id,
+        name,
+        input: index === 2
+          ? { command: 'remote command', codexCommandKind: 'explore' }
+          : { query: 'example', ...metadata },
+      }],
+    }, {
+      uuid: `${id}-result`,
+      type: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: id,
+        content: index === 2 ? 'failed' : 'done',
+        is_error: index === 2,
+        ...metadata,
+      }],
+    }];
+  });
+
+  document.body.innerHTML = `<div class="messages">${window.renderMessages(messages, 'codex')}</div>`;
+  const container = document.querySelector('.messages');
+  window.markToolRunGroups(container);
+  const nodes = Array.from(container.querySelectorAll('.codex-called'));
+  assert.equal(nodes.length, 3);
+  assert.equal(container.querySelectorAll('.codex-ran, .codex-explore').length, 0);
+  assert.deepEqual(nodes.map((node) => node.querySelector('.tool-name').textContent), ['Called', 'Called', 'Called']);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'node_repl.js');
+  assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, '×3');
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.ok(nodes[0].classList.contains('tool-run-summary-error'));
+
+  window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 0);
+  assert.ok(nodes.every((node) => !node.classList.contains('tool-details-collapsed')));
+  assert.ok(nodes.every((node) => node.querySelector('.tool-header').getAttribute('aria-expanded') === 'true'));
+  window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed')));
+
+  document.body.innerHTML = `<div class="messages">${window.renderMessages(messages, 'claude')}</div>`;
+  window.markToolRunGroups(document.querySelector('.messages'));
+  assert.equal(document.querySelectorAll('.codex-called, .tool-run-group-start').length, 0);
+});
+
+test('Codex Called grouping stops at user messages, assistant text, and other tools', () => {
+  const call = (id) => ({
+    uuid: `${id}-use`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'js',
+      input: { code: id, codexMcpServer: 'node_repl', codexMcpTool: 'js' },
+    }],
+  });
+  const beforeUser = window.renderMessages([call('called-one'), call('called-two')], 'codex');
+  const afterUser = window.renderMessages([
+    call('called-three'),
+    call('called-four'),
+    { uuid: 'called-text', type: 'assistant', content: [{ type: 'text', text: 'Next step' }] },
+    call('called-five'),
+    call('called-six'),
+    {
+      uuid: 'called-shell',
+      type: 'assistant',
+      content: [{ type: 'tool_use', id: 'called-shell', name: 'Bash', input: { command: 'pwd' } }],
+    },
+    call('called-seven'),
+  ], 'codex');
+  document.body.innerHTML = `<div class="messages">${beforeUser}<div class="msg-user">Continue</div>${afterUser}</div>`;
+  const container = document.querySelector('.messages');
+  window.markToolRunGroups(container);
+
+  const groups = Array.from(container.querySelectorAll('.codex-called-group-start'));
+  assert.deepEqual(groups.map((node) => node.dataset.toolId), ['called-one', 'called-three', 'called-five']);
+  assert.ok(groups.every((node) => node.querySelector('.tool-run-group-count').textContent === '×2'));
+  assert.equal(new Set(groups.map((node) => node.dataset.toolDetailsGroup)).size, 3);
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 3);
+  assert.equal(container.querySelector('[data-tool-id="called-seven"]').dataset.toolDetailsGroup, undefined);
+  assert.equal(container.querySelector('.assistant-text').textContent, 'Next step');
+});
+
 test('Update Plan renders aligned status icons for completed, active, and pending steps', () => {
   const html = window.renderToolNode({
     type: 'tool_use',
@@ -678,7 +773,7 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.tool-detail-chevron \{\s*display: inline-block; align-self: center;/);
 });
 
-test('tool detail policy collapses all history while realtime stays expanded', () => {
+test('tool detail policy collapses both history and realtime tools', () => {
   const message = {
     uuid: 'bash-use',
     type: 'assistant',
@@ -707,8 +802,8 @@ test('tool detail policy collapses all history while realtime stays expanded', (
     window.renderSingleMessage(message, [message], 'codex')
   }</div>`;
   const realtimeNode = document.querySelector('.tool-node');
-  assert.equal(realtimeNode.classList.contains('tool-details-collapsed'), false);
-  assert.equal(realtimeNode.querySelector('.tool-header').getAttribute('aria-expanded'), 'true');
+  assert.equal(realtimeNode.classList.contains('tool-details-collapsed'), true);
+  assert.equal(realtimeNode.querySelector('.tool-header').getAttribute('aria-expanded'), 'false');
 
   document.body.innerHTML = `<div class="messages">${window.renderMessages([message], 'claude')}</div>`;
   const claudeNode = document.querySelector('.tool-node');
@@ -725,12 +820,12 @@ test('tool detail policy collapses all history while realtime stays expanded', (
   const claudeRealtimeNode = document.querySelector('.tool-node');
   assert.equal(
     claudeRealtimeNode.classList.contains('tool-details-collapsed'),
-    false,
+    true,
   );
   assert.equal(
     claudeRealtimeNode.querySelector('.tool-header')
       .getAttribute('aria-expanded'),
-    'true',
+    'false',
   );
 });
 
@@ -797,7 +892,7 @@ test('Codex Explored title toggles every detail body in the group', () => {
   assert.equal(updated[0].querySelector('.codex-explore-group-count').textContent, '×3');
 });
 
-test('Codex realtime Explored groups start expanded', () => {
+test('Codex realtime Explored groups start collapsed', () => {
   const explore = (id, command, action) => ({
     uuid: `realtime-explore-${id}`,
     type: 'assistant',
@@ -835,8 +930,8 @@ test('Codex realtime Explored groups start expanded', () => {
   const nodes = Array.from(container.querySelectorAll('.codex-explore'));
   assert.equal(nodes.length, 2);
   assert.ok(nodes.every((node) =>
-    !node.classList.contains('tool-details-collapsed')));
-  assert.equal(container.querySelectorAll('.codex-explore-group-hidden').length, 0);
+    node.classList.contains('tool-details-collapsed')));
+  assert.equal(container.querySelectorAll('.codex-explore-group-hidden').length, 1);
   assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'Search tool');
   assert.equal(nodes[0].querySelector('.codex-explore-group-count').textContent, '×2');
 });

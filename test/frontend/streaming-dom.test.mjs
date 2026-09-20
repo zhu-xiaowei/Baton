@@ -194,6 +194,34 @@ test('rebind restores a detached live turn after history render replacement', ()
   assert.equal(h.document.querySelectorAll('[data-turn-id="turn-1"]').length, 1);
 });
 
+for (const identity of ['block', 'tool']) {
+  for (const collapsed of [true, false]) {
+    test(`adopting history by ${identity} identity preserves ${collapsed ? 'collapsed' : 'expanded'} details`, () => {
+      const harness = createRenderer();
+      const container = harness.document.querySelector('.messages');
+      const blockAttribute = identity === 'block' ? ' data-block-id="1"' : '';
+      container.innerHTML = '<div class="msg-user" data-anchor="turn-1">question</div>'
+        + '<div class="assistant-turn" data-turn-id="turn-1">'
+        + `<div class="tl-item tool-node${collapsed ? ' tool-details-collapsed' : ''}" data-tool-id="tool-1"${blockAttribute}>`
+        + `<div class="tool-header tool-details-toggle" aria-expanded="${!collapsed}">Bash</div>`
+        + '<div class="tool-body">history output</div></div></div>';
+      const historical = container.querySelector('.tool-node');
+      const block = { kind: 'tool_use', name: 'Bash', toolUseId: 'tool-1' };
+
+      harness.renderer.applyOperations([
+        { type: 'createBlock', turnId: 'turn-1', blockId: 1, block },
+        { type: 'confirmBlock', turnId: 'turn-1', blockId: 1, block },
+      ]);
+
+      assert.equal(container.querySelectorAll('.tool-node').length, 1);
+      assert.equal(container.querySelector('[data-block-id="1"]'), historical);
+      assert.equal(historical.classList.contains('tool-details-collapsed'), collapsed);
+      assert.equal(historical.querySelector('.tool-header').getAttribute('aria-expanded'), String(!collapsed));
+      assert.equal(historical.querySelector('.tool-body').textContent, 'history output');
+    });
+  }
+}
+
 test('reset removes provisional live turns and pending reveal work', () => {
   const h = createRenderer();
   createText(h.renderer);

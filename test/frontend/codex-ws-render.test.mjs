@@ -269,7 +269,76 @@ test('strict tool results update OUT before stream_end', () => {
   }]);
 });
 
-test('strict stream adopts a historical active tool instead of appending a duplicate', () => {
+for (const runtime of ['codex', 'claude']) {
+  for (const collapsed of [true, false]) {
+    test(`${runtime} strict tool updates preserve ${collapsed ? 'collapsed' : 'manually expanded'} details`, () => {
+      reset();
+      state.appState.runtime = runtime;
+      const turnId = `turn-details-${runtime}-${collapsed}`;
+      const toolId = `${turnId}-tool`;
+      const container = document.querySelector('.messages');
+      container.innerHTML = `<div class="msg-user" data-anchor="${turnId}">run it</div>`;
+      const event = (seq, action, extra = {}) => ({
+        action,
+        sessionId: state.wsSessionId,
+        turnId,
+        seq,
+        ...extra,
+      });
+      const toolUse = {
+        uuid: `${turnId}-use`,
+        type: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: toolId,
+          name: 'Bash',
+          input: { command: 'printf corrected' },
+        }],
+      };
+      const toolResult = {
+        uuid: `${turnId}-result`,
+        type: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: toolId,
+          content: 'corrected',
+          is_error: false,
+        }],
+      };
+      const dispatch = (message) => window.__wsTest.handleWsMessage(message);
+      dispatch(event(0, 'stream_turn_start'));
+      dispatch(event(1, 'stream_block_start', { kind: 'tool_use', name: 'Bash' }));
+      const node = container.querySelector('.tool-node');
+      assert.equal(node.classList.contains('tool-details-collapsed'), true);
+
+      dispatch(event(2, 'stream_tool_input', {
+        chunk: JSON.stringify({ command: 'printf draft' }),
+      }));
+      assert.equal(node.classList.contains('tool-details-collapsed'), true);
+      assert.equal(node.querySelector('.tool-header').getAttribute('aria-expanded'), 'false');
+      if (!collapsed) window.toggleToolDetails(node.querySelector('.tool-header'));
+      const assertDetailsState = () => {
+        assert.equal(container.querySelector('.tool-node'), node);
+        assert.equal(node.classList.contains('tool-details-collapsed'), collapsed);
+        assert.equal(node.querySelector('.tool-header').getAttribute('aria-expanded'), String(!collapsed));
+      };
+
+      dispatch(event(3, 'stream_tool_input', { chunk: ' ' }));
+      assertDetailsState();
+      dispatch(event(4, 'stream_block_stop'));
+      dispatch(event(5, 'messages', { messages: [toolUse] }));
+      assertDetailsState();
+      assert.match(node.querySelector('.tool-desc').textContent, /printf corrected/);
+      dispatch(event(6, 'messages', { messages: [toolResult] }));
+      assertDetailsState();
+      assert.match(node.querySelector('.tool-body').textContent, /OUTcorrected/);
+      dispatch(event(7, 'stream_end', { messages: [toolUse, toolResult] }));
+      assertDetailsState();
+    });
+  }
+}
+
+test('strict stream adopts a historical active tool without expanding or duplicating it', () => {
   reset();
   const turnId = 'turn-active-history';
   const toolUse = {
@@ -334,10 +403,10 @@ test('strict stream adopts a historical active tool instead of appending a dupli
   assert.equal(tools.length, 1);
   assert.equal(tools[0], historical);
   assert.equal(tools[0].dataset.blockId, '1');
-  assert.equal(tools[0].classList.contains('tool-details-collapsed'), false);
+  assert.equal(tools[0].classList.contains('tool-details-collapsed'), true);
   assert.equal(
     tools[0].querySelector('.tool-header').getAttribute('aria-expanded'),
-    'true',
+    'false',
   );
   assert.match(tools[0].textContent, /OUT/);
   assert.match(tools[0].textContent, /active/);
@@ -597,7 +666,7 @@ test('Codex WS keeps mixed Ran and Explored blocks in creation order', () => {
   );
 });
 
-test('Codex realtime Explored group keeps a manual collapse as new commands arrive', () => {
+test('Codex realtime Explored group keeps a manual expansion as new commands arrive', () => {
   reset();
   const explore = (id, command, action, timestamp) => ({
     uuid: `${id}-use`,
@@ -636,10 +705,10 @@ test('Codex realtime Explored group keeps a manual collapse as new commands arri
 
   let explores = Array.from(document.querySelectorAll('.codex-explore'));
   assert.equal(explores.length, 2);
-  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 0);
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 1);
 
   window.toggleToolDetails(explores[0].querySelector('.tool-header'));
-  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 1);
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 0);
 
   send([
     explore('explore-three', 'find web -type f', {
@@ -652,12 +721,12 @@ test('Codex realtime Explored group keeps a manual collapse as new commands arri
 
   explores = Array.from(document.querySelectorAll('.codex-explore'));
   assert.equal(explores.length, 3);
-  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 2);
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 0);
   assert.equal(explores[0].querySelector('.tool-desc').textContent, 'Search tool');
   assert.equal(explores[0].querySelector('.codex-explore-group-count').textContent, '×3');
 });
 
-test('Codex realtime Ran group keeps a manual collapse as new commands arrive', () => {
+test('Codex realtime Ran group keeps a manual expansion as new commands arrive', () => {
   reset();
 
   send([
@@ -675,10 +744,10 @@ test('Codex realtime Ran group keeps a manual collapse as new commands arrive', 
 
   let nodes = Array.from(document.querySelectorAll('.codex-ran'));
   assert.equal(nodes.length, 2);
-  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 0);
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 1);
 
   window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
-  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 1);
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 0);
 
   send([
     tool('ran-three-use', 'ran-three', 'echo three', '2026-08-10T05:10:04.000Z'),
@@ -689,12 +758,94 @@ test('Codex realtime Ran group keeps a manual collapse as new commands arrive', 
 
   nodes = Array.from(document.querySelectorAll('.codex-ran'));
   assert.equal(nodes.length, 3);
-  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 0);
   assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'echo one');
   assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, '×3');
 });
 
-test('Codex WS keeps historical detail state and expands new realtime tools', () => {
+test('Codex strict MCP calls reuse Ran grouping and retain manual state through results and recovery', () => {
+  reset();
+  const turnId = 'turn-called-group';
+  const container = document.querySelector('.messages');
+  container.innerHTML = `<div class="msg-user" data-anchor="${turnId}">run tools</div>`;
+  let sequence = 0;
+  const dispatch = (action, extra = {}) => window.__wsTest.handleWsMessage({
+    action,
+    sessionId: state.wsSessionId,
+    turnId,
+    seq: sequence++,
+    ...extra,
+  });
+  const messages = [];
+  dispatch('stream_turn_start');
+
+  for (const [index, name] of ['js', 'search', 'Bash'].entries()) {
+    const id = `live-called-${index}`;
+    const metadata = { codexMcpServer: `server-${index}`, codexMcpTool: name };
+    const input = index === 2
+      ? { command: 'remote command', codexCommandKind: 'explore' }
+      : { query: 'example', ...metadata };
+    const use = {
+      uuid: `${id}-use`,
+      type: 'assistant',
+      content: [{ type: 'tool_use', id, name, input }],
+    };
+    const resultMessage = {
+      uuid: `${id}-result`,
+      type: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: id,
+        content: index === 2 ? 'failed' : 'done',
+        is_error: index === 2,
+        ...metadata,
+      }],
+    };
+
+    dispatch('stream_block_start', { kind: 'tool_use', name });
+    dispatch('stream_tool_input', { chunk: JSON.stringify(input) });
+    if (index < 2) {
+      const running = Array.from(container.querySelectorAll('.codex-called')).at(-1);
+      assert.equal(running.querySelector('.tool-name').textContent, 'Calling');
+      assert.equal(running.classList.contains('tool-details-collapsed'), true);
+    }
+    dispatch('stream_block_stop');
+    dispatch('messages', { messages: [use] });
+    if (index === 1) {
+      const first = container.querySelector('.codex-called');
+      assert.equal(first.querySelector('.tool-run-group-count').textContent, '×2');
+      assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 1);
+      window.toggleToolDetails(first.querySelector('.tool-header'));
+    }
+    dispatch('messages', { messages: [resultMessage] });
+    messages.push(use, resultMessage);
+
+    const nodes = Array.from(container.querySelectorAll('.codex-called'));
+    assert.equal(nodes.length, index + 1);
+    assert.ok(nodes.every((node) => node.querySelector('.tool-name').textContent === 'Called'));
+    assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed') === (index === 0)));
+    if (index > 0) {
+      assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, `×${index + 1}`);
+      assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 0);
+    }
+  }
+
+  assert.equal(container.querySelectorAll('.codex-ran, .codex-explore').length, 0);
+  const first = container.querySelector('.codex-called');
+  window.toggleToolDetails(first.querySelector('.tool-header'));
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.ok(first.classList.contains('tool-run-summary-error'));
+  dispatch('stream_end', { messages });
+
+  assert.equal(container.querySelectorAll('.codex-called').length, 3);
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.equal(container.querySelector('.tool-run-group-count').textContent, '×3');
+  assert.equal(container.querySelector('.tool-desc').textContent, 'server-0.js');
+  assert.ok(container.querySelector(`[data-turn-id="${turnId}"]`).classList.contains('stream-committed'));
+  send([{ uuid: 'called-group-next-user', type: 'user', content: 'next' }]);
+});
+
+test('Codex WS keeps historical detail state and collapses new realtime tools', () => {
   reset();
   const historicalUse = tool(
     'history-use',
@@ -733,11 +884,11 @@ test('Codex WS keeps historical detail state and expands new realtime tools', ()
     '2026-08-10T05:40:02.000Z',
   )]);
   const realtime = container.querySelector('[data-tool-id="realtime"]');
-  assert.equal(realtime.classList.contains('tool-details-collapsed'), false);
-  assert.equal(realtime.querySelector('.tool-header').getAttribute('aria-expanded'), 'true');
+  assert.equal(realtime.classList.contains('tool-details-collapsed'), true);
+  assert.equal(realtime.querySelector('.tool-header').getAttribute('aria-expanded'), 'false');
 });
 
-test('Codex WS hydrates a realtime Edit after the timeline insertion', async () => {
+test('Codex WS defers realtime Edit hydration until manually expanded', async () => {
   reset();
   window.resetToolDetails();
   const originalLoader = window.loadDiffViewer;
@@ -776,6 +927,13 @@ test('Codex WS hydrates a realtime Edit after the timeline insertion', async () 
 
     const node = document.querySelector('[data-tool-id="live-edit"]');
     const diff = node.querySelector('.diff-container');
+    assert.equal(node.classList.contains('tool-details-collapsed'), true);
+    assert.notEqual(diff.dataset.diffState, 'ready');
+    assert.equal(diff.querySelector('.d2h-file-wrapper'), null);
+
+    window.toggleToolDetails(node.querySelector('.tool-header'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     assert.equal(node.classList.contains('tool-details-collapsed'), false);
     assert.equal(diff.dataset.diffState, 'ready');
     assert.match(diff.textContent, /live diff/);

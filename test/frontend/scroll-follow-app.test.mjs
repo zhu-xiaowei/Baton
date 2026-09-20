@@ -18,7 +18,7 @@ function pointerEvent(window, type, y) {
   return event;
 }
 
-test('a small user drag pauses bottom-follow until the user returns to the bottom', async () => {
+test('returning near the bottom restores following without snapping the current view', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
       + '<div class="top-bar"><div class="top-left"></div><div id="top-right"></div></div>'
@@ -144,8 +144,14 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     content.dispatchEvent(pointerEvent(window, 'pointerup', 282));
 
     assert.equal(state.stickBottom, true);
-    assert.equal(scrollTop, 820);
+    assert.equal(scrollTop, 770);
     assert.equal(scrollButton.classList.contains('visible'), false);
+    await new Promise(function (resolve) { setTimeout(resolve, 180); });
+    assert.equal(state.stickBottom, true);
+    assert.equal(scrollTop, 770);
+
+    window.scrollToBottom();
+    assert.equal(scrollTop, 820);
 
     scrollHeight = 1400;
     scrollTop = 700;

@@ -1890,7 +1890,7 @@ function scheduleScrollBtnPosition() {
     var nearBottom = bottomDistance() < 100;
     btn.classList.toggle('visible', !nearBottom);
     if (!state.stickBottom && buttonWasVisible && nearBottom) {
-      scrollToBottom();
+      state.stickBottom = true;
     }
     return !nearBottom;
   }
@@ -1904,8 +1904,7 @@ function scheduleScrollBtnPosition() {
         resumeBottomWhenSettled = false;
       } else if (resumeBottomWhenSettled) {
         resumeBottomWhenSettled = false;
-        scrollToBottom();
-        return;
+        state.stickBottom = true;
       }
       updateScrollButton();
     }, 140);

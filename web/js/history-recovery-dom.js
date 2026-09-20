@@ -519,7 +519,6 @@ function buildHistoryRecoveryDomAdapter(options) {
       renderMessages,
       options.runtime(),
       {
-        collapseToolDetails: false,
         ...(options.renderOptions || {}),
       },
     );

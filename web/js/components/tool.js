@@ -787,6 +787,10 @@ import { state } from '../state.js';
     return toolUse?.name === 'Bash' && isExploreCommand(toolUse.input || {}, result);
   };
 
+  window.isCodexMcpTool = function (toolUse, result) {
+    return !!codexMcpInfo(toolUse?.input, result);
+  };
+
   window.isCodexHiddenTool = function (toolUse, result) {
     if (toolUse?.name !== 'WriteStdin' || String(toolUse.input?.chars || '').length) return false;
     return !!result && result.codexWait !== 'waiting';
@@ -831,7 +835,7 @@ import { state } from '../state.js';
   const TOOL_DETAIL_POLICY = Object.freeze({
     enabled: true,
     historyCollapsed: true,
-    realtimeCollapsed: false,
+    realtimeCollapsed: true,
   });
 
   window.getToolDetailPolicy = function () {
@@ -842,7 +846,8 @@ import { state } from '../state.js';
     if (!node) return;
     node.classList.toggle('tool-details-collapsed', collapsed);
     const header = node.querySelector(':scope > .tool-header');
-    if (header?.classList.contains('tool-details-toggle')) {
+    if (header?.classList.contains('tool-details-toggle')
+      && header.getAttribute('aria-expanded') !== String(!collapsed)) {
       header.setAttribute('aria-expanded', String(!collapsed));
     }
   };

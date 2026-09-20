@@ -13,6 +13,11 @@ import './components/tool-run-group.js';
     classPrefix: 'codex-ran',
   });
   window.registerToolRunGroup({
+    kind: 'codex-called',
+    itemClass: 'codex-called',
+    classPrefix: 'codex-called',
+  });
+  window.registerToolRunGroup({
     kind: 'claude-bash',
     itemClass: 'claude-bash',
     classPrefix: 'claude-bash',
@@ -142,7 +147,10 @@ import './components/tool-run-group.js';
         const emptyTerminalWait = runtime === 'codex'
           && block.name === 'WriteStdin'
           && !String(block.input?.chars || '').length;
+        const codexCalled = runtime === 'codex'
+          && !!window.isCodexMcpTool?.(block, result);
         const codexExplore = runtime === 'codex'
+          && !codexCalled
           && !!window.isCodexExploreTool?.(block, result);
         items.push({
           type: 'tool',
@@ -150,9 +158,11 @@ import './components/tool-run-group.js';
           toolDetails: !!window._lastToolHasDetails,
           html,
           toolId: block.id,
+          codexCalled,
           codexExplore,
           codexRan: runtime === 'codex'
             && block.name === 'Bash'
+            && !codexCalled
             && !codexExplore,
           claudeBash: runtime === 'claude' && block.name === 'Bash',
           codexWait: emptyTerminalWait,
@@ -205,6 +215,7 @@ import './components/tool-run-group.js';
       if (item.toolDetails && collapseToolDetails) cls += ' tool-details-collapsed';
       if (item.codexExplore) cls += ' codex-explore';
       if (item.codexRan) cls += ' codex-ran';
+      if (item.codexCalled) cls += ' codex-called';
       if (item.claudeBash) cls += ' claude-bash';
       if (item.codexWait) cls += ' codex-terminal-wait';
       if (item.codexBackgroundComplete) cls += ' codex-background-complete';

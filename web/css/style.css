@@ -108,7 +108,7 @@ body {
 /* === Content === */
 /* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
 #content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-body.browse-view #content { scrollbar-gutter: stable; }
+body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 /* Native iOS browse pages keep a 1px scroll range so short lists can rubber-band.
    Session and new-session views never receive the browse-view class. */
 @supports (-webkit-touch-callout: none) {
@@ -390,7 +390,7 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body { display: none; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
-.tool-name { font-weight: 700; }
+.tool-name { color: #8b949e; font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .shell-command .shell-command-name { color: #82aaff; }
 .shell-command .shell-option { color: #f78caa; }

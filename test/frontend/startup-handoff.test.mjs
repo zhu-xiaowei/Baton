@@ -188,12 +188,17 @@ test('desktop and mobile skeleton rows use the final content line boxes', () => 
   );
 });
 
-test('browse lists reserve scrollbar width before and after CSS loads', () => {
-  assert.match(indexHtml, /body\.browse-view #content\{scrollbar-gutter:stable\}/);
-  assert.match(
-    styleSource,
-    /body\.browse-view #content \{ scrollbar-gutter: stable; \}/,
-  );
+test('browse lists reserve scrollbar width even when WebKit ignores stable gutters', () => {
+  const criticalStyle = indexHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1];
+  assert.ok(criticalStyle);
+
+  for (const source of [criticalStyle, styleSource]) {
+    const browseStyle = source.match(/body\.browse-view #content\s*\{([^}]+)\}/)?.[1];
+    assert.ok(browseStyle);
+    assert.match(browseStyle, /overflow-y:\s*scroll;/);
+    assert.match(browseStyle, /scrollbar-gutter:\s*stable;?/);
+    assert.match(source, /(?:^|\n)\s*#content\s*\{[^}]*overflow-y:\s*auto[;}]/);
+  }
 });
 
 test('active session skeleton and loaded heading share the original natural height', () => {

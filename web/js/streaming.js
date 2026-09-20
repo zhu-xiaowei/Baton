@@ -1080,8 +1080,13 @@ export class StreamingDomRenderer {
     var container = this.getContainer?.();
     var anchor = this.findAnchor(turnId);
     if (!turn || !container || !anchor) return false;
+    var previousParent = turn.parentElement;
+    var previousSibling = turn.previousElementSibling;
     this.insertTurn(container, turn, turnId);
-    this.onMutation(turn);
+    if (turn.parentElement !== previousParent
+      || turn.previousElementSibling !== previousSibling) {
+      this.onMutation(turn);
+    }
     return true;
   }
 
@@ -1101,8 +1106,6 @@ export class StreamingDomRenderer {
       element.className = classForBlock(operation.block.kind);
       element.dataset.blockId = String(operation.blockId);
       turn.appendChild(element);
-    } else {
-      element.classList.remove('tool-details-collapsed');
     }
     element.dataset.kind = operation.block.kind;
     var view = {
@@ -1172,11 +1175,6 @@ export class StreamingDomRenderer {
     var provisional = view.element;
     historical.dataset.blockId = String(view.blockId);
     historical.dataset.kind = 'tool_use';
-    historical.classList.remove('tool-details-collapsed');
-    var header = historical.querySelector(':scope > .tool-header');
-    if (header?.classList.contains('tool-details-toggle')) {
-      header.setAttribute('aria-expanded', 'true');
-    }
     if (view.committed
       || provisional.classList.contains('stream-block-committed')) {
       historical.classList.add('stream-block-committed');
