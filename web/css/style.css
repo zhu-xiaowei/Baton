@@ -842,8 +842,6 @@ html.native-mobile .agent-threads-list {
    Input-bar is moved into #content (DOM move in app.js) so it sits with the
    hero in a vertically-centered group. On first send it's restored to body. */
 body.new-session #content { display: flex; flex-direction: column; justify-content: center; align-items: stretch; padding-bottom: 8vh; position: relative; }
-/* Pin banner to top; flex-centered #content would otherwise pull this flex child to the middle. */
-body.new-session #content > .ws-banner { position: absolute; top: 0; left: 0; right: 0; }
 body.new-session #content > #input-bar { padding: 0 36px; max-width: 640px; width: 100%; align-self: center; background: transparent; }
 @media (min-width: 481px) { body.new-session #content > #input-bar { padding: 0 40px; } }
 .new-session-hero { text-align: center; padding: 0 24px 20px; }
@@ -1035,14 +1033,6 @@ html.native-mobile .slash-description {
 #send-btn.is-stop { background: #6e7681; color: #e6edf3; }
 #msg-input:disabled { opacity: 0.4; cursor: not-allowed; }
 .input-row button:disabled { opacity: 0.3; cursor: not-allowed; }
-
-/* === WS status banner === */
-.ws-banner {
-  padding: 6px 12px; font-size: 12px; text-align: center; font-weight: 500;
-  position: sticky; top: 0; z-index: 50;
-}
-.ws-banner.warn { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-.ws-banner.error { background: rgba(248, 81, 73, 0.15); color: #f85149; }
 
 /* === Section title (dashboard) === */
 .section-title {

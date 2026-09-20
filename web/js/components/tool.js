@@ -799,6 +799,10 @@ import { state } from '../state.js';
   function codexToolName(name, input, result) {
     if (codexMcpInfo(input, result)) return result ? 'Called' : 'Calling';
     if (name === 'Bash') return isExploreCommand(input, result) ? 'Explored' : 'Ran';
+    if (name === 'Edit' && input.file_path && !result?.is_error
+      && resultText(result).split('\n').some(line => line.trim() === `D ${input.file_path}`)) {
+      return 'Deleted';
+    }
     if (name === 'WriteStdin' && !String(input.chars || '').length) {
       return result ? 'Waited for background terminal' : 'Waiting for background terminal';
     }

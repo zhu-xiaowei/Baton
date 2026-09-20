@@ -73,6 +73,7 @@ await import('../../web/js/ws.js');
 
 test.afterEach(() => {
   state.wsRunning = false;
+  state.wsStatusText = '';
   window.updateSpinner();
 });
 
@@ -96,6 +97,29 @@ test('Claude and Codex share the same collapsing spinner row', () => {
     assert.equal(hidden?.style.display, 'flex');
     assert.equal(hidden?.classList.contains('is-collapsed'), true);
   }
+});
+
+test('WS reconnect reuses the spinner and restores running or idle status', () => {
+  reset();
+  state.wsRunning = false;
+  window.setWsStatus('disconnected');
+  const spinner = document.getElementById('cc-spinner');
+  assert.equal(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
+  assert.equal(spinner.classList.contains('is-collapsed'), false);
+  assert.equal(document.getElementById('ws-banner'), null);
+  window.setWsStatus('reconnecting');
+  assert.equal(document.getElementById('cc-spinner'), spinner);
+  state.wsRunning = true;
+  window.setWsStatus('connected');
+  assert.equal(document.getElementById('cc-spinner'), spinner);
+  assert.equal(spinner.classList.contains('is-collapsed'), false);
+  assert.notEqual(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
+  state.wsRunning = false;
+  window.setWsStatus('reconnecting');
+  assert.equal(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
+  window.setWsStatus('connected');
+  assert.equal(spinner.classList.contains('is-collapsed'), true);
+  assert.equal(document.querySelectorAll('#cc-spinner').length, 1);
 });
 
 test('spinner appears immediately and only animates while collapsing', () => {
@@ -1360,6 +1384,22 @@ for (const truncation of ['envelope', 'message']) {
     assert.deepEqual(state.wsAllMessages.find(message => message.uuid === complete.uuid).content, complete.content);
   });
 }
+
+test('Codex labels only the successfully deleted file in a mixed patch as Deleted', () => {
+  const result = { content: 'Success. Updated the following files:\nM /src/kept.ts\nD /src/deleted.ts\n' };
+  for (const [filePath, toolResult, label] of [
+    ['/src/deleted.ts', result, 'Deleted'],
+    ['/src/kept.ts', result, 'Edited'],
+    ['/other/deleted.ts', result, 'Edited'],
+    ['/src/deleted.ts', { ...result, is_error: true }, 'Edited'],
+    ['/src/deleted.ts', null, 'Edited'],
+  ]) {
+    const html = window.renderToolNode({
+      name: 'Edit', input: { file_path: filePath, old_string: '', new_string: '' },
+    }, toolResult, 'codex');
+    assert.ok(html.includes(`<span class="tool-name">${label}</span>`));
+  }
+});
 
 test('strict no-op Edit input does not render an empty diff body', () => {
   reset();

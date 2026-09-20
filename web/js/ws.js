@@ -1419,7 +1419,7 @@ function wsSendReliable(data) {
 
 function setWsStatus(status) {
   state.wsStatusText = status;
-  showWsBanner(status);
+  updateSpinner();
 }
 
 function disconnectWs() {

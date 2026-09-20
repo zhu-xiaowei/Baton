@@ -383,27 +383,6 @@ function newSessionRuntimeControl() {
 
 function showStats() {}  // no-op, stats bar removed
 
-function showWsBanner(status) {
-  var existing = document.getElementById('ws-banner');
-  if (status === 'connected' || status === '') {
-    if (existing) existing.remove();
-    return;
-  }
-  var content = document.getElementById('content');
-  if (!content) return;
-  if (!existing) {
-    content.insertAdjacentHTML('afterbegin', '<div id="ws-banner" class="ws-banner"></div>');
-    existing = document.getElementById('ws-banner');
-  }
-  if (status === 'reconnecting') {
-    existing.className = 'ws-banner warn';
-    existing.textContent = 'Reconnecting...';
-  } else {
-    existing.className = 'ws-banner error';
-    existing.textContent = 'Disconnected';
-  }
-}
-
 function navHref(view, params) {
   if (view === 'devices') return '#/';
   if (view === 'projects') return '#/' + encodeURIComponent(params.device);
@@ -2081,7 +2060,7 @@ document.addEventListener('click', function (e) {
 // All shared state lives in state.js, not on window.
 Object.assign(window, {
   osName, timeAgo, formatSize, esc,
-  showStats, showWsBanner, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
+  showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,

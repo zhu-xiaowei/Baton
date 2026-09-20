@@ -36,6 +36,10 @@ import { state } from '../state.js';
   }
 
   function startTyping(verbEl) {
+    if (_currentRuntime === 'connecting') {
+      verbEl.textContent = 'Connecting...';
+      return;
+    }
     var fixed = _currentRuntime === 'codex';
     var newVerb = fixed ? 'Working' : pick();
     var newText = newVerb + '...';
@@ -78,8 +82,9 @@ import { state } from '../state.js';
     var promptUp = typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt();
     // Hold the spinner until the skeleton clears — else it shows under the loading placeholder.
     var skeleton = !!document.querySelector('#content .skeleton-messages');
-    var shouldShow = state.wsRunning && !promptUp && !skeleton;
-    var runtime = state.appState.runtime === 'codex' ? 'codex' : 'claude';
+    var connecting = state.wsStatusText === 'disconnected' || state.wsStatusText === 'reconnecting';
+    var shouldShow = (state.wsRunning || connecting) && !promptUp && !skeleton;
+    var runtime = connecting ? 'connecting' : (state.appState.runtime === 'codex' ? 'codex' : 'claude');
 
     if (state.wsRunning && !_wasRunning) {
       clearTimeout(_hideTimer);
@@ -94,7 +99,7 @@ import { state } from '../state.js';
     _wasRunning = state.wsRunning;
 
     if (!shouldShow) {
-      var remaining = !state.wsRunning && _turnEnded && _outputShownAt
+      var remaining = _currentRuntime !== 'connecting' && !state.wsRunning && _turnEnded && _outputShownAt
         ? MIN_OUTPUT_VISIBLE_MS - (Date.now() - _outputShownAt)
         : 0;
       if (el && remaining > 0) {
