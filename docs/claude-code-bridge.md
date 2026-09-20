@@ -78,6 +78,45 @@ and computes Device/Project aggregates once. The steps below describe the Claude
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
 - **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
 
+### Bridge connection recovery
+
+`bridge/sleep-gap-monitor.mjs` adds sleep detection to the existing WebSocket
+connection logic, without changing its heartbeat, retry, handshake, or DNS settings.
+
+- A local ten-second timer detects wall-clock gaps longer than 15 seconds
+  (the normal ten-second interval plus five seconds of scheduling slack).
+  After sleep (or a long event-loop stall/forward clock jump), it discards the
+  old socket and reconnects immediately, resetting any existing retry backoff.
+  This is a portable sleep-gap heuristic, not a native screen-unlock listener;
+  locking/unlocking an otherwise healthy, awake machine does not reconnect it.
+- Only resume recovery changes: after the immediate attempt, failed connections
+  retain the original five-second retry delay, switching to five minutes after
+  12 consecutive failures. All handshakes retain the 15-second timeout.
+  Detecting another sleep gap or connecting successfully resets failures.
+- Application-level heartbeats remain every four minutes, without adding a
+  heartbeat-reply timeout. The ten-second local timer sends no network requests
+  while the connection is healthy, and no rapid post-wake retry window is added.
+- The detector uses Node.js timers and wall-clock readings, with no native OS
+  APIs, and is shared by macOS, Windows, and Linux Bridge processes. It handles
+  both clocks that pause during sleep and clocks that continue advancing.
+  WSL/VM environments must first resume the Bridge process. A healthy process
+  normally attempts reconnection within zero to ten seconds after it resumes;
+  this is not a hard deadline or a guarantee that Wi-Fi/VPN/DNS is ready.
+- Connection, retry, and heartbeat timers remain independent of this monitor.
+  Shutdown stops monitoring. Terminating a suspended handshake safely absorbs
+  its late error event; existing queued messages still flush after reconnecting.
+
+Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs` (sleep-gap
+detection and the existing connection code's backoff reset/socket cleanup).
+
+Optional overhead benchmark: `node test/bridge/ws-resume-overhead.mjs`. It compares
+no monitoring, one-second monitoring, and ten-second monitoring in three isolated
+processes per mode for 60 seconds each (concurrently), using the production
+sleep monitor without any sockets or network requests. It reports
+CPU time, RSS, check counts, and a separate batch microbenchmark. This does not
+measure actual battery drain or OS power wakeups. Duration and sample count can
+be changed with `BENCH_DURATION_MS` and `BENCH_REPLICAS`.
+
 ### Data extraction
 
 Raw .jsonl (~2KB per message):

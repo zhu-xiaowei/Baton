@@ -69,6 +69,7 @@ import {
   commandCatalogReadyPayload,
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
+import { SleepGapMonitor } from './sleep-gap-monitor.mjs';
 
 let _ws = null;
 let _config = null;
@@ -82,6 +83,15 @@ const RECONNECT_DELAY = 5_000;
 const SLOW_RECONNECT_DELAY = 5 * 60_000;
 const CONNECT_TIMEOUT = 15_000;
 const SLOW_RECONNECT_THRESHOLD = 12;
+const _resumeMonitor = new SleepGapMonitor({
+  onResume: (gap) => {
+    if (!_config?.wsUrl) return;
+    console.log(`[ws] resume/clock gap detected (${Math.round(gap)}ms), reconnecting immediately`);
+    _consecutiveFailures = 0;
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    connect();
+  },
+});
 
 // onExit only fires when a process exits during an active turn.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
@@ -171,6 +181,7 @@ async function gitStatusModule() {
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 export async function shutdownInteractions() {
+  _resumeMonitor.stop();
   _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
   _pool.shutdownAll();
@@ -487,6 +498,7 @@ export function initWs(config) {
       });
   }
   connect();
+  _resumeMonitor.start();
 }
 
 export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
@@ -627,6 +639,7 @@ function connect() {
   if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
   if (_ws) {
     _ws.removeAllListeners();
+    _ws.on('error', () => {});
     _ws.terminate();
     _ws = null;
   }
@@ -646,6 +659,7 @@ function connect() {
     if (_ws && _ws.readyState !== WebSocket.OPEN) {
       console.log('[ws] connect timeout, forcing reconnect...');
       _ws.removeAllListeners();
+      _ws.on('error', () => {});
       _ws.terminate();
       _ws = null;
       scheduleReconnect();
