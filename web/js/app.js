@@ -1664,7 +1664,6 @@ async function startNewSession(projectHash) {
   state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
   state.wsRenderedCount = 0;
-  state.wsLastTimestamp = '';
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
@@ -1750,11 +1749,9 @@ async function loadMessages(sessionId, preview, options) {
   if (_navVersion !== myNav) return;
   updateSendBtn();
 
-  // 1. Subscribe WS first, then buffer+fetch (shared with reconnect recovery)
   state.wsAllMessages = [];
   state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
-  state.wsLastTimestamp = '';
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
@@ -1768,64 +1765,16 @@ async function loadMessages(sessionId, preview, options) {
 
   try {
     var t0 = performance.now();
-    var result = await bufferAndFetch(sessionId, '');
+    var result = await loadLatestMessages(sessionId);
     if (_navVersion !== myNav) return;
-    if (result.ok === false && state.wsAllMessages.length === 0) {
+    if (result.ok === false && state.wsAllMessages.length === 0
+      && !content.querySelector('.messages .assistant-turn, .messages .msg-user')) {
       throw result.error || new Error('Unable to load messages');
     }
     var latency = Math.round(performance.now() - t0);
-    state.wsRunning = resolveSessionRunningAfterFetch(
-      result,
-      state.wsAllMessages,
-      state.appState.runtime,
-    );
-    updateSendBtn();
-
-    if (state.wsAllMessages.length === 0) {
-      if (result.needSync) {
-        var online = state.deviceOnlineMap[state.appState.device] !== false;
-        content.innerHTML = online
-          ? skeletonMessages()
-          : '<div class="empty">Bridge offline — no cached messages</div>';
-      } else {
-        content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
-          + '"><div class="empty">No messages</div></div>';
-        if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
-      }
-      showInputBar(true);
-      if (typeof revealDeferredPermissionPrompt === 'function') {
-        revealDeferredPermissionPrompt();
-      }
-      saveNav();
-      return;
-    }
-
-    content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"><div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
-      + '">Loading...</div>' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
-    if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
-    if (window.markTurnAdjacency) markTurnAdjacency(content.querySelector('.messages'));
-    showInputBar(true);
-    if (typeof revealDeferredPermissionPrompt === 'function') {
-      revealDeferredPermissionPrompt();
-    }
-    if (typeof updateSpinner === 'function') updateSpinner();
-
-    updateTitleFromMessages();
-
-    // Clamp before scrolling: clamp shrinks long messages, so scrolling first
-    // would leave the viewport above the bottom. rAF re-scroll absorbs any
-    // post-clamp reflow before paint (replaces the old visible 500ms jump).
-    loadImages(content);
-    clampOverflow(content.querySelector('.messages'));
-    if (window.renderMermaidBlocks) renderMermaidBlocks(content);
-    if (window.renderKatexBlocks) renderKatexBlocks(content);
-    content.scrollTop = content.scrollHeight;
     requestAnimationFrame(function () {
-      if (_navVersion !== myNav) return;
-      content.scrollTop = content.scrollHeight;
-      maybeLoadOlderAndPrepend();
+      if (_navVersion === myNav) maybeLoadOlderAndPrepend();
     });
-    state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
     if (_navVersion !== myNav) return;

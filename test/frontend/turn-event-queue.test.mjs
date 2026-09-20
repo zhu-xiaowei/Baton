@@ -135,26 +135,6 @@ test('different turns maintain independent contiguous queues', () => {
   );
 });
 
-test('restarting one turn abandons its old gap and accepts a new checkpoint', () => {
-  var queue = new TurnEventQueue();
-  assert.deepEqual(queue.push(event(0, 'stream_turn_start')).map((item) => item.seq), [0]);
-  assert.deepEqual(queue.push(event(1)).map((item) => item.seq), [1]);
-  assert.deepEqual(queue.push(event(3)).map((item) => item.seq), []);
-
-  assert.equal(queue.restartTurn('turn-1'), true);
-  assert.deepEqual(queue.push(event(8)).map((item) => item.seq), []);
-  assert.deepEqual(queue.push(event(9, 'stream_block_start')).map((item) => item.seq), []);
-
-  var resumed = queue.resumeAtNextCheckpoint('turn-1');
-  assert.deepEqual(
-    resumed.events.map((item) => [item.action, item.seq]),
-    [
-      ['stream_turn_start', 0],
-      ['stream_block_start', 9],
-    ],
-  );
-});
-
 test('seq 1 messages synthesize the payload-free turn start and continue streaming', () => {
   var queue = new TurnEventQueue();
   var consumed = queue.push({
@@ -319,28 +299,20 @@ test('late join resumes at a sequenced permission checkpoint', () => {
   );
 });
 
-test('authority delayed behind a resumed block is still returned for history merge', () => {
-  var queue = new TurnEventQueue();
+test('delayed pre-checkpoint events stay skipped and reject conflicting duplicates', () => {
+  const queue = new TurnEventQueue();
   queue.push(event(8, 'stream_block_start'));
-  var recovery = queue.resumeAtNextCheckpoint('turn-1');
-  assert.deepEqual(
-    recovery.events.map((item) => item.seq),
-    [0, 8],
-  );
+  const recovery = queue.resumeAtNextCheckpoint('turn-1');
+  assert.deepEqual(recovery.events.map((item) => item.seq), [0, 8]);
 
-  assert.deepEqual(queue.push({
+  const delayed = {
     ...event(7, 'messages'),
-    messages: [{
-      uuid: 'node-before-resume',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'complete earlier node' }],
-    }],
-  }), []);
-  assert.deepEqual(
-    queue.takeLateJoinUpdates().flatMap((update) => update.messages)
-      .map((message) => message.uuid),
-    ['node-before-resume'],
-  );
+    messages: [{ uuid: 'node-before-resume', type: 'assistant', content: 'earlier node' }],
+  };
+  assert.deepEqual(queue.push(delayed), []);
+  assert.deepEqual(queue.push(delayed), []);
+  assert.throws(() => queue.push({ ...delayed, messages: [] }), /conflicting event/);
+  assert.deepEqual(queue.push(event(9)).map((item) => item.seq), [9]);
 });
 
 test('a normally started turn never skips a transport gap at a later block', () => {

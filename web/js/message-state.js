@@ -1,31 +1,15 @@
-/**
- * @param {{restMessages?: object[], historyBuffer?: object[], restOk?: boolean}} options
- * @returns {{messages: object[], restOk: boolean}}
- */
-export function mergeFetchWindow(options = {}) {
-  var restOk = options.restOk !== false;
+export function dedupeMessages(incoming) {
   var messages = [];
   var index = new Map();
-
-  if (restOk) {
-    for (var message of options.restMessages || []) {
-      upsert(messages, index, message);
-    }
-  }
-
-  for (var message of options.historyBuffer || []) {
-    if (message?.truncated === true) continue;
-    upsert(messages, index, message);
-  }
-
-  return { messages: messages, restOk: restOk };
+  for (var message of incoming) upsert(messages, index, message);
+  return messages;
 }
 
 /**
- * @param {{localMessages?: object[], fetchedMessages?: object[], authoritative?: boolean, replaceConflicts?: boolean, reorderFetched?: boolean}} options
+ * @param {{localMessages?: object[], incomingMessages?: object[], authoritative?: boolean, replaceConflicts?: boolean}} options
  * @returns {{messages: object[], inserted: object[], patched: object[], identityUpdated: object[], conflicts: object[], reordered: boolean, authoritative: boolean}}
  */
-export function mergeLocalHistory(options = {}) {
+export function mergeMessages(options = {}) {
   var inserted = [];
   var patched = [];
   var identityUpdated = [];
@@ -50,9 +34,9 @@ export function mergeLocalHistory(options = {}) {
     indexMessage(index, confirmedMessage);
   }
 
-  var fetchedMessages = options.fetchedMessages || [];
-  for (var fetchedIndex = 0; fetchedIndex < fetchedMessages.length; fetchedIndex++) {
-    var rawMessage = fetchedMessages[fetchedIndex];
+  var incomingMessages = options.incomingMessages || [];
+  for (var incomingIndex = 0; incomingIndex < incomingMessages.length; incomingIndex++) {
+    var rawMessage = incomingMessages[incomingIndex];
     if (!isMessage(rawMessage) || rawMessage.truncated === true) continue;
     var incoming = cloneMessage(rawMessage);
     if (options.authoritative) delete incoming._strictManaged;
@@ -60,11 +44,11 @@ export function mergeLocalHistory(options = {}) {
 
     if (!matches.length) {
       var insertedMessage = cloneMessage(incoming);
-      var insertedIndex = findFetchedInsertionIndex(
+      var insertedIndex = findInsertionIndex(
         messages,
         index,
-        fetchedMessages,
-        fetchedIndex,
+        incomingMessages,
+        incomingIndex,
       );
       messages.splice(insertedIndex, 0, insertedMessage);
       indexMessage(index, insertedMessage);
@@ -162,20 +146,18 @@ export function mergeLocalHistory(options = {}) {
   }
 
   var reordered = false;
-  if (options.authoritative
-    && options.reorderFetched !== false
-    && !ambiguousUserIdentity) {
+  if (options.authoritative && !ambiguousUserIdentity) {
     var orderedMatches = [];
     var used = new Set();
     var finalIndex = new Map();
     for (var finalMessage of messages) indexMessage(finalIndex, finalMessage);
-    for (var fetchedMessage of fetchedMessages) {
-      var fetchedMatches = findExisting(finalIndex, fetchedMessage).filter(
+    for (var incomingMessage of incomingMessages) {
+      var incomingMatches = findExisting(finalIndex, incomingMessage).filter(
         function (message) { return !used.has(message); },
       );
-      if (fetchedMatches.length !== 1) continue;
-      used.add(fetchedMatches[0]);
-      orderedMatches.push(fetchedMatches[0]);
+      if (incomingMatches.length !== 1) continue;
+      used.add(incomingMatches[0]);
+      orderedMatches.push(incomingMatches[0]);
     }
     var matchedIndexes = messages.map(function (message, index) {
       return used.has(message) ? index : -1;
@@ -381,10 +363,10 @@ function replaceIndexedMessages(messages, index, existingMessages, replacement) 
   indexMessage(index, replacement);
 }
 
-function findFetchedInsertionIndex(messages, index, fetchedMessages, fetchedIndex) {
+function findInsertionIndex(messages, index, incomingMessages, incomingIndex) {
   var floor = 0;
-  for (var previousIndex = fetchedIndex - 1; previousIndex >= 0; previousIndex--) {
-    var previousMessage = fetchedMessages[previousIndex];
+  for (var previousIndex = incomingIndex - 1; previousIndex >= 0; previousIndex--) {
+    var previousMessage = incomingMessages[previousIndex];
     if (!isMessage(previousMessage) || previousMessage.truncated === true) continue;
     var previousMatches = findExisting(index, previousMessage);
     var previousPositions = previousMatches.map(function (message) {
@@ -398,8 +380,8 @@ function findFetchedInsertionIndex(messages, index, fetchedMessages, fetchedInde
     }
   }
 
-  for (var nextIndex = fetchedIndex + 1; nextIndex < fetchedMessages.length; nextIndex++) {
-    var nextMessage = fetchedMessages[nextIndex];
+  for (var nextIndex = incomingIndex + 1; nextIndex < incomingMessages.length; nextIndex++) {
+    var nextMessage = incomingMessages[nextIndex];
     if (!isMessage(nextMessage) || nextMessage.truncated === true) continue;
     var matches = findExisting(index, nextMessage);
     if (!matches.length) continue;
@@ -512,4 +494,68 @@ function recordPatch(patched, index, before, after) {
   };
   patched.push(patch);
   return patch;
+}
+
+export function commitMessageState(state, messages) {
+  var index = new Set();
+  for (var message of messages) {
+    if (message?.uuid) index.add(message.uuid);
+    for (var alias of message?.identityAliases || []) {
+      if (!/^(?:turn|pending):/.test(String(alias))) index.add(String(alias));
+    }
+    if (!message?.uuid && message?.nativeId) {
+      index.add('native:' + message.nativeId);
+    }
+  }
+  state.wsAllMessages = messages;
+  state.wsMessageUuids = index;
+  state.wsMessageCount = messages.length;
+}
+
+function isUserEcho(message, pending) {
+  if (message?.type !== 'user' || !pending?.id) return false;
+  if (Array.isArray(message.content)
+    && message.content.length
+    && message.content.every(function (block) {
+      return block?.type === 'tool_result';
+    })) {
+    return false;
+  }
+  var turnId = pending.id;
+  var promptUuid = String(turnId).replace(/^sent-/, '');
+  if (message.turnId === turnId
+    || message.uuid === turnId
+    || message.uuid === promptUuid
+    || message.nativeId === 'codex:user:' + turnId
+    || message.nativeId === 'live:user:' + turnId
+    || message.nativeId === 'codex:turn:' + turnId + ':user') {
+    return true;
+  }
+  var aliases = new Set(message.identityAliases || []);
+  return aliases.has('turn:' + turnId)
+    || aliases.has('pending:' + turnId)
+    || aliases.has('native:codex:user:' + turnId)
+    || aliases.has('native:live:user:' + turnId);
+}
+
+export function reconcilePendingMessages(pendingMessages, messages) {
+  var promoted = [];
+  var remaining = [];
+
+  for (var pending of pendingMessages) {
+    var echo = messages.find(function (message) {
+      return isUserEcho(message, pending);
+    });
+    if (!echo) {
+      remaining.push(pending);
+      continue;
+    }
+    if (!echo.turnId) echo.turnId = pending.id;
+    promoted.push({ pending: pending, echo: echo });
+  }
+
+  return {
+    promoted: promoted,
+    remaining: remaining,
+  };
 }

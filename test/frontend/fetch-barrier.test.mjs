@@ -6,29 +6,26 @@ import {
   FetchBarrierCoordinator,
 } from '../../web/js/fetch-barrier.js';
 
-test('FetchBarrier keeps complete history and strict authority in separate buffers', () => {
+test('FetchBarrier buffers raw WS events in arrival order', () => {
   const barrier = new FetchBarrier({
     sessionId: 'session-1',
-    localMessages: [{ uuid: 'local' }],
   });
 
-  barrier.captureHistory([
-    { uuid: 'history' },
-    { uuid: 'truncated', truncated: true },
-  ]);
-  barrier.captureStrictMessages([{ uuid: 'strict' }]);
-
-  assert.deepEqual(barrier.historyBuffer.map((message) => message.uuid), ['history']);
-  assert.deepEqual(barrier.strictMessages.map((message) => message.uuid), ['strict']);
-  assert.deepEqual(barrier.localMessages.map((message) => message.uuid), ['local']);
+  const events = [
+    { action: 'messages', messages: [{ uuid: 'history' }] },
+    { action: 'stream_delta', seq: 3, chunk: 'text' },
+    { action: 'stream_end', seq: 4 },
+  ];
+  for (const event of events) assert.equal(barrier.capture(event), true);
+  assert.deepEqual(barrier.events, events);
 });
 
 test('FetchBarrier stops accepting messages once commit begins', () => {
   const barrier = new FetchBarrier({ sessionId: 'session-1' });
 
   assert.equal(barrier.beginCommit(), true);
-  assert.equal(barrier.captureHistory([{ uuid: 'late' }]), false);
-  assert.equal(barrier.captureStrictMessages([{ uuid: 'strict-late' }]), false);
+  assert.equal(barrier.capture({ action: 'messages' }), false);
+  assert.deepEqual(barrier.events, []);
   assert.equal(barrier.close(), true);
   assert.equal(barrier.isOpen(), false);
 });

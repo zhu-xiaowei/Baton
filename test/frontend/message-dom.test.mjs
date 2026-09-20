@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
-import { createHistoryRecoveryDomAdapter } from '../../web/js/history-recovery-dom.js';
+import { createMessageDom } from '../../web/js/message-dom.js';
+import { commitMessageState } from '../../web/js/message-state.js';
 import { StreamingDomRenderer } from '../../web/js/streaming.js';
 
 function user(message) {
@@ -10,8 +11,8 @@ function user(message) {
     + message.content + '</div>';
 }
 
-function createAdapter(dom, state, extra = {}) {
-  return createHistoryRecoveryDomAdapter({
+function createDom(dom, state, extra = {}) {
+  return createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'codex',
@@ -23,7 +24,7 @@ function createAdapter(dom, state, extra = {}) {
   });
 }
 
-test('history DOM adapter preserves unchanged and pending bubble identities', () => {
+test('message DOM updater preserves unchanged and pending bubble identities', () => {
   const dom = new JSDOM(
     '<div class="messages">'
       + '<div class="msg-user" data-message-id="one">one</div>'
@@ -37,17 +38,16 @@ test('history DOM adapter preserves unchanged and pending bubble identities', ()
     wsAllMessages: [],
     wsMessageUuids: new Set(),
     wsMessageCount: 0,
-    wsLastTimestamp: '',
     wsRenderedCount: 0,
     pendingSentMessages: [],
     wsRunning: false,
   };
   const one = { uuid: 'one', type: 'user', content: 'one' };
   const two = { uuid: 'two', type: 'user', content: 'two' };
-  const adapter = createAdapter(dom, state);
+  const updater = createDom(dom, state);
 
-  adapter.setMessages([one, two]);
-  assert.equal(adapter.applyHistoryChanges({
+  commitMessageState(state, [one, two]);
+  assert.equal(updater.applyChanges({
     messages: [one, two],
     inserted: [{ index: 1, message: two }],
   }), true);
@@ -57,7 +57,7 @@ test('history DOM adapter preserves unchanged and pending bubble identities', ()
   assert.equal(container.children[2], pending);
 });
 
-test('metadata-only recovery does not rebuild visible history DOM', () => {
+test('metadata-only updates does not rebuild visible history DOM', () => {
   const dom = new JSDOM(
     '<div class="messages"><div class="msg-user" data-message-id="one">one</div></div>',
   );
@@ -69,51 +69,26 @@ test('metadata-only recovery does not rebuild visible history DOM', () => {
     wsAllMessages: [one],
     wsMessageUuids: new Set(['one']),
     wsMessageCount: 1,
-    wsLastTimestamp: '',
     wsRenderedCount: 1,
     pendingSentMessages: [],
     wsRunning: false,
   };
   let titleUpdates = 0;
-  const adapter = createAdapter(dom, state, {
+  const updater = createDom(dom, state, {
     updateTitleFromMessages: () => { titleUpdates++; },
   });
 
-  adapter.setMessages([one, title]);
-  assert.equal(adapter.applyHistoryChanges({
+  commitMessageState(state, [one, title]);
+  assert.equal(updater.applyChanges({
     messages: [one, title],
     inserted: [{ index: 1, message: title }],
   }), false);
-  adapter.finalize();
+  updater.finalize();
   assert.equal(container.firstElementChild, unchanged);
   assert.equal(titleUpdates, 1);
 });
 
-test('activity commit marks the spinner end only on running to completed', () => {
-  const dom = new JSDOM('<div class="messages"></div>');
-  const calls = [];
-  const state = {
-    wsAllMessages: [],
-    wsMessageUuids: new Set(),
-    wsMessageCount: 0,
-    wsLastTimestamp: '',
-    wsRenderedCount: 0,
-    pendingSentMessages: [],
-    wsRunning: true,
-  };
-  const adapter = createAdapter(dom, state, {
-    markSpinnerTurnEnd: () => calls.push('end'),
-    updateSendBtn: () => calls.push('button'),
-    updateSpinner: () => calls.push('spinner'),
-  });
-
-  adapter.applyActivity('completed');
-
-  assert.equal(state.wsRunning, false);
-  assert.deepEqual(calls, ['end', 'button', 'spinner']);
-});
-
-test('completed recovery cannot reuse a stale stream turn for another answer', () => {
+test('live message updates cannot reuse a stale stream turn for another answer', () => {
   const turn8 = 'sent-user-eight';
   const turn0 = 'sent-user-zero';
   const answer8 = 'answer-eight';
@@ -139,7 +114,6 @@ test('completed recovery cannot reuse a stale stream turn for another answer', (
     wsAllMessages: messages,
     wsMessageUuids: new Set(messages.map((message) => message.uuid)),
     wsMessageCount: messages.length,
-    wsLastTimestamp: '',
     wsRenderedCount: 0,
     pendingSentMessages: [],
     wsRunning: false,
@@ -163,17 +137,15 @@ test('completed recovery cannot reuse a stale stream turn for another answer', (
     renderMarkdown: (element, text) => { element.textContent = text; },
   });
   renderer.createTurn({ turnId: turn8 });
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'claude',
     renderMessages,
-    preserveStreamPreviews: false,
-    discardStreamTurn: (turnId) => renderer.discardTurn(turnId),
   });
 
-  adapter.setMessages(messages);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, messages);
+  updater.applyChanges({
     messages,
     inserted: [],
     patched: [],
@@ -181,7 +153,7 @@ test('completed recovery cannot reuse a stale stream turn for another answer', (
     conflicts: [],
     reordered: true,
     authoritative: true,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
   renderer.applyOperation({
     type: 'patchBlock',
     turnId: turn8,
@@ -207,7 +179,7 @@ test('completed recovery cannot reuse a stale stream turn for another answer', (
   ).length, 1);
 });
 
-test('recovery patches but never deletes local stream-committed children', () => {
+test('live updates patch but never deletes local stream-committed children', () => {
   const turnId = 'turn-committed';
   const dom = new JSDOM(
     '<div class="messages">'
@@ -239,12 +211,11 @@ test('recovery patches but never deletes local stream-committed children', () =>
     wsAllMessages: messages,
     wsMessageUuids: new Set(['user', 'shared']),
     wsMessageCount: messages.length,
-    wsLastTimestamp: '',
     wsRenderedCount: messages.length,
     pendingSentMessages: [],
     wsRunning: false,
   };
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'codex',
@@ -256,8 +227,8 @@ test('recovery patches but never deletes local stream-committed children', () =>
       + '</div>',
   });
 
-  adapter.setMessages(messages);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, messages);
+  updater.applyChanges({
     messages,
     inserted: [],
     patched: [{
@@ -268,7 +239,7 @@ test('recovery patches but never deletes local stream-committed children', () =>
     conflicts: [],
     reordered: false,
     authoritative: true,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
 
   assert.equal(container.lastElementChild, committed);
   assert.equal(localOnly.isConnected, true);
@@ -282,7 +253,7 @@ test('recovery patches but never deletes local stream-committed children', () =>
   );
 });
 
-test('completed recovery preserves visible stream previews missing from authority', () => {
+test('live message updates preserves visible stream previews missing from authority', () => {
   const turnId = 'turn-interrupted-preview';
   const interruptId = `live_interrupt_${turnId}`;
   const dom = new JSDOM(
@@ -315,18 +286,14 @@ test('completed recovery preserves visible stream previews missing from authorit
     wsAllMessages: messages,
     wsMessageUuids: new Set(['user', interruptId]),
     wsMessageCount: messages.length,
-    wsLastTimestamp: '',
     wsRenderedCount: messages.length,
     pendingSentMessages: [],
     wsRunning: false,
   };
-  const discarded = [];
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'claude',
-    preserveStreamPreviews: false,
-    discardStreamTurn: (id) => discarded.push(id),
     renderMessages: () =>
       '<div class="msg-user" data-anchor="' + turnId + '"'
       + ' data-message-id="user">question</div>'
@@ -336,8 +303,8 @@ test('completed recovery preserves visible stream previews missing from authorit
       + '</div>',
   });
 
-  adapter.setMessages(messages);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, messages);
+  updater.applyChanges({
     messages,
     inserted: [{ message: messages[1] }],
     patched: [],
@@ -345,15 +312,14 @@ test('completed recovery preserves visible stream previews missing from authorit
     conflicts: [],
     reordered: false,
     authoritative: true,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
 
   assert.equal(localAnswer.isConnected, true);
   assert.equal(localAnswer.textContent, 'visible partial answer');
   assert.equal(preview.querySelectorAll('.msg-interrupt').length, 1);
-  assert.deepEqual(discarded, []);
 });
 
-test('recovered authority patches one matching local stream block without duplication', () => {
+test('live authority patches one matching local stream block without duplication', () => {
   const turnId = 'turn-recovered-stream-block';
   const dom = new JSDOM(
     '<div class="messages">'
@@ -384,12 +350,11 @@ test('recovered authority patches one matching local stream block without duplic
     wsAllMessages: messages,
     wsMessageUuids: new Set(['user', 'assistant-authority']),
     wsMessageCount: messages.length,
-    wsLastTimestamp: '',
     wsRenderedCount: messages.length,
     pendingSentMessages: [],
     wsRunning: false,
   };
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'claude',
@@ -402,8 +367,8 @@ test('recovered authority patches one matching local stream block without duplic
       + '</div>',
   });
 
-  adapter.setMessages(messages);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, messages);
+  updater.applyChanges({
     messages,
     inserted: [{ message: messages[1] }],
     patched: [],
@@ -411,7 +376,7 @@ test('recovered authority patches one matching local stream block without duplic
     conflicts: [],
     reordered: false,
     authoritative: true,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
 
   assert.equal(committed.querySelectorAll('.assistant-text').length, 1);
   assert.equal(localAnswer.isConnected, true);
@@ -419,7 +384,7 @@ test('recovered authority patches one matching local stream block without duplic
   assert.equal(localAnswer.textContent, 'authoritative answer');
 });
 
-test('recovery folds an unscoped REST turn into its committed stream turn', () => {
+test('live updates fold an unscoped authority turn into its committed stream turn', () => {
   const turnId = 'sent-recovered-without-turn-id';
   const dom = new JSDOM(
     '<div class="messages">'
@@ -448,16 +413,14 @@ test('recovery folds an unscoped REST turn into its committed stream turn', () =
     wsAllMessages: messages,
     wsMessageUuids: new Set(['shared', 'rest-only']),
     wsMessageCount: messages.length,
-    wsLastTimestamp: '',
     wsRenderedCount: messages.length,
     pendingSentMessages: [],
     wsRunning: false,
   };
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'codex',
-    preserveUnmatchedHistory: true,
     renderMessages: () =>
       '<div class="assistant-turn">'
       + '<div class="tl-item assistant-text" data-message-id="shared">new</div>'
@@ -465,8 +428,8 @@ test('recovery folds an unscoped REST turn into its committed stream turn', () =
       + '</div>',
   });
 
-  adapter.setMessages(messages);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, messages);
+  updater.applyChanges({
     messages,
     inserted: [{ message: messages[1] }],
     patched: [{
@@ -477,7 +440,7 @@ test('recovery folds an unscoped REST turn into its committed stream turn', () =
     conflicts: [],
     reordered: false,
     authoritative: false,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
 
   assert.equal(container.querySelectorAll('.assistant-turn').length, 1);
   assert.equal(container.lastElementChild, committed);
@@ -502,7 +465,7 @@ test('recovery folds an unscoped REST turn into its committed stream turn', () =
   );
 });
 
-test('append-only recovery patches ordinary nodes in place without removing local rows', () => {
+test('live updates replace changed unanchored rows and remove stale rows', () => {
   const dom = new JSDOM(
     '<div class="messages">'
       + '<div class="msg-user" data-message-id="shared">old</div>'
@@ -517,22 +480,20 @@ test('append-only recovery patches ordinary nodes in place without removing loca
     wsAllMessages: [message],
     wsMessageUuids: new Set(['shared']),
     wsMessageCount: 1,
-    wsLastTimestamp: '',
     wsRenderedCount: 1,
     pendingSentMessages: [],
     wsRunning: false,
   };
-  const adapter = createHistoryRecoveryDomAdapter({
+  const updater = createMessageDom({
     state,
     document: dom.window.document,
     runtime: () => 'codex',
-    preserveUnmatchedHistory: true,
     renderMessages: () =>
       '<div class="msg-user" data-message-id="shared">new</div>',
   });
 
-  adapter.setMessages([message]);
-  adapter.applyHistoryChanges({
+  commitMessageState(state, [message]);
+  updater.applyChanges({
     messages: [message],
     inserted: [],
     patched: [{
@@ -543,10 +504,10 @@ test('append-only recovery patches ordinary nodes in place without removing loca
     conflicts: [],
     reordered: false,
     authoritative: true,
-  }, { promoted: [], remaining: [] }, 'completed');
+  });
 
-  assert.equal(container.firstElementChild, shared);
-  assert.equal(shared.textContent, 'new');
-  assert.equal(localOnly.isConnected, true);
-  assert.equal(container.lastElementChild, localOnly);
+  assert.equal(shared.isConnected, false);
+  assert.equal(container.firstElementChild.textContent, 'new');
+  assert.equal(localOnly.isConnected, false);
+  assert.equal(container.children.length, 1);
 });

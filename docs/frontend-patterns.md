@@ -47,28 +47,23 @@ appState = { device, project: { hash, name }, session, sessionPreview }
 
 ## 3. Entering a Session: Initial Message Load
 
-**Key design: subscribe to WS first, then pull history from DDB, merge and deduplicate.** This ensures no real-time messages are lost during the loading period.
+**Key design: initial entry and recovery share one latest-200 loader and raw WS event barrier.**
 
 ```
-loadMessages(sessionId):
-  1. wsAllMessages = [], wsMessageUuids = Set(), reset state
-  2. startWs(sessionId) → subscribe → reveal_permission
-  3. open request-scoped FetchBarrier
-  4. GET /api/bridge/messages?session=X&device=D&project=P
-                                ← pull history + current Session status
-  5. mergeFetchWindow(REST, historyBuffer)
-  6. mergeLocalHistory(wsAllMessages, fetched + delayed strict authority)
-  7. keyed DOM reconcile; pending bubbles remain last
-  8. close barrier and replay strict DOM operations
-  9. Resolve state: newer applied WS lifecycle → response status → message-tail fallback
-  10. Rebind any active strict-stream preview by turnId
-  11. If bottom-follow intent remains active, scroll once after all DOM updates
+loadLatestMessages(sessionId):
+  1. Reuse an active request, otherwise open a request-scoped FetchBarrier
+  2. Subscribe to the session and reveal current permission state
+  3. GET /api/bridge/messages?session=X&device=D&project=P&limit=200
+  4. Replace the old tail at the snapshot's first unique message ID
+  5. Drop pre-request pending bubbles/previews; retain sends created during loading
+  6. Render the snapshot if needed and resolve REST/message activity
+  7. Close the barrier and replay raw WS events through the normal dispatcher
+  8. Preserve reading position, or place at the new bottom if following is enabled
 ```
 
-No-seq `messages` are historical JSONL/TUI updates and enter the barrier historyBuffer. Events
-carrying `turnId + seq` belong to a live turn: lifecycle state is applied immediately, while strict
-authority history and DOM operations wait until the REST commit. Identity is UUID-first; explicit
-aliases connect protocol mirrors, and nativeId is only a fallback when UUID is absent.
+Both no-seq `messages` and strict events carrying `turnId + seq` wait in the same raw-event buffer
+while REST is pending. They do not mutate lifecycle state or message DOM until replay. The snapshot
+boundary uses a unique UUID/native ID; live message merging separately handles protocol aliases.
 
 `reveal_permission` is intentionally narrower than message replay. It asks the Bridge to resend only
 the current pending permission state after entering or reconnecting to a Session. Existing CC hook
@@ -82,8 +77,8 @@ not display a block whose start is missing. Complete authority renders missed no
 for any remaining nodes. No time-based grace is used to expose partial stream content.
 
 **`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show
-loading state. Wait for `sync_complete`, then use the same `bufferAndFetch` merge path. Replace the
-skeleton with complete history; if real message DOM already exists, reconcile incrementally.
+loading state. `sync_complete` uses the same latest-200 loader. Buffered complete WS messages may
+also replace the skeleton through normal live rendering after the request finishes.
 
 ## 4. Real-time Message Handling (WS)
 
@@ -178,22 +173,20 @@ findInsertBefore(container, timestamp):
 sending a message, or tapping the bottom button enables it. A real pointer drag or wheel gesture
 disables it immediately at the start of that user-scroll sequence, even before the viewport moves
 beyond the bottom-button threshold. Once the bottom button has been visible, the first shared button
-state update that hides it immediately restores follow intent and scrolls to the physical bottom.
-This transition is detected inside `updateScrollButton()`, so it works whether `pointermove` or
-`scroll` observes the new position first. Further movement in the same gesture cannot disable the
-newly restored follow while the button remains hidden; reversing far enough to show the button
-disables it again. A small drag that never shows the button remains paused.
+state update that hides it restores follow intent without moving the viewport. New visible content
+then schedules bottom placement on the next animation frame. Further movement in the same gesture
+cannot disable the restored follow while the button remains hidden; reversing far enough to show
+the button disables it again. A small drag that never shows the button remains paused.
 
-Live insertions synchronously set `scrollTop = scrollHeight` only while that flag is true. A
-`ResizeObserver` bound to the current `.messages` container maintains the same invariant when OUT,
-markdown, diff, image, or wrapping changes its real height. It does nothing while user follow is
-disabled. Session entry performs one immediate and one next-frame placement after the final message
-DOM is rendered. Sending an optimistic user bubble uses the existing smooth scroll. Permission
-prompts position only their own newly inserted content.
+Live mutations and snapshot rendering share next-frame bottom placement while follow intent is
+active. Updates confined to hidden grouped tool rows or collapsed results do not trigger following.
+There is no message-container ResizeObserver that continually forces the viewport to the bottom.
+Sending an optimistic user bubble keeps the existing explicit scroll behavior.
 
-Background synchronization does not re-enable following. When the mobile viewport shrinks, a
-message list that was physically at the bottom is placed at its new bottom on the next frame.
-Viewport growth remains native; keyboard handling does not replace the message list.
+Background synchronization does not re-enable following. When follow intent is off, snapshot
+replacement restores the first visible message/tool anchor and its viewport offset. Mobile viewport
+changes preserve following through a guarded next-frame placement; keyboard handling does not
+replace the message list.
 
 ## 7. wsRunning State + Send/Stop Button
 
@@ -209,9 +202,10 @@ wsRunning updates:
   doSend()                       → true
 ```
 
-During initial loading, only applied WS lifecycle events override the returned status. Fragments
-such as deltas, tool input, or authority messages do not independently prove whether a turn ended.
-The old message-tail `deriveRunning()` logic is used only when the REST response has no status.
+Initial loading and recovery both apply REST status through `resolveActivityState`, then replay
+buffered WS events through the normal dispatcher. Outstanding new sends and terminal history are
+considered before settling the status. `deriveActivityFromMessages` is the shared message-tail
+fallback when there is no REST status; there is no global runtime-status adapter.
 
 ### Button State Machine
 
@@ -238,39 +232,28 @@ Besides clicking the stop button, pressing `Esc` anywhere (input focused or not)
 
 ## 8. WS Disconnect & Reconnect
 
-```
-ws.onclose:
-  1. Discard the old turn seq buffers, but keep the rendered DOM unchanged
-  2. State changes to 'reconnecting'
-  3. Reconnect via connectWs() after 3 seconds
+Initial entry, foreground restoration, reconnect, bridge sync and compact stream-end recovery all
+use `loadLatestMessages(sessionId)`:
 
-ws.onopen (on reconnect):
-  1. Re-subscribe to current sessionId
-  2. Start one incremental REST request; the response includes Session status
-  3. Buffer new strict turn events until REST completes
-  4. Merge REST history, then release buffered WS events through the normal queue
-  5. completed → settle recovered turns
-  6. running → preserve outstanding turns and spinner
-  7. needs_input → preserve the turn but hide spinner/Stop state
-  8. Replace an old partial block in place when its authoritative messages arrive
+1. Keep the existing view (initial entry alone shows a skeleton).
+2. Open one request-scoped barrier, subscribe and request the latest 200 messages.
+3. Buffer raw strict events and ordinary WS messages in arrival order.
+4. Keep the old prefix before the first returned message's unique ID, then replace the tail.
+   If the boundary is missing or ambiguous, replace the entire window.
+5. Drop pre-request optimistic bubbles and previews on success. Retain turn anchors for sends
+   created during the request. On failure, keep the existing view.
+6. Apply REST status and replay buffered events through the normal live dispatcher.
 
-recoverMissing():
-  1. bufferAndFetch(sessionId, after=wsLastTimestamp)  ← only pull incremental during disconnect
-  2. Merge and deduplicate into wsAllMessages
-  3. If new messages exist → incrementally render only unseen history
-```
+Identical overlapping loads reuse the same request. Session/generation checks discard stale
+responses. An unchanged snapshot keeps its DOM; a changed snapshot restores the reading anchor
+unless following is enabled. Pagination keeps its independent `before` cursor. There is no
+incremental reconnect timestamp, recovery-specific per-message diff, or preview-rebinding layer.
 
-**`wsLastTimestamp`**: Updated to the latest timestamp each time a new message is received. Used as the incremental query start point on reconnect.
+Foreground restoration uses the same loader whether the socket stays open or must reconnect.
+Navigation away still disconnects and clears streaming state. A healthy connection trusts ordered
+WS lifecycle events instead of periodic REST polling.
 
-Foreground restoration uses the same reconnect pipeline as an unexpected WS close.
-The old socket is intentionally replaced, but its partial DOM remains visible until
-the matching authoritative message replaces it. `stream_block_stop` only closes the
-input stream; it does not contain full content. Navigation away from the detail page
-still disconnects and clears the whole streaming state.
-
-There is no online inactivity timer and no separate `reveal_turn_state` request. A healthy
-connection trusts ordered WS lifecycle events; foreground/reconnect recovery uses the status
-returned by the required incremental message request.
+See `docs/message-history-merge.md` for module boundaries and validation.
 
 ## 9. New Session Creation
 
@@ -294,7 +277,7 @@ Bridge handling:
 
 On receiving sessionId:
   1. appState.session = msg.sessionId (replace '__new__')
-  2. loadMessages(sessionId)  ← normal load flow
+  2. loadLatestMessages(sessionId)  ← normal load flow
 ```
 
 ## 10. Sending Messages & Optimistic Rendering

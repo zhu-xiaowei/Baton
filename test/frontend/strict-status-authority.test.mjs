@@ -7,21 +7,6 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-function installMessageStatusFallback(h) {
-  function derive(messages) {
-    for (var index = messages.length - 1; index >= 0; index--) {
-      var message = messages[index];
-      if (message.type === 'assistant') {
-        return message.stopReason == null || message.stopReason === 'tool_use';
-      }
-      if (message.type === 'user') return true;
-    }
-    return false;
-  }
-  globalThis.deriveRunning = derive;
-  h.window.deriveRunning = derive;
-}
-
 async function completeStrictTurn(h, sessionId, turnId, options = {}) {
   var userMessage = {
     uuid: 'user-' + turnId,
@@ -62,7 +47,6 @@ test('strict lifecycle remains authoritative without the stream-end freshness ti
   const h = await makeHarness();
   const sessionId = 'codex:strict-late-row';
   resetSession(h, { sessionId });
-  installMessageStatusFallback(h);
 
   const realNow = Date.now;
   var now = realNow();

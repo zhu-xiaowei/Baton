@@ -16,7 +16,7 @@ async function waitFor(h, predicate, timeoutMs = 500) {
   return predicate();
 }
 
-test('completed interrupt recovery freezes a visible partial answer', async () => {
+test('completed interrupt recovery discards previews absent from REST', async () => {
   const h = await makeHarness();
   const sessionId = 'claude:interrupt-recovery-preserves-preview';
   const turnId = 'sent-interrupted-recovery';
@@ -66,9 +66,7 @@ test('completed interrupt recovery freezes a visible partial answer', async () =
   };
   let resolveRest;
   h.setApiHandler(() => new Promise((resolve) => { resolveRest = resolve; }));
-  const recovery = h.hooks.beginSessionConnectionRecovery();
-  assert.ok(recovery);
-  assert.equal(h.hooks.startSessionConnectionRecovery(recovery), true);
+  const loading = h.window.loadLatestMessages(sessionId);
 
   resolveRest({
     messages: [{
@@ -92,13 +90,9 @@ test('completed interrupt recovery freezes a visible partial answer', async () =
   await h.tick(100);
 
   const turn = h.document.querySelector(`[data-turn-id="${turnId}"]`);
-  assert.equal(partialBlock.isConnected, true);
-  assert.equal(partialBlock.textContent, 'visible partial answer');
-  assert.equal(
-    partialBlock.classList.contains('stream-block-committed'),
-    true,
-  );
-  assert.equal(turn?.classList.contains('stream-committed'), true);
+  assert.equal(partialBlock.isConnected, false);
+  assert.equal(h.document.body.textContent.includes('visible partial answer'), false);
+  assert.equal(h.document.querySelector('.stream-preview, .stream-committed'), null);
   assert.equal(turn?.querySelectorAll('.msg-interrupt').length, 1);
   assert.equal(h.state.wsRunning, false);
 });

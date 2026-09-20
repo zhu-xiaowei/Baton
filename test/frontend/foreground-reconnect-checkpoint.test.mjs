@@ -7,7 +7,7 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('reconnect preserves a partial block until authority replaces it in place', async () => {
+test('reconnect replaces the old preview and replays buffered checkpoints', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-checkpoint';
   const turnId = 'turn-foreground-checkpoint';
@@ -40,9 +40,7 @@ test('reconnect preserves a partial block until authority replaces it in place',
   };
   let resolveRest;
   h.setApiHandler(() => new Promise((resolve) => { resolveRest = resolve; }));
-  const recovery = h.hooks.beginSessionConnectionRecovery();
-  assert.ok(recovery);
-  assert.equal(h.hooks.startSessionConnectionRecovery(recovery), true);
+  const loading = h.window.loadLatestMessages(sessionId);
 
   h.hooks.handleWsMessage(event(sessionId, turnId, 4, 'stream_delta', {
     chunk: ' lost continuation',
@@ -116,15 +114,21 @@ test('reconnect preserves a partial block until authority replaces it in place',
     hasMore: false,
     status: 'completed',
   });
-  await h.tick(50);
+  await loading;
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline && (h.state.wsRunning
+    || !h.document.querySelector('.messages').textContent.includes('second block')
+    || h.document.querySelector('.stream-preview'))) {
+    await h.tick(10);
+  }
 
   const text = h.document.querySelector('.messages').textContent;
   assert.equal(text.includes('draft'), false);
   assert.equal(text.includes('lost continuation'), false);
   assert.equal((text.match(/final first block/g) || []).length, 1);
-  assert.equal((text.match(/second block/g) || []).length, 1);
+  assert.equal((text.match(/second block/g) || []).length, 1,
+    h.document.querySelector('.messages').innerHTML);
   assert.equal(h.state.wsRunning, false);
   assert.equal(h.document.querySelector('.stream-preview'), null);
-  assert.equal(partialBlock.isConnected, true);
-  assert.equal(partialBlock.textContent, 'final first block');
+  assert.equal(partialBlock.isConnected, false);
 });

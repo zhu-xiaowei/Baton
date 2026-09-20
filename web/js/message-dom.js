@@ -1,11 +1,3 @@
-/**
- * @param {{state: object, document: Document, runtime: Function, renderMessages: Function, preserveStreamPreviews?: boolean, preserveUnmatchedHistory?: boolean, isCurrentBarrier?: Function, promotePending?: Function, reportConflict?: Function, releaseBarrier?: Function, applyStreamOperations?: Function, discardStreamTurn?: Function, markTurnAdjacency?: Function, loadImages?: Function, clampOverflow?: Function, renderMermaidBlocks?: Function, renderKatexBlocks?: Function, updateTitleFromMessages?: Function, markSpinnerTurnEnd?: Function, updateSendBtn?: Function, updateSpinner?: Function}} options
- * @returns {{setMessages: Function, applyHistoryChanges: Function, applyActivity: Function, finalize: Function}}
- */
-export function createHistoryRecoveryDomAdapter(options = {}) {
-  return buildHistoryRecoveryDomAdapter(options);
-}
-
 function domKey(element) {
   if (!element) return '';
   var messageId = element.dataset?.messageId || '';
@@ -134,7 +126,7 @@ function assistantTurnsShareIdentity(current, expected) {
   return false;
 }
 
-function recoveredTurnsForStream(container, streamRow) {
+function matchingStreamTurns(container, streamRow) {
   var turnId = streamRow?.dataset?.turnId || '';
   return Array.from(container.children).filter(function (element) {
     if (element === streamRow
@@ -145,17 +137,6 @@ function recoveredTurnsForStream(container, streamRow) {
     if (turnId && recoveredTurnId === turnId) return true;
     return !recoveredTurnId
       && assistantTurnsShareIdentity(streamRow, element);
-  });
-}
-
-function streamRowHasVisibleContent(streamRow) {
-  if (!streamRow) return false;
-  return Array.from(streamRow.children).some(function (child) {
-    if ((child.textContent || '').trim()) return true;
-    if (child.classList?.contains('tool-node')) return true;
-    return !!child.querySelector?.(
-      'img,video,audio,canvas,svg,pre,code,table',
-    );
   });
 }
 
@@ -184,7 +165,6 @@ function reconcileChildren(parent, expectedParent, options = {}) {
   var cursor = parent.firstElementChild;
   for (var expected of Array.from(expectedParent.children)) {
     var candidates = byKey.get(domKey(expected)) || [];
-    var matchedStreamBlock = false;
     var current = candidates.find(function (candidate) {
       return !used.has(candidate);
     }) || null;
@@ -201,7 +181,6 @@ function reconcileChildren(parent, expectedParent, options = {}) {
         return !used.has(candidate)
           && streamChildrenCompatible(candidate, expected);
       }) || null;
-      matchedStreamBlock = !!current;
     }
     var resolved;
     if (current && nodeUnchanged(current, expected)) {
@@ -213,28 +192,10 @@ function reconcileChildren(parent, expectedParent, options = {}) {
     } else if (current && options.preserveUnmatched) {
       used.add(current);
       resolved = syncElementInPlace(current, expected);
-    } else if (current && matchedStreamBlock) {
-      used.add(current);
-      resolved = syncElementInPlace(current, expected);
-      if (!options.preserveUnmatched && resolved !== cursor) {
-        parent.insertBefore(resolved, cursor);
-      }
-    } else if (current
-      && parent.classList.contains('stream-committed')
-      && domKey(current) === domKey(expected)) {
-      used.add(current);
-      resolved = syncElementInPlace(current, expected);
-      if (!options.preserveUnmatched && resolved !== cursor) {
-        parent.insertBefore(resolved, cursor);
-      }
     } else {
       inheritUiState(current, expected);
       resolved = expected;
-      if (options.preserveUnmatched && current) {
-        current.before(resolved);
-      } else {
-        parent.insertBefore(resolved, cursor);
-      }
+      parent.insertBefore(resolved, cursor);
       if (current) {
         used.add(current);
         current.remove();
@@ -250,7 +211,7 @@ function reconcileChildren(parent, expectedParent, options = {}) {
   }
 }
 
-function reconcileTopLevel(container, expected, options = {}) {
+function reconcileTopLevel(container, expected) {
   var existing = Array.from(container.children);
   var used = new Set();
   var byKey = new Map();
@@ -276,14 +237,6 @@ function reconcileTopLevel(container, expected, options = {}) {
           && candidate.dataset?.turnId === expectedElement.dataset.turnId;
       }) || null;
     }
-    if (!current
-      && options.preserveUnmatched
-      && expectedElement.classList.contains('assistant-turn')) {
-      current = existing.find(function (candidate) {
-        return !used.has(candidate)
-          && assistantTurnsShareIdentity(candidate, expectedElement);
-      }) || null;
-    }
     if (!current && expectedElement.classList.contains('msg-user')) {
       current = existing.find(function (candidate) {
         return !used.has(candidate)
@@ -296,7 +249,6 @@ function reconcileTopLevel(container, expected, options = {}) {
       && expectedElement.classList.contains('assistant-turn')
       && !cursor.dataset?.turnId
       && cursorKey.indexOf('group:uuid:') !== 0
-      && !options.preserveUnmatched
       && !used.has(cursor)) {
       current = cursor;
     }
@@ -309,13 +261,8 @@ function reconcileTopLevel(container, expected, options = {}) {
     } else if (current?.classList.contains('assistant-turn')
       && expectedElement.classList.contains('assistant-turn')) {
       used.add(current);
-      var wasStreamCommitted =
-        current.classList.contains('stream-committed');
-      reconcileChildren(current, expectedElement, {
-        preserveUnmatched: !!options.preserveUnmatched,
-      });
+      reconcileChildren(current, expectedElement);
       current.className = expectedElement.className;
-      if (wasStreamCommitted) current.classList.add('stream-committed');
       for (var attribute of ['data-turn-id', 'data-ts']) {
         if (expectedElement.hasAttribute(attribute)) {
           current.setAttribute(attribute, expectedElement.getAttribute(attribute));
@@ -324,26 +271,19 @@ function reconcileTopLevel(container, expected, options = {}) {
         }
       }
       resolved = current;
-      if (!options.preserveUnmatched && resolved !== cursor) {
+      if (resolved !== cursor) {
         container.insertBefore(resolved, cursor);
       }
     } else if (current && nodeUnchanged(current, expectedElement)) {
       used.add(current);
       resolved = current;
-      if (!options.preserveUnmatched && resolved !== cursor) {
+      if (resolved !== cursor) {
         container.insertBefore(resolved, cursor);
       }
-    } else if (current && options.preserveUnmatched) {
-      used.add(current);
-      resolved = syncElementInPlace(current, expectedElement);
     } else {
       inheritUiState(current, expectedElement);
       resolved = expectedElement;
-      if (options.preserveUnmatched && current) {
-        current.before(resolved);
-      } else {
-        container.insertBefore(resolved, cursor);
-      }
+      container.insertBefore(resolved, cursor);
       if (current) {
         used.add(current);
         current.remove();
@@ -352,20 +292,18 @@ function reconcileTopLevel(container, expected, options = {}) {
     cursor = resolved.nextElementSibling;
   }
 
-  if (!options.preserveUnmatched) {
-    for (var stale of existing) {
-      if (!used.has(stale)
-        && stale.isConnected
-        && !stale.hasAttribute('data-recovery-pending-placeholder')
-        && !stale.hasAttribute('data-pending')
-        && !(stale.classList.contains('msg-user') && stale.dataset?.anchor)) {
-        stale.remove();
-      }
+  for (var stale of existing) {
+    if (!used.has(stale)
+      && stale.isConnected
+      && !stale.hasAttribute('data-pending-placeholder')
+      && !stale.hasAttribute('data-pending')
+      && !(stale.classList.contains('msg-user') && stale.dataset?.anchor)) {
+      stale.remove();
     }
   }
 }
 
-function restoreStreamPreview(container, streamPreview) {
+function attachStreamRow(container, streamPreview) {
   var turnId = streamPreview?.dataset?.turnId || '';
   var anchor = turnId
     ? Array.from(container.children).find(function (element) {
@@ -382,20 +320,6 @@ function restoreStreamPreview(container, streamPreview) {
   }
   insertionPoint.insertAdjacentElement('afterend', streamPreview);
   return true;
-}
-
-function rebuildMessageIndex(messages) {
-  var index = new Set();
-  for (var message of messages) {
-    if (message?.uuid) index.add(message.uuid);
-    for (var alias of message?.identityAliases || []) {
-      if (!/^(?:turn|pending):/.test(String(alias))) index.add(String(alias));
-    }
-    if (!message?.uuid && message?.nativeId) {
-      index.add('native:' + message.nativeId);
-    }
-  }
-  return index;
 }
 
 function isMetadata(message) {
@@ -416,22 +340,13 @@ function changeAffectsDom(change) {
   return true;
 }
 
-function buildHistoryRecoveryDomAdapter(options) {
+export function createMessageDom(options) {
   var state = options.state;
   var doc = options.document;
   var rendered = false;
   var configuredStreamTurnIds = new Set(options.streamTurnIds || []);
 
-  function setMessages(messages) {
-    state.wsAllMessages = messages;
-    state.wsMessageUuids = rebuildMessageIndex(messages);
-    state.wsMessageCount = messages.length;
-    state.wsLastTimestamp = messages.length
-      ? messages[messages.length - 1].timestamp || ''
-      : '';
-  }
-
-  function applyHistoryChanges(mergeResult, pendingResult, activity) {
+  function applyChanges(mergeResult) {
     var changed = (mergeResult.inserted || []).filter(changeAffectsDom).length
       + (mergeResult.patched || []).filter(changeAffectsDom).length
       + (mergeResult.identityUpdated || []).filter(changeAffectsDom).length;
@@ -454,49 +369,26 @@ function buildHistoryRecoveryDomAdapter(options) {
       .map(function (node) {
         var marker = doc.createElement('span');
         marker.hidden = true;
-        marker.dataset.recoveryPendingPlaceholder = '1';
+        marker.dataset.pendingPlaceholder = '1';
         node.before(marker);
         return { node: node, marker: marker };
       });
     var pendingNodes = pendingPlacements.map(function (placement) {
       return placement.node;
     });
-    var allStreamRows = Array.from(container.children).filter(function (node) {
+    var streamRows = Array.from(container.children).filter(function (node) {
       return node.classList.contains('stream-preview')
         || node.classList.contains('stream-committed');
     });
-    var preserveStreamPreviews = activity !== 'completed'
-      || !!options.preserveStreamPreviews
-      || !!options.preserveUnmatchedHistory
-      || configuredStreamTurnIds.size > 0;
-    var streamRows = allStreamRows.filter(function (node) {
-      return node.classList.contains('stream-committed')
-        || preserveStreamPreviews
-        || streamRowHasVisibleContent(node);
-    });
     var streamPlacements = new Map();
-    for (var streamNode of allStreamRows) {
+    for (var streamNode of streamRows) {
       var streamMarker = doc.createElement('span');
       streamMarker.hidden = true;
-      streamMarker.dataset.recoveryStreamPlaceholder = '1';
+      streamMarker.dataset.streamPlaceholder = '1';
       streamNode.before(streamMarker);
       streamPlacements.set(streamNode, streamMarker);
     }
-    if (!preserveStreamPreviews) {
-      for (var stalePreview of allStreamRows) {
-        if (!stalePreview.classList.contains('stream-preview')) continue;
-        if (streamRows.includes(stalePreview)) continue;
-        var staleTurnId = stalePreview.dataset?.turnId || '';
-        if (staleTurnId) options.discardStreamTurn?.(staleTurnId);
-      }
-    }
-    for (var node of pendingNodes.concat(allStreamRows)) node.remove();
-    for (var removedStreamRow of allStreamRows) {
-      if (!streamRows.includes(removedStreamRow)) {
-        streamPlacements.get(removedStreamRow)?.remove();
-      }
-    }
-
+    for (var node of pendingNodes.concat(streamRows)) node.remove();
     var streamedTurnIds = new Set(configuredStreamTurnIds);
     for (var previewTurnId of streamRows.filter(function (node) {
       return node.classList.contains('stream-preview');
@@ -518,13 +410,9 @@ function buildHistoryRecoveryDomAdapter(options) {
     expected.innerHTML = options.renderMessages(
       renderMessages,
       options.runtime(),
-      {
-        ...(options.renderOptions || {}),
-      },
+      { realtimeOrder: true },
     );
-    reconcileTopLevel(container, expected, {
-      preserveUnmatched: !!options.preserveUnmatchedHistory,
-    });
+    reconcileTopLevel(container, expected);
 
     for (var placement of pendingPlacements) {
       if (placement.marker.isConnected) {
@@ -532,7 +420,7 @@ function buildHistoryRecoveryDomAdapter(options) {
       }
     }
     for (var streamRow of streamRows) {
-      for (var recoveredTurn of recoveredTurnsForStream(
+      for (var recoveredTurn of matchingStreamTurns(
         container,
         streamRow,
       )) {
@@ -553,7 +441,7 @@ function buildHistoryRecoveryDomAdapter(options) {
         }
         recoveredTurn.remove();
       }
-      var restored = restoreStreamPreview(container, streamRow);
+      var restored = attachStreamRow(container, streamRow);
       var streamPlacement = streamPlacements.get(streamRow);
       if (streamPlacement?.isConnected) {
         if (restored) streamPlacement.remove();
@@ -565,16 +453,6 @@ function buildHistoryRecoveryDomAdapter(options) {
     state.wsRenderedCount = state.wsAllMessages.length;
     rendered = true;
     return true;
-  }
-
-  function applyActivity(activity) {
-    var wasRunning = state.wsRunning;
-    state.wsRunning = activity === 'running';
-    if (wasRunning && activity === 'completed') {
-      options.markSpinnerTurnEnd?.();
-    }
-    options.updateSendBtn?.();
-    options.updateSpinner?.();
   }
 
   function finalize() {
@@ -589,18 +467,5 @@ function buildHistoryRecoveryDomAdapter(options) {
     options.renderKatexBlocks?.(container);
   }
 
-  return {
-    isCurrentBarrier: options.isCurrentBarrier,
-    setMessages: setMessages,
-    promotePending: options.promotePending,
-    applyHistoryChanges: applyHistoryChanges,
-    reportConflict: options.reportConflict,
-    setPendingMessages: function (pending) {
-      state.pendingSentMessages = pending;
-    },
-    releaseBarrier: options.releaseBarrier,
-    applyStreamOperations: options.applyStreamOperations,
-    applyActivity: applyActivity,
-    finalize: finalize,
-  };
+  return { applyChanges, finalize };
 }

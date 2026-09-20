@@ -21,8 +21,7 @@ test('completed recovery cannot settle a send created after the REST request sta
 
   const request = deferred();
   h.setApiHandler(() => request.promise);
-  const recovery = h.hooks.beginSessionConnectionRecovery();
-  h.hooks.startSessionConnectionRecovery(recovery);
+  const loading = h.window.loadLatestMessages(sessionId);
   await h.tick(0);
 
   h.window.doSend('new message after recovery started', 'new message after recovery started', []);

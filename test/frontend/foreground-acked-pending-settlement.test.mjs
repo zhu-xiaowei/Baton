@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('completed recovery promotes an acknowledged pending bubble in place', async () => {
+test('completed recovery replaces the old pending bubble with REST history', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-acked-pending';
   resetSession(h, { sessionId });
@@ -46,17 +46,18 @@ test('completed recovery promotes an acknowledged pending bubble in place', asyn
     status: 'completed',
   });
 
-  const recovery = h.hooks.beginSessionConnectionRecovery();
-  h.hooks.startSessionConnectionRecovery(recovery);
+  const loading = h.window.loadLatestMessages(sessionId);
   await h.tick(40);
 
   assert.equal(h.state.wsRunning, false);
   assert.equal(h.state.pendingSentMessages.includes(pending), false);
-  assert.equal(h.document.getElementById(pending.id), originalBubble);
-  assert.equal(originalBubble.hasAttribute('data-pending'), false);
-  assert.equal(originalBubble.dataset.messageId, 'server-user');
+  assert.equal(originalBubble.isConnected, false);
+  const restored = h.document.querySelector(`[data-anchor="${pending.id}"]`);
+  assert.ok(restored);
+  assert.equal(restored.hasAttribute('data-pending'), false);
+  assert.equal(restored.dataset.messageId, 'server-user');
   assert.equal(
-    originalBubble.dataset.nativeId,
+    restored.dataset.nativeId,
     'codex:user:' + pending.id,
   );
   assert.equal(

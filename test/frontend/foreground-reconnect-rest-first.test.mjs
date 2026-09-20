@@ -45,8 +45,7 @@ test('REST status releases reconnect events without settling before stream end',
   let resolveRest;
   h.setApiHandler(() => new Promise((resolve) => { resolveRest = resolve; }));
 
-  const recovery = h.hooks.beginSessionConnectionRecovery();
-  h.hooks.startSessionConnectionRecovery(recovery);
+  const loading = h.window.loadLatestMessages(sessionId);
   h.hooks.handleWsMessage(event(sessionId, turnId, 4, 'messages', {
     messages: [{
       uuid: 'assistant-live',

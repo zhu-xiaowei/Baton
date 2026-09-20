@@ -71,13 +71,15 @@ export async function makeHarness(options = {}) {
   // Mock the render + util globals ws.js calls (defined in render.js/util.js/app.js in prod).
   // Kept minimal but structurally faithful: user→.msg-user, assistant text→.assistant-text.
   const G = (k, v) => { globalThis[k] = v; w[k] = v; };
+  const anchorOf = (message) => message.turnId
+    || String(message.nativeId || '').match(/^(?:codex|live):user:(.+)$/)?.[1] || '';
   const textOf = (c) => Array.isArray(c) ? c.filter(b => b && b.type === 'text').map(b => b.text).join('') : (typeof c === 'string' ? c : '');
   // Faithful to render.js: data-ts is on the INNER tl-item; the outer assistant-turn has none.
   // renderSingleMessage (incremental) also emits the inner tl-item with data-ts.
   const INTERRUPT_MAP = { '[Request interrupted by user]': 'Interrupted', '[Request interrupted by user for tool use]': 'Tool interrupted' };
   const isInterrupt = (m) => m.type === 'user' && Array.isArray(m.content) && m.content.length === 1 && m.content[0].type === 'text' && !!INTERRUPT_MAP[m.content[0].text];
   G('renderUserBubble', (m) => '<div class="msg-user"'
-    + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+    + (anchorOf(m) ? ' data-anchor="' + anchorOf(m) + '"' : '')
     + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
     + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
     + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
@@ -119,7 +121,7 @@ export async function makeHarness(options = {}) {
       return '';
     }
     if (m.type === 'user') return '<div class="msg-user"'
-      + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+      + (anchorOf(m) ? ' data-anchor="' + anchorOf(m) + '"' : '')
       + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
       + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
       + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
@@ -161,14 +163,13 @@ export async function makeHarness(options = {}) {
   });
   G('isInterruptMsg', isInterrupt); // real logic — an interrupt row must render as msg-interrupt, not be skipped
   ['isToolResultOnly', 'isLocalCommandStdout'].forEach(k => G(k, () => false));
-  G('deriveRunning', () => false);
   ['clampOverflow', 'loadImages', 'updateBreadcrumb', 'saveNav', 'showStats', 'updateSpinner', 'updateSendBtn'].forEach(k => G(k, () => {}));
   G('renderMd', (t) => t); G('esc', (s) => String(s));
   // tickStreams reconciles the live text preview through these — set textContent so the
   // streamed text is inspectable (prod renderStreamMd rebuilds markdown in place).
   G('renderStreamMd', (el, t) => { el.textContent = t; });
   ['renderMermaidBlocks', 'renderKatexBlocks'].forEach(k => G(k, () => {}));
-  G('renderToolNode', () => ''); G('summarizeToolInput', () => '');
+  G('renderToolNode', () => '');
   let apiResponse = { messages: [], hasMore: false };
   let apiHandler = async () => apiResponse;
   G('api', (...args) => apiHandler(...args));
@@ -207,7 +208,7 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.wsAllMessages = []; state.wsMessageUuids = new Set(); state.wsRenderedCount = 0; state.wsMessageCount = 0;
   state.wsRunning = mode === 'new';
   state._syncedOnce = null;
-  state.wsLastTimestamp = ''; state._titleTier = 0;
+  state._titleTier = 0;
   state.pendingSentMessages = mode === 'new' && firstText
     ? [{ id: 'sent-1', seq: 0, text: firstText, fullText: firstText, images: [], sentAt: Date.now() }] : [];
   document.querySelector('.messages').innerHTML = mode === 'new' && firstText

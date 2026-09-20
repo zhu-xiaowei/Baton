@@ -24,7 +24,6 @@ export class TurnEventQueue {
   constructor() {
     this.turns = new Map();
     this.lateJoinCompletions = [];
-    this.lateJoinUpdates = [];
     this.closedTurns = new Set();
   }
 
@@ -39,7 +38,6 @@ export class TurnEventQueue {
         pending: new Map(),
         applied: new Map(),
         skipped: new Map(),
-        releasedAuthoritySeqs: new Set(),
         resumeFloor: null,
       };
       this.turns.set(event.turnId, turn);
@@ -53,7 +51,6 @@ export class TurnEventQueue {
         }
         if (!skipped) {
           turn.skipped.set(event.seq, event);
-          this.queueLateJoinUpdate(event);
         }
         return [];
       }
@@ -71,12 +68,6 @@ export class TurnEventQueue {
       return [];
     }
     turn.pending.set(event.seq, event);
-    if (turn.nextSeq === 0 && event.seq > 1
-      && event.action === 'messages'
-      && !turn.releasedAuthoritySeqs.has(event.seq)) {
-      turn.releasedAuthoritySeqs.add(event.seq);
-      this.queueLateJoinUpdate(event);
-    }
     var ready = [];
     if (turn.nextSeq === 0
       && event.seq === 1
@@ -214,40 +205,17 @@ export class TurnEventQueue {
     return completions;
   }
 
-  takeLateJoinUpdates() {
-    var updates = this.lateJoinUpdates;
-    this.lateJoinUpdates = [];
-    return updates;
-  }
-
   closeTurn(turnId) {
     if (!turnId) return false;
     var removed = this.turns.delete(turnId);
-    this.lateJoinUpdates = this.lateJoinUpdates.filter(function (update) {
-      return update.turnId !== turnId;
-    });
     this.closedTurns.delete(turnId);
     this.closedTurns.add(turnId);
-    return removed;
-  }
-
-  restartTurn(turnId) {
-    if (!turnId) return false;
-    var removed = this.turns.delete(turnId);
-    this.lateJoinCompletions = this.lateJoinCompletions.filter(function (item) {
-      return item.turnId !== turnId;
-    });
-    this.lateJoinUpdates = this.lateJoinUpdates.filter(function (item) {
-      return item.turnId !== turnId;
-    });
-    this.closedTurns.delete(turnId);
     return removed;
   }
 
   reset() {
     this.turns.clear();
     this.lateJoinCompletions = [];
-    this.lateJoinUpdates = [];
     this.closedTurns.clear();
   }
 
@@ -261,16 +229,6 @@ export class TurnEventQueue {
       turn.nextSeq++;
     }
     return ready;
-  }
-
-  queueLateJoinUpdate(event) {
-    var messages = this.messagesFromEvents([event]);
-    if (!messages.length) return;
-    this.lateJoinUpdates.push({
-      sessionId: event.sessionId || '',
-      turnId: event.turnId || '',
-      messages: messages,
-    });
   }
 
   messagesFromEvents(events) {
@@ -420,8 +378,6 @@ class TurnState {
     this.pendingAuthorityBlocks = new Map();
     this.unassignedAuthorityBlocks = [];
     this.completed = false;
-    this.reconnecting = false;
-    this.reconnectBlockIds = new Set();
   }
 
   applyFrame(frame) {
@@ -541,7 +497,6 @@ export class StreamCoordinator {
     var turn = this.turns.get(turnId);
     if (!turn || !turn.applyFrame(event)) return false;
     this.assignAuthoritativeBlocks(turn);
-    this.reconcileReconnectTurn(turn);
     if (turnId === this.activeTurnId) this.consumeVisibleFrame(turn, event);
     return true;
   }
@@ -557,7 +512,6 @@ export class StreamCoordinator {
       normalizeAuthoritativeBlocks(payload),
     );
     this.assignAuthoritativeBlocks(turn);
-    this.reconcileReconnectTurn(turn);
     this.finishTurnIfReady(turn);
     return true;
   }
@@ -598,36 +552,10 @@ export class StreamCoordinator {
     return this.turns.get(turnId) || null;
   }
 
-  hasActiveTurns() {
-    for (var turn of this.turns.values()) {
-      if (!turn.completed) return true;
-    }
-    return false;
-  }
-
   activeTurnIds() {
     return Array.from(this.turns.values())
       .filter(function (turn) { return !turn.completed; })
       .map(function (turn) { return turn.turnId; });
-  }
-
-  prepareTurnsForReconnect(turnIds) {
-    var reconnecting = new Set(turnIds || []);
-    var prepared = 0;
-    for (var turnId of reconnecting) {
-      var turn = this.turns.get(turnId);
-      if (!turn || turn.completed) continue;
-      turn.reconnecting = true;
-      turn.reconnectBlockIds = new Set(
-        turn.orderedBlocks()
-          .filter(function (block) {
-            return !block.displayComplete && block.isRenderable();
-          })
-          .map(function (block) { return block.blockId; }),
-      );
-      prepared++;
-    }
-    return prepared;
   }
 
   settleTurn(turnId) {
@@ -863,28 +791,6 @@ export class StreamCoordinator {
     turn.pendingAuthorityBlocks.delete(block.blockId);
     this.emitBlockReconcile(turn, block, matches);
     return true;
-  }
-
-  reconcileReconnectTurn(turn) {
-    if (!turn.reconnecting || turn.completed) return false;
-    var reconciled = false;
-    while (true) {
-      var block = turn.currentBlock();
-      if (!block || block.displayComplete
-        || !turn.reconnectBlockIds.has(block.blockId)
-        || !turn.pendingAuthorityBlocks.has(block.blockId)) {
-        break;
-      }
-      if (turn.currentBlockId === block.blockId) {
-        turn.currentBlockId = null;
-      }
-      block.stopped = true;
-      this.commitVisibleBlock(turn, block);
-      turn.reconnectBlockIds.delete(block.blockId);
-      if (!turn.reconnectBlockIds.size) turn.reconnecting = false;
-      reconciled = true;
-    }
-    return reconciled;
   }
 
   emitBlockReconcile(turn, block, matches) {
@@ -1331,16 +1237,6 @@ export class StreamingDomRenderer {
 
   blockView(operation) {
     return this.blockViews.get(blockViewKey(operation.turnId, operation.blockId)) || null;
-  }
-
-  rebindRenderedHistory() {
-    var container = this.getContainer?.();
-    if (!container) return;
-    for (var [turnId, previousTurn] of this.turnElements) {
-      if (previousTurn.isConnected) continue;
-      this.insertTurn(container, previousTurn, turnId);
-      this.onMutation(previousTurn);
-    }
   }
 
   reset(options = {}) {

@@ -8,11 +8,17 @@ import {
 import { dedupeCodexUserMessages } from './message-dedup.js';
 import { FetchBarrierCoordinator } from './fetch-barrier.js';
 import {
-  mergeFetchWindow,
-  mergeLocalHistory,
-} from './history-recovery.js';
-import { commitHistoryRecovery } from './history-recovery-commit.js';
-import { createHistoryRecoveryDomAdapter } from './history-recovery-dom.js';
+  replaceHistoryTail,
+  captureHistoryViewport,
+  restoreHistoryViewport,
+} from './history-snapshot.js';
+import {
+  dedupeMessages,
+  mergeMessages,
+  commitMessageState,
+  reconcilePendingMessages,
+} from './message-state.js';
+import { createMessageDom } from './message-dom.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -38,9 +44,7 @@ var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
-var _reconnectingTurns = new Set();
 var _queuedTurnIds = new Set();
-var _connectionRecovery = null;
 var _wsReconnectTimer = null;
 var _wsConfigRequest = null;
 var _wsConnectionGeneration = 0;
@@ -57,7 +61,6 @@ var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var MESSAGE_PAGE_SIZE = 200;
-var _appliedLifecycleVersion = 0;
 var _bottomFollowFrame = null;
 
 function placeFollowedContentAtBottom(content, container, sessionId) {
@@ -354,7 +357,6 @@ function connectWs(_, projectHash) {
     if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
     if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
-      beginSessionConnectionRecovery();
       setWsStatus('reconnecting');
       _wsReconnectTimer = setTimeout(function () {
         _wsReconnectTimer = null;
@@ -368,187 +370,21 @@ function connectWs(_, projectHash) {
 
 function recoverSubscribedSession() {
   if (!state.wsSessionId) return false;
-  subscribeSession(state.wsSessionId);
-  if (!_connectionRecovery && hasOutstandingTurns()) {
-    beginSessionConnectionRecovery();
-  }
-  if (_connectionRecovery
-    && _connectionRecovery.sessionId === state.wsSessionId) {
-    startSessionConnectionRecovery(_connectionRecovery);
-  } else if (state.wsLastTimestamp) {
-    recoverMissing().then(function (result) {
-      state.wsRunning = resolveSessionRunningAfterFetch(
-        result,
-        state.wsAllMessages,
-        state.appState.runtime,
-      );
-      updateSendBtn();
-    }).catch(function () {});
-  }
-  return true;
-}
-
-function beginSessionConnectionRecovery() {
-  if (!state.wsSessionId || !state.appState.session) return null;
-  if (_connectionRecovery?.sessionId === state.wsSessionId) {
-    return _connectionRecovery;
-  }
-  var turnIds = _streamCoordinator.activeTurnIds().filter(function (turnId) {
-    return !_streamCoordinator.getTurn(turnId)?.endReceived;
-  });
-  for (var pending of state.pendingSentMessages) {
-    if (pending.sessionId !== state.wsSessionId || pending.failed) continue;
-    if (_streamCoordinator.getTurn(pending.id)?.endReceived) continue;
-    if (!turnIds.includes(pending.id)) turnIds.push(pending.id);
-  }
-  for (var queuedTurnId of _queuedTurnIds) {
-    if (!turnIds.includes(queuedTurnId)) turnIds.push(queuedTurnId);
-  }
-  for (var reconnectingTurnId of _reconnectingTurns) {
-    if (!turnIds.includes(reconnectingTurnId)) {
-      turnIds.push(reconnectingTurnId);
-    }
-  }
-  _reconnectingTurns.clear();
-  for (var turnId of turnIds) {
-    _checkpointResumedTurns.delete(turnId);
-    _reconnectingTurns.add(turnId);
-  }
-  _connectionRecovery = {
-    sessionId: state.wsSessionId,
-    turnIds: turnIds,
-    events: [],
-    started: false,
-    sessionStatus: '',
-  };
-  return _connectionRecovery;
-}
-
-function startSessionConnectionRecovery(recovery) {
-  if (!recovery || recovery.started
-    || recovery !== _connectionRecovery
-    || recovery.sessionId !== state.wsSessionId) {
-    return false;
-  }
-  recovery.started = true;
-  recoverMissing('', {
-    authoritative: true,
-    authoritativeScope: 'all',
-    requireCompleted: true,
-  }).then(function (result) {
-    if (recovery !== _connectionRecovery) return;
-    recovery.authoritativeResult = result?.authoritative ? result : null;
-    recovery.sessionStatus = result?.status || '';
-    recovery.activity = result?.activity || '';
-    finishSessionConnectionRecovery(recovery);
-  });
-  return true;
-}
-
-function settleRecoveredTurns(turnIds) {
-  var settled = 0;
-  for (var turnId of turnIds || []) {
-    if (_streamCoordinator.settleTurn(turnId)) settled++;
-    _turnEventQueue.closeTurn(turnId);
-    _queuedTurnIds.delete(turnId);
-    _checkpointResumedTurns.delete(turnId);
-    _reconnectingTurns.delete(turnId);
-  }
-  return settled;
-}
-
-function recoveredInterruptTurnIds(turnIds) {
-  var candidates = new Set(turnIds || []);
-  var interrupted = new Set();
-  for (var message of state.wsAllMessages) {
-    if (!isInterruptMsg(message)) continue;
-    var turnId = String(message.turnId || '');
-    if (!turnId) {
-      var nativeId = String(message.nativeId || '');
-      var uuid = String(message.uuid || '');
-      if (nativeId.indexOf('live:interrupt:') === 0) {
-        turnId = nativeId.slice('live:interrupt:'.length);
-      } else if (uuid.indexOf('live_interrupt_') === 0) {
-        turnId = uuid.slice('live_interrupt_'.length);
-      }
-    }
-    if (candidates.has(turnId)) interrupted.add(turnId);
-  }
-  return Array.from(interrupted);
-}
-
-function finishSessionConnectionRecovery(recovery) {
-  if (!recovery || recovery !== _connectionRecovery
-    || recovery.sessionId !== state.wsSessionId) {
-    return false;
-  }
-  _streamCoordinator.prepareTurnsForReconnect(recovery.turnIds);
-  drainStrictStreamOperations();
-
-  var bufferedEvents = recovery.events.slice();
-  var hasAuthoritativeCompletion = recovery.sessionStatus === 'completed'
-    && !!recovery.authoritativeResult;
-  var lifecycleVersionBeforeBuffered = _appliedLifecycleVersion;
-  _connectionRecovery = null;
-  _suppressTurnEndRecovery = hasAuthoritativeCompletion;
-  try {
-    for (var event of bufferedEvents) routeTurnEvent(event);
-  } finally {
-    _suppressTurnEndRecovery = false;
-  }
-  var bufferedLifecycleChanged =
-    _appliedLifecycleVersion !== lifecycleVersionBeforeBuffered;
-  var recoveredTurnIds = new Set(recovery.turnIds);
-  var newLocalTurnIds = new Set(
-    state.pendingSentMessages
-      .filter(function (pending) {
-        return pending.sessionId === recovery.sessionId
-          && !pending.failed
-          && !recoveredTurnIds.has(pending.id);
-      })
-      .map(function (pending) { return pending.id; }),
-  );
-  if (recovery.activity === 'completed') {
-    settleRecoveredTurns(recovery.turnIds);
-    drainStrictStreamOperations();
-  } else if (recovery.sessionStatus === 'completed'
-    && !bufferedLifecycleChanged
-    && newLocalTurnIds.size === 0) {
-    var interruptedTurnIds = recoveredInterruptTurnIds(recovery.turnIds);
-    if (interruptedTurnIds.length) {
-      settleRecoveredTurns(interruptedTurnIds);
-      drainStrictStreamOperations();
-    }
-  }
-  state.wsRunning = resolveSessionRunningAfterFetch({
-    status: recovery.sessionStatus,
-    liveLifecycleChanged: bufferedLifecycleChanged
-      || newLocalTurnIds.size > 0
-      || recovery.activity === 'running',
-  }, state.wsAllMessages, state.appState.runtime);
-  updateSendBtn();
-  if (recovery.followBottomAfterForeground) {
-    var content = document.getElementById('content');
-    var container = content?.querySelector('.messages');
-    setTimeout(function () {
-      placeFollowedContentAtBottom(content, container, recovery.sessionId);
-    }, 200);
+  if (_historyFetchBarriers.current(state.wsSessionId)) {
+    subscribeSession(state.wsSessionId);
+  } else {
+    refreshSessionMessages();
   }
   return true;
 }
 
 function resumeSessionForeground() {
   if (!state.appState.session || !state.WS_URL) return false;
-  var recovery = beginSessionConnectionRecovery();
-  if (recovery) recovery.followBottomAfterForeground = state.stickBottom;
   if (state.ws?.readyState === WebSocket.OPEN) {
-    recoverSubscribedSession();
-    return true;
+    refreshSessionMessages();
+  } else if (state.ws?.readyState !== WebSocket.CONNECTING) {
+    connectWs();
   }
-  if (state.ws?.readyState === WebSocket.CONNECTING) {
-    return true;
-  }
-  connectWs();
   return true;
 }
 
@@ -594,7 +430,6 @@ function dispatchControlEvent(message) {
     }
     if (message.sessionId === state.wsSessionId) {
       state.wsRunning = false;
-      _appliedLifecycleVersion++;
       updateSendBtn();
       if (typeof showPermissionPrompt === 'function') {
         showPermissionPrompt(message);
@@ -615,7 +450,6 @@ function dispatchControlEvent(message) {
       activityHint: message.activity,
       hasOutstandingTurns: hasOutstandingTurns(),
     }) === 'running';
-    _appliedLifecycleVersion++;
     updateSendBtn();
   }
   return true;
@@ -660,13 +494,23 @@ function drainPreAdoptionTurnEvents(sessionId, turnId) {
 
 function routeTurnEvent(message) {
   if (bufferPreAdoptionTurnEvent(message)) return;
-  if (!isStrictTurnEvent(message)) {
-    dispatchWsMessage(message);
+  var barrier = _historyFetchBarriers.current(message.sessionId);
+  if (barrier && message.sessionId === barrier.sessionId
+    && (isStrictTurnEvent(message) || message.action === 'messages')) {
+    barrier.capture(message);
     return;
   }
-  if (_connectionRecovery
-    && _connectionRecovery.sessionId === message.sessionId) {
-    _connectionRecovery.events.push(message);
+  if ((message.action === 'messages' || message.action === 'stream_end')
+    && Array.isArray(message.messages)) {
+    message = {
+      ...message,
+      messages: message.truncated === true
+        ? []
+        : message.messages.filter(item => item?.truncated !== true),
+    };
+  }
+  if (!isStrictTurnEvent(message)) {
+    dispatchWsMessage(message);
     return;
   }
   var ordered = _turnEventQueue.push(message);
@@ -753,10 +597,8 @@ function handleGappedTurnCompletion(completion) {
   _strictStreamRenderer?.discardTurn(completion.turnId);
   _queuedTurnIds.delete(completion.turnId);
   _checkpointResumedTurns.delete(completion.turnId);
-  _reconnectingTurns.delete(completion.turnId);
   settlePendingAtTurnEnd(completion.turnId, completion.end);
   mergeLateJoinAuthority(completion, true);
-  _appliedLifecycleVersion++;
   updateSendBtn();
   if (turnCompletionNeedsRecovery(completion)) {
     scheduleTurnEndRecovery(completion.sessionId);
@@ -797,11 +639,6 @@ function dispatchWsMessage(msg) {
       var remainingMessages = handleStrictMessages(msg);
       if (!remainingMessages.length) return;
       msg = Object.assign({}, msg, { messages: remainingMessages });
-      var fetchBarrier = _historyFetchBarriers.current(msg.sessionId);
-      if (fetchBarrier) {
-        fetchBarrier.captureHistory(msg.messages);
-        return;
-      }
       var activeStrictTurnId = _streamCoordinator.activeTurnId || '';
       var completeMessages = msg.messages.map(function (message) {
         if (!activeStrictTurnId
@@ -821,11 +658,11 @@ function dispatchWsMessage(msg) {
           && !isToolResultOnly(message);
       });
       if (startsExternalTurn) _strictStatusAuthority = false;
-      var merged = commitWsAuthority(completeMessages, {
+      var merged = commitMessages(completeMessages, {
         liveStateChanged: _strictStatusAuthority && !startsExternalTurn,
       });
       showStats(state.wsMessageCount + ' messages ('
-        + merged.mergeResult.inserted.length + ' new via WS)');
+        + merged.inserted.length + ' new via WS)');
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
@@ -911,8 +748,9 @@ function dispatchWsMessage(msg) {
         rekeyComposerDraft(msg.sessionId);
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
+        var loading = loadLatestMessages(msg.sessionId);
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
-        bufferAndFetch(msg.sessionId, '').then(function () {
+        loading.then(function () {
           if (state.wsSessionId === msg.sessionId) {
             state._syncedOnce = msg.sessionId;
           }
@@ -932,30 +770,7 @@ function dispatchWsMessage(msg) {
       state._syncedOnce = msg.sessionId;
       // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
       // and re-triggers needSync, causing a render-loop with title flicker.
-      bufferAndFetch(msg.sessionId, '').then(function (result) {
-        if (state.wsAllMessages.length === 0) { showEmptyMessages(); return; }
-        var content = document.getElementById('content');
-        var skeleton = content?.querySelector('.skeleton-messages');
-        if (skeleton) {
-          content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
-            + '">' + renderMessages(state.wsAllMessages, state.appState.runtime) + '</div>';
-          var container = content.querySelector('.messages');
-          state.wsRenderedCount = state.wsAllMessages.length;
-          if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
-          markTurnAdjacency(container);
-          loadImages(container);
-          clampOverflow(container);
-          if (window.renderMermaidBlocks) renderMermaidBlocks(container);
-          if (window.renderKatexBlocks) renderKatexBlocks(container);
-          if (typeof revealDeferredPermissionPrompt === 'function') {
-            revealDeferredPermissionPrompt();
-          }
-          if (typeof updateSpinner === 'function') updateSpinner();
-          content.scrollTop = content.scrollHeight;
-        }
-        updateTitleFromMessages();
-        updateSendBtn();
-      }).catch(function () {});
+      loadLatestMessages(msg.sessionId).catch(function () {});
     } else if (msg.action === 'session_threads_changed') {
       if (msg.deviceName && msg.deviceName !== state.appState.device) return;
       var rootChange = (msg.roots || []).find(function (root) {
@@ -970,7 +785,7 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'bridge_recovery_complete') {
       if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
       queueAgentThreadRefresh({ delays: [150, 1000] });
-      recoverMissing('');
+      refreshSessionMessages();
     } else if (msg.action === 'project_files' || msg.action === 'git_status') {
       handleWsRpcMessage(msg);
     } else if (msg.action === 'file_ready') {
@@ -1083,11 +898,6 @@ function getStrictStreamRenderer() {
   });
   return _strictStreamRenderer;
 }
-
-window.rebindStrictStreamDom = function () {
-  _strictStreamRenderer?.rebindRenderedHistory();
-  drainStrictStreamOperations();
-};
 
 function renderStrictToolBlock(element, block) {
   var collapsed = element.querySelector(':scope > .tool-header')
@@ -1300,7 +1110,6 @@ function drainStrictStreamOperations() {
       completedTurn = true;
       _queuedTurnIds.delete(operation.turnId);
       _checkpointResumedTurns.delete(operation.turnId);
-      _reconnectingTurns.delete(operation.turnId);
     }
   }
   applyResolvedLiveActivity(
@@ -1318,7 +1127,6 @@ function handleStrictTurnStart(message) {
   _streamCoordinator.startTurn(message);
   drainStrictStreamOperations();
   state.wsRunning = true;
-  _appliedLifecycleVersion++;
   updateSendBtn();
 }
 
@@ -1366,12 +1174,10 @@ function handleStrictTurnEnd(message) {
   _turnEventQueue.closeTurn(message.turnId);
   _queuedTurnIds.delete(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
-  _reconnectingTurns.delete(message.turnId);
   settlePendingAtTurnEnd(message.turnId, message);
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
-  _appliedLifecycleVersion++;
   updateSendBtn();
   if (message.recoveryRequired) {
     scheduleTurnEndRecovery(message.sessionId);
@@ -1384,10 +1190,7 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
   var delays = [150, 800, 2000];
   setTimeout(function () {
     if (state.wsSessionId !== sessionId) return;
-    recoverMissing('', {
-      authoritative: true,
-      authoritativeScope: 'last-turn',
-    }).then(function (result) {
+    refreshSessionMessages().then(function (result) {
       if (state.wsSessionId !== sessionId) return;
       if (attempt + 1 < delays.length
         && (!result || result.status === 'running')) {
@@ -1408,7 +1211,6 @@ function handleLateJoinCompletion(completion) {
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
-  _appliedLifecycleVersion++;
   updateSendBtn();
   if (turnCompletionNeedsRecovery(completion)) {
     scheduleTurnEndRecovery(completion.sessionId);
@@ -1429,55 +1231,10 @@ function mergeLateJoinAuthority(completion, completed, terminal) {
       turnId: source.turnId || completion.turnId || '',
     }));
   }
-  if (_reconnectingTurns.has(completion.turnId)
-    && _streamCoordinator.getTurn(completion.turnId)) {
-    if (incoming.length) {
-      handleStrictMessages({
-        action: 'messages',
-        sessionId: completion.sessionId,
-        turnId: completion.turnId,
-        seq: completion.end?.seq || 0,
-        messages: incoming,
-        terminal: terminal,
-      });
-    }
-    if (completed) {
-      _strictStatusAuthority = true;
-      _reconnectingTurns.delete(completion.turnId);
-    }
-    applyResolvedLiveActivity(
-      hasOutstandingTurns() ? 'running' : 'completed',
-    );
-    updateSendBtn();
-    return;
-  }
   if (completed) _strictStatusAuthority = true;
   if (completed) _queuedTurnIds.delete(completion.turnId);
-  if (completed) _reconnectingTurns.delete(completion.turnId);
-  var fetchBarrier = _historyFetchBarriers.current(completion.sessionId);
-  if (fetchBarrier) {
-    for (var bufferedMessage of incoming) {
-      bufferedMessage.turnId = bufferedMessage.turnId || completion.turnId || '';
-      bufferedMessage._strictLifecycle = true;
-    }
-    if (terminal) {
-      fetchBarrier.replaceStrictTurn(completion.turnId, incoming);
-    } else {
-      fetchBarrier.captureStrictMessages(incoming);
-    }
-    if (completed || terminal) {
-      fetchBarrier.completeStrictTurn(completion.turnId);
-    }
-    applyResolvedLiveActivity(
-      hasOutstandingTurns() ? 'running' : 'completed',
-    );
-    updateSendBtn();
-    return;
-  }
-  var merged = commitWsAuthority(incoming, {
+  var merged = commitMessages(incoming, {
     authoritative: terminal,
-    preserveStreamPreviews: _streamCoordinator.hasActiveTurns()
-      || !!document.querySelector('.stream-preview'),
   });
   _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
   if (completed) {
@@ -1488,7 +1245,7 @@ function mergeLateJoinAuthority(completion, completed, terminal) {
       turnId: completion.turnId,
     });
   }
-  if (merged.mergeResult.inserted.length || merged.mergeResult.patched.length) {
+  if (merged.inserted.length || merged.patched.length) {
     showStats(state.wsMessageCount + ' messages (late join)');
   }
   applyResolvedLiveActivity(
@@ -1501,7 +1258,6 @@ function handleStrictMessages(envelope) {
   var remaining = [];
   var completeMessages = [];
   var identities = [];
-  var fetchBarrier = _historyFetchBarriers.current(envelope.sessionId);
   for (var index = 0; index < envelope.messages.length; index++) {
     var message = envelope.messages[index];
     var identity = strictMessageIdentity(envelope, message, index);
@@ -1514,19 +1270,12 @@ function handleStrictMessages(envelope) {
     });
     identities.push(identity);
     completeMessages.push(message);
-    if (fetchBarrier && !envelope.terminal) {
-      fetchBarrier.captureStrictMessages([message]);
-    }
     _streamCoordinator.ingestAuthoritative({
       ...identity,
       message: message,
     });
   }
-  if (fetchBarrier && envelope.terminal) {
-    fetchBarrier.replaceStrictTurn(envelope.turnId, envelope.messages);
-    fetchBarrier.completeStrictTurn(envelope.turnId);
-    drainStrictStreamOperations();
-  } else if (!fetchBarrier && completeMessages.length) {
+  if (completeMessages.length) {
     var needsInterruptDom = completeMessages.some(function (message) {
       return isInterruptMsg(message);
     });
@@ -1546,9 +1295,8 @@ function handleStrictMessages(envelope) {
         return block.isRenderable();
       });
     var streamOwnsTurn = hasRenderedTurn || hasRenderableBlocks;
-    commitWsAuthority(completeMessages, {
+    commitMessages(completeMessages, {
       authoritative: !!envelope.terminal,
-      preserveStreamPreviews: true,
       deferDom: !needsInterruptDom
         && !needsPromptAnchor
         && (!envelope.terminal || streamOwnsTurn),
@@ -1570,18 +1318,17 @@ function handleStrictMessages(envelope) {
   return remaining;
 }
 
-function resetStreamSessionState() {
-  _historyFetchBarriers.invalidate();
+function resetStreamSessionState(keepHistoryRequest = false) {
+  if (!keepHistoryRequest) _historyFetchBarriers.invalidate();
   _messagePaginationGeneration++;
-  if (_strictStreamRenderer) _strictStreamRenderer.reset();
+  state.wsLoadingOlder = false;
+  if (_strictStreamRenderer) _strictStreamRenderer.reset({ remove: !keepHistoryRequest });
   _strictStreamRenderer = null;
   _streamCoordinator.resetSession('');
   _turnEventQueue.reset();
   _checkpointResumedTurns.clear();
-  _reconnectingTurns.clear();
   _queuedTurnIds.clear();
   _turnSendOrder.clear();
-  _connectionRecovery = null;
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
   for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
@@ -1593,7 +1340,6 @@ function resetStreamSessionState() {
   clearTimeout(_agentThreadRefreshTimer);
   _agentThreadRefreshTimer = null;
   _agentThreadRefreshVersion++;
-  _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
   _strictStatusAuthority = false;
 }
@@ -1706,28 +1452,6 @@ var _latestTurnOrder = -1;
 var _latestSendFailed = false;
 var _interruptedTurns = {};
 var _strictStatusAuthority = false;
-var STRICT_TERMINAL_STOP_REASONS = new Set([
-  'end_turn',
-  'max_tokens',
-  'stop_sequence',
-]);
-
-function isTerminalAssistantMessage(message) {
-  return message?.type === 'assistant'
-    && STRICT_TERMINAL_STOP_REASONS.has(message.stopReason);
-}
-
-// One-line preview of a tool's input (best-effort; input may be partial JSON).
-function summarizeToolInput(input) {
-  if (!input || typeof input !== 'object') return '';
-  if (input.command) return String(input.command);                 // Bash
-  if (input.file_path || input.path) return String(input.file_path || input.path); // Read/Write/Edit
-  if (input.pattern) return String(input.pattern);                 // Grep/Glob
-  if (input.url) return String(input.url);                         // WebFetch
-  if (input.prompt) return String(input.prompt).slice(0, 200);     // Task/agent
-  try { return JSON.stringify(input).slice(0, 200); } catch (e) { return ''; }
-}
-
 function isLiveCodexExplore(name, input) {
   if (state.appState.runtime !== 'codex' || name !== 'Bash') return false;
   var actions = Array.isArray(input?.codexCommandActions) ? input.codexCommandActions : [];
@@ -1779,7 +1503,6 @@ function outstandingTurnIds() {
     if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
   }
   for (var turnId of _streamCoordinator.activeTurnIds()) add(turnId);
-  for (var reconnectingTurnId of _reconnectingTurns) add(reconnectingTurnId);
   for (var queuedTurnId of _queuedTurnIds) add(queuedTurnId);
   for (var pendingMessage of state.pendingSentMessages) {
     if (!pendingMessage.failed) add(pendingMessage.id);
@@ -1800,8 +1523,7 @@ function latestOutstandingTurnId() {
   if (queued.length) return queued[queued.length - 1];
   var active = _streamCoordinator.activeTurnIds();
   if (active.length) return active[active.length - 1];
-  var reconnecting = Array.from(_reconnectingTurns);
-  return reconnecting.length ? reconnecting[reconnecting.length - 1] : '';
+  return '';
 }
 
 function activeTurnForInterrupt() {
@@ -1858,55 +1580,7 @@ function currentActivity() {
 }
 
 function applyResolvedLiveActivity(activity) {
-  var resolved = resolveActivityState({
-    liveStateChanged: true,
-    liveActivity: activity,
-    activityBeforeFetch: state.wsRunning ? 'running' : 'completed',
-    messages: state.wsAllMessages,
-    runtime: state.appState.runtime,
-    hasOutstandingTurns: hasOutstandingTurns(),
-    outstandingTurnIds: outstandingTurnIds(),
-  });
-  state.wsRunning = resolved === 'running';
-  return resolved;
-}
-
-function createRecoveryDomAdapter(options) {
-  options = options || {};
-  return createHistoryRecoveryDomAdapter({
-    state: state,
-    document: document,
-    runtime: function () { return state.appState.runtime; },
-    renderMessages: function (messages, runtime, renderOptions) {
-      return renderMessages(messages, runtime, renderOptions);
-    },
-    preserveStreamPreviews: !!options.preserveStreamPreviews,
-    preserveUnmatchedHistory: !!options.preserveUnmatchedHistory,
-    streamTurnIds: options.streamTurnIds !== undefined
-      ? options.streamTurnIds
-      : _streamCoordinator.activeTurnIds(),
-    renderOptions: options.renderOptions,
-    isCurrentBarrier: options.isCurrentBarrier,
-    promotePending: promoteEchoedBubble,
-    reportConflict: function (conflict) {
-      if (window.__APEEK_TEST__) return;
-      console.warn('History recovery conflict', conflict);
-    },
-    releaseBarrier: options.releaseBarrier,
-    applyStreamOperations: options.applyStreamOperations,
-    discardStreamTurn: function (turnId) {
-      _strictStreamRenderer?.discardTurn(turnId);
-    },
-    markTurnAdjacency: markTurnAdjacency,
-    loadImages: loadImages,
-    clampOverflow: clampOverflow,
-    renderMermaidBlocks: window.renderMermaidBlocks,
-    renderKatexBlocks: window.renderKatexBlocks,
-    updateTitleFromMessages: updateTitleFromMessages,
-    markSpinnerTurnEnd: window.markSpinnerTurnEnd,
-    updateSendBtn: updateSendBtn,
-    updateSpinner: window.updateSpinner,
-  });
+  state.wsRunning = activity === 'running';
 }
 
 function prepareCompleteMessages(messages) {
@@ -1936,303 +1610,212 @@ function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
     });
 }
 
-function commitAuthorityMessages(messages, options) {
-  options = options || {};
+function commitMessages(messages, options = {}) {
   var wasFollowingBottom = state.stickBottom;
   var hiddenOnlyUpdate = onlyHiddenToolUpdates(messages, true);
-  var fetched = mergeFetchWindow({
-    restMessages: prepareCompleteMessages(messages),
-    historyBuffer: [],
-    restOk: true,
-  });
-  var mergeResult = mergeLocalHistory({
+  var mergeResult = mergeMessages({
     localMessages: state.wsAllMessages,
-    fetchedMessages: fetched.messages,
+    incomingMessages: dedupeMessages(prepareCompleteMessages(messages)),
     authoritative: !!options.authoritative,
-    replaceConflicts: !!options.replaceConflicts,
+    replaceConflicts: true,
   });
-  var preserveStreamPreviews = options.preserveStreamPreviews;
-  if (preserveStreamPreviews === undefined) {
-    preserveStreamPreviews = _streamCoordinator.hasActiveTurns()
-      || !!document.querySelector('.stream-preview');
-  }
-  var adapter = createRecoveryDomAdapter({
-    preserveStreamPreviews: preserveStreamPreviews,
-    streamTurnIds: options.streamTurnIds !== undefined
-      ? options.streamTurnIds
-      : _streamCoordinator.activeTurnIds(),
-    renderOptions: {
-      realtimeOrder: options.realtimeOrder !== false,
-      ...(options.collapseToolDetails !== undefined
-        ? { collapseToolDetails: !!options.collapseToolDetails }
-        : {}),
-    },
-    applyStreamOperations: options.applyStreamOperations === false
-      ? undefined
-      : function () {
-        drainStrictStreamOperations();
-      },
+  var pending = reconcilePendingMessages(state.pendingSentMessages, mergeResult.messages);
+  var activity = resolveActivityState({
+    liveStateChanged: !!options.liveStateChanged,
+    liveActivity: currentActivity(),
+    messages: mergeResult.messages,
+    runtime: state.appState.runtime,
+    hasOutstandingTurns: hasOutstandingTurns(),
+    outstandingTurnIds: outstandingTurnIds(),
   });
-  var activeStreamTurnIds = new Set(
-    options.streamTurnIds !== undefined
-      ? options.streamTurnIds
-      : _streamCoordinator.activeTurnIds(),
-  );
+  var streamTurnIds = options.streamTurnIds || _streamCoordinator.activeTurnIds();
+  var dom = createMessageDom({
+    state: state,
+    document: document,
+    runtime: function () { return state.appState.runtime; },
+    renderMessages: renderMessages,
+    streamTurnIds: streamTurnIds,
+    markTurnAdjacency: markTurnAdjacency,
+    loadImages: loadImages,
+    clampOverflow: clampOverflow,
+    renderMermaidBlocks: window.renderMermaidBlocks,
+    renderKatexBlocks: window.renderKatexBlocks,
+    updateTitleFromMessages: updateTitleFromMessages,
+  });
   var adoptsActiveStreamTurn = mergeResult.patched
     .concat(mergeResult.identityUpdated)
     .some(function (change) {
-      return !change.before?.turnId
-        && !!change.after?.turnId
-        && activeStreamTurnIds.has(change.after.turnId);
+      return !change.before?.turnId && streamTurnIds.includes(change.after?.turnId);
     });
-  if (options.deferDom && !adoptsActiveStreamTurn) {
-    adapter.applyHistoryChanges = function () {
-      return false;
-    };
+  commitMessageState(state, mergeResult.messages);
+  for (var promotion of pending.promoted) {
+    promoteEchoedBubble(promotion.pending, promotion.echo);
   }
-  var committed = commitHistoryRecovery({
-    mergeResult: mergeResult,
-    pendingMessages: state.pendingSentMessages.slice(),
-    restResult: {
-      ok: true,
-      status: options.status || '',
-    },
-    activitySnapshot: {
-      liveStateChanged: !!options.liveStateChanged,
-      liveActivity: currentActivity(),
-      activityBeforeFetch: currentActivity(),
-      runtime: state.appState.runtime,
-      hasOutstandingTurns: hasOutstandingTurns(),
-      outstandingTurnIds: outstandingTurnIds(),
-    },
-    adapter: adapter,
-  });
+  if (!options.deferDom || adoptsActiveStreamTurn) dom.applyChanges(mergeResult);
+  if (!window.__APEEK_TEST__) {
+    for (var conflict of mergeResult.conflicts) {
+      console.warn('Message identity/content conflict', conflict);
+    }
+  }
+  state.pendingSentMessages = pending.remaining;
+  drainStrictStreamOperations();
+  var wasRunning = state.wsRunning;
+  state.wsRunning = activity === 'running';
+  if (wasRunning && activity === 'completed') window.markSpinnerTurnEnd?.();
+  updateSendBtn();
+  if (typeof updateSpinner === 'function') updateSpinner();
+  dom.finalize();
   applyToolResultMessages(messages);
-  if (options.restoreBottom !== false && !hiddenOnlyUpdate
+  if (options.restoreBottom !== false && wasFollowingBottom && state.stickBottom
+    && !hiddenOnlyUpdate
     && !onlyHiddenToolUpdates(messages)) {
-    restoreBottomAfterRecovery(wasFollowingBottom);
+    followBottomAfterLayout();
   }
-  return {
-    mergeResult: mergeResult,
-    activity: committed.activity,
-  };
+  return mergeResult;
 }
 
-function commitWsAuthority(messages, options) {
-  return commitAuthorityMessages(messages, {
-    ...(options || {}),
-    realtimeOrder: true,
-    replaceConflicts: true,
-  });
-}
-
-function commitRestAuthority(messages, options) {
-  return commitAuthorityMessages(messages, {
-    ...(options || {}),
-    realtimeOrder: false,
-  });
-}
-
-function commitPaginatedMessageState(messages) {
-  state.wsAllMessages = messages;
-  var index = new Set();
-  for (var message of messages) {
-    if (message?.uuid) index.add(message.uuid);
-    for (var alias of message?.identityAliases || []) {
-      if (!/^(?:turn|pending):/.test(String(alias))) {
-        index.add(String(alias));
-      }
+function displayHistorySnapshot(data, pendingNodes) {
+  var content = document.getElementById('content');
+  if (!content) return false;
+  var viewport = captureHistoryViewport(content);
+  var permissionPrompt = content.querySelector('#permission-prompt');
+  var container = document.createElement('div');
+  container.className = 'messages runtime-' + state.appState.runtime;
+  container.innerHTML = '<div class="loading-older' + (state.wsHasMore ? '' : ' exhausted')
+    + '">Loading...</div>' + renderMessages(state.wsAllMessages, state.appState.runtime);
+  for (var pendingNode of pendingNodes) {
+    var echo = Array.from(container.children).find(function (node) {
+      return node.dataset.anchor === pendingNode.dataset.anchor
+        || (pendingNode.dataset.messageId && node.dataset.messageId === pendingNode.dataset.messageId);
+    });
+    var rows = [echo || pendingNode];
+    while (echo?.nextElementSibling?.classList.contains('assistant-turn')) {
+      echo = echo.nextElementSibling;
+      rows.push(echo);
     }
-    if (!message?.uuid && message?.nativeId) {
-      index.add('native:' + message.nativeId);
-    }
+    container.append(...rows);
   }
-  state.wsMessageUuids = index;
-  state.wsMessageCount = messages.length;
-  state.wsLastTimestamp = messages.length
-    ? messages[messages.length - 1].timestamp || ''
-    : '';
+  if (!state.wsAllMessages.length && !pendingNodes.length) {
+    if (data.needSync && state.deviceOnlineMap[state.appState.device] !== false
+      && typeof skeletonMessages === 'function') {
+      content.innerHTML = skeletonMessages();
+      return true;
+    }
+    container.innerHTML = '<div class="empty">'
+      + (data.needSync ? 'Bridge offline — no cached messages' : 'No messages') + '</div>';
+  }
+  if (permissionPrompt) container.appendChild(permissionPrompt);
+  content.replaceChildren(container);
+  state.wsRenderedCount = state.wsAllMessages.length;
+  markTurnAdjacency(container);
+  loadImages(container);
+  clampOverflow(container);
+  window.renderMermaidBlocks?.(container);
+  window.renderKatexBlocks?.(container);
+  if (typeof revealDeferredPermissionPrompt === 'function') revealDeferredPermissionPrompt();
+  if (state.stickBottom) followBottomAfterLayout();
+  else restoreHistoryViewport(content, viewport);
+  return true;
 }
 
-function insertLocalMessage(message, options) {
-  return commitAuthorityMessages([message], {
-    ...(options || {}),
-    realtimeOrder: true,
-    replaceConflicts: true,
-  });
-}
-
-function historyRequestKey(after, options) {
-  return JSON.stringify({
-    after: after || '',
-    authoritative: !!options.authoritative,
-    scope: options.authoritativeScope || '',
-    requireCompleted: !!options.requireCompleted,
-  });
-}
-
-function restoreBottomAfterRecovery(wasFollowingBottom) {
-  if (!wasFollowingBottom || !state.stickBottom) return;
-  followBottomAfterLayout();
-}
-
-/**
- * Fetches one history window and atomically commits history, pending echoes,
- * strict authority and runtime activity.
- */
-async function bufferAndFetch(sessionId, after, options) {
-  options = options || {};
-  var requestKey = historyRequestKey(after, options);
+async function loadLatestMessages(sessionId) {
+  if (state.wsSessionId !== sessionId) return { ok: false, stale: true };
+  selectWsSession(sessionId);
   var active = _historyFetchBarriers.current(sessionId);
-  if (active) {
-    if (active.requestKey === requestKey && active.promise) {
-      return active.promise;
-    }
-    try { await active.promise; } catch (error) {}
-    if (state.wsSessionId !== sessionId) {
-      return { added: 0, needSync: false, stale: true };
-    }
-    return bufferAndFetch(sessionId, after, options);
-  }
-
+  if (active) return active.promise;
   var barrier = _historyFetchBarriers.open({
     sessionId: sessionId,
-    requestKey: requestKey,
-    lifecycleVersion: _appliedLifecycleVersion,
-    activityBeforeFetch: currentActivity(),
-    localMessages: state.wsAllMessages,
-    pendingIds: state.pendingSentMessages.map(function (pending) {
-      return pending.id;
-    }),
+    pendingIds: state.pendingSentMessages.map(function (pending) { return pending.id; }),
   });
-  var wasFollowingBottom = state.stickBottom;
-
   barrier.promise = (async function () {
-    var params = { session: sessionId };
-    if (after) params.after = after;
-    else params.limit = MESSAGE_PAGE_SIZE;
-    if (state.appState.device) params.device = state.appState.device;
-    if (state.appState.project?.hash) params.project = state.appState.project.hash;
-
+    subscribeSession(sessionId);
     var data = {};
-    var restOk = true;
     var restError = null;
     try {
-      data = await api('/api/bridge/messages', params);
+      data = await fetchLatestMessages(sessionId);
     } catch (error) {
-      restOk = false;
       restError = error;
     }
-
-    if (!_historyFetchBarriers.isCurrent(barrier)
-      || state.wsSessionId !== sessionId) {
-      return { added: 0, needSync: false, stale: true };
+    if (!_historyFetchBarriers.isCurrent(barrier) || state.wsSessionId !== sessionId) {
+      return { ok: false, stale: true };
     }
     barrier.beginCommit();
-
-    var strictMessages = prepareCompleteMessages(barrier.strictMessages);
-    var fetched = mergeFetchWindow({
-      restMessages: dedupeCodexUserMessages(data.messages || []),
-      historyBuffer: dedupeCodexUserMessages(
-        barrier.historyBuffer.concat(strictMessages),
-      ),
-      restOk: restOk,
-    });
-    var authoritative = !!options.authoritative
-      && restOk;
-    var mergeResult = mergeLocalHistory({
-      localMessages: barrier.localMessages,
-      fetchedMessages: fetched.messages,
-      authoritative: authoritative,
-      reorderFetched: false,
-    });
-    var liveLifecycleChanged =
-      _appliedLifecycleVersion !== barrier.lifecycleVersion
-      || state.pendingSentMessages.some(function (pending) {
-        return !barrier.pendingIds.has(pending.id);
-      });
-    var adapter = createRecoveryDomAdapter({
-      preserveStreamPreviews: _streamCoordinator.hasActiveTurns(),
-      preserveUnmatchedHistory: true,
-      isCurrentBarrier: function () {
-        return _historyFetchBarriers.isCurrent(barrier);
-      },
-      releaseBarrier: function () {
-        _historyFetchBarriers.close(barrier);
-      },
-      applyStreamOperations: function () {
-        drainStrictStreamOperations();
-        for (var completedTurnId of barrier.completedTurnIds) {
-          var renderer = getStrictStreamRenderer();
-          renderer.createTurn({ turnId: completedTurnId });
-          renderer.applyOperation({
-            type: 'completeTurn',
-            turnId: completedTurnId,
-          });
+    var changed = false;
+    try {
+      if (!restError) {
+        var snapshot = replaceHistoryTail(state.wsAllMessages,
+          dedupeCodexUserMessages(data.messages || []));
+        changed = JSON.stringify(state.wsAllMessages) !== JSON.stringify(snapshot.messages)
+          || !!document.querySelector('.stream-preview, .stream-committed, [data-pending], .skeleton-messages')
+          || !document.querySelector('.messages')?.childElementCount;
+        for (var pending of state.pendingSentMessages.slice()) {
+          if (barrier.pendingIds.has(pending.id)) removePending(pending);
         }
-      },
-    });
-    var committed = commitHistoryRecovery({
-      mergeResult: mergeResult,
-      pendingMessages: state.pendingSentMessages.slice(),
-      restResult: {
-        ok: restOk,
-        status: data.status || '',
-      },
-      activitySnapshot: {
-        liveStateChanged: liveLifecycleChanged,
-        liveActivity: currentActivity(),
-        activityBeforeFetch: barrier.activityBeforeFetch,
-        runtime: state.appState.runtime,
-        hasOutstandingTurns: hasOutstandingTurns(),
-        outstandingTurnIds: outstandingTurnIds(),
-      },
-      adapter: adapter,
-    });
-    restoreBottomAfterRecovery(wasFollowingBottom);
-
-    if (!after
-      && !options.authoritative
-      && data.hasMore !== undefined) {
-      state.wsHasMore = data.hasMore;
-      state.wsOldestTimestamp = data.oldestTimestamp || '';
+        var pendingNodes = state.pendingSentMessages.map(function (pending) {
+          pending.echoScanFrom = 0;
+          return document.getElementById(pending.id);
+        }).filter(Boolean);
+        resetStreamSessionState(true);
+        commitMessageState(state, snapshot.messages);
+        for (var pending of state.pendingSentMessages.slice()) {
+          var echo = messageEchoed(pending);
+          if (echo) {
+            echo.turnId = pending.id;
+            promoteEchoedBubble(pending, echo);
+          } else {
+            _turnSendOrder.set(pending.id, pending.seq);
+            if (!pending.failed) _queuedTurnIds.add(pending.id);
+            rememberLatestSend(pending.id, pending.failed, pending.seq);
+          }
+        }
+        if (!snapshot.preservedCount) {
+          state.wsHasMore = !!data.hasMore;
+          state.wsOldestTimestamp = data.oldestTimestamp || '';
+        }
+        if (changed) displayHistorySnapshot({
+          ...data, needSync: data.needSync && !barrier.events.length,
+        }, pendingNodes);
+        state.wsRunning = resolveActivityState({
+          restStatus: data.status || '',
+          messages: state.wsAllMessages,
+          runtime: state.appState.runtime,
+          hasOutstandingTurns: hasOutstandingTurns(),
+          outstandingTurnIds: outstandingTurnIds(),
+        }) === 'running';
+      }
+    } finally {
+      _historyFetchBarriers.close(barrier);
     }
-
-    var useAuthoritative = !!options.authoritative
-      && (!options.requireCompleted
-        || (data.status === 'completed' && committed.activity === 'completed'));
+    if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
+      displayHistorySnapshot({}, []);
+    }
+    _suppressTurnEndRecovery = !restError && data.status === 'completed';
+    try {
+      for (var event of barrier.events) routeTurnEvent(event);
+      drainStrictStreamOperations();
+    } finally {
+      _suppressTurnEndRecovery = false;
+    }
+    updateTitleFromMessages();
+    updateSendBtn();
+    if (typeof updateSpinner === 'function') updateSpinner();
     return {
-      ok: restOk,
+      ok: !restError,
       error: restError,
-      added: mergeResult.inserted.length,
-      messages: mergeResult.inserted.map(function (entry) {
-        return entry.message;
-      }),
-      mergeResult: mergeResult,
-      needSync: data.needSync,
       status: data.status || '',
-      authoritative: useAuthoritative,
-      liveLifecycleChanged: liveLifecycleChanged,
-      activity: committed.activity,
-      wasFollowingBottom: wasFollowingBottom,
     };
-  })();
-
+  })().catch(function (error) {
+    _historyFetchBarriers.close(barrier);
+    throw error;
+  });
   return barrier.promise;
 }
 
-function resolveSessionRunningAfterFetch(result, messages, runtime) {
-  return resolveActivityState({
-    liveStateChanged: result?.liveLifecycleChanged,
-    liveActivity: currentActivity(),
-    activityBeforeFetch: state.wsRunning ? 'running' : 'completed',
-    restOk: result?.ok !== false,
-    restStatus: result?.status || '',
-    messages: messages,
-    runtime: runtime,
-    hasOutstandingTurns: hasOutstandingTurns(),
-    outstandingTurnIds: outstandingTurnIds(),
-  }) === 'running';
+function fetchLatestMessages(sessionId) {
+  var params = { session: sessionId, limit: MESSAGE_PAGE_SIZE };
+  if (state.appState.device) params.device = state.appState.device;
+  if (state.appState.project?.hash) params.project = state.appState.project.hash;
+  return api('/api/bridge/messages', params);
 }
 
 /**
@@ -2261,11 +1844,11 @@ async function loadOlderMessages(sessionId) {
     var pageWindow = firstConfirmed
       ? msgs.concat([firstConfirmed])
       : msgs;
-    var mergeResult = mergeLocalHistory({
+    var mergeResult = mergeMessages({
       localMessages: state.wsAllMessages,
-      fetchedMessages: pageWindow,
+      incomingMessages: pageWindow,
     });
-    commitPaginatedMessageState(mergeResult.messages);
+    commitMessageState(state, mergeResult.messages);
     return mergeResult.inserted.map(function (entry) {
       return entry.message;
     });
@@ -2277,21 +1860,11 @@ async function loadOlderMessages(sessionId) {
   }
 }
 
-// Reconnect recovery
-async function recoverMissing(after, options) {
-  options = options || {};
+async function refreshSessionMessages() {
   if (!state.wsSessionId) return null;
-  if (after === undefined) after = state.wsLastTimestamp;
   try {
-    var result = await bufferAndFetch(state.wsSessionId, after, options);
-    if (result.authoritative) {
-      showStats(state.wsMessageCount + ' messages (REST authority)');
-      return result;
-    }
-    if (!result.added) return result;
-    showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');
-    return result;
-  } catch (e) {
+    return await loadLatestMessages(state.wsSessionId);
+  } catch (error) {
     return null;
   }
 }
@@ -2790,7 +2363,7 @@ function completeLocalCommand(pending, result) {
       ? Object.assign({ rawText: output }, result.commandPanel)
       : null,
   };
-  insertLocalMessage(message, {
+  commitMessages([message], {
     liveStateChanged: true,
   });
   applyResolvedLiveActivity(
@@ -2848,21 +2421,6 @@ function pendingTurnIdForMessage(message) {
   return '';
 }
 
-function findConfirmedPromptEcho(message) {
-  if (message?.type !== 'user' || isInterruptMsg(message)
-    || isToolResultOnly(message)) {
-    return null;
-  }
-  var turnId = pendingTurnIdForMessage(message);
-  if (!turnId) return null;
-  return state.wsAllMessages.find(function (candidate) {
-    return candidate.type === 'user'
-      && !isInterruptMsg(candidate)
-      && !isToolResultOnly(candidate)
-      && messageMatchesPending(candidate, turnId);
-  }) || null;
-}
-
 function messageEchoed(pending) {
   // Scan only rows after this send (echoScanFrom); a historical same-text row isn't its echo.
   var from = pending.echoScanFrom || 0;
@@ -2872,19 +2430,6 @@ function messageEchoed(pending) {
     if (messageMatchesPending(m, pending.id)) return m;
   }
   return null;
-}
-
-// Retire an optimistic bubble only when its own echo arrives. A later send can
-// acknowledge first because API Gateway invokes send handlers concurrently, so
-// cross-send sequence watermarks cannot prove an earlier send was lost. Messages
-// without an echo are reconciled by their own SEND_TIMEOUT_MS timer.
-function reconcileEchoedPending() {
-  for (var i = state.pendingSentMessages.length - 1; i >= 0; i--) {
-    var pending = state.pendingSentMessages[i];
-    var echoed = messageEchoed(pending);
-    if (!echoed) continue;
-    promoteEchoedBubble(pending, echoed);
-  }
 }
 
 function settlePendingAtTurnEnd(turnId, end) {
@@ -2921,6 +2466,17 @@ function markPendingTime(pending) {
   }
 }
 
+async function checkPendingEcho(pending) {
+  var sessionId = state.wsSessionId;
+  var data = await fetchLatestMessages(sessionId);
+  if (sessionId !== state.wsSessionId || findPending(pending.id) !== pending) return;
+  var echo = (data.messages || []).find(function (message) {
+    return message.type === 'user' && !isInterruptMsg(message)
+      && !isToolResultOnly(message) && messageMatchesPending(message, pending.id);
+  });
+  if (echo) commitMessages([{ ...echo, turnId: pending.id }], { restoreBottom: false });
+}
+
 function markPendingFailed(pending, error) {
   var el = document.getElementById(pending.id);
   if (!el) return;
@@ -2945,7 +2501,7 @@ async function reconcilePendingSend(msgId) {
     setTimeout(function () { reconcilePendingSend(msgId); }, remaining);
     return;
   }
-  try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
+  try { await checkPendingEcho(pending); } catch (e) {}
   pending = findPending(msgId);
   if (!pending || pending.delivered) return;               // ack/dedup fired during the fetch
   // Message actually landed (ack/echo just lost) → success; else flag for retry.
@@ -2957,7 +2513,7 @@ async function reconcilePendingSend(msgId) {
 async function retryPendingSend(msgId) {
   var pending = findPending(msgId);
   if (!pending) return;
-  try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
+  try { await checkPendingEcho(pending); } catch (e) {}
   var echoed = messageEchoed(pending);
   if (echoed) {
     promoteEchoedBubble(pending, echoed);
@@ -3007,8 +2563,7 @@ Object.assign(window, {
   syncMobileViewport,
   connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
   resumeSessionForeground,
-  startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
-  resolveSessionRunningAfterFetch,
+  startWs, loadLatestMessages, loadOlderMessages, refreshSessionMessages,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   retryPendingSend, isInheritedAgentContext,
@@ -3020,8 +2575,6 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     handleWsMessage: handleWsMessage,
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
-    beginSessionConnectionRecovery: beginSessionConnectionRecovery,
-    startSessionConnectionRecovery: startSessionConnectionRecovery,
-    commitWsAuthority: commitWsAuthority,
+    commitMessages: commitMessages,
   };
 }

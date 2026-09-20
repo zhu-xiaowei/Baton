@@ -12,7 +12,7 @@ async function waitFor(h, predicate, timeoutMs = 500) {
   return predicate();
 }
 
-test('foreground recovery follows layout growth once after REST commit', async () => {
+test('foreground recovery follows new content without a delayed bottom snap', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-bottom-follow';
   resetSession(h, { sessionId });
@@ -53,7 +53,12 @@ test('foreground recovery follows layout growth once after REST commit', async (
   height = 1800;
   await h.tick(220);
 
-  assert.equal(top, 1800);
+  assert.equal(top, 1000);
+  h.hooks.handleWsMessage({
+    action: 'messages', sessionId,
+    messages: [{ uuid: 'new-visible-message', type: 'assistant', content: 'new content' }],
+  });
+  assert.equal(await waitFor(h, () => top === 1800), true);
   assert.equal(h.state.stickBottom, true);
   h.window.close();
 });

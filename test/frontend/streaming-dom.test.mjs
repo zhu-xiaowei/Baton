@@ -181,19 +181,6 @@ test('discarding the only incomplete block removes its empty live turn', () => {
   assert.equal(h.document.querySelector('[data-turn-id="turn-1"]'), null);
 });
 
-test('rebind restores a detached live turn after history render replacement', () => {
-  const h = createRenderer();
-  createText(h.renderer);
-  const turn = h.document.querySelector('[data-turn-id="turn-1"]');
-  h.document.querySelector('.messages').innerHTML =
-    '<div class="msg-user" data-anchor="turn-1">history</div>';
-
-  h.renderer.rebindRenderedHistory();
-
-  assert.equal(turn.isConnected, true);
-  assert.equal(h.document.querySelectorAll('[data-turn-id="turn-1"]').length, 1);
-});
-
 for (const identity of ['block', 'tool']) {
   for (const collapsed of [true, false]) {
     test(`adopting history by ${identity} identity preserves ${collapsed ? 'collapsed' : 'expanded'} details`, () => {

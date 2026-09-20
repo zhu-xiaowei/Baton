@@ -35,10 +35,9 @@ export const state = {
   wsStatusText: '',
   wsAllMessages: [],          // all messages for the active session, sorted ascending
   wsMessageUuids: new Set(),  // UUID index for final persisted messages; streaming bypasses it
-  wsLastTimestamp: '',        // for reconnect recovery
   wsProjectHash: null,        // for new session creation
   wsRequestId: null,          // unique ID per new-session creation flow
-  wsRunning: false,           // active session still running (derived via deriveRunning)
+  wsRunning: false,           // active session still running
   stickBottom: true,          // auto-scroll intent: real user drag clears it; returning until the bottom button hides / tapping it restores
   _titleTier: 0,              // 4=customTitle 3=ai-title 2=lastPrompt 1=firstUser; never downgrade
   wsRenderedCount: 0,

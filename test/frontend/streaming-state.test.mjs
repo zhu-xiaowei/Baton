@@ -158,57 +158,7 @@ test('authority dedupes different UUIDs that share one native identity', () => {
   }), false);
 });
 
-test('reconnect preserves an active partial block for authoritative replacement', () => {
-  const coordinator = new StreamCoordinator();
-  coordinator.startTurn(event('stream_turn_start', 0));
-  frame(coordinator, 'stream_block_start', 1, { kind: 'text' });
-  frame(coordinator, 'stream_delta', 2, { chunk: 'draft' });
-  coordinator.takeOperations();
-
-  assert.equal(coordinator.prepareTurnsForReconnect(['turn-1']), 1);
-  assert.deepEqual(coordinator.takeOperations(), []);
-  assert.ok(coordinator.getTurn('turn-1'));
-  assert.equal(coordinator.hasActiveTurns(), true);
-
-  coordinator.ingestAuthoritative({
-    ...event('messages', 3),
-    message: {
-      uuid: 'assistant-final',
-      nativeId: 'native-final',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'complete answer' }],
-    },
-  });
-  assert.deepEqual(
-    coordinator.takeOperations().map((operation) => operation.type),
-    ['commitBlock', 'patchBlock'],
-  );
-  assert.equal(
-    coordinator.getTurn('turn-1').blocks.get(1).text,
-    'complete answer',
-  );
-});
-
-test('reconnect preserves completed and partial blocks without DOM operations', () => {
-  const coordinator = new StreamCoordinator();
-  coordinator.startTurn(event('stream_turn_start', 0));
-  frame(coordinator, 'stream_block_start', 1, { kind: 'text' });
-  frame(coordinator, 'stream_delta', 2, { chunk: 'complete' });
-  frame(coordinator, 'stream_block_stop', 3);
-  coordinator.takeOperations();
-  assert.equal(coordinator.completeBlockReveal('turn-1', 1), true);
-  coordinator.takeOperations();
-
-  frame(coordinator, 'stream_block_start', 4, { kind: 'text' });
-  frame(coordinator, 'stream_delta', 5, { chunk: 'partial' });
-  coordinator.takeOperations();
-
-  assert.equal(coordinator.prepareTurnsForReconnect(['turn-1']), 1);
-  assert.deepEqual(coordinator.takeOperations(), []);
-  assert.equal(coordinator.getTurn('turn-1').blocks.size, 2);
-});
-
-test('completed recovery freezes visible local blocks and discards only empty placeholders', () => {
+test('settling an interrupted turn freezes visible blocks and discards empty placeholders', () => {
   const coordinator = new StreamCoordinator();
   coordinator.startTurn(event('stream_turn_start', 0));
   frame(coordinator, 'stream_block_start', 1, { kind: 'text' });
@@ -232,47 +182,6 @@ test('completed recovery freezes visible local blocks and discards only empty pl
     operation.type === 'discardBlock' && operation.blockId === 4));
   assert.equal(operations.some((operation) =>
     operation.type === 'discardBlock' && operation.blockId === 1), false);
-});
-
-test('reconnect authority replaces the old partial block but not later live blocks', () => {
-  const coordinator = new StreamCoordinator();
-  coordinator.startTurn(event('stream_turn_start', 0));
-  frame(coordinator, 'stream_block_start', 1, { kind: 'text' });
-  frame(coordinator, 'stream_delta', 2, { chunk: 'old partial' });
-  coordinator.takeOperations();
-  coordinator.prepareTurnsForReconnect(['turn-1']);
-
-  coordinator.ingestAuthoritative({
-    ...event('messages', 3),
-    message: {
-      uuid: 'old-final',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'old complete' }],
-    },
-  });
-  coordinator.takeOperations();
-
-  frame(coordinator, 'stream_block_start', 4, { kind: 'text' });
-  frame(coordinator, 'stream_delta', 5, { chunk: 'new partial' });
-  coordinator.takeOperations();
-  coordinator.ingestAuthoritative({
-    ...event('messages', 6),
-    message: {
-      uuid: 'new-final',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'new complete' }],
-    },
-  });
-
-  assert.equal(
-    coordinator.takeOperations().some((operation) =>
-      operation.type === 'patchBlock' && operation.blockId === 4),
-    false,
-  );
-  assert.equal(
-    coordinator.getTurn('turn-1').blocks.get(4).text,
-    'new partial',
-  );
 });
 
 test('turns display serially even when a later turn is fully buffered', () => {

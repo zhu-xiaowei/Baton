@@ -281,7 +281,7 @@ test('an OUT update on an earlier tool still keeps the whole view at the bottom'
   h.state.stickBottom = true;
   content.scrollTop = 400;
 
-  h.hooks.commitWsAuthority([toolResult]);
+  h.hooks.commitMessages([toolResult]);
   assert.equal(
     container.querySelector('[data-tool-id="tool-1"]').textContent,
     'completed output',

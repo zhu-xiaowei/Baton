@@ -53,8 +53,7 @@ expose('esc', (value) => String(value));
 expose('wsSendReliable', () => {});
 
 await import('../../web/js/components/message.js');
-await import('../../web/js/runtime-status.js');
-expose('deriveRunning', window.deriveRunning);
+const { deriveActivityFromMessages } = await import('../../web/js/runtime-status.js');
 await import('../../web/js/components/tool.js');
 expose('renderToolNode', window.renderToolNode);
 await import('../../web/js/components/permission.js');
@@ -156,7 +155,6 @@ function reset() {
   state.wsRenderedCount = 0;
   state.wsMessageCount = 0;
   state.wsRunning = true;
-  state.wsLastTimestamp = '';
   state.pendingSentMessages = [];
   state.stickBottom = false;
   apiResponse = { messages: [], hasMore: false };
@@ -1060,7 +1058,7 @@ test('Codex startup recovery restores a wait missed during Bridge restart', asyn
   assert.doesNotMatch(incompleteWait.textContent, /Waited for background terminal/);
 
   apiResponse = {
-    messages: [waitingResult],
+    messages: state.wsAllMessages.concat(waitingResult),
     hasMore: false,
   };
   window.__wsTest.handleWsMessage({
@@ -1236,8 +1234,8 @@ test('Codex WS keeps running through text updates and stops on task_complete', (
 
   const history = [commentary, finalText, failedTool, taskComplete];
   document.querySelector('.messages').innerHTML = window.renderMessages(history, 'codex');
-  assert.equal(window.deriveRunning(history.slice(0, -1), 'running', 'codex'), true);
-  assert.equal(window.deriveRunning(history, 'running', 'codex'), false);
+  assert.equal(deriveActivityFromMessages({ messages: history.slice(0, -1), authStatus: 'running', runtime: 'codex' }), 'running');
+  assert.equal(deriveActivityFromMessages({ messages: history, authStatus: 'running', runtime: 'codex' }), 'completed');
   assert.equal(document.querySelectorAll('.assistant-text').length, 2);
 });
 
@@ -1265,7 +1263,7 @@ test('Claude still treats a tail error-only tool result as stopped', () => {
     timestamp: '2026-08-10T05:10:01.000Z',
   }];
 
-  assert.equal(window.deriveRunning(history, 'running', 'claude'), false);
+  assert.equal(deriveActivityFromMessages({ messages: history, authStatus: 'running', runtime: 'claude' }), 'completed');
 });
 
 test('Codex grouping does not mutate Claude turns', () => {
@@ -1283,6 +1281,85 @@ test('Codex grouping does not mutate Claude turns', () => {
   assert.ok(document.getElementById('claude-empty'));
   assert.equal(document.querySelector('[data-tool-id="claude-tool"]').className, 'tl-item tool-node');
 });
+
+for (const truncation of ['envelope', 'message']) {
+  test(`strict Edit ignores ${truncation} truncation without losing later authority or event order`, () => {
+    reset();
+    const turnId = 'turn-truncated-edit-' + truncation;
+    const container = document.querySelector('.messages');
+    container.innerHTML = `<div class="msg-user" data-anchor="${turnId}">edit files</div>`;
+    let sequence = 0;
+    const dispatch = (action, extra = {}) => {
+      const event = { action, sessionId: state.wsSessionId, turnId, seq: sequence++, ...extra };
+      window.__wsTest.handleWsMessage(event);
+      return event;
+    };
+    const complete = {
+      uuid: turnId + '-message',
+      nativeId: 'codex:item:' + turnId,
+      type: 'assistant',
+      content: Array.from({ length: 10 }, (_, index) => ({
+        type: 'tool_use',
+        id: turnId + '-file-' + index,
+        name: 'Edit',
+        input: {
+          file_path: `src/file-${index}.js`,
+          old_string: 'head\nbefore\ntail',
+          new_string: 'head\nafter\ntail',
+        },
+      })),
+    };
+    const truncated = structuredClone(complete);
+    for (const block of truncated.content) {
+      block.input.old_string = block.input.new_string = 'head\n…[truncated]\ntail';
+    }
+    if (truncation === 'message') truncated.truncated = true;
+    const result = {
+      uuid: turnId + '-result',
+      type: 'user',
+      content: [{ type: 'tool_result', tool_use_id: complete.content[0].id, content: 'Applied changes' }],
+    };
+    const truncatedPayload = {
+      messages: [truncated, result],
+      ...(truncation === 'envelope' ? { truncated: true } : {}),
+    };
+    dispatch('stream_turn_start');
+    for (const block of complete.content) {
+      dispatch('stream_block_start', { kind: 'tool_use', name: 'Edit' });
+      dispatch('stream_tool_input', { chunk: JSON.stringify(block.input) });
+      dispatch('stream_block_stop');
+    }
+    const originalDiffs = Array.from(container.querySelectorAll('.diff-container'));
+    try {
+      assert.equal(originalDiffs.length, 10);
+      const event = dispatch('messages', truncatedPayload);
+      window.__wsTest.handleWsMessage(event);
+      const edits = Array.from(container.querySelectorAll('.tool-node'));
+      assert.equal(edits.length, 10);
+      for (const [index, edit] of edits.entries()) {
+        assert.ok(edit.querySelector('.tool-detail-chevron'));
+        assert.equal(edit.querySelector('.diff-container'), originalDiffs[index]);
+      }
+      assert.equal(state.wsAllMessages.some(message => message.uuid === complete.uuid), false);
+      assert.equal(state.wsAllMessages.some(message => message.uuid === result.uuid), truncation === 'message');
+      assert.equal(truncatedPayload.messages[0], truncated);
+      assert.equal(truncatedPayload.messages.length, 2);
+
+      dispatch('messages', { messages: [complete, result] });
+      assert.deepEqual(
+        Array.from(container.querySelectorAll('.tool-node'), node => node.dataset.toolId),
+        complete.content.map(block => block.id),
+      );
+      assert.deepEqual(state.wsAllMessages.find(message => message.uuid === complete.uuid).content, complete.content);
+    } finally {
+      dispatch('stream_end', truncatedPayload);
+    }
+    assert.equal(state.wsRunning, false);
+    assert.equal(container.querySelectorAll('.tool-detail-chevron').length, 10);
+    assert.equal(container.querySelectorAll('.diff-container').length, 10);
+    assert.deepEqual(state.wsAllMessages.find(message => message.uuid === complete.uuid).content, complete.content);
+  });
+}
 
 test('strict no-op Edit input does not render an empty diff body', () => {
   reset();

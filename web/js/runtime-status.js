@@ -16,17 +16,13 @@ export function deriveActivityFromMessages(options = {}) {
 }
 
 /**
- * @param {{liveStateChanged?: boolean, liveActivity?: string, activityBeforeFetch?: string, restOk?: boolean, restStatus?: string, messages?: object[], runtime?: string, hasOutstandingTurns?: boolean, outstandingTurnIds?: string[]}} options
+ * @param {{liveStateChanged?: boolean, liveActivity?: string, restStatus?: string, messages?: object[], runtime?: string, hasOutstandingTurns?: boolean, outstandingTurnIds?: string[]}} options
  * @returns {'running'|'needs_input'|'completed'}
  */
 export function resolveActivityState(options = {}) {
   if (options.liveStateChanged) {
     return normalizeActivity(options.liveActivity);
   }
-  if (options.restOk === false) {
-    return normalizeActivity(options.activityBeforeFetch);
-  }
-
   var restStatus = normalizeActivity(options.restStatus, '');
   if (restStatus === 'needs_input') return 'needs_input';
   if (restStatus === 'completed') {
@@ -264,30 +260,4 @@ function hasTerminalAssistantTail(messages) {
     }
   }
   return false;
-}
-
-var adapters = Object.freeze({
-  claude: function (messages, authStatus) {
-    return deriveActivityFromMessages({
-      messages: messages,
-      runtime: 'claude',
-      authStatus: authStatus,
-    }) === 'running';
-  },
-  codex: function (messages, authStatus) {
-    return deriveActivityFromMessages({
-      messages: messages,
-      runtime: 'codex',
-      authStatus: authStatus,
-    }) === 'running';
-  },
-});
-
-if (typeof window !== 'undefined') {
-  window.runtimeStatusAdapters = adapters;
-  window.deriveRunning = function (messages, authStatus, runtime) {
-    if (!Array.isArray(messages)) return false;
-    var adapter = adapters[runtime === 'codex' ? 'codex' : 'claude'];
-    return adapter(messages, authStatus);
-  };
 }

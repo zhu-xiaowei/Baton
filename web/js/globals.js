@@ -46,7 +46,6 @@ async function loadViewerLibs() {
       import('./components/katex.js'),
       import('./components/tool.js'),
       import('./components/message.js'),
-      import('./runtime-status.js'),
       import('./components/permission.js'),
       import('./components/typing-status.js'),
       import('./components/image.js'),
