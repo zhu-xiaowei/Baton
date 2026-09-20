@@ -2067,9 +2067,9 @@ function interruptSession() {
   );
   updateSendBtn();
 }
+var restoreScrollFrame = null;
 (function () {
   var el = document.getElementById('msg-input');
-  var restoreScrollFrame = null;
   function resizeInputPreservingMessages() {
     var content = document.getElementById('content');
     var preserveScroll = content
@@ -2135,6 +2135,10 @@ var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
+  if (restoreScrollFrame !== null) {
+    cancelAnimationFrame(restoreScrollFrame);
+    restoreScrollFrame = null;
+  }
   var previousTurnId = latestOutstandingTurnId();
   state.wsRunning = true;
   var device = state.appState.device || '';

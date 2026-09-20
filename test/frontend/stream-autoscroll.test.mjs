@@ -127,6 +127,53 @@ test('sending a user message restores bottom following without a competing anima
   assert.match(h.document.querySelector('.msg-user[data-pending="1"]').textContent, /hello/);
 });
 
+for (const userScrollAfterSend of [false, true]) {
+  test('sending cancels queued input scroll restoration' + (userScrollAfterSend
+    ? ' without overriding a later user scroll' : ''), async (t) => {
+    resetSession(h, { sessionId: 'codex:send-input-scroll-race' });
+    const content = h.document.getElementById('content');
+    const input = h.document.getElementById('msg-input');
+    let scrollTop = userScrollAfterSend ? 900 : 200;
+    let scrollWrites = 0;
+    Object.defineProperties(content, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1200 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value) => {
+          scrollWrites += 1;
+          scrollTop = Math.min(value, 900);
+        },
+      },
+    });
+    t.after(() => {
+      delete content.clientHeight;
+      delete content.scrollHeight;
+      delete content.scrollTop;
+      input.value = '';
+    });
+
+    h.state.stickBottom = userScrollAfterSend;
+    input.value = 'hello';
+    input.dispatchEvent(new h.window.Event('input'));
+    h.window.doSend('hello', 'hello', []);
+    assert.equal(content.scrollTop, 900);
+    assert.equal(h.state.stickBottom, true);
+
+    scrollWrites = 0;
+    if (userScrollAfterSend) {
+      scrollTop = 350;
+      h.state.stickBottom = false;
+    }
+    await h.tick(10);
+
+    assert.equal(content.scrollTop, userScrollAfterSend ? 350 : 900);
+    assert.equal(h.state.stickBottom, !userScrollAfterSend);
+    assert.equal(scrollWrites, 0);
+  });
+}
+
 test('typing preserves message scroll without refreshing the streaming spinner', async (t) => {
   resetSession(h, { sessionId: 'codex:typing-stability' });
   const content = h.document.getElementById('content');
