@@ -7,17 +7,18 @@ const appSource = fs.readFileSync(
   'utf8',
 );
 
-test('project and session list loading uses the current breadcrumb instead of extra spinners', () => {
+test('project and session lists use breadcrumbs for page one and a footer for pagination', () => {
   assert.match(
     appSource,
     /function setBreadcrumbLoading\(loading\)[\s\S]*setBreadcrumbItemsLoading\([\s\S]*querySelectorAll\('#breadcrumb \.breadcrumb-nav a'\)/,
   );
-  assert.match(
-    appSource,
-    /function setListLoading\(loading\) \{[\s\S]*setBreadcrumbLoading\(loading\);[\s\S]*\}/,
+  const paginationLoading = appSource.slice(
+    appSource.indexOf('function setListLoading('),
+    appSource.indexOf('function rememberActiveListScroll('),
   );
-  assert.doesNotMatch(
-    appSource,
+  assert.doesNotMatch(paginationLoading, /setBreadcrumbLoading/);
+  assert.match(
+    paginationLoading,
     /content\.insertAdjacentHTML\('beforeend', '<div class="loading-more">/,
   );
   assert.doesNotMatch(

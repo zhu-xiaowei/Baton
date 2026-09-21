@@ -21,6 +21,7 @@ import {
   preferredNewSessionRuntime,
 } from './new-session-runtime.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
+import { loadingSpinner } from './components/loading.js';
 import { openProjectTerminal } from './terminal.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
@@ -992,7 +993,15 @@ function setBreadcrumbLoading(loading) {
 function setListLoading(loading) {
   var content = document.getElementById('content');
   content.classList.toggle('list-loading', loading);
-  setBreadcrumbLoading(loading);
+  var existing = content.querySelector('.loading-more');
+  if (!loading) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (!existing && content.querySelector('.list')) {
+    content.insertAdjacentHTML('beforeend', '<div class="loading-more">'
+      + loadingSpinner({ size: 'small', label: 'Loading more' }) + '</div>');
+  }
 }
 
 function rememberActiveListScroll() {
@@ -1003,6 +1012,7 @@ function rememberActiveListScroll() {
 
 function deactivateList() {
   rememberActiveListScroll();
+  setListLoading(false);
   detachLongPress(document.getElementById('content'));
   _activeListKey = null;
   _activeListOptions = null;
@@ -1038,6 +1048,7 @@ async function loadPagedList(options, navVersion) {
   _activeListKey = options.key;
   _activeListOptions = options;
 
+  setListLoading(false);
   setBreadcrumbLoading(true);
   if (hadMemory) {
     renderListEntry(options, entry, entry.scrollTop, null);
