@@ -17,7 +17,7 @@
     "@parcel/watcher": "2.6.0",
     "@xterm/addon-serialize": "0.14.0",
     "@xterm/headless": "6.0.0",
-    "node-pty": "1.1.0",
+    "node-pty": "1.2.0-beta.15",
     "sharp": "^0.35.3",
     "ws": "^8.21.3"
   }
