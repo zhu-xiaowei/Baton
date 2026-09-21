@@ -1176,7 +1176,8 @@ section:first-child > .home-section-heading > .home-section-toggle { padding-top
 }
 .recent-projects-show-more:disabled { cursor: wait; }
 .recent-projects-error { padding: 10px 14px; font-size: 12px; color: #f85149; }
-.home-device-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); }
+.home-devices { padding-bottom: calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); }
+.home-device-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0 12px; }
 .device-card { min-width: 0; padding: 12px 14px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; }
 .device-card .item-bottom { flex-wrap: wrap; gap: 4px 12px; }
 .recent-projects-show-more:focus-visible, .home-section-toggle:focus-visible, .recent-project-toggle:focus-visible,

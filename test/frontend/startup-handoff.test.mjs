@@ -209,10 +209,10 @@ test('active session skeleton and loaded heading share the original natural heig
   assert.doesNotMatch(headingStyle, /(?:min-|max-)?height\s*:/);
 });
 
-test('home devices reserve bottom safe-area spacing beyond their card padding', () => {
+test('home devices keep bottom safe-area spacing outside the collapsible list', () => {
   assert.match(
     styleSource,
-    /\.home-device-list \{[^}]*padding: 0 12px calc\(8px \+ var\(--sab, env\(safe-area-inset-bottom, 0px\)\)\);/,
+    /\.home-devices \{[^}]*padding-bottom: calc\(8px \+ var\(--sab, env\(safe-area-inset-bottom, 0px\)\)\);/,
   );
   assert.match(indexHtml, /id="devices-section" class="home-device-list"/);
 });
