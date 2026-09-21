@@ -26,7 +26,8 @@ test('an underfilled message viewport auto-prepends once and preserves the ancho
   content.scrollTop = 50;
   current.getBoundingClientRect = function () {
     const olderCount = container.querySelectorAll('.older-message').length;
-    return { top: 200 + olderCount * 100.25 };
+    const top = 250 + olderCount * 100.25 - content.scrollTop;
+    return new window.DOMRect(0, top, 300, 50);
   };
 
   Object.assign(globalThis, {

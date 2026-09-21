@@ -1946,12 +1946,16 @@ async function loadOlderAndPrepend() {
   if (state.wsLoadingOlder) return;
   var msgs = await loadOlderMessages(state.appState.session);
 
+  var viewportTop = content.getBoundingClientRect().top;
+  var candidates = Array.from(container.querySelectorAll(
+    '[data-tool-id], [data-message-id], [data-anchor], [data-native-id]'
+  )).map(function (node) {
+    var rect = node.getBoundingClientRect();
+    return { node: node, top: rect.top, bottom: rect.bottom, height: rect.height };
+  }).filter(function (item) { return item.height > 0 && item.bottom > viewportTop; });
   var loader = container.querySelector(':scope > .loading-older');
   if (loader && !state.wsHasMore) loader.classList.add('exhausted'); // no more history: reclaim its space
   if (!msgs || !msgs.length) return;
-
-  var anchor = loader ? loader.nextElementSibling : container.firstElementChild;
-  var prevTop = anchor ? anchor.getBoundingClientRect().top : 0;
 
   // Prepend after the loader so it stays the first child. Pagination updates
   // message state without reconciling the existing DOM, keeping this atomic.
@@ -1964,7 +1968,12 @@ async function loadOlderAndPrepend() {
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (window.renderKatexBlocks) renderKatexBlocks(container);
 
-  if (anchor) content.scrollTop += anchor.getBoundingClientRect().top - prevTop;
+  // Cross-page grouping can hide the old group head or shrink its parent row.
+  var saved = candidates.find(function (item) {
+    return item.node.isConnected && item.node.getBoundingClientRect().height > 0;
+  });
+  var anchor = saved && saved.node;
+  if (anchor) content.scrollTop += anchor.getBoundingClientRect().top - saved.top;
 
   if (_pinRo) { _pinRo.disconnect(); _pinRo = null; }
   clearTimeout(_pinRoTimer);
