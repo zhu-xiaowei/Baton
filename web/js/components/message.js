@@ -1,4 +1,5 @@
 import { extractAttachments, fileAttachmentHtml } from './attachment.js';
+import { systemEventId } from '../timeline.js';
 
 // Message bubble components
 (function () {
@@ -209,7 +210,8 @@ import { extractAttachments, fileAttachmentHtml } from './attachment.js';
   window.renderSystemEvent = function (msg) {
     const content = contentText(msg);
     if (!content) return '';
-    return `<div class="msg-system-event"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><span>${esc(content)}</span></div>`;
+    const segment = esc(systemEventId(msg)).replace(/"/g, '&quot;');
+    return `<div class="msg-system-event" data-timeline-segment="${segment}"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><span>${esc(content)}</span></div>`;
   };
 
   window.renderSummary = function (msg) {

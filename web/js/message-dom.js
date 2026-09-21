@@ -1,3 +1,5 @@
+import { attachTimelineTurn, messageSegments, turnTimeline } from './timeline.js';
+
 function domKey(element) {
   if (!element) return '';
   var messageId = element.dataset?.messageId || '';
@@ -140,7 +142,8 @@ function matchingStreamTurns(container, streamRow) {
   var turnId = streamRow?.dataset?.turnId || '';
   return Array.from(container.children).filter(function (element) {
     if (element === streamRow
-      || !element.classList.contains('assistant-turn')) {
+      || !element.classList.contains('assistant-turn')
+      || (element.dataset.timelineSegment || '') !== (streamRow.dataset.timelineSegment || '')) {
       return false;
     }
     var recoveredTurnId = element.dataset?.turnId || '';
@@ -244,6 +247,7 @@ function reconcileTopLevel(container, expected) {
       current = existing.find(function (candidate) {
         return !used.has(candidate)
           && candidate.classList.contains('assistant-turn')
+          && (candidate.dataset.timelineSegment || '') === (expectedElement.dataset.timelineSegment || '')
           && candidate.dataset?.turnId === expectedElement.dataset.turnId;
       }) || null;
     }
@@ -273,7 +277,7 @@ function reconcileTopLevel(container, expected) {
       used.add(current);
       reconcileChildren(current, expectedElement);
       current.className = expectedElement.className;
-      for (var attribute of ['data-turn-id', 'data-ts']) {
+      for (var attribute of ['data-turn-id', 'data-ts', 'data-timeline-segment']) {
         if (expectedElement.hasAttribute(attribute)) {
           current.setAttribute(attribute, expectedElement.getAttribute(attribute));
         } else {
@@ -313,23 +317,42 @@ function reconcileTopLevel(container, expected) {
   }
 }
 
-function attachStreamRow(container, streamPreview) {
-  var turnId = streamPreview?.dataset?.turnId || '';
-  var anchor = turnId
-    ? Array.from(container.children).find(function (element) {
-        return element.dataset?.anchor === turnId;
-      })
-    : null;
-  if (!anchor) {
+function elementSegment(element, segments) {
+  return segments.get('uuid:' + element.dataset.messageId)
+    ?? segments.get('native:' + element.dataset.nativeId)
+    ?? segments.get('tool:' + element.dataset.toolId);
+}
+
+function splitStreamRows(rows, segments, expected) {
+  var groups = new Map(rows.map(row => [
+    JSON.stringify([row.dataset.turnId, row.dataset.timelineSegment || '']), row,
+  ]));
+  for (var row of rows.slice()) {
+    var timeline = turnTimeline(expected, row.dataset.turnId || '');
+    for (var child of Array.from(row.children)) {
+      var provisional = row.classList.contains('stream-preview')
+        && !child.classList.contains('stream-block-committed')
+        && child.dataset.blockId && !child.dataset.messageId
+        && !child.dataset.nativeId && !child.dataset.toolId;
+      var segment = elementSegment(child, segments)
+        ?? (provisional && timeline.segment ? timeline.segment : row.dataset.timelineSegment || '');
+      if (segment === (row.dataset.timelineSegment || '')) continue;
+      var key = JSON.stringify([row.dataset.turnId, segment]);
+      var target = groups.get(key);
+      if (!target) {
+        target = row.cloneNode(false);
+        target.dataset.timelineSegment = segment;
+        groups.set(key, target);
+        rows.push(target);
+      }
+      target.appendChild(child);
+    }
+  }
+  return rows.filter(row => {
+    if (row.children.length) return true;
+    row.remove();
     return false;
-  }
-  var insertionPoint = anchor;
-  while (insertionPoint.nextElementSibling?.classList.contains('assistant-turn')
-    && insertionPoint.nextElementSibling !== streamPreview) {
-    insertionPoint = insertionPoint.nextElementSibling;
-  }
-  insertionPoint.insertAdjacentElement('afterend', streamPreview);
-  return true;
+  });
 }
 
 function isMetadata(message) {
@@ -407,10 +430,25 @@ export function createMessageDom(options) {
     }).filter(Boolean)) {
       streamedTurnIds.add(previewTurnId);
     }
+    var segments = messageSegments(state.wsAllMessages);
+    var streamedSegments = new Map();
+    for (var streamRow of streamRows) {
+      var covered = streamedSegments.get(streamRow.dataset.turnId) || new Set();
+      covered.add(streamRow.dataset.timelineSegment || '');
+      for (var child of Array.from(streamRow.children)) {
+        var childSegment = elementSegment(child, segments);
+        if (childSegment !== undefined) covered.add(childSegment);
+      }
+      streamedSegments.set(streamRow.dataset.turnId, covered);
+    }
     var renderMessages = streamedTurnIds.size
       ? state.wsAllMessages.map(function (message) {
+          var covered = streamedSegments.get(message.turnId);
+          var segment = segments.get('uuid:' + message.uuid)
+            ?? segments.get('native:' + message.nativeId) ?? '';
           if ((message?.type !== 'assistant' && message?.type !== 'summary')
-            || !streamedTurnIds.has(message.turnId)) {
+            || !streamedTurnIds.has(message.turnId)
+            || (covered && !covered.has(segment))) {
             return message;
           }
           return { ...message, _strictManaged: true };
@@ -422,6 +460,7 @@ export function createMessageDom(options) {
       options.runtime(),
       { realtimeOrder: true },
     );
+    streamRows = splitStreamRows(streamRows, segments, expected);
     reconcileTopLevel(container, expected);
 
     for (var placement of pendingPlacements) {
@@ -451,7 +490,7 @@ export function createMessageDom(options) {
         }
         recoveredTurn.remove();
       }
-      var restored = attachStreamRow(container, streamRow);
+      var restored = attachTimelineTurn(container, streamRow);
       var streamPlacement = streamPlacements.get(streamRow);
       if (streamPlacement?.isConnected) {
         if (restored) streamPlacement.remove();

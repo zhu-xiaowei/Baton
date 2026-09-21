@@ -1,4 +1,5 @@
 import './components/tool-run-group.js';
+import { systemEventId } from './timeline.js';
 
 // Message rendering orchestrator
 (function () {
@@ -244,6 +245,7 @@ import './components/tool-run-group.js';
       : !!detailPolicy.historyCollapsed;
     const html = [];
     let turnItems = []; // accumulate tl-items for current assistant turn
+    let timelineSegment = '';
 
     function flushTurn() {
       if (!turnItems.length) return;
@@ -257,7 +259,9 @@ import './components/tool-run-group.js';
       const turnAttr = turnId && items.every(item => item.turnId === turnId)
         ? ` data-turn-id="${escapeAttribute(turnId)}"`
         : '';
-      html.push(`<div class="assistant-turn"${turnAttr}>${items.map(i =>
+      const segmentAttr = timelineSegment
+        ? ` data-timeline-segment="${escapeAttribute(timelineSegment)}"` : '';
+      html.push(`<div class="assistant-turn"${turnAttr}${segmentAttr}>${items.map(i =>
         itemToHtml(i, i.ts, collapseToolDetails)).join('')}</div>`);
       turnItems = [];
     }
@@ -322,6 +326,7 @@ import './components/tool-run-group.js';
       if (msg.type === 'system_event') {
         flushTurn();
         html.push(renderSystemEvent(msg));
+        timelineSegment = systemEventId(msg);
         continue;
       }
 
@@ -332,6 +337,9 @@ import './components/tool-run-group.js';
           turnItems.push({
             type: 'summary',
             html: summary,
+            messageId: msg.uuid || '',
+            nativeId: msg.nativeId || '',
+            displayOrder: messageIndex,
             turnId: msg.turnId || '',
             ts: msg.timestamp,
           });

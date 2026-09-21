@@ -1,4 +1,5 @@
 import { refreshThinkingGroups } from './thinking.js';
+import { attachTimelineTurn, turnTimeline } from './timeline.js';
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -917,8 +918,8 @@ export class StreamingDomRenderer {
   }
 
   discardTurn(turnId) {
-    var turn = this.turnElements.get(turnId);
-    if (turn) {
+    var turns = this.managedTurnRows(turnId);
+    for (var turn of turns) {
       turn.remove();
       this.onMutation(turn);
     }
@@ -927,7 +928,21 @@ export class StreamingDomRenderer {
       if (key.startsWith(turnId + ':')) this.blockViews.delete(key);
     }
     this.refreshThinking();
-    return !!turn;
+    return turns.length > 0;
+  }
+
+  managedTurnRows(turnId) {
+    var rows = new Set([this.turnElements.get(turnId)]);
+    for (var view of this.blockViews.values()) {
+      if (view.turnId === turnId) rows.add(view.element.parentElement);
+    }
+    for (var row of Array.from(this.getContainer?.()?.children || [])) {
+      if (row.dataset.turnId === turnId
+        && (row.classList.contains('stream-preview') || row.classList.contains('stream-committed'))) {
+        rows.add(row);
+      }
+    }
+    return Array.from(rows).filter(row => row && (row.parentElement || row.children.length));
   }
 
   applyOperation(operation) {
@@ -950,15 +965,19 @@ export class StreamingDomRenderer {
   }
 
   createTurn(operation) {
-    if (this.turnElements.has(operation.turnId)) {
-      return this.turnElements.get(operation.turnId);
-    }
     var container = this.getContainer?.();
     if (!container) return null;
-    var existing = Array.from(container.children).find(function (element) {
+    var timeline = turnTimeline(container, operation.turnId);
+    var cached = this.turnElements.get(operation.turnId);
+    if (cached && (cached.dataset.timelineSegment || '') === timeline.segment
+      && (cached.parentElement === container || !timeline.anchor)) return cached;
+    var matchesSegment = function (element) {
       return element.classList?.contains('assistant-turn')
-        && element.dataset?.turnId === operation.turnId;
-    });
+        && element.dataset?.turnId === operation.turnId
+        && (element.dataset.timelineSegment || '') === timeline.segment;
+    };
+    var existing = timeline.rows.find(matchesSegment)
+      || Array.from(container.children).find(matchesSegment);
     if (existing) {
       this.turnElements.set(operation.turnId, existing);
       return existing;
@@ -966,6 +985,7 @@ export class StreamingDomRenderer {
     var turn = this.document.createElement('div');
     turn.className = 'assistant-turn stream-preview';
     turn.dataset.turnId = operation.turnId;
+    if (timeline.segment) turn.dataset.timelineSegment = timeline.segment;
     this.insertTurn(container, turn, operation.turnId);
     this.turnElements.set(operation.turnId, turn);
     this.onMutation(turn);
@@ -974,52 +994,40 @@ export class StreamingDomRenderer {
 
   insertTurn(container, turn, turnId) {
     var anchor = this.findAnchor(turnId);
-    if (!anchor) {
-      if (this.canAppendWithoutAnchor(container, turnId)) {
-        var permissionPrompt = container.querySelector(':scope > #permission-prompt');
-        if (permissionPrompt) permissionPrompt.before(turn);
-        else container.appendChild(turn);
-        return true;
-      }
-      return false;
-    }
-    var insertionPoint = anchor;
-    while (insertionPoint.nextElementSibling?.classList.contains('assistant-turn')
-      && insertionPoint.nextElementSibling !== turn) {
-      insertionPoint = insertionPoint.nextElementSibling;
-    }
-    if (insertionPoint.nextElementSibling === turn) return true;
-    insertionPoint.insertAdjacentElement('afterend', turn);
-    return true;
+    if (!anchor && !this.canAppendWithoutAnchor(container, turnId)) return false;
+    return attachTimelineTurn(container, turn);
   }
 
   attachTurnToAnchor(turnId) {
-    var turn = this.turnElements.get(turnId);
     var container = this.getContainer?.();
     var anchor = this.findAnchor(turnId);
-    if (!turn || !container || !anchor) return false;
-    var previousParent = turn.parentElement;
-    var previousSibling = turn.previousElementSibling;
-    this.insertTurn(container, turn, turnId);
-    if (turn.parentElement !== previousParent
-      || turn.previousElementSibling !== previousSibling) {
-      this.onMutation(turn);
+    if (!container || !anchor) return false;
+    for (var turn of this.managedTurnRows(turnId)) {
+      var previousParent = turn.parentElement;
+      var previousSibling = turn.previousElementSibling;
+      this.insertTurn(container, turn, turnId);
+      if (turn.parentElement !== previousParent
+        || turn.previousElementSibling !== previousSibling) {
+        this.onMutation(turn);
+      }
     }
     return true;
   }
 
   createBlock(operation) {
-    var turn = this.turnElements.get(operation.turnId)
-      || this.createTurn(operation);
-    if (!turn) return null;
     var key = blockViewKey(operation.turnId, operation.blockId);
     var existing = this.blockViews.get(key);
     if (existing) return existing.element;
-    var element = Array.from(turn.children).find(function (child) {
-      return child.dataset?.blockId === String(operation.blockId);
-    });
+    var element = Array.from(this.getContainer?.()?.children || [])
+      .filter(row => row.dataset.turnId === operation.turnId)
+      .flatMap(row => Array.from(row.children))
+      .find(child => child.dataset.blockId === String(operation.blockId));
+    var turn = element?.parentElement || this.createTurn(operation);
+    if (!turn) return null;
+    if (!this.turnElements.has(operation.turnId)) this.turnElements.set(operation.turnId, turn);
     var adopted = !!element;
     if (!element) {
+      if (!turn.classList.contains('stream-committed')) turn.classList.add('stream-preview');
       element = this.document.createElement('div');
       element.className = classForBlock(operation.block.kind);
       element.dataset.blockId = String(operation.blockId);
@@ -1171,26 +1179,31 @@ export class StreamingDomRenderer {
     this.refreshThinking();
     if (turn && !turn.children.length) {
       turn.remove();
-      this.turnElements.delete(operation.turnId);
+      if (this.turnElements.get(operation.turnId) === turn) {
+        this.turnElements.delete(operation.turnId);
+      }
     }
     if (turn) this.onMutation(turn);
   }
 
   completeTurn(operation) {
-    var turn = this.turnElements.get(operation.turnId);
-    if (!turn) return;
+    var turns = this.managedTurnRows(operation.turnId);
     for (var view of this.blockViews.values()) {
       if (view.turnId === operation.turnId) this.updateThinking(view, true);
     }
-    if (!turn.children.length) {
-      turn.remove();
-      this.turnElements.delete(operation.turnId);
+    for (var turn of turns) {
+      if (!turn.children.length) {
+        turn.remove();
+        if (this.turnElements.get(operation.turnId) === turn) {
+          this.turnElements.delete(operation.turnId);
+        }
+        this.onMutation(turn);
+        continue;
+      }
+      turn.classList.remove('stream-preview');
+      turn.classList.add('stream-committed');
       this.onMutation(turn);
-      return;
     }
-    turn.classList.remove('stream-preview');
-    turn.classList.add('stream-committed');
-    this.onMutation(turn);
   }
 
   ensureBlockKind(view) {
@@ -1307,7 +1320,9 @@ export class StreamingDomRenderer {
     if (this.thinkingTimer != null) this.cancelTimer(this.thinkingTimer);
     this.thinkingTimer = null;
     if (options.remove !== false) {
-      for (var turn of this.turnElements.values()) turn.remove();
+      for (var turnId of this.turnElements.keys()) {
+        for (var turn of this.managedTurnRows(turnId)) turn.remove();
+      }
     }
     this.turnElements.clear();
     this.blockViews.clear();
