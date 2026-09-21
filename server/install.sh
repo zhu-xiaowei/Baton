@@ -221,7 +221,9 @@ cp -r "$SRC_DIR"/. "$BUILD_CTX/"
 rm -f "$BUILD_CTX/test_api.py" 2>/dev/null || true
 cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
-cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" "$BUILD_CTX/bridge/"
+cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" \
+  "$ROOT_DIR/bridge/realtime-direct-protocol.mjs" \
+  "$ROOT_DIR/bridge/live-turn-stream.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 
