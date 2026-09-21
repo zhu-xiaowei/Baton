@@ -277,7 +277,10 @@ Bridge handling:
 
 On receiving sessionId:
   1. appState.session = msg.sessionId (replace '__new__')
-  2. loadLatestMessages(sessionId)  ← normal load flow
+  2. Adopt the real sessionId without resetting the active turn or its anchor
+  3. loadLatestMessages(sessionId, { preserveLive: true })
+     Merge REST echoes in place, then replay buffered WS events; do not replace the live view
+     Empty/stale history must not remove the first prompt or finish its local turn
 ```
 
 ## 10. Sending Messages & Optimistic Rendering

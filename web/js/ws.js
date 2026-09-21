@@ -759,7 +759,7 @@ function dispatchWsMessage(msg) {
         rekeyComposerDraft(msg.sessionId);
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
-        var loading = loadLatestMessages(msg.sessionId);
+        var loading = loadLatestMessages(msg.sessionId, { preserveLive: true });
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
         loading.then(function () {
           if (state.wsSessionId === msg.sessionId) {
@@ -1735,7 +1735,7 @@ function displayHistorySnapshot(data, pendingNodes) {
   return true;
 }
 
-async function loadLatestMessages(sessionId) {
+async function loadLatestMessages(sessionId, options = {}) {
   if (state.wsSessionId !== sessionId) return { ok: false, stale: true };
   selectWsSession(sessionId);
   var active = _historyFetchBarriers.current(sessionId);
@@ -1759,7 +1759,11 @@ async function loadLatestMessages(sessionId) {
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError) {
+      if (!restError && options.preserveLive) {
+        commitMessages(data.messages || [], { liveStateChanged: true });
+        state.wsHasMore = !!data.hasMore;
+        state.wsOldestTimestamp = data.oldestTimestamp || '';
+      } else if (!restError) {
         var snapshot = replaceHistoryTail(state.wsAllMessages,
           dedupeCodexUserMessages(data.messages || []));
         changed = JSON.stringify(state.wsAllMessages) !== JSON.stringify(snapshot.messages)
@@ -1806,7 +1810,7 @@ async function loadLatestMessages(sessionId) {
     if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
       displayHistorySnapshot({}, []);
     }
-    _suppressTurnEndRecovery = !restError && data.status === 'completed';
+    _suppressTurnEndRecovery = !options.preserveLive && !restError && data.status === 'completed';
     try {
       for (var event of barrier.events) routeTurnEvent(event);
       drainStrictStreamOperations();
