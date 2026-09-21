@@ -1226,7 +1226,14 @@ The result is broadcast to all app connections under the account.
 { "action": "heartbeat" }
 ```
 
-Same as App heartbeat.
+Bridge sends this every four minutes. The server updates the connection TTL and replies:
+
+```json
+{ "action": "heartbeat", "ts": 1789900000, "bridgeVersion": "1.0.0-abcdef0" }
+```
+
+Bridge checks for an update only when `bridgeVersion` differs from its installed version.
+Unchanged heartbeats do not trigger additional REST requests.
 
 ---
 

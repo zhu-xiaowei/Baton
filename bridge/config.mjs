@@ -10,7 +10,6 @@ export const CLAUDE_JOBS = path.join(os.homedir(), '.claude', 'jobs');
 export const CLAUDE_DAEMON_ROSTER = path.join(os.homedir(), '.claude', 'daemon', 'roster.json');
 export const VALID_TYPES = new Set(['user', 'assistant', 'summary', 'ai-title', 'custom-title', 'last-prompt']);
 export const CHECK_STOPPED_INTERVAL = 10 * 60_000; // 10 min — settle stale active rows (pool onExit + jsonl-gone are the fast paths)
-export const CHECK_UPDATE_INTERVAL = 300_000; // 5 min — self-update poll
 export const CODEX_STATUS_STALE_MS = 15 * 60_000;
 export const CODEX_STATUS_RECHECK_MS = 30_000;
 export const CODEX_WATCH_RESCAN_MS = 5 * 60_000;

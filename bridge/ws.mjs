@@ -73,6 +73,7 @@ import { SleepGapMonitor } from './sleep-gap-monitor.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 
 let _ws = null;
+let _checkUpdate = null;
 let _realtime = null;
 let _config = null;
 let _reconnectTimer = null;
@@ -112,8 +113,6 @@ let _terminalRemote = null;
 let _terminalRemoteLoading = null;
 let _sharedTerminals = null;
 let _sharedTerminalsLoading = null;
-
-export function hasTerminalSessions() { return (_sharedTerminals?.activeCount || 0) > 0; }
 
 async function handleSharedTerminalMessage(message) {
   if (!_sharedTerminalsLoading) {
@@ -489,6 +488,10 @@ function handleClaudeHookRequest(input, reply) {
   return () => dismissPendingControl(sessionId, requestId);
 }
 
+export function setUpdateChecker(checkUpdate) {
+  _checkUpdate = checkUpdate;
+}
+
 export function initWs(config) {
   _config = config;
   if (!_claudeHookServer) {
@@ -683,6 +686,7 @@ function connect() {
     _realtime = new RealtimeSender({ send, fallback: event => send(JSON.stringify(event)) });
     _realtime.start();
     _consecutiveFailures = 0;
+    void _checkUpdate?.();
     _heartbeatTimer = setInterval(() => {
       if (_ws?.readyState === WebSocket.OPEN) {
         _ws.send(JSON.stringify({ action: 'heartbeat' }));
@@ -853,7 +857,10 @@ async function handleMessage(msg) {
       break;
     }
     case 'heartbeat':
-      // Server heartbeat response — no-op
+      if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
+        && msg.bridgeVersion !== 'dev' && msg.bridgeVersion !== BRIDGE_VERSION) {
+        await _checkUpdate?.();
+      }
       break;
     default:
       console.log(`[ws] unknown action: ${msg.action}`);

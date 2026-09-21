@@ -78,7 +78,7 @@ HMAC 防内容注入，不消除持有该 API 权限者造成的带宽或资源�
 先按原发布流程更新服务端模板和 Lambda ZIP，等待 route 部署完成，再更新 Bridge 和前端。
 仅更新 Python 文件不够；仅更新前端/Bridge 也不能启用新的 HTTP route。
 不要使用旧的 `deploy-terminal-direct.py` 代替此次完整模板更新，它只负责历史终端增量部署。
-正式更新 Bridge 可能影响已有进程/终端，应沿用原发布前确认流程，不自动重启。
+Bridge 启动和 WebSocket 重连后检查一次更新；现有 4 分钟心跳回应携带 `bridgeVersion`，仅版本不一致时再次检查，不设置独立更新定时器。服务端 API 和 WS Lambda 必须同步传入 `AppVersion`。新包校验通过后自动重启，不因已有进程/终端延后更新，运行中的会话可能被中断。
 
 回滚可关闭 WsHandler 的 `REALTIME_DIRECT_ENABLED` 并重连 Bridge/页面，或回退 Bridge/前端版本。
 保留原消息路由和历史存储接口，不需要迁移数据。

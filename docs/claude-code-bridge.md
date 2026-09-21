@@ -94,8 +94,14 @@ connection logic, without changing its heartbeat, retry, handshake, or DNS setti
   12 consecutive failures. All handshakes retain the 15-second timeout.
   Detecting another sleep gap or connecting successfully resets failures.
 - Application-level heartbeats remain every four minutes, without adding a
-  heartbeat-reply timeout. The ten-second local timer sends no network requests
-  while the connection is healthy, and no rapid post-wake retry window is added.
+  heartbeat-reply timeout or a rapid post-wake retry window. Heartbeat replies
+  include `bridgeVersion`; only a version mismatch triggers `/api/version`.
+  Startup and successful WebSocket reconnect also check once, including after
+  resume. There is no dedicated update timer, and the ten-second sleep detector
+  sends no network requests while the connection is healthy. Version checks
+  never overlap and time out after ten seconds.
+  A validated update restarts Bridge even with active terminals, interrupting
+  its existing terminal/agent processes rather than waiting for them to finish.
 - The detector uses Node.js timers and wall-clock readings, with no native OS
   APIs, and is shared by macOS, Windows, and Linux Bridge processes. It handles
   both clocks that pause during sleep and clocks that continue advancing.
@@ -278,7 +284,8 @@ Server → App:  { action: "messages", sessionId: "abc", messages: [...] }
 ```
 App → Server:  { action: "heartbeat" }
 Bridge → Server:  { action: "heartbeat" }
-(every 5 minutes)
+Server → Bridge:  { action: "heartbeat", ts: 1789900000, bridgeVersion: "1.0.0-abcdef0" }
+(Bridge: every 4 minutes)
 ```
 
 ### Send message

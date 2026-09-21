@@ -541,6 +541,7 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "APP_VERSION": { "Ref": "AppVersion" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
             "REALTIME_DIRECT_ENABLED": "1",

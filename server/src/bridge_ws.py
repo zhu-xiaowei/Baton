@@ -508,7 +508,10 @@ def _handle_message(event, connection_id, endpoint):
             ExpressionAttributeNames={"#t": "ttl"},
             ExpressionAttributeValues={":ttl": int(time.time()) + 86400},
         )
-        _post_to_connection(endpoint, connection_id, {"action": "heartbeat", "ts": int(time.time())})
+        response = {"action": "heartbeat", "ts": int(time.time())}
+        if role == "bridge":
+            response["bridgeVersion"] = os.environ.get("BRIDGE_VERSION", os.environ.get("APP_VERSION", "dev"))
+        _post_to_connection(endpoint, connection_id, response)
         return {"statusCode": 200}
 
     return {"statusCode": 200}
