@@ -571,7 +571,8 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       const followBottom = localResize && current.requestedSize.followBottom;
       if (localResize) current.requestedSize = null;
       const following = resizeTerminal(message.cols, message.rows, followBottom);
-      if (localResize && following && document.hasFocus() && document.activeElement === terminal.textarea) {
+      if (localResize && following && terminal.buffer.active.type === 'normal'
+        && document.hasFocus() && document.activeElement === terminal.textarea) {
         terminal.scrollToBottom();
         screen.scrollTop = 0;
       }
@@ -699,15 +700,18 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   const touchViewport = isTouchViewport();
   function viewport() {
     if (view !== current) return;
+    const keyboardWasOpen = current.keyboardOpen;
     const keyboardClosed = syncTerminalViewport(current);
+    const keyboardOpened = window.__BATON_NATIVE_MOBILE__ && !keyboardWasOpen && current.keyboardOpen;
+    const followBottom = (keyboardOpened || keyboardClosed) && terminal.buffer.active.type === 'normal';
     current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
-    if (keyboardClosed) {
-      current.mobileControls?.reset();
-      clearResizeAnchor();
+    if (keyboardClosed) current.mobileControls?.reset();
+    if (keyboardClosed || followBottom) clearResizeAnchor();
+    if (followBottom) {
       terminal.scrollToBottom();
       screen.scrollTop = 0;
     }
-    if (!document.hidden) useLocalSize({ followBottom: keyboardClosed });
+    if (!document.hidden) useLocalSize({ followBottom });
   }
   current.observer = new ResizeObserver(() => {
     if (!document.hidden) useLocalSize();
