@@ -31,7 +31,7 @@ test('shared source view renders line numbers, highlights, and truncation', () =
   delete globalThis.window;
 });
 
-test('Git Code and file preview reuse the shared source renderer', () => {
+test('Git Code reuses the complete file viewer and its source renderer', () => {
   const diff = fs.readFileSync(
     new URL('../../web/js/git/diff-viewer.js', import.meta.url),
     'utf8',
@@ -40,9 +40,9 @@ test('Git Code and file preview reuse the shared source renderer', () => {
     new URL('../../web/js/project/file-viewer.js', import.meta.url),
     'utf8',
   );
-  assert.match(diff, /import \{ renderSourceView \} from '\.\.\/project\/source-view\.js'/);
+  assert.match(diff, /import \{ closeFileViewer, openFile \} from '\.\.\/project\/file-viewer\.js'/);
   assert.match(viewer, /import \{ renderSourceView \} from '\.\/source-view\.js'/);
-  assert.match(diff, /renderSourceView\(body,/);
+  assert.match(diff, /openFile\(path, path\.split\('\/'\)\.pop\(\),/);
   assert.match(viewer, /renderSourceView\(body,/);
   assert.doesNotMatch(diff, /git-full-code/);
 });

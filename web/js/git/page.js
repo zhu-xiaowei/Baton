@@ -35,7 +35,7 @@ function ensurePage() {
   document.addEventListener('keydown', function (event) {
     if (!page.hidden
       && event.key === 'Escape'
-      && !document.querySelector('#gitDiffOverlay:not([hidden])')) {
+      && document.getElementById('fileOverlay')?.style.display !== 'flex') {
       onBack?.();
     }
   });

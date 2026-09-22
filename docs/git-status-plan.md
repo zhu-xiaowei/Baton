@@ -128,7 +128,10 @@ web/js/git/status-render.js
   Section、文件行、折叠和操作按钮。
 
 web/js/git/diff-viewer.js
-  Diff/Code 查看和 Diff2Html 渲染。
+  接入完整 Project File Viewer，提供 Git Diff 加载和刷新恢复状态。
+
+web/js/project/file-viewer.js
+  共用文件详情页、下载、Code/Preview 和可选 Diff 渲染。
 
 web/js/git/discard-confirm.js
   Discard 单文件/全部确认。
@@ -729,16 +732,17 @@ Bridge 侧只有 Diff 需要临时内容缓存；Git status 每次都执行真�
 ```text
 打开完整文件 Viewer
 → 默认显示 Diff
-→ Header 提供 Diff / Code 切换
+→ 共用文件详情页 Header、下载、Code/Preview 和返回逻辑，额外提供 Diff 选项
 ```
 
 - Diff：标准 unified diff + Diff2Html line-by-line。
-- Code：复用 `project_files.read` 获取完整工作区文件，并复用 Project File Viewer 的
-  行号、语法高亮和截断提示 renderer。
+- Code/Preview：直接使用完整 Project File Viewer，通过 `project_files.read` 获取
+  当前工作区文件，共用行号、语法高亮、截断提示及 HTML/Markdown 预览。
+- 下载：复用文件详情页下载按钮和原生/浏览器下载流程，下载当前工作区文件而非 patch。
 - staged 文件的 Code 第一版显示当前 working-tree 内容。
-- deleted 文件无当前正文时禁用 Code 或显示删除提示。
+- deleted 文件无当前正文时禁用 Code/Preview 和下载，仍可查看 Diff。
 - 第一版不在 Viewer 重复放 stage/unstage。
-- Header、Back 和 Diff/Code Tabs 复用现有 Workspace / File Preview 样式。
+- Git 入口不再创建独立详情页，共用同一个文件详情页 DOM 和侧滑返回层。
 - Diff 和 Code 加载都使用统一居中 loading spinner。
 - Diff 双行号支持四位数；行号和代码使用一个整体滚动容器。
 - Diff2Html 内层 overflow 被关闭，避免一次横滑被两个容器竞争。

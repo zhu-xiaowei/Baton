@@ -41,37 +41,32 @@ html.native-mobile .workspace-switch svg.git-branch-icon {
 }
 html.native-mobile .project-files-page-breadcrumb,
 html.native-mobile .git-status-header,
-html.native-mobile .project-terminal-header,
-html.native-mobile .git-diff-header {
+html.native-mobile .project-terminal-header {
   padding-left: 2px;
   padding-right: 2px;
 }
 html.native-mobile .project-files-page-breadcrumb > .back-button,
 html.native-mobile .git-status-header > .back-button,
-html.native-mobile .project-terminal-header > .back-button,
-html.native-mobile .git-diff-header > .back-button {
+html.native-mobile .project-terminal-header > .back-button {
   width: 32px;
   flex-basis: 32px;
   margin-right: 8px;
 }
 html.native-mobile .project-files-page-breadcrumb > .back-button::before,
 html.native-mobile .git-status-header > .back-button::before,
-html.native-mobile .project-terminal-header > .back-button::before,
-html.native-mobile .git-diff-header > .back-button::before {
+html.native-mobile .project-terminal-header > .back-button::before {
   left: -4px;
   width: 36px;
 }
 html.native-mobile .project-files-page-breadcrumb > .back-button svg,
 html.native-mobile .git-status-header > .back-button svg,
-html.native-mobile .project-terminal-header > .back-button svg,
-html.native-mobile .git-diff-header > .back-button svg {
+html.native-mobile .project-terminal-header > .back-button svg {
   transform: translateX(2px);
 }
 @media (orientation: landscape) {
   html.native-mobile .project-files-page-breadcrumb,
   html.native-mobile .git-status-header,
-  html.native-mobile .project-terminal-header,
-  html.native-mobile .git-diff-header {
+  html.native-mobile .project-terminal-header {
     padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 2px);
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 2px);
   }

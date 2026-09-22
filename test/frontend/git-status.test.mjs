@@ -248,10 +248,10 @@ test('Git Diff and Code mode survive refresh for the same session', () => {
 
   const diff = fs.readFileSync(path.join(ROOT, 'web/js/git/diff-viewer.js'), 'utf8');
   const status = fs.readFileSync(path.join(ROOT, 'web/js/git/status.js'), 'utf8');
-  assert.match(diff, /current\.mode = mode;\s*saveGitDiffView\(state\.appState, current\)/);
+  assert.match(diff, /view\.mode = mode === 'diff' \? 'diff' : 'code';\s*saveGitDiffView\(state\.appState, view\)/);
   assert.match(diff, /export function restoreGitDiffView\(\)/);
-  assert.match(diff, /clearGitDiffView\(\);\s*if \(!overlay \|\| overlay\.hidden\)/);
-  assert.match(diff, /if \(state\.gitStatusOpen\) window\.refreshGitStatus\?\.\(\)/);
+  assert.match(diff, /clearGitDiffView\(\);\s*if \(!current\) return false;\s*return closeFileViewer\(\)/);
+  assert.match(diff, /if \(closeOptions\.refresh !== false && state\.gitStatusOpen\) window\.refreshGitStatus\?\.\(\)/);
   assert.match(status, /window\.connectWs\(\);\s*restoreGitDiffView\(\);\s*refreshGitStatus\(\)/);
   assert.match(status, /state\.gitStatusOpen = false;\s*closeGitDiff\(\);\s*clearGitStatusView\(\)/);
 });
@@ -265,10 +265,10 @@ test('Workspace Header actions match top-bar height without growing desktop head
   assert.match(workspaceCss, /\.workspace-switch svg\.git-branch-icon \{[\s\S]*?width: 20px;/);
   assert.match(workspaceCss, /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.git-status-header > \.workspace-switch \{[\s\S]*?margin-right: 2px;/);
   assert.match(workspaceCss, /html\.native-mobile \.workspace-switch svg\.git-branch-icon \{[\s\S]*?width: 22px;/);
-  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb,[\s\S]*?html\.native-mobile \.git-status-header,[\s\S]*?html\.native-mobile \.git-diff-header \{[\s\S]*?padding-left: 2px;[\s\S]*?padding-right: 2px;/);
-  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button,[\s\S]*?html\.native-mobile \.git-diff-header > \.back-button \{[\s\S]*?width: 32px;[\s\S]*?flex-basis: 32px;[\s\S]*?margin-right: 8px;/);
-  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button::before,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button::before,[\s\S]*?html\.native-mobile \.git-diff-header > \.back-button::before \{[\s\S]*?left: -4px;[\s\S]*?width: 36px;/);
-  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button svg,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button svg,[\s\S]*?html\.native-mobile \.git-diff-header > \.back-button svg \{[\s\S]*?transform: translateX\(2px\);/);
+  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb,[\s\S]*?html\.native-mobile \.git-status-header,[\s\S]*?html\.native-mobile \.project-terminal-header \{[\s\S]*?padding-left: 2px;[\s\S]*?padding-right: 2px;/);
+  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button,[\s\S]*?html\.native-mobile \.project-terminal-header > \.back-button \{[\s\S]*?width: 32px;[\s\S]*?flex-basis: 32px;[\s\S]*?margin-right: 8px;/);
+  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button::before,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button::before,[\s\S]*?html\.native-mobile \.project-terminal-header > \.back-button::before \{[\s\S]*?left: -4px;[\s\S]*?width: 36px;/);
+  assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button svg,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button svg,[\s\S]*?html\.native-mobile \.project-terminal-header > \.back-button svg \{[\s\S]*?transform: translateX\(2px\);/);
   assert.match(css, /\.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:20px;height:20px/);
   assert.match(css, /html\.native-mobile #top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon,html\.native-mobile \.edge-back-top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:22px;height:22px;transform:translate\(calc\(-50% \+ 2px\),-50%\)/);
   assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?width: 16px; height: 16px;/);
@@ -285,33 +285,34 @@ test('Workspace Header actions match top-bar height without growing desktop head
 
 test('Diff back consumes Escape before Git page can close', () => {
   const diff = fs.readFileSync(path.join(ROOT, 'web/js/git/diff-viewer.js'), 'utf8');
+  const viewer = fs.readFileSync(path.join(ROOT, 'web/js/project/file-viewer.js'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const style = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
   const page = fs.readFileSync(path.join(ROOT, 'web/js/git/page.js'), 'utf8');
   const css = fs.readFileSync(path.join(ROOT, 'web/css/git-status.css'), 'utf8');
-  assert.match(diff, /stopImmediatePropagation\(\)/);
-  assert.match(diff, /\}, true\);/);
-  assert.match(diff, /class="path-breadcrumb git-diff-header"/);
-  assert.match(diff, /class="git-diff-tabs file-tabs"/);
-  assert.match(diff, /class="file-tab" type="button" data-mode="diff"/);
-  assert.match(diff, /import \{ loadingSpinner \} from '\.\.\/components\/loading\.js'/);
-  assert.match(diff, /showLoading\('Loading diff'\)/);
-  assert.match(diff, /showLoading\('Loading code'\)/);
-  assert.match(diff, /class="file-loading"/);
-  assert.doesNotMatch(diff, /clampHorizontalScroll|addEventListener\('scroll'/);
-  assert.match(diff, /body\.scrollLeft = 0;\s*body\.scrollTop = 0;/);
-  assert.doesNotMatch(diff, /git-view-loading|Loading diff…|Loading code…/);
-  assert.doesNotMatch(diff, /ui\.highlightCode\(\)/);
-  assert.doesNotMatch(css, /\.git-diff-tabs button/);
-  assert.doesNotMatch(css, /\.git-diff-header\{[^}]*min-height:/);
-  assert.match(css, /\.git-diff-title\{[^}]*color:#e6edf3/);
-  assert.match(css, /\.git-diff-tabs\{margin-right:4px;transform:none\}/);
-  assert.match(css, /\.git-diff-body\{[^}]*overflow:auto;[^}]*overscroll-behavior-x:auto;[^}]*overscroll-behavior-y:contain;[^}]*scroll-behavior:auto;[^}]*touch-action:pan-x pan-y;[^}]*-webkit-overflow-scrolling:touch/);
+  assert.match(diff, /import \{ closeFileViewer, openFile \} from '\.\.\/project\/file-viewer\.js'/);
+  assert.doesNotMatch(diff, /createElement|addEventListener|renderSourceView/);
+  assert.match(viewer, /stopImmediatePropagation\(\)/);
+  assert.match(viewer, /\}, true\);/);
+  assert.match(html, /id="fileOverlayTabs" class="file-tabs"/);
+  assert.match(html, /class="file-tab" data-mode="diff"/);
+  assert.match(viewer, /import \{ loadingSpinner \} from '\.\.\/components\/loading\.js'/);
+  assert.match(viewer, /loadingSpinner\(\{ label: 'Loading diff' \}\)/);
+  assert.match(viewer, /loadingSpinner\(\{ label: 'Loading file' \}\)/);
+  assert.match(viewer, /class="file-loading"/);
+  assert.doesNotMatch(viewer, /clampHorizontalScroll|addEventListener\('scroll'/);
+  assert.match(viewer, /body\.scrollLeft = 0;\s*body\.scrollTop = 0;/);
+  assert.doesNotMatch(viewer, /git-view-loading|Loading diff…|Loading code…/);
+  assert.doesNotMatch(viewer, /ui\.highlightCode\(\)/);
+  assert.doesNotMatch(css, /\.git-diff-(overlay|header|title|tabs|body)/);
+  assert.match(style, /\.file-modal-body \{[^}]*overflow: auto;[^}]*overscroll-behavior-x: auto;[^}]*overscroll-behavior-y: contain;[^}]*scroll-behavior: auto;[^}]*touch-action: pan-x pan-y;[^}]*-webkit-overflow-scrolling: touch/);
   assert.match(css, /\.git-diff-render\{min-width:max-content\}/);
   assert.match(css, /\.git-diff-render \.d2h-file-wrapper\{margin:0!important;border:0!important;border-radius:0!important\}/);
   assert.match(css, /\.git-diff-render \.d2h-file-diff\{overflow:visible\}/);
   assert.match(css, /\.git-diff-render \.d2h-code-linenumber\{[^}]*position:static;[^}]*width:5\.5em;[^}]*min-width:5\.5em;[^}]*max-width:5\.5em;[^}]*border-left:0/);
   assert.match(css, /\.git-diff-render \.d2h-code-linenumber \.line-num1,[\s\S]*?\.git-diff-render \.d2h-code-linenumber \.line-num2\{[^}]*width:2\.75em;[^}]*padding:0 \.1em/);
   assert.match(css, /\.git-diff-render \.d2h-code-line\{width:auto;padding:0 \.5em\}/);
-  assert.match(page, /#gitDiffOverlay:not\(\[hidden\]\)/);
+  assert.match(page, /getElementById\('fileOverlay'\)\?\.style\.display !== 'flex'/);
 });
 
 test('Files and Git preserve one level of secondary-page return history', () => {

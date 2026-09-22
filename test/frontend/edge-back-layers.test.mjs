@@ -64,7 +64,7 @@ test('project files use an independent full-screen layer and generic nested edge
   assert.match(edgeBackCss, /z-index: var\(--edge-back-foreground-z, 301\) !important/);
 });
 
-test('Git status and Diff use two nested edge-back layers', () => {
+test('Git status and the shared file viewer use two nested edge-back layers', () => {
   const status = readFileSync(
     new URL('../../web/js/git/status.js', import.meta.url),
     'utf8',
@@ -73,18 +73,23 @@ test('Git status and Diff use two nested edge-back layers', () => {
     new URL('../../web/js/git/diff-viewer.js', import.meta.url),
     'utf8',
   );
+  const viewer = readFileSync(
+    new URL('../../web/js/project/file-viewer.js', import.meta.url),
+    'utf8',
+  );
   assert.match(
     status,
     /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeGitStatus,[\s\S]*foregroundSelectors: \['#gitStatusPage'\],[\s\S]*foregroundZIndex: 900/,
   );
   assert.match(status, /underlaySelectors: function \(\) \{[\s\S]*return returnToFiles \? \['#projectFilesPage'\] : \[\]/);
   assert.match(
-    diff,
-    /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeGitDiff,[\s\S]*foregroundSelectors: \['#gitDiffOverlay'\],[\s\S]*foregroundZIndex: 1001/,
+    viewer,
+    /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeFileViewer,[\s\S]*foregroundSelectors: \['#fileOverlay'\],[\s\S]*guardZIndex: 1001/,
   );
+  assert.match(diff, /import \{ closeFileViewer, openFile \} from '\.\.\/project\/file-viewer\.js'/);
   const edgeBack = readFileSync(
     new URL('../../web/js/edge-back.js', import.meta.url),
     'utf8',
   );
-  assert.match(edgeBack, /\.path-breadcrumb, \.top-bar, \.git-diff-header/);
+  assert.match(edgeBack, /\.path-breadcrumb, \.top-bar/);
 });

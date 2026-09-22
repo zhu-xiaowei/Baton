@@ -6,7 +6,7 @@ import {
   backButtonHtml,
 } from '../../web/js/components/back-button.js';
 
-test('page headers and Git diff share one back button component', () => {
+test('page headers share a back button and Git diff reuses file viewer navigation', () => {
   assert.match(BACK_ICON_SVG, /m15 6-6 6 6 6/);
   assert.match(backButtonHtml(), /class="back-button"/);
 
@@ -35,7 +35,7 @@ test('page headers and Git diff share one back button component', () => {
   assert.match(setupEntry, /mountBackButton\(document\.getElementById\('setupBackButton'\), leaveSetup\)/);
   assert.match(setupEntry, /attachPageEdgeBackGesture\(leaveSetup,/);
   assert.match(gitPage, /backButtonHtml\(\{ className: 'git-status-back' \}\)/);
-  assert.match(gitDiff, /backButtonHtml\(\{ className: 'git-diff-back' \}\)/);
+  assert.match(gitDiff, /import \{ closeFileViewer, openFile \} from '\.\.\/project\/file-viewer\.js'/);
   assert.doesNotMatch(gitDiff, /aria-label="Back">‹/);
   assert.doesNotMatch(setupHtml, /class="back"/);
   assert.doesNotMatch(setupHtml, /<polyline points="15 18 9 12 15 6"/);

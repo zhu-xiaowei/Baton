@@ -828,6 +828,7 @@
       <span id="fileOverlayTitle" class="file-modal-title"></span>
       <button type="button" id="file-download-btn" class="file-action file-download-action" onclick="downloadViewedFile()" title="Download file" aria-label="Download file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg></button>
       <span id="fileOverlayTabs" class="file-tabs" style="display:none">
+        <button class="file-tab" data-mode="diff" style="display:none" onclick="setFileViewMode('diff')">Diff</button>
         <button class="file-tab active" data-mode="source" onclick="setFileViewMode('source')">Code</button>
         <button class="file-tab" data-mode="preview" onclick="setFileViewMode('preview')">Preview</button>
       </span>

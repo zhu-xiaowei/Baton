@@ -15,6 +15,7 @@ function esc(s) {
 }
 
 var _current = null;
+var _view = null;
 var _downloadTarget = null;
 
 function downloadStatus(text) {
@@ -25,7 +26,7 @@ function downloadStatus(text) {
 function updateDownloadButtons() {
   const busy = !!_downloadTarget?.busy;
   document.querySelectorAll('#file-download-btn, #fileOverlay .file-download-action').forEach(button => {
-    button.disabled = busy;
+    button.disabled = !_downloadTarget || busy;
     button.classList.toggle('is-downloading', busy);
     button.setAttribute('aria-busy', String(busy));
     if (busy && !button.querySelector('.file-download-spinner')) {
@@ -129,11 +130,18 @@ function setBody(html) {
   updateDownloadButtons();
 }
 
-function showTabs(show) {
+function updateTabs() {
   var t = document.getElementById('fileOverlayTabs');
   if (!t) return;
-  t.style.display = show ? '' : 'none';
-  if (show) setActiveTab('source');
+  var hasDiff = !!_view?.options.loadDiff;
+  var previewable = isPreviewable(_current?.path || _view?.path);
+  t.style.display = hasDiff || (_current && previewable) ? '' : 'none';
+  t.querySelectorAll('.file-tab').forEach(function (button) {
+    var mode = button.dataset.mode;
+    button.style.display = (mode === 'diff' && !hasDiff) || (mode === 'preview' && !previewable) ? 'none' : '';
+    button.disabled = mode !== 'diff' && _view?.options.canRead === false;
+  });
+  setActiveTab(_view?.mode || 'source');
 }
 
 function setActiveTab(mode) {
@@ -155,26 +163,65 @@ function showPreview(html) {
 }
 
 function setFileViewMode(mode) {
-  if (!_current) return;
+  if (!_view || !['diff', 'source', 'preview'].includes(mode)) return;
+  if (mode === 'diff' ? !_view.options.loadDiff : _view.options.canRead === false) return;
+  if (mode === 'preview' && !isPreviewable(_current?.path || _view.path)) return;
+  if (_view.mode !== mode) _view.options.onModeChange?.(mode);
+  _view.mode = mode;
+  _fileRequestToken++;
+  var token = ++_previewToken;
+  var body = document.getElementById('fileOverlayBody');
+  if (body) {
+    body.scrollLeft = 0;
+    body.scrollTop = 0;
+  }
   setActiveTab(mode);
+  if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
+  if (!_current) {
+    setBody('<div class="file-loading">'
+      + loadingSpinner({ label: 'Loading file' }) + '</div>');
+    if (_view.path.startsWith('baton-file:')) return showAttachment(_view.path.slice('baton-file:'.length));
+    return sendFileRequest(_view.path, _view.line, _view.snippet, 1);
+  }
   if (mode !== 'preview') {
-    _previewToken++;
     return renderSource(_current.path, _current.text, _current.truncated, _current.line, _current.snippet);
   }
   if (isMarkdown(_current.path) && window.renderMd) {
-    _previewToken++;
     setBody('<div class="assistant-text md-preview">' + window.renderMd(_current.text) + '</div>');
     var mdDir = _current.path.slice(0, _current.path.lastIndexOf('/') + 1);
     var mdBody = document.querySelector('#fileOverlayBody .md-preview');
     if (mdBody) inlineImages(mdBody, mdDir); // mutates this node; harmless if view later changes
     return;
   }
-  var token = ++_previewToken;
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading preview' }) + '</div>');
   buildPreviewHtml(_current.text, _current.path).then(function (html) {
     if (token === _previewToken) showPreview(html);
   });
+}
+
+async function showDiff(loadDiff, token) {
+  setBody('<div class="file-loading">'
+    + loadingSpinner({ label: 'Loading diff' }) + '</div>');
+  try {
+    var results = await Promise.all([loadDiff(), window.loadDiffViewer?.()]);
+    if (token !== _previewToken) return;
+    var result = results[0];
+    setBody(result.truncated ? '<div class="git-diff-warning">Showing the first 5 MB.</div>' : '');
+    var host = document.createElement('div');
+    host.className = 'git-diff-render';
+    document.getElementById('fileOverlayBody').appendChild(host);
+    var ui = new window.Diff2HtmlUI(host, result.content || '', {
+      drawFileList: false,
+      outputFormat: 'line-by-line',
+      matching: 'lines',
+      colorScheme: 'dark',
+      highlight: true,
+    });
+    ui.draw();
+  } catch (error) {
+    if (token === _previewToken) setBody('<div class="file-error">' + esc(error.message) + '</div>');
+  }
 }
 
 function isRelativeUrl(u) { return u && !/^(https?:|data:|blob:|#|\/\/|mailto:)/i.test(u); }
@@ -251,27 +298,31 @@ function buildPreviewHtml(html, basePath) {
   return Promise.all(jobs).then(function () { return '<!DOCTYPE html>' + doc.documentElement.outerHTML; });
 }
 
-function closeFileViewer(options) {
+export function closeFileViewer(options) {
   options = options || {};
   var wasOpen = overlay()?.style.display === 'flex';
+  var onClose = _view?.options.onClose;
   _edgeBack.deactivate();
   var o = overlay();
   if (o) o.style.display = 'none';
   _current = null;
+  _view = null;
   _downloadTarget = null;
   downloadStatus('');
   _fileRequestToken++;
   _previewToken++;
   setBody('');
-  showTabs(false);
-  if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
+  updateTabs();
+  if (wasOpen && onClose) onClose(options);
+  else if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
+  return wasOpen;
 }
 
 async function sendFileRequest(absPath, line, snippet, retriesLeft) {
   var token = ++_fileRequestToken;
   try {
     var message = await requestProjectFiles('read', {
-      projectHash: currentProjectHash(),
+      projectHash: _view.options.projectHash || currentProjectHash(),
       path: absPath,
     }, {
       timeout: FILE_REQ_TIMEOUT,
@@ -304,11 +355,14 @@ async function sendFileRequest(absPath, line, snippet, retriesLeft) {
   }
 }
 
-function openFile(absPath, displayName, lineHint, matchId) {
+export function openFile(absPath, displayName, lineHint, matchId, options) {
   if (!absPath) return;
   var o = overlay();
   if (!o) return;
-  _downloadTarget = { path: absPath, projectHash: currentProjectHash(),
+  closeFileViewer({ refresh: false });
+  options = options || {};
+  _view = { path: absPath, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', options: options };
+  _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '' };
   downloadStatus('');
   updateDownloadButtons();
@@ -317,14 +371,12 @@ function openFile(absPath, displayName, lineHint, matchId) {
   titleEl.title = absPath;
   _current = null;
   _previewToken++;
-  showTabs(false);
-  setBody('<div class="file-loading">'
-    + loadingSpinner({ label: 'Loading file' }) + '</div>');
+  updateTabs();
   o.style.display = 'flex';
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
-  if (absPath.startsWith('baton-file:')) showAttachment(absPath.slice('baton-file:'.length));
-  else sendFileRequest(absPath, lineHint || '', matchId ? snippetForTool(matchId) : '', 1);
+  setFileViewMode(options.loadDiff && options.mode !== 'source' ? 'diff' : 'source');
+  return true;
 }
 
 async function showAttachment(key) {
@@ -377,8 +429,8 @@ function snippetForTool(toolId) {
 
 function render(absPath, text, truncated, lineHint, snippet) {
   _current = { path: absPath, text: text, truncated: truncated, line: lineHint, snippet: snippet };
-  showTabs(isPreviewable(absPath));
-  renderSource(absPath, text, truncated, lineHint, snippet);
+  updateTabs();
+  setFileViewMode(_view.mode);
 }
 
 function renderSource(absPath, text, truncated, lineHint, snippet) {
@@ -449,8 +501,11 @@ function handleFileResponse(msg, line, snippet, token) {
 
 document.addEventListener('keydown', function (e) {
   var o = overlay();
-  if (o && o.style.display === 'flex' && e.key === 'Escape') closeFileViewer();
-});
+  if (!o || o.style.display !== 'flex' || e.key !== 'Escape') return;
+  closeFileViewer();
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 Object.assign(window, {
   openFile: openFile,

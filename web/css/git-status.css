@@ -38,11 +38,6 @@
 .git-status-added,.git-status-untracked{color:#3fb950}.git-status-modified,.git-status-type_changed{color:#d29922}
 .git-status-deleted,.git-status-conflicted{color:#f85149}.git-status-renamed,.git-status-copied{color:#58a6ff}
 .git-error{margin:14px 16px;padding:12px;border-radius:8px;background:rgba(248,81,73,.12);color:#ff7b72;font-size:13px}
-.git-diff-overlay{position:fixed;inset:0;z-index:1001;display:flex;flex-direction:column;background:#0d1117}.git-diff-overlay[hidden]{display:none}
-.git-diff-header{position:relative}
-.git-diff-title{min-width:0;flex:1;overflow:hidden;color:#e6edf3;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
-.git-diff-tabs{margin-right:4px;transform:none}
-.git-diff-body{flex:1;min-height:0;overflow:auto;padding-bottom:var(--sab,env(safe-area-inset-bottom,0px));overscroll-behavior-x:auto;overscroll-behavior-y:contain;scroll-behavior:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
 .git-diff-render{min-width:max-content}.git-diff-render .d2h-file-header{display:none}
 .git-diff-render .d2h-file-wrapper{margin:0!important;border:0!important;border-radius:0!important}
 .git-diff-render .d2h-file-diff{overflow:visible}
