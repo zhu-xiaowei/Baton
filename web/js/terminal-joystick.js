@@ -98,8 +98,12 @@ export function attachTerminalJoystick({ page, screen, canInput, onStart, onEnd,
       gesture.active = true;
       onStart();
       const bounds = screen.getBoundingClientRect();
-      const centerX = Math.max(bounds.left + 78, Math.min(bounds.right - 78, gesture.x));
-      const centerY = Math.max(bounds.top + 78, Math.min(bounds.bottom - 78, gesture.y));
+      const insetX = Math.min(88, (bounds.right - bounds.left) / 2);
+      const insetY = Math.min(88, (bounds.bottom - bounds.top) / 2);
+      const centerX = Math.max(bounds.left + insetX, Math.min(bounds.right - insetX, gesture.x));
+      const centerY = Math.max(bounds.top + insetY, Math.min(bounds.bottom - insetY, gesture.y));
+      gesture.x = centerX;
+      gesture.y = centerY;
       overlay.style.left = `${centerX}px`;
       overlay.style.top = `${centerY}px`;
       overlay.hidden = false;
@@ -135,9 +139,12 @@ export function attachTerminalJoystick({ page, screen, canInput, onStart, onEnd,
     if (previous && Math.abs(Math.abs(deltaX) - Math.abs(deltaY)) < 6) {
       horizontal = previous === 'ArrowLeft' || previous === 'ArrowRight';
     }
-    gesture.key = distance < 12 ? null : horizontal
+    const travel = horizontal ? Math.abs(deltaX) : Math.abs(deltaY);
+    const crossTravel = horizontal ? Math.abs(deltaY) : Math.abs(deltaX);
+    const key = horizontal
       ? (deltaX < 0 ? 'ArrowLeft' : 'ArrowRight') : (deltaY < 0 ? 'ArrowUp' : 'ArrowDown');
-    const interval = distance < 32 ? 300 : distance < 64 ? 150 : 70;
+    gesture.key = travel >= 25 && crossTravel <= 22 && (travel <= 69 || previous === key) ? key : null;
+    const interval = travel < 40 ? 300 : travel < 60 ? 150 : 70;
     if (gesture.key !== previous || gesture.interval !== interval) {
       window.clearTimeout(repeatTimer);
       gesture.interval = interval;
