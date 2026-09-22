@@ -117,7 +117,8 @@ test('the mobile terminal uses the page scrollbar width and colors', async conte
     browser.state.appState = { device: 'Mac', project: { hash: 'project', name: 'Project' }, session: null };
     await browser.window.openProjectTerminalPage();
     const options = browser.window.__terminalOptions;
-    assert.equal(options.overviewRuler?.width, 6);
+    assert.equal(options.scrollbar?.width, 6);
+    assert.equal(options.fontSize, 14);
     assert.equal(options.theme.scrollbarSliderBackground, '#3a4049');
     assert.equal(options.theme.scrollbarSliderHoverBackground, '#4a5059');
     assert.equal(options.theme.scrollbarSliderActiveBackground, '#4a5059');

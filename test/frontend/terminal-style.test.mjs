@@ -30,15 +30,15 @@ test('the mobile terminal selector keeps the same compact height as the web sele
 test('the terminal scrollbar has rounded corners without changing auto-hide behavior', () => {
   const dom = new JSDOM('<!doctype html><html class="native-mobile"><head><style>' + terminalCss + xtermCss + '</style></head>'
     + '<body><main class="project-terminal-screen"><div class="xterm"><div class="xterm-scrollable-element">'
-    + '<div class="scrollbar vertical visible"><div class="slider"></div></div>'
+    + '<div class="xterm-scrollbar xterm-vertical xterm-visible"><div class="xterm-slider"></div></div>'
     + '</div></div></main></body></html>');
   try {
-    const scrollbar = dom.window.document.querySelector('.scrollbar');
-    const slider = scrollbar.querySelector('.slider');
+    const scrollbar = dom.window.document.querySelector('.xterm-scrollbar');
+    const slider = scrollbar.querySelector('.xterm-slider');
     assert.equal(dom.window.getComputedStyle(slider).borderRadius, '3px');
     assert.equal(dom.window.getComputedStyle(scrollbar).backgroundColor, 'rgba(0, 0, 0, 0)');
     assert.equal(dom.window.getComputedStyle(scrollbar).opacity, '1');
-    scrollbar.className = 'scrollbar vertical invisible fade';
+    scrollbar.className = 'xterm-scrollbar xterm-vertical xterm-invisible xterm-fade';
     assert.equal(dom.window.getComputedStyle(scrollbar).opacity, '0');
     assert.equal(dom.window.getComputedStyle(scrollbar).pointerEvents, 'none');
   } finally {

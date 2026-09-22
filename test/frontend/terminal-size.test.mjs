@@ -106,6 +106,61 @@ test('shared terminals adopt the current device size after synchronization witho
     const synced = (sessionId = 'first') => socket.receive({ type: 'synced', epoch: sessionId, snapshotId: sessionId });
     const resizes = () => socket.sent.filter(message => message.type === 'resize');
 
+    await context.test('touch taps open the keyboard without a compatibility click, but swipes and scrollbars do not', async () => {
+      localSize = { cols: 40, rows: 20 };
+      await open();
+      ready(localSize);
+      synced();
+      await tick();
+      const screen = document.querySelector('.project-terminal-screen');
+      const pointer = (type, y = 100, target = screen) => {
+        const event = new window.Event(type, { bubbles: true, cancelable: true });
+        Object.assign(event, { pointerType: 'touch', pointerId: 1, isPrimary: true, clientX: 100, clientY: y });
+        target.dispatchEvent(event);
+      };
+      let ended = 0;
+      const onEnd = () => ended++;
+      document.addEventListener('touchend', onEnd);
+      const end = () => {
+        const event = new window.Event('touchend', { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'touches', { value: [] });
+        screen.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false, 'xterm must still receive the touch lifecycle');
+      };
+      try {
+        pointer('pointerdown');
+        pointer('pointerup');
+        end();
+        assert.equal(document.activeElement, terminal.textarea);
+        assert.equal(ended, 1, 'the app does not swallow xterm touchend events');
+        terminal.blur();
+        const click = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+        screen.dispatchEvent(click);
+        assert.equal(click.defaultPrevented, true, 'a later compatibility click must not refocus');
+        assert.notEqual(document.activeElement, terminal.textarea);
+        pointer('pointerdown');
+        pointer('pointermove', 160);
+        pointer('pointerup', 160);
+        end();
+        assert.notEqual(document.activeElement, terminal.textarea);
+        const scrollbar = document.createElement('div');
+        scrollbar.className = 'xterm-scrollbar';
+        screen.appendChild(scrollbar);
+        pointer('pointerdown', 100, scrollbar);
+        pointer('pointerup', 100, scrollbar);
+        end();
+        assert.notEqual(document.activeElement, terminal.textarea);
+        terminal.options.disableStdin = true;
+        pointer('pointerdown');
+        pointer('pointerup');
+        end();
+        assert.notEqual(document.activeElement, terminal.textarea);
+      } finally {
+        document.removeEventListener('touchend', onEnd);
+        terminalModule.closeProjectTerminal();
+      }
+    });
+
     for (const [label, previousSize, nextSize] of [
       ['desktop resumes a phone terminal', { cols: 40, rows: 20 }, { cols: 140, rows: 45 }],
       ['phone resumes a desktop terminal', { cols: 140, rows: 45 }, { cols: 40, rows: 20 }],

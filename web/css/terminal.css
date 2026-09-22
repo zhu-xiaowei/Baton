@@ -42,8 +42,8 @@
   touch-action: pan-x pinch-zoom;
 }
 .project-terminal-screen .xterm { height: 100%; }
-.project-terminal-screen .xterm .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
-.project-terminal-screen .xterm-scrollable-element > .scrollbar > .slider { border-radius: 3px; }
+.project-terminal-screen .xterm:not(.allow-transparency) .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
+.project-terminal-screen .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider { border-radius: 3px; }
 html.native-mobile .project-terminal-screen { margin-right: 0; }
 .project-terminal-confirm { z-index: 1000; }
 .project-terminal-selector { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

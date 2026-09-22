@@ -3,7 +3,6 @@ import { backButtonHtml } from './components/back-button.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { registerEdgeBackLayer } from './edge-back.js';
 import { clearTerminalView } from './terminal-view-state.js';
-import { attachTerminalTouchScroll } from './terminal-touch-scroll.js';
 
 let view = null;
 let retained = null;
@@ -208,7 +207,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   const { page, device, projectHash, selectionKey } = current;
   const terminal = current.terminal = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 1000, allowProposedApi: true,
     fontFamily: 'Menlo, Monaco, Consolas, monospace', disableStdin: true,
-    overviewRuler: { width: 6 },
+    scrollbar: { width: 6 },
     theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3',
       scrollbarSliderBackground: '#3a4049', scrollbarSliderHoverBackground: '#4a5059',
       scrollbarSliderActiveBackground: '#4a5059', overviewRulerBorder: '#00000000' } });
@@ -216,7 +215,6 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   terminal.loadAddon(fit);
   const screen = page.querySelector('.project-terminal-screen');
   terminal.open(screen);
-  current.listeners.push(attachTerminalTouchScroll(terminal, screen));
   const listen = (target, name, callback, options) => {
     target.addEventListener(name, callback, options);
     current.listeners.push(() => target.removeEventListener(name, callback, options));
@@ -229,7 +227,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   listen(page, 'pointerdown', event => {
     clearKeyboardTap();
     if (event.pointerType !== 'touch' || event.isPrimary === false
-      || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .scrollbar')) return;
+      || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .xterm-scrollbar')) return;
     const dismiss = document.activeElement === terminal.textarea && current.keyboardOpen;
     if (!dismiss && !screen.contains(event.target)) return;
     keyboardTap = { id: event.pointerId, x: event.clientX, y: event.clientY, dismiss };
@@ -250,6 +248,14 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     handledKeyboardClick = true;
     terminal.blur();
     consumeKeyboardTap(event);
+  }, true);
+  listen(page, 'touchend', event => {
+    if (event.touches.length || !keyboardTap?.released) return;
+    keyboardTap = null;
+    handledKeyboardClick = true;
+    if (terminal.options.disableStdin) return;
+    if (document.activeElement === terminal.textarea) terminal.blur();
+    terminal.focus();
   }, true);
   for (const name of ['mousedown', 'mouseup', 'click']) {
     listen(page, name, event => {
