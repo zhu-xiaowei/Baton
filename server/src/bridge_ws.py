@@ -7,7 +7,9 @@ import json
 import os
 import time
 import hashlib
+import re
 import boto3
+from botocore.exceptions import ClientError
 from project.files_ws import handle_project_files
 from project.git_ws import handle_git_status
 from terminal_ws import handle_terminal_poc
@@ -101,7 +103,57 @@ def _query_connections(account_id, role):
     while "LastEvaluatedKey" in resp:
         resp = _connections_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
         items.extend(resp.get("Items", []))
-    return items
+    if role != "bridge":
+        return items
+    active = {}
+    owners = {}
+    for item in items:
+        record = _connections_table.get_item(Key={"connectionId": item["connectionId"]},
+            ConsistentRead=True).get("Item")
+        if not record:
+            continue
+        owner_key = record.get("bridgeOwner")
+        if owner_key:
+            if owner_key not in owners:
+                owners[owner_key] = _connections_table.get_item(Key={"connectionId": owner_key},
+                    ConsistentRead=True).get("Item", {})
+            current_id = owners[owner_key].get("activeConnectionId")
+            if not current_id:
+                continue
+            if current_id != record["connectionId"]:
+                record = _connections_table.get_item(Key={"connectionId": current_id},
+                    ConsistentRead=True).get("Item")
+            if not record or record.get("bridgeOwner") != owner_key:
+                continue
+        if record.get("role") == role and record.get("accountId") == account_id:
+            active[record["connectionId"]] = record
+    return list(active.values())
+
+
+def _claim_bridge_connection(item, context, endpoint):
+    connected_at = int(context.get("connectedAt") or context.get("requestTimeEpoch") or time.time() * 1000)
+    try:
+        previous = _connections_table.update_item(
+            Key={"connectionId": item["bridgeOwner"]},
+            UpdateExpression="SET activeConnectionId = :connection, connectionOrder = :order, #ttl = :ttl",
+            ConditionExpression="attribute_not_exists(connectionOrder) OR connectionOrder <= :order",
+            ExpressionAttributeNames={"#ttl": "ttl"},
+            ExpressionAttributeValues={":connection": item["connectionId"],
+                ":order": f"{connected_at:016d}:{item['connectionId']}", ":ttl": item["ttl"]},
+            ReturnValues="ALL_OLD").get("Attributes", {})
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        _connections_table.delete_item(Key={"connectionId": item["connectionId"]})
+        return False
+    previous_id = previous.get("activeConnectionId")
+    if previous_id and previous_id != item["connectionId"]:
+        try:
+            _disconnect_terminal_data(endpoint, previous_id)
+        except Exception:
+            print("Replaced Bridge socket cleanup deferred")
+        _handle_disconnect(previous_id, endpoint)
+    return True
 
 
 def _post_to_connection(endpoint, connection_id, data):
@@ -215,6 +267,9 @@ def _handle_connect(event, connection_id):
 
     if not api_key:
         return {"statusCode": 401}
+    bridge_id = qs.get("bridgeId") if role == "bridge" else None
+    if bridge_id is not None and not re.fullmatch(r"[a-f0-9]{32}", bridge_id):
+        return {"statusCode": 400}
 
     context = event.get("requestContext", {})
     connected_endpoint = f"https://{context.get('domainName', '')}/{context.get('stage', '')}"
@@ -238,6 +293,9 @@ def _handle_connect(event, connection_id):
         item["deviceName"] = device
     if role == "bridge" and version:
         item["bridgeVersion"] = version
+    if bridge_id:
+        identity = json.dumps([account_id, device, bridge_id], separators=(",", ":"))
+        item["bridgeOwner"] = "BRIDGE#" + hashlib.sha256(identity.encode()).hexdigest()
     if role == "bridge" and qs.get("terminal") == "2":
         item["terminalProtocol"] = 2
         if qs.get("terminalStartup") == "1":
@@ -247,6 +305,8 @@ def _handle_connect(event, connection_id):
     if role in ("app", "bridge") and qs.get("realtime") == "1":
         item["realtimeVersion"] = 1
     _connections_table.put_item(Item=item)
+    if bridge_id and not _claim_bridge_connection(item, context, connected_endpoint):
+        return {"statusCode": 409}
 
     return {"statusCode": 200}
 
@@ -335,6 +395,12 @@ def _handle_message(event, connection_id, endpoint):
 
     role = conn.get("role", "app")
     account_id = conn.get("accountId", "")
+    if role == "bridge" and conn.get("bridgeOwner"):
+        owner = _connections_table.get_item(Key={"connectionId": conn["bridgeOwner"]},
+            ConsistentRead=True).get("Item", {})
+        if owner.get("activeConnectionId") != connection_id:
+            _disconnect_terminal_data(endpoint, connection_id)
+            return _handle_disconnect(connection_id, endpoint)
     if action == "realtime_direct":
         return handle_realtime_direct(body, conn, connection_id, _realtime_service(endpoint))
     if action == "terminal_direct":
@@ -502,12 +568,24 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "heartbeat":
         # Update TTL
-        _connections_table.update_item(
-            Key={"connectionId": connection_id},
-            UpdateExpression="SET #t = :ttl",
-            ExpressionAttributeNames={"#t": "ttl"},
-            ExpressionAttributeValues={":ttl": int(time.time()) + 86400},
-        )
+        ttl = int(time.time()) + 86400
+        try:
+            if conn.get("bridgeOwner"):
+                _connections_table.update_item(Key={"connectionId": conn["bridgeOwner"]},
+                    UpdateExpression="SET #ttl = :ttl", ConditionExpression="activeConnectionId = :connection",
+                    ExpressionAttributeNames={"#ttl": "ttl"},
+                    ExpressionAttributeValues={":ttl": ttl, ":connection": connection_id})
+            _connections_table.update_item(
+                Key={"connectionId": connection_id},
+                UpdateExpression="SET #t = :ttl",
+                ConditionExpression="attribute_exists(connectionId)",
+                ExpressionAttributeNames={"#t": "ttl"},
+                ExpressionAttributeValues={":ttl": ttl},
+            )
+        except ClientError as error:
+            if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            return {"statusCode": 200}
         response = {"action": "heartbeat", "ts": int(time.time())}
         if role == "bridge":
             response["bridgeVersion"] = os.environ.get("BRIDGE_VERSION", os.environ.get("APP_VERSION", "dev"))

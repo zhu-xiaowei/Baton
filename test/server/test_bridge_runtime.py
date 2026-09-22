@@ -1366,6 +1366,7 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
 
 def test_bridge_connection_persists_running_version(monkeypatch):
     connections = FakeTable()
+    monkeypatch.setattr(connections, "update_item", lambda **kwargs: connections.updates.append(kwargs) or {})
     monkeypatch.setattr(bridge_ws, "_connections_table", connections)
     response = bridge_ws._handle_connect(
         {
@@ -1374,6 +1375,7 @@ def test_bridge_connection_persists_running_version(monkeypatch):
                 "role": "bridge",
                 "device": "Mac",
                 "version": "0.2.0-test",
+                "bridgeId": "a" * 32,
             },
         },
         "connection-1",
@@ -1381,6 +1383,9 @@ def test_bridge_connection_persists_running_version(monkeypatch):
     assert response == {"statusCode": 200}
     assert connections.items[0]["deviceName"] == "Mac"
     assert connections.items[0]["bridgeVersion"] == "0.2.0-test"
+    assert connections.items[0]["bridgeOwner"].startswith("BRIDGE#")
+    assert connections.updates[0]["Key"]["connectionId"] == connections.items[0]["bridgeOwner"]
+    assert connections.updates[0]["ExpressionAttributeValues"][":connection"] == "connection-1"
 
 
 def test_bridge_recovery_complete_broadcasts_to_apps(monkeypatch):

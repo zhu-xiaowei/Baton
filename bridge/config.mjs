@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { randomBytes } from 'crypto';
 
 export const BRIDGE_HOME = path.join(os.homedir(), '.baton-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
@@ -61,6 +62,7 @@ export function loadConfig() {
       apiKey: cliArgs.apiKey,
       deviceName,
       deviceDisplayName: existing?.deviceDisplayName || deviceName,
+      bridgeId: existing?.bridgeId,
     };
     saveConfig(config);
     console.log(`Config saved to ${CONFIG_PATH}`);
@@ -74,6 +76,10 @@ export function loadConfig() {
   } else {
     console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');
     process.exit(1);
+  }
+  if (!/^[a-f0-9]{32}$/.test(config.bridgeId || '')) {
+    config.bridgeId = randomBytes(16).toString('hex');
+    saveConfig(config);
   }
   return config;
 }

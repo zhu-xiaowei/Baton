@@ -81,24 +81,26 @@ and computes Device/Project aggregates once. The steps below describe the Claude
 ### Bridge connection recovery
 
 `bridge/sleep-gap-monitor.mjs` adds sleep detection to the existing WebSocket
-connection logic, without changing its heartbeat, retry, handshake, or DNS settings.
+connection logic, without changing its periodic heartbeat, retry, handshake, or DNS settings.
 
 - A local ten-second timer detects wall-clock gaps longer than 15 seconds
   (the normal ten-second interval plus five seconds of scheduling slack).
-  After sleep (or a long event-loop stall/forward clock jump), it discards the
-  old socket and reconnects immediately, resetting any existing retry backoff.
+  After sleep (or a long event-loop stall/forward clock jump), an open socket
+  gets one heartbeat probe and is reused if it replies within 15 seconds.
+  An in-flight handshake keeps its existing watchdog; a missing connection
+  bypasses retry backoff. Only failed connections are replaced.
   This is a portable sleep-gap heuristic, not a native screen-unlock listener;
   locking/unlocking an otherwise healthy, awake machine does not reconnect it.
-- Only resume recovery changes: after the immediate attempt, failed connections
+- After the immediate recovery attempt, failed connections
   retain the original five-second retry delay, switching to five minutes after
   12 consecutive failures. All handshakes retain the 15-second timeout.
   Detecting another sleep gap or connecting successfully resets failures.
-- Application-level heartbeats remain every four minutes, without adding a
-  heartbeat-reply timeout or a rapid post-wake retry window. Heartbeat replies
+- Periodic application-level heartbeats remain every four minutes; the
+  reply timeout applies only to the one-off resume probe. Heartbeat replies
   include `bridgeVersion`; only a version mismatch triggers `/api/version`.
   Startup and successful WebSocket reconnect also check once, including after
   resume. There is no dedicated update timer, and the ten-second sleep detector
-  sends no network requests while the connection is healthy. Version checks
+  sends no network requests during normal timer ticks. Version checks
   never overlap and time out after ten seconds.
   A validated update restarts Bridge even with active terminals, interrupting
   its existing terminal/agent processes rather than waiting for them to finish.
@@ -106,11 +108,22 @@ connection logic, without changing its heartbeat, retry, handshake, or DNS setti
   APIs, and is shared by macOS, Windows, and Linux Bridge processes. It handles
   both clocks that pause during sleep and clocks that continue advancing.
   WSL/VM environments must first resume the Bridge process. A healthy process
-  normally attempts reconnection within zero to ten seconds after it resumes;
+  normally checks its connection within zero to ten seconds after it resumes;
   this is not a hard deadline or a guarantee that Wi-Fi/VPN/DNS is ready.
 - Connection, retry, and heartbeat timers remain independent of this monitor.
-  Shutdown stops monitoring. Terminating a suspended handshake safely absorbs
-  its late error event; existing queued messages still flush after reconnecting.
+  Shutdown stops monitoring and attempts a bounded WebSocket close handshake.
+  Duplicate connect calls reuse open/connecting sockets, and late callbacks
+  from replaced sockets cannot reconnect the current one. Queued messages
+  still flush after reconnecting.
+- A persistent `bridgeId` identifies this installation across reconnects and
+  updates. The server atomically records its current control connection and
+  retires its predecessor without relying on a disconnect notification.
+  Strong reads exclude superseded records even while index cleanup lags.
+  Different installations sharing a device name are still rejected as ambiguous;
+  app windows continue to share the same resident terminal sessions.
+  Deploy server support before updating Bridge. Pre-upgrade records without
+  `bridgeId` cannot be safely attributed to an installation and must expire or
+  be removed after confirming they are stale.
 
 Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs` (sleep-gap
 detection and the existing connection code's backoff reset/socket cleanup).

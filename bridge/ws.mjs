@@ -79,6 +79,7 @@ let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
 let _connectWatchdog = null;
+let _resumeProbeTimer = null;
 let _consecutiveFailures = 0;
 const _sendWhenConnected = [];
 const HEARTBEAT_INTERVAL = 4 * 60_000;
@@ -89,9 +90,19 @@ const SLOW_RECONNECT_THRESHOLD = 12;
 const _resumeMonitor = new SleepGapMonitor({
   onResume: (gap) => {
     if (!_config?.wsUrl) return;
-    console.log(`[ws] resume/clock gap detected (${Math.round(gap)}ms), reconnecting immediately`);
+    console.log(`[ws] resume/clock gap detected (${Math.round(gap)}ms), checking connection`);
     _consecutiveFailures = 0;
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (_ws?.readyState === WebSocket.OPEN) {
+      if (_resumeProbeTimer) return;
+      const socket = _ws;
+      _resumeProbeTimer = setTimeout(() => {
+        _resumeProbeTimer = null;
+        if (_ws === socket) { resetConnection(); connect(); }
+      }, CONNECT_TIMEOUT);
+      socket.send(JSON.stringify({ action: 'heartbeat' }));
+      return;
+    }
     connect();
   },
 });
@@ -182,6 +193,23 @@ async function gitStatusModule() {
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 export async function shutdownInteractions() {
+  _config = null;
+  clearTimeout(_reconnectTimer);
+  clearTimeout(_connectWatchdog);
+  clearTimeout(_resumeProbeTimer);
+  clearInterval(_heartbeatTimer);
+  const socket = _ws;
+  _ws = null;
+  if (socket) {
+    socket.removeAllListeners();
+    socket.on('error', () => {});
+    await new Promise(resolve => {
+      const timeout = setTimeout(() => { socket.terminate(); resolve(); }, 1500);
+      socket.once('close', () => { clearTimeout(timeout); resolve(); });
+      if (socket.readyState === WebSocket.OPEN) socket.close(1000, 'Bridge shutting down');
+      else socket.terminate();
+    });
+  }
   _realtime?.dispose();
   _resumeMonitor.stop();
   _terminalRemote?.dispose();
@@ -627,33 +655,15 @@ export function createTurnMessagesEvent(sessionId, turnId, messages) {
 }
 
 function connect() {
-  if (!_config) return;
-  _realtime?.dispose();
-  _realtime = null;
-  _terminalRemote?.closeAll();
-  _sharedTerminals?.detachAll();
-
-  // Derive WS URL from REST URL: https://xxx.execute-api.xxx.amazonaws.com/v1
-  // → wss://xxx-ws.execute-api.xxx.amazonaws.com/v1
-  // For now, use a WS URL env var or derive from config
+  if (!_config?.wsUrl) return;
+  if (_ws?.readyState === WebSocket.OPEN || _ws?.readyState === WebSocket.CONNECTING) return;
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  resetConnection();
   const wsUrl = _config.wsUrl;
-  if (!wsUrl) {
-    // WS API not configured yet — silently skip
-    return;
-  }
-
-  // Clean up old connection
-  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
-  if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
-  if (_ws) {
-    _ws.removeAllListeners();
-    _ws.on('error', () => {});
-    _ws.terminate();
-    _ws = null;
-  }
 
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&realtime=1`
     + `&device=${encodeURIComponent(_config.deviceName)}`
+    + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
     + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2&terminalStartup=1' : '');
   console.log(`[ws] connecting to ${wsUrl}...`);
@@ -661,23 +671,19 @@ function connect() {
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
   // here but it bypasses split-horizon/VPN DNS config and returns unreachable
   // public IPs (varying each call), causing WS handshake timeouts.
-  _ws = new WebSocket(url, { handshakeTimeout: CONNECT_TIMEOUT });
+  const socket = _ws = new WebSocket(url, { handshakeTimeout: CONNECT_TIMEOUT });
 
   _connectWatchdog = setTimeout(() => {
-    if (_ws && _ws.readyState !== WebSocket.OPEN) {
+    if (_ws === socket && socket.readyState !== WebSocket.OPEN) {
       console.log('[ws] connect timeout, forcing reconnect...');
-      _ws.removeAllListeners();
-      _ws.on('error', () => {});
-      _ws.terminate();
-      _ws = null;
       scheduleReconnect();
     }
   }, CONNECT_TIMEOUT);
 
-  _ws.on('open', () => {
+  socket.on('open', () => {
+    if (_ws !== socket) return;
     if (_connectWatchdog) { clearTimeout(_connectWatchdog); _connectWatchdog = null; }
     console.log('[ws] connected');
-    const socket = _ws;
     const send = payload => {
       if (socket !== _ws || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 1024 * 1024) return false;
       socket.send(payload);
@@ -688,8 +694,8 @@ function connect() {
     _consecutiveFailures = 0;
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(() => {
-      if (_ws?.readyState === WebSocket.OPEN) {
-        _ws.send(JSON.stringify({ action: 'heartbeat' }));
+      if (_ws === socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: 'heartbeat' }));
       }
     }, HEARTBEAT_INTERVAL);
     while (_sendWhenConnected.length > 0) {
@@ -701,41 +707,68 @@ function connect() {
     }
   });
 
-  _ws.on('message', async (data) => {
+  socket.on('message', async (data) => {
+    if (_ws !== socket) return;
     try {
       const msg = JSON.parse(data.toString());
+      if (msg.action === 'heartbeat') {
+        clearTimeout(_resumeProbeTimer);
+        _resumeProbeTimer = null;
+      }
       await handleMessage(msg);
     } catch (err) {
       console.error(`[ws] message error: ${err.message}`);
     }
   });
 
-  _ws.on('close', (code, reason) => {
+  socket.on('close', (code, reason) => {
+    if (_ws !== socket) return;
     console.log(`[ws] disconnected (code=${code}, reason=${reason?.toString() || ''}), reconnecting...`);
     scheduleReconnect();
   });
 
-  _ws.on('error', (err) => {
+  socket.on('error', (err) => {
+    if (_ws !== socket) return;
     console.error(`[ws] error: ${err.message} (code: ${err.code}, type: ${err.type})`);
     scheduleReconnect();
   });
 
-  _ws.on('unexpected-response', (_req, res) => {
+  socket.on('unexpected-response', (_req, res) => {
+    if (_ws !== socket) return;
     console.error(`[ws] unexpected-response: ${res.statusCode}`);
     let body = '';
     res.on('data', (chunk) => body += chunk);
     res.on('end', () => {
+      if (_ws !== socket) return;
       console.error(`[ws] response body: ${body.slice(0, 200)}`);
       scheduleReconnect();
     });
   });
 }
 
-function scheduleReconnect() {
+function resetConnection() {
+  clearTimeout(_resumeProbeTimer);
+  _resumeProbeTimer = null;
+  clearTimeout(_connectWatchdog);
+  _connectWatchdog = null;
+  clearInterval(_heartbeatTimer);
+  _heartbeatTimer = null;
+  const socket = _ws;
+  _ws = null;
+  if (socket) {
+    socket.removeAllListeners();
+    socket.on('error', () => {});
+    socket.terminate();
+  }
   _realtime?.dispose();
   _realtime = null;
   _terminalRemote?.closeAll();
   _sharedTerminals?.detachAll();
+}
+
+function scheduleReconnect() {
+  if (!_config) return;
+  resetConnection();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
   const delay = _consecutiveFailures >= SLOW_RECONNECT_THRESHOLD

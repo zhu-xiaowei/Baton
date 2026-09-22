@@ -105,6 +105,7 @@ function connectionHarness() {
   const timers = new Map();
   let timerId = 1;
   class FakeSocket extends EventEmitter {
+    static CONNECTING = 0;
     static OPEN = 1;
     constructor() {
       super();
@@ -112,12 +113,13 @@ function connectionHarness() {
       sockets.push(this);
     }
     terminate() { this.readyState = 3; this.emit('error', new Error('terminated during handshake')); }
-    send() {}
+    send(data) { this.sent = JSON.parse(data); }
   }
   const context = vm.createContext({
     WebSocket: FakeSocket, SleepGapMonitor, RealtimeSender,
     console: { log() {}, error() {} }, process: { platform: process.platform }, BRIDGE_VERSION: 'test',
     _terminalRemote: null, _sharedTerminals: null,
+    handleMessage: async () => {},
     setTimeout: (callback, delay) => { const id = timerId++; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),
     setInterval: (callback, delay) => { const id = timerId++; timers.set(id, { callback, delay }); return id; },
@@ -132,7 +134,7 @@ test('wake bypasses existing five-minute backoff without changing heartbeat or r
   const state = connectionHarness();
   state.run('_consecutiveFailures = 11; scheduleReconnect();');
   assert.equal([...state.timers.values()][0].delay, 300_000);
-  state.run('_resumeMonitor.onResume(60_000);');
+  state.run('_resumeMonitor.onResume(60_000); connect();');
   assert.equal(state.sockets.length, 1);
   assert.equal(state.run('_consecutiveFailures'), 0);
   assert.equal(state.run('_reconnectTimer'), null);
@@ -140,19 +142,32 @@ test('wake bypasses existing five-minute backoff without changing heartbeat or r
   state.sockets[0].readyState = 1;
   state.sockets[0].emit('open');
   assert.deepEqual([...state.timers.values()].map((timer) => timer.delay), [240_000]);
+  state.run('_resumeMonitor.onResume(60_000);');
+  assert.equal(state.sockets.length, 1);
+  assert.deepEqual(state.sockets[0].sent, { action: 'heartbeat' });
+  assert.ok(state.run('_resumeProbeTimer'));
+  state.sockets[0].emit('message', JSON.stringify({ action: 'heartbeat' }));
+  assert.equal(state.run('_resumeProbeTimer'), null);
+  assert.deepEqual([...state.timers.values()].map((timer) => timer.delay), [240_000]);
   state.run('scheduleReconnect();');
   assert.equal([...state.timers.values()].at(-1).delay, 5000);
 });
 
-test('wake safely replaces an in-flight socket and its watchdog', () => {
+test('wake preserves an in-flight socket until its existing watchdog expires', () => {
   const state = connectionHarness();
   state.run('connect();');
   const oldSocket = state.sockets[0];
-  state.run('_resumeMonitor.onResume(60_000);');
+  state.run('_resumeMonitor.onResume(60_000); connect();');
+  assert.equal(oldSocket.readyState, 0);
+  assert.equal(state.sockets.length, 1);
+  const watchdog = state.run('_connectWatchdog');
+  const callback = state.timers.get(watchdog).callback;
+  state.timers.delete(watchdog);
+  callback();
   assert.equal(oldSocket.readyState, 3);
-  assert.equal(state.sockets.length, 2);
+  assert.equal(state.sockets.length, 1);
   assert.equal(state.timers.size, 1);
-  assert.equal(state.run('_consecutiveFailures'), 0);
+  assert.equal(state.run('_consecutiveFailures'), 1);
   oldSocket.emit('error', new Error('late termination error'));
   oldSocket.emit('close', 1006);
   assert.equal(state.timers.size, 1);
