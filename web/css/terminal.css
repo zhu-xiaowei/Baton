@@ -44,6 +44,65 @@
 .project-terminal-screen .xterm { height: 100%; }
 .project-terminal-screen .xterm:not(.allow-transparency) .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
 .project-terminal-screen .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider { border-radius: 3px; }
+.project-terminal-keybar { display: none; }
+html.native-mobile .project-terminal-page.has-mobile-controls.keyboard-open { padding-bottom: 0; }
+html.native-mobile .keyboard-open .project-terminal-keybar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 5px max(6px, var(--sar, env(safe-area-inset-right, 0px))) 5px max(6px, var(--sal, env(safe-area-inset-left, 0px)));
+  border-top: 1px solid #30363d;
+  background: #0d1117;
+}
+.project-terminal-keybar button {
+  height: 36px;
+  min-width: 0;
+  padding: 0 2px;
+  border: 1px solid #30363d;
+  border-radius: 7px;
+  background: #161b22;
+  color: #c9d1d9;
+  font: inherit;
+  font-size: 12px;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.project-terminal-keybar button[aria-pressed="true"] { border-color: #58a6ff; background: #1c3552; color: #fff; }
+.project-terminal-keybar button:active { background: #30363d; }
+.project-terminal-keybar button:disabled { opacity: .4; }
+.project-terminal-joystick {
+  position: fixed;
+  z-index: 4;
+  display: grid;
+  grid-template: repeat(3, 44px) / repeat(3, 44px);
+  gap: 3px;
+  padding: 5px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #8b949e66;
+  border-radius: 50%;
+  background: #0d111799;
+  pointer-events: auto;
+  touch-action: none;
+}
+.project-terminal-joystick,
+.project-terminal-joystick button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.project-terminal-joystick[hidden] { display: none; }
+.project-terminal-joystick button { display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: transparent; color: #e6edf3; font: inherit; font-size: 23px; touch-action: none; }
+.project-terminal-joystick [data-direction="ArrowUp"] { grid-area: 1 / 2; }
+.project-terminal-joystick [data-direction="ArrowLeft"] { grid-area: 2 / 1; }
+.project-terminal-joystick [data-direction="ArrowRight"] { grid-area: 2 / 3; }
+.project-terminal-joystick [data-direction="ArrowDown"] { grid-area: 3 / 2; }
+.project-terminal-joystick-center { grid-area: 2 / 2; margin: 17px; border-radius: 50%; background: #8b949e; }
+.project-terminal-joystick[data-direction="ArrowUp"] [data-direction="ArrowUp"],
+.project-terminal-joystick[data-direction="ArrowLeft"] [data-direction="ArrowLeft"],
+.project-terminal-joystick[data-direction="ArrowRight"] [data-direction="ArrowRight"],
+.project-terminal-joystick[data-direction="ArrowDown"] [data-direction="ArrowDown"] { color: #fff; background: #388bfd99; }
 html.native-mobile .project-terminal-screen { margin-right: 0; }
 .project-terminal-confirm { z-index: 1000; }
 .project-terminal-selector { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

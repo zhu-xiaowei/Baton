@@ -2,11 +2,26 @@
 
 > 状态：已实现项目入口、Header 直转及多端共享 PTY；仍需手机真机兼容性验收。
 >
+> 2026-09-22 手机输入第一版：仅原生 Android / iOS App 挂载手机控件，键盘弹起时显示
+> `Esc / Tab / Ctrl / Shift / Alt / Paste / Enter` 单行栏；键盘收起时隐藏，不占终端空间。
+> 终端原地长按 450ms 启用四向摇杆，中心 12px 内停发，偏移越大连发越快（300/150/70ms）；
+> 松手停止发送但保留方向盘，可点按方向键，或按住 300ms 后以 70ms 间隔连发；点外部只
+> 收起方向盘，不同时开关键盘，外部滑动仍正常滚动。取消、切换会话和后台停止并隐藏。
+> 摇杆只发送方向键，未唤醒时普通短按和滑动继续走原逻辑。
+> Paste 使用 WebView Clipboard API 和 xterm `paste()`，读取被拒绝时显示错误；剪贴板授权、
+> 键盘焦点和手势分流仍需 Android / iOS 真机验收。本次不改滚动库、后端和传输协议。
+>
 > 2026-09-21 手机滚动试验：前端固定使用官方 `@xterm/xterm@6.1.0-beta.304` 和配套
 > `@xterm/addon-fit@0.12.0-beta.301`，停用项目自写的 `attachTerminalTouchScroll`，由官方手势处理接管。
 > 保留 14px 字号、6px 滚动条和现有 PTY 协议；旧触摸模块及测试暂留作回退参考，不再挂载。
 > 此为用户验收用 beta，不代表手机体验已验证。上游 #6059 / #6108 仍报告鼠标上报模式下
 > 甩动可能发送 `NaN` 坐标，先测普通 Shell 历史，再单独验收全屏程序；未引入未合并补丁。
+>
+> 2026-09-22 Paseo 对照（主干 `83f9fba`）：App lockfile 的 xterm 为 `6.1.0-beta.213`，
+> FitAddon 为 `0.12.0-beta.213`。其 Web / 旧 WebView runtime 仍挂载自写触摸处理，
+> 把纵向位移按行高累积后交给 `scrollLines()`；该处理松手即清状态，没有额外惯性阶段。
+> 新原生网格另用 `@xterm/headless` 和 React Native PanResponder。因此与我们停用自写
+> 滚动、交给 beta.304 官方手势的最新方案不同，本次不移植或叠加这些滚动处理。
 >
 > 2026-09-17 更新：当前实现以 `docs/terminal-direct-integration.md` 的“项目共享终端”章节为准。
 > 下文原始方案中的单写入者、接管租约、统一 terminal action 和 replay 协议不是当前实现。

@@ -3,6 +3,7 @@ import { backButtonHtml } from './components/back-button.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { registerEdgeBackLayer } from './edge-back.js';
 import { clearTerminalView } from './terminal-view-state.js';
+import { attachTerminalKeybar } from './terminal-keybar.js';
 
 let view = null;
 let retained = null;
@@ -82,6 +83,7 @@ export function closeProjectTerminal({ preserveView = false, keepAlive = false }
   if (!view) return false;
   const previous = view;
   view = null;
+  previous.mobileControls?.reset();
   if (!preserveView) clearTerminalView();
   edgeBack.deactivate();
   window.removeEventListener('pagehide', suspendProjectTerminal);
@@ -224,10 +226,18 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   let handledKeyboardClick = false;
   const clearKeyboardTap = () => { keyboardTap = null; handledKeyboardClick = false; };
   const consumeKeyboardTap = event => { event.preventDefault(); event.stopImmediatePropagation(); };
+  if (window.__BATON_NATIVE_MOBILE__) {
+    current.mobileControls = attachTerminalKeybar({ page, screen, terminal,
+      send: data => input(encoder.encode(data)), showError: text => status(text, 'error'),
+      canInput: () => view === current && !terminal.options.disableStdin && !document.hidden
+        && current.socket?.readyState === WebSocket.OPEN && current.menu.hidden && current.modal.style.display !== 'flex',
+      onJoystickStart: clearKeyboardTap });
+    current.listeners.push(() => { current.mobileControls.dispose(); current.mobileControls = null; });
+  }
   listen(page, 'pointerdown', event => {
     clearKeyboardTap();
     if (event.pointerType !== 'touch' || event.isPrimary === false
-      || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .xterm-scrollbar')) return;
+      || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .xterm-scrollbar, .project-terminal-keybar')) return;
     const dismiss = document.activeElement === terminal.textarea && current.keyboardOpen;
     if (!dismiss && !screen.contains(event.target)) return;
     keyboardTap = { id: event.pointerId, x: event.clientX, y: event.clientY, dismiss };
@@ -332,6 +342,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.add.disabled = disabled || current.sessions.length >= current.limit;
     current.add.title = current.sessions.length >= current.limit ? 'Maximum 5 terminals' : 'New terminal';
     terminal.options.disableStdin = !current.ready || !!current.busy || current.exited || !current.sessionId;
+    current.mobileControls?.sync();
     const focused = document.activeElement;
     const focusId = current.list.contains(focused) ? focused.dataset.sessionId : null;
     const focusAction = focused?.dataset.action;
@@ -388,6 +399,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   function menu(open) {
+    current.mobileControls?.reset();
     current.menu.hidden = !open;
     current.selector.setAttribute('aria-expanded', String(open));
     if (open) {
@@ -566,6 +578,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     } else if (message.type === 'exit') {
       current.exited = true;
       terminal.options.disableStdin = true;
+      current.mobileControls?.sync();
       settledStatus();
     } else if (message.type === 'error') {
       if (message.fatal) { fail(message.message); current.socket?.close(); }
@@ -675,7 +688,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     }
   });
 
-  terminal.onData(data => input(encoder.encode(data)));
+  terminal.onData(data => { if (!current.mobileControls?.handleData(data)) input(encoder.encode(data)); });
   terminal.onBinary(data => input(Uint8Array.from(data, character => character.charCodeAt(0) & 255)));
   for (const identifier of [{ final: 'n' }, { prefix: '?', final: 'n' }, { final: 'c' },
     { prefix: '>', final: 'c' }, { prefix: '=', final: 'c' }, { intermediates: '$', final: 'p' },
@@ -689,6 +702,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     const keyboardClosed = syncTerminalViewport(current);
     current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
     if (keyboardClosed) {
+      current.mobileControls?.reset();
       clearResizeAnchor();
       terminal.scrollToBottom();
       screen.scrollTop = 0;
