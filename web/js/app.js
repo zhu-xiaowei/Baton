@@ -21,6 +21,7 @@ import {
   preferredNewSessionRuntime,
 } from './new-session-runtime.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
+import { attachmentPreviewText } from './components/attachment.js';
 import { loadingSpinner } from './components/loading.js';
 import { openProjectTerminal } from './terminal.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
@@ -452,13 +453,13 @@ function updateBreadcrumb() {
   var titleMeta = '';
   if (state.appState.session) {
     parts.pop();
-    var titleText = esc(state.rootSessionPreview
+    var titleText = esc(attachmentPreviewText(state.rootSessionPreview
       || state.appState.sessionPreview
       || shortSessionId(
         state.rootSessionId || state.appState.session,
         '',
         state.appState.runtime,
-      ) + '...');
+      ) + '...'));
     var agentMark = state.appState.isAgent ? '<span class="badge agent">Agent</span>' : '';
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
     if (state.appState.session !== '__new__') {
@@ -1337,7 +1338,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     var runtime = sessionRuntime(s.sessionId);
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
-    var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+    var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
       + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span>'
       + '<span> &middot; ' + formatSize(s.size) + '</span>';

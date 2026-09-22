@@ -13,16 +13,20 @@ export function attachmentRef(file) {
     '%' + character.charCodeAt(0).toString(16)) + '](baton-file:' + file.key + ')';
 }
 
-export function extractAttachments(text) {
+export function extractAttachments(text, inlineNames = false) {
   const files = [];
   const cleaned = text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<[^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)>)\)/g,
     (reference, label, remoteKey, localKey) => {
       let name;
       try { name = decodeURIComponent(label); } catch { return reference; }
       files.push({ kind: 'file', name, key: remoteKey || localKey, uploaded: true });
-      return '';
+      return inlineNames ? name : '';
     });
   return { text: cleaned, files };
+}
+
+export function attachmentPreviewText(text) {
+  return extractAttachments(text, true).text;
 }
 
 export function fileAttachmentHtml(file) {

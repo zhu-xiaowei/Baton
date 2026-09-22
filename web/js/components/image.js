@@ -3,6 +3,8 @@ import { state } from '../state.js';
 import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
 
+const stagedAttachmentCards = new WeakMap();
+
 function stagePickedFile(file) {
   if (!file) return;
   if (file.type.startsWith('image/')) stageImageFile(file);
@@ -37,6 +39,7 @@ function stageAttachmentFile(file) {
 async function uploadStagedFile(entry) {
   entry.error = '';
   entry.progress = 0;
+  entry.uploadPhase = 'preparing';
   entry.controller = new AbortController();
   renderStagedImages();
   try {
@@ -46,12 +49,14 @@ async function uploadStagedFile(entry) {
     });
     if (!state.stagedImages.includes(entry)) return;
     entry.key = prepared.key;
+    entry.uploadPhase = 'uploading';
+    updateStagedUpload(entry);
     await uploadAttachment(entry.file, prepared, progress => {
       entry.progress = progress;
-      renderStagedImages();
+      updateStagedUpload(entry);
     }, entry.controller.signal);
-    const confirmed = await window.api('/api/bridge/file-url/' + entry.key);
-    if (confirmed.size !== entry.size) throw new Error('Uploaded file size does not match');
+    if (!state.stagedImages.includes(entry)) return;
+    entry.progress = 100;
     entry.uploaded = true;
   } catch (error) {
     if (!entry.controller.signal.aborted) entry.error = error.message || 'Upload failed';
@@ -66,7 +71,7 @@ function retryStagedFile(index) {
 
 function stageImageFile(file) {
   if (!file) return;
-  var entry = { dataUrl: '', key: '', uploaded: false };
+  var entry = { name: file.name, dataUrl: '', key: '', uploaded: false };
   state.stagedImages.push(entry);
   renderStagedImages();
 
@@ -110,31 +115,110 @@ function stageImageFile(file) {
   reader.readAsDataURL(file);
 }
 
+function stagedUploadOverlayHtml(entry) {
+  if (entry.uploaded) return '';
+  if (entry.error) {
+    return '<div class="staged-error-overlay"><span class="staged-error-message" role="status" title="'
+      + escapeAttachment(entry.error) + '">' + escapeAttachment(entry.error) + '</span>'
+      + '<button class="staged-retry" type="button" onclick="retryStagedFile('
+      + state.stagedImages.indexOf(entry) + ')">Retry</button></div>';
+  }
+  return '<div class="staged-upload-overlay" role="progressbar" aria-label="'
+    + escapeAttachment('Uploading ' + (entry.name || 'image')) + '" aria-valuemin="0" aria-valuemax="100">'
+    + '<div class="staged-upload-visual" aria-hidden="true">'
+    + '<svg class="staged-progress-indicator" viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
+    + '<circle class="staged-progress-pie" cx="18" cy="18" r="6.5" fill="none" stroke="currentColor"'
+    + ' stroke-width="13" pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 18 18)"/>'
+    + '<g class="staged-progress-orbit"><circle class="staged-progress-ring" cx="18" cy="18" r="16"'
+    + ' fill="none" stroke="currentColor" stroke-width="1.5" pathLength="100"'
+    + ' stroke-dasharray="100 100" stroke-linecap="round"/></g></svg>'
+    + '<span class="staged-progress-text"></span></div></div>';
+}
+
+function updateStagedUpload(entry) {
+  const overlay = stagedAttachmentCards.get(entry)?.querySelector('.staged-upload-overlay');
+  if (!overlay || overlay.dataset.state === 'complete') return;
+  const isFile = entry.kind === 'file';
+  const progress = entry.uploaded ? 100 : Math.min(99, Math.max(0, Math.round(Number(entry.progress) || 0)));
+  const phase = isFile ? entry.uploadPhase || (entry.key ? 'uploading' : 'preparing') : 'loading';
+  const hasProgress = phase === 'uploading';
+  overlay.dataset.state = phase;
+  overlay.classList.toggle('has-progress', hasProgress);
+  const pie = overlay.querySelector('.staged-progress-pie');
+  const full = hasProgress && progress === 100;
+  pie.setAttribute('r', full ? '13' : '6.5');
+  pie.setAttribute('fill', full ? 'currentColor' : 'none');
+  pie.setAttribute('stroke', full ? 'none' : 'currentColor');
+  pie.style.strokeDashoffset = String(100 - progress);
+  overlay.querySelector('.staged-progress-text').textContent = isFile ? progress + '%' : '';
+  if (hasProgress) overlay.setAttribute('aria-valuenow', progress);
+  else overlay.removeAttribute('aria-valuenow');
+  overlay.setAttribute('aria-valuetext', !isFile ? 'Uploading' : phase === 'preparing' ? 'Preparing upload'
+    : progress + '%');
+  if (entry.uploaded) {
+    overlay.dataset.state = 'complete';
+    overlay.removeAttribute('role');
+    overlay.setAttribute('aria-hidden', 'true');
+    setTimeout(() => overlay.remove(), 180);
+  }
+}
+
 function renderStagedImages() {
   window.updateSendBtn?.({ skipSpinner: true });
   var row = document.getElementById('img-preview-row');
   if (!state.stagedImages.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  const scrollLeft = row.scrollLeft;
   row.style.display = 'flex';
-  row.innerHTML = state.stagedImages.map(function (img, i) {
-    if (img.kind === 'file') return '';
-    var overlay = img.uploaded ? '' : '<div class="img-upload-overlay"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><circle cx="18" cy="18" r="16" fill="none" stroke="#fff" stroke-width="3" stroke-dasharray="100" stroke-dashoffset="' + (img.dataUrl ? '25' : '90') + '" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>';
-    var src = img.dataUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-    return '<div class="img-thumb" onclick="viewStagedImage(' + i + ')">'
-      + '<img src="' + src + '">' + overlay
-      + '<button class="img-remove" onclick="event.stopPropagation();removeStagedImage(' + i + ')">&times;</button></div>';
-  }).join('');
-  const files = state.stagedImages.map(function (file, index) {
-    if (file.kind !== 'file') return '';
-    const status = file.error || (file.uploaded ? '' : 'Uploading ' + file.progress + '%');
-    return '<div class="staged-file' + (file.error ? ' upload-failed' : '') + '">'
-      + '<button type="button" class="file-badge attachment-file" title="' + escapeAttachment(file.name) + '"'
-      + (file.uploaded ? ' onclick="openFile(\'baton-file:' + file.key + '\',this.title)"' : ' disabled') + '>'
-      + fileIconHtml(file.name) + '<span class="file-badge-name">' + escapeAttachment(file.name) + '</span></button>'
-      + '<span class="attachment-status" role="status">' + escapeAttachment(status) + '</span>'
-      + (file.error ? '<button type="button" onclick="retryStagedFile(' + index + ')">Retry</button>' : '')
-      + '<button type="button" aria-label="Remove file" onclick="removeStagedImage(' + index + ')">&times;</button></div>';
-  }).join('');
-  if (files) row.insertAdjacentHTML('beforeend', '<div class="staged-files">' + files + '</div>');
+  const cards = new Set();
+  state.stagedImages.forEach(function (entry, index) {
+    const isFile = entry.kind === 'file';
+    const name = escapeAttachment(entry.name || 'Image');
+    let card = stagedAttachmentCards.get(entry);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'staged-attachment ' + (isFile ? 'staged-file' : 'img-thumb');
+      let preview;
+      if (isFile) {
+        const extension = String(entry.name || '').match(/\.([^.]+)$/)?.[1].toUpperCase() || 'FILE';
+        preview = '<button type="button" class="staged-file-preview attachment-file" title="' + name + '">'
+          + '<span class="staged-file-name">' + name + '</span><span class="staged-file-type">'
+          + fileIconHtml(entry.name) + '<span>' + escapeAttachment(extension) + '</span></span></button>';
+      } else {
+        preview = '<button class="staged-image-preview" type="button" aria-label="Preview ' + name + '">'
+          + '<img alt="' + name + '"></button>';
+      }
+      card.innerHTML = preview + '<button class="img-remove" type="button" aria-label="Remove ' + name + '">&times;</button>';
+      stagedAttachmentCards.set(entry, card);
+    }
+    const preview = card.firstElementChild;
+    preview.disabled = !entry.uploaded;
+    if (entry.uploaded) preview.setAttribute('onclick', isFile
+      ? "openFile('baton-file:" + entry.key + "',this.title)" : 'viewStagedImage(' + index + ')');
+    else preview.removeAttribute('onclick');
+    if (!isFile) {
+      const src = entry.dataUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      const image = preview.querySelector('img');
+      if (image.getAttribute('src') !== src) image.src = src;
+    }
+    card.querySelector('.img-remove').setAttribute('onclick', 'event.stopPropagation();removeStagedImage(' + index + ')');
+    card.classList.toggle('upload-failed', !!entry.error);
+    card.setAttribute('aria-busy', !entry.uploaded && !entry.error);
+    if (entry.error) {
+      card.querySelector('.staged-upload-overlay')?.remove();
+      card.querySelector('.staged-error-overlay')?.remove();
+      card.insertAdjacentHTML('beforeend', stagedUploadOverlayHtml(entry));
+    } else {
+      card.querySelector('.staged-error-overlay')?.remove();
+      if (!entry.uploaded && !card.querySelector('.staged-upload-overlay')) {
+        card.insertAdjacentHTML('beforeend', stagedUploadOverlayHtml(entry));
+      }
+      updateStagedUpload(entry);
+    }
+    if (row.children[index] !== card) row.insertBefore(card, row.children[index] || null);
+    cards.add(card);
+  });
+  for (const card of [...row.children]) if (!cards.has(card)) card.remove();
+  row.scrollLeft = scrollLeft;
 }
 
 function removeStagedImage(i) {
@@ -145,11 +229,12 @@ function removeStagedImage(i) {
 
 var galleryIndex = 0;
 function viewStagedImage(i) {
+  if (!state.stagedImages[i]?.uploaded || state.stagedImages[i].kind === 'file') return;
   galleryIndex = galleryImages().indexOf(state.stagedImages[i]);
   showGallery();
 }
 
-function galleryImages() { return state.stagedImages.filter(image => image.kind !== 'file'); }
+function galleryImages() { return state.stagedImages.filter(image => image.kind !== 'file' && image.uploaded); }
 
 function showGallery() {
   var images = galleryImages();

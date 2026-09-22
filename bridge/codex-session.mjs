@@ -6,6 +6,7 @@ import { scanJsonlLines } from './jsonl.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
 import { readableProjectName } from './session.mjs';
+import { attachmentPreviewText } from './attachments.mjs';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const codexFileIndex = new Map();
@@ -31,7 +32,7 @@ function walkJsonl(dir, files, errors) {
 }
 
 function previewText(value) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;
 }

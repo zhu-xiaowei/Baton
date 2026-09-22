@@ -5,9 +5,8 @@ import { loadingSpinner } from '../components/loading.js';
 import { currentProjectHash } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
-import { fileIconHtml } from '../components/file-icon.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
-import { browserCanShare, downloadFile, prepareSharedFile } from './download.js';
+import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -23,6 +22,19 @@ function downloadStatus(text) {
   if (status) status.textContent = text;
 }
 
+function updateDownloadButtons() {
+  const busy = !!_downloadTarget?.busy;
+  document.querySelectorAll('#file-download-btn, #fileOverlay .file-download-action').forEach(button => {
+    button.disabled = busy;
+    button.classList.toggle('is-downloading', busy);
+    button.setAttribute('aria-busy', String(busy));
+    if (busy && !button.querySelector('.file-download-spinner')) {
+      button.insertAdjacentHTML('beforeend', '<span class="file-download-spinner">'
+        + loadingSpinner({ size: 'small', label: 'Downloading file' }) + '</span>');
+    }
+  });
+}
+
 async function prepareViewedDownload(target) {
   if (!target.key) {
     const result = await requestProjectFiles('download', {
@@ -36,55 +48,49 @@ async function prepareViewedDownload(target) {
 async function downloadViewedFile() {
   const target = _downloadTarget;
   if (!target || target.busy) return;
-  const button = document.getElementById('file-download-btn');
   target.busy = true;
-  if (button) button.disabled = true;
+  updateDownloadButtons();
   downloadStatus('Preparing download…');
   try {
-    const file = await prepareViewedDownload(target);
-    if (_downloadTarget !== target) return;
-    downloadStatus('Downloading…');
-    const result = await downloadFile(file);
+    let result;
+    if (target.sharedFile) {
+      result = await shareDownloadedFile(target);
+    } else {
+      const file = await prepareViewedDownload(target);
+      if (_downloadTarget !== target) return;
+      downloadStatus('Downloading…');
+      if (browserCanShare() && file.size <= BROWSER_SHARE_MAX_BYTES) {
+        try {
+          target.sharedFile = await prepareSharedFile(file);
+        } catch (error) {
+          if (error.name !== 'NotSupportedError') throw error;
+        }
+        if (_downloadTarget !== target) return;
+      }
+      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
+    }
     if (_downloadTarget === target) downloadStatus({
       saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
       shared: 'Shared.', cancelled: '', started: 'Download started.',
+      share_opened: 'Download complete. System sharing opened.',
+      ready: 'File ready. Tap Download again to open the system share sheet.',
     }[result.status] || 'Download started.');
   } catch (error) {
     if (_downloadTarget === target) downloadStatus(String(error.message || error));
   } finally {
     target.busy = false;
-    if (_downloadTarget === target && button) button.disabled = false;
+    if (_downloadTarget === target) updateDownloadButtons();
   }
 }
 
-async function shareViewedFile() {
-  const target = _downloadTarget;
-  if (!target || target.busy) return;
-  const button = document.getElementById('file-share-btn');
-  if (target.sharedFile) {
-    try {
-      await navigator.share({ files: [target.sharedFile] });
-      if (_downloadTarget === target) downloadStatus('Shared.');
-    } catch (error) {
-      if (_downloadTarget === target && error.name !== 'AbortError') downloadStatus(error.message);
-    }
-    return;
-  }
-  target.busy = true;
-  if (button) button.disabled = true;
-  downloadStatus('Preparing file for sharing…');
+async function shareDownloadedFile(target) {
   try {
-    const file = await prepareViewedDownload(target);
-    if (_downloadTarget !== target) return;
-    target.sharedFile = await prepareSharedFile(file);
-    if (_downloadTarget !== target) return;
-    if (button) button.textContent = 'Share file';
-    downloadStatus('File ready. Tap Share file to open the system share sheet.');
+    await navigator.share({ files: [target.sharedFile] });
+    return { status: 'shared' };
   } catch (error) {
-    if (_downloadTarget === target) downloadStatus(error.message);
-  } finally {
-    target.busy = false;
-    if (_downloadTarget === target && button) button.disabled = false;
+    if (error.name === 'AbortError') return { status: 'cancelled' };
+    if (error.name === 'NotAllowedError') return { status: 'ready' };
+    throw error;
   }
 }
 var _previewToken = 0;
@@ -104,9 +110,23 @@ function requestFileAsync(absPath) {
 
 function overlay() { return document.getElementById('fileOverlay'); }
 
+function clearFileBody() {
+  const body = document.getElementById('fileOverlayBody');
+  if (!body) return;
+  body.querySelectorAll('video, audio').forEach(media => {
+    media.pause();
+    media.removeAttribute('src');
+    media.querySelectorAll('source').forEach(source => source.removeAttribute('src'));
+    media.load();
+  });
+  body.replaceChildren();
+}
+
 function setBody(html) {
+  clearFileBody();
   var b = document.getElementById('fileOverlayBody');
   if (b) b.innerHTML = html;
+  updateDownloadButtons();
 }
 
 function showTabs(show) {
@@ -241,6 +261,8 @@ function closeFileViewer(options) {
   _downloadTarget = null;
   downloadStatus('');
   _fileRequestToken++;
+  _previewToken++;
+  setBody('');
   showTabs(false);
   if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
 }
@@ -262,7 +284,7 @@ async function sendFileRequest(absPath, line, snippet, retriesLeft) {
       },
     });
     if (token !== _fileRequestToken) return;
-    handleFileResponse(message, line, snippet);
+    handleFileResponse(message, line, snippet, token);
   } catch (error) {
     if (token !== _fileRequestToken) return;
     if (retriesLeft > 0) {
@@ -289,14 +311,12 @@ function openFile(absPath, displayName, lineHint, matchId) {
   _downloadTarget = { path: absPath, projectHash: currentProjectHash(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '' };
   downloadStatus('');
-  const downloadButton = document.getElementById('file-download-btn');
-  if (downloadButton) downloadButton.disabled = false;
-  const shareButton = document.getElementById('file-share-btn');
-  if (shareButton) { shareButton.hidden = !browserCanShare(); shareButton.disabled = false; shareButton.textContent = 'Share'; }
+  updateDownloadButtons();
   var titleEl = document.getElementById('fileOverlayTitle');
   titleEl.textContent = displayName || absPath;
   titleEl.title = absPath;
   _current = null;
+  _previewToken++;
   showTabs(false);
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading file' }) + '</div>');
@@ -314,15 +334,11 @@ async function showAttachment(key) {
     const file = await window.api('/api/bridge/file-url/' + key);
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
-    const info = '<div class="attachment-preview-info">' + fileIconHtml(file.name)
-      + '<span>' + escapeAttachment(file.name) + '</span><span>'
-      + (file.size / (1024 * 1024)).toFixed(2) + ' MB</span><button type="button" class="file-action" onclick="downloadViewedFile()">Download / share</button></div>';
     if (isTextAttachment(file)) {
       const content = await readAttachmentText(file.url);
       if (token !== _fileRequestToken) return;
       if (!content.text.includes('\0')) {
         render(file.name, content.text, content.truncated, '', '');
-        document.getElementById('fileOverlayBody').insertAdjacentHTML('afterbegin', info);
         return;
       }
     }
@@ -337,7 +353,7 @@ async function showAttachment(key) {
     } else if (file.previewType?.startsWith('audio/')) {
       preview = '<audio controls preload="metadata" src="' + url + '"></audio>';
     }
-    setBody(info + preview);
+    setBody(preview);
   } catch (error) {
     if (token === _fileRequestToken) setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
   }
@@ -368,6 +384,7 @@ function render(absPath, text, truncated, lineHint, snippet) {
 function renderSource(absPath, text, truncated, lineHint, snippet) {
   var body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  clearFileBody();
   renderSourceView(body, {
     path: absPath,
     text: text,
@@ -385,30 +402,32 @@ function renderVideo(url) {
   setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
 }
 
-function showVideo(key) {
+function showVideo(key, token) {
   var c = state.videoUrlCache.get(key);
   if (c && c.exp > Date.now()) return renderVideo(c.url);
   return window.api('/api/bridge/video-url/' + key).then(function (r) {
+    if (token !== _fileRequestToken) return;
     if (!r || !r.url) return setBody('<div class="file-error">Failed to load video.</div>');
     if (state.videoUrlCache.size > 50) state.videoUrlCache.delete(state.videoUrlCache.keys().next().value);
     state.videoUrlCache.set(key, { url: r.url, exp: Date.now() + VIDEO_URL_TTL });
     renderVideo(r.url);
   }).catch(function () {
-    setBody('<div class="file-error">Failed to load video.</div>');
+    if (token === _fileRequestToken) setBody('<div class="file-error">Failed to load video.</div>');
   });
 }
 
-function handleFileResponse(msg, line, snippet) {
-  if (msg.video) return showVideo(msg.key);
+function handleFileResponse(msg, line, snippet, token) {
+  if (msg.video) return showVideo(msg.key, token);
 
   if (msg.image) {
     var ext = (msg.key.split('.').pop() || '').toLowerCase();
     var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
     return window.getImageDataUrl(msg.key, mime).then(function (dataUrl) {
+      if (token !== _fileRequestToken) return;
       closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(dataUrl);
     }).catch(function () {
-      setBody('<div class="file-error">Failed to download image.</div>');
+      if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download image.</div>');
     });
   }
 
@@ -419,11 +438,12 @@ function handleFileResponse(msg, line, snippet) {
     ? Promise.resolve(msg.content)
     : window.apiText('/api/bridge/file/' + msg.key);
   contentPromise.then(function (text) {
+    if (token !== _fileRequestToken) return;
     if (state.fileCache.size > 50) state.fileCache.delete(state.fileCache.keys().next().value);
     state.fileCache.set(msg.key, { text: text, path: msg.path, truncated: msg.truncated });
     render(msg.path, text, msg.truncated, line, snippet);
   }).catch(function () {
-    setBody('<div class="file-error">Failed to download file.</div>');
+    if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download file.</div>');
   });
 }
 
@@ -437,5 +457,4 @@ Object.assign(window, {
   closeFileViewer: closeFileViewer,
   setFileViewMode: setFileViewMode,
   downloadViewedFile,
-  shareViewedFile,
 });

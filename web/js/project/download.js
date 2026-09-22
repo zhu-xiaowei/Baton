@@ -3,7 +3,10 @@ export function nativeDownloads() {
 }
 
 export function browserCanShare() {
-  return !nativeDownloads() && typeof window.navigator.share === 'function' && typeof window.navigator.canShare === 'function';
+  const navigator = window.navigator;
+  const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return !nativeDownloads() && mobile && typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
 }
 
 function contentType(file) {
@@ -29,7 +32,7 @@ export async function downloadFile(file) {
 }
 
 export async function prepareSharedFile(file) {
-  const maxBytes = 50 * 1024 * 1024;
+  const maxBytes = BROWSER_SHARE_MAX_BYTES;
   if (file.size > maxBytes) throw new Error('Files over 50 MB: use Download instead of browser sharing.');
   const response = await fetch(file.url);
   if (!response.ok) throw new Error('Could not download the file for sharing.');
@@ -47,6 +50,7 @@ export async function prepareSharedFile(file) {
   } finally { await reader.cancel(); }
   if (Number.isFinite(file.size) && size !== file.size) throw new Error('The downloaded file is incomplete. Try again.');
   const shared = new File(chunks, file.name, { type: contentType(file) });
-  if (!navigator.canShare({ files: [shared] })) throw new Error('This browser cannot share this file type. Use Download instead.');
+  if (!navigator.canShare({ files: [shared] })) throw new DOMException('This browser cannot share this file type.', 'NotSupportedError');
   return shared;
 }
+export const BROWSER_SHARE_MAX_BYTES = 50 * 1024 * 1024;

@@ -42,7 +42,7 @@ await new Promise(resolve => storage.listen(0, '127.0.0.1', resolve));
 const storageUrl = 'http://127.0.0.1:' + storage.address().port;
 const fileOverlay = (await readFile(path.resolve('web/index.html'), 'utf8')).split('<!-- File overlay -->')[1].split('</body>')[0];
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/file-icons.css"></head><body>
+<link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/file-icons.css"><link rel="stylesheet" href="/css/loading.css"></head><body>
 <div id="content"><div class="messages"></div></div><div id="input-bar"><div id="img-preview-row"></div>
 <div class="input-row"><input id="img-picker" type="file" multiple hidden onchange="onImagePicked(this)">
 <button class="img-btn" onclick="document.getElementById('img-picker').click()">+</button>
@@ -143,10 +143,12 @@ try {
   await evaluate(`(()=>{const input=document.getElementById('img-picker');const transfer=new DataTransfer();
     transfer.items.add(new File([new Uint8Array(8*1024*1024).fill(80)],'路线图 [2026].pptx'));
     transfer.items.add(new File(['word'],'需求.docx')); transfer.items.add(new File(['sheet'],'预算.xlsx'));
+    transfer.items.add(new File(['video'],'产品演示视频-移动端上传.mp4',{type:'video/mp4'}));
     input.files=transfer.files; input.dispatchEvent(new Event('change'));})()`);
   assert.equal(await evaluate('document.getElementById("send-btn").disabled'), true);
-  await waitFor(() => evaluate('state.stagedImages.length === 3 && state.stagedImages.every(file=>file.uploaded)'));
-  assert.equal(uploads.length, 6);
+  await waitFor(() => evaluate('state.stagedImages.length === 4 && state.stagedImages.every(file=>file.uploaded)'));
+  await waitFor(() => evaluate('!document.querySelector(".staged-upload-overlay")'));
+  assert.equal(uploads.length, 8);
   const deck = [...files.values()][0];
   assert.equal(deck.bytes.length, 8 * 1024 * 1024);
   assert.ok(deck.bytes.every(byte => byte === 80));
@@ -155,14 +157,100 @@ try {
   await evaluate(`(()=>{const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
     const context=canvas.getContext('2d');context.fillStyle='#388bfd';context.fillRect(0,0,64,64);
     state.stagedImages.unshift({key:'photo.jpg',dataUrl:canvas.toDataURL('image/jpeg'),uploaded:true});renderStagedImages();})()`);
-  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-files img")).width'), '14px');
-  assert.equal(await evaluate('document.querySelector(".staged-files").getBoundingClientRect().top > document.querySelector(".img-thumb").getBoundingClientRect().top'), true);
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-file .file-type-icon")).width'), '14px');
+  assert.equal(await evaluate(`(()=>{const cards=[...document.querySelectorAll('#img-preview-row > .staged-attachment')];
+    return cards.length===5 && cards.every(card=>card.getBoundingClientRect().height===64
+      && card.getBoundingClientRect().top===cards[0].getBoundingClientRect().top);})()`), true);
+  assert.equal(await evaluate(`document.querySelector('.staged-file:last-child .staged-file-type').textContent`), 'MP4');
+  assert.equal(await evaluate(`(()=>{const card=document.querySelector('.staged-file'),rect=card.getBoundingClientRect(),
+    close=card.querySelector('.img-remove').getBoundingClientRect();
+    return close.top-rect.top===2 && rect.right-close.right===2;})()`), true);
   await screenshot('desktop-attachments');
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate('document.body.scrollWidth <= innerWidth'), true);
+  assert.equal(await evaluate(`(()=>{const row=document.getElementById('img-preview-row');
+    return row.scrollWidth>row.clientWidth && [...row.children].every(card=>card.getBoundingClientRect().height===64
+      && card.getBoundingClientRect().top===row.firstElementChild.getBoundingClientRect().top);})()`), true);
   await screenshot('mobile-attachments');
-  await evaluate('document.querySelector(".staged-files .attachment-file").click()');
-  await waitFor(() => evaluate('!!document.querySelector(".attachment-preview-info")'));
+  await evaluate(`state.stagedImages.splice(1,0,
+    {kind:'file',key:'',name:'产品演示视频-移动端上传.mp4',uploaded:false,progress:0,uploadPhase:'preparing'});renderStagedImages();
+    window.uploadIndicator=document.querySelector('.staged-progress-indicator')`);
+  await waitFor(() => evaluate('getComputedStyle(document.querySelector(".staged-upload-visual")).opacity === "1"'));
+  assert.equal(await evaluate(`(()=>{const overlay=document.querySelector('.staged-upload-overlay');
+    return overlay.dataset.state==='preparing' && getComputedStyle(overlay.querySelector('.staged-progress-pie')).opacity==='0'
+      && getComputedStyle(overlay.querySelector('.staged-progress-text')).opacity==='0'
+      && getComputedStyle(overlay.querySelector('.staged-progress-orbit')).animationPlayState==='running';})()`), true);
+  await screenshot('mobile-upload-preparing');
+  await evaluate('state.stagedImages[1].key="pending.mp4";state.stagedImages[1].uploadPhase="uploading";state.stagedImages[1].progress=41;renderStagedImages()');
+  await waitFor(() => evaluate(`getComputedStyle(document.querySelector('.staged-progress-ring')).strokeDashoffset==='0px'
+    && getComputedStyle(document.querySelector('.staged-progress-pie')).opacity==='1'
+    && getComputedStyle(document.querySelector('.staged-progress-pie')).strokeDashoffset==='59px'`));
+  assert.equal(await evaluate('document.getElementById("send-btn").disabled'), true);
+  assert.equal(await evaluate(`(()=>{const overlay=document.querySelector('.staged-upload-overlay'),rect=overlay.getBoundingClientRect();
+    return document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2).closest('.staged-upload-overlay')===overlay
+      && overlay.parentElement.querySelector('.attachment-file').disabled
+      && overlay.getAttribute('aria-valuenow')==='41';})()`), true);
+  await evaluate('document.querySelector(".staged-upload-overlay").parentElement.querySelector(".attachment-file").click()');
+  assert.notEqual(await evaluate('document.getElementById("fileOverlay").style.display'), 'flex');
+  assert.equal(await evaluate('document.querySelector(".staged-progress-indicator") === window.uploadIndicator'), true);
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-text")).opacity'), '1');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-orbit")).animationPlayState'), 'paused');
+  assert.equal(await evaluate(`(()=>{const indicator=window.uploadIndicator,rect=indicator.getBoundingClientRect(),
+    overlay=indicator.closest('.staged-upload-overlay').getBoundingClientRect(),pie=indicator.querySelector('.staged-progress-pie'),
+    ring=indicator.querySelector('.staged-progress-ring');return rect.width===28 && rect.height===28
+      && Math.abs(rect.left+rect.width/2-overlay.left-overlay.width/2)<0.5
+      && Math.abs(rect.top+rect.height/2-overlay.top-overlay.height/2)<0.5
+      && Number(pie.getAttribute('r'))+Number(pie.getAttribute('stroke-width'))/2
+        < Number(ring.getAttribute('r'))-Number(ring.getAttribute('stroke-width'))/2
+      && getComputedStyle(pie).stroke===getComputedStyle(ring).stroke
+      && getComputedStyle(ring).stroke==='rgb(201, 209, 217)';})()`), true);
+  await screenshot('mobile-upload-progress');
+  await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+  await screenshot('mobile-upload-progress-3x');
+  await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  assert.equal(await evaluate(`(()=>{const instant={kind:'file',name:'instant.txt',uploaded:false,uploadPhase:'preparing'};
+    state.stagedImages.push(instant);renderStagedImages();instant.uploaded=true;renderStagedImages();
+    const overlay=document.querySelector('.staged-attachment:last-child .staged-upload-overlay');
+    const hidden=getComputedStyle(overlay.querySelector('.staged-upload-visual')).opacity==='0';
+    removeStagedImage(state.stagedImages.length-1);return hidden;})()`), true);
+  await evaluate(`(()=>{const row=document.getElementById('img-preview-row');row.scrollLeft=row.scrollWidth;
+    window.stagedScrollLeft=row.scrollLeft;renderStagedImages();})()`);
+  assert.equal(await evaluate('window.stagedScrollLeft > 0 && document.getElementById("img-preview-row").scrollLeft === window.stagedScrollLeft'), true);
+  assert.equal(await evaluate('document.querySelector(".staged-progress-indicator") === window.uploadIndicator'), true);
+  await screenshot('mobile-scrolled-attachments');
+  await evaluate(`state.stagedImages[1].progress=100;
+    renderStagedImages();document.getElementById('img-preview-row').scrollLeft=0`);
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-ring")).transitionDelay'), '0s');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-orbit")).animationPlayState'), 'paused');
+  await waitFor(() => evaluate(`getComputedStyle(document.querySelector('.staged-progress-ring')).strokeDashoffset==='0px'
+    && document.querySelector('.staged-progress-pie').getAttribute('fill')==='none'
+    && getComputedStyle(document.querySelector('.staged-progress-pie')).strokeDashoffset==='1px'`));
+  assert.equal(await evaluate('document.querySelector(".staged-progress-indicator") === window.uploadIndicator'), true);
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-pie")).opacity'), '1');
+  assert.equal(await evaluate('document.querySelector(".staged-progress-text").textContent'), '99%');
+  await screenshot('mobile-upload-finishing');
+  await evaluate('state.stagedImages[0].uploaded=false;renderStagedImages()');
+  await waitFor(() => evaluate('getComputedStyle(document.querySelector(".img-thumb .staged-upload-visual")).opacity === "1"'));
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".img-thumb .staged-progress-orbit")).animationPlayState'), 'running');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".img-thumb .staged-progress-text")).opacity'), '0');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".img-thumb .staged-progress-pie")).opacity'), '0');
+  await screenshot('mobile-image-loading');
+  await evaluate('state.stagedImages[0].uploaded=true;renderStagedImages()');
+  assert.equal(await evaluate('document.querySelector(".img-thumb .staged-upload-overlay").dataset.state'), 'complete');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".img-thumb .staged-upload-overlay")).pointerEvents'), 'none');
+  await waitFor(() => evaluate('!document.querySelector(".img-thumb .staged-upload-overlay")'));
+  await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-orbit")).animationName'), 'none');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".staged-progress-pie")).transitionDuration'), '0s');
+  await call('Emulation.setEmulatedMedia', { features: [] });
+  await evaluate('state.stagedImages[1].error="Upload failed. Check your connection.";renderStagedImages()');
+  await screenshot('mobile-upload-failed');
+  assert.equal(await evaluate('!!document.querySelector(".staged-error-overlay .staged-retry")'), true);
+  await evaluate('document.querySelector(".upload-failed .img-remove").click()');
+  assert.equal(await evaluate('state.stagedImages.length'), 5);
+  assert.equal(await evaluate('document.getElementById("send-btn").disabled'), false);
+  await evaluate('document.querySelector(".staged-file .attachment-file").click()');
+  await waitFor(() => evaluate('!!document.querySelector(".attachment-preview-note")'));
   assert.equal(await evaluate('document.querySelector("#fileOverlayTitle").textContent'), '路线图 [2026].pptx');
   assert.equal(await evaluate('document.getElementById("fileOverlay").scrollWidth <= innerWidth'), true);
   await screenshot('office-preview');
@@ -177,14 +265,19 @@ try {
   await evaluate('closeFileViewer(); document.getElementById("send-btn").click()');
   assert.equal(await evaluate('sent.length'), 1);
   assert.match(await evaluate('sent[0].text'), /Please review the attached files/);
-  assert.equal(await evaluate('document.querySelectorAll(".msg-attachments .attachment-file").length'), 3);
+  assert.equal(await evaluate('document.querySelectorAll(".msg-attachments .attachment-file").length'), 4);
   assert.equal(await evaluate('state.stagedImages.length'), 0);
   await evaluate('document.querySelector(".messages").innerHTML = renderUserBubble({type:"user",content:sent[0].text})');
-  assert.equal(await evaluate('document.querySelectorAll(".msg-attachments .attachment-file").length'), 3);
+  assert.equal(await evaluate('document.querySelectorAll(".msg-attachments .attachment-file").length'), 4);
   assert.deepEqual(errors, []);
   await writeFile(path.join(directory, 'results.json'), JSON.stringify({
     ok: true, uploadedBytes: deck.bytes.length, putRequests: uploads.length,
-    checks: ['cross-origin raw PUT', 'acceleration fallback', 'Office icons', 'mobile second row',
+    checks: ['cross-origin raw PUT', 'acceleration fallback', 'Office and video icons', 'equal-height horizontal attachment cards',
+      'uppercase extensions', 'top-right remove controls', 'mobile scrolling without page overflow', 'preserved scroll position',
+      'non-interactive upload mask with percentage and pie progress', 'shared SVG with fixed geometry and non-overlapping fill',
+      'continuous ring-to-pie transition', 'progress capped at 99% until upload succeeds', 'no trailing loading animation',
+      'high-DPI progress rendering', 'no loading flash for fast uploads',
+      'shared image loading ring without text', 'completion fade-out', 'reduced-motion spinner', 'inline retry and removal',
       'shared preview overlay', '8 MiB original download', 'Chinese filename', 'duplicate download',
       'attachment-only send', 'historical filename rendering'],
   }, null, 2));

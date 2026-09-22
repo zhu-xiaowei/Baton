@@ -58,7 +58,8 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       state.appState = {
         device: 'Mac', project: { hash: 'project', name: 'Project' },
         session: runtime === 'codex' ? 'codex:root' : 'claude-root',
-        runtime, sessionPreview: 'Inspect a conversation title', isAgent: true,
+        runtime, sessionPreview: '这个文档写的是什么 [' + encodeURIComponent('s02-压力测试报告.md')
+          + '](baton-file:' + 'a'.repeat(32) + '.md)', isAgent: true,
       };
       state.rootSessionId = state.appState.session;
       state.rootSessionPreview = state.appState.sessionPreview;
@@ -74,6 +75,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         ]);
         const meta = document.querySelector('.session-title-meta');
         assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
+        assert.equal(meta.previousElementSibling.textContent, '这个文档写的是什么 s02-压力测试报告.md');
         assert.deepEqual([...meta.querySelectorAll('.badge')].map(badge => badge.textContent), [
           runtime === 'codex' ? 'Codex' : 'Claude', 'Agent',
         ]);

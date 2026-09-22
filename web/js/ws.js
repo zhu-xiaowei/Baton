@@ -1,6 +1,6 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
-import { attachmentRef, fileAttachmentHtml } from './components/attachment.js';
+import { attachmentPreviewText, attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
   clearComposerDraft,
   rekeyComposerDraft,
@@ -230,7 +230,7 @@ function extractFirstPromptFromMsg(msg) {
     }
   }
   for (var j = 0; j < texts.length; j++) {
-    var t = texts[j].replace(/\n/g, ' ').trim();
+    var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
@@ -269,7 +269,7 @@ function updateTitleFromMessages() {
   var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
   if (tier === 0) return;
   if (tier < (state._titleTier || 0)) return;
-  var title = customTitle || aiTitle || lastPrompt || firstUser;
+  var title = attachmentPreviewText(customTitle || aiTitle || lastPrompt || firstUser);
   if (title === state.appState.sessionPreview) return;
   state.appState.sessionPreview = title;
   if (state.activeThreadId === state.rootSessionId) {

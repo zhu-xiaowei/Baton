@@ -117,7 +117,9 @@ def test_missing_storage_and_missing_file_are_errors(clients, monkeypatch):
     assert error.value.status_code == 503
 
 
-def test_real_signer_uses_accelerated_host_and_signed_content_length(monkeypatch):
+def test_real_signer_uses_accelerated_host_and_signed_content_length(monkeypatch, request):
+    bridge_sync._attachment_client.cache_clear()
+    request.addfinalizer(bridge_sync._attachment_client.cache_clear)
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'testing')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'testing')
     monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
@@ -131,6 +133,9 @@ def test_real_signer_uses_accelerated_host_and_signed_content_length(monkeypatch
     assert 'content-length' in signed
     assert 'content-type' in signed
     assert 'x-amz-meta-filename' in signed
+    assert bridge_sync._attachment_client() is bridge_sync._attachment_client()
+    assert bridge_sync._attachment_client(True) is bridge_sync._attachment_client(True)
+    assert bridge_sync._attachment_client() is not bridge_sync._attachment_client(True)
 
 
 def test_deployment_wires_acceleration_and_browser_cors():

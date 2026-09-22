@@ -181,6 +181,12 @@
   }
   function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function attachmentPreviewText(text) {
+    return text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<[^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)>)\)/g,
+      function (reference, label) {
+        try { return decodeURIComponent(label); } catch (error) { return reference; }
+      });
+  }
   var runtimeIconCacheKey = 'baton-runtime-icons-v1';
   var runtimeIconCache = {};
   var runtimeIconPending = {};
@@ -401,7 +407,7 @@
       + '<a class="recent-project-link" href="' + esc(projectHref) + '" data-nav="project"' + projectData + '>'
       + '<span class="recent-project-more">View all</span>' + arrowIcon + '</a></div>'
       + '<div class="recent-project-sessions" id="' + panelId + '"' + (collapsed ? ' hidden' : '') + '>' + project.sessions.map(function (s) {
-        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
         var detail = s.status === 'needs_input' && s.agentDetail ? '\n' + s.agentDetail : '';
         var label = s.status === 'running' ? 'Running' : s.status === 'needs_input' ? 'Needs input' : 'Done';
         var statusClass = s.status === 'running' ? 'running' : s.status === 'needs_input' ? 'idle' : 'stopped';
@@ -476,7 +482,7 @@
         var displayStatus = s.status;
         var statusLabel = displayStatus === 'running' ? 'Running' : displayStatus === 'needs_input' ? 'Needs input' : 'Done';
         var statusClass = displayStatus === 'running' ? 'running' : displayStatus === 'needs_input' ? 'idle' : 'stopped';
-        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
         var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
         return '<div class="active-card ' + esc(statusClass) + '"'
           + ' data-nav="active"'
@@ -820,8 +826,7 @@
   <div class="file-modal">
     <div class="file-modal-header">
       <span id="fileOverlayTitle" class="file-modal-title"></span>
-      <button type="button" id="file-download-btn" class="file-action" onclick="downloadViewedFile()" title="Download file" aria-label="Download file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg></button>
-      <button type="button" id="file-share-btn" class="file-action" onclick="shareViewedFile()" hidden>Share</button>
+      <button type="button" id="file-download-btn" class="file-action file-download-action" onclick="downloadViewedFile()" title="Download file" aria-label="Download file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg></button>
       <span id="fileOverlayTabs" class="file-tabs" style="display:none">
         <button class="file-tab active" data-mode="source" onclick="setFileViewMode('source')">Code</button>
         <button class="file-tab" data-mode="preview" onclick="setFileViewMode('preview')">Preview</button>

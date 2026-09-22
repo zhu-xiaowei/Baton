@@ -12,6 +12,7 @@ import os
 import json
 import hashlib
 from datetime import datetime
+from functools import lru_cache
 import time
 import re
 import uuid
@@ -864,6 +865,7 @@ def _attachment_key(key: str, request: Request):
     return f"attachments/{_hash_key(request.headers.get('x-api-key', ''))}/{key}"
 
 
+@lru_cache(maxsize=2)
 def _attachment_client(accelerated=False):
     return boto3.client(
         "s3", region_name=os.environ.get("AWS_REGION", "us-east-1"),

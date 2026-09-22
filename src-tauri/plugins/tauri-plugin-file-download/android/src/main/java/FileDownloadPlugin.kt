@@ -3,7 +3,11 @@ package com.batonai.download
 import android.Manifest
 import android.app.Activity
 import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.ClipData
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -26,6 +30,18 @@ class DownloadArgs {
 
 @TauriPlugin(permissions = [Permission(strings = [Manifest.permission.WRITE_EXTERNAL_STORAGE], alias = "legacyStorage")])
 class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
+  private data class PendingDownload(val id: Long, val name: String, val mime: String, val invoke: Invoke)
+
+  private var pending: PendingDownload? = null
+  private var foreground = true
+  private var receiverRegistered = false
+  private val receiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      if (intent.action == DownloadManager.ACTION_DOWNLOAD_COMPLETE
+        && intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) == pending?.id) shareCompletedDownload()
+    }
+  }
+
   @Command
   fun download(invoke: Invoke) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && getPermissionState("legacyStorage") != PermissionState.GRANTED) {
@@ -41,7 +57,59 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
     else invoke.reject("Storage permission is required to save to Downloads on this Android version")
   }
 
-  private fun enqueue(invoke: Invoke) {
+  override fun onPause() { foreground = false }
+
+  override fun onResume() {
+    foreground = true
+    shareCompletedDownload()
+  }
+
+  override fun onDestroy() {
+    pending?.invoke?.reject("Download continues in system Downloads. Open the file there when it finishes.")
+    clearPendingDownload()
+  }
+
+  private fun clearPendingDownload() {
+    if (receiverRegistered) {
+      activity.unregisterReceiver(receiver)
+      receiverRegistered = false
+    }
+    pending = null
+  }
+
+  private fun shareCompletedDownload() {
+    val download = pending ?: return
+    if (!foreground || activity.isFinishing || activity.isDestroyed) return
+    try {
+      val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+      val status = manager.query(DownloadManager.Query().setFilterById(download.id)).use { cursor ->
+        require(cursor != null && cursor.moveToFirst()) { "The download is no longer available" }
+        cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+      }
+      require(status != DownloadManager.STATUS_FAILED) { "Download failed. Check your connection and available storage." }
+      if (status != DownloadManager.STATUS_SUCCESSFUL) return
+      val uri = manager.getUriForDownloadedFile(download.id) ?: error("The downloaded file is unavailable")
+      val share = Intent(Intent.ACTION_SEND).setType(download.mime)
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      share.clipData = ClipData.newRawUri(download.name, uri)
+      activity.startActivity(Intent.createChooser(share, null))
+      clearPendingDownload()
+      val result = JSObject()
+      result.put("status", "share_opened")
+      result.put("id", download.id)
+      download.invoke.resolve(result)
+    } catch (error: Exception) {
+      clearPendingDownload()
+      download.invoke.reject(error.message ?: "Could not share the downloaded file")
+    }
+  }
+
+  private fun enqueue(invoke: Invoke) = activity.runOnUiThread {
+    if (pending != null) {
+      invoke.reject("A download is already in progress")
+      return@runOnUiThread
+    }
     try {
       val args = invoke.parseArgs(DownloadArgs::class.java)
       val uri = Uri.parse(args.url)
@@ -56,10 +124,18 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
         .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, destination)
       val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-      val result = JSObject()
-      result.put("status", "queued")
-      result.put("id", manager.enqueue(request))
-      invoke.resolve(result)
-    } catch (error: Exception) { invoke.reject(error.message ?: "Download failed") }
+      val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+      } else {
+        activity.registerReceiver(receiver, filter)
+      }
+      receiverRegistered = true
+      pending = PendingDownload(manager.enqueue(request), name, args.mime, invoke)
+      shareCompletedDownload()
+    } catch (error: Exception) {
+      clearPendingDownload()
+      invoke.reject(error.message ?: "Download failed")
+    }
   }
 }

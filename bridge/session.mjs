@@ -9,6 +9,7 @@ import {
   resolveClaudeBinForCapability,
 } from './runtime-capabilities.mjs';
 import { runExecutable } from './platform.mjs';
+import { attachmentPreviewText } from './attachments.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
@@ -16,7 +17,7 @@ const claudeHistoryCache = new Map();
 const DEFAULT_CLAUDE_HISTORY = path.join(path.dirname(CLAUDE_PROJECTS), 'history.jsonl');
 
 function previewText(value) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}…` : text;
 }

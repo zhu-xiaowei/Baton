@@ -4,7 +4,11 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
 const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-const preview = 'Inspect "quoted" <script> & session';
+const filename = 's02-压力测试报告.md';
+const prompt = 'Inspect "quoted" <script> & session';
+const preview = prompt + ' [' + encodeURIComponent(filename)
+  + '](</Users/demo/.baton-bridge/attachments/' + 'a'.repeat(32) + '.md>)';
+const displayPreview = prompt + ' ' + filename;
 const session = {
   sessionId: 'codex:session/one', preview, status: 'needs_input',
   lastActive: '2026-09-17T02:00:00.000Z', isAgent: true,
@@ -64,10 +68,10 @@ test('home consumes recentProjects from the existing two requests and keeps acti
     assert.deepEqual([...h.doc.querySelectorAll('.recent-project-device')].map(el => el.textContent), ['Office Mac', 'Dev EC2']);
     assert.deepEqual([...h.doc.querySelectorAll('.recent-session-status')].map(el => el.textContent), ['Needs input', 'Done']);
     assert.deepEqual([...h.doc.querySelectorAll('.recent-session .runtime-mark')].map(el => el.getAttribute('aria-label')), ['Codex', 'Claude Code']);
-    assert.equal(h.doc.querySelector('.recent-session-title').textContent, session.agentName);
+    assert.deepEqual([...h.doc.querySelectorAll('.recent-session-title')].map(el => el.textContent), [session.agentName, displayPreview]);
     assert.equal(h.doc.querySelector('.recent-project-name').textContent, project.projectName);
     assert.equal(h.doc.querySelector('#recent-projects-section script'), null);
-    assert.equal(h.doc.querySelector('.recent-session').title, session.agentName + '\n' + session.agentDetail);
+    assert.deepEqual([...h.doc.querySelectorAll('.recent-session')].map(el => el.title), [session.agentName + '\n' + session.agentDetail, displayPreview]);
     assert.equal(h.doc.querySelector('#active-section').compareDocumentPosition(h.doc.querySelector('#recent-projects-section')) & 4, 4);
     assert.equal(h.doc.querySelector('#recent-projects-section').compareDocumentPosition(h.doc.querySelector('#devices-section')) & 4, 4);
   } finally { h.win.close(); }
@@ -116,6 +120,7 @@ test('cached projects remain usable when refreshing the home data fails', async 
     await h.win.__homeLoadPromise;
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 2);
     assert.equal(h.doc.querySelector('.recent-session').dataset.preview, preview);
+    assert.equal(h.doc.querySelectorAll('.recent-session-title')[1].textContent, displayPreview);
   } finally { h.win.close(); }
 });
 

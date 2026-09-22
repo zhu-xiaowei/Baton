@@ -237,13 +237,16 @@ test('Claude metadata follows the TUI title priority and preserves slash command
 test('Claude first prompt outranks the latest prompt when no generated title exists', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-first-prompt-'));
   const filePath = path.join(root, 'session.jsonl');
+  const filename = 's02-压力测试报告.md';
+  const prompt = '这个文档写的是什么 [' + encodeURIComponent(filename)
+    + '](<' + path.join(root, '.baton-bridge', 'attachments', 'a'.repeat(32) + '.md') + '>)';
   fs.writeFileSync(filePath, [
-    JSON.stringify({ type: 'user', message: { content: 'First question' } }),
+    JSON.stringify({ type: 'user', message: { content: prompt } }),
     JSON.stringify({ type: 'last-prompt', lastPrompt: 'Follow-up question' }),
     '',
   ].join('\n'));
   try {
-    assert.equal(getSessionMetadata(filePath).preview, 'First question');
+    assert.equal(getSessionMetadata(filePath).preview, '这个文档写的是什么 ' + filename);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -7,6 +7,13 @@ import { pipeline } from 'node:stream/promises';
 
 const MAX_BYTES = 512 * 1024 * 1024;
 
+export function attachmentPreviewText(text) {
+  return text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<[^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)>)\)/g,
+    (reference, label) => {
+      try { return decodeURIComponent(label); } catch { return reference; }
+    });
+}
+
 export async function downloadAttachment(key, config, options = {}) {
   if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid attachment key');
   const fetchFn = options.fetchFn || fetch;
