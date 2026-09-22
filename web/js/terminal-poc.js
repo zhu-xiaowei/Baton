@@ -27,8 +27,8 @@ fitTerminal();
 const query = new URLSearchParams(location.search);
 const direct = query.get('transport') === 'direct';
 const remote = direct || query.get('transport') === 'remote';
-if (remote) document.querySelector('.notice').textContent = '远程 WSS → 测试 Bridge → 本机真实 Shell · 刷新创建新会话 · 断网后约 45 秒关闭旧会话';
-if (direct) document.querySelector('.notice').textContent = 'Header 签名 WS 直转 → 测试 Bridge → 本机 PTY · 按键/输出不经过 Lambda · 刷新创建新会话';
+if (remote) document.querySelector('.notice').textContent = 'Remote WSS → Test Bridge → Local shell · Refresh starts a new session · Disconnect timeout: ~45s';
+if (direct) document.querySelector('.notice').textContent = 'Header-signed WS → Test Bridge → Local PTY · Input/output bypass Lambda · Refresh starts a new session';
 const socket = remote
   ? new RemoteTerminalSocket(query.get('device'), { profile: query.get('profile') === '1', direct })
   : new WebSocket('ws://127.0.0.1:8787/terminal-poc');
@@ -50,7 +50,7 @@ function send(message) {
   if (socket.readyState !== WebSocket.OPEN) return false;
   const payload = JSON.stringify(message);
   if (socket.bufferedAmount + payload.length > 256 * 1024) {
-    stop('发送队列已满，会话已停止；刷新新建 Shell');
+    stop('Send queue full. Session stopped; refresh to start a new shell.');
     return false;
   }
   socket.send(payload);
@@ -60,7 +60,7 @@ function send(message) {
 function sendInput(bytes) {
   if (!ready) return;
   if (bytes.length > 64 * 1024) {
-    stop('POC 单次输入限制为 64 KiB，会话已停止');
+    stop('Input exceeds 64 KiB. POC session stopped.');
     return;
   }
   for (let offset = 0; offset < bytes.length; offset += 4096) {
@@ -88,7 +88,7 @@ socket.addEventListener('message', event => {
     if (message.type === 'ready') {
       ready = true;
       terminal.options.disableStdin = false;
-      status.textContent = `${direct ? 'Header 直转已连接' : remote ? '远程已连接' : '已连接'} · ${message.shell} · ${message.cwd}`;
+      status.textContent = `${direct ? 'Direct connection ready' : remote ? 'Remote connection ready' : 'Connected'} · ${message.shell} · ${message.cwd}`;
       fitTerminal();
       send({ type: 'resize', cols: terminal.cols, rows: terminal.rows });
       terminal.focus();
@@ -102,21 +102,21 @@ socket.addEventListener('message', event => {
         pendingOutput -= bytes.length;
       });
     } else if (message.type === 'exit') {
-      stop(`Shell 已退出 (${message.exitCode}${message.signal ? `, signal ${message.signal}` : ''}) · 刷新新建会话`);
+      stop(`Shell exited (${message.exitCode}${message.signal ? `, signal ${message.signal}` : ''}) · Refresh to start a new session`);
     } else if (message.type === 'error') {
-      stop(`错误：${message.message}`);
+      stop(`Error: ${message.message}`);
     } else if (message.type !== 'resized') {
       throw new Error('Unknown server message');
     }
   } catch (error) {
-    stop(`终端已停止：${error.message}`);
+    stop(`Terminal stopped: ${error.message}`);
   }
 });
-socket.addEventListener('error', event => stop(event.data || '连接失败：请先运行 npm run poc:terminal，并关闭其他 POC 页面'));
+socket.addEventListener('error', event => stop(event.data || 'Connection failed. Run npm run poc:terminal and close other POC tabs.'));
 socket.addEventListener('close', event => {
   ready = false;
   terminal.options.disableStdin = true;
-  if (!finalStatus) status.textContent = `连接已断开 (${event.code}) · 刷新新建会话，不会恢复旧 Shell`;
+  if (!finalStatus) status.textContent = `Disconnected (${event.code}) · Refresh for a new session; the old shell cannot be restored`;
 });
 
 const observer = new ResizeObserver(fitTerminal);

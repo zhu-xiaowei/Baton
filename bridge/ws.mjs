@@ -130,7 +130,7 @@ async function handleSharedTerminalMessage(message) {
     if (_ws === connection) manager.handle(message);
   } catch {
     wsSend({ action: 'terminal_direct', v: 1, op: 'close', terminalId: message.terminalId,
-      reason: '终端组件未就绪，请更新或重新安装 Bridge' });
+      reason: 'Terminal components unavailable. Update or reinstall Bridge.' });
   }
 }
 

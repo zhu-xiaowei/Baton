@@ -491,7 +491,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (message.error) { current.focusAfterSync = false; status(message.error, 'error'); }
       else settledStatus();
     } else if (message.type === 'ready') {
-      if (!current.sessions.some(session => session.id === message.sessionId)) throw new Error('终端列表未同步，请更新 Bridge 后重新连接');
+      if (!current.sessions.some(session => session.id === message.sessionId)) throw new Error('Terminal list out of sync. Update Bridge and reconnect.');
       clearTimeout(current.ackTimer);
       current.ackTimer = null;
       current.lastAck = 0;
@@ -603,7 +603,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     socket.addEventListener('error', event => {
       if (ownsRuntime(current) && generation === current.generation) {
         const message = event.data || 'Terminal connection failed';
-        fail(message, !/更新|目录|最多|无效|权限|unsupported/i.test(message));
+        fail(message, !/update|directory|maximum|invalid|permission|unsupported/i.test(message));
       }
     });
     socket.addEventListener('close', () => {

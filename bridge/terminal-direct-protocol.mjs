@@ -95,15 +95,15 @@ export class DirectDataChannel extends EventTarget {
     url.protocol = 'wss:';
     url.search = new URLSearchParams({ apiKey: key, role: 'terminal_data', version: 'xterm-direct-1' });
     this.socket = socketFactory(url);
-    this.timeout = setTimeout(() => this.fail('等待 Header 直转授权超时'), 30000);
+    this.timeout = setTimeout(() => this.fail('Direct connection authorization timed out.'), 30000);
     this.socket.addEventListener('open', () => {
       if (this.readyState !== 0) return;
       this.socket.send(JSON.stringify({ action: 'terminal_direct', v: 1, op: 'join', terminalId: offer.terminalId,
         side: offer.side, joinToken: offer.joinToken }));
     });
     this.socket.addEventListener('message', event => this.receive(event.data));
-    this.socket.addEventListener('error', () => this.fail('终端数据连接失败'));
-    this.socket.addEventListener('close', () => this.finish('终端数据连接已断开'));
+    this.socket.addEventListener('error', () => this.fail('Terminal data connection failed.'));
+    this.socket.addEventListener('close', () => this.finish('Terminal data connection closed.'));
   }
 
   get bufferedAmount() {
@@ -115,9 +115,9 @@ export class DirectDataChannel extends EventTarget {
     if (message.terminalId !== this.offer.terminalId || message.device !== this.offer.device || message.side !== this.offer.side
       || message.endpoint !== this.expectedEndpoint.href.replace(/\/$/, '') || !CONNECTION.test(message.connectionId)
       || !CONNECTION.test(message.peerConnectionId) || message.connectionId === message.peerConnectionId
-      || this.socket.readyState !== 1) return this.fail('终端授权与当前连接不匹配');
+      || this.socket.readyState !== 1) return this.fail('Terminal authorization does not match this connection.');
     if (this.binding && (this.binding.connectionId !== message.connectionId || this.binding.peerConnectionId !== message.peerConnectionId)) {
-      return this.fail('终端连接变化，不允许复用旧会话');
+      return this.fail('Terminal connection changed. Previous session cannot be reused.');
     }
     try {
       if (!/^[0-9a-f]{64}$/.test(message.frameKey) || (this.frameKey && this.frameKey !== message.frameKey)) throw new Error('Invalid session frame key');
@@ -128,7 +128,7 @@ export class DirectDataChannel extends EventTarget {
       if (remaining <= 0) throw new Error('Expired');
       this.binding = { connectionId: message.connectionId, peerConnectionId: message.peerConnectionId };
       clearTimeout(this.expiry);
-      this.expiry = setTimeout(() => this.fail('终端授权已过期，请刷新创建新会话'), remaining);
+      this.expiry = setTimeout(() => this.fail('Terminal authorization expired. Refresh to start a new session.'), remaining);
       clearTimeout(this.timeout);
       const opening = this.readyState === 0;
       this.readyState = 1;
@@ -138,7 +138,7 @@ export class DirectDataChannel extends EventTarget {
       this.incomingBytes = 0;
       for (const payload of pending) this.receive(payload);
     } catch {
-      this.fail('终端签名授权无效');
+      this.fail('Invalid terminal signing authorization.');
     }
   }
 
@@ -162,10 +162,10 @@ export class DirectDataChannel extends EventTarget {
         } finally {
           this.pendingBytes -= bytes;
         }
-      }).catch(() => this.fail('终端签名或发送失败，不会重放输入'));
+      }).catch(() => this.fail('Signing or sending failed. Input will not be replayed.'));
       return true;
     } catch {
-      this.fail('终端发送队列或消息超限');
+      this.fail('Terminal send queue full or message too large.');
       return false;
     }
   }
@@ -261,11 +261,11 @@ export class DirectAppSocket extends EventTarget {
     this.borrowed = controlSocket?.readyState === 1 && controlSocket.url === url.href && !borrowedControls.has(controlSocket);
     this.control = this.borrowed ? controlSocket : socketFactory(url);
     if (this.borrowed) borrowedControls.add(this.control);
-    this.timeout = setTimeout(() => this.fail('等待 Header 直转测试 Bridge 超时'), 30000);
+    this.timeout = setTimeout(() => this.fail('Direct Bridge connection timed out.'), 30000);
     this.controlListeners = {
       open: () => this.controlSend('open'),
       message: event => this.receive(event.data),
-      error: () => this.fail('终端授权连接失败'),
+      error: () => this.fail('Terminal authorization connection failed.'),
       close: () => { this.close(); this.detachControl(); },
     };
     for (const [type, listener] of Object.entries(this.controlListeners)) this.control.addEventListener(type, listener);
@@ -289,12 +289,12 @@ export class DirectAppSocket extends EventTarget {
       const message = JSON.parse(typeof data === 'string' ? data : decoder.decode(data));
       if (message.action !== 'terminal_direct' || message.terminalId !== this.options.terminalId) return;
       if (message.type === 'closed') {
-        this.fail(message.message || '终端会话已结束');
+        this.fail(message.message || 'Terminal session ended.');
         this.detachControl();
         return;
       }
       if (this.readyState > 1) return;
-      if (message.type === 'error') return this.fail(message.message || '终端会话已结束');
+      if (message.type === 'error') return this.fail(message.message || 'Terminal session ended.');
       if (message.v !== 1 || message.device !== this.options.device || message.side !== 'app') throw new Error('Invalid control frame');
       if (this.options.projectHash && message.projectHash !== this.options.projectHash) throw new Error('Project mismatch');
       if (message.type === 'offer') {
@@ -317,7 +317,7 @@ export class DirectAppSocket extends EventTarget {
           Math.max(1000, Math.min(300000, message.credentials.expiresAt * 1000 - Date.now() - 120000)));
       }
     } catch {
-      this.fail('终端授权消息无效');
+      this.fail('Invalid terminal authorization message.');
     }
   }
 

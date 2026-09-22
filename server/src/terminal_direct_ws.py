@@ -85,7 +85,7 @@ class DirectSessions:
             if not conditional(error):
                 raise
 
-    def close(self, terminal_id, reason="终端连接已关闭，请重新创建会话"):
+    def close(self, terminal_id, reason="Terminal connection closed. Start a new session."):
         session = self.get(session_key(terminal_id))
         if not session or session.get("state") == "closed":
             return
@@ -118,7 +118,7 @@ class DirectSessions:
         if previous:
             session = self.get(session_key(previous))
             if session and session.get("state") != "closed" and session.get("expiresAt", 0) > time.time():
-                raise ValueError("终端正忙，请关闭原页面后重试")
+                raise ValueError("Terminal busy. Close the previous tab and retry.")
             if session:
                 self.close(previous)
             self.release(connection_id, previous)
@@ -137,13 +137,13 @@ class DirectSessions:
             raise ValueError("Invalid project")
         candidates = [item for item in self.query(connection["accountId"], "bridge") if item.get("deviceName") == device]
         if len(candidates) != 1:
-            raise ValueError("设备离线或存在重复 Bridge 连接")
+            raise ValueError("Device offline or duplicate Bridge connections.")
         bridge = self.get(candidates[0]["connectionId"]) if shared else self.available_control(candidates[0]["connectionId"])
         if (not bridge or bridge.get("role") != "bridge" or bridge.get("accountId") != connection["accountId"]
                 or bridge.get("deviceName") != device
                 or (shared and bridge.get("terminalProtocol") != 2)
                 or (not shared and bridge.get("bridgeVersion") != "xterm-direct-1")):
-            raise ValueError("请更新该设备的 Bridge 后使用终端")
+            raise ValueError("Update Bridge on this device to use the terminal.")
         initial = body.get("initialOpen")
         if initial is not None:
             if (not shared or not isinstance(initial, dict)
@@ -220,7 +220,7 @@ class DirectSessions:
         try:
             self.issue(session, "issuing")
         except Exception:
-            self.close(terminal_id, "终端授权失败，请重新连接")
+            self.close(terminal_id, "Terminal authorization failed. Reconnect.")
             raise
 
     def issue(self, session, expected_state):
@@ -273,12 +273,12 @@ class DirectSessions:
         if session.get("issuedAt", 0) + 60 > time.time():
             return
         if session.get("expiresAt", 0) <= time.time():
-            self.close(session["terminalId"], "终端授权已过期，请重新连接")
+            self.close(session["terminalId"], "Terminal authorization expired. Reconnect.")
             return
         try:
             self.issue(session, "active")
         except Exception:
-            self.close(session["terminalId"], "终端授权续期失败，请重新连接")
+            self.close(session["terminalId"], "Terminal authorization renewal failed. Reconnect.")
             raise
 
 
@@ -286,7 +286,7 @@ def service(endpoint, table, query, post, disconnect):
     global _sts
     role_arn = os.environ.get("TERMINAL_DIRECT_ROLE_ARN")
     if not role_arn:
-        raise ValueError("Header 直转尚未部署")
+        raise ValueError("Direct terminal transport is not deployed.")
     region = os.environ.get("AWS_REGION", "ap-northeast-1")
     if _sts is None:
         _sts = boto3.client("sts", region_name=region)
@@ -309,12 +309,12 @@ def handle_terminal_direct(body, connection, connection_id, endpoint, *, table, 
             manager.control(body, connection, connection_id)
         return {"statusCode": 200}
     except PermissionError:
-        message, status = "终端授权无效或会话不属于当前连接", 403
+        message, status = "Invalid terminal authorization or session connection mismatch.", 403
     except (ValueError, ClientError) as error:
-        message = str(error) if isinstance(error, ValueError) else "终端正忙或授权暂时失败，请重新连接"
+        message = str(error) if isinstance(error, ValueError) else "Terminal busy or authorization unavailable. Reconnect."
         status = 400
     except Exception:
-        message, status = "终端初始化失败，请重新连接", 500
+        message, status = "Terminal initialization failed. Reconnect.", 500
     post(endpoint, connection_id, {"action": "terminal_direct", "v": 1, "type": "error",
         "terminalId": terminal_id, "message": message})
     return {"statusCode": status}

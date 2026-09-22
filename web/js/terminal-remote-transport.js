@@ -12,7 +12,7 @@ function terminalConfiguration(server, key) {
   current.promise = fetch(`${server}/api/bridge/config`, {
     headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000),
   }).then(response => {
-    if (!response.ok) throw new Error(`读取远程配置失败：HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`Remote config failed: HTTP ${response.status}`);
     return response.json();
   }).catch(error => {
     if (configuration === current) configuration = null;
@@ -39,7 +39,7 @@ export class RemoteTerminalSocket extends EventTarget {
     this.direct = direct;
     this.projectHash = projectHash;
     this.initialOpen = initialOpen;
-    Promise.resolve().then(() => this.connect()).catch(() => this.fail('远程连接初始化失败：请确认已登录主页面及网络正常'));
+    Promise.resolve().then(() => this.connect()).catch(() => this.fail('Check your network.'));
   }
 
   get bufferedAmount() {
@@ -52,12 +52,12 @@ export class RemoteTerminalSocket extends EventTarget {
 
   async connect() {
     const key = atob(localStorage.getItem('_ak') || '');
-    if (!key || !this.device) return this.fail('请先在主页面登录，并选择在线设备');
+    if (!key || !this.device) return this.fail('Sign in on the main page and select an online device.');
     const server = (localStorage.getItem('_as') || location.origin).replace(/\/$/, '');
     const { wsUrl } = await terminalConfiguration(server, key);
     if (key !== atob(localStorage.getItem('_ak') || '')
       || server !== (localStorage.getItem('_as') || location.origin).replace(/\/$/, '')) return this.close();
-    if (!wsUrl?.startsWith('wss://')) return this.fail('服务器没有返回有效的 WSS 地址');
+    if (!wsUrl?.startsWith('wss://')) return this.fail('Server returned an invalid WSS URL.');
     const endpoint = new URL(wsUrl);
     endpoint.search = new URLSearchParams({ apiKey: key, role: 'app' });
     if (this.readyState !== WebSocket.CONNECTING) return;
@@ -67,11 +67,11 @@ export class RemoteTerminalSocket extends EventTarget {
       : new WebSocket(endpoint);
     this.socket.addEventListener('open', () => {
       this.readyState = WebSocket.OPEN;
-      this.readyTimeout = setTimeout(() => this.fail('等待远程 PTY 超时：请确认该设备的 Bridge 在线且已更新'), 15000);
+      this.readyTimeout = setTimeout(() => this.fail('Remote terminal timed out. Check that Bridge is online and updated.'), 15000);
       this.dispatchEvent(new Event('open'));
     });
     this.socket.addEventListener('message', event => this.receive(event.data));
-    this.socket.addEventListener('error', event => this.fail(event.data || '远程 WSS 连接失败，请检查网络和登录状态'));
+    this.socket.addEventListener('error', event => this.fail(event.data || 'Check your network.'));
     this.socket.addEventListener('close', event => {
       this.cleanup();
       this.readyState = WebSocket.CLOSED;
@@ -90,7 +90,7 @@ export class RemoteTerminalSocket extends EventTarget {
       ...(this.profile ? { profile: true } : {}),
     });
     if (new TextEncoder().encode(frame).length > 28 * 1024 || this.bufferedAmount + frame.length > 256 * 1024) {
-      return this.fail('远程输入队列超限，会话已停止，不会重放输入');
+      return this.fail('Input queue full. Session stopped; input will not be replayed.');
     }
     if (clientSeq) this.unacked.set(clientSeq, frame.length);
     this.socket.send(frame);
@@ -98,22 +98,22 @@ export class RemoteTerminalSocket extends EventTarget {
 
   receive(payload) {
     try {
-      if (typeof payload !== 'string' || new TextEncoder().encode(payload).length > 28 * 1024) throw new Error('远程消息过大');
+      if (typeof payload !== 'string' || new TextEncoder().encode(payload).length > 28 * 1024) throw new Error('Remote message too large');
       const message = JSON.parse(payload);
       if (message.action !== (this.projectHash ? 'terminal_shared' : 'terminal_poc')) return;
       if (this.projectHash && message.projectHash !== this.projectHash) return;
       if (message.terminalId !== this.terminalId || message.device !== this.device) return;
-      if (message.v !== 1) throw new Error('远程协议版本不兼容');
+      if (message.v !== 1) throw new Error('Remote protocol version mismatch');
       if (message.type === 'ack' && message.eventSeq === 0) {
-        if (!Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('无效输入确认');
+        if (!Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('Invalid input acknowledgment');
         return this.deliver(message);
       }
       if (message.type === 'error' && message.eventSeq === 0) return this.deliver(message);
-      if (!Number.isSafeInteger(message.eventSeq) || message.eventSeq < 1) throw new Error('无效输出序号');
+      if (!Number.isSafeInteger(message.eventSeq) || message.eventSeq < 1) throw new Error('Invalid output sequence');
       if (message.eventSeq < this.eventSeq || this.pending.has(message.eventSeq)) return;
       this.pending.set(message.eventSeq, message);
       this.pendingBytes += JSON.stringify(message).length;
-      if (message.eventSeq - this.eventSeq > 256 || this.pendingBytes > 1024 * 1024) throw new Error('输出排序队列超限');
+      if (message.eventSeq - this.eventSeq > 256 || this.pendingBytes > 1024 * 1024) throw new Error('Output reorder queue full');
       while (this.pending.has(this.eventSeq)) {
         const next = this.pending.get(this.eventSeq);
         this.pending.delete(this.eventSeq++);
@@ -121,7 +121,7 @@ export class RemoteTerminalSocket extends EventTarget {
         this.deliver(next);
       }
       if (!this.pending.size) { clearTimeout(this.gapTimeout); this.gapTimeout = null; }
-      else if (!this.gapTimeout) this.gapTimeout = setTimeout(() => this.fail('远程输出缺失，已停止；刷新创建新会话'), 10000);
+      else if (!this.gapTimeout) this.gapTimeout = setTimeout(() => this.fail('Output missing. Session stopped; refresh to start a new one.'), 10000);
     } catch (error) {
       this.fail(error.message);
     }
@@ -138,7 +138,7 @@ export class RemoteTerminalSocket extends EventTarget {
       clearInterval(this.heartbeat);
       this.lastAckAt = Date.now();
       this.heartbeat = setInterval(() => {
-        if (Date.now() - this.lastAckAt > 30000) return this.fail('远程 Bridge 长时间未确认消息，会话已停止');
+        if (Date.now() - this.lastAckAt > 30000) return this.fail('Bridge is not responding. Session stopped.');
         this.send(JSON.stringify({ type: 'heartbeat' }));
       }, 10000);
     }

@@ -24,7 +24,7 @@ export function createSharedTerminals(options) {
   function rawSend(peer, message, bytes = 0) {
     if (peer.closed) return false;
     if (peer.inflightBytes + bytes > MAX_CLIENT_BYTES) {
-      drop(peer, '终端显示落后，重新连接后恢复当前屏幕');
+      drop(peer, 'Terminal display is behind. Reconnect to restore.');
       return false;
     }
     const eventSeq = message.type === 'ack' ? 0 : ++peer.eventSeq;
@@ -34,7 +34,7 @@ export function createSharedTerminals(options) {
     }
     const accepted = peer.channel.send({ action: 'terminal_shared', v: 1, terminalId: peer.id,
       device: options.device, projectHash: peer.projectHash, eventSeq, ...message });
-    if (!accepted) drop(peer, '终端连接已断开');
+    if (!accepted) drop(peer, 'Terminal disconnected.');
     return accepted;
   }
 
@@ -42,7 +42,7 @@ export function createSharedTerminals(options) {
     if (peer.closed) return;
     if (peer.snapshot) {
       peer.bufferedBytes += Math.max(bytes, 128);
-      if (peer.bufferedBytes > MAX_CLIENT_BYTES) return drop(peer, '屏幕同步期间输出过多，请重新连接');
+      if (peer.bufferedBytes > MAX_CLIENT_BYTES) return drop(peer, 'Too much output during screen sync. Reconnect.');
       peer.buffered.push({ message, bytes });
     } else rawSend(peer, message, bytes);
   }
@@ -99,7 +99,7 @@ export function createSharedTerminals(options) {
       if (session.closed) return;
       stopProcess(session);
       session.exited = true;
-      for (const peer of [...session.peers]) drop(peer, '终端处理失败，请重新连接后新建终端');
+      for (const peer of [...session.peers]) drop(peer, 'Terminal failed. Reconnect and create a new terminal.');
       updateSessions(session.cwd);
     });
     return session.work;
@@ -193,9 +193,9 @@ export function createSharedTerminals(options) {
         historyTruncated = true;
       }
     } catch {
-      return drop(peer, '无法恢复终端屏幕，请重新连接');
+      return drop(peer, 'Cannot restore terminal screen. Reconnect.');
     }
-    if (bytes.length > MAX_SNAPSHOT_BYTES) return drop(peer, '当前终端屏幕过大，无法安全恢复');
+    if (bytes.length > MAX_SNAPSHOT_BYTES) return drop(peer, 'Terminal screen too large to restore safely.');
     peer.buffered = [];
     peer.bufferedBytes = 0;
     peer.inflight.clear();
@@ -211,7 +211,7 @@ export function createSharedTerminals(options) {
 
   function createSession(cwd, size, replacement = null) {
     const existing = projectSessions(cwd).filter(session => session !== replacement);
-    if (existing.length >= PROJECT_LIMIT) throw new Error('每个项目最多 5 个终端，请先关闭一个终端');
+    if (existing.length >= PROJECT_LIMIT) throw new Error('Maximum of 5 terminals per project. Close one first.');
     if (sessions.size - Number(!!replacement) >= TOTAL_LIMIT) {
       for (const [key, candidate] of sessions) {
         if (candidate.cwd !== cwd && candidate.exited && ![...peers.values()].some(peer => peer.cwd === candidate.cwd)) {
@@ -221,7 +221,7 @@ export function createSharedTerminals(options) {
         }
       }
     }
-    if (sessions.size - Number(!!replacement) >= TOTAL_LIMIT) throw new Error('设备最多保留 20 个终端，请先关闭不用的终端');
+    if (sessions.size - Number(!!replacement) >= TOTAL_LIMIT) throw new Error('Maximum of 20 terminals per device. Close unused terminals.');
     let number = 1;
     while (existing.some(session => session.number === number)) number++;
     const session = { id: randomUUID(), cwd, number, peers: new Set(), work: Promise.resolve() };
@@ -273,7 +273,7 @@ export function createSharedTerminals(options) {
         await selectSession(peer, createSession(peer.cwd, dimensions(message)));
       } else {
         const session = sessions.get(message.sessionId);
-        if (!session || session.cwd !== peer.cwd) throw new Error('该终端已关闭或不可用');
+        if (!session || session.cwd !== peer.cwd) throw new Error('Terminal closed or unavailable.');
         if (message.type === 'select_session') await selectSession(peer, session);
         else {
           if (projectSessions(peer.cwd).length === 1) createSession(peer.cwd, { cols: session.cols, rows: session.rows }, session);
@@ -289,7 +289,7 @@ export function createSharedTerminals(options) {
       rawSend(peer, { type: 'session_result', requestId: message.requestId });
     } catch (error) {
       sendSessions(peer);
-      rawSend(peer, { type: 'session_result', requestId: message.requestId, error: error.message || '终端操作失败' });
+      rawSend(peer, { type: 'session_result', requestId: message.requestId, error: error.message || 'Terminal operation failed.' });
     }
   }
 
@@ -313,7 +313,7 @@ export function createSharedTerminals(options) {
       }
     } else if (message.type !== 'heartbeat') {
       if (!session || session.closed || message.epoch !== session.epoch || message.sessionId !== session.id) {
-        rawSend(peer, { type: 'error', message: '终端已切换或关闭，旧输入未执行', fatal: false });
+        rawSend(peer, { type: 'error', message: 'Terminal switched or closed. Previous input was ignored.', fatal: false });
       } else if (message.type === 'resize') {
         const size = dimensions(message);
         if (session.cols !== size.cols || session.rows !== size.rows) {
@@ -335,7 +335,7 @@ export function createSharedTerminals(options) {
       const message = JSON.parse(payload);
       if (message.type === 'open') {
         if (message.clientSeq !== 0) throw new Error('Invalid open sequence');
-        peer.work = peer.work.then(() => attach(peer, message)).catch(error => drop(peer, error.message || '终端初始化失败'));
+        peer.work = peer.work.then(() => attach(peer, message)).catch(error => drop(peer, error.message || 'Terminal initialization failed.'));
         return;
       }
       if ((!INPUT_TYPES.has(message.type) && !MANAGEMENT_TYPES.has(message.type)) || !Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('Invalid terminal input');
@@ -362,21 +362,21 @@ export function createSharedTerminals(options) {
             return manage(peer, next).then(() => rawSend(peer, { type: 'ack', clientSeq: next.clientSeq }));
           }
           const operation = () => {
-            try { apply(peer, next); } catch { drop(peer, '终端请求无效，请重新连接'); }
+            try { apply(peer, next); } catch { drop(peer, 'Invalid terminal request. Reconnect.'); }
           };
           return peer.session ? enqueue(peer.session, operation) : operation();
-        }).catch(() => drop(peer, '终端请求无效，请重新连接'));
+        }).catch(() => drop(peer, 'Invalid terminal request. Reconnect.'));
       }
       peer.gapSince = peer.pending.size ? peer.gapSince || Date.now() : 0;
     } catch (error) {
-      drop(peer, error.message || '终端初始化失败');
+      drop(peer, error.message || 'Terminal initialization failed.');
     }
   }
 
   const watchdog = setInterval(() => {
     for (const peer of [...peers.values()]) {
       if (Date.now() - peer.lastSeen > 45000 || (peer.gapSince && Date.now() - peer.gapSince > 10000)) {
-        drop(peer, '连接超时，请重新连接；后台终端仍保留');
+        drop(peer, 'Connection timed out. Reconnect; background terminals are retained.');
       }
     }
   }, 1000);
