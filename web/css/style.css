@@ -99,6 +99,9 @@ body {
   color: var(--action-icon-color); cursor: pointer; transition: all 0.15s;
 }
 .new-session-btn svg { padding: 4px; width: 22px; height: 22px; border: 1.5px solid currentColor; border-radius: 50%; background: transparent; }
+@media (hover: hover) and (pointer: fine) {
+  html:not(.native-mobile) .new-session-btn svg line { stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+}
 .new-session-btn:focus-visible,
 .project-files-entry:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 @media (hover: hover) and (pointer: fine) {
