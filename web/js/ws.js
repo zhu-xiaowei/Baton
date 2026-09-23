@@ -1204,7 +1204,7 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
   var delays = [150, 800, 2000];
   setTimeout(function () {
     if (state.wsSessionId !== sessionId) return;
-    refreshSessionMessages().then(function (result) {
+    loadLatestMessages(sessionId, { preserveLive: true }).then(function (result) {
       if (state.wsSessionId !== sessionId) return;
       if (attempt + 1 < delays.length
         && (!result || result.status === 'running')) {
@@ -1739,11 +1739,15 @@ async function loadLatestMessages(sessionId, options = {}) {
   if (state.wsSessionId !== sessionId) return { ok: false, stale: true };
   selectWsSession(sessionId);
   var active = _historyFetchBarriers.current(sessionId);
-  if (active) return active.promise;
+  if (active) {
+    if (options.preserveLive) active.preserveLive = true;
+    return active.promise;
+  }
   var barrier = _historyFetchBarriers.open({
     sessionId: sessionId,
     pendingIds: state.pendingSentMessages.map(function (pending) { return pending.id; }),
   });
+  barrier.preserveLive = !!options.preserveLive;
   barrier.promise = (async function () {
     subscribeSession(sessionId);
     var data = {};
@@ -1759,10 +1763,12 @@ async function loadLatestMessages(sessionId, options = {}) {
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError && options.preserveLive) {
+      if (!restError && barrier.preserveLive) {
         commitMessages(data.messages || [], { liveStateChanged: true });
-        state.wsHasMore = !!data.hasMore;
-        state.wsOldestTimestamp = data.oldestTimestamp || '';
+        if (!state.wsOldestTimestamp) {
+          state.wsHasMore = !!data.hasMore;
+          state.wsOldestTimestamp = data.oldestTimestamp || '';
+        }
       } else if (!restError) {
         var snapshot = replaceHistoryTail(state.wsAllMessages,
           dedupeCodexUserMessages(data.messages || []));
@@ -1810,7 +1816,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
       displayHistorySnapshot({}, []);
     }
-    _suppressTurnEndRecovery = !options.preserveLive && !restError && data.status === 'completed';
+    _suppressTurnEndRecovery = !barrier.preserveLive && !restError && data.status === 'completed';
     try {
       for (var event of barrier.events) routeTurnEvent(event);
       drainStrictStreamOperations();
