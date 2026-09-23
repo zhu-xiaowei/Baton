@@ -4,6 +4,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM(`<!doctype html><body>
+  <div id="top-right"><button class="git-status-entry"></button></div>
   <div id="content"><div class="messages"></div></div>
   <div id="input-bar"><textarea id="msg-input"></textarea><button id="send-btn"></button></div>
 </body>`, { url: 'https://test/', pretendToBeVisual: true });
@@ -73,7 +74,7 @@ await import('../../web/js/ws.js');
 
 test.afterEach(() => {
   state.wsRunning = false;
-  state.wsStatusText = '';
+  window.setWsStatus('');
   window.updateSpinner();
 });
 
@@ -141,26 +142,37 @@ test('Claude and Codex share the same collapsing spinner row', () => {
   }
 });
 
-test('WS reconnect reuses the spinner and restores running or idle status', () => {
+test('WS reconnect uses the header without changing the answer spinner or send button', () => {
   reset();
   state.wsRunning = false;
+  window.updateSendBtn();
+  const sendButton = document.getElementById('send-btn');
+  const sendIcon = sendButton.innerHTML;
   window.setWsStatus('disconnected');
-  const spinner = document.getElementById('cc-spinner');
-  assert.equal(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
-  assert.equal(spinner.classList.contains('is-collapsed'), false);
-  assert.equal(document.getElementById('ws-banner'), null);
+  assert.equal(document.getElementById('ws-reconnect-indicator'), null);
   window.setWsStatus('reconnecting');
-  assert.equal(document.getElementById('cc-spinner'), spinner);
+  const indicator = document.getElementById('ws-reconnect-indicator');
+  assert.equal(indicator?.nextElementSibling?.className, 'git-status-entry');
+  assert.equal(indicator.querySelector('[role="status"]').getAttribute('aria-label'), 'Reconnecting');
+  assert.ok(!document.getElementById('cc-spinner')
+    || document.getElementById('cc-spinner').classList.contains('is-collapsed'));
+  assert.equal(sendButton.innerHTML, sendIcon);
+  window.setWsStatus('reconnecting');
+  assert.equal(document.getElementById('ws-reconnect-indicator'), indicator);
   state.wsRunning = true;
+  window.updateSendBtn();
+  const spinner = document.getElementById('cc-spinner');
   window.setWsStatus('connected');
-  assert.equal(document.getElementById('cc-spinner'), spinner);
+  assert.equal(document.getElementById('ws-reconnect-indicator'), null);
   assert.equal(spinner.classList.contains('is-collapsed'), false);
   assert.notEqual(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
-  state.wsRunning = false;
   window.setWsStatus('reconnecting');
-  assert.equal(spinner.querySelector('.cc-spinner-verb').textContent, 'Connecting...');
-  window.setWsStatus('connected');
+  state.wsRunning = false;
+  window.updateSendBtn();
   assert.equal(spinner.classList.contains('is-collapsed'), true);
+  assert.ok(document.getElementById('ws-reconnect-indicator'));
+  window.setWsStatus('');
+  assert.equal(document.getElementById('ws-reconnect-indicator'), null);
   assert.equal(document.querySelectorAll('#cc-spinner').length, 1);
 });
 

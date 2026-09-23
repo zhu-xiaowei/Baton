@@ -82,6 +82,15 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         assert.equal(getComputedStyle(meta).display, 'inline-flex');
         assert.equal(document.querySelector('#top-right .runtime-mark'), null);
         assert.equal(document.querySelector('.top-logo').outerHTML, brandMarkup);
+        assert.equal(document.getElementById('ws-reconnect-indicator'), null);
+        state.wsStatusText = 'reconnecting';
+        window.updateBreadcrumb();
+        assert.equal(document.getElementById('ws-reconnect-indicator')?.nextElementSibling?.title, 'Git changes');
+        window.updateBreadcrumb();
+        assert.equal(document.querySelectorAll('#ws-reconnect-indicator').length, 1);
+        state.wsStatusText = 'connected';
+        window.updateBreadcrumb();
+        assert.equal(document.getElementById('ws-reconnect-indicator'), null);
       }
     });
 

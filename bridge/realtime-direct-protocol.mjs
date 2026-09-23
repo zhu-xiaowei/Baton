@@ -14,10 +14,12 @@ export function realtimePayload(event) {
 }
 
 export class RealtimeReceiver {
-  constructor({ control, key, receive, socketFactory = url => new WebSocket(url) }) {
+  constructor({ control, key, receive, onStatusChange = () => {}, socketFactory = url => new WebSocket(url) }) {
     this.control = control;
     this.key = key;
     this.receive = receive;
+    this.onStatusChange = onStatusChange;
+    this.status = '';
     this.socketFactory = socketFactory;
     this.generation = 0;
     this.disposed = false;
@@ -34,6 +36,7 @@ export class RealtimeReceiver {
       const retry = !!this.socket;
       this.reset();
       if (retry) this.retry = setTimeout(() => this.start(), 3000);
+      this.setStatus(retry ? 'reconnecting' : 'fallback');
     }, 15000);
   }
 
@@ -64,14 +67,17 @@ export class RealtimeReceiver {
           if (generation !== this.generation) return;
           this.reset();
           this.retry = setTimeout(() => this.start(), 3000);
+          this.setStatus('reconnecting');
         };
       } catch {
         this.reset();
+        this.setStatus('fallback');
       }
     } else if (message.type === 'ready' && message.bindingId === this.bindingId) {
       if (!/^[0-9a-f]{64}$/.test(message.frameKey || '')) return true;
       this.frameKey = message.frameKey;
       clearTimeout(this.timeout);
+      this.setStatus('connected');
       const pending = this.pending;
       this.pending = [];
       this.pendingBytes = 0;
@@ -79,8 +85,15 @@ export class RealtimeReceiver {
     } else if (message.type === 'closed' || message.type === 'unsupported' || message.type === 'error') {
       this.reset();
       if (message.type === 'closed') this.retry = setTimeout(() => this.start(), 3000);
+      this.setStatus(message.type === 'closed' ? 'reconnecting' : 'fallback');
     }
     return true;
+  }
+
+  setStatus(status) {
+    if (this.disposed || this.status === status) return;
+    this.status = status;
+    this.onStatusChange(status);
   }
 
   accept(payload) {

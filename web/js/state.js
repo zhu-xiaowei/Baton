@@ -33,6 +33,7 @@ export const state = {
   wsRootSessionId: null,
   wsMessageCount: 0,
   wsStatusText: '',
+  wsRealtimeStatusText: '',
   wsAllMessages: [],          // all messages for the active session, sorted ascending
   wsMessageUuids: new Set(),  // UUID index for final persisted messages; streaming bypasses it
   wsProjectHash: null,        // for new session creation

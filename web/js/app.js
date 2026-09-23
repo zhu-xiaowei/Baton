@@ -23,6 +23,7 @@ import {
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { attachmentPreviewText } from './components/attachment.js';
 import { loadingSpinner } from './components/loading.js';
+import { updateWsStatusIndicator } from './components/ws-status.js';
 import { openProjectTerminal } from './terminal.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
@@ -449,6 +450,7 @@ function updateBreadcrumb() {
   } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
   }
+  updateWsStatusIndicator();
   var titleHtml = '';
   var titleMeta = '';
   if (state.appState.session) {

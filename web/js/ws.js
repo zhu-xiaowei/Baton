@@ -21,6 +21,7 @@ import {
 } from './message-state.js';
 import { createMessageDom } from './message-dom.js';
 import { refreshThinkingGroups } from './thinking.js';
+import { updateWsStatusIndicator } from './components/ws-status.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -340,10 +341,17 @@ function connectWs(_, projectHash) {
   }
   _realtimeReceiver?.dispose();
   _realtimeReceiver = null;
+  state.wsRealtimeStatusText = '';
   state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
 
   state.ws.onopen = function () {
-    _realtimeReceiver = new RealtimeReceiver({ control: state.ws, key: state.KEY, receive: handleWsMessage });
+    var receiver = new RealtimeReceiver({
+      control: state.ws, key: state.KEY, receive: handleWsMessage,
+      onStatusChange: function (status) {
+        if (_realtimeReceiver === receiver) setRealtimeStatus(status);
+      },
+    });
+    _realtimeReceiver = receiver;
     setWsStatus('connected');
     recoverSubscribedSession();
     if (_wsSendQueue.length) {
@@ -365,6 +373,7 @@ function connectWs(_, projectHash) {
   state.ws.onclose = function () {
     _realtimeReceiver?.dispose();
     _realtimeReceiver = null;
+    state.wsRealtimeStatusText = '';
     if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
     if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
@@ -1433,12 +1442,22 @@ function wsSendReliable(data) {
 
 function setWsStatus(status) {
   state.wsStatusText = status;
-  updateSpinner();
+  updateWsStatusIndicator();
+}
+
+function setRealtimeStatus(status) {
+  var previous = state.wsRealtimeStatusText;
+  state.wsRealtimeStatusText = status;
+  updateWsStatusIndicator();
+  if (status !== previous && (previous === 'connected' || previous === 'reconnecting')) {
+    refreshSessionMessages({ preservePending: true });
+  }
 }
 
 function disconnectWs() {
   _realtimeReceiver?.dispose();
   _realtimeReceiver = null;
+  state.wsRealtimeStatusText = '';
   _wsConnectionGeneration++;
   if (window.resetCommandRequest) window.resetCommandRequest();
   if (_wsReconnectTimer) {
@@ -1741,6 +1760,7 @@ async function loadLatestMessages(sessionId, options = {}) {
   var active = _historyFetchBarriers.current(sessionId);
   if (active) {
     if (options.preserveLive) active.preserveLive = true;
+    if (options.preservePending) active.preservePending = true;
     return active.promise;
   }
   var barrier = _historyFetchBarriers.open({
@@ -1748,6 +1768,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     pendingIds: state.pendingSentMessages.map(function (pending) { return pending.id; }),
   });
   barrier.preserveLive = !!options.preserveLive;
+  barrier.preservePending = !!options.preservePending;
   barrier.promise = (async function () {
     subscribeSession(sessionId);
     var data = {};
@@ -1776,7 +1797,7 @@ async function loadLatestMessages(sessionId, options = {}) {
           || !!document.querySelector('.stream-preview, .stream-committed, [data-pending], .skeleton-messages')
           || !document.querySelector('.messages')?.childElementCount;
         for (var pending of state.pendingSentMessages.slice()) {
-          if (barrier.pendingIds.has(pending.id)) removePending(pending);
+          if (!barrier.preservePending && barrier.pendingIds.has(pending.id)) removePending(pending);
         }
         var pendingNodes = state.pendingSentMessages.map(function (pending) {
           pending.echoScanFrom = 0;
@@ -1887,10 +1908,10 @@ async function loadOlderMessages(sessionId) {
   }
 }
 
-async function refreshSessionMessages() {
+async function refreshSessionMessages(options) {
   if (!state.wsSessionId) return null;
   try {
-    return await loadLatestMessages(state.wsSessionId);
+    return await loadLatestMessages(state.wsSessionId, options);
   } catch (error) {
     return null;
   }

@@ -151,8 +151,10 @@ function receiverHarness(context) {
   const controls = [];
   const sockets = [];
   const received = [];
+  const statuses = [];
   const receiver = new RealtimeReceiver({ control: { readyState: 1, send: payload => controls.push(JSON.parse(payload)) },
-    key: 'account-key', receive: message => received.push(message), socketFactory(url) {
+    key: 'account-key', receive: message => received.push(message),
+    onStatusChange: status => statuses.push(status), socketFactory(url) {
       const socket = { url, sent: [], close() {}, send(payload) { this.sent.push(JSON.parse(payload)); } };
       sockets.push(socket);
       return socket;
@@ -167,7 +169,7 @@ function receiverHarness(context) {
     bindingId: 'binding-1', frameKey: key });
   const frame = async message => JSON.stringify(await authenticateFrame(JSON.stringify({ action: 'realtime_direct_frame',
     v: 1, bindingId: 'binding-1', event: message }), key));
-  return { receiver, controls, sockets, received, ready, frame };
+  return { receiver, controls, sockets, received, statuses, ready, frame };
 }
 
 test('receiver preserves raw arrival order and existing TurnEventQueue still sorts it', async context => {
@@ -180,6 +182,13 @@ test('receiver preserves raw arrival order and existing TurnEventQueue still sor
   const queue = new TurnEventQueue();
   assert.deepEqual(harness.received.flatMap(message => queue.push(message)).map(message => message.seq), [0, 1, 2]);
   assert.equal(harness.sockets[0].sent[0].op, 'join');
+  assert.deepEqual(harness.statuses, ['connected']);
+  harness.sockets[0].onclose();
+  assert.deepEqual(harness.statuses, ['connected', 'reconnecting']);
+  harness.receiver.start();
+  harness.receiver.handle({ action: 'realtime_direct', v: 1, type: 'unsupported',
+    requestId: harness.controls.at(-1).requestId });
+  assert.deepEqual(harness.statuses, ['connected', 'reconnecting', 'fallback']);
 });
 
 test('receiver buffers early frames but rejects forged data and control commands', async context => {
@@ -204,4 +213,5 @@ test('an in-flight signature verification cannot deliver into a disposed binding
   harness.receiver.dispose();
   await queue;
   assert.equal(harness.received.length, 0);
+  assert.deepEqual(harness.statuses, ['connected']);
 });

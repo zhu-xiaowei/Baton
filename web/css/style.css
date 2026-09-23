@@ -574,6 +574,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
   .text-btn.danger:hover { background: rgba(229, 83, 75, 0.12); border-color: #e5534b; }
 }
 #top-right { display: flex; align-items: center; gap: 8px; }
+.ws-reconnect-indicator { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; color: #8b949e; }
 .edge-back-top-right { display: flex; align-items: center; gap: 8px; }
 .session-title-meta {
   display: inline-flex; align-items: center; flex-wrap: wrap;
