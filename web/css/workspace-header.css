@@ -71,3 +71,6 @@ html.native-mobile .project-terminal-header > .back-button svg {
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 2px);
   }
 }
+html.native-mobile .project-terminal-header {
+  padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 12px);
+}

@@ -135,7 +135,8 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
   page.innerHTML = '<header class="path-breadcrumb project-terminal-header">' + backButtonHtml({ label: 'Back' })
     + '<div class="project-terminal-heading"><span class="path-breadcrumb-item project-terminal-project"></span></div>'
     + '<button class="project-terminal-action project-terminal-retry" type="button" hidden>Retry</button>'
-    + '<button class="project-terminal-action project-terminal-selector" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="terminalMenu" disabled><span class="project-terminal-selection">Terminals</span><span aria-hidden="true">▾</span></button></header>'
+    + '<button class="project-terminal-action project-terminal-selector" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="terminalMenu" disabled><span class="project-terminal-selection">Terminals</span>'
+    + '<svg class="project-terminal-selector-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></header>'
     + '<div class="project-terminal-status" role="status" hidden></div>'
     + '<main class="project-terminal-screen"></main>'
     + '<div class="project-terminal-menu" id="terminalMenu" role="dialog" aria-modal="true" aria-labelledby="terminalMenuTitle" hidden>'

@@ -8,18 +8,25 @@ const xtermCss = readFileSync(new URL('../../node_modules/@xterm/xterm/css/xterm
 const appCss = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
 const breadcrumbCss = readFileSync(new URL('../../web/css/breadcrumb.css', import.meta.url), 'utf8');
 
-test('the mobile terminal selector keeps the same compact height as the web selector', () => {
+test('the terminal selector matches the project label height on web and mobile', () => {
   const dom = new JSDOM('<!doctype html><head><style>' + appCss + breadcrumbCss + terminalCss + '</style></head>'
     + '<body><section class="project-terminal-page"><header class="path-breadcrumb project-terminal-header">'
-    + '<button class="project-terminal-action project-terminal-selector"><span>Terminal 1</span><span>▾</span></button>'
+    + '<div class="project-terminal-heading"><span class="path-breadcrumb-item project-terminal-project">Project</span></div>'
+    + '<button class="project-terminal-action project-terminal-selector"><span>Terminal 1</span><svg class="project-terminal-selector-chevron"></svg></button>'
     + '</header><div class="project-terminal-menu"><button class="project-terminal-option">Terminal 1</button></div>'
     + '</section></body>');
   try {
     const selector = dom.window.document.querySelector('.project-terminal-selector');
-    const desktopHeight = dom.window.getComputedStyle(selector).height;
-    assert.equal(desktopHeight, '28px');
-    dom.window.document.documentElement.classList.add('native-mobile');
-    assert.equal(dom.window.getComputedStyle(selector).height, desktopHeight);
+    const project = dom.window.document.querySelector('.project-terminal-project');
+    for (const mobile of [false, true]) {
+      dom.window.document.documentElement.classList.toggle('native-mobile', mobile);
+      const selectorStyle = dom.window.getComputedStyle(selector);
+      const projectStyle = dom.window.getComputedStyle(project);
+      assert.equal(selectorStyle.height, 'auto');
+      for (const property of ['fontSize', 'lineHeight', 'paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth']) {
+        assert.equal(selectorStyle[property], projectStyle[property], property);
+      }
+    }
     const option = dom.window.document.querySelector('.project-terminal-option');
     assert.equal(dom.window.getComputedStyle(option).minHeight, '44px');
   } finally {
