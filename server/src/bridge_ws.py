@@ -89,45 +89,87 @@ def _runtime_session_fields(session_id):
     return {"runtime": "claude", "nativeSessionId": session_id}
 
 
-def _query_connections(account_id, role):
+def _bridge_owner_key(account_id, device):
+    identity = json.dumps([account_id, device], separators=(",", ":"))
+    return "BRIDGE#" + hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _bridge_connection_fresh(record):
+    if "ttl" not in record:
+        return True
+    last_seen = int(record["ttl"]) - 86400
+    return last_seen + int(record.get("heartbeatInterval", 240)) + 5 >= time.time()
+
+
+def _connection_order(record):
+    return record.get("connectionOrder") or f"{int(record.get('connectedAt', 0)) * 1000:016d}:{record['connectionId']}"
+
+
+def _query_connections(account_id, role, table=None, device=""):
     """Query ConnectionsTable.accountId-role-index for active connections.
     Auto-paginates. Returns list of items with deviceName + connectionId."""
     from boto3.dynamodb.conditions import Key
+    table = table if table is not None else _connections_table
+    if role == "bridge" and device:
+        owner = table.get_item(Key={"connectionId": _bridge_owner_key(account_id, device)},
+            ConsistentRead=True).get("Item", {})
+        if owner.get("activeConnectionId"):
+            record = table.get_item(Key={"connectionId": owner["activeConnectionId"]},
+                ConsistentRead=True).get("Item", {})
+            if record.get("role") == role and record.get("accountId") == account_id \
+                    and record.get("deviceName") == device and _bridge_connection_fresh(record):
+                return [record]
+            return []
     items = []
     kwargs = {
         "IndexName": "accountId-role-index",
         "KeyConditionExpression": Key("accountId").eq(account_id) & Key("role").eq(role),
     }
-    resp = _connections_table.query(**kwargs)
+    resp = table.query(**kwargs)
     items.extend(resp.get("Items", []))
     while "LastEvaluatedKey" in resp:
-        resp = _connections_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
+        resp = table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
         items.extend(resp.get("Items", []))
     if role != "bridge":
         return items
     active = {}
     owners = {}
     for item in items:
-        record = _connections_table.get_item(Key={"connectionId": item["connectionId"]},
-            ConsistentRead=True).get("Item")
-        if not record:
-            continue
-        owner_key = record.get("bridgeOwner")
-        if owner_key:
+        device = item.get("deviceName", "")
+        owner = {}
+        owner_keys = [_bridge_owner_key(account_id, device), item.get("bridgeOwner")]
+        for owner_key in dict.fromkeys(key for key in owner_keys if key):
             if owner_key not in owners:
-                owners[owner_key] = _connections_table.get_item(Key={"connectionId": owner_key},
+                owners[owner_key] = table.get_item(Key={"connectionId": owner_key},
                     ConsistentRead=True).get("Item", {})
-            current_id = owners[owner_key].get("activeConnectionId")
-            if not current_id:
-                continue
-            if current_id != record["connectionId"]:
-                record = _connections_table.get_item(Key={"connectionId": current_id},
-                    ConsistentRead=True).get("Item")
-            if not record or record.get("bridgeOwner") != owner_key:
-                continue
-        if record.get("role") == role and record.get("accountId") == account_id:
-            active[record["connectionId"]] = record
+            owner = owners[owner_key]
+            if owner.get("activeConnectionId"):
+                break
+        current_id = owner.get("activeConnectionId", item["connectionId"])
+        if item.get("bridgeOwner") and not owner.get("activeConnectionId"):
+            continue
+        record = table.get_item(Key={"connectionId": current_id}, ConsistentRead=True).get("Item")
+        if not record or record.get("role") != role or record.get("accountId") != account_id:
+            continue
+        if record.get("deviceName", "") != device or not _bridge_connection_fresh(record):
+            continue
+        identity = device or current_id
+        if identity not in active or _connection_order(record) > _connection_order(active[identity]):
+            active[identity] = record
     return list(active.values())
+
+
+def _retire_bridge_connection(connection_id, endpoint, replaced=True):
+    if replaced:
+        try:
+            _post_to_connection(endpoint, connection_id, {"action": "bridge_replaced"})
+        except Exception:
+            pass
+    try:
+        _disconnect_terminal_data(endpoint, connection_id)
+    except Exception:
+        print(f"Bridge socket cleanup deferred: {connection_id}")
+    _handle_disconnect(connection_id, endpoint)
 
 
 def _claim_bridge_connection(item, context, endpoint):
@@ -139,7 +181,7 @@ def _claim_bridge_connection(item, context, endpoint):
             ConditionExpression="attribute_not_exists(connectionOrder) OR connectionOrder <= :order",
             ExpressionAttributeNames={"#ttl": "ttl"},
             ExpressionAttributeValues={":connection": item["connectionId"],
-                ":order": f"{connected_at:016d}:{item['connectionId']}", ":ttl": item["ttl"]},
+                ":order": item.get("connectionOrder", f"{connected_at:016d}:{item['connectionId']}"), ":ttl": item["ttl"]},
             ReturnValues="ALL_OLD").get("Attributes", {})
     except ClientError as error:
         if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
@@ -148,11 +190,20 @@ def _claim_bridge_connection(item, context, endpoint):
         return False
     previous_id = previous.get("activeConnectionId")
     if previous_id and previous_id != item["connectionId"]:
-        try:
-            _disconnect_terminal_data(endpoint, previous_id)
-        except Exception:
-            print("Replaced Bridge socket cleanup deferred")
-        _handle_disconnect(previous_id, endpoint)
+        _retire_bridge_connection(previous_id, endpoint)
+    from boto3.dynamodb.conditions import Key
+    kwargs = {"IndexName": "accountId-role-index",
+        "KeyConditionExpression": Key("accountId").eq(item["accountId"]) & Key("role").eq("bridge")}
+    while True:
+        response = _connections_table.query(**kwargs)
+        for candidate in response.get("Items", []):
+            if candidate["connectionId"] not in (previous_id, item["connectionId"]) \
+                    and candidate.get("deviceName") == item.get("deviceName") \
+                    and _connection_order(candidate) < _connection_order(item):
+                _retire_bridge_connection(candidate["connectionId"], endpoint)
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
     return True
 
 
@@ -293,9 +344,13 @@ def _handle_connect(event, connection_id):
         item["deviceName"] = device
     if role == "bridge" and version:
         item["bridgeVersion"] = version
+    if role == "bridge" and device:
+        item["bridgeOwner"] = _bridge_owner_key(account_id, device)
+        item["heartbeatInterval"] = 5 if qs.get("heartbeat") == "5" else 240
+        connected_at = int(context.get("connectedAt") or context.get("requestTimeEpoch") or time.time() * 1000)
+        item["connectionOrder"] = f"{connected_at:016d}:{connection_id}"
     if bridge_id:
-        identity = json.dumps([account_id, device, bridge_id], separators=(",", ":"))
-        item["bridgeOwner"] = "BRIDGE#" + hashlib.sha256(identity.encode()).hexdigest()
+        item["bridgeId"] = bridge_id
     if role == "bridge" and qs.get("terminal") == "2":
         item["terminalProtocol"] = 2
         if qs.get("terminalStartup") == "1":
@@ -305,7 +360,7 @@ def _handle_connect(event, connection_id):
     if role in ("app", "bridge") and qs.get("realtime") == "1":
         item["realtimeVersion"] = 1
     _connections_table.put_item(Item=item)
-    if bridge_id and not _claim_bridge_connection(item, context, connected_endpoint):
+    if item.get("bridgeOwner") and not _claim_bridge_connection(item, context, connected_endpoint):
         return {"statusCode": 409}
 
     return {"statusCode": 200}
@@ -385,7 +440,7 @@ def _handle_message(event, connection_id, endpoint):
 
     # Get connection info — if missing (e.g. DDB cleared), force reconnect.
     # Client's onclose handler will auto-reconnect → $connect rewrites the record.
-    conn = _connections_table.get_item(Key={"connectionId": connection_id}).get("Item")
+    conn = _connections_table.get_item(Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
     if not conn:
         try:
             _apigw_client(endpoint).delete_connection(ConnectionId=connection_id)
@@ -395,17 +450,22 @@ def _handle_message(event, connection_id, endpoint):
 
     role = conn.get("role", "app")
     account_id = conn.get("accountId", "")
-    if role == "bridge" and conn.get("bridgeOwner"):
-        owner = _connections_table.get_item(Key={"connectionId": conn["bridgeOwner"]},
+    if role == "bridge" and conn.get("deviceName"):
+        owner_key = _bridge_owner_key(account_id, conn.get("deviceName", ""))
+        owner = _connections_table.get_item(Key={"connectionId": owner_key},
             ConsistentRead=True).get("Item", {})
-        if owner.get("activeConnectionId") != connection_id:
-            _disconnect_terminal_data(endpoint, connection_id)
-            return _handle_disconnect(connection_id, endpoint)
+        if not owner and conn.get("bridgeOwner") and conn["bridgeOwner"] != owner_key:
+            owner = _connections_table.get_item(Key={"connectionId": conn["bridgeOwner"]},
+                ConsistentRead=True).get("Item", {})
+        if (owner or conn.get("bridgeOwner")) and owner.get("activeConnectionId") != connection_id:
+            _retire_bridge_connection(connection_id, endpoint, replaced=bool(owner.get("activeConnectionId")))
+            return {"statusCode": 200}
     if action == "realtime_direct":
         return handle_realtime_direct(body, conn, connection_id, _realtime_service(endpoint))
     if action == "terminal_direct":
         return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
-            query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+            query=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
+            post=_post_to_connection, disconnect=_disconnect_terminal_data)
     if role in ("terminal_data", "realtime_data"):
         return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \
@@ -416,7 +476,7 @@ def _handle_message(event, connection_id, endpoint):
         return handle_terminal_poc(
             body, conn, connection_id, endpoint,
             identity_ms=(time.perf_counter() - terminal_identity_started) * 1000 if terminal_identity_started is not None else 0,
-            query_connections=_query_connections,
+            query_connections=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
             post_to_connection=_post_to_connection,
             connections_table=_connections_table,
         )
@@ -900,7 +960,7 @@ def _handle_send_to_bridge(
     if preserve_device and device:
         payload["device"] = device
     delivered = 0
-    for item in _query_connections(account_id, "bridge"):
+    for item in _query_connections(account_id, "bridge", device=device):
         if device and item.get("deviceName", "") != device:
             continue
         if _post_to_connection(endpoint, item["connectionId"], payload) is not False:

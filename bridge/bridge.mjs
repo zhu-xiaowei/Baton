@@ -11,7 +11,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, fetchServerConfig } from './config.mjs';
+import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
+import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
@@ -26,24 +27,20 @@ import {
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
-// Ensure single instance via PID lock file (cross-platform, works on WSL too)
-const LOCK_FILE = path.join(BRIDGE_HOME, 'bridge.pid');
-try {
-  if (!fs.existsSync(BRIDGE_HOME)) fs.mkdirSync(BRIDGE_HOME, { recursive: true });
-  if (fs.existsSync(LOCK_FILE)) {
-    const oldPid = parseInt(fs.readFileSync(LOCK_FILE, 'utf-8').trim());
-    if (oldPid && oldPid !== process.pid) {
-      try { process.kill(oldPid); console.log(`[init] killed old bridge (PID ${oldPid})`); } catch {}
-    }
-  }
-  fs.writeFileSync(LOCK_FILE, String(process.pid));
-} catch {}
-process.on('exit', () => { saveSynced(); try { fs.unlinkSync(LOCK_FILE); } catch {} });
+const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
+if (!releaseInstanceLock) {
+  console.log('[init] another Bridge instance is already running; exiting');
+  process.exit(0);
+}
+process.on('exit', () => { try { saveSynced(); } finally { releaseInstanceLock(); } });
 let shuttingDown = false;
 let updateInProgress = false;
+let nextUpdateCheckAt = 0;
+let wsConfigRetry = null;
 async function shutdownBridge(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(wsConfigRetry);
   await shutdownInteractions();
   process.exit(exitCode);
 }
@@ -56,9 +53,8 @@ initHttp(CONFIG);
 loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
 setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
 
-// Auto-discover WS URL from server (retry every 5 min if network unavailable at boot)
 const serverConfig = await fetchServerConfig(CONFIG);
-if (serverConfig.wsUrl) CONFIG.wsUrl = serverConfig.wsUrl;
+if (serverConfig.wsUrl) { CONFIG.wsUrl = serverConfig.wsUrl; saveConfig(CONFIG); }
 
 console.log('Baton Bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
@@ -67,13 +63,19 @@ if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
 if (CONFIG.wsUrl) {
-  initWs(CONFIG);
+  initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 } else {
-  console.log('[ws] wsUrl not available, will retry every 5 min');
-  const wsRetry = setInterval(async () => {
+  console.log('[ws] wsUrl not available, will retry every 5 seconds');
+  wsConfigRetry = setInterval(async () => {
     const sc = await fetchServerConfig(CONFIG);
-    if (sc.wsUrl) { CONFIG.wsUrl = sc.wsUrl; clearInterval(wsRetry); initWs(CONFIG); }
-  }, 5 * 60_000);
+    if (shuttingDown) return;
+    if (sc.wsUrl) {
+      CONFIG.wsUrl = sc.wsUrl;
+      saveConfig(CONFIG);
+      clearInterval(wsConfigRetry);
+      initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
+    }
+  }, 5000);
 }
 // Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
 // --skip-init only skips replaying historical messages — metadata is cheap and required
@@ -96,7 +98,8 @@ setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
 // Compare the immutable package version; config.json is user state.
 async function checkUpdate() {
-  if (shuttingDown || updateInProgress) return;
+  if (shuttingDown || updateInProgress || Date.now() < nextUpdateCheckAt) return;
+  nextUpdateCheckAt = Date.now() + 4 * 60_000;
   updateInProgress = true;
   try {
     const res = await fetch(`${CONFIG.server}/api/version`, {

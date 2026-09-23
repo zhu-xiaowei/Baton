@@ -80,61 +80,38 @@ and computes Device/Project aggregates once. The steps below describe the Claude
 
 ### Bridge connection recovery
 
-`bridge/sleep-gap-monitor.mjs` adds sleep detection to the existing WebSocket
-connection logic, without changing its periodic heartbeat, retry, handshake, or DNS settings.
+Healthy sockets are reused. The same Node.js timers handle normal operation and
+resume on macOS, Windows, and Linux; there is no extra sleep/network listener.
+The system DNS resolver is unchanged.
 
-- A local ten-second timer detects wall-clock gaps longer than 15 seconds
-  (the normal ten-second interval plus five seconds of scheduling slack).
-  After sleep (or a long event-loop stall/forward clock jump), an open socket
-  gets one heartbeat probe and is reused if it replies within 15 seconds.
-  An in-flight handshake keeps its existing watchdog; a missing connection
-  bypasses retry backoff. Only failed connections are replaced.
-  This is a portable sleep-gap heuristic, not a native screen-unlock listener;
-  locking/unlocking an otherwise healthy, awake machine does not reconnect it.
-- After the immediate recovery attempt, failed connections
-  retain the original five-second retry delay, switching to five minutes after
-  12 consecutive failures. All handshakes retain the 15-second timeout.
-  Detecting another sleep gap or connecting successfully resets failures.
-- Periodic application-level heartbeats remain every four minutes; the
-  reply timeout applies only to the one-off resume probe. Heartbeat replies
-  include `bridgeVersion`; only a version mismatch triggers `/api/version`.
-  Startup and successful WebSocket reconnect also check once, including after
-  resume. There is no dedicated update timer, and the ten-second sleep detector
-  sends no network requests during normal timer ticks. Version checks
-  never overlap and time out after ten seconds.
-  A validated update restarts Bridge even with active terminals, interrupting
-  its existing terminal/agent processes rather than waiting for them to finish.
-- The detector uses Node.js timers and wall-clock readings, with no native OS
-  APIs, and is shared by macOS, Windows, and Linux Bridge processes. It handles
-  both clocks that pause during sleep and clocks that continue advancing.
-  WSL/VM environments must first resume the Bridge process. A healthy process
-  normally checks its connection within zero to ten seconds after it resumes;
-  this is not a hard deadline or a guarantee that Wi-Fi/VPN/DNS is ready.
-- Connection, retry, and heartbeat timers remain independent of this monitor.
-  Shutdown stops monitoring and attempts a bounded WebSocket close handshake.
-  Duplicate connect calls reuse open/connecting sockets, and late callbacks
-  from replaced sockets cannot reconnect the current one. Queued messages
-  still flush after reconnecting.
-- A persistent `bridgeId` identifies this installation across reconnects and
-  updates. The server atomically records its current control connection and
-  retires its predecessor without relying on a disconnect notification.
-  Strong reads exclude superseded records even while index cleanup lags.
-  Different installations sharing a device name are still rejected as ambiguous;
-  app windows continue to share the same resident terminal sessions.
-  Deploy server support before updating Bridge. Pre-upgrade records without
-  `bridgeId` cannot be safely attributed to an installation and must expire or
-  be removed after confirming they are stale.
+- Protocol Ping: every 20 seconds, one outstanding probe, five-second Pong
+  timeout. It does not renew database records or check updates. Silent failure
+  detection takes up to about 25 seconds plus reconnect time, not a hard SLA.
+- Business heartbeat: every four minutes, ten-second timeout, independent of
+  Pong. Both probes run immediately on connection; only the business reply
+  confirms backend responsiveness.
+- Reconnect: first retry immediate, subsequent retries every five seconds,
+  five-second handshake deadline. Configuration discovery has a three-second
+  timeout, retries every five seconds, and caches the URL for the same server.
+- Shutdown clears timers; old sockets and late Pongs cannot affect a replacement.
+  Duplicate connect calls reuse the current attempt. Queued messages still flush.
+- Version checks run on startup/reconnect or a heartbeat version mismatch, at
+  most once per four minutes, without a dedicated timer. Version requests have a
+  ten-second timeout. Updates can restart Bridge and interrupt active terminals.
+- The instance lock reserves a loopback port (20000–39999) derived from the
+  canonical Bridge directory. The kernel releases it on exit or crash; port
+  conflicts fail closed. PID metadata also protects an older running Bridge:
+  it is never killed automatically, and cleanup only removes the owner's PID.
+- Installers preserve `bridgeId`; the server atomically assigns one owner per
+  account/device, retires old connections, and rejects stale handshakes/messages.
+  Replaced Bridges stop retrying. Routing follows the owner despite index lag.
+- Online status is a recent control-connection lease, not a delivery guarantee.
+  The four-minute heartbeat has five seconds of freshness slack; business
+  acknowledgements, not Pongs, establish message delivery. Deploy the server
+  before Bridge updates. OS/network/backend delays can extend recovery time.
 
-Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs` (sleep-gap
-detection and the existing connection code's backoff reset/socket cleanup).
-
-Optional overhead benchmark: `node test/bridge/ws-resume-overhead.mjs`. It compares
-no monitoring, one-second monitoring, and ten-second monitoring in three isolated
-processes per mode for 60 seconds each (concurrently), using the production
-sleep monitor without any sockets or network requests. It reports
-CPU time, RSS, check counts, and a separate batch microbenchmark. This does not
-measure actual battery drain or OS power wakeups. Duration and sample count can
-be changed with `BENCH_DURATION_MS` and `BENCH_REPLICAS`.
+Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs test/bridge/updater.test.mjs`
+and `python3 -m pytest test/server/test_bridge_connection_ownership.py`.
 
 ### Data extraction
 
@@ -162,6 +139,11 @@ Content block processing:
 - macOS: launchd plist (`~/Library/LaunchAgents/`)
 - Linux: systemd user service (`~/.config/systemd/user/`)
 - Windows: Task Scheduler runs `bridge-launcher.mjs`
+
+The launcher retries unexpected exits after five seconds and update exits after
+one second. Successful exits and an explicit stop do not restart the child.
+Task Scheduler remains the fallback for launcher failures; its existing
+one-minute restart interval is unchanged.
 
 ### Claude credentials in background services
 

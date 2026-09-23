@@ -45,7 +45,7 @@ function parseArgs() {
 
 export function saveConfig(config) {
   fs.mkdirSync(BRIDGE_HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify({ ...config, skipInit: undefined }, null, 2));
 }
 
 export function loadConfig() {
@@ -63,6 +63,7 @@ export function loadConfig() {
       deviceName,
       deviceDisplayName: existing?.deviceDisplayName || deviceName,
       bridgeId: existing?.bridgeId,
+      wsUrl: existing?.server === cliArgs.server ? existing?.wsUrl : undefined,
     };
     saveConfig(config);
     console.log(`Config saved to ${CONFIG_PATH}`);
@@ -88,6 +89,7 @@ export async function fetchServerConfig(config) {
   try {
     const res = await fetch(`${config.server}/api/bridge/config`, {
       headers: { 'x-api-key': config.apiKey },
+      signal: AbortSignal.timeout(3000),
     });
     if (res.ok) return await res.json();
   } catch (err) {

@@ -190,12 +190,8 @@ def _online_bridge_devices(account_id):
     if _connections_table is None:
         return None
     try:
-        rows = _query_all(
-            _connections_table,
-            IndexName="accountId-role-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("role").eq("bridge"),
-            ProjectionExpression="deviceName",
-        )
+        from bridge_ws import _query_connections
+        rows = _query_connections(account_id, "bridge", table=_connections_table)
         return {row.get("deviceName", "") for row in rows if row.get("deviceName")}
     except Exception:
         return None
@@ -441,21 +437,7 @@ async def get_devices(request: Request):
         ExpressionAttributeNames=DEVICE_LIST_ATTRIBUTE_NAMES,
     )
 
-    # Check which devices have active bridge WS connections.
-    online_devices = set()
-    if _connections_table is not None:
-        try:
-            resp = _connections_table.query(
-                IndexName="accountId-role-index",
-                KeyConditionExpression=Key("accountId").eq(account_id) & Key("role").eq("bridge"),
-                ProjectionExpression="deviceName",
-            )
-            for c in resp.get("Items", []):
-                dn = c.get("deviceName", "")
-                if dn:
-                    online_devices.add(dn)
-        except Exception:
-            pass
+    online_devices = _online_bridge_devices(account_id) or set()
 
     devices = []
     for item in items:
@@ -1011,6 +993,7 @@ def _windows_install_script(url, server, api_key, name):
         "$configPath = Join-Path $dir 'config.json'",
         "$existingName = ''",
         "$existingDisplayName = ''",
+        "$existingConfig = $null",
         "if (Test-Path $configPath) {",
         "  try {",
         "    $existingConfig = Get-Content $configPath -Raw | ConvertFrom-Json",
@@ -1087,6 +1070,7 @@ def _windows_install_script(url, server, api_key, name):
         "} finally { Pop-Location }",
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
         f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
+        "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
         "$utf8 = New-Object System.Text.UTF8Encoding($false)",
         "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
         "$bridge = Join-Path $dir 'bridge-launcher.mjs'",
@@ -1228,8 +1212,10 @@ async def get_install(
         f'BATON_SERVER={_shell_literal(server)} BATON_API_KEY={_shell_literal(api_key)} '
         'BATON_DEVICE_NAME="$NAME" BATON_DEVICE_DISPLAY_NAME="$DEVICE_DISPLAY_NAME" '
         'node -e \'const fs=require("fs");const p=process.argv[1];'
+        'let existing={};try{existing=JSON.parse(fs.readFileSync(p,"utf8"));}catch{}'
         'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
         'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
+        'if(existing.bridgeId)config.bridgeId=existing.bridgeId;'
         'fs.writeFileSync(p,JSON.stringify(config,null,2));\' "$DIR/config.json"\n'
         '\n'
         '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n'

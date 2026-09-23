@@ -69,43 +69,29 @@ import {
   commandCatalogReadyPayload,
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
-import { SleepGapMonitor } from './sleep-gap-monitor.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
+let _onSuperseded = null;
 let _realtime = null;
 let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
+let _heartbeatTimeout = null;
+let _pingTimer = null;
 let _connectWatchdog = null;
 let _resumeProbeTimer = null;
+let _pendingPing = null;
+let _pingSequence = 0;
 let _consecutiveFailures = 0;
 const _sendWhenConnected = [];
 const HEARTBEAT_INTERVAL = 4 * 60_000;
+const HEARTBEAT_TIMEOUT = 10_000;
+const PING_INTERVAL = 20_000;
+const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
-const SLOW_RECONNECT_DELAY = 5 * 60_000;
-const CONNECT_TIMEOUT = 15_000;
-const SLOW_RECONNECT_THRESHOLD = 12;
-const _resumeMonitor = new SleepGapMonitor({
-  onResume: (gap) => {
-    if (!_config?.wsUrl) return;
-    console.log(`[ws] resume/clock gap detected (${Math.round(gap)}ms), checking connection`);
-    _consecutiveFailures = 0;
-    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
-    if (_ws?.readyState === WebSocket.OPEN) {
-      if (_resumeProbeTimer) return;
-      const socket = _ws;
-      _resumeProbeTimer = setTimeout(() => {
-        _resumeProbeTimer = null;
-        if (_ws === socket) { resetConnection(); connect(); }
-      }, CONNECT_TIMEOUT);
-      socket.send(JSON.stringify({ action: 'heartbeat' }));
-      return;
-    }
-    connect();
-  },
-});
+const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn.
 const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
@@ -197,7 +183,9 @@ export async function shutdownInteractions() {
   clearTimeout(_reconnectTimer);
   clearTimeout(_connectWatchdog);
   clearTimeout(_resumeProbeTimer);
+  clearTimeout(_heartbeatTimeout);
   clearInterval(_heartbeatTimer);
+  clearInterval(_pingTimer);
   const socket = _ws;
   _ws = null;
   if (socket) {
@@ -211,7 +199,6 @@ export async function shutdownInteractions() {
     });
   }
   _realtime?.dispose();
-  _resumeMonitor.stop();
   _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
   _pool.shutdownAll();
@@ -520,8 +507,9 @@ export function setUpdateChecker(checkUpdate) {
   _checkUpdate = checkUpdate;
 }
 
-export function initWs(config) {
+export function initWs(config, options = {}) {
   _config = config;
+  _onSuperseded = options.onSuperseded || null;
   if (!_claudeHookServer) {
     _claudeHookServer = new ClaudeHookServer({ onRequest: handleClaudeHookRequest });
     _claudeHookServer.start()
@@ -532,7 +520,6 @@ export function initWs(config) {
       });
   }
   connect();
-  _resumeMonitor.start();
 }
 
 export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
@@ -654,6 +641,35 @@ export function createTurnMessagesEvent(sessionId, turnId, messages) {
   return liveTurn.createMessagesEvent(messages);
 }
 
+function probeConnection() {
+  const socket = _ws;
+  if (!socket || socket.readyState !== WebSocket.OPEN || _resumeProbeTimer !== null) return;
+  const timeout = _resumeProbeTimer = setTimeout(() => {
+    if (_ws !== socket || _resumeProbeTimer !== timeout) return;
+    console.log(`[ws] ping timed out after ${PING_TIMEOUT}ms, reconnecting`);
+    scheduleReconnect();
+  }, PING_TIMEOUT);
+  _pendingPing = String(++_pingSequence);
+  try { socket.ping(_pendingPing); } catch (error) {
+    console.error(`[ws] ping failed: ${error.message}`);
+    scheduleReconnect();
+  }
+}
+
+function sendHeartbeat() {
+  const socket = _ws;
+  if (!socket || socket.readyState !== WebSocket.OPEN || _heartbeatTimeout !== null) return;
+  const timeout = _heartbeatTimeout = setTimeout(() => {
+    if (_ws !== socket || _heartbeatTimeout !== timeout) return;
+    console.log(`[ws] heartbeat timed out after ${HEARTBEAT_TIMEOUT}ms, reconnecting`);
+    scheduleReconnect();
+  }, HEARTBEAT_TIMEOUT);
+  try { socket.send(JSON.stringify({ action: 'heartbeat' })); } catch (error) {
+    console.error(`[ws] heartbeat failed: ${error.message}`);
+    scheduleReconnect();
+  }
+}
+
 function connect() {
   if (!_config?.wsUrl) return;
   if (_ws?.readyState === WebSocket.OPEN || _ws?.readyState === WebSocket.CONNECTING) return;
@@ -661,7 +677,7 @@ function connect() {
   resetConnection();
   const wsUrl = _config.wsUrl;
 
-  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&realtime=1`
+  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&realtime=1&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
@@ -691,13 +707,11 @@ function connect() {
     };
     _realtime = new RealtimeSender({ send, fallback: event => send(JSON.stringify(event)) });
     _realtime.start();
-    _consecutiveFailures = 0;
     void _checkUpdate?.();
-    _heartbeatTimer = setInterval(() => {
-      if (_ws === socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ action: 'heartbeat' }));
-      }
-    }, HEARTBEAT_INTERVAL);
+    _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+    _pingTimer = setInterval(probeConnection, PING_INTERVAL);
+    probeConnection();
+    sendHeartbeat();
     while (_sendWhenConnected.length > 0) {
       const queued = _sendWhenConnected.shift();
       if (!wsSend(queued)) {
@@ -707,13 +721,21 @@ function connect() {
     }
   });
 
+  socket.on('pong', data => {
+    if (_ws !== socket || data.toString() !== _pendingPing) return;
+    clearTimeout(_resumeProbeTimer);
+    _resumeProbeTimer = null;
+    _pendingPing = null;
+  });
+
   socket.on('message', async (data) => {
     if (_ws !== socket) return;
     try {
       const msg = JSON.parse(data.toString());
       if (msg.action === 'heartbeat') {
-        clearTimeout(_resumeProbeTimer);
-        _resumeProbeTimer = null;
+        _consecutiveFailures = 0;
+        clearTimeout(_heartbeatTimeout);
+        _heartbeatTimeout = null;
       }
       await handleMessage(msg);
     } catch (err) {
@@ -749,10 +771,15 @@ function connect() {
 function resetConnection() {
   clearTimeout(_resumeProbeTimer);
   _resumeProbeTimer = null;
+  _pendingPing = null;
+  clearTimeout(_heartbeatTimeout);
+  _heartbeatTimeout = null;
   clearTimeout(_connectWatchdog);
   _connectWatchdog = null;
   clearInterval(_heartbeatTimer);
   _heartbeatTimer = null;
+  clearInterval(_pingTimer);
+  _pingTimer = null;
   const socket = _ws;
   _ws = null;
   if (socket) {
@@ -771,11 +798,8 @@ function scheduleReconnect() {
   resetConnection();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
-  const delay = _consecutiveFailures >= SLOW_RECONNECT_THRESHOLD
-    ? SLOW_RECONNECT_DELAY : RECONNECT_DELAY;
-  if (_consecutiveFailures === SLOW_RECONNECT_THRESHOLD) {
-    console.log(`[ws] ${_consecutiveFailures} failures, switching to 5-min reconnect interval`);
-  }
+  const delay = _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
+  console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
     connect();
@@ -889,6 +913,14 @@ async function handleMessage(msg) {
       _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
       break;
     }
+    case 'bridge_replaced':
+      console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
+      _config = null;
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
+      resetConnection();
+      await _onSuperseded?.();
+      break;
     case 'heartbeat':
       if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
         && msg.bridgeVersion !== 'dev' && msg.bridgeVersion !== BRIDGE_VERSION) {

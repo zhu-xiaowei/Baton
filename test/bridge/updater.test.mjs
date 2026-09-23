@@ -3,6 +3,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import test from 'node:test';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { acquireInstanceLock } from '../../bridge/instance-lock.mjs';
 import {
   cleanupUpdateWorkspace,
   createUpdateWorkspace,
@@ -13,6 +16,72 @@ import {
   installProductionDependencies,
   runExecutable,
 } from '../../bridge/platform.mjs';
+
+test('launcher recovers a crash and an update, then respects a clean stop', { timeout: 15000 }, async context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-launcher-'));
+  fs.copyFileSync(new URL('../../bridge/bridge-launcher.mjs', import.meta.url), path.join(root, 'bridge-launcher.mjs'));
+  fs.writeFileSync(path.join(root, 'bridge.mjs'), `
+    import fs from 'node:fs';
+    const attempts = fs.existsSync('attempts') ? Number(fs.readFileSync('attempts', 'utf8')) + 1 : 1;
+    fs.writeFileSync('attempts', String(attempts));
+    process.exit([1, 75, 0][attempts - 1]);
+  `);
+  const child = spawn(process.execPath, [path.join(root, 'bridge-launcher.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
+  context.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  let output = '';
+  child.stdout.on('data', bytes => { output += bytes; });
+  child.stderr.on('data', bytes => { output += bytes; });
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 0, output);
+  assert.equal(fs.readFileSync(path.join(root, 'attempts'), 'utf8'), '3');
+  assert.match(output, /restarting in 5000ms/);
+  assert.match(output, /restarting in 1000ms/);
+});
+
+test('instance lock survives deleted metadata and recovers after a crash', { timeout: 10000 }, async context => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-lock-test-'));
+  const pidFile = path.join(home, 'bridge.pid');
+  const moduleUrl = new URL('../../bridge/instance-lock.mjs', import.meta.url).href;
+  const child = spawn(process.execPath, ['--input-type=module', '-e',
+    `import {acquireInstanceLock} from ${JSON.stringify(moduleUrl)}; await acquireInstanceLock(${JSON.stringify(home)}); console.log('ready');`],
+  { stdio: ['ignore', 'pipe', 'pipe'] });
+  let release;
+  context.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    release?.();
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  await once(child.stdout, 'data');
+  assert.equal(await acquireInstanceLock(home), null);
+  fs.unlinkSync(pidFile);
+  await assert.rejects(acquireInstanceLock(home), { code: 'EADDRINUSE' });
+  const exited = once(child, 'exit');
+  child.kill('SIGKILL');
+  await exited;
+  fs.writeFileSync(pidFile, String(child.pid));
+  release = await acquireInstanceLock(home);
+  assert.equal(typeof release, 'function');
+  assert.equal(await acquireInstanceLock(home), null);
+  release();
+  release();
+  assert.equal(fs.existsSync(pidFile), false);
+  await new Promise(resolve => setImmediate(resolve));
+  release = await acquireInstanceLock(home);
+  fs.writeFileSync(pidFile, '2147483646');
+  release();
+  assert.equal(fs.readFileSync(pidFile, 'utf8'), '2147483646');
+});
 
 test('update workspace is created outside the Bridge home', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-update-workspace-'));

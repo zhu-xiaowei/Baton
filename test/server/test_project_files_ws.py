@@ -23,7 +23,7 @@ class Connections:
     def __init__(self, incoming_role):
         self.incoming_role = incoming_role
 
-    def get_item(self, Key):
+    def get_item(self, Key, **kwargs):
         connection_id = Key["connectionId"]
         if connection_id == "incoming":
             return {"Item": {

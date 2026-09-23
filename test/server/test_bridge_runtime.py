@@ -170,7 +170,7 @@ def test_command_catalog_round_trip_is_account_scoped_and_trims_descriptions(mon
 
 def test_command_catalog_ready_is_broadcast_to_apps(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {"Item": {
                 "connectionId": Key["connectionId"],
                 "role": "bridge",
@@ -1354,6 +1354,7 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     assert 'printf "Device name [%s]: " "$DEFAULT_NAME" > /dev/tty' in script
     assert "/api/bridge/device-name/validate" in script
     assert "deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME" in script
+    assert "if(existing.bridgeId)config.bridgeId=existing.bridgeId" in script
     assert "Requires >= 20.9" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script
@@ -1390,7 +1391,7 @@ def test_bridge_connection_persists_running_version(monkeypatch):
 
 def test_bridge_recovery_complete_broadcasts_to_apps(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1452,7 +1453,9 @@ def test_bridge_recovery_complete_broadcasts_to_apps(monkeypatch):
 
 def test_send_result_includes_the_responding_bridge_device(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
+            if Key["connectionId"].startswith("BRIDGE#"):
+                return {}
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1516,7 +1519,7 @@ def test_send_result_includes_the_responding_bridge_device(monkeypatch):
 
 def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1530,7 +1533,7 @@ def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatc
     monkeypatch.setattr(
         bridge_ws,
         "_query_connections",
-        lambda account_id, role: [{
+        lambda account_id, role, **kwargs: [{
             "connectionId": "bridge-1",
             "deviceName": "Mac",
         }] if account_id == "account-1" and role == "bridge" else [],
@@ -1582,7 +1585,7 @@ def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatc
     ]
 
     sent.clear()
-    monkeypatch.setattr(bridge_ws, "_query_connections", lambda *_: [])
+    monkeypatch.setattr(bridge_ws, "_query_connections", lambda *_, **kwargs: [])
     response = bridge_ws._handle_message(
         {
             "body": json.dumps({
@@ -1610,8 +1613,10 @@ def test_new_session_result_subscribes_origin_before_reply(monkeypatch):
     events = []
 
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             connection_id = Key["connectionId"]
+            if connection_id.startswith("BRIDGE#"):
+                return {}
             role = "bridge" if connection_id == "bridge-1" else "app"
             return {
                 "Item": {
@@ -1848,7 +1853,7 @@ def test_turn_event_validation_requires_turn_id_and_seq():
 
 def test_permission_resolved_uses_the_shared_turn_relay(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1892,7 +1897,7 @@ def test_permission_resolved_uses_the_shared_turn_relay(monkeypatch):
 
 def test_reveal_permission_subscribes_before_forwarding_to_bridge(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1945,7 +1950,7 @@ def test_reveal_permission_subscribes_before_forwarding_to_bridge(monkeypatch):
 
 def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             return {
                 "Item": {
                     "connectionId": Key["connectionId"],
@@ -1959,7 +1964,7 @@ def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
     monkeypatch.setattr(
         bridge_ws,
         "_query_connections",
-        lambda account_id, role: [
+        lambda account_id, role, **kwargs: [
             {"connectionId": "bridge-mac", "deviceName": "Mac"},
             {"connectionId": "bridge-linux", "deviceName": "Linux"},
         ] if account_id == "account-1" and role == "bridge" else [],
@@ -2003,7 +2008,7 @@ def test_list_commands_keeps_device_after_routing_to_the_bridge(monkeypatch):
 
 def test_command_options_route_between_app_and_bridge(monkeypatch):
     class ConnectionTable:
-        def get_item(self, Key):
+        def get_item(self, Key, **kwargs):
             role = "bridge" if Key["connectionId"] == "bridge-mac" else "app"
             return {
                 "Item": {
@@ -2018,7 +2023,7 @@ def test_command_options_route_between_app_and_bridge(monkeypatch):
     monkeypatch.setattr(
         bridge_ws,
         "_query_connections",
-        lambda account_id, role: (
+        lambda account_id, role, **kwargs: (
             [{"connectionId": "bridge-mac", "deviceName": "Mac"}]
             if role == "bridge"
             else [{"connectionId": "app-1"}, {"connectionId": "app-2"}]
