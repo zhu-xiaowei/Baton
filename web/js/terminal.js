@@ -286,14 +286,18 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
 
   let resizeAnchor = null;
   let resizeFrame = 0;
+  let resizeFollowBottom = false;
   const clearResizeAnchor = () => {
     window.cancelAnimationFrame(resizeFrame);
     resizeAnchor?.dispose();
     resizeAnchor = null;
+    resizeFollowBottom = false;
   };
   current.listeners.push(clearResizeAnchor);
   function resizeTerminal(cols, rows, followBottom = false) {
+    followBottom = (followBottom || resizeFollowBottom) && terminal.buffer.active.type === 'normal';
     if (followBottom) clearResizeAnchor();
+    resizeFollowBottom = followBottom;
     const buffer = terminal.buffer.active;
     const following = followBottom || (!resizeAnchor && buffer.viewportY === buffer.baseY);
     if (!following && !resizeAnchor) resizeAnchor = terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY);
@@ -307,7 +311,11 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       const resizedViewport = terminal.buffer.active.viewportY;
       window.cancelAnimationFrame(resizeFrame);
       resizeFrame = window.requestAnimationFrame(() => {
-        if (!resizeAnchor?.isDisposed && terminal.buffer.active.viewportY === resizedViewport) {
+        if (followBottom && terminal.buffer.active.type === 'normal') {
+          terminal.scrollLines(terminal.buffer.active.length);
+          terminal.refresh(0, terminal.rows - 1);
+          screen.scrollTop = 0;
+        } else if (!resizeAnchor?.isDisposed && terminal.buffer.active.viewportY === resizedViewport) {
           const target = resizeAnchor?.line ?? (following ? terminal.buffer.active.baseY : resizedViewport);
           terminal.scrollLines(-terminal.buffer.active.length);
           terminal.scrollToLine(target);
