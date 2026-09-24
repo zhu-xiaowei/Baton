@@ -127,15 +127,18 @@ export async function refreshGitStatus() {
   return request.promise;
 }
 
-async function mutate(spec) {
+async function mutate(spec, confirmed = false) {
   if (busy || !snapshot) return;
   var all = !spec.path;
   var entries = snapshot.groups?.[spec.group] || [];
-  if (spec.operation === 'discard') {
+  if (spec.operation === 'discard' && !confirmed) {
+    var discardSpec = { ...spec, snapshotId: snapshot.snapshotId };
     var untracked = all
       ? entries.some(function (entry) { return entry.status === 'untracked'; })
       : entryFor(spec.path, spec.group)?.status === 'untracked';
-    if (!await confirmDiscard({ all: all, count: all ? entries.length : 1, path: spec.path, untracked: untracked })) return;
+    await confirmDiscard({ all: all, count: all ? entries.length : 1, path: spec.path, untracked: untracked,
+      onConfirm: function () { return mutate(discardSpec, true); } });
+    return;
   }
   busy = true;
   setGitLoading(true);
@@ -144,13 +147,14 @@ async function mutate(spec) {
     var result = await requestGit(spec.operation, {
       projectHash: projectHash(),
       group: spec.group,
-      ...(all ? { all: true, snapshotId: snapshot.snapshotId } : { path: spec.path }),
+      ...(all ? { all: true, snapshotId: confirmed ? spec.snapshotId : snapshot.snapshotId } : { path: spec.path }),
     });
     cacheSnapshot(result);
     render();
   } catch (error) {
     if (error.response?.groups) snapshot = error.response;
     render(error.message);
+    if (confirmed) throw error;
   } finally {
     busy = false;
     setGitLoading(false);

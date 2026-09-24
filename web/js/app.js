@@ -22,7 +22,7 @@ import {
 } from './new-session-runtime.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { attachmentPreviewText } from './components/attachment.js';
-import { loadingSpinner } from './components/loading.js';
+import { loadingSpinner, setButtonLoading } from './components/loading.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
 import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
@@ -1489,13 +1489,14 @@ function closeNewProjectModal() {
   var input = document.getElementById('newProjectInput');
   var btn = modal.querySelector('.modal-btn.confirm');
   if (input) input.disabled = false;
-  if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
+  setButtonLoading(btn);
 }
 
 async function submitNewProject() {
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
   var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
+  if (btn.disabled) return;
   var projectPath = input.value.trim();
   if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
   err.textContent = '';
@@ -1505,11 +1506,18 @@ async function submitNewProject() {
   state._pendingCreatePath = projectPath;
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
-  btn.disabled = true;
-  btn.dataset.origText = btn.textContent;
-  btn.innerHTML = '<span class="spinner"></span>Creating';
-  await window.loadViewerLibs();
-  ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+  setButtonLoading(btn, 'Creating');
+  try {
+    await window.loadViewerLibs();
+    if (state._pendingCreatePath !== projectPath) return;
+    ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+  } catch (error) {
+    if (state._pendingCreatePath !== projectPath) return;
+    state._pendingCreatePath = null;
+    input.disabled = false;
+    setButtonLoading(btn);
+    err.textContent = error.message || 'Could not create project.';
+  }
 }
 
 var _deleteCountdownTimer = null;
@@ -1533,12 +1541,14 @@ function openDeleteModal() {
 function resetDeleteBtn() {
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   var btn = document.getElementById('deleteConfirmBtn');
-  btn.disabled = false; btn.textContent = 'Delete';
+  setButtonLoading(btn);
+  btn.textContent = 'Delete';
 }
 
 // Checking "delete original data" arms a 5s countdown before Delete is clickable (guards misfires).
 function onDeleteFilesToggle() {
   var btn = document.getElementById('deleteConfirmBtn');
+  if (btn.getAttribute('aria-busy') === 'true') return;
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
   var left = 5;
@@ -1579,20 +1589,21 @@ async function performDelete(device, isProject, ids, deleteFiles) {
 }
 
 async function submitDelete() {
+  var btn = document.getElementById('deleteConfirmBtn');
+  if (btn.disabled) return;
   var ids = Array.from(state.selected);
   if (!ids.length) return;
   var device = state.appState.device || '';
   var deleteFiles = !!document.getElementById('deleteFilesCb').checked;
   var isProject = state.selectType === 'project';
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
-  var btn = document.getElementById('deleteConfirmBtn');
-  btn.disabled = true; btn.dataset.origText = 'Delete'; btn.innerHTML = '<span class="spinner"></span>Deleting';
+  setButtonLoading(btn, 'Deleting');
   var result;
   try {
     result = await performDelete(device, isProject, ids, deleteFiles);
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Delete failed: ' + e.message;
-    btn.disabled = false; btn.textContent = 'Delete';
+    setButtonLoading(btn);
     return;
   }
   closeDeleteModal();

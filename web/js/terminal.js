@@ -5,6 +5,7 @@ import { registerEdgeBackLayer } from './edge-back.js';
 import { clearTerminalView } from './terminal-view-state.js';
 import { attachTerminalKeybar } from './terminal-keybar.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
+import { setButtonLoading } from './components/loading.js';
 
 let view = null;
 let retained = null;
@@ -147,6 +148,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     + '<div class="modal-overlay project-terminal-confirm" style="display:none" role="dialog" aria-modal="true" aria-labelledby="terminalCloseTitle">'
     + '<div class="modal-box"><div class="modal-title" id="terminalCloseTitle">Close terminal?</div>'
     + '<div class="modal-desc">This stops the terminal and its running process for all connected devices.</div>'
+    + '<div class="modal-error" role="alert"></div>'
     + '<div class="modal-actions"><button class="modal-btn cancel" type="button">Cancel</button>'
     + '<button class="modal-btn confirm danger" type="button">Close terminal</button></div></div></div>';
   const returnFocus = document.activeElement;
@@ -504,7 +506,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     controls();
     current.failure = message;
     clearTimeout(current.syncTimer);
-    hideCenteredModal(current.modal);
+    closeConfirmation();
     if (reconnect && !current.reconnect && (current.reconnectCount || 0) < 5) {
       current.reconnectCount = (current.reconnectCount || 0) + 1;
       current.reconnect = setTimeout(() => { current.reconnect = null; connect(); }, Math.min(15000, current.reconnectCount * 3000));
@@ -519,13 +521,20 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (!Array.isArray(message.sessions) || message.sessions.length > 5 || message.limit !== 5
         || message.sessions.some(session => typeof session.id !== 'string' || typeof session.name !== 'string')) throw new Error('Invalid terminal list');
       current.sessions = message.sessions;
-      if (current.closingId && !current.sessions.some(session => session.id === current.closingId)) closeConfirmation();
+      if (current.closingId && !current.busy && !current.sessions.some(session => session.id === current.closingId)) closeConfirmation();
       controls();
     } else if (message.type === 'session_result') {
       if (message.requestId !== current.busy) return;
       clearTimeout(current.operationTimer);
       current.busy = null;
       controls();
+      if (current.closingId) {
+        if (message.error) {
+          setButtonLoading(current.modal.querySelector('.confirm'));
+          current.modal.querySelector('.cancel').disabled = false;
+          current.modal.querySelector('.modal-error').textContent = message.error;
+        } else closeConfirmation();
+      }
       if (message.error) { current.focusAfterSync = false; status(message.error, 'error'); }
       else settledStatus();
     } else if (message.type === 'ready') {
@@ -660,6 +669,9 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   function closeConfirmation() {
+    if (current.closingId && current.busy) return;
+    setButtonLoading(current.modal.querySelector('.confirm'));
+    current.modal.querySelector('.cancel').disabled = false;
     hideCenteredModal(current.modal);
     current.closingId = null;
     current.selector.focus({ preventScroll: true });
@@ -680,6 +692,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     } else {
       menu(false);
       current.closingId = session.id;
+      current.modal.querySelector('.modal-error').textContent = '';
       const restart = current.sessions.length === 1;
       current.modal.querySelector('.modal-title').textContent = `${restart ? 'Restart' : 'Close'} ${session.name}?`;
       current.modal.querySelector('.modal-desc').textContent = restart
@@ -694,8 +707,11 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   listen(current.modal, 'click', event => { if (event.target === current.modal) closeConfirmation(); });
   listen(current.modal.querySelector('.confirm'), 'click', () => {
     const sessionId = current.closingId;
-    closeConfirmation();
-    if (sessionId) operate('close_session', sessionId);
+    if (!sessionId || !current.ready || current.busy) return;
+    setButtonLoading(current.modal.querySelector('.confirm'), current.sessions.length === 1 ? 'Restarting' : 'Closing');
+    current.modal.querySelector('.cancel').disabled = true;
+    current.modal.querySelector('.modal-error').textContent = '';
+    operate('close_session', sessionId);
   });
   listen(current.menu, 'keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); menu(false); }
@@ -712,7 +728,8 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeConfirmation(); }
     if (event.key === 'Tab') {
       event.preventDefault();
-      const buttons = current.modal.querySelectorAll('button');
+      const buttons = current.modal.querySelectorAll('button:not(:disabled)');
+      if (!buttons.length) return;
       (document.activeElement === buttons[0] ? buttons[1] : buttons[0]).focus();
     }
   });

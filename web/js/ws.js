@@ -23,6 +23,7 @@ import { createMessageDom } from './message-dom.js';
 import { refreshThinkingGroups } from './thinking.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
+import { setButtonLoading } from './components/loading.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -861,7 +862,7 @@ function dispatchWsMessage(msg) {
           var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
           if (err) err.textContent = msg.error || 'Unknown error';
           if (input) input.disabled = false;
-          if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || 'Create'; }
+          setButtonLoading(btn);
         }
       }
     }
@@ -2348,7 +2349,7 @@ function handleCodexSendConflict(pending, msg) {
     + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
   error.textContent = '';
   confirm.style.display = '';
-  confirm.disabled = false;
+  setButtonLoading(confirm);
   confirm.textContent = 'Take over and send';
   cancel.disabled = false;
   showCenteredModal(modal);
@@ -2382,10 +2383,7 @@ function confirmCodexTakeover() {
   pendingStatus(pending, 'Taking over Codex...');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
-  if (confirm) {
-    confirm.disabled = true;
-    confirm.innerHTML = '<span class="spinner"></span>Taking over';
-  }
+  setButtonLoading(confirm, 'Taking over');
   if (cancel) cancel.disabled = true;
   wsSendReliable(Object.assign({}, pending.sendPayload, {
     takeover: true,

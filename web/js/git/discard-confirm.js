@@ -1,4 +1,5 @@
 import { showCenteredModal, hideCenteredModal } from '../components/modal-viewport.js';
+import { setButtonLoading } from '../components/loading.js';
 
 export function confirmDiscard(options) {
   options = options || {};
@@ -12,11 +13,16 @@ export function confirmDiscard(options) {
       + '<div class="modal-desc">'
       + (all ? 'This will discard ' + count + ' working tree changes.' : 'This will discard changes to ' + escapeHtml(options.path) + '.')
       + (options.untracked ? '<br><br>Untracked files will be permanently deleted.' : '')
-      + '</div><div class="modal-actions">'
+      + '</div><div class="modal-error" role="alert"></div><div class="modal-actions">'
       + '<button class="modal-btn cancel" type="button">Cancel</button>'
       + '<button class="modal-btn confirm danger" type="button">Discard</button>'
       + '</div></div>';
+    const confirm = overlay.querySelector('.confirm');
+    const cancel = overlay.querySelector('.cancel');
+    const error = overlay.querySelector('.modal-error');
+    let busy = false;
     function finish(value) {
+      if (busy) return;
       document.removeEventListener('keydown', onKey);
       hideCenteredModal(overlay);
       overlay.remove();
@@ -27,7 +33,24 @@ export function confirmDiscard(options) {
     }
     overlay.addEventListener('click', function (event) {
       if (event.target === overlay || event.target.closest('.cancel')) finish(false);
-      if (event.target.closest('.confirm')) finish(true);
+    });
+    confirm.addEventListener('click', async function () {
+      if (busy) return;
+      busy = true;
+      error.textContent = '';
+      cancel.disabled = true;
+      setButtonLoading(confirm, 'Discarding');
+      try {
+        await options.onConfirm();
+        busy = false;
+        finish(true);
+      } catch (failure) {
+        error.textContent = failure.message || 'Could not discard changes.';
+      } finally {
+        busy = false;
+        cancel.disabled = false;
+        setButtonLoading(confirm);
+      }
     });
     showCenteredModal(overlay);
     document.addEventListener('keydown', onKey);

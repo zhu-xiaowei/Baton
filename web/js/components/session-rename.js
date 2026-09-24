@@ -1,6 +1,7 @@
 import { state } from '../state.js';
 import { requestWsRpc } from '../ws-rpc.js';
 import { showCenteredModal, hideCenteredModal } from './modal-viewport.js';
+import { setButtonLoading } from './loading.js';
 
 export function openSessionRename() {
   const sessionId = state.rootSessionId || state.appState.session;
@@ -60,7 +61,7 @@ export function openSessionRename() {
     }
     busy = true;
     input.disabled = cancel.disabled = confirm.disabled = true;
-    confirm.textContent = 'Saving…';
+    setButtonLoading(confirm, 'Saving');
     try {
       const result = await requestWsRpc({ action: 'rename_session', ...target, name }, { timeout: 30000 });
       window.applySessionTitle({ ...target, name: result.name });
@@ -75,7 +76,7 @@ export function openSessionRename() {
     } finally {
       busy = false;
       input.disabled = cancel.disabled = confirm.disabled = false;
-      confirm.textContent = 'Save';
+      setButtonLoading(confirm);
       if (overlay.isConnected) input.focus({ preventScroll: true });
     }
   });
