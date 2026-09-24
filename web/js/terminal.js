@@ -478,8 +478,18 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.ackBytes = 0;
   }
 
+  let submittedMessages = Promise.resolve();
+  const pendingWrites = new Set();
+  current.listeners.push(() => {
+    for (const complete of pendingWrites) complete();
+  });
   function write(data) {
-    return new Promise(resolve => terminal.write(data, resolve));
+    return new Promise((resolve, reject) => {
+      const complete = () => { pendingWrites.delete(complete); resolve(); };
+      pendingWrites.add(complete);
+      try { terminal.write(data, complete); }
+      catch (error) { pendingWrites.delete(complete); reject(error); }
+    });
   }
 
   function fail(message, reconnect = false) {
@@ -503,7 +513,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   async function receive(message, generation) {
-    if (!ownsRuntime(current) || generation !== current.generation) return;
+    if (!ownsRuntime(current) || generation !== current.generation || current.failure) return;
     if (message.type === 'sessions') {
       if (!Array.isArray(message.sessions) || message.sessions.length > 5 || message.limit !== 5
         || message.sessions.some(session => typeof session.id !== 'string' || typeof session.name !== 'string')) throw new Error('Invalid terminal list');
@@ -623,11 +633,19 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (!ownsRuntime(current) || generation !== current.generation) return;
       const message = JSON.parse(event.data);
       const size = message.data?.length || 0;
+      if (current.queuedBytes + size > 1024 * 1024) { fail('Terminal display is behind; reconnect to restore'); socket.close(); return; }
       current.queuedBytes += size;
-      if (current.queuedBytes > 1024 * 1024) { fail('Terminal display is behind; reconnect to restore'); socket.close(); return; }
-      current.writes = current.writes.then(() => receive(message, generation)).catch(error => {
+      const previousWrites = current.writes;
+      let completion;
+      const submitted = submittedMessages.then(async () => {
+        if (message.type !== 'output') await previousWrites;
+        completion = receive(message, generation);
+      });
+      const completed = submitted.then(() => completion).catch(error => {
         if (generation === current.generation) { fail(error.message); socket.close(); }
       }).finally(() => { current.queuedBytes -= size; });
+      submittedMessages = message.type === 'output' ? submitted : completed;
+      current.writes = Promise.all([previousWrites, completed]).then(() => {});
     });
     socket.addEventListener('error', event => {
       if (ownsRuntime(current) && generation === current.generation) {
