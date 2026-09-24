@@ -133,6 +133,13 @@ function selectBox(id) {
     + '</span>';
 }
 
+function sessionRenameButton() {
+  return '<button class="session-rename-button" type="button" title="Rename session" aria-label="Rename session"'
+    + ' onclick="event.stopPropagation();openSessionRename()">'
+    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">'
+    + '<path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"/></svg></button>';
+}
+
 // Toggle select mode by mutating the live DOM (add/remove the checkbox column) —
 // no list re-fetch/re-render, so entering/leaving doesn't flash.
 function applySelectModeDom() {
@@ -238,6 +245,10 @@ function attachLongPress(container, type) {
     // The pointerup after a long-press fires a click; swallow it (selection already made).
     if (justLongPressed) { justLongPressed = false; return; }
     var item = e.target.closest && e.target.closest('.item[data-id]');
+    if (item && e.target.closest('.session-rename-button')) {
+      openSessionRename(item.dataset.sid);
+      return;
+    }
     if (item) toggleSelected(item.getAttribute('data-id'));
   };
 
@@ -468,10 +479,7 @@ function updateBreadcrumb() {
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
     if (state.appState.session !== '__new__') {
       titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark
-        + '<button class="session-rename-button" type="button" title="Rename session" aria-label="Rename session"'
-        + ' onclick="event.stopPropagation();openSessionRename()">'
-        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">'
-        + '<path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"/></svg></button></div>';
+        + sessionRenameButton() + '</div>';
     }
   }
   var titleSession = state.rootSessionId || state.appState.session || '';
@@ -526,10 +534,21 @@ function toggleBreadcrumbExpand(nav) {
 
 function applySessionTitle(message) {
   if (!message.name || !message.sessionId || !message.device || !message.projectHash) return;
-  invalidatePagedList('sessions:' + message.device + ':' + message.projectHash);
+  var listKey = 'sessions:' + message.device + ':' + message.projectHash;
+  var entry = _listPages.peek(listKey);
+  entry?.items.forEach(function (session) {
+    if (session.sessionId === message.sessionId) session.preview = message.name;
+  });
+  invalidateListCache(listKey);
+  delete _listPrefetches[listKey];
   localStorage.removeItem('apeek_home_cache');
   _agentThreadsCache.delete(message.sessionId);
   if (state.appState.device !== message.device || state.appState.project?.hash !== message.projectHash) return;
+  document.querySelectorAll('.list .session-item').forEach(function (item) {
+    if (item.dataset.sid !== message.sessionId) return;
+    item.dataset.preview = message.name;
+    item.querySelector('.title').textContent = attachmentPreviewText(message.name);
+  });
   state.sessionThreads.forEach(function (thread) {
     if (thread.sessionId === message.sessionId) thread.preview = message.name;
   });
@@ -1383,7 +1402,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     var runtime = sessionRuntime(s.sessionId);
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
-    var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
+    var title = attachmentPreviewText(s.preview || (s.isAgent && s.agentName) || 'No preview');
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
       + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span>'
       + '<span> &middot; ' + formatSize(s.size) + '</span>';
@@ -1397,6 +1416,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
+      + sessionRenameButton()
       + '<span class="session-badges">' + agentBadge + childAgentsBadge + statusBadge + runtimeIcon(s.sessionId, runtime) + '</span></div>'
       + '<div class="item-bottom session-item-bottom"><span class="session-secondary-slot">' + secondary + '</span>'
       + '<span class="item-time">' + timeAgo(s.lastActive) + '</span></div></div>'

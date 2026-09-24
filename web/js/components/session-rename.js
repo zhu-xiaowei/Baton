@@ -3,8 +3,8 @@ import { requestWsRpc } from '../ws-rpc.js';
 import { showCenteredModal, hideCenteredModal } from './modal-viewport.js';
 import { setButtonLoading } from './loading.js';
 
-export function openSessionRename() {
-  const sessionId = state.rootSessionId || state.appState.session;
+export function openSessionRename(sessionId) {
+  sessionId = sessionId || state.rootSessionId || state.appState.session;
   if (!sessionId || sessionId === '__new__' || !state.appState.project) return;
   if (document.getElementById('sessionRenameModal')) return;
   const target = {
@@ -63,6 +63,7 @@ export function openSessionRename() {
     input.disabled = cancel.disabled = confirm.disabled = true;
     setButtonLoading(confirm, 'Saving');
     try {
+      if (typeof window.wsSendReliable !== 'function') await window.loadViewerLibs();
       const result = await requestWsRpc({ action: 'rename_session', ...target, name }, { timeout: 30000 });
       window.applySessionTitle({ ...target, name: result.name });
       busy = false;
