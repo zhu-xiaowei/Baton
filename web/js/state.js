@@ -41,6 +41,7 @@ export const state = {
   wsRunning: false,           // active session still running
   stickBottom: true,          // auto-scroll intent: real user drag clears it; returning until the bottom button hides / tapping it restores
   _titleTier: 0,              // 4=customTitle 3=ai-title 2=lastPrompt 1=firstUser; never downgrade
+  _titleRename: null,
   wsRenderedCount: 0,
   wsHasMore: false,           // more older messages on server
   wsOldestTimestamp: '',      // cursor for older-load

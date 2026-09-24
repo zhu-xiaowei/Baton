@@ -543,6 +543,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 /* New Project modal */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
 .modal-box { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px; width: 90%; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.viewport-centered-modal > .modal-box { max-height: 100%; overflow-y: auto; }
 .modal-title { font-size: 18px; font-weight: 600; color: #e6edf3; margin-bottom: 6px; }
 .modal-desc { font-size: 13px; color: #8b949e; margin-bottom: 16px; line-height: 1.5; }
 .delete-toggle { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; cursor: pointer; transition: all 0.15s; }
@@ -583,6 +584,9 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
   display: inline-flex; align-items: center; flex-wrap: wrap;
   gap: 6px; margin-left: 6px; line-height: 18px; vertical-align: middle;
 }
+.session-rename-button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: #8b949e; cursor: pointer; vertical-align: middle; }
+.session-rename-button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .session-rename-button:hover { color: #e6edf3; border-color: #58a6ff; } }
 .breadcrumb-nav.is-truncated:not(.expanded) > .session-title-meta { display: none; }
 .session-runtime-label {
   display: inline-flex; align-items: center; justify-content: center;
@@ -695,6 +699,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .agent-thread-empty { padding: 18px 10px; color: #8b949e; font-size: 12px; text-align: center; }
 html.native-mobile .session-title-meta { line-height: 20px; }
 html.native-mobile .session-title-meta .badge { font-size: 12px; }
+html.native-mobile .session-rename-button { width: 24px; height: 24px; }
 html.native-mobile .agent-threads-list {
   margin-right: -8px;
   padding-right: 8px;

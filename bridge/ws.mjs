@@ -70,6 +70,7 @@ import {
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
+import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
@@ -809,6 +810,12 @@ function scheduleReconnect() {
 async function handleMessage(msg) {
   if (_realtime?.handle(msg)) return;
   switch (msg.action) {
+    case 'rename_session':
+      await handleSessionRename(msg, {
+        deviceName: _config.deviceName, post, send: wsSend,
+        rename: message => renameNativeSession(message, { claudePool: _pool }),
+      });
+      break;
     case 'terminal_direct':
       await handleSharedTerminalMessage(msg);
       break;

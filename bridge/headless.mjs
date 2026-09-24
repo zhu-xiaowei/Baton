@@ -43,6 +43,7 @@ class HeadlessProc {
     this._framer = new StreamFramer((frame) => this._emitFrame(frame));
     this._pendingCtl = new Map(); // outbound control_request id → {resolve,reject,timer}
     this.noPersistence = !!options.noPersistence;
+    this.bare = !!options.bare;
   }
 
   spawn() {
@@ -56,6 +57,7 @@ class HeadlessProc {
       '--permission-prompt-tool', 'stdio',
     ];
     if (this.noPersistence) args.push('--no-session-persistence');
+    if (this.bare) args.push('--bare');
     // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
     if (this.createId) args.push('--session-id', this.createId);
     else if (this.sessionId) args.push('--resume', this.sessionId);
@@ -396,6 +398,36 @@ export class ClaudePool {
       }
     }
     return { result, errors };
+  }
+
+  async renameSession(key, cwd, title) {
+    let proc = this.procs.get(key);
+    let temporary = false;
+    if (!proc || proc.dead) {
+      const renameKey = 'rename-session-' + key;
+      proc = new HeadlessProc(this, renameKey, cwd, key, null, { bare: true });
+      this._inspectProcs.add(proc);
+      proc.spawn();
+      temporary = true;
+    }
+    try {
+      if (temporary) await proc.requestControl({ subtype: 'initialize' }, this.initTimeout);
+      await proc.requestControl({
+        subtype: 'rename_session', title, source: 'host', session_id: key,
+      }, this.initTimeout);
+      this._touch(proc);
+    } finally {
+      if (temporary) {
+        this._inspectProcs.delete(proc);
+        if (!proc.dead) {
+          await new Promise(resolve => {
+            const timeout = setTimeout(() => proc.proc.kill(), 5000);
+            proc.proc.once('close', () => { clearTimeout(timeout); resolve(); });
+            proc.shutdown();
+          });
+        }
+      }
+    }
   }
 
   // Release a daemon-held (bg-agent) session so --resume can take it over. `claude stop` blocks until released (~200ms) — no polling needed.

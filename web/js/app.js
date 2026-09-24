@@ -25,6 +25,8 @@ import { attachmentPreviewText } from './components/attachment.js';
 import { loadingSpinner } from './components/loading.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
 import { openProjectTerminal } from './terminal.js';
+import { openSessionRename } from './components/session-rename.js';
+import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
@@ -465,13 +467,33 @@ function updateBreadcrumb() {
     var agentMark = state.appState.isAgent ? '<span class="badge agent">Agent</span>' : '';
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
     if (state.appState.session !== '__new__') {
-      titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark + '</div>';
+      titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark
+        + '<button class="session-rename-button" type="button" title="Rename session" aria-label="Rename session"'
+        + ' onclick="event.stopPropagation();openSessionRename()">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">'
+        + '<path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"/></svg></button></div>';
     }
   }
-  el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
+  var titleSession = state.rootSessionId || state.appState.session || '';
+  var oldNav = el.querySelector('.breadcrumb-nav');
+  var expanded = oldNav?.dataset.sessionId === titleSession && oldNav.classList.contains('expanded');
+  el.innerHTML = '<div class="breadcrumb-nav' + (expanded ? ' expanded' : '')
+    + '" data-session-id="' + esc(titleSession) + '" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml + titleMeta
     + '</div>';
   el.classList.toggle('session-detail', !!state.appState.session);
+  var title = el.querySelector('.breadcrumb-title');
+  if (title && state.appState.session !== '__new__') {
+    title.tabIndex = 0;
+    title.setAttribute('role', 'button');
+    title.setAttribute('aria-expanded', String(!!expanded));
+    title.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleBreadcrumbExpand(title.parentElement);
+      }
+    });
+  }
   el.style.display = parts.length > 0 ? 'flex' : 'none';
   requestAnimationFrame(function () {
     updateBreadcrumbTruncation(el.querySelector('.breadcrumb-nav'));
@@ -498,7 +520,27 @@ function updateBreadcrumbTruncation(nav) {
 
 function toggleBreadcrumbExpand(nav) {
   nav.classList.toggle('expanded');
+  nav.querySelector('.breadcrumb-title')?.setAttribute('aria-expanded', String(nav.classList.contains('expanded')));
   requestAnimationFrame(function () { updateBreadcrumbTruncation(nav); });
+}
+
+function applySessionTitle(message) {
+  if (!message.name || !message.sessionId || !message.device || !message.projectHash) return;
+  invalidatePagedList('sessions:' + message.device + ':' + message.projectHash);
+  localStorage.removeItem('apeek_home_cache');
+  _agentThreadsCache.delete(message.sessionId);
+  if (state.appState.device !== message.device || state.appState.project?.hash !== message.projectHash) return;
+  state.sessionThreads.forEach(function (thread) {
+    if (thread.sessionId === message.sessionId) thread.preview = message.name;
+  });
+  if (state.rootSessionId === message.sessionId) state.rootSessionPreview = message.name;
+  if (state.appState.session === message.sessionId) {
+    state.appState.sessionPreview = message.name;
+    state._titleTier = 4;
+    state._titleRename = { sessionId: message.sessionId, name: message.name };
+  }
+  updateBreadcrumb();
+  saveNav();
 }
 
 window.addEventListener('resize', function () {
@@ -787,6 +829,7 @@ function applyThreadInputState() {
 
 function resetSessionThreads() {
   closeAgentThreadsModal();
+  state._titleRename = null;
   state.threadRequestVersion++;
   state.rootSessionId = null;
   state.rootSessionPreview = '';
@@ -1428,8 +1471,12 @@ function createNewProject() {
   // Prefill last-used parent prefix so the user only types the new project name (still editable).
   input.value = localStorage.getItem('_np_prefix') || '';
   err.textContent = '';
-  modal.style.display = 'flex';
-  setTimeout(function () { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 100);
+  showCenteredModal(modal);
+  setTimeout(function () {
+    if (modal.style.display === 'none') return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, 100);
 }
 
 function closeNewProjectModal() {
@@ -1438,7 +1485,7 @@ function closeNewProjectModal() {
     disconnectWs();
   }
   var modal = document.getElementById('newProjectModal');
-  modal.style.display = 'none';
+  hideCenteredModal(modal);
   var input = document.getElementById('newProjectInput');
   var btn = modal.querySelector('.modal-btn.confirm');
   if (input) input.disabled = false;
@@ -1480,7 +1527,7 @@ function openDeleteModal() {
   document.getElementById('deleteFilesCb').checked = false;
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
-  modal.style.display = 'flex';
+  showCenteredModal(modal);
 }
 
 function resetDeleteBtn() {
@@ -1505,7 +1552,7 @@ function onDeleteFilesToggle() {
 
 function closeDeleteModal() {
   resetDeleteBtn();
-  document.getElementById('deleteModal').style.display = 'none';
+  hideCenteredModal(document.getElementById('deleteModal'));
 }
 
 // Single delete entry point: ① delete DDB rows (REST, authoritative) then, if opted
@@ -2084,6 +2131,7 @@ document.addEventListener('click', function (e) {
 Object.assign(window, {
   osName, timeAgo, formatSize, esc,
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
+  openSessionRename, applySessionTitle,
   showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,

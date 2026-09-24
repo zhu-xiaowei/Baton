@@ -1,3 +1,5 @@
+import { showCenteredModal, hideCenteredModal } from '../components/modal-viewport.js';
+
 export function confirmDiscard(options) {
   options = options || {};
   return new Promise(function (resolve) {
@@ -16,6 +18,7 @@ export function confirmDiscard(options) {
       + '</div></div>';
     function finish(value) {
       document.removeEventListener('keydown', onKey);
+      hideCenteredModal(overlay);
       overlay.remove();
       resolve(value);
     }
@@ -26,9 +29,9 @@ export function confirmDiscard(options) {
       if (event.target === overlay || event.target.closest('.cancel')) finish(false);
       if (event.target.closest('.confirm')) finish(true);
     });
-    document.body.appendChild(overlay);
+    showCenteredModal(overlay);
     document.addEventListener('keydown', onKey);
-    overlay.querySelector('.cancel').focus();
+    overlay.querySelector('.cancel').focus({ preventScroll: true });
   });
 }
 

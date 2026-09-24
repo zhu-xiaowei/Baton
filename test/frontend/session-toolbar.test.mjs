@@ -160,6 +160,148 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       }
       assert.deepEqual(window.__terminalOpenCalls[0], { device: 'Mac', projectHash: 'project', projectName: 'Project' });
     });
+
+    await context.test('rename is visible by default, opens empty, and updates only after success', async () => {
+      showSession('claude');
+      const rpc = await vite.ssrLoadModule('/js/ws-rpc.js');
+      const nav = document.querySelector('.breadcrumb-nav');
+      nav.classList.remove('expanded');
+      const button = nav.querySelector('.session-rename-button');
+      assert.equal(getComputedStyle(button).display, 'inline-flex');
+      button.click();
+      assert.equal(nav.classList.contains('expanded'), false);
+      const input = document.getElementById('sessionRenameInput');
+      const modal = document.getElementById('sessionRenameModal');
+      const confirm = modal.querySelector('.confirm');
+      assert.equal(input.value, '');
+      assert.equal(document.activeElement, input);
+      assert.equal(confirm.disabled, true);
+      input.value = '  New native title  ';
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+      let payload;
+      window.wsSendReliable = message => { payload = message; };
+      confirm.click();
+      assert.equal(confirm.disabled, true);
+      assert.equal(payload.sessionId, state.rootSessionId);
+      assert.equal(payload.name, 'New native title');
+      rpc.handleWsRpcMessage({ ...payload, ok: false, error: 'Bridge offline.' });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.equal(modal.querySelector('.modal-error').textContent, 'Bridge offline.');
+      assert.notEqual(state.rootSessionPreview, 'New native title');
+      confirm.click();
+      rpc.handleWsRpcMessage({ ...payload, ok: true, synced: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.equal(document.getElementById('sessionRenameModal'), null);
+      assert.equal(state.rootSessionPreview, 'New native title');
+      assert.equal(document.querySelector('.breadcrumb-title').textContent, 'New native title');
+      assert.equal(JSON.parse(sessionStorage.getItem('baton-nav')).sessionPreview, 'New native title');
+      window.openSessionRename();
+      assert.equal(document.getElementById('sessionRenameInput').value, '');
+      document.querySelector('#sessionRenameModal .cancel').click();
+      state.appState.session = '__new__';
+      state.rootSessionId = null;
+      window.updateBreadcrumb();
+      assert.equal(document.querySelector('.session-rename-button'), null);
+    });
+
+    await context.test('isolated native end-to-end rename with real Claude CLI and Codex app-server', {
+      skip: process.env.BATON_TEST_NATIVE_RENAME !== '1', timeout: 60000,
+    }, async () => {
+      const fs = await import('node:fs');
+      const os = await import('node:os');
+      const { randomUUID } = await import('node:crypto');
+      const { handleSessionRename, renameNativeSession } = await import('../../bridge/session-rename.mjs');
+      const { CodexAppServerClient } = await import('../../bridge/codex-app-server.mjs');
+      const { ClaudePool } = await import('../../bridge/headless.mjs');
+      const { getSessionMetadata } = await import('../../bridge/session.mjs');
+      const { inspectCodexSession } = await import('../../bridge/codex-session.mjs');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-rename-e2e-'));
+      const oldClaudeHome = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = path.join(root, 'claude');
+      const claudePool = new ClaudePool({ env: {
+        CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      } });
+      const codexHome = path.join(root, 'codex');
+      const cwd = path.join(root, 'project');
+      const projectHash = cwd.replace(/[^a-zA-Z0-9-]/g, '-');
+      const timestamp = new Date().toISOString();
+      const claudeId = randomUUID(), codexId = randomUUID();
+      const claudeFile = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', projectHash, `${claudeId}.jsonl`);
+      const codexFile = path.join(codexHome, 'sessions/2026/09/24', `rollout-2026-09-24T00-00-00-${codexId}.jsonl`);
+      let reader;
+      try {
+        fs.mkdirSync(cwd, { recursive: true });
+        for (const file of [claudeFile, codexFile]) fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(claudeFile, JSON.stringify({
+          type: 'user', sessionId: claudeId, uuid: randomUUID(), parentUuid: null, cwd, timestamp,
+          message: { role: 'user', content: 'Native rename verification' },
+        }) + '\n');
+        fs.writeFileSync(codexFile, [
+          { type: 'session_meta', timestamp, payload: {
+            id: codexId, timestamp, cwd, originator: 'codex_cli_rs', cli_version: '0.155.1',
+            source: 'cli', model_provider: 'openai', base_instructions: { text: '' },
+          } },
+          { type: 'event_msg', timestamp, payload: {
+            type: 'user_message', message: 'Native rename verification', images: [], local_images: [], text_elements: [],
+          } },
+        ].map(JSON.stringify).join('\n') + '\n');
+        const rpc = await vite.ssrLoadModule('/js/ws-rpc.js');
+        const synced = [];
+        let operation;
+        window.wsSendReliable = message => {
+          operation = handleSessionRename({ ...message, replyConnectionId: 'local-app' }, {
+            deviceName: 'Mac',
+            rename: message => renameNativeSession(message, {
+              codexHomes: [codexHome], findClaudeSessionFile: () => claudeFile, claudePool,
+            }),
+            post: async (endpoint, body) => {
+              assert.equal(endpoint, '/api/bridge/session-title');
+              synced.push(body);
+              return { ok: true };
+            },
+            send: message => rpc.handleWsRpcMessage(message),
+          });
+        };
+        for (const runtime of ['claude', 'codex']) {
+          showSession(runtime);
+          const sessionId = runtime === 'claude' ? claudeId : `codex:${codexId}`;
+          state.appState.session = state.rootSessionId = state.activeThreadId = sessionId;
+          state.appState.project.hash = projectHash;
+          window.updateBreadcrumb();
+          for (const name of [`${runtime} 原生名称验证`, `${runtime} 再次改名`]) {
+            const nav = document.querySelector('.breadcrumb-nav');
+            nav.querySelector('.session-rename-button').click();
+            const input = document.getElementById('sessionRenameInput');
+            assert.equal(input.value, '');
+            input.value = name;
+            input.dispatchEvent(new window.Event('input', { bubbles: true }));
+            document.querySelector('#sessionRenameModal .confirm').click();
+            await operation;
+            await new Promise(resolve => setTimeout(resolve, 0));
+            assert.equal(document.getElementById('sessionRenameModal'), null);
+            assert.equal(document.querySelector('.breadcrumb-title').textContent, name);
+            assert.equal(synced.at(-1).name, name);
+            if (runtime === 'claude') {
+              assert.equal(getSessionMetadata(claudeFile).preview, name);
+            } else {
+              reader = new CodexAppServerClient({ socketPath: false, env: { ...process.env, CODEX_HOME: codexHome } });
+              assert.equal((await reader.request('thread/read', { threadId: codexId, includeTurns: false })).thread.name, name);
+              assert.equal(inspectCodexSession(codexId, { codexHomes: [codexHome] }).preview, name);
+              await reader.stop();
+              reader = null;
+            }
+          }
+        }
+        assert.equal(synced.length, 4);
+      } finally {
+        claudePool.shutdownAll();
+        await reader?.stop();
+        if (oldClaudeHome === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = oldClaudeHome;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
   } finally {
     await vite.close();
     dom.window.close();

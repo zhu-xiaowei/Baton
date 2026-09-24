@@ -12,6 +12,7 @@ import boto3
 from botocore.exceptions import ClientError
 from project.files_ws import handle_project_files
 from project.git_ws import handle_git_status
+from project.session_ws import handle_session_rename
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
@@ -541,6 +542,14 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "request_file":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
+    elif action == "rename_session":
+        return handle_session_rename(
+            body, role, connection_id, account_id, endpoint,
+            query_connections=_query_connections,
+            post_to_connection=_post_to_connection,
+            connections_table=_connections_table,
+            bridge_device=conn.get("deviceName", ""),
+        )
     elif action == "project_files":
         return handle_project_files(
             body,

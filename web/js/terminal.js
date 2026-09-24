@@ -4,6 +4,7 @@ import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { registerEdgeBackLayer } from './edge-back.js';
 import { clearTerminalView } from './terminal-view-state.js';
 import { attachTerminalKeybar } from './terminal-keybar.js';
+import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 
 let view = null;
 let retained = null;
@@ -36,6 +37,7 @@ function decode(data) {
 }
 
 function disposeTerminalRuntime(previous) {
+  hideCenteredModal(previous.modal);
   previous.generation++;
   clearTimeout(previous.reconnect);
   clearTimeout(previous.ackTimer);
@@ -93,7 +95,7 @@ export function closeProjectTerminal({ preserveView = false, keepAlive = false }
     retained = previous;
     previous.menu.hidden = true;
     previous.selector.setAttribute('aria-expanded', 'false');
-    previous.modal.style.display = 'none';
+    hideCenteredModal(previous.modal);
     previous.focusAfterSync = false;
     previous.keepAliveTimer = setTimeout(releaseRetained, 60000);
     document.addEventListener('visibilitychange', releaseHiddenTerminal);
@@ -194,7 +196,6 @@ async function loadTerminalRuntime(current) {
     current.selector.disabled = true;
     current.add.disabled = true;
     current.menu.hidden = true;
-    current.modal.style.display = 'none';
     setBreadcrumbItemsLoading([current.projectLabel], false);
     current.status.hidden = false;
     current.status.dataset.state = 'error';
@@ -503,7 +504,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     controls();
     current.failure = message;
     clearTimeout(current.syncTimer);
-    current.modal.style.display = 'none';
+    hideCenteredModal(current.modal);
     if (reconnect && !current.reconnect && (current.reconnectCount || 0) < 5) {
       current.reconnectCount = (current.reconnectCount || 0) + 1;
       current.reconnect = setTimeout(() => { current.reconnect = null; connect(); }, Math.min(15000, current.reconnectCount * 3000));
@@ -659,7 +660,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   function closeConfirmation() {
-    current.modal.style.display = 'none';
+    hideCenteredModal(current.modal);
     current.closingId = null;
     current.selector.focus({ preventScroll: true });
   }
@@ -685,7 +686,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
         ? 'This stops the current process and starts a new terminal for all connected devices.'
         : 'This stops the terminal and its running process for all connected devices.';
       current.modal.querySelector('.confirm').textContent = restart ? 'Restart terminal' : 'Close terminal';
-      current.modal.style.display = 'flex';
+      showCenteredModal(current.modal);
       current.modal.querySelector('.cancel').focus({ preventScroll: true });
     }
   });

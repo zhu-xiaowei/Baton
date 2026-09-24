@@ -22,6 +22,7 @@ import {
 import { createMessageDom } from './message-dom.js';
 import { refreshThinkingGroups } from './thinking.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
+import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -268,6 +269,10 @@ function updateTitleFromMessages() {
     }
   }
   var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
+  if (state._titleRename?.sessionId === state.appState.session) {
+    if (customTitle !== state._titleRename.name) return;
+    state._titleRename = null;
+  }
   if (tier === 0) return;
   if (tier < (state._titleTier || 0)) return;
   var title = attachmentPreviewText(customTitle || aiTitle || lastPrompt || firstUser);
@@ -806,6 +811,11 @@ function dispatchWsMessage(msg) {
       if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
       queueAgentThreadRefresh({ delays: [150, 1000] });
       refreshSessionMessages();
+    } else if (msg.action === 'session_title_changed') {
+      window.applySessionTitle?.(msg);
+    } else if (msg.action === 'rename_session') {
+      if (msg.ok) window.applySessionTitle?.(msg);
+      handleWsRpcMessage(msg);
     } else if (msg.action === 'project_files' || msg.action === 'git_status') {
       handleWsRpcMessage(msg);
     } else if (msg.action === 'file_ready') {
@@ -2341,7 +2351,7 @@ function handleCodexSendConflict(pending, msg) {
   confirm.disabled = false;
   confirm.textContent = 'Take over and send';
   cancel.disabled = false;
-  modal.style.display = 'flex';
+  showCenteredModal(modal);
   return true;
 }
 
@@ -2350,7 +2360,7 @@ function finishCodexTakeover(pending) {
   pending.awaitingTakeover = false;
   _codexTakeover = null;
   var modal = document.getElementById('codexTakeoverModal');
-  if (modal) modal.style.display = 'none';
+  hideCenteredModal(modal);
 }
 
 function closeCodexTakeoverModal() {

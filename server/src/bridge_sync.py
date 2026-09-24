@@ -154,6 +154,34 @@ class SyncMessagesRequest(BaseModel):
     messages: List[dict]
 
 
+class SessionTitleRequest(BaseModel):
+    deviceName: str = Field(min_length=1)
+    projectHash: str = Field(min_length=1)
+    sessionId: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=200)
+
+
+@bridge_router.post('/session-title')
+async def update_session_title(req: SessionTitleRequest, raw: Request):
+    name = req.name.strip()
+    if not name or re.search(r'[\x00-\x1f\x7f]', name):
+        raise HTTPException(status_code=400, detail='Invalid session name')
+    account_id = _hash_key(raw.headers.get('x-api-key', ''))
+    sessions_table, _ = _tables()
+    try:
+        sessions_table.update_item(
+            Key={'accountId': account_id, 'sk': f'SESS#{req.deviceName}#{req.projectHash}#{req.sessionId}'},
+            UpdateExpression='SET preview = :name',
+            ConditionExpression='attribute_exists(sk)',
+            ExpressionAttributeValues={':name': name},
+        )
+    except ClientError as error:
+        if error.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            raise HTTPException(status_code=404, detail='Session not found') from error
+        raise
+    return {'ok': True}
+
+
 def _normalize_runtime(runtime: str) -> str:
     return "codex" if runtime == "codex" else "claude"
 
