@@ -184,11 +184,13 @@ Codex 的 `session_meta.cwd` 使用现有 Claude 兼容规则计算 `projectHash
 ```text
 macOS/Linux cwd → Claude 兼容路径 hash
 Windows C:\...  → 兼容现有 C--Users-* / C-Users-* 候选
-worktree        → 归一到 parent project hash
+worktree        → 校验 Git 仓库身份，按 primaryRoot / relativeCwd 归一到原项目 hash
 ```
 
 同一 cwd 的 Claude/Codex Session 必须落入同一 Device → Project。原生 Windows 已验证盘符、
 空格、中文路径和现有 Claude project hash 兼容；Codex 不依赖 WSL。
+
+Codex worktree 的实际 session cwd 保持不变。已有独立项目通过一次性脚本迁移元数据，不增加旧 hash 查询兼容层；操作见 [worktree 迁移说明](codex-worktree-migration.md)。
 
 ## 5. DynamoDB 数据模型
 

@@ -324,6 +324,7 @@ export function scanCodexRollout(filePath, options = {}) {
       id: nativeSessionId,
       nativeSessionId,
       runtime: 'codex',
+      cwd: String(meta.cwd),
       project,
       projectName: readableProjectName(project),
       lastActive: stat.mtime.toISOString(),
@@ -465,4 +466,12 @@ export function inspectCodexSession(nativeSessionId, options = {}) {
     nativeSessionId,
     threadName,
   }).session;
+}
+
+export function resolveCodexSessionCwd(nativeSessionId, options = {}) {
+  const cwd = inspectCodexSession(nativeSessionId, options)?.cwd;
+  try {
+    if (cwd && fs.statSync(cwd).isDirectory()) return cwd;
+  } catch {}
+  throw new Error('Codex session working directory is unavailable. Restore its worktree before continuing.');
 }

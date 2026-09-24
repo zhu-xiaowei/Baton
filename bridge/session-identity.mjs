@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { projectCwdFromCwd } from './repository-identity.mjs';
 
 export function normalizeRuntime(runtime) {
   return runtime === 'codex' ? 'codex' : 'claude';
@@ -50,6 +51,7 @@ export function projectHashCandidatesFromCwd(cwd) {
 }
 
 export function projectHashFromCwd(cwd, claudeProjectsRoot) {
+  cwd = projectCwdFromCwd(cwd);
   const candidates = projectHashCandidatesFromCwd(cwd);
   if (!candidates.length) return '';
   if (claudeProjectsRoot) {

@@ -40,7 +40,7 @@ import {
   isSupportedCodexCommand,
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
-import { inspectCodexSession } from './codex-session.mjs';
+import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
 import {
   updateSessionStatus,
   knownProjects,
@@ -1011,9 +1011,22 @@ async function handleSendMessage(
     return;
   }
   let routedText = resolved;
-  const projectCwd = typeof projectHash === 'string' && projectHash
+  let projectCwd = typeof projectHash === 'string' && projectHash
     ? projectHashToPath(projectHash)
     : null;
+
+  if (identity.runtime === 'codex' && sessionId) {
+    try {
+      projectCwd = resolveCodexSessionCwd(identity.nativeSessionId);
+    } catch (error) {
+      wsSend({
+        action: 'send_message_result', ok: false, sessionId, requestId, turnId,
+        error: error.message,
+        ...(replyConnectionId ? { replyConnectionId } : {}),
+      });
+      return;
+    }
+  }
 
   if (identity.runtime === 'codex') {
     const command = parseCodexSlashCommand(resolved);
