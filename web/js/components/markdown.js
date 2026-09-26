@@ -92,6 +92,16 @@
   };
 
   marked.use({
+    tokenizer: {
+      emStrong: function (src) {
+        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=\p{Script=Han})/u.exec(src);
+        if (!match) return false;
+        return {
+          type: 'strong', raw: match[0], text: match[1],
+          tokens: this.lexer.inlineTokens(match[1]),
+        };
+      },
+    },
     renderer: {
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
       // being inserted into Baton's document where <style>/<meta> can alter the UI.

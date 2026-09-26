@@ -55,3 +55,51 @@ test('fenced code highlighting and Mermaid placeholders remain trusted UI', () =
   assert.match(mermaid, /class="mermaid-block"/);
   assert.match(mermaid, /class="mermaid-src"/);
 });
+
+test('Chinese labels ending in punctuation stay bold during streaming', () => {
+  const window = setupMarkdown();
+  const host = window.document.createElement('div');
+  const input = '**部署状态：**云端已部署 ,';
+  const closingEnd = input.indexOf('**', 2) + 2;
+
+  host.innerHTML = window.renderAssistantText(input);
+  assert.equal(host.querySelector('strong')?.textContent, '部署状态：');
+  assert.equal(host.textContent.trim(), '部署状态：云端已部署 ,');
+
+  for (let length = 2; length <= input.length; length++) {
+    window.renderStreamMd(host, input.slice(0, length));
+    assert.equal(host.querySelector('strong')?.textContent,
+      length < closingEnd ? undefined : '部署状态：');
+  }
+
+  host.innerHTML = window.renderMd('前文 **注意！**请检查');
+  assert.equal(host.querySelector('strong')?.textContent, '注意！');
+  window.close();
+});
+
+test('Chinese label compatibility preserves Markdown boundaries and HTML escaping', () => {
+  const window = setupMarkdown();
+  const standard = new Marked({ breaks: true, gfm: true });
+  const host = window.document.createElement('div');
+  for (const input of [
+    '**部署状态：** 云端已部署',
+    '**部署状态**：云端已部署',
+    '**Status:**deployed',
+    String.raw`\*\*部署状态：\*\*云端已部署`,
+    '`**部署状态：**云端已部署`',
+    '***粗体和斜体***',
+    '**外层 *内层* 结束**',
+    '**内含 `：**云` 的代码**',
+  ]) {
+    assert.equal(window.renderMd(input), standard.parse(input), input);
+  }
+
+  host.innerHTML = window.renderMd('```text\n**部署状态：**云端已部署\n```');
+  assert.equal(host.querySelector('strong'), null);
+  assert.equal(host.querySelector('code').textContent.trim(), '**部署状态：**云端已部署');
+
+  host.innerHTML = window.renderMd('**部署&lt;img src=x onerror=alert(1)&gt;：**云端已部署');
+  assert.equal(host.querySelector('img'), null);
+  assert.equal(host.querySelector('strong')?.textContent, '部署<img src=x onerror=alert(1)>：');
+  window.close();
+});
