@@ -691,6 +691,8 @@ export class CodexWatcher {
     const extracted = await syncCodexMessages(filePath, nativeSessionId, sessionId, {
       watermarks: this.watermarks,
       uploader: async (id, messages, identity) => {
+        const historyComplete = identity.historyComplete;
+        identity = { ...identity, historyComplete: false };
         const persistedOnly = [];
         const realtime = [];
         const runtimeOwned = this.runtimeOwnsFn(nativeSessionId);
@@ -713,6 +715,7 @@ export class CodexWatcher {
           await this.uploadFn(id, persistedOnly, identity);
         }
         if (realtime.length) await this.deliverFn(id, realtime, identity);
+        if (historyComplete) await this.uploadFn(id, [], { ...identity, historyComplete: true });
       },
     });
     for (const liveKey of extracted.releaseOwnershipKeys || []) {

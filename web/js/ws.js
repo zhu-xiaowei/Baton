@@ -35,6 +35,7 @@ import {
 } from './streaming.js';
 import { handleWsRpcMessage } from './ws-rpc.js';
 import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
+import { ExecutionEventQueue } from './execution-events.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
@@ -51,6 +52,9 @@ var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
 var _queuedTurnIds = new Set();
+var _activeExecutionIds = new Set();
+var _executionEvents = new ExecutionEventQueue();
+var _executionRecoveryTimers = new Map();
 var _wsReconnectTimer = null;
 var _wsConfigRequest = null;
 var _realtimeReceiver = null;
@@ -526,6 +530,11 @@ function routeTurnEvent(message) {
     barrier.capture(message);
     return;
   }
+  if (message.executionId && Number.isInteger(message.executionSeq) && !message._executionOrdered) {
+    for (var event of _executionEvents.push(message)) routeTurnEvent(event);
+    scheduleExecutionRecovery(message);
+    return;
+  }
   if ((message.action === 'messages' || message.action === 'stream_end')
     && Array.isArray(message.messages)) {
     message = {
@@ -565,6 +574,32 @@ function routeTurnEvent(message) {
     && !_handledControlEvents.has(strictEventKey(message))) {
     scheduleControlEventFallback(message);
   }
+}
+
+function scheduleExecutionRecovery(message) {
+  var id = message.executionId;
+  if (!_executionEvents.hasGap(id)) {
+    clearTimeout(_executionRecoveryTimers.get(id));
+    _executionRecoveryTimers.delete(id);
+    return;
+  }
+  if (_executionRecoveryTimers.has(id)) return;
+  var attempt = message._executionRecoveryAttempt || 0;
+  var timer = setTimeout(async function () {
+    try {
+      if (state.wsSessionId !== message.sessionId) return;
+      var result = await loadLatestMessages(message.sessionId, { preserveLive: true });
+      if (!result?.ok || state.wsSessionId !== message.sessionId) return;
+      for (var event of _executionEvents.recover(id)) routeTurnEvent(event);
+    } catch (error) {
+    } finally {
+      _executionRecoveryTimers.delete(id);
+      if (attempt < 2 && state.wsSessionId === message.sessionId && _executionEvents.hasGap(id)) {
+        scheduleExecutionRecovery({ ...message, _executionRecoveryAttempt: attempt + 1 });
+      }
+    }
+  }, [500, 1500, 3000][attempt]);
+  _executionRecoveryTimers.set(id, timer);
 }
 
 function clearGappedEndTimer(turnId) {
@@ -613,6 +648,7 @@ function completeGappedTurn(turnId) {
 
 function handleGappedTurnCompletion(completion) {
   if (!completion || completion.sessionId !== state.wsSessionId) return false;
+  updateExecutionEnd(completion.end);
   clearGappedEndTimer(completion.turnId);
   // A missing block-start means strict authority cannot be mapped onto the
   // partial coordinator state. Discard that preview, then render the complete
@@ -625,6 +661,8 @@ function handleGappedTurnCompletion(completion) {
   _checkpointResumedTurns.delete(completion.turnId);
   settlePendingAtTurnEnd(completion.turnId, completion.end);
   mergeLateJoinAuthority(completion, true);
+  consumeExecutionInputs(completion.end || {});
+  applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
   updateSendBtn();
   if (turnCompletionNeedsRecovery(completion)) {
     scheduleTurnEndRecovery(completion.sessionId);
@@ -1156,6 +1194,7 @@ function drainStrictStreamOperations() {
 }
 
 function handleStrictTurnStart(message) {
+  if (message.executionId) _activeExecutionIds.add(message.executionId);
   _strictStatusAuthority = true;
   _queuedTurnIds.delete(message.turnId);
   _streamCoordinator.startTurn(message);
@@ -1178,6 +1217,7 @@ function handleStrictFrame(message, type) {
 }
 
 function handleStrictTurnEnd(message) {
+  updateExecutionEnd(message);
   clearGappedEndTimer(message.turnId);
   _strictStatusAuthority = true;
   var endMessages = Array.isArray(message.messages)
@@ -1209,6 +1249,7 @@ function handleStrictTurnEnd(message) {
   _queuedTurnIds.delete(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
   settlePendingAtTurnEnd(message.turnId, message);
+  consumeExecutionInputs(message);
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
@@ -1239,9 +1280,11 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
 }
 
 function handleLateJoinCompletion(completion) {
+  updateExecutionEnd(completion.end);
   clearGappedEndTimer(completion.turnId);
   mergeLateJoinAuthority(completion, true);
   settlePendingAtTurnEnd(completion.turnId, completion.end);
+  consumeExecutionInputs(completion.end || {});
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
@@ -1249,6 +1292,12 @@ function handleLateJoinCompletion(completion) {
   if (turnCompletionNeedsRecovery(completion)) {
     scheduleTurnEndRecovery(completion.sessionId);
   }
+}
+
+function updateExecutionEnd(message) {
+  if (!message?.executionId) return;
+  if (message.continued === true) _activeExecutionIds.add(message.executionId);
+  else _activeExecutionIds.delete(message.executionId);
 }
 
 function turnCompletionNeedsRecovery(completion) {
@@ -1349,7 +1398,22 @@ function handleStrictMessages(envelope) {
   if (completeMessages.length) {
     showStats(state.wsMessageCount + ' messages (strict live)');
   }
+  consumeExecutionInputs(envelope);
   return remaining;
+}
+
+function consumeExecutionInputs(envelope) {
+  for (var id of envelope.consumedInputIds || []) {
+    _queuedTurnIds.delete(id);
+    var pending = findPending(id);
+    if (!pending || pending.failed) continue;
+    var echo = messageEchoed(pending);
+    if (echo) promoteEchoedBubble(pending, echo);
+    else {
+      document.getElementById(id)?.remove();
+      removePending(pending);
+    }
+  }
 }
 
 function resetStreamSessionState(keepHistoryRequest = false) {
@@ -1362,6 +1426,10 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   _turnEventQueue.reset();
   _checkpointResumedTurns.clear();
   _queuedTurnIds.clear();
+  _activeExecutionIds.clear();
+  _executionEvents.reset();
+  for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
+  _executionRecoveryTimers.clear();
   _turnSendOrder.clear();
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
@@ -1549,6 +1617,7 @@ function outstandingTurnIds() {
     if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
   }
   for (var turnId of _streamCoordinator.activeTurnIds()) add(turnId);
+  for (var executionId of _activeExecutionIds) add(executionId);
   for (var queuedTurnId of _queuedTurnIds) add(queuedTurnId);
   for (var pendingMessage of state.pendingSentMessages) {
     if (!pendingMessage.failed) add(pendingMessage.id);
@@ -1892,6 +1961,10 @@ async function loadOlderMessages(sessionId) {
       before: state.wsOldestTimestamp,
       limit: MESSAGE_PAGE_SIZE,
     });
+    if (data.historyReset) {
+      await loadLatestMessages(sessionId, { preservePending: true });
+      return null;
+    }
     if (generation !== _messagePaginationGeneration
       || state.wsSessionId !== sessionId) {
       return null;

@@ -72,7 +72,8 @@ export async function makeHarness(options = {}) {
   // Kept minimal but structurally faithful: user→.msg-user, assistant text→.assistant-text.
   const G = (k, v) => { globalThis[k] = v; w[k] = v; };
   const anchorOf = (message) => message.turnId
-    || String(message.nativeId || '').match(/^(?:codex|live):user:(.+)$/)?.[1] || '';
+    || String(message.nativeId || '').match(/^(?:codex|live):user:(.+)$/)?.[1]
+    || (message.nativeId ? message.uuid : `sent-${message.uuid}`);
   const textOf = (c) => Array.isArray(c) ? c.filter(b => b && b.type === 'text').map(b => b.text).join('') : (typeof c === 'string' ? c : '');
   // Faithful to render.js: data-ts is on the INNER tl-item; the outer assistant-turn has none.
   // renderSingleMessage (incremental) also emits the inner tl-item with data-ts.

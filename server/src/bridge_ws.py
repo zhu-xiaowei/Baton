@@ -4,6 +4,7 @@ Deployed as a standalone Lambda (not in Docker), invoked by WebSocket API Gatewa
 """
 
 import json
+from message_history import message_key
 import os
 import time
 import hashlib
@@ -772,8 +773,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                             continue
                         timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
                         item = {
-                            "sessionId": session_id,
-                            "sk": f"{timestamp}#{uuid}",
+                            **message_key(session_id, msg, timestamp),
                             "uuid": uuid,
                             "type": msg.get("type", ""),
                             "content": json.dumps(
@@ -785,6 +785,8 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
                         }
                         if msg.get("nativeId"):
                             item["nativeId"] = msg["nativeId"]
+                        if msg.get("orderKey"):
+                            item["orderKey"] = msg["orderKey"]
                         if msg.get("stopReason"):
                             item["stopReason"] = msg["stopReason"]
                         if msg.get("toolUseResult"):

@@ -403,7 +403,8 @@ export class CodexInteraction {
         releasingClient: null,
         subscribedGeneration: 0,
         active: null,
-        queue: [],
+        submissions: new Map(),
+        submitting: 0,
         sendLock: Promise.resolve(),
       };
       this.sessions.set(nativeSessionId, session);
@@ -457,27 +458,28 @@ export class CodexInteraction {
     await client.start();
     if (session.subscribedGeneration === client.generation) return;
     const pendingTurn = options.pendingTurn || null;
+    const buffered = [];
+    const originalCallbacks = pendingTurn?.callbacks || {};
+    const adoptionCallbacks = Object.fromEntries(Object.entries(originalCallbacks).map(([name, value]) => [
+      name,
+      typeof value === 'function' ? (...args) => buffered.push(() => value(...args)) : value,
+    ]));
     let adopted = pendingTurn
       ? this.#prepareTurn(session, {
         streamId: pendingTurn.streamId
           || `codex-resumed-${session.nativeSessionId}-${client.generation}`,
         text: '',
-        callbacks: pendingTurn.callbacks,
+        callbacks: adoptionCallbacks,
         external: true,
       })
       : null;
     if (adopted) {
       session.active = adopted;
-      if (pendingTurn) session.queue.push(pendingTurn);
     }
     const clearAdoption = () => {
       if (!adopted) return;
       const current = adopted;
       adopted = null;
-      if (pendingTurn) {
-        const queuedIndex = session.queue.indexOf(pendingTurn);
-        if (queuedIndex !== -1) session.queue.splice(queuedIndex, 1);
-      }
       if (session.active === current) session.active = null;
       current.framer.cancel();
     };
@@ -524,10 +526,32 @@ export class CodexInteraction {
     session.effort = result.reasoningEffort ?? session.effort;
     session.subscribedGeneration = client.generation;
     if (!adopted) return { active: false };
+    let activeTurn;
+    try {
+      const snapshot = result?.thread?.status?.type === 'active'
+        ? await client.request('thread/read', { threadId: session.nativeSessionId, includeTurns: true })
+        : null;
+      activeTurn = snapshot?.thread?.turns?.findLast((turn) => turn.status === 'inProgress');
+      const anchor = activeTurn?.items?.findLast((item) => item.type === 'userMessage');
+      if (anchor) {
+        for (const complete of codexCompletedLiveMessages(anchor, undefined, '', {
+          sessionId: session.nativeSessionId,
+          turnId: activeTurn.id,
+        })) {
+          originalCallbacks.onMessage?.(adopted.streamId, complete.message, { normalized: true });
+        }
+      }
+    } finally {
+      adopted.callbacks = originalCallbacks;
+      for (const publish of buffered) publish();
+    }
     if (session.active !== adopted) {
       return { active: true };
     }
     if (result?.thread?.status?.type === 'active') {
+      if (!adopted.turnId) {
+        this.#bindTurnId(adopted, activeTurn?.id);
+      }
       return { active: true };
     }
     clearAdoption();
@@ -535,7 +559,7 @@ export class CodexInteraction {
   }
 
   async #release(session) {
-    if (session.active || session.queue.length) return;
+    if (session.active || session.submitting) return;
     if (session.releasePromise) return session.releasePromise;
     const client = session.client;
     if (!client) return;
@@ -556,31 +580,68 @@ export class CodexInteraction {
   async sendExisting(options) {
     const session = this.#session(options.nativeSessionId, options.sessionId);
     if (options.cwd) session.cwd = options.cwd;
+    if (session.submissions.has(options.streamId)) return session.submissions.get(options.streamId);
     const turn = {
       streamId: options.streamId,
       text: options.text,
       callbacks: options.callbacks || {},
     };
+    session.submitting++;
     const operation = session.sendLock.then(async () => {
       try {
-        const resumed = await this.#resume(session, {
+        await this.#resume(session, {
           ...options,
           pendingTurn: turn,
         });
-        if (resumed?.active) return { queued: true };
-      } catch (error) {
-        await this.#release(session);
-        throw error;
+        if (session.active) await this.#steerTurn(session, turn);
+        else await this.#startTurn(session, turn);
+        return { queued: false };
+      } finally {
+        session.submitting--;
+        this.#drainOrRelease(session);
       }
-      if (session.active) {
-        session.queue.push(turn);
-        return { queued: true };
+    });
+    session.submissions.set(options.streamId, operation);
+    operation.catch((error) => {
+      if (error.code === 'CODEX_ACTIVE_WRITER' || error.code === -32600) {
+        session.submissions.delete(options.streamId);
       }
-      await this.#startTurn(session, turn);
-      return { queued: false };
     });
     session.sendLock = operation.catch(() => {});
     return operation;
+  }
+
+  async #steerTurn(session, inputTurn) {
+    const input = await this.#turnInput(session, inputTurn.text);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const active = session.active;
+      if (!active) return this.#startTurn(session, inputTurn);
+      if (!active.turnId) throw new Error('Codex active turn identity is not available yet.');
+      try {
+        await session.client.request('turn/steer', {
+          threadId: session.nativeSessionId,
+          expectedTurnId: active.turnId,
+          clientUserMessageId: inputTurn.streamId,
+          input,
+        });
+        inputTurn.callbacks.onAccepted?.(inputTurn.streamId);
+        return;
+      } catch (error) {
+        if (error.code !== -32600 || !/no active turn|expected.*turn/i.test(error.message) || attempt) throw error;
+        const snapshot = await session.client.request('thread/read', {
+          threadId: session.nativeSessionId,
+          includeTurns: true,
+        });
+        const current = snapshot?.thread?.turns?.findLast((turn) => turn.status === 'inProgress');
+        if (current) this.#bindTurnId(active, current.id, true);
+        else if (session.active === active) {
+          active.framer.finish();
+          active.ended = true;
+          this.turns.delete(this.#turnKey(session.nativeSessionId, active.turnId));
+          session.active = null;
+        }
+      }
+    }
   }
 
   async observePermissions(options) {
@@ -781,15 +842,17 @@ export class CodexInteraction {
       session.subscribedGeneration = client.generation;
       this.#bindClient(session, client);
 
-      const callbacks = await options.onCreated?.({
-        nativeSessionId,
-        sessionId,
-      }) || options.callbacks || {};
-      await this.#startTurn(session, {
-        streamId: options.streamId,
-        text: options.text,
-        callbacks,
+      session.submitting++;
+      const submission = (async () => {
+        const callbacks = await options.onCreated?.({ nativeSessionId, sessionId }) || options.callbacks || {};
+        await this.#startTurn(session, { streamId: options.streamId, text: options.text, callbacks });
+      })().finally(() => {
+        session.submitting--;
+        this.#drainOrRelease(session);
       });
+      session.sendLock = submission.catch(() => {});
+      session.submissions.set(options.streamId, submission);
+      await submission;
       return { nativeSessionId, sessionId };
     } catch (error) {
       if (!session || session.client !== client) {
@@ -1787,6 +1850,17 @@ export class CodexInteraction {
       const streamedType = ['agentMessage', 'reasoning', 'plan']
         .includes(params.item?.type);
       this.#itemState(turn, params.item, { startBlocks: !streamedType });
+      if (isCodexToolItem(params.item)) {
+        const started = codexCompletedLiveMessages(params.item, undefined, '', {
+          turnId: turn.turnId,
+          sessionId: turn.session.nativeSessionId,
+        }).find((complete) => complete.message.type === 'assistant');
+        if (started) turn.callbacks.onMessage?.(turn.streamId, started.message, {
+          normalized: true,
+          runtime: 'codex',
+          liveKey: codexTurnLiveKey(turn.turnId),
+        });
+      }
       return;
     }
 
@@ -1935,12 +2009,6 @@ export class CodexInteraction {
   }
 
   #drainOrRelease(session) {
-    if (session.active) return;
-    if (session.queue.length) {
-      const next = session.queue.shift();
-      this.#startTurn(session, next).catch(() => {});
-      return;
-    }
     this.#release(session).catch(() => {});
   }
 
@@ -2106,7 +2174,7 @@ export class CodexInteraction {
       if (session.releasingClient) clients.add(session.releasingClient);
       if (session.releasePromise) releases.push(session.releasePromise);
       session.active = null;
-      session.queue = [];
+      session.submissions.clear();
       session.client = null;
       session.releasingClient = null;
       session.subscribedGeneration = 0;
@@ -2128,16 +2196,10 @@ export class CodexInteraction {
       this.turns.delete(this.#turnKey(session.nativeSessionId, turn.turnId));
       this.#failTurn(turn, error);
     }
-    for (const queued of session.queue) {
-      queued.callbacks.onError?.(
-        queued.streamId,
-        { code: -1, detail: error.message },
-      );
-    }
     for (const [requestId, pending] of this.pendingRequests) {
       if (pending.turn.session === session) this.pendingRequests.delete(requestId);
     }
-    session.queue = [];
+    session.submissions.clear();
     session.active = null;
   }
 }

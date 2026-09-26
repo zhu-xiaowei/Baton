@@ -10,6 +10,7 @@
 
 import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
+import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
@@ -34,7 +35,7 @@ class HeadlessProc {
     this.ready = false;         // system/init seen
     this.busy = false;          // a turn is generating
     this.dead = false;
-    this.queue = [];            // messages waiting for idle
+    this.inputs = new Map();
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
@@ -53,6 +54,7 @@ class HeadlessProc {
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--include-partial-messages',
+      '--replay-user-messages',
       '--verbose',
       '--permission-prompt-tool', 'stdio',
     ];
@@ -67,6 +69,7 @@ class HeadlessProc {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.stdin = this.proc.stdin;
+    this.stdin.on('error', (error) => this._onClose(-1, error.message));
 
     const rl = readline.createInterface({ input: this.proc.stdout });
     rl.on('line', (line) => this._onLine(line));
@@ -116,6 +119,10 @@ class HeadlessProc {
 
     // Full authoritative rows (same uuid as jsonl → app dedupes; renders in/out cards).
     if ((t === 'assistant' || t === 'user') && o.uuid) {
+      if (t === 'user' && !o.timestamp && this.inputs.has(o.uuid)) {
+        this._cb?.onInputConsumed?.([this.inputs.get(o.uuid).streamId]);
+        return;
+      }
       this._cb?.onMessage?.(this.streamId, o);
       return;
     }
@@ -146,14 +153,25 @@ class HeadlessProc {
     // Turn finished
     if (t === 'result') {
       this._framer.finish();
-      this.busy = false;
+      const consumed = Array.isArray(o.user_message_uuids)
+        ? o.user_message_uuids
+        : [...this.inputs.keys()].filter((uuid) => !this.inputs.get(uuid).consumed).slice(0, 1);
+      const consumedInputIds = [];
+      for (const uuid of consumed) {
+        const input = this.inputs.get(uuid);
+        if (!input) continue;
+        input.consumed = true;
+        consumedInputIds.push(input.streamId);
+      }
+      this.busy = [...this.inputs.values()].some((input) => !input.consumed);
       this.pool._touch(this);
       const cb = this._cb;
-      this._cb = null;
       const sid = this.streamId;
-      this.streamId = null;
-      cb?.onResult?.(sid, o);
-      this._drainQueue();
+      if (!this.busy) {
+        this._cb = null;
+        this.streamId = null;
+      }
+      cb?.onResult?.(sid, { ...o, consumedInputIds, continued: this.busy });
       return;
     }
 
@@ -177,6 +195,7 @@ class HeadlessProc {
   }
 
   _onClose(code, detail) {
+    if (this.dead) return;
     const wasBusy = this.busy;
     this.dead = true;
     this._framer.cancel();
@@ -184,9 +203,6 @@ class HeadlessProc {
     if (this.sessionId && wasBusy) this.pool._onExit?.(this.sessionId);
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
-    // Fail any queued sends
-    const q = this.queue; this.queue = [];
-    for (const item of q) item.cb?.onError?.(item.streamId, { code, detail });
     const waiters = this._initWaiters; this._initWaiters = [];
     for (const w of waiters) w(null);
     for (const pending of this._pendingCtl.values()) {
@@ -209,13 +225,17 @@ class HeadlessProc {
 
   // Write one user message and bind this turn's callbacks.
   _writeTurn(text, streamId, cb) {
+    const uuid = userMessageUuidForTurnId(streamId) || streamId || randomUUID();
+    if (this.inputs.has(uuid)) return;
+    if (!this.busy) {
+      this.streamId = streamId;
+      this._cb = cb;
+      this._blockId = -1;
+      this._framer.reset();
+    }
     this.busy = true;
-    this.streamId = streamId;
-    this._cb = cb;
-    this._blockId = -1;
-    this._framer.reset();
+    this.inputs.set(uuid, { streamId, consumed: false });
     this.pool._touch(this);
-    const uuid = userMessageUuidForTurnId(streamId);
     const msg = {
       type: 'user',
       ...(uuid ? { uuid } : {}),
@@ -223,16 +243,6 @@ class HeadlessProc {
     };
     try { this.stdin.write(JSON.stringify(msg) + '\n'); }
     catch (err) { this._onClose(-1, err.message); }
-  }
-
-  enqueue(text, streamId, cb) {
-    this.queue.push({ text, streamId, cb });
-  }
-
-  _drainQueue() {
-    if (this.busy || this.dead || this.queue.length === 0) return;
-    const item = this.queue.shift();
-    this._writeTurn(item.text, item.streamId, item.cb);
   }
 
   requestControl(request, timeoutMs = HEADLESS_INIT_TIMEOUT_MS) {
@@ -319,6 +329,7 @@ export class ClaudePool {
       onResult: opts.onResult,
       onControlRequest: opts.onControlRequest,
       onError: opts.onError,
+      onInputConsumed: opts.onInputConsumed,
     };
 
     let proc = this.procs.get(key);
@@ -336,8 +347,7 @@ export class ClaudePool {
       return { sessionId: proc.sessionId, bgLocked: false };
     }
 
-    if (proc.busy) proc.enqueue(text, streamId, cb);
-    else proc._writeTurn(text, streamId, cb);
+    proc._writeTurn(text, streamId, cb);
     return { sessionId: proc.sessionId, bgLocked: false };
   }
 

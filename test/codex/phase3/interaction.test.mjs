@@ -1142,10 +1142,11 @@ test('Codex completed commands publish authoritative IN and OUT before turn end'
 
   assert.deepEqual(
     cb.messages.map(({ message }) => message.type),
-    ['assistant', 'user'],
+    ['assistant', 'assistant', 'user'],
   );
   const use = cb.messages[0].message.content[0];
-  const result = cb.messages[1].message.content[0];
+  assert.equal(cb.messages[1].message.uuid, cb.messages[0].message.uuid);
+  const result = cb.messages[2].message.content[0];
   assert.equal(use.type, 'tool_use');
   assert.equal(use.name, 'Bash');
   assert.equal(use.input.command, 'pwd');
@@ -1191,11 +1192,12 @@ test('Codex interrupted turns complete unfinished tools before reporting the fin
 
   assert.deepEqual(
     cb.messages.map(({ message }) => message.type),
-    ['assistant', 'user', 'user'],
+    ['assistant', 'assistant', 'user', 'user'],
   );
   const use = cb.messages[0].message.content[0];
-  const result = cb.messages[1].message.content[0];
-  const interrupt = cb.messages[2].message;
+  assert.equal(cb.messages[1].message.uuid, cb.messages[0].message.uuid);
+  const result = cb.messages[2].message.content[0];
+  const interrupt = cb.messages[3].message;
   assert.equal(use.type, 'tool_use');
   assert.equal(use.name, 'Bash');
   assert.equal(result.type, 'tool_result');
@@ -1882,7 +1884,7 @@ test('Codex interrupt targets the active thread and turn', async () => {
   assert.equal(await interaction.interrupt('thread-5'), false);
 });
 
-test('burst sends to one Codex thread start one turn and queue the next', async () => {
+test('burst sends to one Codex thread start once and steer without waiting', async () => {
   const client = new FakeClient();
   let releaseFirst;
   const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
@@ -1912,11 +1914,17 @@ test('burst sends to one Codex thread start one turn and queue the next', async 
   releaseFirst();
 
   assert.deepEqual(await firstSend, { queued: false });
-  assert.deepEqual(await secondSend, { queued: true });
+  assert.deepEqual(await secondSend, { queued: false });
   assert.deepEqual(first.accepted, ['stream-burst-1']);
-  assert.deepEqual(second.accepted, []);
+  assert.deepEqual(second.accepted, ['stream-burst-2']);
   assert.equal(client.requests.filter((entry) => entry.method === 'thread/resume').length, 1);
   assert.equal(client.requests.filter((entry) => entry.method === 'turn/start').length, 1);
+  assert.deepEqual(client.requests.find((entry) => entry.method === 'turn/steer').params, {
+    threadId: 'thread-burst',
+    expectedTurnId: 'turn-1',
+    clientUserMessageId: 'stream-burst-2',
+    input: [{ type: 'text', text: 'second' }],
+  });
 
   notify(client, 'turn/completed', {
     threadId: 'thread-burst',
@@ -1924,23 +1932,11 @@ test('burst sends to one Codex thread start one turn and queue the next', async 
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(second.accepted, ['stream-burst-2']);
-  assert.equal(client.requests.filter((entry) => entry.method === 'turn/start').length, 2);
-  assert.equal(
-    client.requests.filter((entry) => entry.method === 'turn/start')[1]
-      .params.clientUserMessageId,
-    'stream-burst-2',
-  );
-  assert.equal(client.stopCalls, 0);
-
-  notify(client, 'turn/completed', {
-    threadId: 'thread-burst',
-    turn: { id: 'turn-2', status: 'completed' },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(client.requests.filter((entry) => entry.method === 'turn/start').length, 1);
   assert.equal(client.stopCalls, 1);
 });
 
-test('managed app-server resume adopts an active approval turn before queued send', async () => {
+test('managed app-server resume steers an active approval turn', async () => {
   const client = new FakeClient();
   const request = client.request.bind(client);
   client.request = async (method, params) => {
@@ -1977,7 +1973,8 @@ test('managed app-server resume adopts an active approval turn before queued sen
     streamId: 'stream-queued',
     text: 'continue after approval',
     callbacks: cb.value,
-  }), { queued: true });
+  }), { queued: false });
+  assert.equal(client.requests.find((entry) => entry.method === 'turn/steer').params.expectedTurnId, 'turn-external');
   assert.equal(
     client.requests.filter((entry) => entry.method === 'turn/start').length,
     0,
@@ -2001,14 +1998,7 @@ test('managed app-server resume adopts an active approval turn before queued sen
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   const starts = client.requests.filter((entry) => entry.method === 'turn/start');
-  assert.equal(starts.length, 1);
-  assert.equal(starts[0].params.clientUserMessageId, 'stream-queued');
-
-  notify(client, 'turn/completed', {
-    threadId: 'thread-managed',
-    turn: { id: 'turn-1', status: 'completed' },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(starts.length, 0);
   assert.equal(client.stopCalls, 1);
 });
 

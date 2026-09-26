@@ -636,6 +636,7 @@ export class StreamCoordinator {
     if (!turn) return;
     this.activeTurnId = turn.turnId;
     this.showVisibleBlock(turn);
+    this.finishTurnIfReady(turn);
   }
 
   consumeVisibleFrame(turn, frame) {

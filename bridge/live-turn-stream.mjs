@@ -228,6 +228,7 @@ export class LiveTurnStream {
     if (options.interrupted) this.#sendInterrupt(options.interruptedAt);
     const messages = Array.from(this.authoritativeMessages.values());
     const event = this.emit('stream_end', {
+      ...(typeof options.continued === 'boolean' ? { continued: options.continued } : {}),
       ...(options.error ? { error: options.error } : {}),
       ...(messages.length
         ? { messages: structuredClone(messages) }

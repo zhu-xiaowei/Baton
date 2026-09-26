@@ -19,6 +19,7 @@ import uuid
 from urllib.parse import quote, unquote
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from message_history import message_key, publish_history
 
 MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
 
@@ -152,6 +153,7 @@ class SyncMessagesRequest(BaseModel):
     runtime: str = "claude"
     nativeSessionId: str = ""
     messages: List[dict]
+    historyComplete: bool = False
 
 
 class SessionTitleRequest(BaseModel):
@@ -820,8 +822,7 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
             content = json.dumps(msg.get("content", ""), ensure_ascii=False)
             timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
             item = {
-                "sessionId": storage_id,
-                "sk": f"{timestamp}#{uuid}",
+                **message_key(storage_id, msg, timestamp),
                 "uuid": uuid,
                 "type": msg.get("type", ""),
                 "content": content,
@@ -832,6 +833,8 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
                 item["runtime"] = runtime
             if msg.get("nativeId"):
                 item["nativeId"] = msg["nativeId"]
+            if msg.get("orderKey"):
+                item["orderKey"] = msg["orderKey"]
             if msg.get("stopReason"):
                 item["stopReason"] = msg["stopReason"]
             if msg.get("toolUseResult"):
@@ -839,6 +842,8 @@ async def sync_messages(req: SyncMessagesRequest, raw: Request):
             batch.put_item(Item=item)
             written += 1
 
+    if req.historyComplete:
+        publish_history(messages_table, storage_id)
     return {"written": written}
 
 

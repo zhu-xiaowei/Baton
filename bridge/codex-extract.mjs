@@ -398,6 +398,8 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     userClientIdsByTurn,
   } = analyzeLines(lines);
   const messages = [];
+  let sourceLine = 0;
+  let fragment = 0;
   const callCounts = new Map();
   const pending = new Map();
   const execPairs = new Map();
@@ -430,6 +432,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const emit = (...items) => {
     const liveKey = codexTurnLiveKey(activeTurnId);
     for (const item of items) {
+      item.orderKey = `O2#${String(sourceLine).padStart(12, '0')}#${String(fragment++).padStart(4, '0')}`;
       if (item?.nativeId) item.uuid = codexMessageUuid(item.nativeId);
       messages.push(liveKey ? tagCodexLiveSource(item, liveKey) : item);
     }
@@ -476,6 +479,8 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       continue;
     }
     const payload = entry.payload || {};
+    sourceLine = line;
+    fragment = 0;
     const timestamp = timestampFor(entry);
     const shouldEmit = line >= startLine;
     if (hiddenPatchLines.has(line)) {
@@ -996,10 +1001,11 @@ export async function syncCodexMessages(filePath, nativeSessionId, storageSessio
   const watermarks = options.watermarks;
   const startLine = options.startLine ?? watermarks.get(storageSessionId) ?? 0;
   const extracted = extractCodexMessages(filePath, nativeSessionId, { startLine });
-  if (extracted.messages.length > 0) {
+  if (extracted.messages.length > 0 || startLine === 0) {
     await options.uploader(storageSessionId, extracted.messages, {
       runtime: 'codex',
       nativeSessionId,
+      historyComplete: startLine === 0,
     });
   }
   // Commit only after upload so deterministic rows can be retried.

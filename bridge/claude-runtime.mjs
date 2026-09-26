@@ -135,8 +135,8 @@ async function syncClaudeMessages(session, context, startLine) {
       watermarks: context.watermarks,
     },
   );
-  if (extracted.messages.length > 0) {
-    await context.uploader(context.storageSessionId, extracted.messages);
+  if (extracted.messages.length > 0 || startLine === 0) {
+    await context.uploader(context.storageSessionId, extracted.messages, { historyComplete: startLine === 0 });
   }
   context.watermarks.set(context.storageSessionId, extracted.nextLine);
   return extracted;

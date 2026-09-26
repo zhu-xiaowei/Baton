@@ -1519,7 +1519,7 @@ test('Codex watermark advances only after a successful upload', async () => {
     },
   });
   assert.deepEqual(uploaded.messages, result.messages);
-  assert.deepEqual(uploaded.identity, { runtime: 'codex', nativeSessionId: SESSION_ID });
+  assert.deepEqual(uploaded.identity, { runtime: 'codex', nativeSessionId: SESSION_ID, historyComplete: true });
   assert.equal(watermarks.get('codex:test'), result.nextLine);
 });
 

@@ -67,6 +67,9 @@ class FakeRequest:
 
 
 class FakeMessageTable:
+    def get_item(self, **kwargs):
+        return {}
+
     def __init__(self, items):
         self.items = sorted(items, key=lambda item: item["sk"])
 

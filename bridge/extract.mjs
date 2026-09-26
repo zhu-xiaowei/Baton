@@ -30,7 +30,9 @@ export function decodeSyncedState(value) {
 
 export function loadSynced() {
   try {
-    const restored = decodeSyncedState(JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8')));
+    const saved = JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8'));
+    if (saved.historyVersion !== 2) return;
+    const restored = decodeSyncedState(saved);
     for (const [key, line] of restored) synced.set(key, line);
     console.log(`[synced] restored ${synced.size} session watermarks`);
   } catch {} // missing/corrupt → start empty (handleHeadlessSend baselines on demand)
@@ -39,6 +41,7 @@ export function saveSynced() {
   try {
     fs.writeFileSync(SYNCED_PATH, JSON.stringify({
       version: 2,
+      historyVersion: 2,
       watermarks: Object.fromEntries(synced),
     }));
   } catch {}
@@ -197,6 +200,7 @@ function stripToolUseResultBase64(tur) {
 }
 
 export async function extractForApp(msg) {
+  msg = normalizeClaudeQueuedInput(msg);
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
     // Content-addressed uuid so re-syncing overwrites one DDB item instead of accumulating (was Date.now()).
@@ -252,6 +256,22 @@ export async function extractForApp(msg) {
   return extracted;
 }
 
+export function normalizeClaudeQueuedInput(message) {
+  const attachment = message?.attachment;
+  if (message?.type !== 'attachment' || attachment?.type !== 'queued_command'
+    || !attachment.source_uuid) return message;
+  return {
+    ...message,
+    type: 'user',
+    uuid: attachment.source_uuid,
+    message: { role: 'user', content: attachment.prompt ?? '' },
+  };
+}
+
+export function nativeOrderKey(line, fragment = 0) {
+  return `O2#${String(line).padStart(12, '0')}#${String(fragment).padStart(4, '0')}`;
+}
+
 export function isClaudeLocalCommandCaveat(msg) {
   const content = msg?.message?.content;
   return msg?.type === 'user'
@@ -274,6 +294,7 @@ export async function extractClaudeMessages(filePath, sessionId, options = {}) {
     if (!lines[i].trim()) continue;
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
+    msg = normalizeClaudeQueuedInput(msg);
     if (!VALID_TYPES.has(msg.type)) continue;
     if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') {
       if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
@@ -282,6 +303,7 @@ export async function extractClaudeMessages(filePath, sessionId, options = {}) {
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
     if (!extracted.uuid) continue;
+    extracted.orderKey = nativeOrderKey(i);
     if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
       if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
       else { metaIdx[extracted.type] = newMsgs.length; newMsgs.push(extracted); }
@@ -294,7 +316,7 @@ export async function extractClaudeMessages(filePath, sessionId, options = {}) {
 }
 
 export async function uploadMessages(sessionId, messages, options = {}) {
-  if (messages.length === 0) return;
+  if (messages.length === 0 && !options.historyComplete) return;
   let batch = [];
   let batchSize = 0;
   const identity = {
@@ -318,5 +340,8 @@ export async function uploadMessages(sessionId, messages, options = {}) {
   }
   if (batch.length > 0) {
     await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
+  }
+  if (options.historyComplete) {
+    await postRequired('/api/bridge/sync-messages', { sessionId, messages: [], historyComplete: true, ...identity });
   }
 }

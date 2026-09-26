@@ -176,7 +176,7 @@ import { systemEventId } from '../timeline.js';
     if (!displayText && !attachHtml) return '';
     const nativeTurn = String(msg.nativeId || '')
       .match(/^(?:codex|live):user:(.+)$/)?.[1] || '';
-    const anchorId = msg.turnId || nativeTurn;
+    const anchorId = msg.turnId || nativeTurn || (msg.nativeId ? msg.uuid : `sent-${msg.uuid}`);
     const anchorAttr = anchorId ? ` data-anchor="${esc(anchorId)}"` : '';
     const messageAttr = msg.uuid ? ` data-message-id="${esc(msg.uuid)}"` : '';
     const nativeAttr = msg.nativeId ? ` data-native-id="${esc(msg.nativeId)}"` : '';

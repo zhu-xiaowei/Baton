@@ -6,6 +6,8 @@ import {
   synced,
   extractForApp,
   isClaudeLocalCommandCaveat,
+  normalizeClaudeQueuedInput,
+  nativeOrderKey,
   uploadMessages,
 } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
@@ -242,6 +244,7 @@ async function readAndSend(config, filename, sessionId) {
     if (s) lastStatus = s;
 
     if (skipSession) continue;
+    raw = normalizeClaudeQueuedInput(raw);
     if (!VALID_TYPES.has(raw.type)) continue;
     // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
     if (raw.isMeta && raw.type === 'user') {
@@ -253,6 +256,7 @@ async function readAndSend(config, filename, sessionId) {
 
     let msg = await extractForApp(raw);
     if (!msg.uuid) continue;
+    msg.orderKey = nativeOrderKey(i);
     msg = correlateClaudeInterruptMessage(sessionId, msg);
 
     // A managed headless turn is the sole realtime source. Its JSONL copy only
@@ -270,8 +274,12 @@ async function readAndSend(config, filename, sessionId) {
     if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
+  if (skipSession) {
+    synced.set(sessionId, lastParsedLine);
+    return;
+  }
+  if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
-  if (skipSession) return;
 
   const forceActivity = gotActivity
     && activitySyncDue(_lastActivitySyncAt, sessionId);
@@ -325,11 +333,14 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
     lastParsedLine = i + 1;
     const status = statusFromEntry(raw);
     if (status) lastStatus = status;
+    raw = normalizeClaudeQueuedInput(raw);
     if (!VALID_TYPES.has(raw.type)) continue;
     const message = await extractForApp(raw);
     if (!message.uuid) continue;
+    message.orderKey = nativeOrderKey(i);
     await deliverRealtimeMessages(sessionId, [message]);
   }
+  if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
 
   const parts = String(filename).split(path.sep);

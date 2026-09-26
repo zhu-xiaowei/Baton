@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
+from message_history import history_partition
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -631,6 +632,8 @@ def _parse_messages(items):
         }
         if item.get("nativeId"):
             msg["nativeId"] = item["nativeId"]
+        if item.get("orderKey"):
+            msg["orderKey"] = item["orderKey"]
         if item.get("stopReason"):
             msg["stopReason"] = item["stopReason"]
         tur = item.get("toolUseResult", "")
@@ -706,6 +709,11 @@ async def get_messages(
     project: str = Query(None),
 ):
     sessions_table, messages_table = _tables()
+    partition = history_partition(messages_table, session)
+    ordered = partition != session
+    history_reset = bool(before and (before.startswith("O2#") != ordered))
+    if history_reset:
+        before = None
     status_future = None
     if device and project:
         status_future = asyncio.get_running_loop().run_in_executor(
@@ -722,13 +730,17 @@ async def get_messages(
         status = await status_future if status_future else ""
         if status:
             payload["status"] = status
+        if history_reset:
+            payload["historyReset"] = True
         return payload
 
     if after:
+        if ordered and not after.startswith("O2#"):
+            return await with_status({"messages": [], "hasMore": False, "needSync": False, "historyReset": True})
         # Forward query: used by WS reconnect recovery
         items = _query_all(
             messages_table,
-            KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").gt(f"{after}#\xff"),
+            KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").gt(f"{after}#\xff"),
         )
         messages = _parse_messages(items)
         return await with_status({
@@ -744,7 +756,7 @@ async def get_messages(
         items, has_more = _query_page(
             messages_table,
             page_limit,
-            KeyConditionExpression=Key("sessionId").eq(session) & Key("sk").lt(f"{before}"),
+            KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").lt(f"{before}"),
             ScanIndexForward=False,
         )
         # items are newest-first; trim the older tail that overflows the 6MB
@@ -767,7 +779,7 @@ async def get_messages(
     items, has_more = _query_page(
         messages_table,
         page_limit,
-        KeyConditionExpression=Key("sessionId").eq(session),
+        KeyConditionExpression=Key("sessionId").eq(partition),
         ScanIndexForward=False,
         ConsistentRead=True,
     )
@@ -778,7 +790,7 @@ async def get_messages(
     oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
     messages.reverse()
 
-    need_sync = len(messages) == 0
+    need_sync = len(messages) == 0 or not ordered
     if need_sync:
         try:
             account_id = _account_id(request)

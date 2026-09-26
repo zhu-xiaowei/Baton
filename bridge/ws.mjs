@@ -54,6 +54,7 @@ import {
 } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
 import { ActiveTurnRegistry } from './active-turn-registry.mjs';
+import { LiveExecutionStream } from './live-execution-stream.mjs';
 import {
   assertTurnEventEnvelope,
   isPromptUserMessage,
@@ -225,6 +226,7 @@ export function headlessRoute(uuid) { return liveMessageRoute('claude', uuid); }
 const _pendingControl = new PermissionQueue();
 const _statusSyncs = new Map();
 const _activeTurns = new ActiveTurnRegistry();
+const _liveExecutions = new Map();
 const NEW_SESSION_FILE_WAIT_MS = 30_000;
 const SESSION_FILE_POLL_MS = 50;
 
@@ -1209,23 +1211,39 @@ function resolveTurnId(sessionId, requestedTurnId = '') {
 
 // Create one strictly identified live turn before the runtime can emit frames.
 function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
-  const liveTurn = new LiveTurnStream({
+  const steer = options.userInitiated && options.steer !== false;
+  const existing = steer && _liveExecutions.get(sessionId);
+  if (existing && !existing.liveTurn.isEnded()) {
+    existing.liveTurn.registerInput(turnId, ack);
+    return existing;
+  }
+  const segmentIds = new Set([turnId]);
+  const Stream = steer ? LiveExecutionStream : LiveTurnStream;
+  const liveTurn = new Stream({
     sessionId,
     turnId,
     replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
+    onSegment: (id, segment) => {
+      segmentIds.add(id);
+      _activeTurns.register(sessionId, id, segment);
+    },
   });
+  if (steer) liveTurn.registerInput(turnId, ack);
   _activeTurns.register(sessionId, turnId, liveTurn);
-  const ownsUserPrompt = (options.runtime || 'claude') === 'claude'
+  const ownsUserPrompt = !steer && (options.runtime || 'claude') === 'claude'
     && typeof options.userText === 'string'
     && !!options.userText.trim();
   if (ownsUserPrompt) {
     liveTurn.sendTransientUser(options.userText);
   }
-  const discardTurn = () => _activeTurns.discard(sessionId, turnId);
+  const discardTurn = () => {
+    for (const id of segmentIds) _activeTurns.discard(sessionId, id);
+    if (_liveExecutions.get(sessionId)?.liveTurn === liveTurn) _liveExecutions.delete(sessionId);
+  };
   const finishTurn = (end = {}) => {
     liveTurn.sendEnd(end);
-    _activeTurns.discard(sessionId, turnId);
+    if (liveTurn.isEnded()) discardTurn();
   };
   let authorityQueue = Promise.resolve();
   const publishAuthority = async (raw, meta = {}) => {
@@ -1240,51 +1258,54 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     } else {
       markHeadlessPushed(msg.uuid);
     }
-    liveTurn.start();
     liveTurn.sendAuthoritative(msg, { noCache: true });
   };
-  const queueAuthority = (raw, meta = {}) => {
+  const enqueue = (operation) => {
     authorityQueue = authorityQueue
-      .then(() => publishAuthority(raw, meta))
+      .then(operation)
       .catch((error) => {
         console.log(`[ws] live message extract failed: ${error.message}`);
       });
     return authorityQueue;
   };
   const callbacks = {
+    liveTurn,
     onAccepted: () => {
       if (options.syncStatus !== false) {
         syncInteractionStatus(sessionId, 'running', '', options.runtime);
       }
     },
     onDelta: (sid, chunk, blockId) => {
-      liveTurn.sendDelta({ chunk, blockId });
+      enqueue(() => liveTurn.sendDelta({ chunk, blockId }));
     },
     onInputDelta: (sid, chunk, blockId) => {
-      liveTurn.sendToolInput({ chunk, blockId });
+      enqueue(() => liveTurn.sendToolInput({ chunk, blockId }));
     },
     onBlockStart: (sid, blockId, kind, name) => {
-      liveTurn.sendBlockStart({ blockId, kind, name });
+      enqueue(() => liveTurn.sendBlockStart({ blockId, kind, name }));
     },
     onBlockStop: (sid, blockId) => {
-      liveTurn.sendBlockStop({ blockId });
+      enqueue(() => liveTurn.sendBlockStop({ blockId }));
     },
     // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
-    onMessage: (sid, raw, meta = {}) => queueAuthority(raw, meta),
+    onMessage: (sid, raw, meta = {}) => enqueue(() => publishAuthority(raw, meta)),
+    onInputConsumed: (ids) => enqueue(() => liveTurn.consumeInputs?.(ids)),
     onResult: (sid, result) => {
-      authorityQueue.finally(() => {
+      enqueue(() => {
         if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
         const interrupted = !result.interruptAuthority
           && shouldCreateFinalInterrupt(options.runtime, result);
         finishTurn({
           error: result.is_error ? (result.subtype || 'error') : undefined,
           interrupted,
+          consumedInputIds: result.consumedInputIds,
+          continued: result.continued,
         });
         // A turn awaiting a permission reply stays needs_input; otherwise the turn is done.
         if (options.syncStatus !== false) {
           syncInteractionStatus(
             sessionId,
-            _pendingControl.has(sessionId) ? 'needs_input' : 'completed',
+            _pendingControl.has(sessionId) ? 'needs_input' : liveTurn.isEnded() ? 'completed' : 'running',
             controlDetail(_pendingControl.current(sessionId)),
             options.runtime,
           );
@@ -1294,27 +1315,32 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     onControlRequest: (req) => {
       // Permission state must update the list even when another runtime source
       // owns ordinary running/completed status updates.
-      queuePermissionRequest(sessionId, req, {
+      enqueue(() => queuePermissionRequest(sessionId, req, {
         runtime: options.runtime || 'claude',
         nativeSessionId: options.nativeSessionId || sessionId,
         liveTurn,
-      });
+      }));
     },
     onControlResolved: (requestId) => {
-      dismissPendingControl(sessionId, requestId);
+      enqueue(() => dismissPendingControl(sessionId, requestId));
     },
     onError: (sid, err) => {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
-      if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
-      finishTurn({ error: 'unavailable' });
-      if (options.syncStatus !== false) {
-        syncInteractionStatus(sessionId, 'completed', '', options.runtime);
-      }
+      enqueue(() => {
+        if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
+        finishTurn({ error: 'unavailable' });
+        if (options.syncStatus !== false) syncInteractionStatus(sessionId, 'completed', '', options.runtime);
+      });
       ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
   };
-  callbacks.failTurn = (error = 'unavailable') => finishTurn({ error });
+  callbacks.failTurn = (error = 'unavailable') => enqueue(() => finishTurn({ error }));
+  callbacks.rejectInput = (id, detail) => enqueue(() => {
+    liveTurn.rejectInput?.(id, detail);
+    if (liveTurn.isEnded()) discardTurn();
+  });
   callbacks.discardTurn = discardTurn;
+  if (steer) _liveExecutions.set(sessionId, callbacks);
   return callbacks;
 }
 
@@ -1368,7 +1394,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
     ack(true);
     return true;
   } catch (error) {
-    callbacks?.failTurn('unavailable');
+    callbacks?.rejectInput(liveTurnId, error.message);
     const errorCode = {
       CODEX_ACTIVE_WRITER: 'codex_active_writer',
       CODEX_WRITER_CHANGED: 'codex_writer_changed',
@@ -1411,6 +1437,7 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
         nativeSessionId: identity.nativeSessionId,
         syncStatus: false,
         userInitiated: true,
+        steer: false,
         replyConnectionId: options.replyConnectionId,
       },
     );
@@ -1531,12 +1558,16 @@ async function handleClaudeCommand(
   };
   let callbacks = null;
   try {
+    if (_pool.isBusy(identity.nativeSessionId)) {
+      ack(false, `/${command.name} is unavailable while a task is running.`);
+      return;
+    }
     callbacks = createStreamCallbacks(
       identity.sessionId,
       liveTurnId,
       cwd,
       ack,
-      { userInitiated: true, userText: command.text, replyConnectionId },
+      { userInitiated: true, steer: false, userText: command.text, replyConnectionId },
     );
     // CC emits the same synthetic assistant row and result text for synchronous
     // local commands. commandOutput below is the single rendered source.
