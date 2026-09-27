@@ -904,7 +904,10 @@ import { state } from '../state.js';
       WebSearch: () => renderWebSearch(input),
       WriteStdin: () => !String(input.chars || '').length
         ? renderTerminalWait(input, toolResult)
-        : renderGeneric(name, input, toolResult),
+        : {
+          ...renderGeneric(name, input, toolResult),
+          desc: String(input.chars),
+        },
     };
     const info = codexMcp
       ? renderCodexMcp(input, toolResult)
