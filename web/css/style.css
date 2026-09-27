@@ -384,7 +384,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 
 .tool-header {
   display: flex; align-items: baseline; gap: 6px;
-  padding: 0; font-size: 13px; cursor: pointer; user-select: none;
+  padding: 0; font-size: 13px; cursor: pointer; -webkit-user-select: none; user-select: none;
   line-height: 21px;
 }
 .tool-detail-chevron {
