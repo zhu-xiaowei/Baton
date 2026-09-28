@@ -135,7 +135,7 @@ function updateTabs() {
   if (!t) return;
   var hasDiff = !!_view?.options.loadDiff;
   var previewable = isPreviewable(_current?.path || _view?.path);
-  t.style.display = hasDiff || (_current && previewable) ? '' : 'none';
+  t.style.display = !_view?.options.diffOnly && (hasDiff || (_current && previewable)) ? '' : 'none';
   t.querySelectorAll('.file-tab').forEach(function (button) {
     var mode = button.dataset.mode;
     button.style.display = (mode === 'diff' && !hasDiff) || (mode === 'preview' && !previewable) ? 'none' : '';

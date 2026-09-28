@@ -10,7 +10,18 @@ import {
   openGitDiff,
   restoreGitDiffView,
 } from './diff-viewer.js';
-import { closeGitPage, gitContent, openGitPage, renderGitHeader, setGitLoading } from './page.js';
+import { mountCommitBar, updateCommitBar } from './commit-bar.js';
+import { mountGitHistory, refreshGitHistory, updateGitHistorySnapshot } from './history.js';
+import {
+  closeGitPage,
+  gitCommitBarContent,
+  gitContent,
+  gitHistoryContent,
+  gitScrollContent,
+  openGitPage,
+  renderGitHeader,
+  setGitLoading,
+} from './page.js';
 import { requestGit } from './rpc.js';
 import { renderGitStatus } from './status-render.js';
 import { clearGitStatusView, saveGitStatusView } from './view-state.js';
@@ -80,6 +91,9 @@ function entryFor(path, group) {
 }
 
 function render(error) {
+  renderGitHeader(projectName(), snapshot?.repository);
+  updateCommitBar(snapshot);
+  updateGitHistorySnapshot(snapshot);
   renderGitStatus(gitContent(), snapshot, {
     busy: busy,
     error: error,
@@ -172,7 +186,7 @@ export function openGitStatus(options) {
   edgeBack.activate();
   openGitPage({
     onBack: closeGitStatus,
-    onRefresh: refreshGitStatus,
+    onRefresh: refreshAll,
     onFiles: function () {
       if (returnToFiles) {
         closeGitStatus();
@@ -182,8 +196,23 @@ export function openGitStatus(options) {
       window.openProjectFilesFromGit?.();
     },
   });
-  renderGitHeader(projectName());
   var cacheKey = snapshotCacheKey();
+  mountGitHistory({
+    container: gitHistoryContent(),
+    scroller: gitScrollContent(),
+    projectHash: projectHash(),
+    projectKey: cacheKey,
+  });
+  mountCommitBar({
+    container: gitCommitBarContent(),
+    projectHash: projectHash(),
+    projectKey: cacheKey,
+    onSnapshot: function (value) {
+      cacheSnapshot(value);
+      render();
+    },
+    onPushed: refreshGitHistory,
+  });
   var memorySnapshot = snapshotCache.get(cacheKey);
   if (memorySnapshot) {
     snapshot = memorySnapshot;
@@ -202,6 +231,11 @@ export function openGitStatus(options) {
     restoreGitDiffView();
     refreshGitStatus();
   });
+}
+
+function refreshAll() {
+  refreshGitStatus();
+  refreshGitHistory();
 }
 
 export function closeGitStatus() {
@@ -233,6 +267,6 @@ Object.assign(window, {
   deactivateGitStatus: deactivateGitStatus,
   refreshGitStatus: refreshGitStatus,
   refreshGitStatusOnReconnect: function () {
-    if (state.gitStatusOpen) refreshGitStatus();
+    if (state.gitStatusOpen) refreshAll();
   },
 });

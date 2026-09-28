@@ -52,3 +52,20 @@ export function sendTextFrames(metadata, text, send) {
     });
   });
 }
+
+export function listFrames(envelope, field, items, frameLimit = WS_FRAME_LIMIT) {
+  const chunks = [[]];
+  for (const item of items) {
+    const current = chunks[chunks.length - 1];
+    const probe = { ...envelope, sequence: 9999, chunkCount: 9999, complete: false, [field]: current.concat(item) };
+    if (current.length && !fitsWsFrame(probe, frameLimit)) chunks.push([item]);
+    else current.push(item);
+  }
+  return chunks.map((chunk, sequence) => ({
+    ...envelope,
+    sequence,
+    chunkCount: chunks.length,
+    complete: sequence === chunks.length - 1,
+    [field]: chunk,
+  }));
+}

@@ -36,18 +36,12 @@ const MINUS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><
 const UNDO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5"/><path d="M5 12h9a5 5 0 0 1 5 5"/></svg>';
 const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>';
 
-function rowHtml(entry, group, busy) {
+export function gitFileRowHtml(entry, attrs, actions) {
   var parts = splitPath(entry.path);
   var subtitle = entry.previousPath
     ? entry.previousPath + ' → ' + (parts.directory || '.')
     : parts.directory;
-  var actions = group === 'staged'
-    ? iconButton(MINUS, 'Unstage ' + parts.name, 'unstage', group, entry.path, busy)
-    : (group === 'conflicts'
-      ? iconButton(PLUS, 'Stage resolved ' + parts.name, 'stage', group, entry.path, busy)
-      : iconButton(UNDO, 'Discard ' + parts.name, 'discard', group, entry.path, busy)
-        + iconButton(PLUS, 'Stage ' + parts.name, 'stage', group, entry.path, busy));
-  return '<div class="git-file-row" data-group="' + group + '" data-path="' + esc(entry.path) + '">'
+  return '<div class="git-file-row"' + attrs + ' data-path="' + esc(entry.path) + '">'
     + '<button class="git-file-main" type="button">'
     + '<span class="git-file-icon">' + fileIconHtml(parts.name) + '</span>'
     + '<span class="git-file-copy"><span class="git-file-name" title="' + esc(parts.name) + '">'
@@ -56,7 +50,18 @@ function rowHtml(entry, group, busy) {
       + esc(subtitle) + '</span>' : '')
     + '</span><span class="git-status git-status-' + entry.status + '">'
     + (STATUS_CODE[entry.status] || '?') + '</span></button>'
-    + '<span class="git-row-actions">' + actions + '</span></div>';
+    + (actions ? '<span class="git-row-actions">' + actions + '</span>' : '') + '</div>';
+}
+
+function rowHtml(entry, group, busy) {
+  var name = splitPath(entry.path).name;
+  var actions = group === 'staged'
+    ? iconButton(MINUS, 'Unstage ' + name, 'unstage', group, entry.path, busy)
+    : (group === 'conflicts'
+      ? iconButton(PLUS, 'Stage resolved ' + name, 'stage', group, entry.path, busy)
+      : iconButton(UNDO, 'Discard ' + name, 'discard', group, entry.path, busy)
+        + iconButton(PLUS, 'Stage ' + name, 'stage', group, entry.path, busy));
+  return gitFileRowHtml(entry, ' data-group="' + group + '"', actions);
 }
 
 function sectionHtml(group, title, entries, collapsed, busy, always) {

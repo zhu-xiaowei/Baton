@@ -32,6 +32,21 @@ export function openGitDiff(path, group, status, options) {
   if (opened) current = view;
 }
 
+export function openGitCommitDiff(commitOid, file) {
+  var projectHash = state.appState.project?.hash || '';
+  var opened = openFile(file.path, file.path.split('/').pop() + ' @ ' + commitOid.slice(0, 7), '', '', {
+    projectHash: projectHash,
+    canRead: false,
+    diffOnly: true,
+    mode: 'diff',
+    loadDiff: function () {
+      return requestGitDiff({ projectHash: projectHash, commitOid: commitOid, path: file.path });
+    },
+    onClose: function () { current = null; },
+  });
+  if (opened) current = { path: file.path, commitOid: commitOid };
+}
+
 export function closeGitDiff() {
   clearGitDiffView();
   if (!current) return false;

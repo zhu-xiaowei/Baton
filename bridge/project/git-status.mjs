@@ -18,6 +18,7 @@ const STATUS_NAMES = {
   T: 'type_changed',
 };
 const GROUP_ORDER = ['conflicts', 'staged', 'changes'];
+const GIT_CAPABILITIES = { history: 1, commit: 1, push: 1 };
 
 function fixedFields(record, count) {
   const fields = [];
@@ -80,7 +81,15 @@ export function parseGitStatus(raw, context) {
     ? raw.toString('utf8').split('\0')
     : String(raw || '').split('\0');
   const groups = { conflicts: [], staged: [], changes: [] };
-  const repository = { branch: '', detached: false, unborn: false };
+  const repository = {
+    branch: '',
+    detached: false,
+    unborn: false,
+    headOid: '',
+    upstream: '',
+    ahead: 0,
+    behind: 0,
+  };
   for (let index = 0; index < records.length; index++) {
     const record = records[index];
     if (!record) continue;
@@ -91,7 +100,19 @@ export function parseGitStatus(raw, context) {
       continue;
     }
     if (record.startsWith('# branch.oid ')) {
-      repository.unborn = record.slice('# branch.oid '.length) === '(initial)';
+      const oid = record.slice('# branch.oid '.length);
+      repository.unborn = oid === '(initial)';
+      repository.headOid = repository.unborn ? '' : oid;
+      continue;
+    }
+    if (record.startsWith('# branch.upstream ')) {
+      repository.upstream = record.slice('# branch.upstream '.length);
+      continue;
+    }
+    if (record.startsWith('# branch.ab ')) {
+      const [ahead, behind] = record.slice('# branch.ab '.length).split(' ');
+      repository.ahead = Math.abs(Number.parseInt(ahead, 10)) || 0;
+      repository.behind = Math.abs(Number.parseInt(behind, 10)) || 0;
       continue;
     }
     if (record[0] === '#') continue;
@@ -142,7 +163,10 @@ export function parseGitStatus(raw, context) {
   const snapshotId = crypto.createHash('sha256')
     .update(JSON.stringify(groups))
     .digest('hex');
-  return { repository, groups, snapshotId };
+  const stagedId = crypto.createHash('sha256')
+    .update(JSON.stringify(groups.staged))
+    .digest('hex');
+  return { repository, groups, snapshotId, stagedId };
 }
 
 export async function readRawGitStatus(projectPath, options = {}) {
@@ -187,6 +211,8 @@ function responseFrame(envelope, snapshot, groups, sequence, chunkCount) {
     chunkCount,
     complete: sequence === chunkCount - 1,
     snapshotId: snapshot.snapshotId,
+    stagedId: snapshot.stagedId,
+    capabilities: GIT_CAPABILITIES,
     repository: snapshot.repository,
     groups,
   };

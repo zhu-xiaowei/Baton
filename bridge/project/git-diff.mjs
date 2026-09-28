@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { operationError, runGit } from './git-command.mjs';
+import { commitRange, readCommitFiles } from './git-history.mjs';
 import { readGitSnapshot } from './git-status.mjs';
 import { splitTextToFrames } from './ws-frames.mjs';
 
@@ -95,6 +96,32 @@ async function trackedDiff(context, entry, group, options) {
   return limitedDiff(result.stdout);
 }
 
+async function commitDiff(message, options) {
+  const listing = await readCommitFiles(message, options);
+  const entry = listing.files.find((file) => file.path === message.path);
+  if (!entry) throw operationError('target_changed', 'That file is not part of this commit.');
+  const result = await (options.runGit || runGit)([
+    '--no-optional-locks',
+    '--literal-pathspecs',
+    '-C', listing.context.projectPath,
+    'diff-tree',
+    '-p',
+    '-M',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--no-color',
+    '--no-commit-id',
+    '--relative',
+    ...commitRange(listing.target),
+    '--',
+    ...(entry.previousPath ? [entry.path, entry.previousPath] : [entry.path]),
+  ], {
+    maxStdoutBytes: 10 * 1024 * 1024,
+    timeoutMs: 30_000,
+  });
+  return limitedDiff(result.stdout);
+}
+
 function limitedDiff(buffer) {
   if (buffer.length <= MAX_DIFF_BYTES) {
     return { text: buffer.toString('utf8'), truncated: false };
@@ -137,6 +164,7 @@ function createEntry(message, diff) {
     projectHash: message.projectHash,
     path: message.path,
     group: message.group,
+    commitOid: message.commitOid || '',
     pages,
     truncated,
     createdAt: Date.now(),
@@ -174,16 +202,22 @@ export async function gitDiffFrames(message, options = {}) {
     if (!cached
       || cached.projectHash !== message.projectHash
       || cached.path !== message.path
-      || cached.group !== message.group) {
+      || cached.group !== message.group
+      || cached.commitOid !== (message.commitOid || '')) {
       throw operationError('diff_expired', 'Diff has expired. Reload the file.');
     }
     return pageFrames(message, cached, Number.parseInt(message.cursor || '0', 10));
   }
-  const snapshot = await readGitSnapshot(message.projectHash, options);
-  const entry = targetFor(message, snapshot);
-  const diff = entry.status === 'untracked'
-    ? await untrackedDiff(snapshot.context, entry, options)
-    : await trackedDiff(snapshot.context, entry, message.group, options);
+  let diff;
+  if (message.commitOid) {
+    diff = await commitDiff(message, options);
+  } else {
+    const snapshot = await readGitSnapshot(message.projectHash, options);
+    const entry = targetFor(message, snapshot);
+    diff = entry.status === 'untracked'
+      ? await untrackedDiff(snapshot.context, entry, options)
+      : await trackedDiff(snapshot.context, entry, message.group, options);
+  }
   const cached = createEntry(message, diff);
   diffCache.set(cached.token, cached);
   pruneCache();

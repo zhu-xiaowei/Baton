@@ -33,3 +33,8 @@ export const GIT_BRANCH_ICON_SVG = '<svg class="git-branch-icon"'
   + ' 0-17.6 14.4-32 32-32s32 14.4 32 32c0 70-26.4 122.4-78.4 155.8'
   + '-43 27.6-96.8 38.8-148.8 49.4-100 20.8-156.6 36.4-156.6 114.8'
   + ' 0 17.6-14.4 32-32 32z"/></svg>';
+export const CLOSE_ICON_SVG = '<svg class="file-modal-close-icon" viewBox="0 0 24 24" fill="none"'
+  + ' stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">'
+  + '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+export const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"'
+  + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';

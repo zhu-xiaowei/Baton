@@ -10,7 +10,7 @@ const VALID_GROUPS = {
   discard: new Set(['changes']),
 };
 
-function withRepoMutation(repoRoot, work) {
+export function withRepoMutation(repoRoot, work) {
   const previous = mutationQueues.get(repoRoot) || Promise.resolve();
   const next = previous.catch(() => {}).then(work);
   mutationQueues.set(repoRoot, next);

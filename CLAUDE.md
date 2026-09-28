@@ -117,6 +117,18 @@ Done:
   new-Session input view.
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
+### Git Graph + Commit/Push: COMPLETE
+- Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
+- Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout
+  (`web/js/git/graph-layout.js`); scope is Auto (HEAD + upstream) / All / one branch and never checks out.
+- Everything stays on the `git_status` action: read-only `refs` / `history` / `commit_files`, commit-target `diff`,
+  and `commit` / `push`. History pages over fixed head OIDs with `--topo-order` + `--skip`; commits and file lists
+  share a first-parent base; subdirectory projects are scoped with pathspec / `--relative`.
+- Commit only takes the staged set the user saw (`stagedId`); push never forces, publishes with `-u origin`, and fails
+  fast on SSH prompts. The commit bar is one state-driven button (Commit / Push / Publish).
+- Graph view state, the first page per scope and the branch list reuse the Changes IndexedDB cache
+  (stale-while-revalidate). Checkout / Stash & Switch / Pull are deferred. Details: `docs/git-history-design.md`.
+
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 

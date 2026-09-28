@@ -11,6 +11,21 @@ function assembleSnapshot(frames) {
   return { ...frames[frames.length - 1], groups: groups };
 }
 
+function assembleList(field) {
+  return function (frames) {
+    var items = [];
+    frames.forEach(function (frame) { items = items.concat(frame[field] || []); });
+    return { ...frames[frames.length - 1], [field]: items };
+  };
+}
+
+var ASSEMBLERS = {
+  diff: assembleTextFrames,
+  refs: assembleList('refs'),
+  history: assembleList('commits'),
+  commit_files: assembleList('files'),
+};
+
 export function requestGit(operation, fields, options) {
   return requestWsRpc({
     action: 'git_status',
@@ -23,9 +38,17 @@ export function requestGit(operation, fields, options) {
     ...(fields.snapshotId ? { snapshotId: fields.snapshotId } : {}),
     ...(fields.diffToken ? { diffToken: fields.diffToken } : {}),
     ...(fields.cursor ? { cursor: fields.cursor } : {}),
+    ...(fields.commitOid ? { commitOid: fields.commitOid } : {}),
+    ...(fields.scope ? { scope: fields.scope } : {}),
+    ...(fields.ref ? { ref: fields.ref } : {}),
+    ...(fields.heads ? { heads: fields.heads } : {}),
+    ...(fields.skip ? { skip: fields.skip } : {}),
+    ...(fields.limit ? { limit: fields.limit } : {}),
+    ...(fields.message ? { message: fields.message } : {}),
+    ...(fields.stagedId ? { stagedId: fields.stagedId } : {}),
   }, {
     ...(options || {}),
-    assemble: operation === 'diff' ? assembleTextFrames : assembleSnapshot,
+    assemble: ASSEMBLERS[operation] || assembleSnapshot,
   });
 }
 

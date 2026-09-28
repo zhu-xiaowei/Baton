@@ -1,5 +1,8 @@
 # Git Changes 完整设计
 
+本文记录已实现的 Git Changes 基线。下一阶段的分支展示、Git Graph、提交历史和历史 Diff 见
+[Git Graph / History 移动端设计](git-history-design.md)；该阶段仍在确认中，不改变本文已完成阶段的范围。
+
 ## 1. 目标
 
 在 AgentPeek 手机端提供接近 VS Code Source Control 的 Git Changes 能力，方便用户在
@@ -977,9 +980,11 @@ IndexedDB:  CRUD / reopen / project delete / clear / LRU PASS
 
 ## 15. Git Graph
 
-Git Graph / Commit History 对开发有价值，但明确延后：
+Git Graph / Commit History 未进入上述已完成的两个实施阶段，目前仍未实现。
+下一阶段的推荐方案见 [Git Graph / History 移动端设计](git-history-design.md)。
 
-- 不进入本期 status 响应。
-- 不进入这两个实施阶段。
-- 后续使用独立 `git_history` action。
-- 后续再设计 commit list、parent graph、commit files 和 commit diff。
+- Header 显示工作分支与 ↑↓；默认折叠的 Graph 按真实 parents 绘制分叉与合并。
+- 浏览范围支持 Auto（HEAD + upstream）、All branches 与单个分支；提交可展开文件并复用现有 Diff 页。
+- 分支选择仅用于历史浏览，不执行 checkout。
+- 替代原先独立 `git_history` action 的设想，推荐在 `git_status` 下增加只读 operation，兼容现有路由。
+- 历史列表仍按需独立请求，不混入 status 的改动分组，也不改变既有 mutation 行为。

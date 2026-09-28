@@ -163,10 +163,11 @@ test('Session detail adds Git before runtime and keeps Project Files separate', 
   assert.match(project, /deactivateProjectFiles\(true\);[\s\S]*?openGitStatusPage/);
 });
 
-test('Git page header is static text instead of a clickable breadcrumb', () => {
+test('Git page header shows the project refresh chip and the working branch', () => {
   const page = fs.readFileSync(path.join(ROOT, 'web/js/git/page.js'), 'utf8');
   assert.match(page, /git-status-project/);
-  assert.match(page, /git-status-title">Git Changes/);
+  assert.doesNotMatch(page, /Git Changes<\/span>/);
+  assert.match(page, /git-status-branch/);
   assert.match(page, /button class="path-breadcrumb-item git-status-project"/);
   assert.match(page, /aria-label="Refresh Git changes"/);
   assert.match(page, /setBreadcrumbItemsLoading\(\[projectLabel\]/);

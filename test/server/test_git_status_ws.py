@@ -153,3 +153,61 @@ def test_git_status_reports_bridge_offline_to_the_requesting_app(monkeypatch):
         "errorCode": "bridge_offline",
         "error": "Bridge offline",
     })]
+
+
+OID = "a" * 40
+
+
+def test_git_status_forwards_history_commit_and_push_requests(monkeypatch):
+    delivered = configure(monkeypatch, "app")
+    valid = [
+        {"operation": "refs"},
+        {"operation": "history", "scope": "auto", "limit": 50},
+        {"operation": "history", "scope": "ref", "ref": "refs/remotes/origin/main"},
+        {"operation": "history", "scope": "all", "heads": [OID], "skip": 50, "limit": 50},
+        {"operation": "commit_files", "commitOid": OID},
+        {"operation": "diff", "commitOid": OID, "path": "web/app.js"},
+        {"operation": "commit", "message": "feat: x", "stagedId": "abc"},
+        {"operation": "push"},
+    ]
+    for fields in valid:
+        response = send({
+            "action": "git_status",
+            "requestId": REQUEST_ID,
+            "projectHash": "project",
+            **fields,
+        })
+        assert response == {"statusCode": 200}
+    forwarded = [payload for _, payload in delivered]
+    assert forwarded[3]["heads"] == [OID] and forwarded[3]["skip"] == 50
+    assert forwarded[5]["commitOid"] == OID and "group" not in forwarded[5]
+    assert forwarded[6]["message"] == "feat: x" and forwarded[6]["stagedId"] == "abc"
+
+
+def test_git_status_rejects_invalid_history_commit_and_diff_targets(monkeypatch):
+    delivered = configure(monkeypatch, "app")
+    invalid = [
+        {"operation": "history", "scope": "everything"},
+        {"operation": "history", "scope": "ref", "ref": "HEAD~1"},
+        {"operation": "history", "scope": "ref", "ref": "refs/heads/../x"},
+        {"operation": "history", "scope": "auto", "ref": "refs/heads/main"},
+        {"operation": "history", "scope": "all", "heads": ["--all"]},
+        {"operation": "history", "scope": "all", "heads": [OID] * 257},
+        {"operation": "history", "scope": "all", "skip": 2001},
+        {"operation": "history", "scope": "all", "limit": True},
+        {"operation": "commit_files", "commitOid": "HEAD"},
+        {"operation": "diff", "commitOid": OID, "group": "changes", "path": "a.js"},
+        {"operation": "diff", "commitOid": "main", "path": "a.js"},
+        {"operation": "commit", "message": "   ", "stagedId": "abc"},
+        {"operation": "commit", "message": "x", "stagedId": ""},
+        {"operation": "commit", "message": "字" * 6000, "stagedId": "abc"},
+    ]
+    for fields in invalid:
+        response = send({
+            "action": "git_status",
+            "requestId": REQUEST_ID,
+            "projectHash": "project",
+            **fields,
+        })
+        assert response == {"statusCode": 400}, fields
+    assert delivered == []

@@ -1,9 +1,15 @@
 import { operationError } from './git-command.mjs';
 import { gitDiffFrames } from './git-diff.mjs';
+import { readCommitFiles, readHistory, readRefList } from './git-history.mjs';
 import { mutateGit } from './git-mutations.mjs';
 import { readGitSnapshot, snapshotFrames } from './git-status.mjs';
+import { commitGit, pushGit } from './git-write.mjs';
+import { listFrames } from './ws-frames.mjs';
 
-const OPERATIONS = new Set(['status', 'stage', 'unstage', 'discard', 'diff']);
+const OPERATIONS = new Set([
+  'status', 'stage', 'unstage', 'discard', 'diff',
+  'refs', 'history', 'commit_files', 'commit', 'push',
+]);
 
 function envelope(message, extra = {}) {
   return {
@@ -30,6 +36,8 @@ function errorEnvelope(message, error) {
 
 function sendSnapshot(message, snapshot, send, extra = {}) {
   const frames = snapshotFrames(snapshot, envelope(message, {
+    ...(snapshot.commit ? { commit: snapshot.commit } : {}),
+    ...(snapshot.push ? { push: snapshot.push } : {}),
     ok: extra.ok !== false,
     ...(extra.errorCode ? {
       errorCode: extra.errorCode,
@@ -57,6 +65,35 @@ export async function handleGitStatusMessage(message, options = {}) {
     if (message.operation === 'diff') {
       const frames = await gitDiffFrames(message, options);
       frames.forEach(send);
+      return;
+    }
+    if (message.operation === 'refs') {
+      listFrames(envelope(message, { ok: true }), 'refs', await readRefList(message, options)).forEach(send);
+      return;
+    }
+    if (message.operation === 'history') {
+      const page = await readHistory(message, options);
+      listFrames(envelope(message, { ok: true, heads: page.heads, hasMore: page.hasMore }), 'commits', page.commits)
+        .forEach(send);
+      return;
+    }
+    if (message.operation === 'commit_files') {
+      const entry = await readCommitFiles(message, options);
+      listFrames(envelope(message, {
+        ok: true,
+        commitOid: entry.commitOid,
+        baseOid: entry.baseOid,
+        merge: entry.merge,
+        truncated: entry.truncated,
+      }), 'files', entry.files).forEach(send);
+      return;
+    }
+    if (message.operation === 'commit') {
+      sendSnapshot(message, await commitGit(message, options), send);
+      return;
+    }
+    if (message.operation === 'push') {
+      sendSnapshot(message, await pushGit(message, options), send);
       return;
     }
     sendSnapshot(message, await mutateGit(message, options), send);

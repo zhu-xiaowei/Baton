@@ -6,6 +6,7 @@ export class GitCommandError extends Error {
     this.name = 'GitCommandError';
     this.errorCode = errorCode;
     this.stderr = options.stderr || '';
+    this.stdout = options.stdout || '';
     this.exitCode = options.exitCode;
   }
 }
@@ -21,6 +22,7 @@ export function runGit(args, options = {}) {
     timeoutMs = 20_000,
     maxStdoutBytes = 10 * 1024 * 1024,
     allowedExitCodes = [0],
+    env,
   } = options;
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
@@ -31,6 +33,7 @@ export function runGit(args, options = {}) {
         LC_ALL: 'C',
         LANG: 'C',
         GIT_TERMINAL_PROMPT: '0',
+        ...env,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -87,7 +90,7 @@ export function runGit(args, options = {}) {
         finish(operationError(
           notRepo ? 'not_git_repository' : 'git_failed',
           notRepo ? 'This project is not inside a Git repository.' : 'Git command failed.',
-          { stderr: stderrText, exitCode },
+          { stderr: stderrText, stdout: Buffer.concat(stdout).toString('utf8').slice(-8192), exitCode },
         ));
         return;
       }

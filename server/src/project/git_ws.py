@@ -2,7 +2,16 @@ import re
 import uuid
 
 
-ALLOWED_OPERATIONS = {"status", "stage", "unstage", "discard", "diff"}
+ALLOWED_OPERATIONS = {
+    "status", "stage", "unstage", "discard", "diff",
+    "refs", "history", "commit_files", "commit", "push",
+}
+NO_FIELD_OPERATIONS = {"status", "refs", "push"}
+OID_PATTERN = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+MAX_HEADS = 256
+MAX_SKIP = 2000
+MAX_LIMIT = 100
+MAX_COMMIT_MESSAGE_BYTES = 16 * 1024
 ALLOWED_GROUPS = {"conflicts", "staged", "changes"}
 MUTATION_GROUPS = {
     "stage": {"changes", "conflicts"},
@@ -27,6 +36,42 @@ def _valid_path(value):
     return ".." not in value.replace("\\", "/").split("/")
 
 
+def _valid_oid(value):
+    return isinstance(value, str) and bool(OID_PATTERN.match(value))
+
+
+def _valid_int(value, low, high):
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def _valid_ref(value):
+    return isinstance(value, str) and value.startswith(("refs/heads/", "refs/remotes/")) \
+        and len(value) <= 1024 and "\0" not in value and ".." not in value
+
+
+def _valid_history(body):
+    scope = body.get("scope")
+    if scope not in {"auto", "all", "ref"}:
+        return False
+    if (scope == "ref") != ("ref" in body) or ("ref" in body and not _valid_ref(body["ref"])):
+        return False
+    heads = body.get("heads", [])
+    if not isinstance(heads, list) or len(heads) > MAX_HEADS or not all(map(_valid_oid, heads)):
+        return False
+    if "skip" in body and not _valid_int(body["skip"], 0, MAX_SKIP):
+        return False
+    return "limit" not in body or _valid_int(body["limit"], 1, MAX_LIMIT)
+
+
+def _valid_commit(body):
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return False
+    if len(message.encode("utf-8")) > MAX_COMMIT_MESSAGE_BYTES:
+        return False
+    return isinstance(body.get("stagedId"), str) and bool(body["stagedId"])
+
+
 def _valid_request(body):
     operation = body.get("operation")
     if operation not in ALLOWED_OPERATIONS:
@@ -35,10 +80,21 @@ def _valid_request(body):
         return False
     if not _valid_uuid(body.get("requestId")):
         return False
-    if operation == "status":
+    if operation in NO_FIELD_OPERATIONS:
         return True
+    if operation == "history":
+        return _valid_history(body)
+    if operation == "commit_files":
+        return _valid_oid(body.get("commitOid"))
+    if operation == "commit":
+        return _valid_commit(body)
     if operation == "diff":
-        if body.get("group") not in ALLOWED_GROUPS or not _valid_path(body.get("path")):
+        if not _valid_path(body.get("path")):
+            return False
+        if "group" in body:
+            if "commitOid" in body or body["group"] not in ALLOWED_GROUPS:
+                return False
+        elif not _valid_oid(body.get("commitOid")):
             return False
         if body.get("diffToken"):
             cursor = body.get("cursor", "0")
@@ -65,6 +121,7 @@ def _request_payload(body, reply_connection_id):
     }
     for field in (
         "group", "path", "all", "snapshotId", "diffToken", "cursor",
+        "commitOid", "scope", "ref", "heads", "skip", "limit", "message", "stagedId",
     ):
         if field in body:
             payload[field] = body[field]
