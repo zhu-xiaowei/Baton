@@ -225,6 +225,11 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     target.addEventListener(name, callback, options);
     current.listeners.push(() => target.removeEventListener(name, callback, options));
   };
+  // Bottom-anchor only once content fills the screen so the fit remainder moves above row one.
+  const syncFill = () => {
+    const buffer = terminal.buffer.active;
+    screen.classList.toggle('fills', buffer.type === 'alternate' || buffer.baseY > 0 || buffer.cursorY >= terminal.rows - 1);
+  };
 
   let keyboardTap = null;
   let handledKeyboardClick = false;
@@ -306,6 +311,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     const following = followBottom || (!resizeAnchor && buffer.viewportY === buffer.baseY);
     if (!following && !resizeAnchor) resizeAnchor = terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY);
     terminal.resize(cols, rows);
+    syncFill();
     const bounds = screen.querySelector('.xterm-screen')?.getBoundingClientRect();
     if (bounds) {
       terminal.textarea.style.top = `${terminal.buffer.active.cursorY * bounds.height / terminal.rows}px`;
@@ -488,7 +494,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   });
   function write(data) {
     return new Promise((resolve, reject) => {
-      const complete = () => { pendingWrites.delete(complete); resolve(); };
+      const complete = () => { pendingWrites.delete(complete); syncFill(); resolve(); };
       pendingWrites.add(complete);
       try { terminal.write(data, complete); }
       catch (error) { pendingWrites.delete(complete); reject(error); }
@@ -560,6 +566,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       clearResizeAnchor();
       terminal.reset();
       terminal.resize(message.cols, message.rows);
+      syncFill();
       current.page.dataset.sessionId = message.sessionId;
       current.page.dataset.epoch = message.epoch;
       current.page.dataset.cwd = message.cwd;

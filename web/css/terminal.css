@@ -5,7 +5,7 @@
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  padding-bottom: max(4px, var(--sab, env(safe-area-inset-bottom, 0px)));
+  padding-bottom: 4px;
   background: #0d1117;
   color: #e6edf3;
   overflow: hidden;
@@ -40,12 +40,16 @@
   overflow-y: hidden;
   overscroll-behavior: contain;
   touch-action: pan-x pinch-zoom;
+  display: flex;
+  flex-direction: column;
 }
 .project-terminal-screen .xterm { height: 100%; }
+.project-terminal-screen.fills .xterm { height: auto; margin-top: auto; }
 .project-terminal-screen .xterm:not(.allow-transparency) .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
 .project-terminal-screen .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider { border-radius: 3px; }
 .project-terminal-keybar { display: none; }
 html.native-mobile .project-terminal-page.has-mobile-controls.keyboard-open { padding-bottom: 0; }
+html.native-mobile .project-terminal-page.has-mobile-controls.keyboard-open .project-terminal-screen { margin-bottom: 4px; }
 html.native-mobile .keyboard-open .project-terminal-keybar {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -163,7 +167,11 @@ html.native-mobile .project-terminal-selector { padding-top: 2px; padding-bottom
   .project-terminal-selector { position: relative; }
   .project-terminal-selector::before { content: ''; position: absolute; inset: -8px 0; }
 }
+@media (orientation: portrait) {
+  html.native-mobile .project-terminal-page { padding-bottom: 20px; }
+}
 @media (orientation: landscape) {
+  html.native-mobile .project-terminal-page { padding-bottom: 12px; }
   html.native-mobile .project-terminal-screen {
     margin-left: max(8px, var(--sal, env(safe-area-inset-left, 0px)));
     margin-right: var(--sar, env(safe-area-inset-right, 0px));

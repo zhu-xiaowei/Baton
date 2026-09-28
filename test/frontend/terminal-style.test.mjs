@@ -67,7 +67,23 @@ test('terminal history does not create a second vertical scroller or consume fit
   }
 });
 
-test('the mobile terminal keeps its right edge flush and bottom safe area reserved', () => {
+test('the terminal stays top-anchored until its content fills the screen', () => {
+  const dom = new JSDOM('<style>' + xtermCss + terminalCss + '</style><main class="project-terminal-screen"><div class="xterm"></div></main>');
+  try {
+    const screen = dom.window.document.querySelector('main');
+    const xterm = screen.querySelector('.xterm');
+    assert.equal(dom.window.getComputedStyle(screen).flexDirection, 'column');
+    assert.equal(dom.window.getComputedStyle(xterm).height, '100%');
+    assert.notEqual(dom.window.getComputedStyle(xterm).marginTop, 'auto');
+    screen.classList.add('fills');
+    assert.equal(dom.window.getComputedStyle(xterm).height, 'auto');
+    assert.equal(dom.window.getComputedStyle(xterm).marginTop, 'auto');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('the mobile terminal keeps its right edge flush and a compact bottom inset', () => {
   const dom = new JSDOM('<html class="native-mobile"><style>' + terminalCss + '</style>'
     + '<section class="project-terminal-page"><main class="project-terminal-screen"></main></section></html>');
   try {
@@ -78,9 +94,14 @@ test('the mobile terminal keeps its right edge flush and bottom safe area reserv
       page.classList.toggle('keyboard-open', keyboardOpen);
       const style = dom.window.getComputedStyle(page);
       assert.equal(style.boxSizing, 'border-box');
-      assert.equal(style.paddingBottom, 'max(4px, var(--sab, env(safe-area-inset-bottom, 0px)))');
+      assert.equal(style.paddingBottom, '4px');
       assert.equal(parseFloat(dom.window.getComputedStyle(page.querySelector('main')).marginBottom), 0);
     }
+    page.classList.add('has-mobile-controls', 'keyboard-open');
+    assert.equal(dom.window.getComputedStyle(page).paddingBottom, '0px');
+    assert.equal(dom.window.getComputedStyle(page.querySelector('main')).marginBottom, '4px');
+    assert.match(terminalCss, /@media \(orientation: landscape\)\s*\{\s*html\.native-mobile \.project-terminal-page \{ padding-bottom: 12px; \}/);
+    assert.match(terminalCss, /@media \(orientation: portrait\)\s*\{\s*html\.native-mobile \.project-terminal-page \{ padding-bottom: 20px; \}/);
   } finally {
     dom.window.close();
   }
