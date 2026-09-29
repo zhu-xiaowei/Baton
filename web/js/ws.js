@@ -3,6 +3,7 @@ import { state } from './state.js';
 import { attachmentPreviewText, attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
   clearComposerDraft,
+  flushComposerDraft,
   rekeyComposerDraft,
   syncComposerDraft,
 } from './drafts/composer-draft.js';
@@ -23,7 +24,7 @@ import { createMessageDom } from './message-dom.js';
 import { refreshThinkingGroups } from './thinking.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
-import { setButtonLoading } from './components/loading.js';
+import { loadingSpinner, setButtonLoading } from './components/loading.js';
 import {
   resolveActivityState,
   resolveControlActivity,
@@ -743,7 +744,7 @@ function dispatchWsMessage(msg) {
       dispatchControlEvent(msg);
     } else if (msg.action === 'send_message_received') {
       var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
-      if (receivedPending) receivedPending.serverReceived = true;
+      acceptPendingReceipt(receivedPending);
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -752,6 +753,7 @@ function dispatchWsMessage(msg) {
       // multiple pending sends, so it never mutates optimistic UI state.
       if (state.pendingSentMessages.length) {
         var pending = msg.turnId ? findPending(msg.turnId) : null;
+        if (pending && msg.ok) acceptPendingReceipt(pending);
         if (pending && msg.errorCode === 'bridge_offline') {
           pending.serverReceived = false;
           schedulePendingTransportRetry(pending);
@@ -947,7 +949,7 @@ function getStrictStreamRenderer() {
     getContainer: function () { return document.querySelector('.messages'); },
     findAnchor: function (turnId) {
       return turnId
-        ? document.querySelector('[data-anchor="' + turnId + '"]')
+        ? document.querySelector('[data-anchor="' + turnId + '"]:not([hidden])')
         : null;
     },
     canAppendWithoutAnchor: function (container) {
@@ -2019,6 +2021,7 @@ async function refreshSessionMessages(options) {
 }
 
 function sendMessage() {
+  if (pendingReceipt()) return;
   var input = document.getElementById('msg-input');
   var text = input.value.trim();
   var images = state.stagedImages.slice();
@@ -2039,6 +2042,7 @@ function sendMessage() {
   // Keep image markdown refs on the SAME line as text (separated by spaces) — putting `!`
   // at line start triggers Ink's shell-out mode in CC, causing bash syntax errors.
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
+  flushComposerDraft();
   if (readyImages.length) {
     var refs = readyImages.map(function (img) {
       return img.kind === 'file' ? attachmentRef(img) : '![](baton-bridge:' + img.key + ')';
@@ -2048,11 +2052,6 @@ function sendMessage() {
     doSend(text, text, []);
   }
 
-  state.stagedImages = [];
-  renderStagedImages();
-  input.value = '';
-  input.style.height = 'auto';
-  clearComposerDraft();
   if (typeof stopDictation === 'function') stopDictation();  // sending ends dictation too
   if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
 }
@@ -2145,25 +2144,36 @@ var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stro
 function updateSendBtn(options) {
   options = options || {};
   var btn = document.getElementById('send-btn');
-  var textLen = document.getElementById('msg-input').value.trim().length;
+  var input = document.getElementById('msg-input');
+  var waitingReceipt = !!pendingReceipt();
+  var textLen = input.value.trim().length;
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
   var hasText = textLen >= (isNewAgent ? 4 : 1);
   var hasInput = hasText || state.stagedImages.length > 0;
   var filesPending = state.stagedImages.some(function (file) { return !file.uploaded || !file.key; });
-  var cls = !state.activeThreadCanSend
+  var cls = !state.activeThreadCanSend || waitingReceipt
     ? ''
     : (hasInput ? 'has-text' : (state.wsRunning ? 'is-stop' : ''));
-  var icon = cls === 'is-stop' ? 'stop' : 'send';
+  var icon = waitingReceipt ? 'loading' : (cls === 'is-stop' ? 'stop' : 'send');
   // Only rewrite innerHTML when the icon actually changes. Rewriting it every stream frame
   // detaches the SVG mid-tap, dropping a click that landed on it (had to tap 2-3×).
-  if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
+  if (btn.dataset.icon !== icon) {
+    btn.innerHTML = icon === 'loading'
+      ? loadingSpinner({ size: 'small', label: 'Sending' })
+      : (icon === 'stop' ? _stopSvg : _sendSvg);
+    btn.dataset.icon = icon;
+  }
   if (btn.className !== cls) btn.className = cls;
-  btn.disabled = !state.activeThreadCanSend || (hasInput ? filesPending : !state.wsRunning);
+  btn.disabled = waitingReceipt || !state.activeThreadCanSend || (hasInput ? filesPending : !state.wsRunning);
+  if (waitingReceipt) btn.setAttribute('aria-busy', 'true');
+  else btn.removeAttribute('aria-busy');
+  input.readOnly = waitingReceipt || !state.activeThreadCanSend;
   if (!options.skipSpinner && typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }
 function onSendBtnClick() {
+  if (pendingReceipt()) return;
   var input = document.getElementById('msg-input');
   var isMobile = /Mobi|Android/i.test(navigator.userAgent);
   var kbWasUp = isMobile && window.visualViewport && window.visualViewport.height < _vpBaseHeight * 0.75;
@@ -2294,7 +2304,7 @@ function doSend(fullText, displayText, images) {
     restoreScrollFrame = null;
   }
   var previousTurnId = latestOutstandingTurnId();
-  state.wsRunning = true;
+  state.stickBottom = true;
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result
   // so the ack maps back to THIS exact bubble (not "the first pending", which
@@ -2307,7 +2317,6 @@ function doSend(fullText, displayText, images) {
   rememberLatestSend(msgId, false, seq);
   _turnSendOrder.set(msgId, seq);
   _queuedTurnIds.add(msgId);
-  updateSendBtn();
   var sendPayload;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
     if (!state.wsRequestId) {
@@ -2323,26 +2332,10 @@ function doSend(fullText, displayText, images) {
     var ph = state.appState.project && state.appState.project.hash;
     sendPayload = { action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, turnId: msgId, previousTurnId: previousTurnId, text: fullText, device: device };
   }
-  wsSendReliable(sendPayload);
-
   // Empty session has no .messages yet; create one or the bubble + preview have nowhere to render.
-  var empty = document.querySelector('.empty');
-  if (empty) empty.remove();
   var contentEl = document.getElementById('content');
   if (contentEl && !contentEl.querySelector('.messages')) {
     contentEl.insertAdjacentHTML('beforeend', '<div class="messages"></div>');
-  }
-
-  // Exit new-session centered layout once the user sends the first message
-  if (document.body.classList.contains('new-session')) {
-    document.body.classList.remove('new-session');
-    var hero = document.querySelector('.new-session-hero');
-    if (hero) hero.remove();
-    var msgs = document.querySelector('.messages');
-    if (msgs) msgs.removeAttribute('hidden');
-    // Restore input-bar to body (it was moved into #content for centered layout)
-    var bar = document.getElementById('input-bar');
-    if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
   }
 
   // Keep fullText (with image refs) so a retry re-sends the exact same payload;
@@ -2350,6 +2343,7 @@ function doSend(fullText, displayText, images) {
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
   var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false, transportRetries: 0 };
+  pendingSend.inputText = document.getElementById('msg-input').value;
   state.pendingSentMessages.push(pendingSend);
   var container = document.querySelector('.messages');
   if (container) {
@@ -2360,16 +2354,63 @@ function doSend(fullText, displayText, images) {
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
+      '<div class="msg-user" hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
-    clampOverflow(container);
-    state.stickBottom = true; // sending a message = follow the incoming reply
-    document.getElementById('content').scrollTop =
-      document.getElementById('content').scrollHeight;
   }
+  updateSendBtn();
+  wsSendReliable(sendPayload);
   schedulePendingTransportRetry(pendingSend);
   scheduleSendTimeout(msgId);
+}
+
+function pendingReceipt() {
+  if (!state.appState.session) return null;
+  return state.pendingSentMessages.find(function (pending) {
+    return pending.sessionId === state.wsSessionId
+      && !pending.serverReceived && !pending.delivered
+      && !pending.queued && !pending.awaitingTakeover
+      && !!document.getElementById(pending.id);
+  }) || null;
+}
+
+function showPendingMessage(pending) {
+  var content = document.getElementById('content');
+  var element = document.getElementById(pending.id);
+  if (!content?.contains(element) || pending.sessionId !== state.wsSessionId) return false;
+  content.querySelector('.empty')?.remove();
+  element.hidden = false;
+  _strictStreamRenderer?.attachTurnToAnchor(pending.id);
+  if (document.body.classList.contains('new-session')) {
+    document.body.classList.remove('new-session');
+    content.querySelector('.new-session-hero')?.remove();
+    content.querySelector('.messages')?.removeAttribute('hidden');
+    var bar = document.getElementById('input-bar');
+    if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
+  }
+  clampOverflow(element.parentElement);
+  if (state.stickBottom) content.scrollTop = content.scrollHeight;
+  return true;
+}
+
+function acceptPendingReceipt(pending) {
+  if (!pending || pending.serverReceived || pending.failed) return;
+  pending.serverReceived = true;
+  clearTimeout(pending.transportTimer);
+  if (!showPendingMessage(pending)) return;
+  var input = document.getElementById('msg-input');
+  if (input.value === pending.inputText) {
+    input.value = '';
+    input.style.height = 'auto';
+    clearComposerDraft();
+  }
+  state.stagedImages = state.stagedImages.filter(function (image) {
+    return !(pending.images || []).some(function (sent) { return sent.key === image.key; });
+  });
+  if (typeof renderStagedImages === 'function') renderStagedImages();
+  if (!pending.turnEnded) state.wsRunning = true;
+  updateSendBtn();
+  if (state.stickBottom) followBottomAfterLayout();
 }
 
 // If neither the send_message_result ack nor the echoed-message dedup clears a
@@ -2424,6 +2465,7 @@ function handleCodexSendConflict(pending, msg) {
     || !writer.canTerminate
     || !writer.pid) return false;
   pending.awaitingTakeover = true;
+  showPendingMessage(pending);
   state.wsRunning = false;
   updateSendBtn();
   pendingStatus(pending, 'Waiting for confirmation');
@@ -2495,6 +2537,7 @@ function resolvePending(pending, ok, error) {
   } else {
     _queuedTurnIds.delete(pending.id);
     rememberLatestSend(pending.id, true);
+    showPendingMessage(pending);
     markPendingFailed(pending, error);
     applyResolvedLiveActivity(
       hasOutstandingTurns() ? 'running' : 'completed',
@@ -2694,6 +2737,7 @@ async function retryPendingSend(msgId) {
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
+  acceptPendingReceipt(pending);
   clearTimeout(pending.transportTimer);
   // The authoritative echo can beat the final send ack. Settle the visible
   // optimistic bubble from its original send time before retiring its pending
