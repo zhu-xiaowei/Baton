@@ -270,7 +270,7 @@ function copyHash(element) {
   }
   if (element.classList.contains('copied') || element.classList.contains('copy-failed')) return;
   if (!navigator.clipboard?.writeText) return flash('Copy failed', 'copy-failed');
-  navigator.clipboard.writeText(element.dataset.oid).then(function () {
+  navigator.clipboard.writeText(element.dataset.oid.slice(0, 7)).then(function () {
     flash('Copied', 'copied');
   }, function () {
     flash('Copy failed', 'copy-failed');

@@ -36,8 +36,8 @@ function listHtml(refs, repository, selected, filter) {
 export function pickGitRef(options) {
   return new Promise(function (resolve) {
     var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay git-ref-overlay';
-    overlay.innerHTML = '<div class="modal-box git-ref-box" role="dialog" aria-modal="true">'
+    overlay.className = 'modal-overlay agent-threads-overlay git-ref-overlay';
+    overlay.innerHTML = '<div class="modal-box agent-threads-box git-ref-box" role="dialog" aria-modal="true">'
       + '<div class="git-ref-dialog-head"><div class="modal-title">Show history'
       + '<span class="git-ref-refreshing" hidden>' + loadingSpinner({ size: 'small', label: 'Refreshing branches' }) + '</span></div>'
       + '<button class="file-modal-close git-ref-close" type="button" aria-label="Close" title="Close">'
@@ -47,11 +47,25 @@ export function pickGitRef(options) {
     var list = overlay.querySelector('.git-ref-list');
     var filter = overlay.querySelector('.git-ref-filter');
     var refs = options.cachedRefs || null;
+    var closed = false;
+    // Same sheet motion as the agent threads modal: slide out, then detach.
     function finish(value) {
+      if (closed) return;
+      closed = true;
       document.removeEventListener('keydown', onKey);
-      hideCenteredModal(overlay);
-      overlay.remove();
       resolve(value);
+      var box = overlay.querySelector('.git-ref-box');
+      var detached = false;
+      function detach(event) {
+        if (detached || (event && (event.target !== box || event.propertyName !== 'transform'))) return;
+        detached = true;
+        hideCenteredModal(overlay);
+        overlay.remove();
+      }
+      overlay.classList.remove('open');
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return detach();
+      box.addEventListener('transitionend', detach);
+      setTimeout(detach, 320);
     }
     function onKey(event) { if (event.key === 'Escape') finish(null); }
     function draw() { list.innerHTML = listHtml(refs, options.repository, options.selected, filter.value); }
@@ -62,6 +76,8 @@ export function pickGitRef(options) {
     });
     filter.addEventListener('input', draw);
     showCenteredModal(overlay);
+    void overlay.offsetWidth;
+    overlay.classList.add('open');
     document.addEventListener('keydown', onKey);
     function apply(result) {
       refs = result;

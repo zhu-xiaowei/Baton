@@ -115,10 +115,12 @@ html.native-mobile .git-section-actions,html.native-mobile .git-row-actions{marg
 .git-history-loading{display:flex;justify-content:center;padding:14px}
 .git-history-more{width:100%;height:44px;border:0;border-top:1px solid #21262d;background:transparent;color:#58a6ff;font-size:13px}
 .git-history-more:active{background:#161b22}
-.git-ref-box{max-height:80%;display:flex;flex-direction:column;padding:10px 0 8px}
+.git-ref-box{display:flex;flex-direction:column;padding:10px 0 8px}
+.viewport-centered-modal>.git-ref-box{max-height:min(70%,560px);overflow:hidden}
 .git-ref-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 10px 4px 16px}
 .git-ref-dialog-head .modal-title{margin:0;font-size:15px;line-height:20px}
-.git-ref-filter{height:32px;margin:2px 16px 6px;padding:0 10px;border:1px solid #30363d;border-radius:8px;background:#0d1117;color:#e6edf3;font:inherit;font-size:14px}
+.git-ref-filter{flex:0 0 auto;height:32px;margin:2px 16px 6px;padding:0 10px;border:1px solid #30363d;border-radius:8px;background:#0d1117;color:#e6edf3;font:inherit;font-size:14px}
+.git-ref-filter:focus{border-color:#1f6feb;outline:none}
 .git-ref-filter[hidden]{display:none}
 .git-ref-list{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain}
 .git-ref-group{padding:8px 16px 2px;color:#8b949e;font-size:11px;letter-spacing:.05em;text-transform:uppercase}
@@ -144,3 +146,14 @@ html.native-mobile .git-section-actions,html.native-mobile .git-row-actions{marg
 .git-history-spinner,.git-ref-refreshing{display:inline-flex;align-items:center;margin-left:8px}
 .git-history-spinner[hidden],.git-ref-refreshing[hidden]{display:none}
 .git-ref-dialog-head .modal-title{display:flex;align-items:center}
+@media(max-width:600px){
+  .viewport-centered-modal>.git-ref-box{max-height:min(80%,640px);padding-bottom:0}
+  .git-ref-list{padding-bottom:max(16px,calc(var(--sab,env(safe-area-inset-bottom,0px)) + 8px))}
+  .git-ref-filter{font-size:16px}
+}
+html.native-mobile .git-commit-time,html.native-mobile .git-commit-meta,html.native-mobile .git-file-directory{font-size:12px}
+html.native-mobile .git-ref{min-width:20px;padding:0 5px;font-size:12px;line-height:16px}
+html.native-mobile .git-ref-more{min-width:0;padding:0 3px}
+html.native-mobile .git-status-branch{font-size:14px}
+html.native-mobile .git-status-branch svg.git-branch-icon{width:15px;height:15px;flex-basis:15px}
+html.native-mobile .git-status-sync{font-size:13px}

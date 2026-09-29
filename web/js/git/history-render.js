@@ -140,7 +140,7 @@ export function commitRowHtml(row, metrics, model) {
     + (expanded ? '<span class="git-commit-line git-commit-attribution">' + attribution + '</span>'
       + '<span class="git-commit-line git-commit-meta">'
       + '<span class="git-commit-id"><span class="git-commit-hash" role="button" tabindex="0"'
-      + ' data-oid="' + commit.oid + '" title="Copy full hash" aria-label="Copy commit hash">'
+      + ' data-oid="' + commit.oid + '" title="Copy hash" aria-label="Copy commit hash">'
       + commit.oid.slice(0, 7) + '</span>' + statsHtml(commit.stats) + '</span>'
       + '<span class="git-commit-time">' + formatClock(commit.authorTime) + '</span></span>' : '')
     + '</span></button>'
