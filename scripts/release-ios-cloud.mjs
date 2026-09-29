@@ -68,9 +68,10 @@ if (git('status', '--porcelain', '--untracked-files=no')) console.warn('WARNING:
 
 const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}&fields[apps]=name`);
 const appId = apps.data[0]?.id ?? die(`No App Store Connect app for ${BUNDLE_ID}`);
-const product = (await api('GET', `/v1/apps/${appId}/ciProduct?include=primaryRepositories`)).data;
-const repoId = product.relationships.primaryRepositories.data[0]?.id ?? die('Xcode Cloud product has no repository');
-const repo = (await api('GET', `/v1/scmRepositories/${repoId}`)).data.attributes;
+const product = (await api('GET', `/v1/apps/${appId}/ciProduct`)).data;
+const repos = await api('GET', `/v1/ciProducts/${product.id}/primaryRepositories`);
+const repoId = repos.data[0]?.id ?? die('Xcode Cloud product has no repository');
+const repo = repos.data[0].attributes;
 
 const remoteSha = git('ls-remote', repo.httpCloneUrl, `refs/heads/${branch}`).split(/\s+/)[0];
 if (remoteSha !== head) die(`${repo.httpCloneUrl} ${branch} is at ${remoteSha || '(missing)'}, local HEAD is ${head}; push first`);
