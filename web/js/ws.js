@@ -2014,7 +2014,7 @@ async function loadOlderMessages(sessionId) {
 async function refreshSessionMessages(options) {
   if (!state.wsSessionId) return null;
   try {
-    return await loadLatestMessages(state.wsSessionId, options);
+    return await loadLatestMessages(state.wsSessionId, { preservePending: true, ...options });
   } catch (error) {
     return null;
   }
