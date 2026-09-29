@@ -110,6 +110,54 @@ test('keyboard opening and closing preserve physical bottom follow', async (t) =
   h.document.getElementById('msg-input').blur();
 });
 
+test('Git commit keyboard keeps the page in place without disabling chat chrome adaptation', async (t) => {
+  await h.tick(10);
+  resetSession(h, { sessionId: 'codex:git-keyboard' });
+  const topBar = h.document.createElement('div');
+  topBar.className = 'top-bar';
+  Object.defineProperty(topBar, 'offsetHeight', { value: 103 });
+  const gitPage = h.document.createElement('section');
+  gitPage.id = 'gitStatusPage';
+  gitPage.innerHTML = '<textarea class="git-commit-input"></textarea>';
+  h.document.body.append(topBar, gitPage);
+  t.after(async () => {
+    h.document.activeElement.blur();
+    topBar.remove();
+    gitPage.remove();
+    h.visualViewport.height = 844;
+    h.visualViewport.offsetTop = 0;
+    h.visualViewport.dispatch('resize');
+    await h.tick(20);
+  });
+
+  gitPage.querySelector('textarea').focus();
+  h.visualViewport.height = 420;
+  h.visualViewport.offsetTop = 0;
+  h.visualViewport.dispatch('resize');
+  assert.equal(h.document.body.style.height, '420px');
+  assert.equal(h.document.body.style.transform, '');
+
+  h.visualViewport.offsetTop = 24;
+  h.visualViewport.dispatch('scroll');
+  assert.equal(h.document.body.style.top, '24px');
+  assert.equal(h.document.body.style.transform, '');
+
+  h.document.activeElement.blur();
+  h.visualViewport.height = 844;
+  h.visualViewport.offsetTop = 0;
+  h.visualViewport.dispatch('resize');
+  assert.equal(h.document.body.style.height, '844px');
+  assert.equal(h.document.body.style.transform, '');
+
+  gitPage.hidden = true;
+  h.document.getElementById('msg-input').focus();
+  h.visualViewport.height = 420;
+  h.visualViewport.dispatch('resize');
+  assert.equal(h.document.body.style.height, '523px');
+  assert.equal(h.document.body.style.transform, 'translateY(-103px)');
+  await h.tick(10);
+});
+
 test('sending a user message restores bottom following without a competing animation', () => {
   resetSession(h, { sessionId: 'codex:send-follow' });
   const content = h.document.getElementById('content');

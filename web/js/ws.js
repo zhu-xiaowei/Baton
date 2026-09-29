@@ -134,7 +134,8 @@ if (window.visualViewport && _isMobile) {
       });
     }
     var chromeHeight = 0;
-    if (_isIOS && kbUp && !document.getElementById('projectTerminalPage')) {
+    if (_isIOS && kbUp
+      && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
       if (topBar) chromeHeight += topBar.offsetHeight;
@@ -177,8 +178,8 @@ if (window.visualViewport && _isMobile) {
   syncMobileViewport();
 }
 
-// Match React Native's keyboardShouldPersistTaps="never": while the message
-// keyboard is open, the first tap outside the input bar only dismisses it.
+// Match React Native's keyboardShouldPersistTaps="never": while a composer
+// keyboard is open, the first tap outside its input area only dismisses it.
 // Consume the whole pointer/click sequence so expandable IN/OUT content does
 // not also toggle and disturb streaming bottom-follow.
 if (_isMobile) {
@@ -195,12 +196,12 @@ if (_isMobile) {
     event.stopImmediatePropagation();
   };
 
-  document.addEventListener('pointerdown', function (event) {
-    var input = document.getElementById('msg-input');
-    if (!input
+  window.addEventListener('pointerdown', function (event) {
+    var input = document.activeElement;
+    if (!input?.matches('#msg-input, #gitStatusPage:not([hidden]) .git-commit-input')
       || !_mobileKeyboardOpen
-      || document.activeElement !== input
-      || event.target.closest?.('#input-bar')) {
+      || event.target === input
+      || (input.id === 'msg-input' && event.target.closest?.('#input-bar'))) {
       return;
     }
     _dismissKeyboardTap = true;
@@ -210,17 +211,17 @@ if (_isMobile) {
     _dismissKeyboardTimer = setTimeout(clearDismissKeyboardTap, 500);
   }, true);
 
-  document.addEventListener('pointerup', function (event) {
+  window.addEventListener('pointerup', function (event) {
     if (_dismissKeyboardTap) consumeDismissKeyboardEvent(event);
   }, true);
 
-  document.addEventListener('click', function (event) {
+  window.addEventListener('click', function (event) {
     if (!_dismissKeyboardTap) return;
     consumeDismissKeyboardEvent(event);
     clearDismissKeyboardTap();
   }, true);
 
-  document.addEventListener('pointercancel', clearDismissKeyboardTap, true);
+  window.addEventListener('pointercancel', clearDismissKeyboardTap, true);
 }
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
