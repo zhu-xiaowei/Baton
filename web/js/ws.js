@@ -73,6 +73,7 @@ var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var MESSAGE_PAGE_SIZE = 200;
 var _bottomFollowFrame = null;
+var _pendingBottomFollow = null;
 
 function placeFollowedContentAtBottom(content, container, sessionId) {
   if (!state.stickBottom
@@ -87,17 +88,26 @@ function placeFollowedContentAtBottom(content, container, sessionId) {
   }
 }
 
+function flushBottomFollow() {
+  if (_bottomFollowFrame !== null) cancelAnimationFrame(_bottomFollowFrame);
+  _bottomFollowFrame = null;
+  var pending = _pendingBottomFollow;
+  _pendingBottomFollow = null;
+  if (pending) {
+    placeFollowedContentAtBottom(pending.content, pending.container, pending.sessionId);
+  }
+}
+
 function followBottomAfterLayout() {
   var content = document.getElementById('content');
   var container = content?.querySelector('.messages');
   var sessionId = state.appState.session;
   if (!state.stickBottom || !content || !container
     || content.querySelector('.skeleton-messages')) return;
-  if (_bottomFollowFrame !== null) cancelAnimationFrame(_bottomFollowFrame);
-  _bottomFollowFrame = requestAnimationFrame(function () {
-    _bottomFollowFrame = null;
-    placeFollowedContentAtBottom(content, container, sessionId);
-  });
+  _pendingBottomFollow = { content, container, sessionId };
+  if (_bottomFollowFrame === null) {
+    _bottomFollowFrame = requestAnimationFrame(flushBottomFollow);
+  }
 }
 
 if (window.visualViewport && _isMobile) {
@@ -928,6 +938,12 @@ function getStrictStreamRenderer() {
   if (_strictStreamRenderer) return _strictStreamRenderer;
   _strictStreamRenderer = new StreamingDomRenderer({
     document: document,
+    scheduleFrame: function (callback) {
+      return requestAnimationFrame(function (timestamp) {
+        callback(timestamp);
+        flushBottomFollow();
+      });
+    },
     getContainer: function () { return document.querySelector('.messages'); },
     findAnchor: function (turnId) {
       return turnId
