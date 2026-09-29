@@ -10,7 +10,8 @@
 .git-status-branch-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .git-status-sync{flex:0 0 auto;color:#8b949e;font-size:12px}
 .git-status-sync:empty{display:none}
-.git-status-content{flex:1;min-height:0;overflow-x:hidden;overflow-y:auto;padding-bottom:var(--sab,env(safe-area-inset-bottom,0px));overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.git-status-content{flex:1;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.git-status-list{padding-bottom:var(--sab,env(safe-area-inset-bottom,0px))}
 @media(hover:hover) and (pointer:fine){
   .git-status-content{scrollbar-gutter:stable}
   .git-section-header::after{content:"";position:absolute;top:0;bottom:0;left:100%;width:24px;background:#1c2128;pointer-events:none}
@@ -55,19 +56,33 @@ html.native-mobile #top-right .git-status-entry{width:44px;height:44px;flex-basi
 html.native-mobile #top-right .project-files-entry.git-status-entry svg.git-branch-icon,html.native-mobile .edge-back-top-right .project-files-entry.git-status-entry svg.git-branch-icon{width:22px;height:22px;transform:translate(calc(-50% + 2px),-50%)}
 html.native-mobile .git-section-actions,html.native-mobile .git-row-actions{margin-right:4px}
 @media(orientation:landscape){html.native-mobile .git-status-content{padding-left:var(--sal,env(safe-area-inset-left,0px));padding-right:var(--sar,env(safe-area-inset-right,0px))}}
+.git-history-section{border-bottom:0}
 .git-history-section .git-section-actions{min-width:0;flex:0 1 auto;max-width:62%}
 .git-ref-picker{max-width:100%;height:44px;display:flex;align-items:center;padding:0 10px 0 6px;border:0;background:transparent}
 .git-ref-picker-pill{max-width:100%;display:inline-flex;align-items:center;gap:1px;padding-right:3px}
 .git-ref-picker-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .git-ref-picker-pill svg{width:1.15em;height:1.15em;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:2}
 .git-ref-picker:active .git-ref-picker-pill{background:#21262d;border-color:#6e7681;color:#e6edf3}
-.git-history-section .git-section-files{padding-bottom:4px}
 .git-commit-main{width:100%;height:34px;display:flex;align-items:stretch;padding:0;border:0;background:transparent;color:inherit;text-align:left}
 .git-commit-main:active{background:#161b22}
-.git-commit.expanded>.git-commit-main{height:52px;background:rgba(56,139,253,.24)}
-.git-commit.expanded .git-commit-subject{color:#fff}
+.git-commit.expanded>.git-commit-main{height:auto;min-height:52px;background:rgba(56,139,253,.24)}
+.git-commit.expanded .git-commit-subject{color:#fff;overflow-wrap:anywhere;white-space:normal}
+.git-commit.expanded .git-commit-copy{padding-bottom:8px}
+.git-commit.expanded .git-commit-line:first-child{align-items:flex-start;line-height:20px}
+.git-commit-attribution{flex-wrap:wrap;line-height:18px}
+.git-commit-attribution .git-commit-author{flex-shrink:1}
+.git-commit-attribution .git-ref{min-width:0;max-width:100%;overflow:visible;white-space:normal;overflow-wrap:anywhere;text-overflow:clip}
 .git-commit.expanded .git-commit-meta{color:#c9d1d9}
-.git-graph{flex:0 0 auto;margin-left:4px;overflow:hidden}
+@media(hover:hover) and (pointer:fine){
+  html:not(.native-mobile) .git-commit.expanded .git-commit-copy{display:grid;grid-template-columns:minmax(52px,1fr) fit-content(50%) auto;column-gap:4px}
+  html:not(.native-mobile) .git-commit.expanded .git-commit-copy>.git-commit-line:first-child{display:contents}
+  html:not(.native-mobile) .git-commit.expanded .git-commit-subject{grid-column:1;grid-row:1}
+  html:not(.native-mobile) .git-commit.expanded .git-commit-line:first-child>.git-commit-time{grid-column:3;grid-row:1}
+  html:not(.native-mobile) .git-commit.expanded .git-commit-attribution{grid-column:2;grid-row:1;align-self:start;justify-content:flex-end}
+  html:not(.native-mobile) .git-commit.expanded .git-commit-meta{grid-column:1/-1;grid-row:2}
+}
+.git-graph{flex:0 0 auto;display:flex;flex-direction:column;margin-left:4px;overflow:hidden}
+.git-graph .git-graph-rail{flex:1 1 auto;margin-left:0}
 .git-graph-svg{display:block}
 .git-graph-svg path,.git-graph-rail path{fill:none;stroke-width:2;stroke-linecap:round}
 .git-commit-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px;padding:8px 12px 0 4px}

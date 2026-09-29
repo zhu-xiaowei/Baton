@@ -31,8 +31,9 @@ function ensurePage() {
     + '<span class="git-status-sync"></span></span></div>'
     + '<button class="workspace-switch" type="button" aria-label="Project files">'
     + FOLDER_ICON_SVG + '</button></div>'
-    + '<div class="git-status-content"><div class="git-commit-bar" hidden></div><div class="git-status-groups"></div>'
-    + '<div class="git-history"></div></div>';
+    + '<div class="git-status-content"><div class="git-status-list">'
+    + '<div class="git-commit-bar" hidden></div><div class="git-status-groups"></div>'
+    + '<div class="git-history"></div></div></div>';
   document.body.appendChild(page);
   header = page.querySelector('.git-status-header');
   content = page.querySelector('.git-status-content');

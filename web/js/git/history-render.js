@@ -3,7 +3,6 @@ import { LANE_COLORS } from './graph-layout.js';
 import { gitFileRowHtml } from './status-render.js';
 
 const ROW_HEIGHT = 34;
-const EXPANDED_ROW_HEIGHT = 52;
 const NODE_Y = 17;
 const GRAPH_PAD = 8;
 const GRAPH_BUDGET = 84;
@@ -101,12 +100,14 @@ function statsHtml(stats) {
     + (stats.deletions ? ' <span class="git-stat-del">−' + stats.deletions + '</span>' : '');
 }
 
-function refChips(refs) {
+function refChips(refs, expanded) {
   if (!refs?.length) return '';
   var names = refs.map(function (ref) { return ref.name; }).join(', ');
-  return '<span class="git-ref git-ref-' + refs[0].kind + (refs[0].head ? ' git-ref-head' : '') + '" title="' + esc(names) + '">'
-    + esc(refs[0].name) + '</span>'
-    + (refs.length > 1 ? '<span class="git-ref git-ref-more" title="' + esc(names) + '">+' + (refs.length - 1) + '</span>' : '');
+  return (expanded ? refs : refs.slice(0, 1)).map(function (ref) {
+    return '<span class="git-ref git-ref-' + ref.kind + (ref.head ? ' git-ref-head' : '') + '" title="' + esc(expanded ? ref.name : names) + '">'
+      + esc(ref.name) + '</span>';
+  }).join('')
+    + (!expanded && refs.length > 1 ? '<span class="git-ref git-ref-more" title="' + esc(names) + '">+' + (refs.length - 1) + '</span>' : '');
 }
 
 export function commitDetailHtml(row, metrics, files, end) {
@@ -125,16 +126,19 @@ export function commitRowHtml(row, metrics, model) {
   var commit = row.commit;
   var expanded = model.expanded.has(commit.oid);
   var end = isGraphEnd(row, model);
+  var attribution = '<span class="git-commit-author" title="' + esc(commit.authorName) + '">' + esc(commit.authorName) + '</span>'
+    + refChips(commit.refs, expanded);
   return '<div class="git-commit' + (expanded ? ' expanded' : '') + '" data-oid="' + commit.oid + '">'
     + '<button class="git-commit-main" type="button" aria-expanded="' + expanded + '">'
     + '<span class="git-graph" style="width:' + metrics.width + 'px">'
-    + graphSvg(row, metrics, commit.oid === model.headOid, expanded ? EXPANDED_ROW_HEIGHT : ROW_HEIGHT, end) + '</span>'
+    + graphSvg(row, metrics, commit.oid === model.headOid, ROW_HEIGHT, end)
+    + (expanded && !end ? railSvg(row, metrics, false) : '') + '</span>'
     + '<span class="git-commit-copy"><span class="git-commit-line">'
     + '<span class="git-commit-subject">' + esc(commit.subject) + '</span>'
-    + '<span class="git-commit-author" title="' + esc(commit.authorName) + '">' + esc(commit.authorName) + '</span>'
-    + refChips(commit.refs)
+    + (expanded ? '' : attribution)
     + '<span class="git-commit-time">' + formatDate(commit.authorTime) + '</span></span>'
-    + (expanded ? '<span class="git-commit-line git-commit-meta">'
+    + (expanded ? '<span class="git-commit-line git-commit-attribution">' + attribution + '</span>'
+      + '<span class="git-commit-line git-commit-meta">'
       + '<span class="git-commit-id"><span class="git-commit-hash" role="button" tabindex="0"'
       + ' data-oid="' + commit.oid + '" title="Copy full hash" aria-label="Copy commit hash">'
       + commit.oid.slice(0, 7) + '</span>' + statsHtml(commit.stats) + '</span>'
