@@ -417,12 +417,20 @@ npm run dev:android / dev:ios / tauri:dev
 # Release (all four platforms have ready-made scripts in scripts/)
 npm run build:android       — release APK (aarch64)
 npm run release:ios         — build + bump CFBundleVersion + upload TestFlight
+npm run release:ios:cloud   — trigger Xcode Cloud archive → TestFlight (any OS, e.g. Linux)
 npm run build:mac           — signed + notarized universal macOS DMG
 npm run build:windows       — cross-compiled Windows NSIS installer (.exe)
 ```
 
 All release scripts read secrets from `.env.local` (gitignored). See each script's
 header comment for required env vars, one-time setup, and output paths.
+
+Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xiaowei/Baton`;
+workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
+deployment target), and archives `baton_iOS` for TestFlight. `src-tauri/gen/apple/ci_scripts/ci_post_clone.sh`
+installs Node + Rust, builds `dist/`, and patches the Rust build phase PATH in the CI checkout.
+Push to GitHub before triggering; Xcode Cloud assigns its own build numbers, so `project.yml`
+`CFBundleVersion` is not bumped by the cloud path.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`

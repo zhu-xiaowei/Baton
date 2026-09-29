@@ -25,6 +25,7 @@
     "dev:ios": "tauri ios dev \"iPhone 17 Pro\"",
     "build:ios": "tauri ios build",
     "release:ios": "./scripts/release-ios.sh",
+    "release:ios:cloud": "node scripts/release-ios-cloud.mjs",
     "build:mac": "./scripts/release-mac.sh",
     "build:windows": "./scripts/release-windows.sh"
   },
