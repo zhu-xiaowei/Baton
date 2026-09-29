@@ -171,14 +171,15 @@ test('mobile edge-back owns the left edge and accepts drags within 45 degrees', 
   );
 });
 
-test('file preview uses one circled close icon across desktop and native mobile', () => {
+test('file preview uses the shared back button before its filename', () => {
   const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
+  const viewer = readFileSync(new URL('../../web/js/project/file-viewer.js', import.meta.url), 'utf8');
 
-  assert.match(html, /<button type="button" class="file-modal-close"[^>]*aria-label="Close"/);
-  assert.doesNotMatch(html, /file-modal-close-glyph/);
-  assert.match(css, /\.file-modal-close-icon\s*\{[^}]*display:\s*block;[^}]*border:\s*1\.5px solid currentColor;[^}]*border-radius:\s*50%;[^}]*rotate\(45deg\)/s);
-  assert.match(css, /html\.native-mobile \.file-modal-close-icon\s*\{[^}]*width:\s*26px;[^}]*height:\s*26px;/s);
+  assert.match(html, /<div class="file-modal-header">\s*<span id="fileBackButton" class="file-back-slot"><\/span>\s*<span id="fileOverlayTitle"/);
+  assert.doesNotMatch(html, /file-modal-close/);
+  assert.match(viewer, /import \{ mountBackButton \} from '\.\.\/components\/back-button\.js'/);
+  assert.match(viewer, /mountBackButton\(backSlot, function \(\) \{ closeFileViewer\(\); \}\)/);
   assert.match(css, /\.file-modal-header\s*\{[^}]*min-height:\s*44px;/s);
-  assert.doesNotMatch(css, /\.file-modal-close\s*\{[^}]*translateY/);
+  assert.match(css, /html\.native-mobile \.file-modal-header\s*\{[^}]*padding:\s*var\(--sat, env\(safe-area-inset-top, 0px\)\) 8px 0 0;/s);
 });

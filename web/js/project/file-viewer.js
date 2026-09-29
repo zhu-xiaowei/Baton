@@ -1,6 +1,7 @@
 // Project file viewer: text up to 300 KB arrives over WS; larger content uses S3.
 import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
+import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
 import { currentProjectHash } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
@@ -498,6 +499,9 @@ function handleFileResponse(msg, line, snippet, token) {
     if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download file.</div>');
   });
 }
+
+var backSlot = document.getElementById('fileBackButton');
+if (backSlot) mountBackButton(backSlot, function () { closeFileViewer(); });
 
 document.addEventListener('keydown', function (e) {
   var o = overlay();

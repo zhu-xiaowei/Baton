@@ -26,7 +26,7 @@ function layerBackTarget(layer, clientY) {
   for (const selector of layer?.foregroundSelectors || []) {
     const root = document.querySelector(selector);
     const button = root?.querySelector('.back-button');
-    const header = button?.closest('.path-breadcrumb, .top-bar');
+    const header = button?.closest('.path-breadcrumb, .top-bar, .file-modal-header');
     if (!header) continue;
     const rect = header.getBoundingClientRect();
     return clientY >= rect.top && clientY <= rect.bottom
