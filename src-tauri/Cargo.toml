@@ -32,6 +32,7 @@ tauri-plugin-file-download = { path = "plugins/tauri-plugin-file-download" }
 
 [target."cfg(any(target_os = \"android\", target_os = \"ios\"))".dependencies]
 tauri-plugin-barcode-scanner = "2"
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-speech = { path = "plugins/tauri-plugin-speech" }
 
 [target."cfg(target_os = \"ios\")".dependencies]

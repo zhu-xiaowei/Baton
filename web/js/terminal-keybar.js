@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { attachTerminalJoystick } from './terminal-joystick.js';
 
 function encodeKey(key, modifiers, terminal) {
@@ -97,8 +98,9 @@ export function attachTerminalKeybar({ page, screen, terminal, send, canInput, s
     pasting = true;
     sync();
     try {
-      if (!window.navigator.clipboard?.readText) throw new Error('Clipboard unavailable');
-      const text = await window.navigator.clipboard.readText();
+      const text = window.__TAURI_INTERNALS__
+        ? await invoke('plugin:clipboard-manager|read_text')
+        : await window.navigator.clipboard.readText();
       if (disposed || requestedRevision !== revision || !canInput()) return;
       clearModifiers();
       terminal.paste(text);

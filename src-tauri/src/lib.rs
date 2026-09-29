@@ -70,6 +70,8 @@ pub fn run() {
       }
       #[cfg(any(target_os = "android", target_os = "ios"))]
       app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
+      #[cfg(any(target_os = "android", target_os = "ios"))]
+      app.handle().plugin(tauri_plugin_clipboard_manager::init())?;
       #[cfg(target_os = "ios")]
       app.handle().plugin(tauri_plugin_speech::init())?;
 

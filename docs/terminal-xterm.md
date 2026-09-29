@@ -15,8 +15,11 @@
 > 松手停止发送但保留方向盘，可点按方向键，或按住 300ms 后以 70ms 间隔连发；点外部只
 > 收起方向盘，不同时开关键盘，外部滑动仍正常滚动。取消、切换会话和后台停止并隐藏。
 > 摇杆只发送方向键，未唤醒时普通短按和滑动继续走原逻辑。
-> Paste 使用 WebView Clipboard API 和 xterm `paste()`，读取被拒绝时显示错误；剪贴板授权、
-> 键盘焦点和手势分流仍需 Android / iOS 真机验收。本次不改滚动库、后端和传输协议。
+> 2026-09-29 Paste 改为通过 Tauri clipboard-manager 原生读取文本，再交给 xterm `paste()`，
+> 不再在 App 内调用 WebView Clipboard API，避免额外的 WebKit Paste 确认气泡；系统仍可能
+> 要求粘贴授权。仅移动端启用文本读取权限，仅在点击时读取；原生读取失败时显示错误，
+> 不回退触发 WebView 确认。浏览器保留 Clipboard API。需重新构建 App；iOS 用户已确认
+> 粘贴正常，Android 仍待验收。本次不改滚动库、后端和传输协议。
 >
 > 2026-09-21 手机滚动试验：前端固定使用官方 `@xterm/xterm@6.1.0-beta.304` 和配套
 > `@xterm/addon-fit@0.12.0-beta.301`，停用项目自写的 `attachTerminalTouchScroll`，由官方手势处理接管。

@@ -5,6 +5,7 @@
   "platforms": ["android", "iOS"],
   "windows": ["main"],
   "permissions": [
+    "clipboard-manager:allow-read-text",
     "barcode-scanner:allow-scan",
     "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-check-permissions",

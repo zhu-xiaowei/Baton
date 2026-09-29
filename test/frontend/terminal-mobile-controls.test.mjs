@@ -114,23 +114,32 @@ test('one-shot modifiers encode soft and hardware keys without modifying composi
 
 test('paste uses the terminal paste path and discards clipboard results after a session reset', async context => {
   const { window, controls, button, pasted, errors } = setup(context);
+  const originalWindow = globalThis.window;
+  globalThis.window = window;
+  context.after(() => {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  });
   let resolveRead;
-  Object.defineProperty(window.navigator, 'clipboard', { value: { readText: () => new Promise(resolve => { resolveRead = resolve; }) } });
+  window.__TAURI_INTERNALS__ = { invoke(command) {
+    assert.equal(command, 'plugin:clipboard-manager|read_text');
+    return new Promise(resolve => { resolveRead = resolve; });
+  } };
   button('ctrl').click();
   button('Paste').click();
   assert.equal(button('ctrl').getAttribute('aria-pressed'), 'false');
   assert.equal(button('Paste').disabled, true);
   resolveRead('echo hello\n');
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.deepEqual(pasted, ['echo hello\n']);
   button('Paste').click();
   controls.reset();
   resolveRead('do not send to the next session');
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.equal(pasted.length, 1);
-  window.navigator.clipboard.readText = async () => { throw new Error('Permission denied'); };
+  window.__TAURI_INTERNALS__.invoke = async () => { throw new Error('Permission denied'); };
   button('Paste').click();
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.equal(errors.length, 1);
 });
 
