@@ -104,9 +104,6 @@ body {
 }
 .new-session-btn:focus-visible,
 .project-files-entry:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-@media (hover: hover) and (pointer: fine) {
-  .new-session-btn:hover { background: #21262d; color: var(--action-icon-hover-color); }
-}
 
 /* === Content === */
 /* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
@@ -1038,8 +1035,17 @@ html.native-mobile .slash-description {
 .attachment-file .file-type-icon, .attachment-file > svg { width: 14px; height: 14px; flex-shrink: 0; }
 .attachment-preview-note { padding: 16px; color: #8b949e; }
 .attachment-pdf { width: 100%; height: 70vh; border: 0; }
-.file-action { background: none; border: 0; color: #8b949e; cursor: pointer; padding: 8px; flex-shrink: 0; }
-.file-action:hover { color: #58a6ff; }
+.file-action { background: none; border: 0; border-radius: 50%; color: var(--action-icon-color); cursor: pointer; padding: 8px; flex-shrink: 0; transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent; }
+.file-action:not(:disabled):active,
+.project-files-entry:not(:disabled):active,
+.new-session-btn:not(:disabled):active,
+.workspace-switch:not(:disabled):active { color: var(--action-icon-hover-color); background: #21262d; }
+@media (hover: hover) and (pointer: fine) {
+  .file-action:not(:disabled):hover,
+  .project-files-entry:not(:disabled):hover,
+  .new-session-btn:not(:disabled):hover,
+  .workspace-switch:not(:disabled):hover { color: var(--action-icon-hover-color); background: #21262d; }
+}
 .file-action:disabled { opacity: 0.5; cursor: wait; }
 .file-download-action { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; }
 .file-download-spinner { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }

@@ -14,6 +14,7 @@
   flex: 0 0 28px;
   overflow: visible;
   transition: color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
 }
 .project-files-entry svg {
   position: absolute;
@@ -27,12 +28,6 @@
 .project-files-entry.active {
   color: #c9d1d9;
   background: #21262d;
-}
-@media (hover: hover) and (pointer: fine) {
-  .project-files-entry:hover {
-    color: var(--action-icon-hover-color);
-    background: #21262d;
-  }
 }
 html.native-mobile #top-right .project-files-entry {
   width: 44px;

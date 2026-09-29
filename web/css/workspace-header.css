@@ -7,8 +7,12 @@
   justify-content: center;
   padding: 0;
   border: 0;
+  border-radius: 50%;
   background: transparent;
-  color: #8b949e;
+  color: var(--action-icon-color);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
 }
 .workspace-switch svg {
   width: 23px;
