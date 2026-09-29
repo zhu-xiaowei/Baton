@@ -22,9 +22,10 @@ echo "==> Installing npm dependencies + building frontend"
 npm ci
 npm run build
 
-# Xcode build phases do not inherit this shell's PATH, so prepend the toolchains in the CI checkout only.
+# CI checkout only: build phases do not inherit this PATH, and xcode-script needs the `tauri ios build` options server.
 PBXPROJ="${REPO}/src-tauri/gen/apple/baton.xcodeproj/project.pbxproj"
-sed -i '' "s#shellScript = \"npm run -- tauri ios xcode-script#shellScript = \"export PATH=${HOME}/.cargo/bin:${NODE_DIR}/bin:\$PATH; npm run -- tauri ios xcode-script#" "${PBXPROJ}"
+OPTIONS_SERVER="${CI_PRIMARY_REPOSITORY_PATH}/src-tauri/gen/apple/ci_scripts/tauri-options.mjs"
+sed -i '' "s#shellScript = \"npm run -- tauri ios xcode-script#shellScript = \"export PATH=${HOME}/.cargo/bin:${NODE_DIR}/bin:\$PATH; node ${OPTIONS_SERVER} npm run -- tauri ios xcode-script#" "${PBXPROJ}"
 grep -q "export PATH=${HOME}/.cargo/bin" "${PBXPROJ}" || { echo "ERROR: failed to patch build phase PATH" >&2; exit 1; }
 
 node --version; cargo --version
