@@ -18,6 +18,9 @@ echo "==> Installing Rust"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --target aarch64-apple-ios
 . "$HOME/.cargo/env"
 
+# The Xcode project references this folder, but git does not keep it while empty.
+mkdir -p "${REPO}/src-tauri/gen/apple/assets"
+
 echo "==> Installing npm dependencies + building frontend"
 npm ci
 npm run build
