@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Trigger the Xcode Cloud workflow that archives iOS and ships it to TestFlight, then wait for the result.
+// Bump the configured iOS build number, trigger Xcode Cloud, and wait for TestFlight.
 //
 // Works on any OS (used from Linux hosts without Xcode). Prerequisites:
 //   - .env.local: APPSTORE_KEY_ID, APPSTORE_ISSUER_ID (optional XCODE_CLOUD_WORKFLOW, default "Default")
 //   - ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8
 //   - The current commit is pushed to the repository Xcode Cloud is connected to.
+//   - Xcode Cloud's Next Build Number matches the version printed by --dry-run.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -14,6 +15,8 @@ import { execFileSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const BUNDLE_ID = 'com.batonai.app';
+const PROJECT_YML = 'src-tauri/gen/apple/project.yml';
+const INFO_PLIST = 'src-tauri/gen/apple/baton_iOS/Info.plist';
 const POLL_MS = 30_000;
 const TIMEOUT_MS = 90 * 60_000;
 
@@ -59,12 +62,42 @@ async function api(method, urlPath, body) {
   return json;
 }
 
-const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
+async function allPages(urlPath) {
+  const data = [];
+  const included = [];
+  while (urlPath) {
+    const page = await api('GET', urlPath);
+    data.push(...page.data);
+    included.push(...(page.included ?? []));
+    const next = page.links?.next;
+    const nextUrl = next ? new URL(next, 'https://api.appstoreconnect.apple.com') : null;
+    urlPath = nextUrl ? `${nextUrl.pathname}${nextUrl.search}` : null;
+  }
+  return { data, included };
+}
+
+const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const dryRun = process.argv.slice(2).includes('--dry-run');
+if (process.argv.slice(2).some((arg) => arg !== '--dry-run')) die('Usage: node scripts/release-ios-cloud.mjs [--dry-run]');
 
 const branch = git('rev-parse', '--abbrev-ref', 'HEAD');
 const head = git('rev-parse', 'HEAD');
-if (git('status', '--porcelain', '--untracked-files=no')) console.warn('WARNING: uncommitted changes are not part of the cloud build');
+if (branch === 'HEAD') die('Check out a branch before releasing');
+if (!dryRun && git('status', '--porcelain', '--untracked-files=no')) die('Commit or discard tracked changes before releasing');
+
+const projectPath = path.join(ROOT, PROJECT_YML);
+const plistPath = path.join(ROOT, INFO_PLIST);
+const project = fs.readFileSync(projectPath, 'utf8');
+const plist = fs.readFileSync(plistPath, 'utf8');
+const marketingVersion = project.match(/^\s*CFBundleShortVersionString: (\d+\.\d+\.\d+)\s*$/m)?.[1];
+const plistMarketingVersion = plist.match(/<key>CFBundleShortVersionString<\/key>\s*<string>(\d+\.\d+\.\d+)<\/string>/)?.[1];
+const projectBuild = project.match(/^\s*CFBundleVersion: "(\d+)"\s*$/m)?.[1];
+const plistBuild = plist.match(/<key>CFBundleVersion<\/key>\s*<string>(\d+)<\/string>/)?.[1];
+if (!marketingVersion || marketingVersion !== plistMarketingVersion || !projectBuild || projectBuild !== plistBuild) die(`${PROJECT_YML} and ${INFO_PLIST} must have the same marketing version and numeric build number`);
+const configuredBuild = Number(projectBuild);
+if (!Number.isSafeInteger(configuredBuild)) die('Configured build number is too large');
+if (JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri/tauri.conf.json'), 'utf8')).version !== marketingVersion) die('Tauri and Xcode marketing versions differ');
 
 const apps = await api('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}&fields[apps]=name`);
 const appId = apps.data[0]?.id ?? die(`No App Store Connect app for ${BUNDLE_ID}`);
@@ -76,12 +109,54 @@ const repo = repos.data[0].attributes;
 const remoteSha = git('ls-remote', repo.httpCloneUrl, `refs/heads/${branch}`).split(/\s+/)[0];
 if (remoteSha !== head) die(`${repo.httpCloneUrl} ${branch} is at ${remoteSha || '(missing)'}, local HEAD is ${head}; push first`);
 
+// A failed Cloud run still consumes a Cloud build number. Reuse a prepared
+// version only when no run has used the commit that introduced that version.
+const builds = await allPages(`/v1/builds?filter[app]=${appId}&limit=200&include=preReleaseVersion&fields[builds]=version,preReleaseVersion&fields[preReleaseVersions]=version`);
+const versionById = new Map((builds.included ?? []).map((v) => [v.id, v.attributes.version]));
+const uploadedBuild = Math.max(0, ...builds.data
+  .filter((b) => versionById.get(b.relationships?.preReleaseVersion?.data?.id) === marketingVersion)
+  .map((b) => Number(b.attributes.version)));
+if (!Number.isSafeInteger(uploadedBuild)) die(`App Store Connect returned an invalid build number for ${marketingVersion}`);
+if (configuredBuild < uploadedBuild) die(`Configured build ${configuredBuild} is behind uploaded ${marketingVersion} (${uploadedBuild})`);
+
+const versionCommit = git('blame', '--porcelain', '-L', '/CFBundleVersion:/,+1', '--', PROJECT_YML).split(/\s+/)[0];
+const preparedByScript = git('show', '-s', '--format=%s', versionCommit) === `chore(ios): bump build number to ${configuredBuild}`;
+const priorRuns = await allPages(`/v1/ciProducts/${product.id}/buildRuns?limit=200`);
+const versionWasRun = priorRuns.data.some((r) => {
+  const sha = r.attributes.sourceCommit?.commitSha;
+  if (!sha) return false;
+  try { git('merge-base', '--is-ancestor', versionCommit, sha); return true; }
+  catch { return false; }
+});
+let releaseHead = head;
+let releaseBuild = configuredBuild;
+const needsBump = configuredBuild === uploadedBuild || versionWasRun || !preparedByScript;
+if (dryRun) {
+  console.log(`Configured: ${marketingVersion} (${configuredBuild}); latest uploaded: ${marketingVersion} (${uploadedBuild})`);
+  console.log(`Next release: ${marketingVersion} (${needsBump ? configuredBuild + 1 : configuredBuild})${needsBump ? ' (bump both Xcode files)' : ' (reuse prepared version)'}`);
+  console.log(`Last Xcode Cloud run: #${Math.max(0, ...priorRuns.data.map((r) => Number(r.attributes.number)))}`);
+  process.exit(0);
+}
+if (needsBump) {
+  releaseBuild = configuredBuild + 1;
+  if (!Number.isSafeInteger(releaseBuild)) die('Next build number is too large');
+  fs.writeFileSync(projectPath, project.replace(/^(\s*CFBundleVersion: ")\d+("\s*)$/m, (_, before, after) => `${before}${releaseBuild}${after}`));
+  fs.writeFileSync(plistPath, plist.replace(/(<key>CFBundleVersion<\/key>\s*<string>)\d+(<\/string>)/, (_, before, after) => `${before}${releaseBuild}${after}`));
+  git('add', '--', PROJECT_YML, INFO_PLIST);
+  git('commit', '-m', `chore(ios): bump build number to ${releaseBuild}`);
+  releaseHead = git('rev-parse', 'HEAD');
+  console.log(`==> Prepared ${marketingVersion} (${releaseBuild}) in ${releaseHead.slice(0, 7)}`);
+  git('push', repo.httpCloneUrl, `HEAD:refs/heads/${branch}`);
+} else {
+  console.log(`==> Reusing prepared ${marketingVersion} (${releaseBuild}) in ${releaseHead.slice(0, 7)}`);
+}
+
 const workflows = await api('GET', `/v1/ciProducts/${product.id}/workflows?fields[ciWorkflows]=name`);
 const workflow = workflows.data.find((w) => w.attributes.name === WORKFLOW_NAME) ?? die(`No Xcode Cloud workflow named "${WORKFLOW_NAME}"`);
 const refs = await api('GET', `/v1/scmRepositories/${repoId}/gitReferences?limit=200&fields[scmGitReferences]=name,kind`);
 const ref = refs.data.find((r) => r.attributes.kind === 'BRANCH' && r.attributes.name === branch) ?? die(`Xcode Cloud does not see branch ${branch}`);
 
-console.log(`==> Starting Xcode Cloud "${WORKFLOW_NAME}" on ${repo.ownerName}/${repo.repositoryName}@${branch} (${head.slice(0, 7)})`);
+console.log(`==> Starting Xcode Cloud "${WORKFLOW_NAME}" on ${repo.ownerName}/${repo.repositoryName}@${branch} (${releaseHead.slice(0, 7)})`);
 const run = (await api('POST', '/v1/ciBuildRuns', {
   data: {
     type: 'ciBuildRuns',
@@ -92,6 +167,10 @@ const run = (await api('POST', '/v1/ciBuildRuns', {
   },
 })).data;
 console.log(`==> Build run #${run.attributes.number} (${run.id})`);
+if (Number(run.attributes.number) !== releaseBuild) {
+  console.error(`ERROR: Xcode Cloud assigned build #${run.attributes.number}, but the configured version is ${releaseBuild}. The CI pre-build check will stop this archive.`);
+  console.error(`Set Xcode Cloud > Settings > Build Number > Next Build Number to ${releaseBuild} in App Store Connect, then retry.`);
+}
 
 const started = Date.now();
 let last = '';
@@ -118,7 +197,9 @@ for (const action of actions.data) {
 }
 if (attrs.completionStatus !== 'SUCCEEDED') die(`Xcode Cloud build #${run.attributes.number} ${attrs.completionStatus}`);
 
-const builds = await api('GET', `/v1/ciBuildRuns/${run.id}/builds?fields[builds]=version,processingState`);
-for (const { attributes: b } of builds.data) console.log(`==> App Store Connect build ${b.version} (${b.processingState})`);
+const runBuilds = await api('GET', `/v1/ciBuildRuns/${run.id}/builds?fields[builds]=version,processingState`);
+for (const { attributes: b } of runBuilds.data) console.log(`==> App Store Connect build ${b.version} (${b.processingState})`);
+if (Number(run.attributes.number) !== releaseBuild) die(`Cloud build number did not match configured build ${releaseBuild}`);
+if (runBuilds.data.some((b) => Number(b.attributes.version) !== releaseBuild)) die(`Uploaded build number did not match configured build ${releaseBuild}`);
 console.log('==> Done. TestFlight build will be available after processing (~5-15 minutes).');
 console.log('    https://appstoreconnect.apple.com/apps -> Baton -> TestFlight');

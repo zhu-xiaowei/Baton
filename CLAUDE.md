@@ -429,8 +429,16 @@ Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xi
 workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
 deployment target), and archives `baton_iOS` for TestFlight. `src-tauri/gen/apple/ci_scripts/ci_post_clone.sh`
 installs Node + Rust, builds `dist/`, and patches the Rust build phase PATH in the CI checkout.
-Push to GitHub before triggering; Xcode Cloud assigns its own build numbers, so `project.yml`
-`CFBundleVersion` is not bumped by the cloud path.
+Push the current commit to the connected GitHub repository before triggering.
+The cloud release script increments `CFBundleVersion` in `project.yml` and `Info.plist`,
+commits and pushes the new version, then starts the workflow. If a version was
+prepared but no cloud run started, retrying reuses it. Xcode Cloud assigns its own
+build number during export. The first cloud release uses app version 1.0.1 and
+build 7, since app version 1.0.0 already has build 29 uploaded. Use
+`node scripts/release-ios-cloud.mjs --dry-run` to check the next version.
+The pre-build script rejects a mismatch before archive. If Xcode Cloud's number
+stops matching the configured number, align its Next Build Number in App Store
+Connect before another release.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`

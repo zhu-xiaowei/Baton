@@ -75,6 +75,7 @@ echo "==> Verified CFBundleVersion: ${PACKAGED_BUILD}"
 # Xcode may raise the build number during export. Record the packaged value so
 # the next release starts above the build that users actually install.
 sed -i '' -E "s/CFBundleVersion: \"${CURRENT_BUILD}\"/CFBundleVersion: \"${PACKAGED_BUILD}\"/" "${PROJECT_YML}"
+plutil -replace CFBundleVersion -string "${PACKAGED_BUILD}" src-tauri/gen/apple/baton_iOS/Info.plist
 echo "==> Recorded CFBundleVersion: ${PACKAGED_BUILD}"
 
 echo "==> Validating with App Store Connect..."

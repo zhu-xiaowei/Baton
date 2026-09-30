@@ -14,8 +14,14 @@ npm run release:ios
 ```
 
 **On Linux (or any non-macOS host)** trigger Xcode Cloud instead. The current
-commit must already be pushed to the GitHub repo Xcode Cloud is connected to;
-the script refuses otherwise:
+commit must already be pushed to the GitHub repo Xcode Cloud is connected to.
+The script increments `CFBundleVersion` in `project.yml` and `Info.plist`,
+commits and pushes the version, then starts Xcode Cloud. Use
+`node scripts/release-ios-cloud.mjs --dry-run` to find the expected next
+version. Xcode Cloud overwrites the IPA build number during export. The first
+cloud release uses app version 1.0.1 and build 7, avoiding a collision with
+the uploaded app version 1.0.0 (29). The cloud pre-build script rejects
+mismatched build numbers before archive:
 
 ```
 npm run release:ios:cloud
@@ -26,4 +32,5 @@ output. When it finishes, report the result: the build number, the IPA path
 (local flow only), and whether validation + upload succeeded. If it fails, show
 the error.
 
-Do not commit the `project.yml` version bump unless asked.
+For the macOS release script, do not commit the `project.yml` version bump
+unless asked. The cloud script commits its version bump as part of the release.
