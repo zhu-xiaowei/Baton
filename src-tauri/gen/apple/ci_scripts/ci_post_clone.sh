@@ -5,6 +5,10 @@ set -eu
 REPO="${CI_PRIMARY_REPOSITORY_PATH:?}"
 cd "${REPO}"
 
+# Stop immediately when Xcode Cloud's export number would differ from the
+# configured build number, before downloading toolchains or archiving.
+"${REPO}/src-tauri/gen/apple/ci_scripts/ci_pre_xcodebuild.sh"
+
 NODE_VERSION="v24.21.0"
 
 # Xcode Cloud runners may be Intel, where Homebrew has no bottles and builds from source; use the official tarball.

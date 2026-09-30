@@ -19,9 +19,10 @@ The script increments `CFBundleVersion` in `project.yml` and `Info.plist`,
 commits and pushes the version, then starts Xcode Cloud. Use
 `node scripts/release-ios-cloud.mjs --dry-run` to find the expected next
 version. Xcode Cloud overwrites the IPA build number during export. The first
-cloud release uses app version 1.0.1 and build 7, avoiding a collision with
-the uploaded app version 1.0.0 (29). The cloud pre-build script rejects
-mismatched build numbers before archive:
+successful release of app version 1.0.0 needs build 30, above the uploaded
+build 29. Align Xcode Cloud > Settings > Build Number > Next Build Number to
+30 before triggering. The cloud scripts reject mismatched build numbers
+before archive:
 
 ```
 npm run release:ios:cloud
