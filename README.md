@@ -72,80 +72,6 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ---
 
-## Git Workflow
-
-Open Git from a session's toolbar or switch to it from Project Files:
-
-- Review conflicts, staged files, and working-tree changes within the current project; stage, unstage, or discard individual files or a whole changes section.
-- Write a commit message and commit staged changes. Push to the configured upstream, or publish the current branch to a configured remote, after confirming the destination.
-- Expand **Graph** to inspect branch and merge topology. Choose **Auto**, **All branches**, or a local / remote branch to change the history view without checking out another branch.
-- Expand a commit to inspect its changed files and historical diffs; tap its displayed hash to copy the seven-character hash.
-
-Working-tree diffs reuse the file viewer's Diff / Code / Preview modes where applicable.
-Historical diffs are read-only and do not substitute the current working-tree file for the historical version.
-Git commands run on the selected device's Bridge using that machine's Git configuration and credentials.
-Checkout, fetch, pull, force-push, and hunk-level staging are not exposed by this UI.
-
-On mobile, opening the commit keyboard keeps the Git header and input in place; the first tap
-outside the input only dismisses the keyboard. File viewing shares the left-side back button,
-and toolbar icons use matching desktop-hover and mobile-press feedback.
-
-## Session Control
-
-Additional instructions can be sent while an agent is working; there is no need to stop the
-current turn first. Codex uses native turn steering, while Claude Code receives the input through
-its running session. The runtime decides when to consume the instruction, so this does not
-guarantee immediate interruption of a running tool. Explicit stop and approval controls remain available.
-
-To rename a session, enter selection mode in the session list, select one session, and choose
-**Rename**. The Bridge updates the native session name and synchronizes the title back to Baton.
-
-## File Attachments
-
-The composer accepts files up to 512 MiB each. Images keep the existing compressed-image
-flow; other files upload as original bytes with a presigned S3 PUT, not through Lambda.
-Word, Excel and PowerPoint use the same Material Icon Theme icons as Project Files.
-Files appear as small icon/name badges below image thumbnails, with progress, retry and removal.
-Sending waits for every attachment to finish, and works without accompanying text.
-
-Clicking an uploaded file reuses the file preview overlay, even before sending it.
-Text uses the existing source viewer (preview reads are capped at 5 MiB); PDF and supported
-media use browser previews. The viewer's **Download file** button also handles Office and other
-binary files. Office content rendering is not included, and no files are sent to a third-party viewer.
-The Bridge streams attachments to `~/.baton-bridge/attachments/` and passes local file paths
-to the runtime; parsing still depends on the agent's tools and filesystem permissions.
-
-The same download action is available for project files. Native macOS / Windows apps save to
-Downloads, Android uses system Downloads, and iOS opens the system share sheet. Supported mobile
-browsers can share files up to 50 MiB; other browser cases use the normal download flow.
-Downloads show progress and prevent duplicate clicks while running.
-
-Deploy the updated Server, Bridge and frontend together. `server/install.sh` configures the
-dedicated bucket's browser CORS policy and attempts to enable S3 Transfer Acceleration.
-Acceleration can incur extra AWS transfer charges; use `S3_UPLOAD_ACCELERATE=false` when
-running the installer to use standard S3 only. Uploads also retry the standard S3 URL if
-the accelerated endpoint fails. Signing is account-scoped, expires after one hour, and
-binds the upload size and metadata. Bucket objects remain private. This does not add multipart
-uploads or resumable transfers, and removed/orphaned uploads are not automatically deleted.
-
-Attachment checks: `node --test test/bridge/attachments.test.mjs test/frontend/attachments.test.mjs`,
-`python3 -m pytest test/server/test_attachments.py`, and `node test/browser/attachments-chrome.mjs`.
-The Chrome check uses isolated local S3-like endpoints (no AWS account), uploads an 8 MiB file,
-and saves desktop/mobile screenshots in `.test-runs/`.
-
-## Multi-agent Sessions
-
-Baton groups a multi-agent task under its main session instead of listing every worker separately. Open a session's runtime icon to inspect its **Subagents**:
-
-- nested agents form a parent-child tree, including multi-level delegation when the runtime exposes parent metadata
-- each thread shows its task, identity, size, last activity, and running / needs input / done state
-- the status dot is green while any subagent runs, yellow when one needs input, gray once all finish
-- updates arrive over a root-session WebSocket subscription, so the list and status refresh without reloading
-
-Claude Code and Codex share this UI. Nesting depth depends on the runtime; Codex, for example, controls recursive delegation with `agents.max_depth`.
-
----
-
 ## Architecture
 
 ```
@@ -162,12 +88,6 @@ Claude Code and Codex share this UI. Nesting depth depends on the runtime; Codex
 ```
 
 **Bridge** discovers Claude Code and Codex sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Server** authenticates and routes control messages, stores session and root-thread data in DynamoDB, and serves synced media through S3. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
-
-With the updated Server, Bridge, and frontend, eligible live chat events use a signed API Gateway
-data path that bypasses Lambda per event; this is still an AWS relay, not a peer-to-peer connection.
-Commands, file / Git requests, and durable history retain the control and storage paths, with
-control-channel fallback for live events when needed. See [realtime transport](docs/realtime-direct.md)
-and [running-session input](docs/steer.md) for the deployment requirements and behavior.
 
 ---
 
