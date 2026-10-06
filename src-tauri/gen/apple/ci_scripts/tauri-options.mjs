@@ -10,8 +10,17 @@ import { WebSocketServer } from 'ws';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const tauriConf = JSON.parse(fs.readFileSync(path.join(here, '../../../tauri.conf.json'), 'utf8'));
-// Same defaults `tauri ios build` sends when no --features/--config/args are given (tauri-cli CliOptions).
-const options = { dev: false, features: [], args: [], noise_level: 'Polite', vars: {}, config: [], target_device: null };
+// `tauri ios build` adds these Rust options before starting its options server.
+// Without custom-protocol, an archive launches against build.devUrl (localhost:5173).
+const options = {
+  dev: false,
+  features: ['tauri/custom-protocol'],
+  args: ['--lib'],
+  noise_level: 'Polite',
+  vars: {},
+  config: [],
+  target_device: null,
+};
 
 const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
 wss.on('connection', (ws) => {

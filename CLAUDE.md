@@ -429,6 +429,9 @@ Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xi
 workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
 deployment target), and archives `baton_iOS` for TestFlight. `src-tauri/gen/apple/ci_scripts/ci_post_clone.sh`
 installs Node + Rust, builds `dist/`, and patches the Rust build phase PATH in the CI checkout.
+`tauri-options.mjs` supplies the `tauri/custom-protocol` feature and `--lib`
+argument that `tauri ios build` adds on macOS; without the feature, the archived
+app attempts to load the `devUrl` at localhost:5173.
 Push the current commit to the connected GitHub repository before triggering.
 The cloud release script increments `CFBundleVersion` in `project.yml` and `Info.plist`,
 commits and pushes the new version, then starts the workflow. If a version was
