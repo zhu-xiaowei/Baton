@@ -120,11 +120,12 @@ if (!Number.isSafeInteger(uploadedBuild)) die(`App Store Connect returned an inv
 if (configuredBuild < uploadedBuild) die(`Configured build ${configuredBuild} is behind uploaded ${marketingVersion} (${uploadedBuild})`);
 
 const versionCommit = git('blame', '--porcelain', '-L', '/CFBundleVersion:/,+1', '--', PROJECT_YML).split(/\s+/)[0];
-const preparedByScript = git('show', '-s', '--format=%s', versionCommit) === `chore(ios): bump build number to ${configuredBuild}`;
+const versionCommitted = !/^0+$/.test(versionCommit);
+const preparedByScript = versionCommitted && git('show', '-s', '--format=%s', versionCommit) === `chore(ios): bump build number to ${configuredBuild}`;
 const priorRuns = await allPages(`/v1/ciProducts/${product.id}/buildRuns?limit=200`);
 const versionWasRun = priorRuns.data.some((r) => {
   const sha = r.attributes.sourceCommit?.commitSha;
-  if (!sha) return false;
+  if (!sha || !versionCommitted) return false;
   try { git('merge-base', '--is-ancestor', versionCommit, sha); return true; }
   catch { return false; }
 });
@@ -197,9 +198,36 @@ for (const action of actions.data) {
 }
 if (attrs.completionStatus !== 'SUCCEEDED') die(`Xcode Cloud build #${run.attributes.number} ${attrs.completionStatus}`);
 
-const runBuilds = await api('GET', `/v1/ciBuildRuns/${run.id}/builds?fields[builds]=version,processingState`);
-for (const { attributes: b } of runBuilds.data) console.log(`==> App Store Connect build ${b.version} (${b.processingState})`);
 if (Number(run.attributes.number) !== releaseBuild) die(`Cloud build number did not match configured build ${releaseBuild}`);
-if (runBuilds.data.some((b) => Number(b.attributes.version) !== releaseBuild)) die(`Uploaded build number did not match configured build ${releaseBuild}`);
-console.log('==> Done. TestFlight build will be available after processing (~5-15 minutes).');
-console.log('    https://appstoreconnect.apple.com/apps -> Baton -> TestFlight');
+
+let processedBuild;
+const processingStarted = Date.now();
+for (;;) {
+  const builds = await api('GET', `/v1/ciBuildRuns/${run.id}/builds?fields[builds]=version,processingState`);
+  if (builds.data.some((b) => Number(b.attributes.version) !== releaseBuild)) die(`Uploaded build number did not match configured build ${releaseBuild}`);
+  processedBuild = builds.data.find((b) => Number(b.attributes.version) === releaseBuild);
+  if (processedBuild?.attributes.processingState === 'VALID') break;
+  if (processedBuild && processedBuild.attributes.processingState !== 'PROCESSING') die(`App Store Connect build ${releaseBuild} is ${processedBuild.attributes.processingState}`);
+  if (Date.now() - processingStarted > 30 * 60_000) die(`timed out waiting for App Store Connect build ${releaseBuild} to process`);
+  await sleep(POLL_MS);
+}
+console.log(`==> App Store Connect build ${releaseBuild}: VALID (${processedBuild.id})`);
+
+// Xcode Cloud builds must be assigned to internal TestFlight groups explicitly.
+const groups = await api('GET', `/v1/apps/${appId}/betaGroups?limit=200`);
+const group = groups.data.find((g) => g.attributes.isInternalGroup && g.attributes.name === 'Test') ?? die('No internal TestFlight group named "Test"');
+const groupBuilds = await api('GET', `/v1/betaGroups/${group.id}/builds?limit=200&fields[builds]=version`);
+if (!groupBuilds.data.some((b) => b.id === processedBuild.id)) {
+  await api('POST', `/v1/builds/${processedBuild.id}/relationships/betaGroups`, {
+    data: [{ type: 'betaGroups', id: group.id }],
+  });
+}
+let internalState;
+for (let attempt = 0; attempt < 6; attempt++) {
+  const beta = await api('GET', `/v1/builds/${processedBuild.id}/buildBetaDetail`);
+  internalState = beta.data.attributes.internalBuildState;
+  if (internalState === 'IN_BETA_TESTING') break;
+  await sleep(5_000);
+}
+if (internalState !== 'IN_BETA_TESTING') die(`Internal TestFlight state is ${internalState}`);
+console.log('==> Done. Internal TestFlight group "Test": IN_BETA_TESTING.');

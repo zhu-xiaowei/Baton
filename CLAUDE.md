@@ -436,11 +436,10 @@ Push the current commit to the connected GitHub repository before triggering.
 The cloud release script increments `CFBundleVersion` in `project.yml` and `Info.plist`,
 commits and pushes the new version, then starts the workflow. If a version was
 prepared but no cloud run started, retrying reuses it. Xcode Cloud assigns its own
-build number during export. App version 1.0.0 already has build 29 uploaded, so
-Xcode Cloud's Next Build Number must be set to 30 in App Store Connect before
-the next release. Use `node scripts/release-ios-cloud.mjs --dry-run` to check
-the configured number. The post-clone script rejects a mismatch before
-installing toolchains or archiving.
+build number during export. Use `node scripts/release-ios-cloud.mjs --dry-run`
+to check the expected next number and align Xcode Cloud's Next Build Number
+in App Store Connect if necessary. The post-clone script rejects a mismatch
+before installing toolchains or archiving.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`
