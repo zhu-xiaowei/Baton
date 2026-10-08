@@ -177,6 +177,14 @@ async function gitStatusModule() {
   return _gitStatusModule;
 }
 
+// Windows updates stop terminal shells first so no ConPTY children outlive the old Bridge.
+export async function closeTerminalsForUpdate() {
+  const terminals = [_sharedTerminals, _terminalRemote].filter(Boolean);
+  _sharedTerminals = _sharedTerminalsLoading = _terminalRemote = _terminalRemoteLoading = null;
+  for (const terminal of terminals) terminal.dispose();
+  if (terminals.length) await new Promise(resolve => setTimeout(resolve, 1500));
+}
+
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
@@ -684,7 +692,7 @@ function connect() {
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2&terminalStartup=1' : '');
+    + '&terminal=2&terminalStartup=1';
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried

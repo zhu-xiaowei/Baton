@@ -16,7 +16,7 @@ import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
-import { initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
+import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
@@ -140,6 +140,7 @@ async function checkUpdate() {
           throw new Error('downloaded Bridge version does not match server');
         }
 
+        if (process.platform === 'win32') await closeTerminalsForUpdate();
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {
         cleanupUpdateWorkspace(workspace);
