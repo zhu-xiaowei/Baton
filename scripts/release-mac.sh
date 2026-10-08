@@ -29,13 +29,9 @@ echo "==> Building macOS universal DMG with signing + notarization..."
 echo "    Identity: ${APPLE_SIGNING_IDENTITY}"
 echo "    Team ID:  ${APPLE_TEAM_ID}"
 
-npx tauri build --target universal-apple-darwin
+npx tauri build --target universal-apple-darwin --bundles dmg
 
 DMG="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit 2>/dev/null)"
-if [[ -z "${DMG}" ]]; then
-    DMG="$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -type f -print -quit 2>/dev/null)"
-fi
-
 if [[ -z "${DMG}" ]]; then
     echo "ERROR: no .dmg produced" >&2
     exit 1
@@ -45,15 +41,20 @@ fi
 VERSION="$(grep '"version"' src-tauri/tauri.conf.json | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')"
 OUTPUT_DIR="$(dirname "${DMG}")"
 FINAL="${OUTPUT_DIR}/Baton_${VERSION}.dmg"
-mv "${DMG}" "${FINAL}"
+if [[ "${DMG}" != "${FINAL}" ]]; then
+    mv "${DMG}" "${FINAL}"
+fi
 
 echo "==> Done: ${FINAL}"
 echo "    Size: $(du -h "${FINAL}" | cut -f1)"
 
-# Verify code signature
+# Reject a bundle without a valid Developer ID signature or a stapled notarization.
 echo "==> Verifying signature..."
-codesign --verify --deep --strict --verbose=2 \
-    "$(find src-tauri/target/universal-apple-darwin -path '*/bundle/macos/Baton.app' -type d -print -quit 2>/dev/null)" 2>&1 | tail -3 || true
+APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Baton.app"
+[[ -d "${APP}" ]] || { echo "ERROR: signed app not found: ${APP}" >&2; exit 1; }
+codesign --verify --deep --strict --verbose=2 "${APP}"
+echo "==> Verifying notarization staple..."
+xcrun stapler validate -v "${FINAL}"
 
 # Unmount if auto-mounted
 hdiutil detach "/Volumes/Baton" 2>/dev/null || true

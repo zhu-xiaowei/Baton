@@ -1,0 +1,150 @@
+name: Package
+run-name: Package ${{ inputs.request_id }} at ${{ inputs.expected_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Commit to package
+        required: true
+        type: string
+      request_id:
+        description: Unique invocation ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Verify source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify dispatched commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
+
+  android:
+    name: Android APK
+    needs: source
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          set +o pipefail
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - run: rustup target add aarch64-linux-android
+      - run: npm ci
+      - name: Restore Android release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 is required" >&2; exit 1; }
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/baton.keystore
+          test -s src-tauri/gen/android/baton.keystore
+      - run: npm run build:android -- --ci
+      - name: Stage APK
+        run: |
+          apk="$(find src-tauri/gen/android -path '*/release/*' -name '*.apk' -type f -print -quit)"
+          test -n "$apk" && test -s "$apk"
+          mkdir -p artifacts
+          cp "$apk" artifacts/Baton.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baton-Android
+          path: artifacts/Baton.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS notarized DMG
+    needs: source
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: npm ci
+      - name: Sign, notarize, and stage DMG
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!name}" || { echo "$name is required" >&2; exit 1; }
+          done
+          certificate="$RUNNER_TEMP/baton.p12"
+          keychain="$RUNNER_TEMP/baton.keychain-db"
+          password="$(openssl rand -hex 32)"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 -D > "$certificate"
+          test -s "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          trap 'security delete-keychain "$keychain" || true' EXIT
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          npm run build:mac
+          dmg="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
+          test -n "$dmg" && test -s "$dmg"
+          mkdir -p artifacts
+          cp "$dmg" artifacts/Baton.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baton-macOS
+          path: artifacts/Baton.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows NSIS
+    needs: source
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Stage installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe -File | Select-Object -First 1
+          if (!$installer -or !$installer.Length) { throw "Windows installer missing" }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item $installer.FullName artifacts/Baton.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baton-Windows
+          path: artifacts/Baton.exe
+          if-no-files-found: error
+          retention-days: 7

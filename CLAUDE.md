@@ -420,10 +420,12 @@ npm run release:ios         — build + bump CFBundleVersion + upload TestFlight
 npm run release:ios:cloud   — trigger Xcode Cloud archive → TestFlight (any OS, e.g. Linux)
 npm run build:mac           — signed + notarized universal macOS DMG
 npm run build:windows       — cross-compiled Windows NSIS installer (.exe)
+npm run package             — Android/macOS/Windows into release/<version>/ (Linux uses GitHub Actions)
 ```
 
-All release scripts read secrets from `.env.local` (gitignored). See each script's
-header comment for required env vars, one-time setup, and output paths.
+The local macOS release script reads signing values from `.env.local`
+(gitignored). See `docs/package.md` for GitHub Actions secrets, the
+pushed-commit requirement, and platform-specific outputs.
 
 Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xiaowei/Baton`;
 workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
