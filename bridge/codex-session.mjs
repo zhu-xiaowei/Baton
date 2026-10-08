@@ -211,6 +211,7 @@ export function scanCodexRollout(filePath, options = {}) {
   let onlyMetadata = null;
   let matchingMetadata = null;
   let activeTurnId = '';
+  let reviewExitTurnId = '';
   const eventPreviews = [];
   const responsePreviews = [];
   let model = '';
@@ -247,9 +248,17 @@ export function scanCodexRollout(filePath, options = {}) {
       }
       if (payload.type === 'task_started' && payload.turn_id) {
         activeTurnId = payload.turn_id;
+        reviewExitTurnId = '';
+      }
+      if (payload.type === 'item_completed' && payload.item?.type === 'ExitedReviewMode') {
+        reviewExitTurnId = payload.turn_id || '';
       }
       if ((payload.type === 'task_complete' || payload.type === 'turn_aborted')
-        && payload.turn_id === activeTurnId) {
+        && (payload.turn_id === activeTurnId
+          // A review's final turn can omit task_started in the parent rollout.
+          || (payload.type === 'task_complete'
+            && reviewExitTurnId
+            && payload.turn_id === reviewExitTurnId))) {
         activeTurnId = '';
       }
     });

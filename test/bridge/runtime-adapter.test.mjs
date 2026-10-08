@@ -123,6 +123,26 @@ test('Codex permission status refresh preserves needs_input detail without a cou
   assert.equal(request.statusDeltas, undefined);
 });
 
+test('Codex stopped polling updates the original project after its worktree disappears', () => {
+  const oldProject = '-home-ec2-user-workspace-video-video-capability';
+  const result = codexRuntime.inspectActiveSession({
+    nativeSessionId: CODEX_SESSION_ID,
+    deviceName: 'test-ec2-ap',
+    projectHash: oldProject,
+    status: 'running',
+  }, {
+    runningInfo: { projects: new Set(), sessions: new Set() },
+    lastKnownStatus: new Map(),
+    findSessionFile: () => CODEX_FIXTURE,
+  });
+
+  assert.equal(result.session.project, oldProject);
+  assert.equal(result.session.status, 'completed');
+  assert.equal(result.statusDelta.projectHash, oldProject);
+  assert.equal(result.statusDelta.from, 'running');
+  assert.equal(result.statusDelta.to, 'completed');
+});
+
 test('capability detection is dispatched through runtime adapters', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-capabilities-'));
   const claudeProjects = path.join(root, 'claude-projects');
