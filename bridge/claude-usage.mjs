@@ -433,7 +433,9 @@ function scanClaudeStatsInWorker(options = {}) {
 
   const promise = new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./claude-stats-worker.mjs', import.meta.url), {
-      execArgv: process.execArgv.filter((arg) => !arg.startsWith('--input-type')),
+      // This worker needs no parent Node flags. Node 24 test runs can expose
+      // process.execArgv entries that Worker rejects as invalid.
+      execArgv: [],
       workerData: {
         projectsRoot,
         now: options.now instanceof Date ? options.now.toISOString() : options.now,
