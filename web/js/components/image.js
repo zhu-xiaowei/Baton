@@ -188,7 +188,8 @@ function renderStagedImages() {
         preview = '<button class="staged-image-preview" type="button" aria-label="Preview ' + name + '">'
           + '<img alt="' + name + '"></button>';
       }
-      card.innerHTML = preview + '<button class="img-remove" type="button" aria-label="Remove ' + name + '">&times;</button>';
+      card.innerHTML = preview + '<button class="img-remove" type="button" aria-label="Remove ' + name + '">'
+        + '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
       stagedAttachmentCards.set(entry, card);
     }
     const preview = card.firstElementChild;

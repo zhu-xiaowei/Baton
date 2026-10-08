@@ -1029,7 +1029,7 @@ html.native-mobile .slash-description {
 .staged-file { width: 156px; }
 .staged-file-preview, .staged-image-preview { display: flex; width: 100%; height: 100%; border: 1px solid #30363d; border-radius: inherit; background: transparent; color: inherit; cursor: pointer; }
 .staged-file-preview { flex-direction: column; justify-content: space-between; gap: 4px; padding: 6px 8px; text-align: left; }
-.staged-file-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; width: 100%; padding-right: 14px; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 15px; }
+.staged-file-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; width: 100%; padding-right: 36px; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 15px; }
 .staged-file-type { display: flex; align-items: center; gap: 5px; max-width: 100%; color: #8b949e; font-size: 11px; line-height: 14px; }
 .staged-file-type > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .staged-file-type .file-type-icon, .staged-file-type > svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -1037,6 +1037,7 @@ html.native-mobile .slash-description {
 .attachment-file .file-type-icon, .attachment-file > svg { width: 14px; height: 14px; flex-shrink: 0; }
 .attachment-preview-note { padding: 16px; color: #8b949e; }
 .attachment-pdf { display: block; width: 100%; height: 100%; border: 0; }
+.file-modal-body.pdf-preview-active { overflow: hidden; }
 .file-action { background: none; border: 0; border-radius: 50%; color: var(--action-icon-color); cursor: pointer; padding: 8px; flex-shrink: 0; transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent; }
 .file-action:not(:disabled):active,
 .project-files-entry:not(:disabled):active,
@@ -1060,12 +1061,14 @@ html.native-mobile .slash-description {
 .file-download-status:not(:empty) { padding-bottom: 8px; }
 #img-preview-row .img-thumb { width: 64px; }
 .staged-image-preview img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
-#img-preview-row .img-remove { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; background: rgba(48,54,61,0.82); color: #9da5ae; border: none; border-radius: 50%; font-size: 14px; line-height: 18px; text-align: center; cursor: pointer; display: block; z-index: 2; }
+#img-preview-row .img-remove { position: absolute; top: 0; right: 0; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; color: #c9d1d9; border: 0; cursor: pointer; z-index: 2; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+#img-preview-row .img-remove::before { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: rgba(48,54,61,0.9); }
+#img-preview-row .img-remove svg { position: relative; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; pointer-events: none; }
 .staged-file-preview:disabled, .staged-image-preview:disabled { cursor: default; }
 .staged-attachment button:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) {
   .staged-file-preview:not(:disabled):hover, .staged-image-preview:not(:disabled):hover { border-color: #6e7681; }
-  #img-preview-row .img-remove:hover { background: rgba(72,79,88,0.9); color: #c9d1d9; }
+  #img-preview-row .img-remove:hover::before { background: rgba(72,79,88,0.95); }
 }
 .staged-upload-overlay, .staged-error-overlay { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: inherit; background: rgba(13,17,23,0.78); color: #e6edf3; cursor: default; }
 .staged-upload-overlay { transition: opacity 180ms ease; }

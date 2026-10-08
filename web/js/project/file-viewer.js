@@ -18,6 +18,7 @@ function esc(s) {
 var _current = null;
 var _view = null;
 var _downloadTarget = null;
+var _pdfPreview = null;
 
 function downloadStatus(text) {
   const status = document.getElementById('file-download-status');
@@ -115,6 +116,8 @@ function overlay() { return document.getElementById('fileOverlay'); }
 function clearFileBody() {
   const body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  _pdfPreview?.destroy();
+  _pdfPreview = null;
   body.querySelectorAll('video, audio').forEach(media => {
     media.pause();
     media.removeAttribute('src');
@@ -382,6 +385,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
 
 async function showAttachment(key) {
   const token = ++_fileRequestToken;
+  let pdfFallbackUrl = '';
   try {
     if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
     const file = await window.api('/api/bridge/file-url/' + key);
@@ -398,7 +402,16 @@ async function showAttachment(key) {
     let preview = '<div class="attachment-preview-note">No inline preview for this file type. Download to open it.</div>';
     const url = escapeAttachment(file.previewUrl);
     if (file.previewType === 'application/pdf') {
-      preview = '<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>';
+      pdfFallbackUrl = url;
+      if (!window.ResizeObserver || !window.requestAnimationFrame) {
+        setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>');
+        return;
+      }
+      const { mountPdfPreview } = await import('../components/pdf-preview.js');
+      if (token !== _fileRequestToken) return;
+      _pdfPreview = mountPdfPreview(document.getElementById('fileOverlayBody'), file.previewUrl, file.size);
+      await _pdfPreview.ready;
+      return;
     } else if (file.previewType?.startsWith('image/')) {
       preview = '<img class="file-image" alt="" src="' + url + '">';
     } else if (file.previewType?.startsWith('video/')) {
@@ -408,7 +421,12 @@ async function showAttachment(key) {
     }
     setBody(preview);
   } catch (error) {
-    if (token === _fileRequestToken) setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
+    if (token !== _fileRequestToken) return;
+    if (pdfFallbackUrl) {
+      setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
+    } else {
+      setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
+    }
   }
 }
 
