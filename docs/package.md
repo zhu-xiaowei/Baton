@@ -4,7 +4,7 @@ Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repo
 
 On macOS the command uses the local Android, macOS, and Windows build scripts. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
-The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight. The macOS desktop DMG is a Tauri bundle, so the packaging workflow builds it on a macOS GitHub runner with a Developer ID certificate. The existing App Store Connect API key can also authenticate notarization. Tauri signs and notarizes the DMG; the release script requires a valid app signature and notarization staple before uploading it.
+The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight. The macOS desktop DMG is a Tauri bundle, so the packaging workflow builds it on a macOS GitHub runner with a Developer ID certificate. The existing App Store Connect API key authenticates notarization. Tauri signs and notarizes the app, then removes its staging copy when bundling the DMG. The release script separately notarizes and staples the DMG, mounts it, and verifies the app's signature and ticket before uploading.
 
 ## GitHub Actions setup
 

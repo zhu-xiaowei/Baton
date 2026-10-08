@@ -53,19 +53,47 @@ if [[ "${DMG}" != "${FINAL}" ]]; then
     mv "${DMG}" "${FINAL}"
 fi
 
-echo "==> Done: ${FINAL}"
-echo "    Size: $(du -h "${FINAL}" | cut -f1)"
-
-# Reject a bundle without a valid Developer ID signature or a stapled notarization.
-echo "==> Verifying signature..."
-APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Baton.app"
-[[ -d "${APP}" ]] || { echo "ERROR: signed app not found: ${APP}" >&2; exit 1; }
-codesign --verify --deep --strict --verbose=2 "${APP}"
-echo "==> Verifying notarization staple..."
+# Tauri notarizes and staples the app, then removes its staging copy while
+# bundling the DMG. Submit the DMG separately so it has its own stapled ticket.
+echo "==> Notarizing DMG..."
+if [[ -n "${APPLE_API_KEY:-}" ]]; then
+    NOTARY_ARGS=(--key "${APPLE_API_KEY_PATH}" --key-id "${APPLE_API_KEY}" --issuer "${APPLE_API_ISSUER}")
+else
+    NOTARY_ARGS=(--apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}")
+fi
+NOTARY_RESULT="$(xcrun notarytool submit "${FINAL}" "${NOTARY_ARGS[@]}" --wait --output-format json)"
+printf '%s' "${NOTARY_RESULT}" | node -e '
+  let input = "";
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => {
+    const result = JSON.parse(input);
+    if (result.status !== "Accepted") {
+      console.error(`ERROR: DMG notarization ${result.status} (${result.id})`);
+      process.exitCode = 1;
+    } else {
+      console.log(`    Accepted (${result.id})`);
+    }
+  });
+'
+echo "==> Stapling and verifying DMG..."
+xcrun stapler staple "${FINAL}"
 xcrun stapler validate -v "${FINAL}"
 
-# Unmount if auto-mounted
-hdiutil detach "/Volumes/Baton" 2>/dev/null || true
+# Verify the signed and stapled app from the finished DMG: Tauri deletes the
+# intermediate bundle/macos/Baton.app when it finishes the disk image.
+MOUNTPOINT="$(mktemp -d)"
+trap 'hdiutil detach "${MOUNTPOINT}" >/dev/null 2>&1 || true; rmdir "${MOUNTPOINT}" >/dev/null 2>&1 || true' EXIT
+hdiutil attach -quiet -readonly -nobrowse -mountpoint "${MOUNTPOINT}" "${FINAL}"
+APP="${MOUNTPOINT}/Baton.app"
+[[ -d "${APP}" ]] || { echo "ERROR: Baton.app not found in DMG" >&2; exit 1; }
+echo "==> Verifying app signature and notarization staple..."
+codesign --verify --deep --strict --verbose=2 "${APP}"
+xcrun stapler validate -v "${APP}"
+hdiutil detach "${MOUNTPOINT}"
+rmdir "${MOUNTPOINT}"
+trap - EXIT
 
 echo ""
+echo "==> Done: ${FINAL}"
+echo "    Size: $(du -h "${FINAL}" | cut -f1)"
 echo "==> DMG ready for distribution: ${FINAL}"
