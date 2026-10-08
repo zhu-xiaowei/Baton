@@ -807,6 +807,60 @@ test('a later completed turn supersedes an older unterminated desktop turn', () 
   }
 });
 
+test('review completion closes an open turn when the final turn has no start event', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [
+      { type: 'session_meta', payload: { id: SESSION_ID, cwd: '/tmp/baton-codex-target' } },
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'review-turn' } },
+      { type: 'event_msg', payload: { type: 'item_completed', turn_id: 'review-turn' } },
+      { type: 'event_msg', payload: {
+        type: 'item_completed',
+        turn_id: 'final-turn',
+        item: { type: 'ExitedReviewMode' },
+      } },
+      { type: 'response_item', payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: '<user_action>review</user_action>' }],
+      } },
+      { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'final-turn' } },
+    ];
+    const runningInfo = { projects: new Set(), sessions: new Set([SESSION_ID]) };
+    fs.writeFileSync(target, `${entries.slice(0, -1).map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    assert.equal(scanCodexRollout(target, { runningInfo }).session.status, 'running');
+    fs.appendFileSync(target, `${JSON.stringify(entries.at(-1))}\n`);
+    assert.equal(scanCodexRollout(target, { runningInfo }).session.status, 'completed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('completion of an older turn does not close a newer active turn', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [
+      { type: 'session_meta', payload: { id: SESSION_ID, cwd: '/tmp/baton-codex-target' } },
+      { type: 'event_msg', payload: { type: 'user_message', message: 'Continue working' } },
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'old-turn' } },
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'new-turn' } },
+      { type: 'event_msg', payload: {
+        type: 'item_completed',
+        turn_id: 'old-turn',
+        item: { type: 'AgentMessage' },
+      } },
+      { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'old-turn' } },
+    ];
+    fs.writeFileSync(target, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    const scanned = scanCodexRollout(target, {
+      runningInfo: { projects: new Set(), sessions: new Set([SESSION_ID]) },
+    });
+    assert.equal(scanned.session.status, 'running');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('recursive discovery returns one catalog row and tolerates a half-written tail', () => {
   const { root } = tempRollout();
   try {

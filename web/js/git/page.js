@@ -14,6 +14,25 @@ var onBack;
 var onFiles;
 var onRefresh;
 var returnFocus;
+var scrollLayoutPending = false;
+var scrollbarProbe;
+
+function refreshScrollLayout() {
+  if (page.hidden || scrollLayoutPending
+    || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
+  scrollLayoutPending = true;
+  requestAnimationFrame(function () {
+    scrollLayoutPending = false;
+    if (page.hidden) return;
+    // Keep controls at the same width as the scrollport gains or loses its
+    // scrollbar. The spare space stays inside the list so headers can paint it.
+    var nativeWidth = scrollbarProbe.offsetWidth - scrollbarProbe.clientWidth;
+    var styledWidth = parseFloat(getComputedStyle(scrollbarProbe, '::-webkit-scrollbar').width) || 0;
+    var occupiedWidth = content.offsetWidth - content.clientWidth;
+    var spacer = Math.max(0, Math.max(nativeWidth, styledWidth) - occupiedWidth);
+    content.style.setProperty('--git-scroll-spacer', spacer + 'px');
+  });
+}
 
 function ensurePage() {
   if (page) return;
@@ -42,6 +61,21 @@ function ensurePage() {
   groupsContent = page.querySelector('.git-status-groups');
   commitBarContent = page.querySelector('.git-commit-bar');
   historyContent = page.querySelector('.git-history');
+  scrollbarProbe = document.createElement('div');
+  scrollbarProbe.style.cssText = 'position:absolute;top:-1000px;left:-1000px;width:100px;height:100px;overflow:scroll;visibility:hidden;pointer-events:none';
+  page.appendChild(scrollbarProbe);
+  if (typeof ResizeObserver !== 'undefined') {
+    var scrollResizeObserver = new ResizeObserver(refreshScrollLayout);
+    scrollResizeObserver.observe(content);
+    scrollResizeObserver.observe(content.firstElementChild);
+  }
+  var scrollMutationObserver = new MutationObserver(refreshScrollLayout);
+  scrollMutationObserver.observe(content.firstElementChild, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'hidden'],
+  });
   page.querySelector('.git-status-back').addEventListener('click', function () { onBack?.(); });
   page.querySelector('.workspace-switch').addEventListener('click', function () { onFiles?.(); });
   projectLabel.addEventListener('click', function () { onRefresh?.(); });
@@ -62,6 +96,7 @@ export function openGitPage(options) {
   onRefresh = options.onRefresh;
   page.hidden = false;
   window.attachScrollIndicator?.(content);
+  refreshScrollLayout();
 }
 
 export function closeGitPage() {

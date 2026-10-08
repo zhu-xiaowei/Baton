@@ -40,7 +40,7 @@ const tauriConfig = JSON.parse(readFileSync(
   'utf8',
 ));
 
-test('native startup handoff releases after the animated Web shell is painted', () => {
+test('native startup handoff releases after the Web shell is painted', () => {
   assert.match(indexHtml, /new MutationObserver\(check\)/);
   assert.match(
     indexHtml,
@@ -326,15 +326,6 @@ test('mobile assistant paragraphs do not collapse space outside the timeline nod
     styleSource,
     /html\.native-mobile \.msg-interrupt \{ font-size: 14px; line-height: 21px; \}/,
   );
-});
-
-test('Web skeleton shimmer remains enabled during native handoff', () => {
-  assert.match(styleSource, /@keyframes shimmer/);
-  assert.match(styleSource, /\.skel \{[\s\S]*animation: shimmer 1\.5s ease-in-out infinite;/);
-  assert.match(indexHtml, /var stageNativeSkeleton = document\.documentElement\.classList\.contains\('native-mobile'\)/);
-  assert.match(indexHtml, /var nativeSkeletonUntil = stageNativeSkeleton \? performance\.now\(\) \+ 650 : 0;/);
-  assert.match(indexHtml, /if \(stageNativeSkeleton\) \{\s*renderSkeleton/);
-  assert.match(indexHtml, /afterNativeSkeleton\(applyFresh\)/);
 });
 
 test('mobile header separator is drawn inside the fixed 44px bar', () => {

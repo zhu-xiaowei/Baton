@@ -10,14 +10,11 @@
 .git-status-branch-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .git-status-sync{flex:0 0 auto;color:#8b949e;font-size:12px}
 .git-status-sync:empty{display:none}
-.git-status-content{flex:1;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-.git-status-list{padding-bottom:var(--sab,env(safe-area-inset-bottom,0px))}
-@media(hover:hover) and (pointer:fine){
-  .git-status-content{scrollbar-gutter:stable}
-  .git-section-header::after{content:"";position:absolute;top:0;bottom:0;left:100%;width:24px;background:#1c2128;pointer-events:none}
-}
+.git-status-content{flex:1;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.git-status-list{padding-right:var(--git-scroll-spacer,0px);padding-bottom:var(--sab,env(safe-area-inset-bottom,0px))}
 .git-section{border-bottom:1px solid #30363d}
 .git-section-header{position:sticky;top:0;z-index:3;min-height:44px;display:flex;align-items:center;padding:0;background:#1c2128}
+.git-section-header::after{content:"";position:absolute;top:0;bottom:0;left:100%;width:var(--git-scroll-spacer,0px);background:#1c2128;pointer-events:none}
 .git-section-toggle{min-width:0;flex:1;display:flex;align-items:center;gap:7px;height:44px;padding:0 0 0 10px;border:0;background:transparent;color:#e6edf3;text-align:left;font-size:14px;font-weight:500}
 @media(hover:hover) and (pointer:fine){.git-section-toggle{padding-left:12px}}
 .git-section-toggle svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;pointer-events:none;transition:transform .15s ease}

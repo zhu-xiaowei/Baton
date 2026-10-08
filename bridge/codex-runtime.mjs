@@ -9,6 +9,7 @@ import {
   getCodexRunningInfo,
   inspectCodexSession,
 } from './codex-session.mjs';
+import { readableProjectName } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import {
   binaryVersion,
@@ -100,7 +101,7 @@ export const codexRuntime = defineRuntimeAdapter({
   inspectActiveSession(active, context) {
     const nativeSessionId = active.nativeSessionId || active.sessionId;
     const sessionId = storageSessionId('codex', nativeSessionId);
-    const filePath = findCodexSessionFile(nativeSessionId);
+    const filePath = (context.findSessionFile || findCodexSessionFile)(nativeSessionId);
     let session;
     if (!filePath || !fs.existsSync(filePath)) {
       session = {
@@ -122,6 +123,12 @@ export const codexRuntime = defineRuntimeAdapter({
         runtimeOwned: codexInteraction.owns(nativeSessionId),
       });
       if (!session) return null;
+    }
+    // A deleted worktree changes what projectHashFromCwd can resolve. Settle
+    // the active row under its existing key instead of creating a second row.
+    if (active.projectHash && session.project !== active.projectHash) {
+      session.project = active.projectHash;
+      session.projectName = readableProjectName(active.projectHash);
     }
     if (session.status === active.status) return null;
 
