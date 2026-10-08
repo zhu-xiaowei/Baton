@@ -2,10 +2,23 @@
 # Build Android APK, macOS DMG, and Windows EXE, then copy each into
 # release/<version>/ (version read from package.json) as Baton.{apk,dmg,exe}.
 # Each platform builds independently — one failing never blocks the others.
-# Invoked by the /package slash command. iOS is excluded (TestFlight flow).
+# Invoked by /package and $package. iOS is excluded (TestFlight flow).
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  exec node scripts/package-cloud.mjs "$@"
+fi
+
+if (( $# > 0 )); then
+  echo "Usage: bash scripts/package-all.sh" >&2
+  exit 2
+fi
+
+if [[ -f .env.local ]]; then
+  set -a; source .env.local; set +a
+fi
 
 # Populate env that interactive shells (.zshrc) provide but /package, CI, cron do not.
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"                    # Android needs cargo on PATH
@@ -24,12 +37,13 @@ echo "==> Packaging Baton v${VERSION} -> ${DEST}/"
 RESULTS=()
 
 # Newest matching file (BSD/macOS-compatible; paths here have no spaces).
-newest() { ls -t $(find "$@" 2>/dev/null) 2>/dev/null | head -1; }
+newest() { find "$@" 2>/dev/null | while IFS= read -r file; do stat -f '%m %N' "$file"; done | sort -nr | head -1 | cut -d' ' -f2-; }
 
 package_one() { # label  build-cmd  out-name  find-args...
   local label="$1" cmd="$2" out="$3"; shift 3
   echo ""
   echo "================ ${label} ================"
+  rm -f "${DEST}/${out}"
   if ! eval "${cmd}"; then RESULTS+=("${label}: BUILD FAILED"); return; fi
   local artifact; artifact="$(newest "$@")"
   if [[ -z "${artifact}" || ! -f "${artifact}" ]]; then
@@ -49,3 +63,6 @@ package_one "Windows" "npm run build:windows" "Baton.exe" \
 echo ""
 echo "==================== SUMMARY (v${VERSION}) ===================="
 for r in "${RESULTS[@]}"; do echo "  - ${r}"; done
+if ((${#RESULTS[@]} != 3)) || printf '%s\n' "${RESULTS[@]}" | grep -Eq 'BUILD FAILED|artifact not found'; then
+  exit 1
+fi

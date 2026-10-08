@@ -6,12 +6,16 @@ allowed-tools: Bash(./scripts/package-all.sh), Bash(bash scripts/package-all.sh)
 Build the release packages for the current `package.json` version and copy them
 into `release/<version>/` as `Baton.apk`, `Baton.dmg`, `Baton.exe`.
 
-Run the packaging script (it reads the version itself, builds all three
-platforms independently, and copies the artifacts):
+Run the packaging script (it reads the version itself and collects all three
+platforms independently):
 
 ```
 bash scripts/package-all.sh
 ```
+
+On macOS the script builds locally. On Linux it dispatches the native GitHub
+Actions workflow for the pushed source commit and downloads the artifacts.
+See `docs/package.md` for one-time GitHub secrets and other prerequisites.
 
 This takes several minutes (each platform compiles Rust). When it finishes,
 report the SUMMARY block verbatim — which platforms succeeded, where each file
