@@ -544,8 +544,7 @@
     markFirstWebFrameReady();
   }
 
-  // First-frame skeleton mirrors the final content geometry. Once it has painted,
-  // the native overlay fades to this animated Web skeleton.
+  // Without cache, the Web skeleton mirrors the native launch layout.
   function skelCard() {
     return '<div class="active-card skeleton-card">'
       + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
@@ -590,26 +589,10 @@
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
     var usePagePreview = !options.resetScroll && !!window.__returningHome;
-    var stageNativeSkeleton = document.documentElement.classList.contains('native-mobile')
-      && !window.__inlineRendered
-      && !usePagePreview;
-    // The native LaunchScreen is static. Keep the existing Web shimmer visible
-    // briefly after handoff so cached data cannot replace it in the same frame.
-    var nativeSkeletonUntil = stageNativeSkeleton ? performance.now() + 650 : 0;
-    var cachedRenderTimer = null;
     var isVisible = options.isCurrent || function () {
       return !!document.querySelector('.top-gear');
     };
     var isCurrent = function () { return version === homeLoadVersion && isVisible(); };
-
-    function afterNativeSkeleton(fn) {
-      var delay = nativeSkeletonUntil - performance.now();
-      if (delay <= 0) {
-        fn();
-        return null;
-      }
-      return setTimeout(fn, Math.ceil(delay));
-    }
 
     setSync(true);
     whenContentReady(function () {
@@ -622,17 +605,7 @@
         : usePagePreview && (window.__homePreviewRestored || restoreReturningHomePreview());
       if (restoredPreview) setSync(true);
       if (!restoredPreview) {
-        if (stageNativeSkeleton) {
-          renderSkeleton(!!options.resetScroll);
-          if (hasCached) {
-            cachedRenderTimer = afterNativeSkeleton(function () {
-              cachedRenderTimer = null;
-              if (isCurrent() && !window.__inlineRendered) {
-                renderInline(cached.active, cached.devices);
-              }
-            });
-          }
-        } else if (hasCached) renderInline(cached.active, cached.devices);
+        if (hasCached) renderInline(cached.active, cached.devices);
         else renderSkeleton(!!options.resetScroll);
       }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
@@ -643,34 +616,21 @@
         whenContentReady(function () {
           if (!isCurrent()) { resolve(fresh); return; }
           if (!fresh[0] || !fresh[1]) { reject(new Error('Home refresh failed')); return; }
-          var applyFresh = function () {
-            if (!isCurrent()) { resolve(fresh); return; }
-            if (options.appendProjects) {
-              fresh[0] = appendRecentProjects(fresh[0]);
-            } else {
-              var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
-              var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
-              if (!window.__inlineRendered || freshRaw !== cachedRaw) {
-                var content = document.getElementById('content');
-                var keepScroll = content ? content.scrollTop : 0;
-                renderInline(fresh[0], fresh[1]);
-                if (content) content.scrollTop = keepScroll;
-              }
-            }
-            writeCache(fresh[0], fresh[1]);
-            if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
-            resolve(fresh);
-          };
-
-          if (stageNativeSkeleton && performance.now() < nativeSkeletonUntil) {
-            if (cachedRenderTimer) {
-              clearTimeout(cachedRenderTimer);
-              cachedRenderTimer = null;
-            }
-            afterNativeSkeleton(applyFresh);
+          if (options.appendProjects) {
+            fresh[0] = appendRecentProjects(fresh[0]);
           } else {
-            applyFresh();
+            var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
+            var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+            if (!window.__inlineRendered || freshRaw !== cachedRaw) {
+              var content = document.getElementById('content');
+              var keepScroll = content ? content.scrollTop : 0;
+              renderInline(fresh[0], fresh[1]);
+              if (content) content.scrollTop = keepScroll;
+            }
           }
+          writeCache(fresh[0], fresh[1]);
+          if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
+          resolve(fresh);
         });
       });
     }).catch(function () {
