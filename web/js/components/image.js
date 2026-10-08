@@ -2,6 +2,7 @@
 import { state } from '../state.js';
 import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
+import { showImageViewer, closeImageViewer } from './image-viewer.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -241,10 +242,7 @@ function showGallery() {
   var img = images[galleryIndex];
   if (!img || !img.dataUrl) return;
   var overlay = document.getElementById('imgOverlay');
-  var overlayImg = document.getElementById('imgOverlayImg');
-  overlayImg.src = img.dataUrl;
-  overlay.style.display = 'flex';
-  overlay.onclick = null;
+  showImageViewer(img.dataUrl, true);
   // Build nav buttons if multiple
   var nav = overlay.querySelector('.gallery-nav');
   if (nav) nav.remove();
@@ -256,7 +254,6 @@ function showGallery() {
       + '</div>';
     overlay.insertAdjacentHTML('beforeend', navHtml);
   }
-  overlay.onclick = function (e) { if (e.target === overlay) { overlay.style.display = 'none'; } };
 }
 
 function galleryPrev() { if (galleryIndex > 0) { galleryIndex--; showGallery(); } }
@@ -267,7 +264,7 @@ document.addEventListener('keydown', function (e) {
   if (!overlay || overlay.style.display !== 'flex') return;
   if (e.key === 'ArrowLeft') { e.preventDefault(); galleryPrev(); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); galleryNext(); }
-  else if (e.key === 'Escape') overlay.style.display = 'none';
+  else if (e.key === 'Escape') closeImageViewer();
 });
 
 // Function bridges for inline HTML handlers (state.stagedImages lives in state.js).
