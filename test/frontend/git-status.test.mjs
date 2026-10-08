@@ -148,8 +148,11 @@ test('Git file rows keep the filename, directory, status, and actions on one com
   assert.doesNotMatch(css, /git-action:first-child:nth-last-child\(2\) svg/);
   assert.match(css, /\.git-action\[data-operation="discard"\] svg\{transform:translateX\(2px\)\}/);
   assert.match(css, /\.git-action\[data-operation="stage"\] svg,[\s\S]*?\.git-action\[data-operation="unstage"\] svg\{transform:translateX\(-2px\)\}/);
-  assert.match(css, /\.git-status-content\{[^}]*overflow-x:hidden;overflow-y:auto/);
-  assert.match(css, /@media\(hover:hover\) and \(pointer:fine\)\{[\s\S]*?\.git-status-content\{scrollbar-gutter:stable\}[\s\S]*?\.git-section-header::after\{[^}]*left:100%;[^}]*width:24px;[^}]*background:#1c2128/);
+  assert.match(css, /\.git-status-content\{[^}]*overflow-x:hidden;overflow-y:auto;scrollbar-gutter:auto/);
+  assert.doesNotMatch(css, /\.git-status-content\{[^}]*scrollbar-gutter:stable/);
+  assert.match(css, /\.git-status-list\{padding-right:var\(--git-scroll-spacer,0px\)/);
+  assert.match(css, /\.git-section-header::after\{[^}]*left:100%;width:var\(--git-scroll-spacer,0px\);background:#1c2128/);
+  assert.doesNotMatch(css, /\.git-status-content::-webkit-scrollbar\{display:none\}/);
   assert.match(css, /\.git-section\{border-bottom:1px solid #30363d\}/);
   dom.window.close();
   delete globalThis.document;
