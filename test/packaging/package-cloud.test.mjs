@@ -33,7 +33,9 @@ const path = require('path');
 const args = process.argv.slice(2);
 const root = process.env.PACKAGE_TEST_DIR;
 if (args[0] === 'secret' && args[1] === 'list') {
-  process.stdout.write(JSON.stringify(['ANDROID_KEYSTORE_BASE64','MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPLE_SIGNING_IDENTITY','APPSTORE_KEY_ID','APPSTORE_ISSUER_ID','APPSTORE_PRIVATE_KEY_BASE64'].map(name => ({name}))));
+  process.stdout.write(JSON.stringify(['ANDROID_KEYSTORE_BASE64','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_PASSWORD','MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPSTORE_PRIVATE_KEY_BASE64'].map(name => ({name}))));
+} else if (args[0] === 'variable' && args[1] === 'list') {
+  process.stdout.write(JSON.stringify((process.env.PACKAGE_TEST_MISSING_VARIABLES ? [] : ['APPLE_SIGNING_IDENTITY','APPSTORE_KEY_ID','APPSTORE_ISSUER_ID']).map(name => ({name}))));
 } else if (args[0] === 'workflow' && args[1] === 'run') {
   fs.writeFileSync(path.join(root, 'request-id'), args.find(arg => arg.startsWith('request_id=')).slice(11));
 } else if (args[0] === 'run' && args[1] === 'list') {
@@ -105,4 +107,12 @@ test('dry run checks the source without dispatching', (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Dry run/);
   assert.ok(!fs.existsSync(path.join(root, 'request-id')));
+});
+
+test('dry run identifies missing GitHub variables separately from secrets', (t) => {
+  const root = fixture(t);
+  const result = run(root, { PACKAGE_TEST_MISSING_VARIABLES: '1' }, ['--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Missing GitHub Actions variables: APPLE_SIGNING_IDENTITY, APPSTORE_KEY_ID, APPSTORE_ISSUER_ID/);
+  assert.doesNotMatch(result.stderr, /Missing GitHub Actions secrets:/);
 });

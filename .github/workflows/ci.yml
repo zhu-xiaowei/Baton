@@ -38,6 +38,9 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      # This job creates a disposable CI keystore with these test passwords.
+      ANDROID_KEYSTORE_PASSWORD: baton123
+      ANDROID_KEY_PASSWORD: baton123
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

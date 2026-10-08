@@ -19,9 +19,11 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("../baton.keystore")
-            storePassword = "baton123"
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                ?: error("ANDROID_KEYSTORE_PASSWORD is required for Android signing")
             keyAlias = "baton"
-            keyPassword = "baton123"
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                ?: error("ANDROID_KEY_PASSWORD is required for Android signing")
         }
     }
     defaultConfig {
