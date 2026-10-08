@@ -115,6 +115,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
       - name: Sign, notarize, and stage DMG
         env:
+          TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ vars.APPSTORE_KEY_ID }}
           APPLE_API_ISSUER: ${{ vars.APPSTORE_ISSUER_ID }}
