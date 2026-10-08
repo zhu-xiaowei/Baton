@@ -12,6 +12,7 @@ import { ClaudePool } from '../../bridge/headless.mjs';
 import {
   getSessionStatus,
   resolveAgentMetadata,
+  sessionIdFromProcessArgs,
   statusFromEntry,
 } from '../../bridge/session.mjs';
 import { preferPendingInteraction } from '../../bridge/watcher.mjs';
@@ -189,6 +190,26 @@ test('fresh end_turn completes immediately after running content', () => {
       getSessionStatus(sessionId, fixture.filePath, runningInfo),
       'completed',
     );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('process args identify both resumed and Bridge-created sessions', () => {
+  const resumed = '47474747-4747-4474-8474-474747474747';
+  const created = '48484848-4848-4484-8484-484848484848';
+  const prefix = 'u 1 0.0 0.1 0 0 ? Sl 06:00 0:01 /home/u/.local/bin/claude -p --input-format stream-json';
+  assert.equal(sessionIdFromProcessArgs(`${prefix} --resume ${resumed}`), resumed);
+  assert.equal(sessionIdFromProcessArgs(`${prefix} --session-id ${created}`), created);
+  assert.equal(sessionIdFromProcessArgs('u 2 0.0 0.1 0 0 ? Sl 06:00 0:01 claude'), null);
+
+  const fixture = sessionFixture(created, 'running');
+  const runningInfo = {
+    projects: new Set([fixture.project]),
+    sessions: new Set([resumed, created]),
+  };
+  try {
+    assert.equal(getSessionStatus(created, fixture.filePath, runningInfo), 'running');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
