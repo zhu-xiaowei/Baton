@@ -86,6 +86,7 @@ trap 'hdiutil detach "${MOUNTPOINT}" >/dev/null 2>&1 || true; rmdir "${MOUNTPOIN
 hdiutil attach -quiet -readonly -nobrowse -mountpoint "${MOUNTPOINT}" "${FINAL}"
 APP="${MOUNTPOINT}/Baton.app"
 [[ -d "${APP}" ]] || { echo "ERROR: Baton.app not found in DMG" >&2; exit 1; }
+[[ -s "${MOUNTPOINT}/.DS_Store" ]] || { echo "ERROR: DMG Finder layout missing (.DS_Store)" >&2; exit 1; }
 echo "==> Verifying app signature and notarization staple..."
 codesign --verify --deep --strict --verbose=2 "${APP}"
 xcrun stapler validate -v "${APP}"
