@@ -377,10 +377,15 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   return contentStatus;
 }
 
+// Existing sessions run with --resume; Bridge-created ones with --session-id.
+export function sessionIdFromProcessArgs(line) {
+  return line.match(/--(?:resume|session-id)\s+([0-9a-f-]{36})/)?.[1] || null;
+}
+
 /**
  * Detect running CC processes. Returns { projects: Set<hash>, sessions: Set<sessionId> }
  * - projects: project directory hashes with active CC processes
- * - sessions: exact session IDs extracted from --resume args
+ * - sessions: exact session IDs extracted from --resume / --session-id args
  *
  * On WSL watching /mnt/ paths: Windows CC processes are invisible to Linux ps,
  * so we return empty sets and rely on mtime heuristic (same as VS Code CC).
@@ -401,9 +406,8 @@ export function getRunningInfo() {
       const pid = parts[1];
       if (!pid || isNaN(pid)) continue;
 
-      // Extract --resume sessionId from process args
-      const resumeMatch = line.match(/--resume\s+([0-9a-f-]{36})/);
-      if (resumeMatch) sessions.add(resumeMatch[1]);
+      const sid = sessionIdFromProcessArgs(line);
+      if (sid) sessions.add(sid);
 
       try {
         const cwd = process.platform === 'darwin'
