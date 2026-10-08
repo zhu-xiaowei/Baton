@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests and frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm ci --prefix bridge
+      - run: python3 -m pip install -r server/src/requirements.txt pytest
+      - run: npm run test:bridge && npm run test:codex
+      - run: node --no-experimental-global-navigator --test test/frontend/*.test.mjs
+      - run: npm run test:server && npm run test:packaging
+      - run: npm run build
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - run: rustup target add aarch64-linux-android
+      - run: npm ci
+      - name: Create CI signing key
+        run: >-
+          keytool -genkeypair -noprompt -keystore src-tauri/gen/android/baton.keystore
+          -storepass baton123 -keypass baton123 -alias baton -keyalg RSA -keysize 2048
+          -validity 1 -dname "CN=Baton CI"
+      - run: npm run build:android -- --ci
+
+  ios:
+    name: iOS archive
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - run: rustup target add aarch64-apple-ios
+      - run: npm ci
+      - run: mkdir -p src-tauri/gen/apple/assets
+      - run: npm run tauri -- ios build --ci --no-sign --archive-only
+
+  macos:
+    name: macOS DMG
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: npm ci
+      - run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
+
+  windows:
+    name: Windows NSIS
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis

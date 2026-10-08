@@ -1,0 +1,32 @@
+name: PR title lint
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            ci
+            test
+            tests
+            build
+            perf
+            refactor
+            style
+          requireScope: false

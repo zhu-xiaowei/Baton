@@ -167,7 +167,7 @@ test('push publishes, pushes to the upstream and reports a rejected remote witho
   const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-remote-'));
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'agentpeek-other-'));
   try {
-    git(remote, ['init', '-q', '--bare']);
+    git(remote, ['init', '-q', '--bare', '-b', 'main']);
     git(root, ['remote', 'add', 'origin', remote]);
     const published = await call(root, 'push');
     assert.equal(published.ok, true);
