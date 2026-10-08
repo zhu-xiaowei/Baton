@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { userInfo } from 'node:os';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { DirectDataChannel } from './terminal-direct-protocol.mjs';
-import { dimensions, inputBytes, spawnTerminal } from './terminal-pty.mjs';
+import { defaultShell, dimensions, inputBytes, spawnTerminal } from './terminal-pty.mjs';
 import { resolveProjectPath } from './project/git-context.mjs';
 
 const MAX_CLIENT_BYTES = 512 * 1024;
@@ -120,8 +119,9 @@ export function createSharedTerminals(options) {
     mirror.loadAddon(serializer);
     session.mirror = mirror;
     session.serializer = serializer;
-    const process = spawnTerminal({ shell: options.shell || userInfo().shell || '/bin/bash',
-      shellArgs: options.shellArgs || ['-l', '-i'], cwd: session.cwd, ...size });
+    const shell = defaultShell();
+    const process = spawnTerminal({ shell: options.shell || shell.shell,
+      shellArgs: options.shellArgs || shell.shellArgs, cwd: session.cwd, ...size });
     session.process = process;
     for (const [code, color] of [[10, 'e6e6/eded/f3f3'], [11, '0d0d/1111/1717'], [12, 'e6e6/eded/f3f3']]) {
       mirror.parser.registerOscHandler(code, data => {
