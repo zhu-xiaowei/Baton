@@ -71,18 +71,21 @@ const destination = path.join(root, 'release', version);
 const availableSecrets = new Set(JSON.parse(gh(['secret', 'list', '--json', 'name'])).map((item) => item.name));
 const neededSecrets = [
   'ANDROID_KEYSTORE_BASE64',
+  'ANDROID_KEYSTORE_PASSWORD',
+  'ANDROID_KEY_PASSWORD',
   'MACOS_CERTIFICATE_P12_BASE64',
   'MACOS_CERTIFICATE_PASSWORD',
-  'APPLE_SIGNING_IDENTITY',
-  'APPSTORE_KEY_ID',
-  'APPSTORE_ISSUER_ID',
   'APPSTORE_PRIVATE_KEY_BASE64',
 ];
+const availableVariables = new Set(JSON.parse(gh(['variable', 'list', '--json', 'name'])).map((item) => item.name));
+const neededVariables = ['APPLE_SIGNING_IDENTITY', 'APPSTORE_KEY_ID', 'APPSTORE_ISSUER_ID'];
 const missingSecrets = neededSecrets.filter((name) => !availableSecrets.has(name));
+const missingVariables = neededVariables.filter((name) => !availableVariables.has(name));
 if (missingSecrets.length) {
   console.warn(`Missing GitHub Actions secrets: ${missingSecrets.join(', ')}`);
-  console.warn('Affected platforms will fail; see docs/package.md for setup.');
 }
+if (missingVariables.length) console.warn(`Missing GitHub Actions variables: ${missingVariables.join(', ')}`);
+if (missingSecrets.length || missingVariables.length) console.warn('Affected platforms will fail; see docs/package.md for setup.');
 console.log(`==> Packaging Baton v${version} from ${repo}@${branch} (${sha.slice(0, 7)})`);
 if (dryRun) {
   console.log('Dry run: source and version checked; no workflow started.');

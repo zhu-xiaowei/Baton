@@ -16,6 +16,10 @@ if (( $# > 0 )); then
   exit 2
 fi
 
+if [[ -f .env.local ]]; then
+  set -a; source .env.local; set +a
+fi
+
 # Populate env that interactive shells (.zshrc) provide but /package, CI, cron do not.
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"                    # Android needs cargo on PATH
 export LANG="${LANG:-en_US.UTF-8}" LC_ALL="${LC_ALL:-en_US.UTF-8}"   # makensis std::bad_alloc under C locale
