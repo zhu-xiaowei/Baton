@@ -33,7 +33,7 @@ const path = require('path');
 const args = process.argv.slice(2);
 const root = process.env.PACKAGE_TEST_DIR;
 if (args[0] === 'secret' && args[1] === 'list') {
-  process.stdout.write(JSON.stringify(['ANDROID_KEYSTORE_BASE64','MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPLE_SIGNING_IDENTITY','APPLE_ID','APPLE_PASSWORD','APPLE_TEAM_ID'].map(name => ({name}))));
+  process.stdout.write(JSON.stringify(['ANDROID_KEYSTORE_BASE64','MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPLE_SIGNING_IDENTITY','APPSTORE_KEY_ID','APPSTORE_ISSUER_ID','APPSTORE_PRIVATE_KEY_BASE64'].map(name => ({name}))));
 } else if (args[0] === 'workflow' && args[1] === 'run') {
   fs.writeFileSync(path.join(root, 'request-id'), args.find(arg => arg.startsWith('request_id=')).slice(11));
 } else if (args[0] === 'run' && args[1] === 'list') {

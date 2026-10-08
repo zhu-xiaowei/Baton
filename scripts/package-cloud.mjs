@@ -74,9 +74,9 @@ const neededSecrets = [
   'MACOS_CERTIFICATE_P12_BASE64',
   'MACOS_CERTIFICATE_PASSWORD',
   'APPLE_SIGNING_IDENTITY',
-  'APPLE_ID',
-  'APPLE_PASSWORD',
-  'APPLE_TEAM_ID',
+  'APPSTORE_KEY_ID',
+  'APPSTORE_ISSUER_ID',
+  'APPSTORE_PRIVATE_KEY_BASE64',
 ];
 const missingSecrets = neededSecrets.filter((name) => !availableSecrets.has(name));
 if (missingSecrets.length) {

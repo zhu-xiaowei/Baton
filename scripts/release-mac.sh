@@ -3,8 +3,10 @@
 #
 # Prerequisites:
 #   - "Developer ID Application" certificate in Keychain
-#   - App-Specific Password generated at https://account.apple.com
-#   - Env vars in .env.local: APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+#   - App Store Connect API key (APPLE_API_KEY, APPLE_API_ISSUER,
+#     APPLE_API_KEY_PATH) or Apple ID credentials (APPLE_ID,
+#     APPLE_PASSWORD, APPLE_TEAM_ID)
+#   - APPLE_SIGNING_IDENTITY, provided in the environment or .env.local
 #
 # Output: src-tauri/target/release/bundle/dmg/Baton_<version>_aarch64.dmg
 
@@ -17,9 +19,16 @@ if [[ -f .env.local ]]; then
 fi
 
 : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY in .env.local}"
-: "${APPLE_ID:?Set APPLE_ID in .env.local}"
-: "${APPLE_PASSWORD:?Set APPLE_PASSWORD in .env.local}"
-: "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in .env.local}"
+if [[ -n "${APPLE_API_KEY:-}" || -n "${APPLE_API_ISSUER:-}" || -n "${APPLE_API_KEY_PATH:-}" ]]; then
+    : "${APPLE_API_KEY:?Set APPLE_API_KEY}"
+    : "${APPLE_API_ISSUER:?Set APPLE_API_ISSUER}"
+    : "${APPLE_API_KEY_PATH:?Set APPLE_API_KEY_PATH}"
+    [[ -f "${APPLE_API_KEY_PATH}" ]] || { echo "ERROR: Apple API key file not found" >&2; exit 1; }
+else
+    : "${APPLE_ID:?Set APPLE_ID in .env.local}"
+    : "${APPLE_PASSWORD:?Set APPLE_PASSWORD in .env.local}"
+    : "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in .env.local}"
+fi
 
 if [[ -f "$HOME/.cargo/env" ]]; then
     source "$HOME/.cargo/env"
@@ -27,7 +36,6 @@ fi
 
 echo "==> Building macOS universal DMG with signing + notarization..."
 echo "    Identity: ${APPLE_SIGNING_IDENTITY}"
-echo "    Team ID:  ${APPLE_TEAM_ID}"
 
 npx tauri build --target universal-apple-darwin --bundles dmg
 
