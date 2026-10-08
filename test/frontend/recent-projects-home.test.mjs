@@ -39,9 +39,13 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for home');
 }
 
-function harness({ cache, fetchData } = {}) {
+function harness({ cache, fetchData, nativeMobile = false } = {}) {
   const requests = [];
-  const dom = new JSDOM(html, {
+  const page = nativeMobile
+    ? html.replace('<script src="/native-mobile.js"></script>',
+      '<script>document.documentElement.classList.add("native-mobile")</script>')
+    : html;
+  const dom = new JSDOM(page, {
     url: 'http://baton.test/index.html', runScripts: 'dangerously', pretendToBeVisual: true,
     beforeParse(win) {
       win.localStorage.setItem('_ak', win.btoa('fixture-key'));
@@ -55,6 +59,31 @@ function harness({ cache, fetchData } = {}) {
   });
   return { dom, win: dom.window, doc: dom.window.document, requests };
 }
+
+test('native mobile startup shows cached home content before refresh completes', async () => {
+  const pending = new Promise(() => {});
+  const h = harness({
+    cache: { active, devices },
+    fetchData: () => pending,
+    nativeMobile: true,
+  });
+  try {
+    await waitFor(() => h.doc.querySelector('#content > *'));
+    assert.ok(h.doc.querySelector('#recent-projects-section'));
+    assert.equal(h.doc.querySelector('.skeleton-card'), null);
+    assert.equal(h.win.__inlineRendered, true);
+  } finally { h.win.close(); }
+});
+
+test('native mobile startup shows a skeleton while uncached refresh is pending', async () => {
+  const pending = new Promise(() => {});
+  const h = harness({ fetchData: () => pending, nativeMobile: true });
+  try {
+    await waitFor(() => h.doc.querySelector('#content > *'));
+    assert.ok(h.doc.querySelector('.skeleton-card'));
+    assert.equal(h.doc.querySelector('#recent-projects-section'), null);
+  } finally { h.win.close(); }
+});
 
 test('home consumes recentProjects from the existing two requests and keeps active cards and devices', async () => {
   const h = harness();
