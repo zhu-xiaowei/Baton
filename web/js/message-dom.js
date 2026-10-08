@@ -323,6 +323,26 @@ function elementSegment(element, segments) {
     ?? segments.get('tool:' + element.dataset.toolId);
 }
 
+function messageOrder(messages) {
+  var order = new Map();
+  messages.forEach(function (message, index) {
+    if (message.uuid) order.set('uuid:' + message.uuid, index);
+    if (message.nativeId) order.set('native:' + message.nativeId, index);
+    for (var block of Array.isArray(message.content) ? message.content : []) {
+      if (block?.type === 'tool_use' && block.id) order.set('tool:' + block.id, index);
+    }
+  });
+  return order;
+}
+
+// Provisional stream blocks have no identity yet and are always the newest.
+function elementOrder(element, order) {
+  return order.get('uuid:' + element.dataset.messageId)
+    ?? order.get('native:' + element.dataset.nativeId)
+    ?? order.get('tool:' + element.dataset.toolId)
+    ?? Infinity;
+}
+
 function splitStreamRows(rows, segments, expected) {
   var groups = new Map(rows.map(row => [
     JSON.stringify([row.dataset.turnId, row.dataset.timelineSegment || '']), row,
@@ -441,6 +461,28 @@ export function createMessageDom(options) {
       }
       streamedSegments.set(streamRow.dataset.turnId, covered);
     }
+    // After a checkpoint resume the stream renders only post-checkpoint blocks;
+    // earlier messages of the same turn must stay in history.
+    var streamIdentities = new Set();
+    for (var identityRow of streamRows) {
+      for (var identityChild of Array.from(identityRow.children)) {
+        if (identityChild.dataset.messageId) streamIdentities.add('uuid:' + identityChild.dataset.messageId);
+        if (identityChild.dataset.nativeId) streamIdentities.add('native:' + identityChild.dataset.nativeId);
+        if (identityChild.dataset.toolId) streamIdentities.add('tool:' + identityChild.dataset.toolId);
+      }
+    }
+    var renderedByStream = function (message) {
+      if (!options.streamMessageIds || message._strictLifecycle) return true;
+      if (options.streamMessageIds.has(message.nativeId)
+        || options.streamMessageIds.has(message.uuid)
+        || streamIdentities.has('uuid:' + message.uuid)
+        || streamIdentities.has('native:' + message.nativeId)) {
+        return true;
+      }
+      return (Array.isArray(message.content) ? message.content : []).some(function (block) {
+        return block?.type === 'tool_use' && streamIdentities.has('tool:' + block.id);
+      });
+    };
     var renderMessages = streamedTurnIds.size
       ? state.wsAllMessages.map(function (message) {
           var covered = streamedSegments.get(message.turnId);
@@ -448,7 +490,8 @@ export function createMessageDom(options) {
             ?? segments.get('native:' + message.nativeId) ?? '';
           if ((message?.type !== 'assistant' && message?.type !== 'summary')
             || !streamedTurnIds.has(message.turnId)
-            || (covered && !covered.has(segment))) {
+            || (covered && !covered.has(segment))
+            || !renderedByStream(message)) {
             return message;
           }
           return { ...message, _strictManaged: true };
@@ -462,6 +505,7 @@ export function createMessageDom(options) {
     );
     streamRows = splitStreamRows(streamRows, segments, expected);
     reconcileTopLevel(container, expected);
+    var order = messageOrder(state.wsAllMessages);
 
     for (var placement of pendingPlacements) {
       if (placement.marker.isConnected) {
@@ -485,7 +529,13 @@ export function createMessageDom(options) {
                 return recoveredKey && domKey(candidate) === recoveredKey;
               },
             );
-            if (!alreadyPresent) streamRow.appendChild(recoveredChild);
+            if (!alreadyPresent) {
+              var position = elementOrder(recoveredChild, order);
+              var before = Array.from(streamRow.children).find(function (candidate) {
+                return elementOrder(candidate, order) > position;
+              }) || null;
+              streamRow.insertBefore(recoveredChild, before);
+            }
           }
         }
         recoveredTurn.remove();

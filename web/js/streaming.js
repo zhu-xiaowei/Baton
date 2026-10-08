@@ -555,6 +555,14 @@ export class StreamCoordinator {
     return this.turns.get(turnId) || null;
   }
 
+  receivedMessageIds() {
+    var ids = new Set();
+    for (var turn of this.turns.values()) {
+      for (var id of turn.receivedAuthoritativeIds) ids.add(id);
+    }
+    return ids;
+  }
+
   activeTurnIds() {
     return Array.from(this.turns.values())
       .filter(function (turn) { return !turn.completed; })

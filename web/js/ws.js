@@ -1770,6 +1770,7 @@ function commitMessages(messages, options = {}) {
     runtime: function () { return state.appState.runtime; },
     renderMessages: renderMessages,
     streamTurnIds: streamTurnIds,
+    streamMessageIds: _streamCoordinator.receivedMessageIds(),
     markTurnAdjacency: markTurnAdjacency,
     loadImages: loadImages,
     clampOverflow: clampOverflow,
