@@ -10,6 +10,7 @@ const SKIP_DIRS = new Set([
   '.git',
   '.build',
   '.pytest_cache',
+  '.tauri',
   'dist',
   'gen',
   'node_modules',
@@ -73,6 +74,10 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload > -1);
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation create-stack'));
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
+  assert.match(install, /preview_tunnel_ws\.py/);
+  const previewRoute = JSON.parse(read('server/template/Baton.template')).Resources.PreviewDataRoute;
+  assert.equal(previewRoute.Properties.ApiId.Ref, 'TerminalDirectApi');
+  assert.equal(previewRoute.Properties.RouteKey, 'preview_data');
 
   const dockerfile = read('server/src/Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
