@@ -71,6 +71,29 @@ document.getElementById('retry').addEventListener('click', () => {
 });
 
 const form = document.getElementById('configForm');
+async function startFromClipboard() {
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    try {
+      status.textContent = 'Reading isolated test clipboard.';
+      const text = await Promise.race([
+        invoke('plugin:clipboard-manager|read_text'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Clipboard read timed out')), 5000)),
+      ]);
+      const config = JSON.parse(text);
+      if (typeof config.apiKey !== 'string' || typeof config.wsUrl !== 'string'
+        || typeof config.device !== 'string') throw new Error('Waiting for test config');
+      form.hidden = true;
+      status.textContent = 'Test config received.';
+      void start({ key: config.apiKey, wsUrl: config.wsUrl, device: config.device });
+      return;
+    } catch (error) {
+      status.textContent = `Waiting for isolated test clipboard: ${error.message || error}`;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  markFailure('Isolated test clipboard was not available.');
+}
 document.getElementById('clipboardStart').addEventListener('click', async () => {
   try {
     const text = await invoke('plugin:clipboard-manager|read_text');
@@ -97,7 +120,11 @@ if (new URLSearchParams(location.search).get('auto') === '1') {
     void start({ key: embeddedKey, wsUrl: embeddedWsUrl, device: embeddedDevice });
   } else {
     form.hidden = false;
-    status.textContent = 'Enter the isolated test connection.';
+    if (new URLSearchParams(location.search).get('clipboard') === '1') {
+      void startFromClipboard();
+    } else {
+      status.textContent = 'Enter the isolated test connection.';
+    }
   }
 }
 window.addEventListener('pagehide', () => { void tunnel?.close(); });
