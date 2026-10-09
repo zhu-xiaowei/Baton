@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Local preview check</title>
+  <style>
+    html { background: #0d1117; color: #e6edf3; font: 16px system-ui; }
+    body { margin: 0; padding: max(20px, env(safe-area-inset-top)) 20px 20px; }
+    a { color: #58a6ff; }
+    button { padding: 10px 14px; font: inherit; }
+    iframe { display: block; width: 100%; height: 240px; margin-top: 16px; border: 1px solid #30363d; border-radius: 8px; }
+    #status { min-height: 3em; }
+  </style>
+</head>
+<body>
+  <a href="setup.html">← Setup</a>
+  <h1>Local preview check</h1>
+  <p>This checks whether Baton can display a page served on this phone's loopback address.</p>
+  <button id="start" type="button">Load local page</button>
+  <p id="status" role="status">Ready to start.</p>
+  <iframe id="preview" title="Local preview test" sandbox="allow-scripts allow-same-origin" hidden></iframe>
+  <script type="module" src="js/preview-feasibility.js"></script>
+</body>
+</html>
