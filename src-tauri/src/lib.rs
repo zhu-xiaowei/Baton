@@ -1,5 +1,7 @@
 // Multi-window is macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
+mod preview_feasibility;
+
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -59,7 +61,10 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_file_download::init())
-    .invoke_handler(tauri::generate_handler![ios_build_number])
+    .invoke_handler(tauri::generate_handler![
+      ios_build_number,
+      preview_feasibility::start_local_preview_probe
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
