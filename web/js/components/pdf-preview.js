@@ -1,14 +1,42 @@
-import * as pdfjs from 'pdfjs-dist/build/pdf.js';
-import * as pdfjsViewer from 'pdfjs-dist/web/pdf_viewer.js';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
-import pdfViewerCss from 'pdfjs-dist/web/pdf_viewer.css?inline';
+const PDF_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174';
+let pdfModulesPromise;
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Failed to load PDF viewer'));
+    document.head.appendChild(script);
+  });
+}
+
+function loadPdfModules() {
+  if (!pdfModulesPromise) pdfModulesPromise = (async () => {
+    await loadScript(`${PDF_CDN}/build/pdf.min.js`);
+    await loadScript(`${PDF_CDN}/web/pdf_viewer.js`);
+    const response = await fetch(`${PDF_CDN}/web/pdf_viewer.css`);
+    if (!response.ok) throw new Error('Failed to load PDF styles');
+    const css = (await response.text()).replace(
+      /url\((["']?)images\//g,
+      (_, quote) => `url(${quote}${PDF_CDN}/web/images/`,
+    );
+    const pdfjs = globalThis.pdfjsLib;
+    const pdfjsViewer = globalThis.pdfjsViewer;
+    if (!pdfjs || !pdfjsViewer) throw new Error('PDF viewer is unavailable');
+    pdfjs.GlobalWorkerOptions.workerSrc = `${PDF_CDN}/build/pdf.worker.min.js`;
+    return { pdfjs, pdfjsViewer, css };
+  })().catch(error => { pdfModulesPromise = null; throw error; });
+  return pdfModulesPromise;
+}
 
 let activePreview = null;
 const RANGE_CHUNK_SIZE = 64 * 1024;
 
-export function mountPdfPreview(body, url, size) {
+export async function mountPdfPreview(body, url, size) {
+  const { pdfjs, pdfjsViewer, css: pdfViewerCss } = await loadPdfModules();
   activePreview?.destroy();
 
   const host = document.createElement('div');

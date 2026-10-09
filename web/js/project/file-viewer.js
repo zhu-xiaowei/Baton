@@ -409,8 +409,12 @@ async function showAttachment(key) {
       }
       const { mountPdfPreview } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
-      _pdfPreview = mountPdfPreview(document.getElementById('fileOverlayBody'), file.previewUrl, file.size);
-      await _pdfPreview.ready;
+      setBody('<div class="file-loading">' + loadingSpinner({ label: 'Loading PDF preview' })
+        + '<span>Loading PDF preview…</span></div>');
+      const pdfPreview = await mountPdfPreview(document.getElementById('fileOverlayBody'), file.previewUrl, file.size);
+      if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
+      _pdfPreview = pdfPreview;
+      await pdfPreview.ready;
       return;
     } else if (file.previewType?.startsWith('image/')) {
       preview = '<img class="file-image" alt="" src="' + url + '">';
