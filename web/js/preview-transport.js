@@ -5,7 +5,7 @@ import { PreviewDataChannel } from '../../bridge/preview-protocol.mjs';
 const CHUNK_BYTES = 16 * 1024;
 const WINDOW_BYTES = 128 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function decodedLength(value) {
   return value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
