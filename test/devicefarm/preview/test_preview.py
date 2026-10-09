@@ -3,7 +3,6 @@
 import os
 import json
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -44,16 +43,6 @@ def options():
     return AppiumOptions().load_capabilities(capabilities)
 
 
-def android_pass_marker():
-    if os.environ["DEVICEFARM_DEVICE_PLATFORM_NAME"].lower() != "android":
-        return False
-    result = subprocess.run(
-        ["adb", "-s", os.environ["DEVICEFARM_DEVICE_UDID"], "logcat", "-d", "-v", "brief"],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    return LOG_MARKER in result.stdout
-
-
 def configure_ios_app(driver):
     config_file = Path(__file__).resolve().parent.parent / "test_config.json"
     if not config_file.exists():
@@ -85,12 +74,12 @@ def main():
     try:
         if os.environ["DEVICEFARM_DEVICE_PLATFORM_NAME"].lower() == "ios":
             configure_ios_app(driver)
-        deadline = time.monotonic() + 75
+        deadline = time.monotonic() + 90
         last_source = ""
         while time.monotonic() < deadline:
             try:
                 last_source = driver.page_source
-                if MARKER in last_source or android_pass_marker():
+                if MARKER in last_source:
                     driver.save_screenshot(str(screenshots / "remote-preview-pass.png"))
                     print(LOG_MARKER)
                     return
