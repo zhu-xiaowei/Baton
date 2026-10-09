@@ -19,6 +19,7 @@ var _current = null;
 var _view = null;
 var _downloadTarget = null;
 var _pdfPreview = null;
+var _pdfLoadController = null;
 
 function downloadStatus(text) {
   const status = document.getElementById('file-download-status');
@@ -116,6 +117,8 @@ function overlay() { return document.getElementById('fileOverlay'); }
 function clearFileBody() {
   const body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  _pdfLoadController?.abort();
+  _pdfLoadController = null;
   _pdfPreview?.destroy();
   _pdfPreview = null;
   body.querySelectorAll('video, audio').forEach(media => {
@@ -411,7 +414,11 @@ async function showAttachment(key) {
       if (token !== _fileRequestToken) return;
       setBody('<div class="file-loading">' + loadingSpinner({ label: 'Loading PDF preview' })
         + '<span>Loading PDF preview…</span></div>');
-      const pdfPreview = await mountPdfPreview(document.getElementById('fileOverlayBody'), file.previewUrl, file.size);
+      const controller = new AbortController();
+      _pdfLoadController = controller;
+      const pdfPreview = await mountPdfPreview(document.getElementById('fileOverlayBody'),
+        file.previewUrl, file.size, controller.signal, state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size);
+      if (_pdfLoadController === controller) _pdfLoadController = null;
       if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
       _pdfPreview = pdfPreview;
       await pdfPreview.ready;
