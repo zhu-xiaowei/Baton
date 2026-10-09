@@ -123,7 +123,7 @@ function connectionHarness(options = {}) {
   const context = vm.createContext({
     WebSocket: options.live ? WebSocket : FakeSocket, SleepGapMonitor, RealtimeSender,
     console: { log() {}, error() {} }, process: { platform: process.platform }, BRIDGE_VERSION: 'test',
-    _terminalRemote: null, _sharedTerminals: null,
+    _terminalRemote: null, _sharedTerminals: null, _previewBridge: null,
     handleMessage: async () => {},
     setTimeout: (callback, delay) => { const id = timerId++; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),

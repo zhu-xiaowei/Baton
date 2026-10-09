@@ -16,6 +16,7 @@ from project.git_ws import handle_git_status
 from project.session_ws import handle_session_rename
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
+from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
 from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
 
 _ddb = None
@@ -327,7 +328,7 @@ def _handle_connect(event, connection_id):
     context = event.get("requestContext", {})
     connected_endpoint = f"https://{context.get('domainName', '')}/{context.get('stage', '')}"
     data_endpoint = os.environ.get("TERMINAL_DIRECT_ENDPOINT")
-    if (role in ("terminal_data", "realtime_data")) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
+    if (role in ("terminal_data", "realtime_data", "preview_data")) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
         return {"statusCode": 403}
     if role == "realtime_data" and not realtime_enabled():
         return {"statusCode": 403}
@@ -357,7 +358,9 @@ def _handle_connect(event, connection_id):
         item["terminalProtocol"] = 2
         if qs.get("terminalStartup") == "1":
             item["terminalStartup"] = 1
-    if role in ("terminal_data", "realtime_data"):
+    if role == "bridge" and qs.get("preview") == "1":
+        item["previewProtocol"] = 1
+    if role in ("terminal_data", "realtime_data", "preview_data"):
         item["terminalDataEndpoint"] = connected_endpoint
     if role in ("app", "bridge") and qs.get("realtime") == "1":
         item["realtimeVersion"] = 1
@@ -387,12 +390,21 @@ def _handle_disconnect(connection_id, endpoint=None):
         except Exception:
             print("Realtime connection cleanup failed")
     try:
-        if endpoint:
-            connection = _connections_table.get_item(Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
+        connection = (_connections_table.get_item(Key={"connectionId": connection_id},
+            ConsistentRead=True).get("Item") if endpoint else None)
+    except Exception:
+        connection = None
+    if endpoint:
+        try:
             terminal_direct_disconnect(connection, endpoint, table=_connections_table,
                 query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
-    except Exception:
-        pass
+        except Exception:
+            pass
+        try:
+            preview_tunnel_disconnect(connection, endpoint, table=_connections_table,
+                query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+        except Exception:
+            pass
 
     try:
         _connections_table.delete_item(Key={"connectionId": connection_id})
@@ -468,7 +480,10 @@ def _handle_message(event, connection_id, endpoint):
         return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
             query=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
             post=_post_to_connection, disconnect=_disconnect_terminal_data)
-    if role in ("terminal_data", "realtime_data"):
+    if action == "preview_tunnel":
+        return handle_preview_tunnel(body, conn, connection_id, endpoint, table=_connections_table,
+            query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+    if role in ("terminal_data", "realtime_data", "preview_data"):
         return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \
             and not _has_valid_turn_sequence(body):
