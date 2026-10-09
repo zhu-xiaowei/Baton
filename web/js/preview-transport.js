@@ -132,6 +132,7 @@ export class PreviewTunnel {
 
   nativeOpen(payload) {
     if (this.closed || payload.tunnelId !== this.tunnelId || !UUID.test(payload.streamId)) return;
+    this.status(`Connecting to port ${this.target.port} on ${this.device}`);
     const stream = {
       id: payload.streamId, opened: false, localFin: false, remoteFin: false,
       nextOutgoing: 1, nextIncoming: 1, lastWritten: 0,
@@ -191,6 +192,7 @@ export class PreviewTunnel {
     if (!stream || this.closed) return;
     if (message.type === 'opened') {
       stream.opened = true;
+      this.status(`Connected to port ${this.target.port} on ${this.device}`);
       void invoke('preview_credit', { streamId: stream.id, bytes: WINDOW_BYTES })
         .catch(() => this.closeStream(stream.id, true));
       this.status(`Loading ${this.target.displayUrl}`);
