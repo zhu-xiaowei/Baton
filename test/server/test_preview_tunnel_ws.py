@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import uuid
+from decimal import Decimal
 
 import pytest
 from botocore.exceptions import ClientError
@@ -18,13 +19,21 @@ def conditional():
     return ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
 
 
+def from_ddb(value):
+    if type(value) is int:
+        return Decimal(value)
+    if isinstance(value, dict):
+        return {key: from_ddb(item) for key, item in value.items()}
+    return value
+
+
 class Table:
     def __init__(self):
         self.rows = {}
 
     def get_item(self, Key, **_):
         row = self.rows.get(Key["connectionId"])
-        return {"Item": copy.deepcopy(row)} if row else {}
+        return {"Item": from_ddb(copy.deepcopy(row))} if row else {}
 
     def put_item(self, Item, **_):
         if Item["connectionId"] in self.rows:
@@ -66,7 +75,7 @@ class Table:
                 row.pop(field, None)
         else:
             raise AssertionError(UpdateExpression)
-        return {"Attributes": copy.deepcopy(row)}
+        return {"Attributes": from_ddb(copy.deepcopy(row))}
 
 
 class Sts:
