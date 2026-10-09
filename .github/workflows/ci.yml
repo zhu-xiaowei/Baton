@@ -76,7 +76,16 @@ jobs:
       - run: rustup target add aarch64-apple-ios
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
-      - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - name: Build isolated iOS preview archive
+        env:
+          BATON_PREVIEW_SMOKE_KEY: ${{ secrets.BATON_PREVIEW_TEST_KEY }}
+          BATON_PREVIEW_SMOKE_WS_URL: ${{ secrets.BATON_PREVIEW_TEST_WS_URL }}
+          BATON_PREVIEW_SMOKE_DEVICE: ${{ secrets.BATON_PREVIEW_TEST_DEVICE }}
+        run: |
+          test -n "$BATON_PREVIEW_SMOKE_KEY"
+          test -n "$BATON_PREVIEW_SMOKE_WS_URL"
+          test -n "$BATON_PREVIEW_SMOKE_DEVICE"
+          npm run tauri -- ios build --ci --no-sign --archive-only
       - name: Stage unsigned iOS test IPA
         run: |
           archive="$(find src-tauri/gen/apple/build -maxdepth 1 -name '*.xcarchive' -type d -print -quit)"
