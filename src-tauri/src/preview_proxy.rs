@@ -91,6 +91,12 @@ impl PreviewProxy {
     while !session.stopped.load(Ordering::Acquire) {
       match listener.accept() {
         Ok((reader, _)) => {
+          // Accepted sockets can inherit O_NONBLOCK from the listener on BSD systems.
+          // Browser connections must block while waiting for the remote response.
+          if reader.set_nonblocking(false).is_err() {
+            let _ = reader.shutdown(Shutdown::Both);
+            continue;
+          }
           let mut stream_ids = match session.sockets.lock() {
             Ok(value) => value,
             Err(_) => break,
