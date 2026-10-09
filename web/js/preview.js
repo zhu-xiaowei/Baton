@@ -29,7 +29,7 @@ function ensureOverlay() {
         </div>
       </form>
       <p class="preview-status" role="status">Enter a port or open a localhost link in this session.</p>
-      <a class="preview-local-url" hidden target="_blank" rel="noopener noreferrer"></a>
+      <code class="preview-local-url" hidden></code>
       <div class="preview-actions">
         <button class="preview-reopen" type="button" disabled>Open browser again</button>
         <button class="preview-stop" type="button">Stop preview</button>
@@ -127,7 +127,6 @@ async function startPreview(target, device) {
     }
     currentUrl = url;
     const link = view.querySelector('.preview-local-url');
-    link.href = url;
     link.textContent = url;
     link.hidden = false;
     view.querySelector('.preview-reopen').disabled = false;
