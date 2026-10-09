@@ -15,6 +15,7 @@
     "windows": [
       {
         "title": "Baton",
+        "url": "preview-live-check.html?auto=1",
         "width": 1024,
         "height": 768,
         "minWidth": 480,
