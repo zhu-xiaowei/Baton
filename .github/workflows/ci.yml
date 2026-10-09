@@ -77,6 +77,22 @@ jobs:
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
       - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - name: Stage unsigned iOS test IPA
+        run: |
+          archive="$(find src-tauri/gen/apple/build -maxdepth 1 -name '*.xcarchive' -type d -print -quit)"
+          test -n "$archive"
+          app="$archive/Products/Applications/Baton.app"
+          test -d "$app"
+          mkdir -p artifacts/Payload
+          cp -R "$app" artifacts/Payload/Baton.app
+          (cd artifacts && zip -qry Baton-unsigned-test.ipa Payload)
+          test -s artifacts/Baton-unsigned-test.ipa
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Baton-iOS-unsigned-test
+          path: artifacts/Baton-unsigned-test.ipa
+          if-no-files-found: error
+          retention-days: 7
 
   macos:
     name: macOS DMG
