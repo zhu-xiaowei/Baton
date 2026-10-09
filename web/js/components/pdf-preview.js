@@ -83,6 +83,8 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
     await Promise.all([loadPdfModules(), initialRange]);
   activePreview?.destroy();
 
+  const previousLoading = body.querySelector('.file-loading');
+  const continueLoading = previousLoading && getComputedStyle(previousLoading).visibility === 'visible';
   const host = document.createElement('div');
   host.className = 'pdf-preview-host';
   const shadow = host.attachShadow({ mode: 'open' });
@@ -91,8 +93,11 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
     :host { display: block; width: 100%; height: 100%; }
     .pdf-surface { position: relative; width: 100%; height: 100%; background: #0d1117; }
     .pdf-container { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-    .pdf-loading { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; background: #0d1117; color: #8b949e; font: 14px system-ui; }
-    .pdf-loading::before { content: ''; width: 18px; height: 18px; border: 2px solid #484f58; border-top-color: #e6edf3; border-radius: 50%; animation: pdf-loading-spin .6s linear infinite; }
+    .pdf-loading { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: #0d1117; color: #8b949e; font: 14px system-ui; }
+    .pdf-loading-indicator { display: flex; align-items: center; gap: 10px; visibility: hidden; animation: pdf-loading-reveal 0s 250ms forwards; }
+    .pdf-loading.is-visible .pdf-loading-indicator { visibility: visible; animation: none; }
+    .pdf-loading-indicator::before { content: ''; width: 18px; height: 18px; border: 2px solid #484f58; border-top-color: #e6edf3; border-radius: 50%; animation: pdf-loading-spin .6s linear infinite; }
+    @keyframes pdf-loading-reveal { to { visibility: visible; } }
     @keyframes pdf-loading-spin { to { transform: rotate(360deg); } }
     .pdf-controls { position: absolute; right: 12px; bottom: 12px; z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: rgba(22,27,34,.9); box-shadow: 0 2px 12px #0008; }
     .pdf-controls[hidden] { display: none; }
@@ -102,7 +107,7 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
   </style>
   <div class="pdf-surface">
     <div class="pdf-container" tabindex="0" aria-label="PDF pages. Press Enter to toggle zoom controls"><div class="pdfViewer"></div></div>
-    <div class="pdf-loading" role="status" aria-label="Loading PDF page">Loading PDF…</div>
+    <div class="pdf-loading${continueLoading ? ' is-visible' : ''}" role="status" aria-label="Loading PDF page"><span class="pdf-loading-indicator">Loading PDF…</span></div>
     <div class="pdf-controls" aria-label="PDF zoom" hidden>
       <button type="button" data-action="out" aria-label="Zoom out">−</button>
       <button type="button" data-action="fit" aria-label="Fit page width">Fit</button>

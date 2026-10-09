@@ -185,7 +185,7 @@ function setFileViewMode(mode) {
   setActiveTab(mode);
   if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
   if (!_current) {
-    setBody('<div class="file-loading">'
+    setBody('<div class="file-loading' + (_view.path.startsWith('baton-file:') ? ' file-loading-delayed' : '') + '">'
       + loadingSpinner({ label: 'Loading file' }) + '</div>');
     if (_view.path.startsWith('baton-file:')) return showAttachment(_view.path.slice('baton-file:'.length));
     return sendFileRequest(_view.path, _view.line, _view.snippet, 1);
@@ -412,11 +412,18 @@ async function showAttachment(key) {
       }
       const { mountPdfPreview } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
-      setBody('<div class="file-loading">' + loadingSpinner({ label: 'Loading PDF preview' })
-        + '<span>Loading PDF preview…</span></div>');
+      const body = document.getElementById('fileOverlayBody');
+      const loading = body.querySelector('.file-loading');
+      if (loading) {
+        loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF preview');
+        loading.insertAdjacentHTML('beforeend', '<span>Loading PDF preview…</span>');
+      } else {
+        setBody('<div class="file-loading file-loading-delayed">' + loadingSpinner({ label: 'Loading PDF preview' })
+          + '<span>Loading PDF preview…</span></div>');
+      }
       const controller = new AbortController();
       _pdfLoadController = controller;
-      const pdfPreview = await mountPdfPreview(document.getElementById('fileOverlayBody'),
+      const pdfPreview = await mountPdfPreview(body,
         file.previewUrl, file.size, controller.signal, state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size);
       if (_pdfLoadController === controller) _pdfLoadController = null;
       if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
