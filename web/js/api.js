@@ -4,6 +4,7 @@
 import { state } from './state.js';
 import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
+import { showImageViewer } from './components/image-viewer.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -137,9 +138,7 @@ function loadImages(container) {
 }
 
 function viewImage(src) {
-  var overlay = document.getElementById('imgOverlay');
-  document.getElementById('imgOverlayImg').src = src;
-  overlay.style.display = 'flex';
+  showImageViewer(src);
 }
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.

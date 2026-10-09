@@ -777,7 +777,8 @@
 </div>
 
 <!-- Image overlay -->
-<div id="imgOverlay" class="img-overlay" style="display:none" onclick="this.style.display='none'">
+<div id="imgOverlay" class="img-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Image preview">
+  <button type="button" class="img-overlay-close" aria-label="Close image preview">&times;</button>
   <img id="imgOverlayImg" />
 </div>
 

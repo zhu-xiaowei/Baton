@@ -18,6 +18,19 @@ function esc(s) {
 var _current = null;
 var _view = null;
 var _downloadTarget = null;
+var _pdfPreview = null;
+var _pdfLoadController = null;
+var _viewedPdfKeys = new Set();
+var _clearPdfRanges = null;
+
+function clearAttachmentPreviewCache(key) {
+  if (!key) return;
+  const prefix = state.SERVER + '|' + state.KEY + '|' + key + '|';
+  for (const viewed of _viewedPdfKeys) {
+    if (viewed.startsWith(prefix)) _viewedPdfKeys.delete(viewed);
+  }
+  _clearPdfRanges?.(prefix);
+}
 
 function downloadStatus(text) {
   const status = document.getElementById('file-download-status');
@@ -115,6 +128,10 @@ function overlay() { return document.getElementById('fileOverlay'); }
 function clearFileBody() {
   const body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  _pdfLoadController?.abort();
+  _pdfLoadController = null;
+  _pdfPreview?.destroy();
+  _pdfPreview = null;
   body.querySelectorAll('video, audio').forEach(media => {
     media.pause();
     media.removeAttribute('src');
@@ -179,8 +196,11 @@ function setFileViewMode(mode) {
   setActiveTab(mode);
   if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
   if (!_current) {
-    setBody('<div class="file-loading">'
-      + loadingSpinner({ label: 'Loading file' }) + '</div>');
+    const attachment = _view.path.startsWith('baton-file:');
+    setBody('<div class="file-loading' + (attachment ? ' file-loading-delayed' : '') + '">'
+      + (attachment ? '<span class="file-loading-content">' : '')
+      + loadingSpinner({ label: 'Loading file' })
+      + (attachment ? '</span>' : '') + '</div>');
     if (_view.path.startsWith('baton-file:')) return showAttachment(_view.path.slice('baton-file:'.length));
     return sendFileRequest(_view.path, _view.line, _view.snippet, 1);
   }
@@ -382,6 +402,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
 
 async function showAttachment(key) {
   const token = ++_fileRequestToken;
+  let pdfFallbackUrl = '';
   try {
     if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
     const file = await window.api('/api/bridge/file-url/' + key);
@@ -398,7 +419,43 @@ async function showAttachment(key) {
     let preview = '<div class="attachment-preview-note">No inline preview for this file type. Download to open it.</div>';
     const url = escapeAttachment(file.previewUrl);
     if (file.previewType === 'application/pdf') {
-      preview = '<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>';
+      pdfFallbackUrl = url;
+      if (!window.ResizeObserver || !window.requestAnimationFrame) {
+        setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>');
+        return;
+      }
+      const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
+      if (token !== _fileRequestToken) return;
+      _clearPdfRanges = clearPdfRangeCache;
+      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size;
+      const showLoadingText = !_viewedPdfKeys.has(cacheKey);
+      const body = document.getElementById('fileOverlayBody');
+      const loading = body.querySelector('.file-loading');
+      if (loading) {
+        loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF');
+        if (showLoadingText) {
+          (loading.querySelector('.file-loading-content') || loading)
+            .insertAdjacentHTML('beforeend', '<span>Loading PDF…</span>');
+        }
+      } else {
+        setBody('<div class="file-loading file-loading-delayed"><span class="file-loading-content">'
+          + loadingSpinner({ label: 'Loading PDF' })
+          + (showLoadingText ? '<span>Loading PDF…</span>' : '') + '</span></div>');
+      }
+      const controller = new AbortController();
+      _pdfLoadController = controller;
+      const pdfPreview = await mountPdfPreview(body,
+        file.previewUrl, file.size, controller.signal, cacheKey);
+      if (_pdfLoadController === controller) _pdfLoadController = null;
+      if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
+      _pdfPreview = pdfPreview;
+      await pdfPreview.ready;
+      if (token === _fileRequestToken) {
+        _viewedPdfKeys.delete(cacheKey);
+        _viewedPdfKeys.add(cacheKey);
+        if (_viewedPdfKeys.size > 100) _viewedPdfKeys.delete(_viewedPdfKeys.values().next().value);
+      }
+      return;
     } else if (file.previewType?.startsWith('image/')) {
       preview = '<img class="file-image" alt="" src="' + url + '">';
     } else if (file.previewType?.startsWith('video/')) {
@@ -408,7 +465,12 @@ async function showAttachment(key) {
     }
     setBody(preview);
   } catch (error) {
-    if (token === _fileRequestToken) setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
+    if (token !== _fileRequestToken) return;
+    if (pdfFallbackUrl) {
+      setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
+    } else {
+      setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
+    }
   }
 }
 
@@ -514,6 +576,7 @@ document.addEventListener('keydown', function (e) {
 Object.assign(window, {
   openFile: openFile,
   closeFileViewer: closeFileViewer,
+  clearAttachmentPreviewCache,
   setFileViewMode: setFileViewMode,
   downloadViewedFile,
 });
