@@ -1062,8 +1062,8 @@ html.native-mobile .slash-description {
 #img-preview-row .img-thumb { width: 64px; }
 .staged-image-preview img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 #img-preview-row .img-remove { position: absolute; top: 0; right: 0; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; color: #c9d1d9; border: 0; cursor: pointer; z-index: 2; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-#img-preview-row .img-remove::before { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: rgba(48,54,61,0.9); }
-#img-preview-row .img-remove svg { position: relative; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; pointer-events: none; }
+#img-preview-row .img-remove::before { content: ''; position: absolute; inset: 3px 3px 9px 9px; border-radius: 50%; background: rgba(48,54,61,0.9); }
+#img-preview-row .img-remove svg { position: relative; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; transform: translate(3px,-3px); pointer-events: none; }
 .staged-file-preview:disabled, .staged-image-preview:disabled { cursor: default; }
 .staged-attachment button:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) {
