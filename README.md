@@ -8,9 +8,20 @@ Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex
 
 Baton provides non-intrusive, real-time streaming and rendering for Claude Code and Codex sessions across your devices. Your session data stays in your own AWS account.
 
-### Why Baton?
 
-Named after both a relay baton and a conductor's baton, Baton lets you pick up work on another device and direct your agents remotely.
+## Rich rendering
+
+<p align="center">
+  <img src="docs/assets/mobile-rendering.avif" alt="Baton mobile rendering: interactive prompts, Mermaid diagrams, HTML, and Markdown previews" width="100%">
+</p>
+
+## Developer tools
+
+<p align="center">
+  <img src="docs/assets/mobile-capabilities.avif" alt="Baton developer tools: project files, Git changes, terminal controls, and session management" width="100%">
+</p>
+
+---
 
 ## Quick Start
 
@@ -88,6 +99,12 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 ```
 
 **Bridge** discovers Claude Code and Codex sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Server** authenticates and routes control messages, stores session and root-thread data in DynamoDB, and serves synced media through S3. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
+
+---
+
+## Why Baton?
+
+Named after both a relay baton and a conductor's baton, Baton lets you pick up work on another device and direct your agents remotely.
 
 ---
 
