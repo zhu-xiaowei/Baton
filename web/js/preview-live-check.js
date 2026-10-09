@@ -71,6 +71,18 @@ document.getElementById('retry').addEventListener('click', () => {
 });
 
 const form = document.getElementById('configForm');
+document.getElementById('clipboardStart').addEventListener('click', async () => {
+  try {
+    const text = await invoke('plugin:clipboard-manager|read_text');
+    const config = JSON.parse(text);
+    if (typeof config.apiKey !== 'string' || typeof config.wsUrl !== 'string'
+      || typeof config.device !== 'string') throw new Error('Invalid test clipboard');
+    form.hidden = true;
+    void start({ key: config.apiKey, wsUrl: config.wsUrl, device: config.device });
+  } catch (error) {
+    markFailure(`Test clipboard unavailable: ${error.message || error}`);
+  }
+});
 form.addEventListener('submit', event => {
   event.preventDefault();
   form.hidden = true;
