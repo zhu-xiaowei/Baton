@@ -84,7 +84,6 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
   activePreview?.destroy();
 
   const previousLoading = body.querySelector('.file-loading');
-  const continueLoading = previousLoading && getComputedStyle(previousLoading).visibility === 'visible';
   const host = document.createElement('div');
   host.className = 'pdf-preview-host';
   const shadow = host.attachShadow({ mode: 'open' });
@@ -107,14 +106,19 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
   </style>
   <div class="pdf-surface">
     <div class="pdf-container" tabindex="0" aria-label="PDF pages. Press Enter to toggle zoom controls"><div class="pdfViewer"></div></div>
-    <div class="pdf-loading${continueLoading ? ' is-visible' : ''}" role="status" aria-label="Loading PDF page"><span class="pdf-loading-indicator">Loading PDF…</span></div>
+    ${previousLoading ? '' : '<div class="pdf-loading" role="status" aria-label="Loading PDF page"><span class="pdf-loading-indicator">Loading PDF…</span></div>'}
     <div class="pdf-controls" aria-label="PDF zoom" hidden>
       <button type="button" data-action="out" aria-label="Zoom out">−</button>
       <button type="button" data-action="fit" aria-label="Fit page width">Fit</button>
       <button type="button" data-action="in" aria-label="Zoom in">+</button>
     </div>
   </div>`;
-  body.replaceChildren(host);
+  if (previousLoading) {
+    body.insertBefore(host, previousLoading);
+    previousLoading.classList.add('pdf-overlay-loading');
+  } else {
+    body.replaceChildren(host);
+  }
   body.classList.add('pdf-preview-active');
 
   const container = shadow.querySelector('.pdf-container');
@@ -140,6 +144,7 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
   eventBus.on('pagerendered', event => {
     if (disposed || event.cssTransform) return;
     if (event.error) return failFirstPaint(event.error);
+    previousLoading?.remove();
     shadow.querySelector('.pdf-loading')?.remove();
     finishFirstPaint();
   });
@@ -250,6 +255,7 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
     destroy() {
       if (disposed) return;
       disposed = true;
+      previousLoading?.remove();
       finishFirstPaint();
       if (toggleTimer) clearTimeout(toggleTimer);
       resizeObserver.disconnect();

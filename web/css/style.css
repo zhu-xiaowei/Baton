@@ -772,7 +772,9 @@ html.native-mobile .agent-threads-list {
 .md-preview { padding: 16px 18px; font-size: 14px; line-height: 1.7; max-width: 820px; margin: 0 auto; }
 .md-preview img { max-width: 100%; height: auto; }
 .file-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: #8b949e; font-size: 13px; }
-.file-loading-delayed { visibility: hidden; animation: show-file-loading 0s 250ms forwards; }
+.file-loading-content { display: flex; align-items: center; gap: 10px; }
+.file-loading-delayed { background: #0d1117; }
+.file-loading-delayed > * { visibility: hidden; animation: show-file-loading 0s 250ms forwards; }
 @keyframes show-file-loading { to { visibility: visible; } }
 .file-error { padding: 24px; color: #f85149; font-size: 13px; text-align: center; }
 .file-error-path { margin-top: 10px; color: #8b949e; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
@@ -1039,7 +1041,8 @@ html.native-mobile .slash-description {
 .attachment-file .file-type-icon, .attachment-file > svg { width: 14px; height: 14px; flex-shrink: 0; }
 .attachment-preview-note { padding: 16px; color: #8b949e; }
 .attachment-pdf { display: block; width: 100%; height: 100%; border: 0; }
-.file-modal-body.pdf-preview-active { overflow: hidden; }
+.file-modal-body.pdf-preview-active { position: relative; overflow: hidden; }
+.file-modal-body.pdf-preview-active > .pdf-overlay-loading { position: absolute; inset: 0; z-index: 20; background: #0d1117; }
 .file-action { background: none; border: 0; border-radius: 50%; color: var(--action-icon-color); cursor: pointer; padding: 8px; flex-shrink: 0; transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent; }
 .file-action:not(:disabled):active,
 .project-files-entry:not(:disabled):active,

@@ -185,8 +185,11 @@ function setFileViewMode(mode) {
   setActiveTab(mode);
   if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
   if (!_current) {
-    setBody('<div class="file-loading' + (_view.path.startsWith('baton-file:') ? ' file-loading-delayed' : '') + '">'
-      + loadingSpinner({ label: 'Loading file' }) + '</div>');
+    const attachment = _view.path.startsWith('baton-file:');
+    setBody('<div class="file-loading' + (attachment ? ' file-loading-delayed' : '') + '">'
+      + (attachment ? '<span class="file-loading-content">' : '')
+      + loadingSpinner({ label: 'Loading file' })
+      + (attachment ? '</span>' : '') + '</div>');
     if (_view.path.startsWith('baton-file:')) return showAttachment(_view.path.slice('baton-file:'.length));
     return sendFileRequest(_view.path, _view.line, _view.snippet, 1);
   }
@@ -415,11 +418,12 @@ async function showAttachment(key) {
       const body = document.getElementById('fileOverlayBody');
       const loading = body.querySelector('.file-loading');
       if (loading) {
-        loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF preview');
-        loading.insertAdjacentHTML('beforeend', '<span>Loading PDF preview…</span>');
+        loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF');
+        (loading.querySelector('.file-loading-content') || loading)
+          .insertAdjacentHTML('beforeend', '<span>Loading PDF…</span>');
       } else {
-        setBody('<div class="file-loading file-loading-delayed">' + loadingSpinner({ label: 'Loading PDF preview' })
-          + '<span>Loading PDF preview…</span></div>');
+        setBody('<div class="file-loading file-loading-delayed"><span class="file-loading-content">'
+          + loadingSpinner({ label: 'Loading PDF' }) + '<span>Loading PDF…</span></span></div>');
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
