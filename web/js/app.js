@@ -28,6 +28,7 @@ import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { parsePreviewTarget } from './preview-link.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
@@ -71,6 +72,12 @@ function openGitStatusPage(options) {
   return _gitStatusModulePromise.then(function (module) {
     module.openGitStatus(options);
   });
+}
+
+function openPreviewPortPrompt() {
+  if (!state.appState.device) return;
+  void import('./preview.js').then(module => module.showPreviewInput(state.appState.device))
+    .catch(error => showStats(`Preview unavailable: ${error.message}`));
 }
 
 function timeAgo(iso) {
@@ -452,11 +459,18 @@ function updateBreadcrumb() {
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
+    var previewButton = state.appState.session !== '__new__'
+      && (window.isTauri || window.__TAURI_INTERNALS__)
+      ? '<button class="project-files-entry" type="button" onclick="openPreviewPortPrompt()"'
+        + ' aria-label="Preview localhost port" title="Preview localhost port">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+        + '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>'
+      : '';
     var gitButton = state.appState.session && state.appState.session !== '__new__'
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
-    topRight.innerHTML = gitButton + runtimeMark + filesButton + terminalButton
+    topRight.innerHTML = gitButton + runtimeMark + filesButton + terminalButton + previewButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -2153,6 +2167,12 @@ document.addEventListener('click', function (e) {
   var a = e.target.closest && e.target.closest('a.ext-link');
   if (!a || !a.href) return;
   if (!(window.isTauri || window.__TAURI_INTERNALS__)) return;
+  if (state.appState.device && parsePreviewTarget(a.href)) {
+    e.preventDefault();
+    void import('./preview.js').then(module => module.openPreviewLink(a.href, state.appState.device))
+      .catch(error => showStats(`Preview unavailable: ${error.message}`));
+    return;
+  }
   e.preventDefault();
   import('@tauri-apps/plugin-opener').then(function (m) { m.openUrl(a.href); }).catch(function () {});
 });
@@ -2163,6 +2183,7 @@ Object.assign(window, {
   osName, timeAgo, formatSize, esc,
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   openSessionRename, applySessionTitle,
+  openPreviewPortPrompt,
   showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,
