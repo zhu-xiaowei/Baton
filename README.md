@@ -15,10 +15,10 @@ Baton provides non-intrusive, real-time streaming and rendering for Claude Code 
   <img src="docs/assets/mobile-rendering.avif" alt="Baton mobile rendering: interactive prompts, Mermaid diagrams, HTML, and Markdown previews" width="100%">
 </p>
 
-## Mobile tools
+## Developer tools
 
 <p align="center">
-  <img src="docs/assets/mobile-capabilities.avif" alt="Baton mobile tools: project files, Git changes, terminal controls, and session management" width="100%">
+  <img src="docs/assets/mobile-capabilities.avif" alt="Baton developer tools: project files, Git changes, terminal controls, and session management" width="100%">
 </p>
 
 ---
