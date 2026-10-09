@@ -20,6 +20,7 @@ var _view = null;
 var _downloadTarget = null;
 var _pdfPreview = null;
 var _pdfLoadController = null;
+var _viewedPdfKeys = new Set();
 
 function downloadStatus(text) {
   const status = document.getElementById('file-download-status');
@@ -415,24 +416,34 @@ async function showAttachment(key) {
       }
       const { mountPdfPreview } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
+      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size;
+      const showLoadingText = !_viewedPdfKeys.has(cacheKey);
       const body = document.getElementById('fileOverlayBody');
       const loading = body.querySelector('.file-loading');
       if (loading) {
         loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF');
-        (loading.querySelector('.file-loading-content') || loading)
-          .insertAdjacentHTML('beforeend', '<span>Loading PDF…</span>');
+        if (showLoadingText) {
+          (loading.querySelector('.file-loading-content') || loading)
+            .insertAdjacentHTML('beforeend', '<span>Loading PDF…</span>');
+        }
       } else {
         setBody('<div class="file-loading file-loading-delayed"><span class="file-loading-content">'
-          + loadingSpinner({ label: 'Loading PDF' }) + '<span>Loading PDF…</span></span></div>');
+          + loadingSpinner({ label: 'Loading PDF' })
+          + (showLoadingText ? '<span>Loading PDF…</span>' : '') + '</span></div>');
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
       const pdfPreview = await mountPdfPreview(body,
-        file.previewUrl, file.size, controller.signal, state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size);
+        file.previewUrl, file.size, controller.signal, cacheKey);
       if (_pdfLoadController === controller) _pdfLoadController = null;
       if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
       _pdfPreview = pdfPreview;
       await pdfPreview.ready;
+      if (token === _fileRequestToken) {
+        _viewedPdfKeys.delete(cacheKey);
+        _viewedPdfKeys.add(cacheKey);
+        if (_viewedPdfKeys.size > 100) _viewedPdfKeys.delete(_viewedPdfKeys.values().next().value);
+      }
       return;
     } else if (file.previewType?.startsWith('image/')) {
       preview = '<img class="file-image" alt="" src="' + url + '">';
