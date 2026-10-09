@@ -22,7 +22,16 @@ function urlWith(endpoint, fields) {
 }
 
 function socketFactory(url) {
-  return new WebSocket(url, { maxPayload: 28 * 1024, perMessageDeflate: false });
+  const socket = new WebSocket(url, { maxPayload: 28 * 1024, perMessageDeflate: false });
+  socket.on('message', bytes => {
+    try {
+      const message = JSON.parse(bytes.toString());
+      if (message.action === 'preview_tunnel' && message.type === 'error') {
+        console.log('preview data/control error', message.message || '');
+      }
+    } catch {}
+  });
+  return socket;
 }
 
 async function directRequest(request) {
@@ -106,7 +115,10 @@ async function main() {
   try {
     bridgeControl.on('message', bytes => {
       const message = JSON.parse(bytes.toString());
-      if (message.action === 'preview_tunnel') bridge.handle(message);
+      if (message.action === 'preview_tunnel') {
+        console.log('bridge control', message.type || message.op);
+        bridge.handle(message);
+      }
     });
     await once(bridgeControl, 'open');
     appControl = socketFactory(urlWith(config.wsUrl, {
@@ -119,6 +131,7 @@ async function main() {
       appControl.on('message', bytes => {
         const message = JSON.parse(bytes.toString());
         if (message.action !== 'preview_tunnel' || message.tunnelId !== tunnelId) return;
+        console.log('app control', message.type || message.op);
         if (message.type === 'offer') {
           channel = new PreviewDataChannel({ key: config.apiKey, offer: message, socketFactory });
           channel.addEventListener('open', () => { clearTimeout(timer); resolve(channel); }, { once: true });
@@ -141,9 +154,13 @@ async function main() {
     assert.ok(bodyOf(tunneled).length > 32 * 1024);
     assert.deepEqual(bodyOf(tunneled), bodyOf(direct));
     console.log('HTTP bytes', bodyOf(tunneled).length, 'SHA256', createHash('sha256').update(bodyOf(tunneled)).digest('hex').slice(0, 16));
+    const viteClient = await fetch(`http://127.0.0.1:${port}/@vite/client`).then(response => response.text());
+    const token = viteClient.match(/const wsToken = ["']([^"']+)["'];/)?.[1];
+    assert.ok(token, 'Vite HMR token missing');
     const wsKey = randomBytes(16).toString('base64');
-    const upgrade = Buffer.from(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${wsKey}\r\nSec-WebSocket-Protocol: vite-hmr\r\nOrigin: http://localhost:${port}\r\n\r\n`);
+    const upgrade = Buffer.from(`GET /?token=${encodeURIComponent(token)} HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${wsKey}\r\nSec-WebSocket-Protocol: vite-hmr\r\nOrigin: http://localhost:${port}\r\n\r\n`);
     const upgraded = await requestThroughChannel(channel, upgrade, { upgrade: true });
+    console.log('upgrade status', upgraded.toString('latin1').split('\r\n', 1)[0]);
     assert.ok(upgraded.toString('latin1').startsWith('HTTP/1.1 101'));
     console.log('WebSocket upgrade 101');
     appControl.send(JSON.stringify({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId }));

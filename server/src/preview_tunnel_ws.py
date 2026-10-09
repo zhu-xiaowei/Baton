@@ -36,7 +36,7 @@ class PreviewSessions:
         return self.post(self.endpoint, connection_id, {
             "action": "preview_tunnel", "v": 1, "type": kind,
             "tunnelId": session["tunnelId"], "device": session["device"],
-            "port": session["port"], **fields})
+            "port": int(session["port"]), **fields})
 
     def claim(self, connection_id, tunnel_id):
         self.table.update_item(Key={"connectionId": connection_id},
