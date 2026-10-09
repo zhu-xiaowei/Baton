@@ -3,6 +3,10 @@ description: Build iOS release IPA and upload a new TestFlight build (auto-bumps
 allowed-tools: Bash(npm run release:ios), Bash(./scripts/release-ios.sh), Bash(npm run release:ios:cloud), Bash(node scripts/release-ios-cloud.mjs --dry-run)
 ---
 
+For TestFlight update notes (`whatsNew`), default to exactly
+`Bug fixes and improvements.` when there are no major new user-facing features.
+Use feature-specific notes for major additions, or the user's supplied wording.
+
 Before publishing, inspect `git status --short`, including untracked files.
 If there are changes, show the files that would be included and ask whether
 to commit them and continue. Wait for the answer. Commit only agreed files;
