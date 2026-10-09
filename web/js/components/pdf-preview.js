@@ -94,7 +94,6 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey) {
     .pdf-container { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
     .pdf-loading { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: #0d1117; color: #8b949e; font: 14px system-ui; }
     .pdf-loading-indicator { display: flex; align-items: center; gap: 10px; visibility: hidden; animation: pdf-loading-reveal 0s 250ms forwards; }
-    .pdf-loading.is-visible .pdf-loading-indicator { visibility: visible; animation: none; }
     .pdf-loading-indicator::before { content: ''; width: 18px; height: 18px; border: 2px solid #484f58; border-top-color: #e6edf3; border-radius: 50%; animation: pdf-loading-spin .6s linear infinite; }
     @keyframes pdf-loading-reveal { to { visibility: visible; } }
     @keyframes pdf-loading-spin { to { transform: rotate(360deg); } }
