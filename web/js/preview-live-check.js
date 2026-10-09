@@ -4,6 +4,10 @@ import { parsePreviewTarget } from './preview-link.js';
 
 const status = document.getElementById('status');
 const traffic = document.getElementById('traffic');
+const debugLog = document.createElement('pre');
+debugLog.setAttribute('aria-label', 'Preview transport diagnostics');
+debugLog.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;font:12px monospace;';
+document.body.appendChild(debugLog);
 const embeddedKey = __PREVIEW_SMOKE_KEY__;
 const embeddedWsUrl = __PREVIEW_SMOKE_WS_URL__;
 const embeddedDevice = __PREVIEW_SMOKE_DEVICE__;
@@ -41,6 +45,7 @@ async function start({ key, wsUrl, device }) {
   const target = parsePreviewTarget('http://localhost:5173/preview-target.html');
   tunnel = new PreviewTunnel({
     device, target, wsUrl, key,
+    onDiagnostic: message => { debugLog.textContent += `${message}\n`; },
     onStatus: message => {
       status.textContent = message;
       console.info('BATON_REMOTE_PREVIEW_STAGE', message);

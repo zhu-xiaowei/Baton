@@ -21,13 +21,14 @@ function waitForOpen(socket) {
 }
 
 export class PreviewTunnel {
-  constructor({ device, target, wsUrl, key, onStatus, onTraffic }) {
+  constructor({ device, target, wsUrl, key, onStatus, onTraffic, onDiagnostic }) {
     this.device = device;
     this.target = target;
     this.wsUrl = wsUrl;
     this.key = key;
     this.onStatus = onStatus;
     this.onTraffic = onTraffic;
+    this.onDiagnostic = onDiagnostic;
     this.inboundBytes = 0;
     this.tunnelId = crypto.randomUUID();
     this.streams = new Map();
@@ -132,6 +133,7 @@ export class PreviewTunnel {
 
   nativeOpen(payload) {
     if (this.closed || payload.tunnelId !== this.tunnelId || !UUID.test(payload.streamId)) return;
+    this.onDiagnostic?.('native-open');
     this.status(`Connecting to port ${this.target.port} on ${this.device}`);
     const stream = {
       id: payload.streamId, opened: false, localFin: false, remoteFin: false,
@@ -146,6 +148,7 @@ export class PreviewTunnel {
 
   nativeBytes(payload) {
     const stream = this.streams.get(payload.streamId);
+    if (stream && payload.seq === 1) this.onDiagnostic?.('browser-request-bytes');
     if (!stream || payload.tunnelId !== this.tunnelId || !stream.opened
       || !Number.isSafeInteger(payload.seq) || payload.seq < stream.nextOutgoing
       || payload.seq > stream.nextOutgoing + 32) return;
@@ -163,6 +166,7 @@ export class PreviewTunnel {
 
   nativeClose(payload) {
     if (payload.tunnelId !== this.tunnelId) return;
+    this.onDiagnostic?.('native-close');
     this.closeStream(payload.streamId, true);
   }
 
@@ -192,9 +196,14 @@ export class PreviewTunnel {
     if (!stream || this.closed) return;
     if (message.type === 'opened') {
       stream.opened = true;
+      this.onDiagnostic?.('remote-opened');
       this.status(`Connected to port ${this.target.port} on ${this.device}`);
       void invoke('preview_credit', { streamId: stream.id, bytes: WINDOW_BYTES })
-        .catch(() => this.closeStream(stream.id, true));
+        .then(() => this.onDiagnostic?.('credit-ok'))
+        .catch(error => {
+          this.onDiagnostic?.(`credit-failed: ${error.message || error}`);
+          this.closeStream(stream.id, true);
+        });
       this.status(`Loading ${this.target.displayUrl}`);
     } else if (message.type === 'ack') {
       if (message.seq < stream.lastAcked || message.seq >= stream.nextOutgoing) {
@@ -211,6 +220,7 @@ export class PreviewTunnel {
       if (credited) void invoke('preview_credit', { streamId: stream.id, bytes: credited })
         .catch(() => this.closeStream(stream.id, true));
     } else if (message.type === 'bytes') {
+      if (message.seq === 1) this.onDiagnostic?.('remote-response-bytes');
       if (message.seq < stream.nextIncoming) {
         this.channel.send({ type: 'ack', streamId: stream.id, seq: stream.lastWritten });
         return;
@@ -233,6 +243,7 @@ export class PreviewTunnel {
       stream.remoteFinSeq = message.seq;
       void this.flushIncoming(stream);
     } else if (message.type === 'error') {
+      this.onDiagnostic?.(`remote-error: ${message.code}`);
       this.status(message.code === 'connection_refused'
         ? `Port ${this.target.port} is not listening on ${this.device}`
         : 'Remote preview service failed');
@@ -267,7 +278,8 @@ export class PreviewTunnel {
         stream.remoteFin = true;
         this.maybeCloseStream(stream);
       }
-    } catch {
+    } catch (error) {
+      this.onDiagnostic?.(`remote-write-failed: ${error.message || error}`);
       this.closeStream(stream.id, true);
     } finally {
       stream.flushing = false;
