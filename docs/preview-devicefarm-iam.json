@@ -1,0 +1,39 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BatonPreviewDeviceFarmTest",
+      "Effect": "Allow",
+      "Action": [
+        "devicefarm:GetAccountSettings",
+        "devicefarm:ListProjects",
+        "devicefarm:GetProject",
+        "devicefarm:ListDevices",
+        "devicefarm:CreateProject",
+        "devicefarm:CreateDevicePool",
+        "devicefarm:ListDevicePools",
+        "devicefarm:GetDevicePoolCompatibility",
+        "devicefarm:CreateUpload",
+        "devicefarm:GetUpload",
+        "devicefarm:ScheduleRun",
+        "devicefarm:GetRun",
+        "devicefarm:ListRuns",
+        "devicefarm:ListJobs",
+        "devicefarm:ListSuites",
+        "devicefarm:ListTests",
+        "devicefarm:ListArtifacts",
+        "devicefarm:StopRun",
+        "devicefarm:DeleteRun",
+        "devicefarm:DeleteUpload",
+        "devicefarm:DeleteDevicePool",
+        "devicefarm:DeleteProject"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-west-2"
+        }
+      }
+    }
+  ]
+}

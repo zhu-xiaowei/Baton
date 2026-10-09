@@ -14,6 +14,9 @@ window.addEventListener('message', event => {
   status.textContent = event.data.ok
     ? 'Passed: the in-app frame loaded the local page, CSS, JavaScript and fetch.'
     : `Local page error: ${event.data.error || 'unknown error'}`;
+  if (event.data.ok) console.info('BATON_LOCAL_PREVIEW_PROBE_PASS');
+  else console.error('BATON_LOCAL_PREVIEW_PROBE_FAIL', event.data.error || 'unknown error');
+  void invoke('record_local_preview_probe_result', { passed: event.data.ok }).catch(() => {});
 });
 
 button.addEventListener('click', async () => {
@@ -31,7 +34,10 @@ button.addEventListener('click', async () => {
     }, 10000);
   } catch (error) {
     status.textContent = `Could not start the local page: ${error}`;
+    console.error('BATON_LOCAL_PREVIEW_PROBE_FAIL', String(error));
   } finally {
     button.disabled = false;
   }
 });
+
+if (new URLSearchParams(location.search).get('auto') === '1') button.click();

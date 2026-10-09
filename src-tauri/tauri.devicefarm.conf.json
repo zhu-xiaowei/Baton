@@ -1,0 +1,11 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Baton Preview Check",
+        "url": "preview-feasibility.html?auto=1"
+      }
+    ]
+  }
+}
