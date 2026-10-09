@@ -2398,6 +2398,9 @@ function acceptPendingReceipt(pending) {
   if (!pending || pending.serverReceived || pending.failed) return;
   pending.serverReceived = true;
   clearTimeout(pending.transportTimer);
+  (pending.images || []).forEach(function (sent) {
+    if (sent.kind === 'file' && sent.key) window.clearAttachmentPreviewCache?.(sent.key);
+  });
   if (!showPendingMessage(pending)) return;
   var input = document.getElementById('msg-input');
   if (input.value === pending.inputText) {

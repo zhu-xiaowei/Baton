@@ -46,6 +46,15 @@ const RANGE_CACHE_LIMIT = 16 * 1024 * 1024;
 const rangeCache = new Map();
 let rangeCacheBytes = 0;
 
+export function clearPdfRangeCache(prefix) {
+  if (!prefix) return;
+  for (const [id, entry] of rangeCache) {
+    if (!id.startsWith(prefix)) continue;
+    rangeCache.delete(id);
+    rangeCacheBytes -= entry.bytes.length;
+  }
+}
+
 async function fetchPdfRange(url, begin, end, signal, cacheKey) {
   if (signal?.aborted) throw new DOMException('PDF loading cancelled', 'AbortError');
   const id = cacheKey ? `${cacheKey}:${begin}-${end}` : '';
@@ -62,6 +71,11 @@ async function fetchPdfRange(url, begin, end, signal, cacheKey) {
   if (response.status !== 200 && response.status !== 206) throw new Error(`PDF download failed (${response.status})`);
   const result = { bytes: new Uint8Array(await response.arrayBuffer()), partial: response.status === 206 };
   if (id && result.bytes.length <= RANGE_CACHE_LIMIT) {
+    const previous = rangeCache.get(id);
+    if (previous) {
+      rangeCache.delete(id);
+      rangeCacheBytes -= previous.bytes.length;
+    }
     while (rangeCacheBytes + result.bytes.length > RANGE_CACHE_LIMIT) {
       const oldest = rangeCache.keys().next().value;
       const removed = rangeCache.get(oldest);

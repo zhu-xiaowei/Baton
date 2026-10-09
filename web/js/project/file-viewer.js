@@ -21,6 +21,16 @@ var _downloadTarget = null;
 var _pdfPreview = null;
 var _pdfLoadController = null;
 var _viewedPdfKeys = new Set();
+var _clearPdfRanges = null;
+
+function clearAttachmentPreviewCache(key) {
+  if (!key) return;
+  const prefix = state.SERVER + '|' + state.KEY + '|' + key + '|';
+  for (const viewed of _viewedPdfKeys) {
+    if (viewed.startsWith(prefix)) _viewedPdfKeys.delete(viewed);
+  }
+  _clearPdfRanges?.(prefix);
+}
 
 function downloadStatus(text) {
   const status = document.getElementById('file-download-status');
@@ -414,8 +424,9 @@ async function showAttachment(key) {
         setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>');
         return;
       }
-      const { mountPdfPreview } = await import('../components/pdf-preview.js');
+      const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
+      _clearPdfRanges = clearPdfRangeCache;
       const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size;
       const showLoadingText = !_viewedPdfKeys.has(cacheKey);
       const body = document.getElementById('fileOverlayBody');
@@ -565,6 +576,7 @@ document.addEventListener('keydown', function (e) {
 Object.assign(window, {
   openFile: openFile,
   closeFileViewer: closeFileViewer,
+  clearAttachmentPreviewCache,
   setFileViewMode: setFileViewMode,
   downloadViewedFile,
 });

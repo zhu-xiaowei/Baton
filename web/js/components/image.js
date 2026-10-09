@@ -224,7 +224,9 @@ function renderStagedImages() {
 }
 
 function removeStagedImage(i) {
-  state.stagedImages[i]?.controller?.abort();
+  const entry = state.stagedImages[i];
+  entry?.controller?.abort();
+  if (entry?.kind === 'file' && entry.key) window.clearAttachmentPreviewCache?.(entry.key);
   state.stagedImages.splice(i, 1);
   renderStagedImages();
 }
