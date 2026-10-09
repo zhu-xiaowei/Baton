@@ -284,6 +284,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "baton"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "log",
  "objc2-foundation",
  "serde",
@@ -293,9 +294,11 @@ dependencies = [
  "tauri-plugin-barcode-scanner",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-file-download",
+ "tauri-plugin-in-app-browser",
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "tauri-plugin-speech",
+ "uuid",
 ]
 
 [[package]]
@@ -4079,6 +4082,19 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-in-app-browser"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d17c367021dc4ec584feef4d7e2aa922e3520fc430d896d97f6c484a52f42f0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 // Multi-window is macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
 mod preview_feasibility;
+mod preview_proxy;
 
 #[tauri::command]
 fn record_local_preview_probe_result(passed: bool) {
@@ -69,11 +70,19 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_in_app_browser::init())
     .plugin(tauri_plugin_file_download::init())
+    .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
       preview_feasibility::start_local_preview_probe,
-      record_local_preview_probe_result
+      record_local_preview_probe_result,
+      preview_proxy::preview_start,
+      preview_proxy::preview_credit,
+      preview_proxy::preview_write,
+      preview_proxy::preview_shutdown_write,
+      preview_proxy::preview_close_socket,
+      preview_proxy::preview_stop
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
