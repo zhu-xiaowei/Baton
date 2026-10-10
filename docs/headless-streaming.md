@@ -1,341 +1,341 @@
-# Headless Stream-JSON 实时性 — 实现流程文档
+# Headless Stream-JSON Real-Time Delivery — Implementation Flow
 
-> 当前状态：Claude Phase 2E 已完成，headless 是唯一发送路径，tmux 已删除。
-> 本文保留早期实测数据，并以当前实现描述最终架构。Codex 已完成历史读取和实时只读监控；
-> 发送、streaming 与权限交互属于 Phase 3 的独立 app-server controller，见
-> [Codex 接入设计与实施状态](codex.md)。
+> Current status: Claude Phase 2E is complete; headless is the only send path and tmux has been deleted.
+> This document keeps the early measured data and describes the final architecture as currently implemented. Codex has completed history reading and real-time read-only monitoring;
+> sending, streaming and permission interaction belong to the separate Phase 3 app-server controller, see
+> [Codex integration design and implementation status](codex.md).
 >
-> 目标:App 发送的消息获得**逐 token 的流式反馈**,同时完整保留现有的所有能力(读 jsonl、
-> 接管终端已开会话、回电脑继续)。参考 `dnakov/litter`(headless 驱动 + ClaudePool)。
+> Goal: messages sent from the App get **token-by-token streaming feedback**, while fully preserving every existing capability (reading jsonl,
+> taking over sessions already open in a terminal, continuing back on the computer). Reference: `dnakov/litter` (headless driver + ClaudePool).
 >
-> **架构定型:per-session 常驻 headless 进程池**(不是回合级一次性 `-p`)。bridge 为每个会话维护
-> **一个**常驻 `claude` 进程,通过持久 stdin 管道多轮喂消息;多网页/多端的消息全部路由到 bridge,
-> 由 bridge 分发给那**唯一**的进程 → 天然单写者,从架构上消除双写。已用本机实跑
-> (CC 2.1.204)校准所有假设。
+> **Architecture settled: per-session persistent headless process pool** (not turn-level one-shot `-p`). The bridge maintains
+> **one** persistent `claude` process per session and feeds multiple turns through a persistent stdin pipe; messages from multiple web pages/devices are all routed to the bridge,
+> which dispatches them to that **single** process → naturally a single writer, eliminating double writes by architecture. All assumptions were calibrated with real local runs
+> (CC 2.1.204).
 
-## 一、实测结论(本机实跑)
+## 1. Measured Findings (real local runs)
 
-一次会读文件的回合(`claude -p "Read sample.txt…" --output-format stream-json
---include-partial-messages --verbose`)产出 34 行,分析后确认:
+A turn that reads a file (`claude -p "Read sample.txt…" --output-format stream-json
+--include-partial-messages --verbose`) produced 34 lines; analysis confirmed:
 
-1. **stream-json 的完整 `assistant` 行，以及表示 tool_result 的 `user` 行，与 JSONL 同条
-   消息 `uuid` 一致、`content[]` 结构等价。**用户问题本身不会稳定从 headless stdout 回显；
-   Bridge 使用 Web 已提供的 `turnId + text` 立即生成仅实时的 user authority，JSONL 再以
-   Claude 的真实 UUID 负责持久化。
+1. **Complete `assistant` lines in stream-json, and `user` lines representing tool_result, have the same
+   message `uuid` as JSONL and an equivalent `content[]` structure.** The user question itself is not reliably echoed on headless stdout;
+   the Bridge uses the `turnId + text` already provided by Web to immediately generate a real-time-only user authority, and JSONL then uses
+   Claude's real UUID for persistence.
 
-2. **stream-json 的完整 runtime 行有 `uuid` + `timestamp` + 完整
-   `content`(含 assistant、tool_use、tool_result),与 JSONL 同条消息 uuid 一致。**
-   顶层 keys:`type / message / parent_tool_use_id / session_id / uuid / timestamp`(user 行多
-   `tool_use_result`)。实测 stream 的 uuid **全部**能在 jsonl 里找到(4/4 匹配)→ **stream 完整行
-   就是 assistant/tool 的实时权威消息**；相同 uuid 的 JSONL 行只负责持久化。
-   缺的只有 `parentUuid`(有 `parent_tool_use_id`,语义是"属于哪个子 agent/工具",不是父消息链)。
-   → **架构:stream 完整行当权威消息渲染(工具卡/tool_result 免费);`text_delta` 仅作"完整行到达前"
-   的打字机预览;runtime-owned JSONL 不再广播 → 零闪烁。**
-   （早期本条曾误记为"stream 无 uuid/timestamp";实测 CC 2.1.204+ 均有,已更正。）
+2. **Complete runtime lines in stream-json have `uuid` + `timestamp` + complete
+   `content` (including assistant, tool_use, tool_result), with the same uuid as the matching JSONL message.**
+   Top-level keys: `type / message / parent_tool_use_id / session_id / uuid / timestamp` (user lines additionally have
+   `tool_use_result`). Measured: **every** stream uuid can be found in jsonl (4/4 matches) → **complete stream lines
+   are the real-time authoritative messages for assistant/tool**; JSONL lines with the same uuid are only responsible for persistence.
+   The only missing field is `parentUuid` (there is `parent_tool_use_id`, meaning "which sub-agent/tool it belongs to", not the parent message chain).
+   → **Architecture: render complete stream lines as authoritative messages (tool cards/tool_result for free); `text_delta` is only the typewriter preview "before the complete line arrives";
+   runtime-owned JSONL is no longer broadcast → zero flicker.**
+   (Early versions of this item wrongly recorded "stream has no uuid/timestamp"; measurements show CC 2.1.204+ has both, corrected.)
 
-3. **headless 会写 jsonl(新建写新文件,resume/多轮追加同一文件)。**
-   新建会话产生 `~/.claude/projects/<hash>/<sessionId>.jsonl`;`--resume` 或持久管道的后续回合
-   追加进同一文件、sessionId 不变。→ 现有 fs.watch + 行号追踪天然兼容。
+3. **headless writes jsonl (a new session writes a new file; resume/multi-turn appends to the same file).**
+   A new session produces `~/.claude/projects/<hash>/<sessionId>.jsonl`; later turns via `--resume` or the persistent pipe
+   append to the same file with the same sessionId. → Naturally compatible with the existing fs.watch + line-number tracking.
 
-4. **⭐ 持久 stdin 管道可多轮对话(常驻进程池的基石,已实测)。**
-   `claude -p --input-format stream-json --output-format stream-json --verbose`,**stdin 保持打开**
-   时进程常驻,可连续喂多条 `{"type":"user","message":{...}}\n`;实测同一进程、同一 sessionId
-   处理 2 个回合,第二轮答出第一轮记住的数字(上下文保持)。**关闭 stdin → 进程退出。**
-   → 一个会话一个进程 = 唯一写者,连发/多端消息串行进同一 stdin,双写不可能发生。
-   输入格式:每条 user 消息是一行 JSON `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"…"}]}}`。
+4. **⭐ A persistent stdin pipe supports multi-turn conversation (the foundation of the persistent process pool, measured).**
+   `claude -p --input-format stream-json --output-format stream-json --verbose`: while **stdin stays open**
+   the process stays alive and can be fed multiple `{"type":"user","message":{...}}\n` in a row; measured the same process and same sessionId
+   handling 2 turns, with the second turn answering the number remembered from the first (context preserved). **Closing stdin → process exits.**
+   → One process per session = single writer; rapid/multi-device messages are serialized into the same stdin, double writes cannot happen.
+   Input format: each user message is one JSON line `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"…"}]}}`.
 
-5. **⚠️ cwd 的 symlink 会改变 project hash。**
-   在 `/tmp/hltest` 跑,`system/init.cwd` 实际是 `/private/tmp/hltest`(macOS `/tmp`→`/private/tmp`),
-   jsonl 落在 `-private-tmp-hltest/` 而非 `-tmp-hltest/`。
-   → **新建会话的 sessionId 由 Bridge 预生成并传给 `--session-id`；实际 cwd 仍以
-   `system/init.cwd` 为准。** watcher 递归监听整个 `CLAUDE_PROJECTS`，symlink 解析后的 hash
-   目录也能被捕获。
+5. **⚠️ A symlinked cwd changes the project hash.**
+   Running in `/tmp/hltest`, `system/init.cwd` is actually `/private/tmp/hltest` (macOS `/tmp`→`/private/tmp`),
+   and jsonl lands in `-private-tmp-hltest/` instead of `-tmp-hltest/`.
+   → **The sessionId of a new session is pre-generated by the Bridge and passed to `--session-id`; the actual cwd is still
+   taken from `system/init.cwd`.** The watcher recursively watches all of `CLAUDE_PROJECTS`, so the symlink-resolved hash
+   directory is also captured.
 
-6. **流式增量的形态**(逐行分派见第六节):
-   - 文本走 `content_block_start(text)` → 多个 `content_block_delta(text_delta)` → `content_block_stop`,
-     `text_delta` 是半截文本(如 `"The file says a simple greeting from the"`)。
-   - 工具走 `content_block_start(tool_use)` → 多个 `content_block_delta(input_json_delta)`(入参 JSON 分片)。
-   - `tool_result` 作为后续**完整 `user` 行**出现(带 uuid,携带 `content` + 顶层 `tool_use_result`
-     `{stdout,stderr,interrupted,...}` — 与 jsonl 完全同构)。
+6. **Shape of streaming increments** (per-line dispatch in Section 6):
+   - Text goes `content_block_start(text)` → multiple `content_block_delta(text_delta)` → `content_block_stop`;
+     `text_delta` is partial text (e.g. `"The file says a simple greeting from the"`).
+   - Tools go `content_block_start(tool_use)` → multiple `content_block_delta(input_json_delta)` (input JSON fragments).
+   - `tool_result` appears as a later **complete `user` line** (with uuid, carrying `content` + top-level `tool_use_result`
+     `{stdout,stderr,interrupted,...}` — fully isomorphic with jsonl).
 
-7. **⭐ 子 agent(Task 工具)中间过程:stream 有,主 jsonl 没有。** 实测发一个 Task 子 agent:
-   stream 里出现 5 条带 `parent_tool_use_id` 的行(子 agent 的 Bash/Read/tool_result 全过程),
-   而主 jsonl **完全没有**这些(watcher 本就 `if (filename.includes('subagents')) return` 跳过,
-   且内联 Task 连 `subagents/` 文件都不落)。→ **streaming 在"子 agent 过程"上比 jsonl 更完整**,
-   但这是 streaming 独有的实时价值,**不写 DDB**(见架构决策)——刷新/历史看不到子 agent 过程,已接受此取舍。
+7. **⭐ Sub-agent (Task tool) intermediate steps: present in stream, absent from the main jsonl.** Measured by launching a Task sub-agent:
+   the stream contained 5 lines with `parent_tool_use_id` (the sub-agent's full Bash/Read/tool_result process),
+   while the main jsonl had **none** of them (the watcher already skips with `if (filename.includes('subagents')) return`,
+   and an inline Task doesn't even write a `subagents/` file). → **streaming is more complete than jsonl for "sub-agent process"**,
+   but this is real-time value unique to streaming and is **not written to DDB** (see architecture decisions) — refresh/history cannot see the sub-agent process; this trade-off is accepted.
 
-8. **各有独有,谁都不是超集**(实测汇总):
-   | 内容 | stream | 主 jsonl |
+8. **Each has unique content; neither is a superset** (measured summary):
+   | Content | stream | main jsonl |
    |---|---|---|
-   | assistant 文本/thinking/tool_use/tool_result | ✅ | ✅ |
-   | 子 agent 中间步骤(parent_tool_use_id) | ✅ 独有 | ❌ |
-   | `ai-title` / `last-prompt`(会话标题元数据) | ❌ | ✅ 独有(CC 异步写盘,不走 stream stdout) |
-   | 用户输入回显 / `file-history-snapshot` | ❌ | ✅ |
-   - **标题不受影响**:沿用与 CC TUI 一致的多级 fallback(custom-title → ai-title
-     → summary → **第一条原始 prompt** → last-prompt)。第一条原始 prompt 优先从
-     `~/.claude/history.jsonl` 按 sessionId 获取，缺失时从 session JSONL 恢复普通文本、
-     `/package` 等 slash command。ai-title 仍随 jsonl 落 DDB;实时期前端有 user 消息即可出标题。litter 同思路
-     (`claude_session_scan.rs` 直接取首条 user 消息文本作 preview)。
+   | assistant text/thinking/tool_use/tool_result | ✅ | ✅ |
+   | Sub-agent intermediate steps (parent_tool_use_id) | ✅ unique | ❌ |
+   | `ai-title` / `last-prompt` (session title metadata) | ❌ | ✅ unique (CC writes to disk asynchronously, not via stream stdout) |
+   | User input echo / `file-history-snapshot` | ❌ | ✅ |
+   - **Titles are unaffected**: they follow the same multi-level fallback as the CC TUI (custom-title → ai-title
+     → summary → **first raw prompt** → last-prompt). The first raw prompt is preferably fetched from
+     `~/.claude/history.jsonl` by sessionId; if missing, plain text and slash commands such as `/package`
+     are recovered from the session JSONL. ai-title still lands in DDB via jsonl; during real time the frontend can show a title once a user message exists. litter uses the same idea
+     (`claude_session_scan.rs` takes the first user message text directly as the preview).
 
-## 二、核心架构:per-session 常驻进程池(ClaudePool)
+## 2. Core Architecture: per-session Persistent Process Pool (ClaudePool)
 
-bridge 维护 `Map<sessionId, HeadlessProc>`,每个会话一个常驻 `claude` 进程:
+The bridge maintains `Map<sessionId, HeadlessProc>`, one persistent `claude` process per session:
 
 ```
 HeadlessProc = {
-  proc,           // child_process,持久
-  stdin,          // 保持打开的管道;写 user 消息;关闭 = 让进程退出
-  sessionId,      // resume/create 时已知；否则由 system/init 回传
+  proc,           // child_process, persistent
+  stdin,          // pipe kept open; write user messages; close = make the process exit
+  sessionId,      // known on resume/create; otherwise returned by system/init
   cwd,
-  busy,           // 当前是否有回合在生成(用于 UI 状态 / 串行)
-  queue,          // busy 时到达的消息排队,回合结束后依次喂
-  lastActiveAt,   // idle 回收用
-  turnId,         // 当前回合的关联 id
+  busy,           // whether a turn is currently generating (for UI status / serialization)
+  queue,          // messages arriving while busy are queued and fed in order after the turn ends
+  lastActiveAt,   // for idle reaping
+  turnId,         // correlation id of the current turn
 }
 ```
 
-**为什么是进程池而非回合级 spawn**:回合级一次性 `-p` 时,同一会话的第二条消息(多网页/多端/连发)
-会 spawn 第二个 `--resume` 进程,与第一个同写一个 jsonl → 双写损坏。常驻进程 + 持久 stdin 让
-**同一会话永远只有一个写者**,连发消息串行进同一 stdin,双写从架构上消失(实测见结论 4)。
+**Why a process pool instead of per-turn spawn**: with turn-level one-shot `-p`, a second message for the same session (multiple web pages/devices/rapid sends)
+would spawn a second `--resume` process writing the same jsonl as the first → double-write corruption. A persistent process + persistent stdin ensures
+**a session always has exactly one writer**; rapid messages are serialized into the same stdin, and double writes disappear by architecture (measured, see finding 4).
 
-### 决策表
+### Decision Table
 
-| 项 | 采用 |
+| Item | Adopted |
 |---|---|
-| 驱动方式 | **per-session 常驻进程 + 持久 stdin 管道**(`--input-format stream-json`) |
-| 多网页/多端 | 全路由到 bridge(单例)→ 分发给该 sessionId 的**唯一**进程 |
-| 同会话连发 | 进 `queue` 串行,不并行 spawn(stdin 天然单写者) |
-| 新建会话 | Bridge 预生成 UUID 并用 `--session-id` 启动；`system/init` 用于确认 session/cwd |
-| 发送路径 | headless 是唯一发送路径；`streamMode` 和 tmux fallback 已删除 |
-| 接管判据 | daemon agent 先 `claude stop` 再 resume；其他 session 直接复用或启动 headless |
-| 权限 | **默认 `--permission-prompt-tool stdio` 不加 bypass** — 用户配什么权限就什么权限(零侵入)。见第六·五节 |
-| 显示/落地 | stream 完整行=实时权威,`text_delta`=打字机预览;runtime-owned JSONL 只写 DDB |
-| 预览渲染 | 完整 markdown 容错重渲(见第五节) |
-| 按需启动 | **不预启动**;新消息到达且无进程时才 spawn(spawn→init 就绪约 ≤30s,之后同会话复用) |
-| idle 回收 | 周期 `reap`:`lastActiveAt` 超 **idleTTL(默认 10min)** 且非 busy → 关 stdin,进程干净退出(jsonl 保留) |
-| 数量上限 | **默认 16 个进程**,超限时 LRU 淘汰最久未活跃的 idle 进程;busy 进程永不回收/淘汰 |
+| Driver | **per-session persistent process + persistent stdin pipe** (`--input-format stream-json`) |
+| Multiple web pages/devices | All routed to the bridge (singleton) → dispatched to the **single** process for that sessionId |
+| Rapid sends in one session | Go into `queue` serially, no parallel spawn (stdin is naturally single-writer) |
+| New session | Bridge pre-generates a UUID and starts with `--session-id`; `system/init` confirms session/cwd |
+| Send path | headless is the only send path; `streamMode` and the tmux fallback are deleted |
+| Takeover rule | daemon agent: `claude stop` first, then resume; other sessions reuse or start headless directly |
+| Permissions | **Default `--permission-prompt-tool stdio` without bypass** — whatever permissions the user configured apply (zero intrusion). See Section 6.5 |
+| Display/persistence | Complete stream lines = real-time authority, `text_delta` = typewriter preview; runtime-owned JSONL only writes DDB |
+| Preview rendering | Fault-tolerant full markdown re-render (see Section 5) |
+| On-demand start | **No pre-start**; spawn only when a new message arrives and no process exists (spawn→init ready in ≤30s, then reused for the same session) |
+| Idle reaping | Periodic `reap`: `lastActiveAt` exceeds **idleTTL (default 10min)** and not busy → close stdin, process exits cleanly (jsonl kept) |
+| Count cap | **Default 16 processes**; over the cap, LRU evicts the least recently active idle process; busy processes are never reaped/evicted |
 
-### 单写者约束(两层)
-1. **内部**:同会话只有一个 headless 进程(进程池保证)→ 消除"我们自己起多个"的双写。
-2. **外部**:daemon agent 可通过 `claude stop` 后接管；普通 terminal/VS Code 没有等价锁，
-   不支持在原进程仍生成时同时从 Web resume(见第四节)。
+### Single-Writer Constraint (two layers)
+1. **Internal**: only one headless process per session (guaranteed by the pool) → eliminates double writes from "us starting several".
+2. **External**: a daemon agent can be taken over after `claude stop`; ordinary terminal/VS Code has no equivalent lock,
+   and resuming from Web while the original process is still generating is not supported (see Section 4).
 
-## 三、数据流
+## 3. Data Flow
 
-### 发送(App → CC),headless 路径
+### Send (App → CC), headless path
 ```
 App doSend()  ──WS send_message {sessionId|projectHash, text, turnId}──►
-Server _handle_send_to_bridge(原样透传,去掉 device) ──►
-Bridge handleSendMessage → pool.send(sessionId|新建, cwd, text, callbacks):
-  ┌─ 进程已存在且空闲 → 直接往 stdin 写 user 消息
-  ├─ 进程已存在且 busy → 入 queue,回合结束后喂
-  └─ 进程不存在 → spawn 常驻进程(新建不带 --resume;已有带 --resume <id>),stdin 保持打开
-  逐行解析 stdout(见第六节):
-    system/init                → 校验 session_id + cwd
-    content_block_delta/text   → onDelta(turnId, text) → WS stream_delta(打字机预览)
-    assistant / user 完整行     → onMessage → extractForApp(归一 tool_use_result)
-                                  → WS messages {noCache:true}(权威消息,含工具卡/tool_result)
-    result                     → 本回合结束:busy=false,喂 queue 下一条;WS stream_end
-    进程 exit/error            → 从池移除;WS stream_end {error?};只读回退
-  回合受理后回 send_message_result {ok, sessionId, turnId}
+Server _handle_send_to_bridge (passed through as-is, device removed) ──►
+Bridge handleSendMessage → pool.send(sessionId|new, cwd, text, callbacks):
+  ┌─ process exists and idle → write user message to stdin directly
+  ├─ process exists and busy → enqueue, feed after the turn ends
+  └─ no process → spawn persistent process (new: no --resume; existing: --resume <id>), keep stdin open
+  parse stdout line by line (see Section 6):
+    system/init                → verify session_id + cwd
+    content_block_delta/text   → onDelta(turnId, text) → WS stream_delta (typewriter preview)
+    assistant / user full line → onMessage → extractForApp (normalize tool_use_result)
+                                  → WS messages {noCache:true} (authoritative message, incl. tool cards/tool_result)
+    result                     → turn ends: busy=false, feed next queued message; WS stream_end
+    process exit/error         → remove from pool; WS stream_end {error?}; read-only fallback
+  once the turn is accepted, reply send_message_result {ok, sessionId, turnId}
 ```
-**关键**:stream 完整行(有 uuid+ts+content)当**权威消息**,走和 jsonl 相同的 `messages`→`updateLastTurn`
-渲染路径(工具卡/tool_result 免费复用)。`noCache:true` → server 转发给 app 但**不写 DDB**(DDB 由
-jsonl watcher 独占写,避免同 uuid 双写)。
+**Key**: complete stream lines (with uuid+ts+content) are **authoritative messages**, going through the same `messages`→`updateLastTurn`
+render path as jsonl (tool cards/tool_result reused for free). `noCache:true` → server forwards to the app but **does not write DDB** (DDB is
+written exclusively by the jsonl watcher, avoiding double writes of the same uuid).
 
-### 单一实时来源，JSONL 只负责持久化
+### Single real-time source, JSONL only handles persistence
 ```
-实时:Web send_message → user messages{noCache}
-     stream 完整行 → assistant/tool messages{noCache} → App
-持久:CC 写 jsonl → watcher → DDB
+Real time: Web send_message → user messages{noCache}
+           complete stream lines → assistant/tool messages{noCache} → App
+Persisted: CC writes jsonl → watcher → DDB
 ```
-- Web/headless 管理的 turn 中，Web 请求是 user 实时来源，headless stdout 是 assistant/tool
-  实时来源；JSONL watcher 根据 busy
-  Session ownership 和精确 UUID ownership 只持久化，不重复广播。
-- Codex app-server 使用结构化 `runtime-turn:<turnId>` ownership 覆盖整个 JSONL turn。该
-  ownership 在 `turn_aborted/task_complete` 后仍保留，因为被中断工具的最终 OUT 可能继续写入；
-  直到下一条 `task_started` 建立新 turn 后才释放上一 turn。归属判断不依赖 Interrupted 文案。
-- CC headless 使用运行中 Session ownership，并以与 JSONL 相同的消息 UUID保留迟到行的精确
-  ownership；CC 的不同中断文案不会参与路由判断。
-- terminal/VS Code 自己产生、没有 headless ownership 的 JSONL 行仍以无 seq `messages`
-  实时广播并持久化。
-- **DDB 只由 jsonl 写**(决策:streaming 只做实时显示,不写 DDB)→ 刷新/历史/reconnect 读 DDB(jsonl 内容)。
+- In turns managed by Web/headless, the Web request is the real-time user source and headless stdout is the real-time
+  assistant/tool source; the JSONL watcher, based on busy
+  Session ownership and exact UUID ownership, only persists and does not rebroadcast.
+- Codex app-server uses structured `runtime-turn:<turnId>` ownership covering the whole JSONL turn. This
+  ownership is retained after `turn_aborted/task_complete`, because the final OUT of an interrupted tool may still be written;
+  the previous turn is released only after the next `task_started` establishes a new turn. Ownership does not depend on Interrupted wording.
+- CC headless uses running-Session ownership, and keeps exact ownership of late lines by the same message UUID
+  as JSONL; CC's various interrupt wordings do not take part in routing decisions.
+- JSONL lines produced by terminal/VS Code themselves, without headless ownership, are still broadcast in real time as seq-less `messages`
+  and persisted.
+- **DDB is written only from jsonl** (decision: streaming is for real-time display only, not written to DDB) → refresh/history/reconnect read DDB (jsonl content).
 
-### 预览 ↔ 权威衔接
-- `stream_delta` → App 按 `turnId + seq` 严格消费并更新当前文本节点。
-- **完整 assistant 行经 `messages` 到达 → 局部 reconcile 相同 turn 的预览节点**。内容一致时只标记
-  committed，不删除或重建正确 DOM。
-- 中断时 runtime 先完成未结束工具的权威 OUT，再发送唯一 Interrupted，最后发送
-  `stream_end{error:"interrupted"}`。Web 不根据 error 合成兼容节点。
-- headless 其他异常:`stream_end{error}` → 只读回退；reconnect 后由 `bufferAndFetch` 从 DDB
-  增量重建，并使用同一 `/messages` 响应中的 Session status 收口 spinner。
+### Preview ↔ Authority Handoff
+- `stream_delta` → the App strictly consumes by `turnId + seq` and updates the current text node.
+- **When the complete assistant line arrives via `messages` → locally reconcile the preview node of the same turn**. If content matches, it is only marked
+  committed; correct DOM is not deleted or rebuilt.
+- On interrupt, the runtime first completes the authoritative OUT of unfinished tools, then sends a single Interrupted, and finally sends
+  `stream_end{error:"interrupted"}`. Web does not synthesize compatibility nodes from the error.
+- Other headless failures: `stream_end{error}` → read-only fallback; after reconnect, `bufferAndFetch` rebuilds incrementally from DDB
+  and uses the Session status in the same `/messages` response to settle the spinner.
 
-## 三·五、进程生命周期(按需启动 + idle 回收,实证自 litter ClaudePool)
+## 3.5 Process Lifecycle (on-demand start + idle reaping, derived from litter ClaudePool)
 
-**不预启动、不常驻一堆进程**。参数与机制照搬 litter `crates/baton-bridge/src/pool/` +
-`bridge-core/src/pool.rs`(已读源码核对):
+**No pre-start, no pile of persistent processes**. Parameters and mechanisms copied from litter `crates/baton-bridge/src/pool/` +
+`bridge-core/src/pool.rs` (verified against the source):
 
-| 阶段 | 行为 |
+| Phase | Behavior |
 |---|---|
-| **启动** | 仅当有新消息且该会话无进程时才 spawn;`system/init` 就绪约 ≤30s(`initTimeout`),之后同会话复用 |
-| **复用** | 同会话后续消息直接进已存在进程的 stdin(空闲直发 / busy 入 queue) |
-| **保活** | 每次收发刷新 `lastActiveAt`;正在生成回合的进程标 `busy`(litter 的 `active`) |
-| **回收** | 周期 `reapIdle()`:`now - lastActiveAt >= idleTTL(默认 10min)` 且非 busy → 关 stdin,进程干净退出,jsonl 保留 |
-| **上限** | 默认最多 16 进程;新 acquire 超限时 LRU 淘汰最久未活跃的 idle 进程;**busy 进程永不被回收/淘汰** |
-| **崩溃** | 进程意外 exit → 从池移除;下条消息按"无进程"重新 spawn(带 `--resume` 续上) |
+| **Start** | Spawn only when there is a new message and the session has no process; `system/init` ready in ≤30s (`initTimeout`), then reused for the same session |
+| **Reuse** | Later messages for the same session go directly into the existing process's stdin (idle: send directly / busy: enqueue) |
+| **Keep-alive** | Every send/receive refreshes `lastActiveAt`; a process generating a turn is marked `busy` (litter's `active`) |
+| **Reap** | Periodic `reapIdle()`: `now - lastActiveAt >= idleTTL (default 10min)` and not busy → close stdin, process exits cleanly, jsonl kept |
+| **Cap** | Default max 16 processes; when a new acquire exceeds the cap, LRU evicts the least recently active idle process; **busy processes are never reaped/evicted** |
+| **Crash** | Process exits unexpectedly → removed from pool; the next message re-spawns as "no process" (with `--resume` to continue) |
 
-要点:
-- **回收 = 关 stdin**(不是 kill),CC 收到 EOF 干净退出,jsonl 完整落盘 → 下次 `--resume` 无缝续。
-- idle 进程占用极小(等 stdin,无 CPU);10min TTL 保证"发一波消息→看完→自动散场"。
-- 常量集中在 `headless.mjs`：`HEADLESS_IDLE_TTL_MS` / `HEADLESS_MAX_PROCS` /
-  `HEADLESS_INIT_TIMEOUT_MS`，当前值为 10min / 16 / 30s。
+Key points:
+- **Reap = close stdin** (not kill); CC gets EOF and exits cleanly, jsonl fully flushed → the next `--resume` continues seamlessly.
+- An idle process uses very little (waiting on stdin, no CPU); the 10min TTL ensures "send a burst → read → automatically disperse".
+- Constants live in `headless.mjs`: `HEADLESS_IDLE_TTL_MS` / `HEADLESS_MAX_PROCS` /
+  `HEADLESS_INIT_TIMEOUT_MS`, currently 10min / 16 / 30s.
 
-## 四、状态所有权与接管
+## 4. Status Ownership and Takeover
 
-现有 session 的 Web 发送由 `bridge/ws.mjs` `handleHeadlessSend` 处理：
+Web sends to an existing session are handled by `bridge/ws.mjs` `handleHeadlessSend`:
 
-1. 若 session 在 daemon roster 中且尚未被 pool 接管，先执行 `claude stop <shortId>`，再以
-   `--resume` 启动 headless。
-2. roster 读取与 spawn 发生竞态时，Claude 会返回 background-agent lock；Bridge 再 stop daemon
-   并重试一次。
-3. Web 回合 busy 时 pool 拥有状态；回合完成后的 idle 进程不再阻断 JSONL/terminal 状态同步。
-4. agent 身份来自 `claude agents --json --all`，只有 roster-active worker 的 daemon 状态具有权威；
-   `jobs/<shortId>/state.json` 仅用于当前 `needs_input` 的问题文本。
+1. If the session is in the daemon roster and not yet taken over by the pool, first run `claude stop <shortId>`, then
+   start headless with `--resume`.
+2. If the roster read races with spawn, Claude returns a background-agent lock; the Bridge stops the daemon again
+   and retries once.
+3. While a Web turn is busy the pool owns status; after the turn completes, the idle process no longer blocks JSONL/terminal status sync.
+4. Agent identity comes from `claude agents --json --all`; only roster-active workers' daemon state is authoritative;
+   `jobs/<shortId>/state.json` is used only for the question text of the current `needs_input`.
 
-这保证 `daemon needs_input → Web running/completed → terminal running/needs_input` 的状态切换不会被
-旧 daemon 记录覆盖。
+This ensures that the status transition `daemon needs_input → Web running/completed → terminal running/needs_input` is not overwritten by
+stale daemon records.
 
-普通 terminal/VS Code session 没有等价的停止协议。用户在 terminal 正生成时又从 Web resume
-同一常规 session，Claude 可能允许两个进程同时写同一 JSONL。该并发方式不受支持；应先让 terminal
-回合结束或退出，再从 Web 接管。
+Ordinary terminal/VS Code sessions have no equivalent stop protocol. If the user resumes the same regular session from Web
+while the terminal is generating, Claude may allow two processes to write the same JSONL at once. This concurrency is not supported; let the terminal
+turn finish or exit first, then take over from Web.
 
-## 五、预览渲染:完整 markdown 的容错做法
+## 5. Preview Rendering: Fault-Tolerant Full Markdown
 
-用户要求预览也跑完整 markdown。半截 `text_delta` 若逐片拼 HTML 会破版,做法定为:
-- **每次都用「累积到目前的完整文本」整体调 marked 重渲预览气泡**(不是逐 delta 增量拼接)。
-  marked 对未闭合语法是容错的(半个代码块/表格当普通文本处理),下一片补齐后重渲即自动纠正。
-- 预览气泡复用现有 markdown 渲染(`web/js/components/markdown.js`),但**只渲文本**;
-  工具卡/diff/图片等**不在预览做**,一律等**stream 完整行**(经 `messages`)由 `renderSingleMessage`
-  全量渲染(工具卡/tool_result 都在完整行里,无需等 jsonl)。
-- 代码块语法高亮在流式下可能闪一下——可接受(完整行到达即定稿);若明显,预览阶段关高亮、之后再上。
+The user requires the preview to run full markdown too. Concatenating HTML piece by piece from partial `text_delta` would break layout, so the approach is:
+- **Every time, re-render the preview bubble with marked on "the complete text accumulated so far"** (not incremental per-delta concatenation).
+  marked is fault-tolerant to unclosed syntax (half a code block/table is treated as plain text), and re-rendering after the next piece completes it corrects automatically.
+- The preview bubble reuses the existing markdown rendering (`web/js/components/markdown.js`), but **renders text only**;
+  tool cards/diffs/images etc. are **not done in the preview**; they always wait for the **complete stream line** (via `messages`) to be fully rendered by `renderSingleMessage`
+  (tool cards/tool_result are in the complete line; no need to wait for jsonl).
+- Code block syntax highlighting may flash during streaming — acceptable (finalized when the complete line arrives); if noticeable, disable highlighting during preview and apply it afterward.
 
-> UI 全部内容(markdown/diff/工具卡/图片)由 **stream 完整行**实时渲染(与 jsonl 同构);jsonl 只负责
-> DDB 持久化 + reconnect 重建。"打字机预览 → 完整行替换"已由 frontend replay 覆盖。
+> All UI content (markdown/diff/tool cards/images) is rendered in real time from **complete stream lines** (isomorphic with jsonl); jsonl is only responsible for
+> DDB persistence + reconnect rebuild. "Typewriter preview → complete-line replacement" is covered by frontend replay.
 
-## 六、headless.mjs stream-json 行分派表(实测)
+## 6. headless.mjs stream-json Line Dispatch Table (measured)
 
-| line `type` | 子类型 | 当前处理 |
+| line `type` | Subtype | Current handling |
 |---|---|---|
-| `system` | `init` | 记录 `session_id` 和实际 `cwd` |
-| `system` | `status` | 忽略 |
-| `stream_event` | `message_start` | 忽略(回合开始) |
-| `stream_event` | `content_block_start` | flush 前一批并发送 `stream_block_start` |
-| `stream_event` | `content_block_delta` + `text_delta/thinking_delta` | 合并后发送 `stream_delta` |
-| `stream_event` | `content_block_delta` + `input_json_delta` | 合并后发送 `stream_tool_input` |
-| `stream_event` | `content_block_stop` | flush 并发送 `stream_block_stop` |
-| `stream_event` | `message_delta` / `message_stop` | 忽略(回合结束标记) |
-| `assistant` / tool_result `user` 完整行 | — | **`onMessage`** → extractForApp → WS `messages{noCache}`(权威消息,有 uuid+ts+content) |
-| `result` | — | **本回合结束**:标 `busy=false`,若 queue 非空喂下一条;发 `stream_end`。**进程不退出**(持久管道) |
+| `system` | `init` | Record `session_id` and actual `cwd` |
+| `system` | `status` | Ignore |
+| `stream_event` | `message_start` | Ignore (turn start) |
+| `stream_event` | `content_block_start` | Flush the previous batch and send `stream_block_start` |
+| `stream_event` | `content_block_delta` + `text_delta/thinking_delta` | Send `stream_delta` after batching |
+| `stream_event` | `content_block_delta` + `input_json_delta` | Send `stream_tool_input` after batching |
+| `stream_event` | `content_block_stop` | Flush and send `stream_block_stop` |
+| `stream_event` | `message_delta` / `message_stop` | Ignore (turn-end marker) |
+| `assistant` / tool_result `user` complete line | — | **`onMessage`** → extractForApp → WS `messages{noCache}` (authoritative message, with uuid+ts+content) |
+| `result` | — | **Turn ends**: mark `busy=false`, feed the next message if queue is non-empty; send `stream_end`. **Process does not exit** (persistent pipe) |
 
-spawn 参数(常驻进程,每会话一次):
+spawn arguments (persistent process, once per session):
 ```
 claude -p
   [--resume <sessionId> | --session-id <sessionId>]
-  --input-format stream-json    // ⭐ 持久 stdin,多轮喂 user 消息
+  --input-format stream-json    // ⭐ persistent stdin, feed user messages over multiple turns
   --output-format stream-json
   --include-partial-messages
   --verbose
-cwd = 会话/项目目录(已有会话用 projectHashToPath();新建用用户选的项目路径)
-stdin 保持打开 → 进程常驻;idle 回收时关闭 stdin → 进程退出
+cwd = session/project directory (existing session: projectHashToPath(); new: the project path the user selected)
+stdin kept open → process persistent; idle reaping closes stdin → process exits
 ```
-每条消息写一行 JSON 到 stdin:
+Each message writes one JSON line to stdin:
 ```
-{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<消息>"}]}}\n
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<message>"}]}}\n
 ```
-> 权限:默认加 `--permission-prompt-tool stdio`(**不加** bypass),透传用户既有权限配置。
-> control_request/response 处理见第六·五节。
+> Permissions: `--permission-prompt-tool stdio` is added by default (**no** bypass), passing through the user's existing permission configuration.
+> control_request/response handling: see Section 6.5.
 
-## 六·五、状态判断 & 权限:字段来源 + litter 处理方式(实测 + 源码核对)
+## 6.5 Status Detection & Permissions: Field Sources + litter's Handling (measured + verified against source)
 
-三个状态判断(running / 结束 / 权限),实测本机 wire 格式并核对了 litter `translate/events.rs` +
-`approval.rs` + `pool/claude_protocol.rs` 的处理:
+The three status determinations (running / finished / permission) were measured against the local wire format and checked against litter's handling in `translate/events.rs` +
+`approval.rs` + `pool/claude_protocol.rs`:
 
-### running(回合进行中)
-- **stream-json 里没有"running"字段**。running = 我们自己维护的进程 `busy` 标志:
-  **发出 user 消息 → busy=true;收到本回合 `result` → busy=false**。litter 同法:回合由调用方
-  发消息驱动("turn/start"),`result` 信封标志回合结束。
-- 辅助进度信号(可选):`system/status`、`system/thinking_tokens{estimated_tokens}`(实测存在,
-  是思考 token 计数)。**litter 直接丢弃 `system/status`**(`events.rs:225 → Vec::new()`),
-  不用它判状态。当前实现忽略该字段,只用 busy 标志。
-- Bridge 在发送时写 `running`，收到 `control_request` 时写 `needs_input`，收到 `result` 时写
-  `completed`。这比只靠 JSONL `stop_reason` 更即时。
+### running (turn in progress)
+- **stream-json has no "running" field**. running = the process `busy` flag we maintain ourselves:
+  **send user message → busy=true; receive this turn's `result` → busy=false**. litter does the same: turns are driven by the caller
+  sending messages ("turn/start"), and the `result` envelope marks the turn end.
+- Auxiliary progress signals (optional): `system/status`, `system/thinking_tokens{estimated_tokens}` (measured to exist;
+  a thinking token count). **litter simply discards `system/status`** (`events.rs:225 → Vec::new()`),
+  and does not use it for status. The current implementation ignores this field and uses only the busy flag.
+- The Bridge writes `running` on send, `needs_input` on receiving `control_request`, and `completed` on receiving `result`.
+  This is more immediate than relying only on JSONL `stop_reason`.
 
-### CC 结束(回合完成 / 出错)
-`result` 信封(每回合一条,实测字段):
+### CC finished (turn complete / error)
+`result` envelope (one per turn, measured fields):
 ```
 { type:"result", subtype:"success"|"error_max_turns"|..., is_error:bool,
-  stop_reason:"end_turn"|..., num_turns, result:"<最终文本>", duration_ms,
+  stop_reason:"end_turn"|..., num_turns, result:"<final text>", duration_ms,
   total_cost_usd, usage:{...}, terminal_reason }
 ```
-- **成功判定(litter `events.rs:1006`)**:`is_error === false && subtype === "success"` → 正常结束。
-  否则(`is_error` 或 `subtype !== "success"`,如 `error_max_turns`)→ 发一条错误提示。
-- `result` 到达 → busy=false + `stream_end`;`is_error` 为真时 `stream_end{error}`,前端预览标错误态。
-- **进程不退出**(持久管道),继续等下一条 stdin;进程真正退出只发生在 idle 回收(关 stdin)或崩溃。
+- **Success check (litter `events.rs:1006`)**: `is_error === false && subtype === "success"` → normal end.
+  Otherwise (`is_error` or `subtype !== "success"`, e.g. `error_max_turns`) → emit an error notice.
+- `result` arrives → busy=false + `stream_end`; when `is_error` is true, `stream_end{error}`, and the frontend preview shows an error state.
+- **Process does not exit** (persistent pipe) and keeps waiting for the next stdin; the process only truly exits on idle reaping (stdin closed) or a crash.
 
-### 权限:默认 stdio 透传用户配置(不 bypass)
+### Permissions: default stdio passes through user configuration (no bypass)
 
-**决策**:默认 `--permission-prompt-tool stdio` **不加** `--dangerously-skip-permissions`。理由:bypass
-是用我们的意志覆盖用户的安全配置,违背零侵入定位。stdio 不 bypass = **用户配什么权限,我们就什么权限**
-(allow 列表里的直接跑、需确认的发 control_request、`defaultMode:bypassPermissions` 则从不询问)。
-额外好处:给出**精确权限信号**,替掉现在脆弱的"5 秒启发式"(false-positive)。
+**Decision**: default `--permission-prompt-tool stdio` **without** `--dangerously-skip-permissions`. Rationale: bypass
+overrides the user's security configuration with our will, contradicting the zero-intrusion positioning. stdio without bypass = **whatever permissions the user configured, we have the same**
+(allow-listed tools run directly, ones needing confirmation send control_request, `defaultMode:bypassPermissions` never asks).
+Extra benefit: provides a **precise permission signal**, replacing the current fragile "5-second heuristic" (false-positive).
 
-工具调用时 CC 发**入站 `control_request`**:
+On a tool call, CC sends an **inbound `control_request`**:
 ```
 { type:"control_request", request_id:"<uuid>",
   request:{ subtype:"can_use_tool", tool_name, display_name, input,
             tool_use_id?, blocked_path?, decision_reason?, requires_user_interaction? } }
 ```
-bridge 回**出站 `control_response`**(wire-quirk:`request_id` 嵌在 `response` 里,不在顶层):
+The bridge replies with an **outbound `control_response`** (wire quirk: `request_id` is nested in `response`, not at the top level):
 ```
 { type:"control_response",
   response:{ request_id:"<uuid>", subtype:"success",
-             response:{ behavior:"allow", updatedInput:<原样 input 不改> }
+             response:{ behavior:"allow", updatedInput:<original input unchanged> }
                      | { behavior:"deny", message?, interrupt? } } }
 ```
 
-**两类工具,两条处理路径(均实测)**:
+**Two kinds of tools, two handling paths (both measured)**:
 
-1. **普通工具(Bash/Write/Edit…)**:`can_use_tool` → 桥接现有 permission 弹窗 → allow/deny。
-   allow 时 `updatedInput` 回**原样 input 不改**(litter `approval.rs:303` 证实)。
+1. **Ordinary tools (Bash/Write/Edit…)**: `can_use_tool` → bridge to the existing permission popup → allow/deny.
+   On allow, `updatedInput` returns the **original input unchanged** (confirmed by litter `approval.rs:303`).
 
-2. **`requires_user_interaction:true` 的工具(AskUserQuestion / ExitPlanMode)**:
-   - **control_response 无法传答案**(实测 allow/answers/selectedOptions 三种变体全返回
-     `"The user did not answer the questions."`);且官方文档明确:v2.1.199+ 对
-     `requires_user_interaction` 的工具**把 allow 强制转成 deny**;`updatedInput.answers` 的答案
-     回传格式**仅 Agent SDK `canUseTool` 支持,CLI `--permission-prompt-tool` 不支持**。
-   - **✅ 当前方案(实测通过)**:`control_response{behavior:"deny", message:answerText}`。
-     CC 将 message 作为该交互工具的 OUT 并继续当前回合；取消时使用
-     `{behavior:"deny", interrupt:true}`。
-   - `control_request` 主动把完整 `questions[]`(header/options/multiSelect)推给我们，
-     headless 下不再需要 capture-pane / 两次采样 / Escape 抢救。
+2. **Tools with `requires_user_interaction:true` (AskUserQuestion / ExitPlanMode)**:
+   - **control_response cannot carry the answer** (measured: all three variants allow/answers/selectedOptions returned
+     `"The user did not answer the questions."`); and the official docs state explicitly: v2.1.199+ **force-converts allow to deny** for
+     `requires_user_interaction` tools; the `updatedInput.answers` answer
+     return format is **supported only by the Agent SDK `canUseTool`, not by the CLI `--permission-prompt-tool`**.
+   - **✅ Current approach (measured, works)**: `control_response{behavior:"deny", message:answerText}`.
+     CC uses message as the OUT of that interactive tool and continues the current turn; cancel uses
+     `{behavior:"deny", interrupt:true}`.
+   - `control_request` proactively pushes the complete `questions[]` (header/options/multiSelect) to us;
+     under headless, capture-pane / two-pass sampling / Escape rescue are no longer needed.
 
-> litter 现状:把 AskUserQuestion 归类 `RequestUserInput` 但走的是统一 allow/deny 审批分支
-> (`approval.rs:275-299`),**并未真正回传答案**;它定义了 `request_user_input`(→ 合成 tool_result
-> on stdin)但主路径没接上。我们的 deny+普通消息方案已实测跑通,更简单可靠。
+> litter's current state: it classifies AskUserQuestion as `RequestUserInput` but goes through the unified allow/deny approval branch
+> (`approval.rs:275-299`), and **does not actually return the answer**; it defines `request_user_input` (→ synthesized tool_result
+> on stdin) but the main path doesn't wire it up. Our deny + plain message approach is measured to work and is simpler and more reliable.
 
-### 额外字段小结(相对 jsonl)
-| 字段/行 | 来源 | 当前用途 |
+### Extra Fields Summary (relative to jsonl)
+| Field/line | Source | Current use |
 |---|---|---|
-| `system/init` | 每进程一次 | 记录 session_id + cwd |
-| `system/status` | 流中偶发 | **忽略**(litter 也忽略) |
-| `system/thinking_tokens` | 思考时 | 忽略(可选做"思考中"指示) |
-| `result` | 每回合一条 | **判回合结束 + 成功/失败**;busy→false |
-| `control_request{can_use_tool}` | 每工具调用 | 普通工具→弹窗 allow/deny;requires_user_interaction→deny+answerText |
-| `control_response` | bridge 回 | allow(原样 input)/ deny |
-| Web `send_message` | 每回合一次 | Bridge 立即生成带 seq 的 user `messages{noCache}`，同步给发送窗口和旁观窗口 |
-| `assistant`/tool_result `user` 完整行 | 每消息 | **实时权威消息**(uuid+ts+content):`onMessage`→带 seq 的 `messages{noCache}`→app 渲染；JSONL 只持久化 |
+| `system/init` | Once per process | Record session_id + cwd |
+| `system/status` | Occasional in stream | **Ignore** (litter ignores it too) |
+| `system/thinking_tokens` | While thinking | Ignore (optionally a "thinking" indicator) |
+| `result` | One per turn | **Detect turn end + success/failure**; busy→false |
+| `control_request{can_use_tool}` | Per tool call | Ordinary tool → popup allow/deny; requires_user_interaction → deny+answerText |
+| `control_response` | Bridge reply | allow (original input) / deny |
+| Web `send_message` | Once per turn | Bridge immediately generates a user `messages{noCache}` with seq, synced to the sending window and observing windows |
+| `assistant`/tool_result `user` complete line | Per message | **Real-time authoritative message** (uuid+ts+content): `onMessage` → `messages{noCache}` with seq → app renders; JSONL only persists |
 
-## 七、WS streaming 协议
+## 7. WS Streaming Protocol
 
 ```
 Web → Bridge:           { action: "send_message", sessionId, turnId, text }
@@ -348,125 +348,125 @@ Bridge → Server → App:  { action: "messages", sessionId, turnId, seq, messag
 Bridge → Server → App:  { action: "stream_end", sessionId, turnId, seq, error? }
 ```
 
-### 乱序保序：turn 级统一 seq
-链路 bridge→Lambda→API GW→app 中,**每个 WS 帧是一次独立、时长不定的 Lambda 调用**,
-`post_to_connection` 落地顺序 ≠ 发送顺序。litter 是单条有序 TCP,天然无此问题;我们必须让接收端
-不依赖到达顺序：
-- **发送端**：`LiveTurnStream` 对 turn 内所有共享渲染事件统一分配连续 `seq`。`messages`、
-  permission、stop 和 end 都不能绕过这套序列。
-- **接收端**：`TurnEventQueue` 按 `turnId + seq` 缓存，只消费从 0 开始的连续事件。遇到 gap 时，
-  后续事件零副作用。
-- **中途进入**：`seq=1 messages(user)` 可在本地补空 start 后继续 streaming；缺少当前
-  block start 时丢弃残缺 delta，收到完整 authority 后渲染该节点，并从下一个
-  `stream_block_start` 恢复 streaming；end 用整轮 authority 补齐。
-- **关联**：Web 在发送前生成 `turnId`，同一 ID 同时作为用户气泡 anchor 和所有回复事件归属。
-- **节点**：`stream_block_start.seq` 是节点内部 ID；后续有序事件作用于当前节点。
-- **权威消息**：authority 也按 seq 消费，只做确认或局部修正，不删除并重建正确 DOM。
-- **持久化**：DDB 只保存最终消息字段，不保存 `turnId/seq`。
-- **终止**：`stream_end` 是该 turn 最后一条共享事件，之后的 watcher 数据按普通历史消息处理。
+### Ordering Under Reordering: Unified Turn-Level seq
+In the bridge→Lambda→API GW→app chain, **each WS frame is an independent Lambda invocation of variable duration**,
+so the `post_to_connection` delivery order ≠ send order. litter is a single ordered TCP connection and naturally has no such problem; we must make the receiver
+independent of arrival order:
+- **Sender**: `LiveTurnStream` assigns a contiguous `seq` to all shared render events within a turn. `messages`,
+  permission, stop and end cannot bypass this sequence.
+- **Receiver**: `TurnEventQueue` buffers by `turnId + seq` and only consumes contiguous events starting from 0. On a gap,
+  later events have zero side effects.
+- **Late join**: `seq=1 messages(user)` can locally fill in an empty start and continue streaming; when the current
+  block start is missing, incomplete deltas are dropped, the node is rendered once complete authority arrives, and streaming resumes from the next
+  `stream_block_start`; end fills in the whole turn with authority.
+- **Correlation**: Web generates `turnId` before sending; the same ID serves as the user bubble anchor and the owner of all reply events.
+- **Nodes**: `stream_block_start.seq` is the node's internal ID; later ordered events apply to the current node.
+- **Authoritative messages**: authority is also consumed by seq and only confirms or locally patches; correct DOM is not deleted and rebuilt.
+- **Persistence**: DDB stores only final message fields, not `turnId/seq`.
+- **Termination**: `stream_end` is the last shared event of the turn; watcher data after it is treated as ordinary history messages.
 
-## 八、涉及文件与改动
+## 8. Files Involved and Changes
 
-| 文件 | 改动 |
+| File | Change |
 |---|---|
-| `bridge/headless.mjs` | **ClaudePool**:`Map<sessionId, HeadlessProc>`;`send(sessionId,cwd,text,cb)`(spawn/复用/queue)、`reapIdle()`(周期回收)、LRU 上限、崩溃移除;readline 分派 stdout(含 `control_request`);stdin 写 user 消息 + `control_response` |
-| `bridge/ws.mjs` | `handleSendMessage` 调 `pool.send(...)`;daemon agent 接管;`control_request` → permission_request;App 的 permission_reply → allow/deny(或 requires_user_interaction 的 deny+答案回);新建常规会话预生成 UUID 后用 `--session-id` 启动 |
-| `server/src/bridge_ws.py` | 校验并广播完整 turn 事件序列；runtime `messages{noCache}` 不写 DDB |
-| `web/js/streaming.js` | `TurnEventQueue → StreamCoordinator → StreamingDomRenderer`，分别负责乱序、节点状态与 DOM |
-| `web/js/ws.js` | 将所有 active-turn 事件送入统一队列，并按 `turnId` 定位用户问题 |
-| `web/js/components/permission.js` | 展示/延迟恢复权限请求，并回传 permission_reply |
-| `docs/api.md` | 记录完整 turn 序列、权限与恢复协议 |
-| `CLAUDE.md` | 记录 headless 进程池架构 + 生命周期 + 分流规则 + 单写者约束 + symlink cwd 坑 |
+| `bridge/headless.mjs` | **ClaudePool**: `Map<sessionId, HeadlessProc>`; `send(sessionId,cwd,text,cb)` (spawn/reuse/queue), `reapIdle()` (periodic reaping), LRU cap, crash removal; readline dispatch of stdout (incl. `control_request`); stdin writes user messages + `control_response` |
+| `bridge/ws.mjs` | `handleSendMessage` calls `pool.send(...)`; daemon agent takeover; `control_request` → permission_request; App's permission_reply → allow/deny (or deny + answer for requires_user_interaction); new regular sessions pre-generate a UUID and start with `--session-id` |
+| `server/src/bridge_ws.py` | Validate and broadcast the complete turn event sequence; runtime `messages{noCache}` not written to DDB |
+| `web/js/streaming.js` | `TurnEventQueue → StreamCoordinator → StreamingDomRenderer`, responsible for reordering, node state and DOM respectively |
+| `web/js/ws.js` | Feed all active-turn events into the unified queue, and locate the user question by `turnId` |
+| `web/js/components/permission.js` | Display/delayed-recover permission requests and return permission_reply |
+| `docs/api.md` | Document the complete turn sequence, permission and recovery protocol |
+| `CLAUDE.md` | Document the headless process pool architecture + lifecycle + routing rules + single-writer constraint + symlink cwd pitfall |
 
-## 九、实施状态
+## 9. Implementation Status
 
-以下步骤均已完成，保留清单用于说明交付边界。
+All steps below are complete; the checklist is kept to describe the delivery boundary.
 
-### 发送流程(已存在 headless session 时)
+### Send Flow (when a headless session already exists)
 ```
 App doSend(text)
  └ WS send_message {sessionId, text, turnId, device}
-   └ Server _handle_send_to_bridge(原样透传)
+   └ Server _handle_send_to_bridge (passed through as-is)
      └ Bridge handleSendMessage → pool.send(sessionId, cwd, text, cb)
-        ├ 池里有该 sessionId 进程?
-        │   ├ 空闲 → stdin.write({"type":"user",...})
-        │   └ busy → 入 queue,本回合 result 后再喂
-        └ 无 → spawn 常驻进程(--resume sessionId),init 就绪后 stdin.write
-        stdout 分派:text_delta → WS stream_delta;result → WS stream_end + busy=false
- └ 并行:CC 写 jsonl → watcher → DDB；不重复广播 runtime 已实时发送的消息
+        ├ pool has a process for this sessionId?
+        │   ├ idle → stdin.write({"type":"user",...})
+        │   └ busy → enqueue, feed after this turn's result
+        └ none → spawn persistent process (--resume sessionId), stdin.write after init ready
+        stdout dispatch: text_delta → WS stream_delta; result → WS stream_end + busy=false
+ └ in parallel: CC writes jsonl → watcher → DDB; messages already sent in real time by the runtime are not rebroadcast
 ```
-入口仍是 WS `send_message`；Bridge 内部使用 `pool.send → stdin`，前端接收
-`stream_delta`/`stream_end` 做预览。
+The entry point is still WS `send_message`; inside the Bridge it uses `pool.send → stdin`, and the frontend receives
+`stream_delta`/`stream_end` for preview.
 
-### 多 session 路由
-`ClaudePool = Map<sessionId, HeadlessProc>`,**按 sessionId 路由**,天然隔离:
-- 每 session 一个独立进程,并行互不干扰。
-- 多网页看**同一** session → 都订阅同一 sessionId → server broadcast → 都收到同一份 stream_delta(多端同步)。
-- 池上限 16,超限 LRU 淘汰最久空闲;每进程 idle 10min 自动回收。
-- 不需要为"多 session"写特殊逻辑——Map key 隔离,与现有按 sessionId 订阅模型一致。
+### Multi-Session Routing
+`ClaudePool = Map<sessionId, HeadlessProc>`, **routed by sessionId**, naturally isolated:
+- One independent process per session, running in parallel without interference.
+- Multiple web pages viewing the **same** session → all subscribe to the same sessionId → server broadcast → all receive the same stream_delta (multi-device sync).
+- Pool cap 16, over the cap LRU evicts the longest idle; each process is reaped automatically after 10min idle.
+- No special logic needed for "multiple sessions" — Map key isolation, consistent with the existing per-sessionId subscription model.
 
-### 已完成步骤
+### Completed Steps
 
-- [x] **Step 0 — `headless.mjs` 独立命令行验证**(不接 ws/前端)。
-  spawn 持久进程 + 持久 stdin + readline 分派(delta/result/init/control_request)+ resume 已有 session +
-  多轮喂消息。写一个命令行脚本喂 2-3 条消息,肉眼确认 delta 流、result 收尾、上下文保持。
-- [x] **Step 1 — 最小闭环(核心)**:进 idle session → 发消息 → `pool.send` → `stream_delta` 经 WS →
-  前端打字机预览 → jsonl 落地替换预览。端到端一条路走通(ws.mjs 分流 + server 转发 `stream_delta`/`stream_end` +
-  web 预览 handler)。
-- [x] **Step 2 — 权限 stdio**:`--permission-prompt-tool stdio`;control_request(普通工具)→ 现有 permission 弹窗
-  → allow/deny;requires_user_interaction(AskUserQuestion/ExitPlanMode)→ deny + 答案走普通消息(实测方案)。
-- [x] **Step 3 — 新建会话走 headless**:Bridge 预先生成 sessionId，以 `--session-id` spawn，
-  先回 `send_message_result` 再开始 streaming。
-- [x] **Step 4 — 生命周期 + 失败回退**:`reapIdle`(10min)+ LRU 上限(16)+ 崩溃重 spawn；
-  CC 拒绝或异常时返回明确错误，会话仍可只读。
-- [x] **Step 5 — tmux 退役**:`projectHashToPath` 移入 `session.mjs`，interrupt 走 headless，
-  `tmux.mjs`、Stall Rescue、`streamMode` 和旧命令输出路径均已删除。
+- [x] **Step 0 — standalone command-line verification of `headless.mjs`** (not wired to ws/frontend).
+  spawn persistent process + persistent stdin + readline dispatch (delta/result/init/control_request) + resume existing session +
+  multi-turn feeding. Wrote a command-line script feeding 2-3 messages and visually confirmed the delta stream, result finish, and context preservation.
+- [x] **Step 1 — minimal loop (core)**: enter idle session → send message → `pool.send` → `stream_delta` via WS →
+  frontend typewriter preview → jsonl lands and replaces preview. One end-to-end path working (ws.mjs routing + server forwarding `stream_delta`/`stream_end` +
+  web preview handler).
+- [x] **Step 2 — stdio permissions**: `--permission-prompt-tool stdio`; control_request (ordinary tool) → existing permission popup
+  → allow/deny; requires_user_interaction (AskUserQuestion/ExitPlanMode) → deny + answer via plain message (measured approach).
+- [x] **Step 3 — new sessions via headless**: Bridge pre-generates the sessionId, spawns with `--session-id`,
+  replies `send_message_result` first, then starts streaming.
+- [x] **Step 4 — lifecycle + failure fallback**: `reapIdle` (10min) + LRU cap (16) + crash re-spawn;
+  when CC refuses or fails, a clear error is returned and the session stays read-only.
+- [x] **Step 5 — tmux retirement**: `projectHashToPath` moved into `session.mjs`, interrupt goes through headless,
+  `tmux.mjs`, Stall Rescue, `streamMode` and the old command output path are all deleted.
 
-## 十、验证清单
+## 10. Verification Checklist
 
-- [x] 已有 idle 会话发消息 → 打字机预览逐字出现 → jsonl 落地后无重复气泡、无破版
-- [x] daemon agent 的 Web 接管 → 停止 daemon 后由 headless 继续，状态不被旧 blocked 记录覆盖
-- [x] 新建会话 → 先返回预生成 sessionId 并订阅 → 预览 + 落地一致
-- [x] 富 markdown(代码块/表格/列表/链接/行内代码)流式重渲不破版,落地后与现网渲染一致
-- [x] headless 中途失败 → 预览不卡死;发送气泡状态正确
-- [x] stream_delta/stream_end 不进 DDB(缓存不被污染)
-- [x] **同会话多端/连发** → 复用同一进程(单写者),消息串行,jsonl 不分叉
-- [x] **idle 回收** → 会话闲置超 TTL 后进程自动退出,jsonl 完整
-- [x] **回收后再发** → 自动 `--resume` 重启,上下文续上
-- [x] **超上限** → LRU 淘汰 idle 进程;busy 进程不被淘汰
-- [x] **普通工具权限** → control_request → 弹窗 → allow/deny 生效
-- [x] **AskUserQuestion(含多问题)** → 完整问题推到 App → 用户答 → deny+答案回 → CC 收下继续
-- [x] **ExitPlanMode** → 计划推到 App → 批准/拒绝正确
-- [x] **defaultMode:bypassPermissions 的会话** → 普通工具不弹窗，AskUserQuestion 仍可交互
+- [x] Send to an existing idle session → typewriter preview appears character by character → after jsonl lands, no duplicate bubbles, no broken layout
+- [x] Web takeover of a daemon agent → after stopping the daemon, headless continues, and status is not overwritten by stale blocked records
+- [x] New session → pre-generated sessionId returned first and subscribed → preview + persisted result consistent
+- [x] Rich markdown (code blocks/tables/lists/links/inline code) streaming re-render doesn't break layout; after landing it matches production rendering
+- [x] headless fails midway → preview doesn't hang; send bubble state correct
+- [x] stream_delta/stream_end not written to DDB (cache not polluted)
+- [x] **Multi-device/rapid sends in one session** → reuse the same process (single writer), messages serialized, jsonl doesn't fork
+- [x] **Idle reaping** → process exits automatically after session idle exceeds TTL, jsonl complete
+- [x] **Send after reaping** → automatic `--resume` restart, context continues
+- [x] **Over the cap** → LRU evicts idle processes; busy processes are not evicted
+- [x] **Ordinary tool permission** → control_request → popup → allow/deny takes effect
+- [x] **AskUserQuestion (incl. multiple questions)** → complete questions pushed to App → user answers → deny+answer returned → CC accepts and continues
+- [x] **ExitPlanMode** → plan pushed to App → approve/reject correct
+- [x] **Sessions with defaultMode:bypassPermissions** → ordinary tools don't pop up, AskUserQuestion still interactive
 
-Bridge 状态交接和 frontend streaming/queue 场景有自动化回归。`ClaudePool` 的 idle reap/LRU
-目前主要由实跑与实现审查覆盖，后续可补独立进程生命周期单测；这不影响 Phase 2E 功能完成状态。
+Bridge status handoff and frontend streaming/queue scenarios have automated regression tests. `ClaudePool` idle reap/LRU
+is currently covered mainly by real runs and implementation review; standalone process lifecycle unit tests can be added later; this does not affect Phase 2E's completed status.
 
-## 十一、流式粒度 & 实时性基准测试(本机 CC 2.1.204 + EC2 2.1.206 实跑)
+## 11. Streaming Granularity & Real-Time Benchmarks (real runs on local CC 2.1.204 + EC2 2.1.206)
 
-跑了 9 类覆盖全部 UI 节点的会话,带毫秒时间戳记录每行到达时刻。
+Ran 9 kinds of sessions covering all UI node types, recording each line's arrival time with millisecond timestamps.
 
-### 11.1 UI 节点类型 × stream-json 兼容性(全部 ✅)
+### 11.1 UI Node Types × stream-json Compatibility (all ✅)
 
-| UI 节点 | 测试 | stream-json 表现 | 与现有 UI 输入格式 |
+| UI node | Test | stream-json behavior | vs existing UI input format |
 |---|---|---|---|
-| 纯文本/prose | t1 | `text_delta` 逐片 | ✅ 累积重渲 |
-| 富 markdown(标题/列表/代码块/表格/链接/加粗/行内码) | t2 | `text_delta` 逐片,marked 容错重渲 | ✅ 落地由 renderSingleMessage 全量渲染 |
-| Bash 执行 in/out | t3 | tool_use 经 `input_json_delta` 流式;tool_result 作为完整 `user` 行到达,含 `tool_use_result{stdout,stderr,interrupted}` | ✅ **结构与 extract.mjs 现读的完全一致** |
-| 文件 Read | t4 | 同上 | ✅ |
-| 文件 Edit(diff) | t5 | tool_use.input 流式,落地含完整 diff 数据 | ✅ |
-| 多工具序列 | t6 | 多个 tool_use/tool_result 交替,块边界清晰 | ✅ |
-| 扩展 thinking | t7 | `thinking` 块 + `thinking_delta`/`signature_delta` | ✅(可选流式) |
-| TodoWrite(todo 列表) | t8 | tool_use.input 经 input_json_delta 流式,完整 assistant 行落地 | ✅ |
-| 图片 Read | t9 | tool_use → tool_result(user 行) → 文本 | ✅(图片走 baton-bridge: → Read 路径不变) |
+| Plain text/prose | t1 | `text_delta` piece by piece | ✅ cumulative re-render |
+| Rich markdown (headings/lists/code blocks/tables/links/bold/inline code) | t2 | `text_delta` piece by piece, marked fault-tolerant re-render | ✅ fully rendered by renderSingleMessage on landing |
+| Bash execution in/out | t3 | tool_use streamed via `input_json_delta`; tool_result arrives as a complete `user` line, containing `tool_use_result{stdout,stderr,interrupted}` | ✅ **structure identical to what extract.mjs currently reads** |
+| File Read | t4 | Same as above | ✅ |
+| File Edit (diff) | t5 | tool_use.input streamed, landed line contains complete diff data | ✅ |
+| Multi-tool sequence | t6 | Multiple tool_use/tool_result alternating, clear block boundaries | ✅ |
+| Extended thinking | t7 | `thinking` block + `thinking_delta`/`signature_delta` | ✅ (optional streaming) |
+| TodoWrite (todo list) | t8 | tool_use.input streamed via input_json_delta, complete assistant line lands | ✅ |
+| Image Read | t9 | tool_use → tool_result (user line) → text | ✅ (images go baton-bridge: → Read path unchanged) |
 
-**关键**:stream-json 的 `assistant`/`user` 行的 `message.content[]` 与 jsonl **完全同构**,
-tool_use/tool_result/toolUseResult 字段名一致 → **现有 extract.mjs / renderSingleMessage 零改动即可复用**。
-理论上"json 格式兼容"得到实测证实。
+**Key**: the `message.content[]` of stream-json `assistant`/`user` lines is **fully isomorphic** with jsonl,
+and tool_use/tool_result/toolUseResult field names match → **existing extract.mjs / renderSingleMessage can be reused with zero changes**.
+The theoretical "json format compatibility" is confirmed by measurement.
 
-### 11.2 流式粒度(text_delta)
+### 11.2 Streaming Granularity (text_delta)
 
-| 测试 | #delta | char/delta 均值 | char 范围 | delta 间隔均值 | 间隔最大 |
+| Test | #delta | mean char/delta | char range | mean delta interval | max interval |
 |---|---|---|---|---|---|
 | t1 prose | 66 | 15.4 | 1–40 | 55.6ms | 967ms |
 | t2 rich md | 32 | 13.8 | 1–27 | 33.5ms | 771ms |
@@ -476,77 +476,77 @@ tool_use/tool_result/toolUseResult 字段名一致 → **现有 extract.mjs / re
 | t9 img | 16 | 8.2 | 1–17 | 295.9ms | 3678ms |
 | EC2 prose | 63 | 14.4 | 1–37 | 59.1ms | 1325ms |
 
-**结论 — 粒度是"几个词一片,不稳定"**:
-- 不是逐字符,也不是逐句。**平均每片 8–15 字符(约 1–3 个词/token 组)**,单片 1–40 字符波动大。
-- 间隔平均 30–60ms(顺滑打字机),但会有偶发 700ms–1s+ 的停顿(模型内部;工具前后停顿更长)。
-- 本机与 EC2 粒度基本一致(avg ~14 char/delta,~59ms 间隔)→ 粒度由**模型侧**决定,与网络位置无关。
+**Conclusion — granularity is "a few words per piece, irregular"**:
+- Not per character, nor per sentence. **On average 8–15 characters per piece (about 1–3 word/token groups)**, with single pieces varying widely from 1–40 characters.
+- Mean interval 30–60ms (smooth typewriter), but with occasional 700ms–1s+ pauses (model-internal; pauses around tools are longer).
+- Local and EC2 granularity are essentially the same (avg ~14 char/delta, ~59ms interval) → granularity is determined by the **model side**, independent of network location.
 
-### 11.3 实时性:headless streaming vs 旧 tmux+jsonl(核心结论)
+### 11.3 Real-Time: headless streaming vs old tmux+jsonl (core conclusion)
 
-旧 tmux 方案的瓶颈已实测确认:**CC 只在一个 content block 完整生成后,才把整段 assistant 消息
-一次性写入 jsonl**(实测 jsonl 文件大小是**一次性跳变** +2629B / +11089B,而非随生成增长)。
-所以 tmux+watcher 方案下,app 必须等整段生成完才能看到文字。
+The bottleneck of the old tmux approach was confirmed by measurement: **CC writes the whole assistant message to jsonl at once only after a content block
+is fully generated** (measured jsonl file size **jumps at once** by +2629B / +11089B, rather than growing during generation).
+So under the tmux+watcher approach, the app had to wait for the whole block to finish generating before seeing any text.
 
-| 场景 | headless 首字可见 | tmux+jsonl 最早可见 | **实时性提升** | 打字机时长 |
+| Scenario | headless first visible char | tmux+jsonl earliest visible | **Real-time gain** | Typewriter duration |
 |---|---|---|---|---|
-| 短回合(3 句) | 7813ms | 8979ms(jsonl 落地) | **早 1.2s** | 1.0s 逐字流动 |
-| 长回合(500 字) | 6032ms | 21818ms(jsonl 落地) | **早 15.8s** | 15.6s 逐字流动 |
-| 长回合(EC2) | ~6.9s | 整段生成后(>13.6s) | 数秒–十几秒 | 15.1s |
+| Short turn (3 sentences) | 7813ms | 8979ms (jsonl landed) | **1.2s earlier** | 1.0s of streaming text |
+| Long turn (500 characters) | 6032ms | 21818ms (jsonl landed) | **15.8s earlier** | 15.6s of streaming text |
+| Long turn (EC2) | ~6.9s | After whole block generated (>13.6s) | Several to over ten seconds | 15.1s |
 
-**结论**:
-- headless 在 **firstDelta**(首字)就能显示,tmux 要等**整段 block 落盘**。回合越长差距越大:
-  短回合领先 ~1s,500 字长回合**领先约 16 秒**。
-- 更重要的是**体验差异**:tmux 是"空白等待十几秒 → 整段突现";headless 是"秒级出字 → 逐字流动"。
-  这正是"更丝滑"的来源,长回合尤其明显。
-- 一次性 headless `-p` 的 jsonl 甚至在**进程退出时**才落地(比 streaming 的 lastDelta 还晚),
-  进一步说明:**实时性提升不是几百 ms 的边际优化,而是"能否边生成边看" vs "只能等结果"的本质差别。**
+**Conclusions**:
+- headless can display at **firstDelta** (first character), while tmux has to wait for **the whole block to be flushed to disk**. The longer the turn, the larger the gap:
+  ~1s ahead for short turns, **about 16 seconds ahead** for a 500-word long turn.
+- More important is the **experience difference**: tmux is "blank wait of over ten seconds → whole block appears suddenly"; headless is "text within seconds → flowing character by character".
+  This is where the "smoother" feel comes from, especially for long turns.
+- With one-shot headless `-p`, jsonl even lands only **when the process exits** (later than streaming's lastDelta),
+  further showing: **the real-time gain is not a marginal optimization of a few hundred ms, but the fundamental difference of "watch while it generates" vs "only wait for the result".**
 
-> 注:firstDelta 的绝对值(6–7s)主要是 Opus 的模型 TTFT,tmux 和 headless 都要等这段;
-> 差距体现在 TTFT **之后**——headless 立即流出,tmux 还要再等整段生成完 + 落盘。
+> Note: the absolute value of firstDelta (6–7s) is mainly Opus's model TTFT, which both tmux and headless must wait for;
+> the gap shows up **after** TTFT — headless streams out immediately, while tmux still waits for the whole block to generate + flush to disk.
 
-## 十二、running 中连发消息（已解决）
+## 12. Rapid Sends While running (resolved)
 
-旧 tmux 路径依赖 CC 的 `queue-operation`，队列消息可能没有 `type:"user"` echo，导致乐观气泡
-长期停在 sending。Phase 2E 不再解析该路径：
+The old tmux path depended on CC's `queue-operation`; queued messages might have no `type:"user"` echo, leaving the optimistic bubble
+stuck in sending for a long time. Phase 2E no longer parses that path:
 
-- `ClaudePool` 在 session 进程 busy 时把新消息放入自己的 FIFO queue，上一回合结束后调用
-  `_writeTurn`，因此每条消息都会进入正常 headless 输入和权威消息链路。
-- 每次发送都有独立 `turnId`。用户气泡、预览及权威 assistant 行使用同一 ID，不依赖文本或
-  时间戳猜测，也不需要额外绑定事件。
-- 乐观 user 气泡原位升级并保留 `data-anchor`；真实 echo、后续确认 watermark 和 turn-end
-  reconciliation 负责清理 pending，不会因缺失旧式 queue-operation echo 永久卡住。
+- When a session process is busy, `ClaudePool` puts new messages into its own FIFO queue and calls
+  `_writeTurn` after the previous turn ends, so every message enters the normal headless input and authoritative message chain.
+- Every send has its own `turnId`. The user bubble, preview and authoritative assistant lines use the same ID, without guessing from text or
+  timestamps, and without extra binding events.
+- The optimistic user bubble is upgraded in place and keeps `data-anchor`; the real echo, later confirmation watermark and turn-end
+  reconciliation clean up the pending state, so it never gets stuck permanently due to a missing old-style queue-operation echo.
 
-该流程由 frontend replay 的 burst、乱序 delivery、多 block 和 interrupt 场景覆盖。
+This flow is covered by frontend replay scenarios for bursts, out-of-order delivery, multiple blocks and interrupt.
 
-## 十三、tmux 退役后的当前架构
+## 13. Current Architecture After tmux Retirement
 
-tmux、Stall Rescue、capture-pane 命令输出和 `streamMode` 已全部删除。当前保留三套职责：
+tmux, Stall Rescue, capture-pane command output and `streamMode` are all deleted. Three responsibilities remain:
 
-| 职责 | 当前实现 |
+| Responsibility | Current implementation |
 |---|---|
-| JSONL 监听与持久化 | `watcher.mjs` / `extract.mjs` / `sync.mjs` 负责历史、DDB 和断线恢复；headless 实时帧不写 DDB |
-| 外部会话状态 | `session.mjs` 结合进程、daemon roster 和 JSONL 推导 terminal/VS Code/agent 状态 |
-| Web 交互 | `headless.mjs` `ClaudePool` 负责发送、streaming、queue、interrupt、权限、idle reap 和 LRU |
+| JSONL watching and persistence | `watcher.mjs` / `extract.mjs` / `sync.mjs` handle history, DDB and disconnect recovery; headless real-time frames are not written to DDB |
+| External session status | `session.mjs` combines processes, daemon roster and JSONL to derive terminal/VS Code/agent status |
+| Web interaction | `headless.mjs` `ClaudePool` handles sending, streaming, queue, interrupt, permissions, idle reap and LRU |
 
-状态所有权优先级为：busy pool-owned > roster-active daemon > external process/JSONL。空闲 pool
-只保留可复用进程，不阻止 terminal 后续把状态更新为 running 或 `needs_input`；结构化
-`AskUserQuestion`/`ExitPlanMode` 可精确识别，普通文本结尾提问仍属于外部状态的已知限制。
+Status ownership precedence is: busy pool-owned > roster-active daemon > external process/JSONL. An idle pool
+only keeps a reusable process and does not prevent the terminal from later updating status to running or `needs_input`; structured
+`AskUserQuestion`/`ExitPlanMode` are detected precisely, while questions ending in plain text remain a known limitation of external status.
 
-Slash command 主目录来自独立、无会话持久化的 headless `initialize` control request，直接复用
-当前 CC 的命令、描述、参数、模型和账号过滤结果。Bridge 只维护手机端行为分类与过滤，不维护
-内置命令数据。旧 CC 不支持该请求时，`commands.mjs` 仅扫描用户、项目和插件的自定义
-command/Skill 作为回退。
+The primary slash command catalog comes from a separate, no-session-persistence headless `initialize` control request, directly reusing
+the current CC's commands, descriptions, arguments, models and account filtering results. The Bridge only maintains mobile behavior classification and filtering, not
+built-in command data. When an old CC doesn't support this request, `commands.mjs` only scans user, project and plugin custom
+commands/Skills as a fallback.
 
-`/model`、`/effort`、`/fast` 使用运行态返回的二级选项；同步本地命令继续写入同一 session 的
-headless stdin，并以 `commandOutput` 结束乐观气泡和 loading。普通 prompt/Skill 仍走正常
-streaming 与 JSONL。
+`/model`, `/effort`, `/fast` use second-level options returned at runtime; synchronous local commands continue to be written to the same session's
+headless stdin and end the optimistic bubble and loading with `commandOutput`. Ordinary prompts/Skills still go through normal
+streaming and JSONL.
 
-`/usage`、`/cost`、`/stats`、`/status` 和无参数 `/config` 不写入 session JSONL。Bridge
-对当前 session 发 `initialize/get_settings/get_usage` control request，同时在 Worker 线程只读
-聚合 `~/.claude/projects/**/*.jsonl`，返回 `Status / Config / Usage / Stats` 四 tab 面板。
-Stats 含 `Overview / Models` 和 all-time/7-day/30-day 范围；历史 session 的 Usage token 在
-CC control response 为空时从该 session JSONL 补齐。响应被限制在 WebSocket 单帧预算内，
-超大配置会明确标记部分明细被裁剪。
+`/usage`, `/cost`, `/stats`, `/status` and argument-less `/config` are not written to the session JSONL. The Bridge
+sends `initialize/get_settings/get_usage` control requests for the current session, while read-only aggregating
+`~/.claude/projects/**/*.jsonl` in a Worker thread, and returns a four-tab `Status / Config / Usage / Stats` panel.
+Stats includes `Overview / Models` and all-time/7-day/30-day ranges; Usage tokens for historical sessions are filled in from that session's JSONL when the
+CC control response is empty. The response is limited to the WebSocket single-frame budget,
+and oversized configurations are explicitly marked as having partial details truncated.
 
-headless 被 Claude 拒绝或进程异常时，Bridge 返回明确错误并保留只读 JSONL 监听，不再尝试
-任何 tmux fallback。
+When headless is refused by Claude or the process fails, the Bridge returns a clear error and keeps read-only JSONL watching, and no longer attempts
+any tmux fallback.

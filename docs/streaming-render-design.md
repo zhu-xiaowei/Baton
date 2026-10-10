@@ -1,21 +1,21 @@
-# Streaming 顺序与渲染设计
+# Streaming Ordering and Rendering Design
 
-> 状态：strict streaming 已实现；历史合并重构待实现
-> 日期：2026-08-27
-> 范围：Claude Code、Codex、Bridge、WebSocket Server 与 Web 前端
+> Status: strict streaming implemented; history merge refactor pending
+> Date: 2026-08-27
+> Scope: Claude Code, Codex, Bridge, WebSocket Server, and the Web frontend
 
-REST、请求期 historyBuffer、本地历史和 DOM 的目标合并策略，以及当前待修复问题，见
-[`message-history-merge.md`](message-history-merge.md)。
+For the target merge strategy across REST, the request-time historyBuffer, local history, and DOM, plus current open issues, see
+[`message-history-merge.md`](message-history-merge.md).
 
-## 1. 核心原则
+## 1. Core Principles
 
-一次用户问答由 `turnId` 唯一标识。Web 在发送问题前生成 `turnId`，并立即把它写入用户气泡：
+One user question/answer exchange is uniquely identified by `turnId`. Web generates the `turnId` before sending the question and immediately writes it onto the user bubble:
 
 ```text
 data-anchor="<turnId>"
 ```
 
-Bridge 从该 turn 的第一条共享渲染事件开始分配连续 `seq`：
+Bridge assigns a contiguous `seq` starting from the turn's first shared render event:
 
 ```text
 stream_turn_start  seq=0
@@ -27,30 +27,30 @@ messages           seq=5
 stream_end         seq=6
 ```
 
-一个 turn 只有一套序号。事件类型不参与排序判断。
+A turn has exactly one sequence. Event type plays no part in ordering decisions.
 
-Web 收到事件后的唯一排序规则是：
+The only ordering rule Web applies to received events is:
 
 ```text
 turnId + seq
 ```
 
-缺少 `seq=N` 时，所有 `seq>N` 的事件都保持缓存，不能产生 DOM 副作用。
+When `seq=N` is missing, every event with `seq>N` stays buffered and must not produce DOM side effects.
 
-## 2. 最小协议字段
+## 2. Minimal Protocol Fields
 
-所有 active-turn 共享事件必须包含：
+Every active-turn shared event must include:
 
-| 字段 | 职责 |
+| Field | Responsibility |
 |---|---|
-| `action` | 决定事件消费后执行的行为 |
-| `sessionId` | 决定事件属于哪个 Session |
-| `turnId` | 关联用户问题、回答、权限和工具节点 |
-| `seq` | turn 内唯一的传输与消费顺序 |
+| `action` | Determines the behavior executed after the event is consumed |
+| `sessionId` | Determines which Session the event belongs to |
+| `turnId` | Links the user question, answer, permissions, and tool nodes |
+| `seq` | The unique transport and consumption order within the turn |
 
-具体 action 再携带自己的 payload，例如 `chunk`、`kind`、`name`、`messages` 或 `error`。
+Each action then carries its own payload, such as `chunk`, `kind`, `name`, `messages`, or `error`.
 
-协议不再包含：
+The protocol no longer includes:
 
 - `clientId`
 - `streamId`
@@ -62,25 +62,25 @@ turnId + seq
 - `blockIds`
 - `send_message_binding`
 
-`stream_block_start` 的 `seq` 同时作为该节点的内部 `blockId`。后续 delta、input 和 stop 按有序事件流作用于当前 block，不再传独立 `blockId`。
+The `seq` of `stream_block_start` also serves as that node's internal `blockId`. Subsequent delta, input, and stop events apply to the current block by virtue of the ordered event stream; no separate `blockId` is sent.
 
-## 3. 事件边界
+## 3. Event Boundaries
 
-下列共享渲染事件必须进入 turn 序列：
+The following shared render events must enter the turn sequence:
 
 - `stream_turn_start`
 - `stream_block_start`
 - `stream_delta`
 - `stream_tool_input`
 - `stream_block_stop`
-- turn 内 `messages`
-- turn 内 `permission_request`
-- turn 内 `permission_resolved`
+- in-turn `messages`
+- in-turn `permission_request`
+- in-turn `permission_resolved`
 - `stream_end`
 
-`stream_end` 是终止事件。它被发送后，该 turn 不能再产生带 seq 的事件。
+`stream_end` is the terminal event. Once it is sent, the turn can produce no more events with a seq.
 
-下列单连接或控制事件不进入 turn 序列：
+The following single-connection or control events do not enter the turn sequence:
 
 - `subscribe`
 - `reveal_permission`
@@ -88,78 +88,78 @@ turnId + seq
 - `send_message_result`
 - `messages_ack`
 - heartbeat
-- session/project 状态同步
+- session/project status sync
 
-原因是这些事件可能只发给一个连接。若它们占用共享 seq，其他窗口会永久等待一个不会收到的号码。
+The reason is that these events may be sent to only one connection. If they consumed a shared seq, other windows would wait forever for a number they will never receive.
 
 ## 4. Bridge
 
-### 4.1 唯一发送出口
+### 4.1 Single Send Outlet
 
-`LiveTurnStream` 是 active turn 的唯一共享事件出口：
+`LiveTurnStream` is the single shared-event outlet for an active turn:
 
 ```text
 runtime callback
 → LiveTurnStream.emit(action, payload)
-→ 分配 seq
-→ 校验 sessionId + turnId + seq
-→ 发送 WS
+→ assign seq
+→ validate sessionId + turnId + seq
+→ send WS
 ```
 
-底层 Claude/Codex framer 只负责：
+The underlying Claude/Codex framers are responsible only for:
 
-- 块边界
-- delta 批处理
-- UTF-8 安全分片
+- block boundaries
+- delta batching
+- UTF-8-safe chunking
 
-它不分配传输序号。
+They do not assign transport sequence numbers.
 
-### 4.2 发送校验
+### 4.2 Send Validation
 
-Bridge `wsSend()` 对所有 active-turn action 做运行时校验：
+Bridge `wsSend()` performs runtime validation on every active-turn action:
 
-- `sessionId` 必须非空
-- `turnId` 必须非空
-- `seq` 必须是非负整数
+- `sessionId` must be non-empty
+- `turnId` must be non-empty
+- `seq` must be a non-negative integer
 
-缺少任一字段时立即抛错，不发送半严格事件。
+If any field is missing it throws immediately; half-strict events are never sent.
 
-### 4.3 Bridge 重启
+### 4.3 Bridge Restart
 
-`seq` 只存在于 Bridge 内存，每个 turn 从 0 开始，因此不需要 `bridgeEpoch`。
+`seq` exists only in Bridge memory and every turn starts from 0, so no `bridgeEpoch` is needed.
 
-Bridge 重启后：
+After a Bridge restart:
 
-- 旧 active turn 不再继续 streaming
-- 新 turn 使用新的 `turnId`
-- 新 turn 的 `seq` 从 0 开始
-- 已持久化历史消息不受影响
+- the old active turn no longer continues streaming
+- new turns use a new `turnId`
+- a new turn's `seq` starts from 0
+- persisted history messages are unaffected
 
 ## 5. Server
 
-Server 对 Bridge 发来的 active-turn 事件重复执行相同校验。非法事件返回 `400`，不会转发给 Web。
+Server repeats the same validation on active-turn events from Bridge. Invalid events return `400` and are not forwarded to Web.
 
-Server 的职责只有：
+Server's only responsibilities are:
 
-1. 把共享事件广播给该 Session 的所有已订阅窗口。
-2. 对普通 watcher `messages` 写入 DDB，并返回 `messages_ack`。
-3. 对 runtime-owned `messages{noCache:true}` 只广播；对应 JSONL watcher 负责最终持久化。
+1. Broadcast shared events to all subscribed windows of that Session.
+2. Write ordinary watcher `messages` to DDB and return `messages_ack`.
+3. Only broadcast runtime-owned `messages{noCache:true}`; the corresponding JSONL watcher owns final persistence.
 
-DDB 不保存 streaming 传输字段：
+DDB does not store streaming transport fields:
 
-- 不保存 `turnId`
-- 不保存 `seq`
-- 不恢复 active streaming 状态
+- does not store `turnId`
+- does not store `seq`
+- does not restore active streaming state
 
-历史记录只保存 `uuid/nativeId/type/content/timestamp` 等最终消息字段。
+History records store only final message fields such as `uuid/nativeId/type/content/timestamp`.
 
 ## 6. Web
 
-前端 streaming 代码集中在 `web/js/streaming.js`，分为三层。
+Frontend streaming code lives in `web/js/streaming.js`, split into three layers.
 
 ### 6.1 TurnEventQueue
 
-只处理传输乱序：
+Handles only transport reordering:
 
 ```text
 pending[seq] = event
@@ -169,41 +169,41 @@ while pending[nextSeq]:
     nextSeq += 1
 ```
 
-不变量：
+Invariants:
 
-- gap 关闭前零副作用
-- 相同重复事件幂等
-- 同一 seq 的不同内容是协议错误
-- stop、authority、permission 和 end 都不能跨过缺失 delta
-- 不同 turn 使用独立队列
+- zero side effects until the gap closes
+- identical duplicate events are idempotent
+- different content for the same seq is a protocol error
+- stop, authority, permission, and end can never skip past a missing delta
+- different turns use independent queues
 
 ### 6.2 StreamCoordinator
 
-只处理 turn/block 状态：
+Handles only turn/block state:
 
-- block-start 的 seq 是节点 ID
-- 一个 block 完成输入且 UI reveal 完成后，才能显示下一个 block
-- 一个 turn 完成后，才能开始显示下一个已缓存 turn
-- authority 只确认或局部修正现有节点
+- the block-start seq is the node ID
+- the next block can be shown only after a block finishes input and its UI reveal completes
+- the next buffered turn can start showing only after a turn completes
+- authority only confirms or locally corrects existing nodes
 
-它不处理 WS 到达顺序。
+It does not handle WS arrival order.
 
 ### 6.3 StreamingDomRenderer
 
-只执行声明式 DOM operation：
+Executes only declarative DOM operations:
 
-- 创建 turn 容器
-- 创建文本、thinking 或工具节点
-- 追加已经排序的文本
-- 更新工具 input/result
-- 局部 reconcile 权威消息
-- 保留展开状态和 DOM 身份
+- create the turn container
+- create text, thinking, or tool nodes
+- append already-ordered text
+- update tool input/result
+- locally reconcile authority messages
+- preserve expanded state and DOM identity
 
-它不读取 WS 事件，也不决定排序。
+It does not read WS events and does not decide ordering.
 
-## 7. 用户消息关联
+## 7. User Message Association
 
-Web 发送时：
+When Web sends:
 
 ```json
 {
@@ -214,158 +214,158 @@ Web 发送时：
 }
 ```
 
-同一时刻创建：
+At the same moment it creates:
 
 ```html
 <div class="user-message" data-anchor="sent-uuid">...</div>
 ```
 
-Bridge 和 Server 原样使用该 `turnId`。Streaming renderer 只通过精确选择器定位：
+Bridge and Server use that `turnId` unchanged. The streaming renderer locates it only via an exact selector:
 
 ```text
 [data-anchor="<turnId>"]
 ```
 
-因此不需要：
+Therefore none of the following are needed:
 
-- clientId 到 streamId 的绑定事件
-- 文本内容匹配
-- “最近一个问题”推断
-- timestamp 归属
+- a clientId-to-streamId binding event
+- text content matching
+- "most recent question" inference
+- timestamp ownership
 
-快速发送相同文本的多个问题时，每个问题仍有不同 `turnId`，回复不会串位。
+When multiple questions with identical text are sent quickly, each question still has a distinct `turnId`, so replies never land in the wrong place.
 
-## 8. 多窗口与 late join
+## 8. Multiple Windows and Late Join
 
-订阅是 fire-and-forget。Server 只写入订阅关系，不发送 ack；Bridge 不保存或回放 active turn。
+Subscription is fire-and-forget. Server only records the subscription; it sends no ack. Bridge neither stores nor replays the active turn.
 
-新窗口进入正在运行的 turn 时使用以下最小规则：
+A new window joining a running turn uses these minimal rules:
 
-1. 收到 `seq=0`：正常从 turn start 开始严格 streaming。
-2. 首个有效事件是 `seq=1 messages(user)`：Web 在本地补一个无 payload 的
-   `stream_turn_start(seq=0)`，然后从 `seq=1` 继续 streaming。
-3. 缺少当前节点的 `stream_block_start`：丢弃该节点的残缺 delta/stop。
-4. 收到完整 `messages`：立即用 authority 渲染已完成但缺少 start 的节点。
-5. 收到后续 `stream_block_start`：从这个完整节点边界恢复严格 streaming。
-6. `stream_end` 到达：使用整轮去重 authority 补齐仍缺失的节点并结束 turn。
-7. 后续新 turn 收到 `seq=0/1` 后自动恢复正常 streaming。
+1. `seq=0` received: strict streaming proceeds normally from turn start.
+2. The first valid event is `seq=1 messages(user)`: Web locally fills in a payload-less
+   `stream_turn_start(seq=0)`, then continues streaming from `seq=1`.
+3. The current node's `stream_block_start` is missing: discard that node's partial delta/stop.
+4. A complete `messages` is received: immediately render the completed node whose start was missing using authority.
+5. A later `stream_block_start` is received: resume strict streaming from that complete node boundary.
+6. `stream_end` arrives: use the whole-turn deduplicated authority to fill in still-missing nodes and end the turn.
+7. Subsequent new turns automatically resume normal streaming upon receiving `seq=0/1`.
 
-`stream_end` 携带该 turn 已产生的完整去重 authority。它只补缺失 UUID/nativeId，
-不会复制已由实时事件确认的节点。恢复逻辑不使用时间窗口。
+`stream_end` carries the complete deduplicated authority produced by the turn. It only fills in missing UUID/nativeId,
+and never duplicates nodes already confirmed by real-time events. The recovery logic uses no time windows.
 
-### 8.1 连接恢复
+### 8.1 Connection Recovery
 
-> 本节描述 strict turn 恢复不变量。REST/historyBuffer/local history 的统一 FetchBarrier
-> 尚待按 [`message-history-merge.md`](message-history-merge.md) 重构。
+> This section describes the strict turn recovery invariants. The unified FetchBarrier for REST/historyBuffer/local history
+> is still pending a refactor per [`message-history-merge.md`](message-history-merge.md).
 
-后台回前台和意外 WS 断线使用同一条恢复链：
+Returning from background to foreground and unexpected WS disconnects use the same recovery chain:
 
-1. 立即废弃旧连接的 turn seq 缓冲，但不修改现有 DOM。
-2. 新 WS 订阅后请求 REST 历史；同一响应并行强一致读取 Session status。
-3. REST 完成前，新连接的 strict turn 事件只缓存，不渲染。
-4. REST 历史先按 UUID/nativeId 合并，再按统一队列释放缓存的 WS 事件。
-5. `completed` 收口重连前的 turn；`running` 保留 outstanding turn；`needs_input`
-   保留 turn 但关闭 spinner。
-6. 从下一个完整 block/permission checkpoint 恢复 streaming。
-7. 重连前的残缺 block 收到完整 authority 后原位替换；重连后新建的 block 仍按正常逐步 reveal。
+1. Immediately discard the old connection's turn seq buffers, but do not modify existing DOM.
+2. After the new WS subscribes, request REST history; the same response reads Session status in parallel with strong consistency.
+3. Until REST completes, strict turn events on the new connection are only buffered, not rendered.
+4. REST history is merged by UUID/nativeId first, then buffered WS events are released through the unified queue.
+5. `completed` closes out turns from before the reconnect; `running` keeps the outstanding turn; `needs_input`
+   keeps the turn but stops the spinner.
+6. Resume streaming from the next complete block/permission checkpoint.
+7. A partial block from before the reconnect is replaced in place once its complete authority arrives; blocks created after the reconnect still reveal progressively as normal.
 
-离开详情页仍会完全断开并清理 Session 状态；只有同一详情页的连接恢复使用上述增量流程。
-恢复链不再发送 `reveal_turn_state`，也没有在线静默超时探针。正常连接只信任严格有序的
-WS 生命周期事件；前台/重连边界复用本来就必须执行的 messages 请求完成状态校准。
+Leaving the detail page still fully disconnects and clears Session state; only connection recovery within the same detail page uses the incremental flow above.
+The recovery chain no longer sends `reveal_turn_state`, and there is no online silence-timeout probe. A normal connection trusts only strictly ordered
+WS lifecycle events; foreground/reconnect boundaries reuse the status calibration from the messages request that must run anyway.
 
-`stream_block_stop` 只表示该 block 不会再有 delta，不携带完整内容。完整覆盖只能由
-对应的 authority `messages` 或 `stream_end.messages` 触发。
+`stream_block_stop` only signals that the block will receive no more deltas; it carries no complete content. A full overwrite can only be triggered by
+the corresponding authority `messages` or `stream_end.messages`.
 
-## 9. 权威消息
+## 9. Authority Messages
 
-turn 内 authority `messages` 也有 seq，不能绕过 gap。
+In-turn authority `messages` also carry a seq and cannot bypass a gap.
 
-处理规则：
+Handling rules:
 
-1. 流式内容与 authority 一致：只标记 committed，不替换 DOM。
-2. 内容不同：局部 patch 对应节点。
-3. tool result：按工具自身原生 ID 更新 OUT。
-4. 不执行整个 `.messages` 的重建。
-5. runtime-owned JSONL 消息只持久化，不广播；外部 TUI/IDE 的无 seq watcher 消息作为
-   普通历史消息处理，不重新打开已结束 turn。
-6. Codex runtime ownership 从本轮 `task_started` 持续到下一轮 `task_started`。中间的
-   `turn_aborted/task_complete` 不是释放边界，确保其后的尾部工具结果仍只持久化。
-7. 中断由 runtime 在 `stream_end` 前发送唯一 authority；Web 不根据错误码或显示文案合成节点。
+1. Streamed content matches authority: only mark it committed, do not replace DOM.
+2. Content differs: locally patch the corresponding node.
+3. tool result: update OUT by the tool's own native ID.
+4. Never rebuild the whole `.messages`.
+5. Runtime-owned JSONL messages are only persisted, not broadcast; seq-less watcher messages from external TUI/IDE are handled as
+   ordinary history messages and do not reopen an ended turn.
+6. Codex runtime ownership lasts from this turn's `task_started` until the next turn's `task_started`. An intermediate
+   `turn_aborted/task_complete` is not a release boundary, ensuring trailing tool results after it are still only persisted.
+7. On interruption, the runtime sends a single authority before `stream_end`; Web does not synthesize nodes from error codes or display text.
 
-## 10. 初次进入 Session
+## 10. First Entry into a Session
 
-Web 先发送 `subscribe`，同时拉取 REST 历史。两类 WS 消息分别处理：
+Web first sends `subscribe` while fetching REST history. The two kinds of WS messages are handled separately:
 
-紧接 `subscribe` 的 `reveal_permission` 只恢复当前权限状态。它不会请求或回放 streaming
-snapshot。CC 使用 Bridge 已保存的 hook/runtime pending request；Codex TUI 使用
-permission-only app-server observation 发现尚未回答的审批。仍属于未结束 live turn 的请求
-会分配新的统一 seq；没有 live turn 的 hook/TUI 请求作为 standalone control event，不带 seq。
+The `reveal_permission` immediately following `subscribe` only restores the current permission state. It does not request or replay a streaming
+snapshot. CC uses the hook/runtime pending request already stored by Bridge; Codex TUI uses a
+permission-only app-server observation to discover unanswered approvals. Requests that still belong to an unfinished live turn
+are assigned a new unified seq; hook/TUI requests without a live turn are standalone control events without a seq.
 
-权限是控制面 UI：若 sequenced permission 被缺失的前序渲染事件阻塞，Web 会做一次短延迟、
-幂等的 fallback dispatch，只负责显示/关闭弹窗，不推进 `TurnEventQueue`。之后严格队列消费
-到同一 `turnId + seq` 时会被去重。普通 delta、工具节点和 authority 不使用此旁路。
+Permissions are control-plane UI: if a sequenced permission is blocked by a missing earlier render event, Web performs a single short-delay,
+idempotent fallback dispatch that only shows/closes the dialog and does not advance the `TurnEventQueue`. When the strict queue later consumes
+the same `turnId + seq`, it is deduplicated. Ordinary deltas, tool nodes, and authority do not use this bypass.
 
-### 10.1 带 `turnId + seq` 的 live turn
+### 10.1 Live Turns with `turnId + seq`
 
-- 立即进入 `TurnEventQueue`，不进入历史 buffer。
-- REST 首次渲染后，把仍活跃的 preview 重新挂回对应 `data-anchor=turnId`。
-- 权威 `messages` 与 REST 历史按 `uuid/nativeId` 去重。
-- late-join authority 仍属于 strict turn；REST barrier 完成后再按 seq/checkpoint 消费，
-  不作为普通无 seq 历史消息参与 REST 数组合并。
+- Enter the `TurnEventQueue` immediately, not the history buffer.
+- After the first REST render, reattach still-active previews to the corresponding `data-anchor=turnId`.
+- Authority `messages` and REST history are deduplicated by `uuid/nativeId`.
+- Late-join authority still belongs to the strict turn; it is consumed by seq/checkpoint after the REST barrier completes,
+  and does not take part in REST array merging as ordinary seq-less history messages.
 
-### 10.2 无 seq 的 JSONL/TUI 消息
+### 10.2 Seq-less JSONL/TUI Messages
 
-- 仅来自没有 runtime ownership 的外部 TUI/IDE turn；Web 发起的 runtime turn 不走此路径。
-- REST 完成前进入请求级 `historyBuffer`。
-- REST 返回后按 `uuid/nativeId` 合并去重，再执行第一次历史渲染。
-- REST 完成后到达的无 seq 消息走普通历史增量渲染。
-- 无 seq 消息不进入 turn queue，也不能关闭或改变 active streaming turn。
+- Come only from external TUI/IDE turns without runtime ownership; Web-initiated runtime turns never take this path.
+- Before REST completes, they go into the request-level `historyBuffer`.
+- After REST returns, they are merged and deduplicated by `uuid/nativeId`, then the first history render runs.
+- Seq-less messages arriving after REST completes go through ordinary incremental history rendering.
+- Seq-less messages never enter the turn queue and can neither close nor alter an active streaming turn.
 
-REST 与 WS 谁先到达都不能导致重复节点、覆盖 preview 或改变工具展开状态。
+Whichever of REST and WS arrives first must not cause duplicate nodes, overwrite previews, or change tool expanded state.
 
-### 10.3 初次加载的状态权威
+### 10.3 Status Authority on Initial Load
 
-`bufferAndFetch` 记录 REST 请求期间是否实际应用过以下生命周期事件：
+`bufferAndFetch` records whether the following lifecycle events were actually applied during the REST request:
 
-- `stream_turn_start`：running
-- `stream_end`：按剩余 outstanding turns 计算
-- `permission_request`：保留 turn，但 spinner 关闭
-- `permission_resolved`：按剩余 outstanding turns 计算
+- `stream_turn_start`: running
+- `stream_end`: computed from the remaining outstanding turns
+- `permission_request`: keep the turn, but stop the spinner
+- `permission_resolved`: computed from the remaining outstanding turns
 
-有生命周期事件时，WS 状态比 REST 快照更新；没有时使用 `/messages.status`。普通 delta、
-tool input、block start/stop 或 authority 消息片段不能独立证明 turn 是否结束，因此不会覆盖
-REST status。只有接口未返回 status 时，才按合并后的消息尾部做兼容推导。
+When lifecycle events exist, the WS status is newer than the REST snapshot; otherwise `/messages.status` is used. Ordinary deltas,
+tool input, block start/stop, or authority message fragments cannot independently prove whether a turn has ended, so they never override
+the REST status. Only when the endpoint returns no status is a compatibility derivation made from the tail of the merged messages.
 
-## 11. 测试不变量
+## 11. Test Invariants
 
-必须长期保留：
+Must be retained long-term:
 
-- 完整 turn 所有排列都按 seq 恰好消费一次。
-- 重复投递不重复渲染。
-- 冲突 seq 被拒绝。
-- stop/messages/end 不能跨 gap。
-- 大 chunk 与单字符乱序不会重复文本。
-- 多 block 按创建顺序显示。
-- 后一 block 必须等待前一 block reveal 完成。
-- 多 turn 快速发送仍精确关联各自用户 anchor。
-- `seq=1 messages(user)` 可以恢复正常 streaming。
-- late join 不显示缺少 block start 的残缺 preview。
-- 后续 block start 能从节点边界恢复 streaming。
-- end 抢先时使用整轮 authority 一次性完成，迟到 frame 不重新打开 turn。
-- REST 与 strict WS 任意先后都只生成一个节点。
-- REST 与无 seq JSONL WS 任意先后都只生成一条历史消息。
-- Bridge 所有 active-turn action 都带合法 seq。
-- runtime-owned JSONL user/text/tool-use/tool-result/end 全部只持久化，不产生第二套 WS。
-- 外部 TUI/IDE JSONL 在没有 runtime ownership 时仍发送无 seq 完整消息。
-- runtime 中断 turn 的尾部工具结果在终止记录之后到达时仍属于同一 ownership。
-- 中断请求失败不显示 Interrupted；最终中断按 `OUT → Interrupted → stream_end` 严格排序。
-- Server 拒绝缺少 turnId/seq 的 active-turn 事件。
-- DDB 不保存 live 传输字段。
+- Every permutation of a complete turn is consumed exactly once in seq order.
+- Duplicate delivery does not render twice.
+- Conflicting seqs are rejected.
+- stop/messages/end cannot skip a gap.
+- Reordering of large chunks and single characters does not duplicate text.
+- Multiple blocks display in creation order.
+- A later block must wait for the previous block's reveal to complete.
+- Rapidly sending multiple turns still associates each precisely with its own user anchor.
+- `seq=1 messages(user)` can resume normal streaming.
+- Late join does not show a partial preview lacking a block start.
+- A later block start can resume streaming from a node boundary.
+- When end arrives early, the whole-turn authority completes it in one pass, and late frames do not reopen the turn.
+- REST and strict WS in any order produce only one node.
+- REST and seq-less JSONL WS in any order produce only one history message.
+- Every Bridge active-turn action carries a valid seq.
+- Runtime-owned JSONL user/text/tool-use/tool-result/end are all only persisted and do not produce a second WS stream.
+- External TUI/IDE JSONL still sends complete seq-less messages when there is no runtime ownership.
+- Trailing tool results of a runtime-interrupted turn that arrive after the terminal record still belong to the same ownership.
+- A failed interrupt request does not show Interrupted; a final interrupt is strictly ordered as `OUT → Interrupted → stream_end`.
+- Server rejects active-turn events missing turnId/seq.
+- DDB does not store live transport fields.
 
-当前核心乱序覆盖包括：
+Current core reordering coverage includes:
 
-- 6 个事件的全部 720 种排列
-- 500 轮包含重复投递的随机乱序
-- stop、authority、end 抢先
-- 多 block、多 turn、REST/WS 并发和 late join
-- 真实 Codex 大 chunk 乱序回放
+- all 720 permutations of 6 events
+- 500 rounds of random reordering including duplicate delivery
+- stop, authority, and end arriving early
+- multiple blocks, multiple turns, concurrent REST/WS, and late join
+- replay of real Codex large-chunk reordering
