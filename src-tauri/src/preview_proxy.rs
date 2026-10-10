@@ -87,6 +87,8 @@ struct PreviewSession {
 struct PreviewSocket {
   tunnel_id: String,
   writer: Mutex<TcpStream>,
+  // Separate handle: a write blocked on a non-reading browser holds `writer`.
+  shutdown: TcpStream,
   credit: (Mutex<usize>, Condvar),
   stopped: AtomicBool,
   read_logged: AtomicBool,
@@ -128,9 +130,7 @@ impl PreviewProxy {
     if let Some(socket) = socket {
       socket.stopped.store(true, Ordering::Release);
       socket.credit.1.notify_all();
-      if let Ok(writer) = socket.writer.lock() {
-        let _ = writer.shutdown(Shutdown::Both);
-      }
+      let _ = socket.shutdown.shutdown(Shutdown::Both);
       if let Ok(sessions) = self.sessions.lock() {
         if let Some(session) = sessions.get(&socket.tunnel_id) {
           if let Ok(mut sockets) = session.sockets.lock() {
@@ -160,13 +160,13 @@ impl PreviewProxy {
             let _ = reader.shutdown(Shutdown::Both);
             continue;
           }
-          let writer = match reader.try_clone() {
-            Ok(value) => value,
-            Err(_) => continue,
+          let (writer, shutdown) = match (reader.try_clone(), reader.try_clone()) {
+            (Ok(writer), Ok(shutdown)) => (writer, shutdown),
+            _ => continue,
           };
           let stream_id = Uuid::new_v4().to_string();
           let socket = Arc::new(PreviewSocket {
-            tunnel_id: tunnel_id.clone(), writer: Mutex::new(writer),
+            tunnel_id: tunnel_id.clone(), writer: Mutex::new(writer), shutdown,
             credit: (Mutex::new(0), Condvar::new()), stopped: AtomicBool::new(false),
             read_logged: AtomicBool::new(false), write_logged: AtomicBool::new(false),
           });

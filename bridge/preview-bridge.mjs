@@ -6,6 +6,9 @@ const WINDOW_BYTES = 128 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
 const MAX_STREAMS = 24;
 const MAX_TUNNELS = 4;
+// Data frames wait per stream while the shared channel holds this much unsent output.
+const CHANNEL_HIGH_BYTES = 256 * 1024;
+const LOOPBACK_HOSTS = ['127.0.0.1', '::1'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function createPreviewBridge(options) {
@@ -15,6 +18,7 @@ export function createPreviewBridge(options) {
   function closeSession(session, notify = true) {
     if (session.closed) return;
     session.closed = true;
+    clearTimeout(session.pumpTimer);
     sessions.delete(session.id);
     for (const stream of session.streams.values()) {
       stream.closed = true;
@@ -42,7 +46,28 @@ export function createPreviewBridge(options) {
     stream.socket.destroy();
     stream.pending.clear();
     stream.outstanding.clear();
+    stream.queue.length = 0;
     if (notify) send(session, { type: 'close', streamId: stream.id });
+  }
+
+  // Sends queued bytes/fin round-robin across streams without overrunning the shared channel.
+  function pump(session) {
+    clearTimeout(session.pumpTimer);
+    session.pumpTimer = null;
+    let progressed = true;
+    while (!session.closed && progressed) {
+      progressed = false;
+      for (const stream of session.streams.values()) {
+        if (stream.closed || !stream.queue.length) continue;
+        if (session.channel.bufferedAmount >= CHANNEL_HIGH_BYTES) {
+          session.pumpTimer = setTimeout(() => pump(session), 5);
+          return;
+        }
+        if (!send(session, stream.queue.shift())) return;
+        if (!stream.queue.length && stream.socketClosed) closeStream(session, stream, false);
+        progressed = true;
+      }
+    }
   }
 
   function openStream(session, streamId) {
@@ -55,14 +80,21 @@ export function createPreviewBridge(options) {
       send(session, { type: 'error', streamId, code: 'stream_limit' });
       return;
     }
-    const socket = net.connect({ host: '127.0.0.1', port: session.port });
-    socket.pause();
     const stream = {
-      id: streamId, socket, closed: false, connected: false, remoteEnded: false, failed: false,
+      id: streamId, socket: null, closed: false, connected: false, remoteEnded: false, failed: false,
       nextOutgoing: 1, nextIncoming: 1, lastWritten: 0, pending: new Map(), pendingBytes: 0,
-      outstanding: new Map(), outstandingBytes: 0, finSeq: null, flushing: false,
+      outstanding: new Map(), outstandingBytes: 0, finSeq: null, flushing: false, queue: [],
     };
     session.streams.set(streamId, stream);
+    dial(session, stream, 0);
+  }
+
+  // Services bound only to ::1 (common for `localhost` on macOS) refuse 127.0.0.1.
+  function dial(session, stream, hostIndex) {
+    const streamId = stream.id;
+    const socket = net.connect({ host: LOOPBACK_HOSTS[hostIndex], port: session.port });
+    stream.socket = socket;
+    socket.pause();
     socket.on('connect', () => {
       if (stream.closed || session.closed) return;
       stream.connected = true;
@@ -76,24 +108,36 @@ export function createPreviewBridge(options) {
         const seq = stream.nextOutgoing++;
         stream.outstanding.set(seq, chunk.length);
         stream.outstandingBytes += chunk.length;
-        if (!send(session, { type: 'bytes', streamId, seq, data: chunk.toString('base64') })) return;
+        stream.queue.push({ type: 'bytes', streamId, seq, data: chunk.toString('base64') });
       }
       if (stream.outstandingBytes >= WINDOW_BYTES) socket.pause();
-      if (stream.outstandingBytes > MAX_PENDING_BYTES) closeStream(session, stream);
+      if (stream.outstandingBytes > MAX_PENDING_BYTES) return closeStream(session, stream);
+      pump(session);
     });
     socket.on('end', () => {
       if (!stream.closed) {
         stream.remoteEnded = true;
-        send(session, { type: 'fin', streamId, seq: stream.nextOutgoing - 1 });
+        stream.queue.push({ type: 'fin', streamId, seq: stream.nextOutgoing - 1 });
+        pump(session);
       }
     });
     socket.on('error', error => {
-      if (stream.closed || session.closed) return;
+      if (stream.closed || session.closed || stream.socket !== socket) return;
+      if (!stream.connected && error?.code === 'ECONNREFUSED' && hostIndex + 1 < LOOPBACK_HOSTS.length) {
+        stream.refused = true;
+        dial(session, stream, hostIndex + 1);
+        return;
+      }
       stream.failed = true;
       send(session, { type: 'error', streamId,
-        code: error?.code === 'ECONNREFUSED' ? 'connection_refused' : 'io_error' });
+        code: error?.code === 'ECONNREFUSED' || stream.refused ? 'connection_refused' : 'io_error' });
     });
-    socket.on('close', () => closeStream(session, stream, !stream.remoteEnded && !stream.failed));
+    socket.on('close', () => {
+      if (stream.socket !== socket) return;
+      // Queued response bytes and fin still belong to the app after the local socket closes.
+      if (stream.remoteEnded && stream.queue.length) stream.socketClosed = true;
+      else closeStream(session, stream, !stream.remoteEnded && !stream.failed);
+    });
   }
 
   async function flushIncoming(session, stream) {
@@ -188,7 +232,7 @@ export function createPreviewBridge(options) {
           options.sendControl({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId: message.tunnelId });
           return;
         }
-        const session = { id: message.tunnelId, port: message.port, channel, streams: new Map(), closed: false };
+        const session = { id: message.tunnelId, port: message.port, channel, streams: new Map(), closed: false, pumpTimer: null };
         sessions.set(session.id, session);
         channel.addEventListener('message', event => receive(session, event.data));
         channel.addEventListener('error', () => closeSession(session));

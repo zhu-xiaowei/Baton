@@ -11,7 +11,7 @@ test('native TCP connection opens a preview stream with its UUID', () => {
   tunnel.channel = { send(message) { sent.push(message); return true; } };
   const streamId = crypto.randomUUID();
 
-  tunnel.nativeOpen({ tunnelId: tunnel.tunnelId, streamId });
+  tunnel.nativeOpen({ tunnelId: tunnel.localId, streamId });
 
   assert.equal(tunnel.streams.size, 1);
   assert.deepEqual(sent, [{ type: 'open', streamId }]);

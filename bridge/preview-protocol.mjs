@@ -1,6 +1,8 @@
 import { authenticateFrame, createHeaderSigner, verifyFrame } from './terminal-direct-protocol.mjs';
 
 const MAX_FRAME = 28 * 1024;
+const KEEPALIVE_MS = 5 * 60 * 1000;
+const KEEPALIVE = JSON.stringify({ action: 'ping' });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CONNECTION = /^[A-Za-z0-9_+=.-]{1,256}$/;
 const APP_TYPES = new Set(['open', 'bytes', 'ack', 'fin', 'close']);
@@ -101,7 +103,13 @@ export class PreviewDataChannel extends EventTarget {
       clearTimeout(this.timeout);
       const opening = this.readyState === 0;
       this.readyState = 1;
-      if (opening) emit(this, 'open');
+      if (opening) {
+        // API Gateway closes a socket after 10 idle minutes; frames posted to it do not count.
+        this.keepalive = setInterval(() => {
+          if (this.socket.readyState === 1) this.socket.send(KEEPALIVE);
+        }, KEEPALIVE_MS);
+        emit(this, 'open');
+      }
       const pending = this.incoming;
       this.incoming = [];
       this.incomingBytes = 0;
@@ -186,6 +194,7 @@ export class PreviewDataChannel extends EventTarget {
     this.incomingBytes = 0;
     clearTimeout(this.timeout);
     clearTimeout(this.expiry);
+    clearInterval(this.keepalive);
     emit(this, 'close', { reason });
   }
 
