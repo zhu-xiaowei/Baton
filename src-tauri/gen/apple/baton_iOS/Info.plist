@@ -28,6 +28,11 @@
 	<string>Baton uses speech recognition to convert your voice to text.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Baton can save downloaded images or videos when you choose Save in the share sheet.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchStoryboardName</key>

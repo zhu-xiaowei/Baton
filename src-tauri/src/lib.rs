@@ -1,5 +1,7 @@
 // Multi-window is macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
+mod preview_proxy;
+
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -58,8 +60,21 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_in_app_browser::init())
     .plugin(tauri_plugin_file_download::init())
-    .invoke_handler(tauri::generate_handler![ios_build_number])
+    .plugin(tauri::plugin::Builder::<_, ()>::new("browser-frame")
+      .js_init_script_on_all_frames(include_str!("../../web/js/browser/frame-bridge.js"))
+      .build())
+    .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
+    .invoke_handler(tauri::generate_handler![
+      ios_build_number,
+      preview_proxy::preview_start,
+      preview_proxy::preview_credit,
+      preview_proxy::preview_write,
+      preview_proxy::preview_shutdown_write,
+      preview_proxy::preview_close_socket,
+      preview_proxy::preview_stop
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

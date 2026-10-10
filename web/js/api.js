@@ -26,10 +26,12 @@ state.WS_URL = localStorage.getItem('_wsurl') || '';
 
 function clearCachedAccountData() {
   window.closeProjectTerminal?.({ keepAlive: false });
+  window.closePreviewConnections?.();
   window.disconnectWs?.();
   state.WS_URL = '';
   localStorage.removeItem('_wsurl');
   localStorage.removeItem('apeek_home_cache');
+  localStorage.removeItem('baton-preview-ports');
   localStorage.removeItem('baton-nav'); // legacy location
   sessionStorage.removeItem('baton-nav');
   clearListCaches();
