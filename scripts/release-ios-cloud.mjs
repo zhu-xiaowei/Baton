@@ -109,20 +109,21 @@ const repo = repos.data[0].attributes;
 const remoteSha = git('ls-remote', repo.httpCloneUrl, `refs/heads/${branch}`).split(/\s+/)[0];
 if (remoteSha !== head) die(`${repo.httpCloneUrl} ${branch} is at ${remoteSha || '(missing)'}, local HEAD is ${head}; push first`);
 
-// A failed Cloud run still consumes a Cloud build number. Reuse a prepared
-// version only when no run has used the commit that introduced that version.
+// Release branches do not need to be merged, so the source build number can
+// lag behind uploads. Failed Cloud runs also consume build numbers.
 const builds = await allPages(`/v1/builds?filter[app]=${appId}&limit=200&include=preReleaseVersion&fields[builds]=version,preReleaseVersion&fields[preReleaseVersions]=version`);
 const versionById = new Map((builds.included ?? []).map((v) => [v.id, v.attributes.version]));
 const uploadedBuild = Math.max(0, ...builds.data
   .filter((b) => versionById.get(b.relationships?.preReleaseVersion?.data?.id) === marketingVersion)
   .map((b) => Number(b.attributes.version)));
 if (!Number.isSafeInteger(uploadedBuild)) die(`App Store Connect returned an invalid build number for ${marketingVersion}`);
-if (configuredBuild < uploadedBuild) die(`Configured build ${configuredBuild} is behind uploaded ${marketingVersion} (${uploadedBuild})`);
 
 const versionCommit = git('blame', '--porcelain', '-L', '/CFBundleVersion:/,+1', '--', PROJECT_YML).split(/\s+/)[0];
 const versionCommitted = !/^0+$/.test(versionCommit);
 const preparedByScript = versionCommitted && git('show', '-s', '--format=%s', versionCommit) === `chore(ios): bump build number to ${configuredBuild}`;
 const priorRuns = await allPages(`/v1/ciProducts/${product.id}/buildRuns?limit=200`);
+const lastCloudBuild = Math.max(0, ...priorRuns.data.map((r) => Number(r.attributes.number)));
+if (!Number.isSafeInteger(lastCloudBuild)) die('Xcode Cloud returned an invalid build number');
 const versionWasRun = priorRuns.data.some((r) => {
   const sha = r.attributes.sourceCommit?.commitSha;
   if (!sha || !versionCommitted) return false;
@@ -130,17 +131,16 @@ const versionWasRun = priorRuns.data.some((r) => {
   catch { return false; }
 });
 let releaseHead = head;
-let releaseBuild = configuredBuild;
-const needsBump = configuredBuild === uploadedBuild || versionWasRun || !preparedByScript;
+const needsBump = configuredBuild <= Math.max(uploadedBuild, lastCloudBuild) || versionWasRun || !preparedByScript;
+const releaseBuild = needsBump ? Math.max(configuredBuild, uploadedBuild, lastCloudBuild) + 1 : configuredBuild;
+if (!Number.isSafeInteger(releaseBuild)) die('Next build number is too large');
 if (dryRun) {
   console.log(`Configured: ${marketingVersion} (${configuredBuild}); latest uploaded: ${marketingVersion} (${uploadedBuild})`);
-  console.log(`Next release: ${marketingVersion} (${needsBump ? configuredBuild + 1 : configuredBuild})${needsBump ? ' (bump both Xcode files)' : ' (reuse prepared version)'}`);
-  console.log(`Last Xcode Cloud run: #${Math.max(0, ...priorRuns.data.map((r) => Number(r.attributes.number)))}`);
+  console.log(`Next release: ${marketingVersion} (${releaseBuild})${needsBump ? ' (bump both Xcode files)' : ' (reuse prepared version)'}`);
+  console.log(`Last Xcode Cloud run: #${lastCloudBuild}`);
   process.exit(0);
 }
 if (needsBump) {
-  releaseBuild = configuredBuild + 1;
-  if (!Number.isSafeInteger(releaseBuild)) die('Next build number is too large');
   fs.writeFileSync(projectPath, project.replace(/^(\s*CFBundleVersion: ")\d+("\s*)$/m, (_, before, after) => `${before}${releaseBuild}${after}`));
   fs.writeFileSync(plistPath, plist.replace(/(<key>CFBundleVersion<\/key>\s*<string>)\d+(<\/string>)/, (_, before, after) => `${before}${releaseBuild}${after}`));
   git('add', '--', PROJECT_YML, INFO_PLIST);
