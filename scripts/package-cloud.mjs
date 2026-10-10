@@ -52,21 +52,15 @@ function humanSize(bytes) {
 }
 
 const args = process.argv.slice(2);
-const usage = 'Usage: node scripts/package-cloud.mjs [--test] [--platform android|ios|macos|windows|all] [--dry-run]';
-let dryRun = false;
-let testMode = false;
-let platform = 'all';
-for (let index = 0; index < args.length; index++) {
-  const arg = args[index];
-  if (arg === '--dry-run' && !dryRun) dryRun = true;
-  else if (arg === '--test' && !testMode) testMode = true;
-  else if (arg === '--platform' && platform === 'all' && args[index + 1]) platform = args[++index];
-  else die(usage);
+const dryRun = args.includes('--dry-run');
+const selection = args.filter((arg) => arg !== '--dry-run');
+const testPlatform = selection.length === 2 && selection[0] === '--test'
+  && ['android', 'ios', 'macos', 'windows'].includes(selection[1]) ? selection[1] : null;
+if (selection.length && !testPlatform || args.filter((arg) => arg === '--dry-run').length > 1) {
+  die('Usage: node scripts/package-cloud.mjs [--dry-run] | --test android|ios|macos|windows [--dry-run]');
 }
-if (!['all', 'android', 'ios', 'macos', 'windows'].includes(platform)) die(usage);
-const targets = (testMode ? testTargets : releaseTargets).filter((target) =>
-  platform === 'all' || target.platform === platform);
-if (!targets.length) die(`No release package for ${platform}; use --test for an unsigned iOS IPA`);
+const testMode = Boolean(testPlatform);
+const targets = testMode ? [testTargets.find((target) => target.platform === testPlatform)] : releaseTargets;
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) die(`Invalid PACKAGE_GITHUB_REPO: ${repo}`);
 
 const branch = command('git', ['branch', '--show-current']);
@@ -89,13 +83,10 @@ const destination = testMode
 
 if (!testMode) {
   const neededSecrets = [
-    ...(targets.some((target) => target.platform === 'android')
-      ? ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_PASSWORD'] : []),
-    ...(targets.some((target) => target.platform === 'macos')
-      ? ['MACOS_CERTIFICATE_P12_BASE64', 'MACOS_CERTIFICATE_PASSWORD', 'APPSTORE_PRIVATE_KEY_BASE64'] : []),
+    'ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_PASSWORD',
+    'MACOS_CERTIFICATE_P12_BASE64', 'MACOS_CERTIFICATE_PASSWORD', 'APPSTORE_PRIVATE_KEY_BASE64',
   ];
-  const neededVariables = targets.some((target) => target.platform === 'macos')
-    ? ['APPLE_SIGNING_IDENTITY', 'APPSTORE_KEY_ID', 'APPSTORE_ISSUER_ID'] : [];
+  const neededVariables = ['APPLE_SIGNING_IDENTITY', 'APPSTORE_KEY_ID', 'APPSTORE_ISSUER_ID'];
   const availableSecrets = new Set(JSON.parse(gh(['secret', 'list', '--json', 'name'])).map((item) => item.name));
   const availableVariables = new Set(JSON.parse(gh(['variable', 'list', '--json', 'name'])).map((item) => item.name));
   const missingSecrets = neededSecrets.filter((name) => !availableSecrets.has(name));
@@ -106,7 +97,7 @@ if (!testMode) {
     console.warn('Affected platforms will fail; see docs/package.md for setup.');
   }
 }
-console.log(`==> Packaging Baton ${testMode ? 'test' : `v${version}`} ${platform} from ${repo}@${branch} (${sha.slice(0, 7)})`);
+console.log(`==> Packaging Baton ${testMode ? `test ${testPlatform}` : `v${version}`} from ${repo}@${branch} (${sha.slice(0, 7)})`);
 if (dryRun) {
   console.log('Dry run: source and version checked; no workflow started.');
   process.exit(0);
@@ -115,7 +106,7 @@ if (dryRun) {
 const requestId = crypto.randomUUID();
 const dispatch = ['workflow', 'run', workflow, '--ref', branch,
   '-f', `expected_sha=${sha}`, '-f', `request_id=${requestId}`];
-if (testMode || platform !== 'all') dispatch.push('-f', `mode=${testMode ? 'test' : 'release'}`, '-f', `platform=${platform}`);
+if (testMode) dispatch.push('-f', `package=test-${testPlatform}`);
 gh(dispatch);
 console.log(`==> Dispatched ${workflow} (${requestId})`);
 
@@ -173,6 +164,6 @@ try {
   fs.rmSync(stage, { recursive: true, force: true });
 }
 
-console.log(`==================== SUMMARY (${testMode ? `test ${platform} at ${sha.slice(0, 7)}` : `v${version}`}) ====================`);
+console.log(`==================== SUMMARY (${testMode ? `test ${testPlatform} at ${sha.slice(0, 7)}` : `v${version}`}) ====================`);
 for (const result of results) console.log(`  - ${result}`);
 if (results.some((result) => result.includes('FAILED') || result.includes('download failed'))) process.exitCode = 1;

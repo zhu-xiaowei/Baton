@@ -1,5 +1,5 @@
 name: Package
-run-name: Package ${{ inputs.mode || 'release' }} ${{ inputs.platform || 'all' }} ${{ inputs.request_id }} at ${{ inputs.expected_sha }}
+run-name: Package ${{ inputs.package || 'release' }} ${{ inputs.request_id }} at ${{ inputs.expected_sha }}
 
 on:
   workflow_dispatch:
@@ -12,18 +12,12 @@ on:
         description: Unique invocation ID
         required: true
         type: string
-      mode:
-        description: Package type
+      package:
+        description: Release bundle or one test package
         required: false
         type: choice
         default: release
-        options: [release, test]
-      platform:
-        description: Build only this platform
-        required: false
-        type: choice
-        default: all
-        options: [all, android, ios, macos, windows]
+        options: [release, test-android, test-ios, test-macos, test-windows]
 
 permissions:
   contents: read
@@ -39,19 +33,16 @@ jobs:
         run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
       - name: Verify package selection
         env:
-          MODE: ${{ inputs.mode }}
-          PLATFORM: ${{ inputs.platform }}
+          PACKAGE: ${{ inputs.package }}
         run: |
-          mode="${MODE:-release}"
-          platform="${PLATFORM:-all}"
-          case "$mode:$platform" in
-            release:all|release:android|release:macos|release:windows|test:all|test:android|test:ios|test:macos|test:windows) ;;
-            *) echo "Unsupported package selection: $mode / $platform" >&2; exit 1 ;;
+          case "${PACKAGE:-release}" in
+            release|test-android|test-ios|test-macos|test-windows) ;;
+            *) echo "Unsupported package selection: $PACKAGE" >&2; exit 1 ;;
           esac
 
   android:
     name: Android APK
-    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'android' }}
+    if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'test-android' }}
     needs: source
     runs-on: ubuntu-24.04
     steps:
@@ -72,7 +63,7 @@ jobs:
       - run: rustup target add aarch64-linux-android
       - run: npm ci
       - name: Restore Android release keystore
-        if: ${{ inputs.mode != 'test' }}
+        if: ${{ inputs.package == '' || inputs.package == 'release' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -81,15 +72,15 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/baton.keystore
           test -s src-tauri/gen/android/baton.keystore
       - name: Create disposable Android test key
-        if: ${{ inputs.mode == 'test' }}
+        if: ${{ inputs.package == 'test-android' }}
         run: >-
           keytool -genkeypair -noprompt -keystore src-tauri/gen/android/baton.keystore
           -storepass baton123 -keypass baton123 -alias baton -keyalg RSA -keysize 2048
           -validity 1 -dname "CN=Baton CI"
       - name: Build Android APK
         env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.mode == 'test' && 'baton123' || secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ inputs.mode == 'test' && 'baton123' || secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.package == 'test-android' && 'baton123' || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.package == 'test-android' && 'baton123' || secrets.ANDROID_KEY_PASSWORD }}
         run: |
           test -n "$ANDROID_KEYSTORE_PASSWORD" && test -n "$ANDROID_KEY_PASSWORD"
           npm run build:android -- --ci
@@ -101,14 +92,14 @@ jobs:
           cp "$apk" artifacts/Baton.apk
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.mode == 'test' && 'Baton-test-Android' || 'Baton-Android' }}
+          name: ${{ inputs.package == 'test-android' && 'Baton-test-Android' || 'Baton-Android' }}
           path: artifacts/Baton.apk
           if-no-files-found: error
           retention-days: 7
 
   ios:
     name: iOS unsigned IPA
-    if: ${{ inputs.mode == 'test' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.package == 'test-ios' }}
     needs: source
     runs-on: macos-26
     steps:
@@ -140,8 +131,8 @@ jobs:
           retention-days: 7
 
   macos:
-    name: ${{ inputs.mode == 'test' && 'macOS test DMG' || 'macOS notarized DMG' }}
-    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'macos' }}
+    name: ${{ inputs.package == 'test-macos' && 'macOS test DMG' || 'macOS notarized DMG' }}
+    if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'test-macos' }}
     needs: source
     runs-on: macos-26
     steps:
@@ -154,7 +145,7 @@ jobs:
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
       - name: Restore macOS signing and notarization keys
-        if: ${{ inputs.mode != 'test' }}
+        if: ${{ inputs.package == '' || inputs.package == 'release' }}
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -180,7 +171,7 @@ jobs:
           security list-keychains -d user -s "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
       - name: Sign and notarize DMG
-        if: ${{ inputs.mode != 'test' }}
+        if: ${{ inputs.package == '' || inputs.package == 'release' }}
         env:
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -190,7 +181,7 @@ jobs:
         run: |
           npm run build:mac
       - name: Build unsigned macOS test DMG
-        if: ${{ inputs.mode == 'test' }}
+        if: ${{ inputs.package == 'test-macos' }}
         run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
       - name: Stage DMG
         run: |
@@ -205,14 +196,14 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/baton.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.mode == 'test' && 'Baton-test-macOS' || 'Baton-macOS' }}
+          name: ${{ inputs.package == 'test-macos' && 'Baton-test-macOS' || 'Baton-macOS' }}
           path: artifacts/Baton.dmg
           if-no-files-found: error
           retention-days: 7
 
   windows:
     name: Windows NSIS
-    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'windows' }}
+    if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'test-windows' }}
     needs: source
     runs-on: windows-2022
     steps:
@@ -223,10 +214,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build Windows release installer
-        if: ${{ inputs.mode != 'test' }}
+        if: ${{ inputs.package == '' || inputs.package == 'release' }}
         run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis
       - name: Build Windows unsigned test installer
-        if: ${{ inputs.mode == 'test' }}
+        if: ${{ inputs.package == 'test-windows' }}
         run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis
       - name: Stage installer
         shell: pwsh
@@ -237,7 +228,7 @@ jobs:
           Copy-Item $installer.FullName artifacts/Baton.exe
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ inputs.mode == 'test' && 'Baton-test-Windows' || 'Baton-Windows' }}
+          name: ${{ inputs.package == 'test-windows' && 'Baton-test-Windows' || 'Baton-Windows' }}
           path: artifacts/Baton.exe
           if-no-files-found: error
           retention-days: 7

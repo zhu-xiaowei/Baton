@@ -30,27 +30,26 @@ Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA,
 
 The Windows NSIS installer is currently unsigned, as it was with the previous local Windows cross compile script. Distributing a signed Windows installer requires a separate Windows code signing certificate.
 
-## Individual test packages without a PR
+## One test package without a PR
 
-The same `package.yml` workflow can build one test package from any clean branch
-pushed to GitHub. No pull request or release signing secrets are required:
+From any clean branch pushed to GitHub, choose a single test package:
 
 ```sh
-npm run package:test -- --platform android  # disposable-key APK
-npm run package:test -- --platform ios      # unsigned IPA for device testing
-npm run package:test -- --platform macos    # unsigned DMG
-npm run package:test -- --platform windows  # unsigned NSIS installer
+npm run package:test -- android  # disposable-key APK
+npm run package:test -- ios      # unsigned IPA for device testing
+npm run package:test -- macos    # unsigned DMG
+npm run package:test -- windows  # unsigned NSIS installer
 ```
 
-Use `--platform all` for all four test packages, or append `--dry-run` to
-check the pushed SHA without dispatching. Downloads go to the ignored
-`release/test/<first 12 characters of SHA>/` directory. The script verifies
-the workflow run's SHA and downloads only the chosen artifact. The same
-choices are available in GitHub Actions' manual **Package** workflow:
-select `mode=test` and the desired `platform`. The `gh workflow run`
-command calls the same workflow dispatch API; it does not need a PR.
+Append `--dry-run` to check the pushed SHA without dispatching. Downloads go
+to the ignored `release/test/<first 12 characters of SHA>/` directory. The
+script verifies the workflow run's SHA and downloads only the chosen artifact.
+GitHub Actions' manual **Package** workflow has one optional `package`
+selection: `release` (the existing default) or `test-android`, `test-ios`,
+`test-macos`, `test-windows`. No PR or release signing secrets are required
+for the test choices.
 
-Leaving `mode=release` and `platform=all` preserves the existing three
-release installers. iOS release signing and TestFlight remain separate.
-The Android test APK uses a disposable signing key, so it may need the
-previously installed Baton app removed before installation.
+`$package` still builds the existing three release installers. iOS release
+signing and TestFlight remain separate. The Android test APK uses a
+disposable signing key, so it may need the previously installed Baton app
+removed before installation.
