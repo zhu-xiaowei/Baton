@@ -7,7 +7,9 @@
 }
 .preview-heading { flex-shrink: 0; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #30363d; color: #e6edf3; }
 .preview-panel.bottom-sheet-panel .preview-heading { margin-bottom: 12px; padding-bottom: 12px; }
-.preview-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 16px; }
+.preview-heading-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.preview-title { flex: 0 0 auto; font-size: 16px; white-space: nowrap; }
+.preview-device { min-width: 0; flex: 0 1 auto; font-family: inherit; }
 .preview-manager { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .preview-form label { display: block; margin-bottom: 6px; font-size: 14px; }
 .preview-input-row input {
@@ -30,6 +32,11 @@
   cursor: pointer;
 }
 .preview-actions { flex: 0 0 auto; gap: 2px; }
+.preview-add { position: relative; }
+.preview-add-spinner { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }
+.preview-add[aria-busy="true"] .preview-add-label { visibility: hidden; }
+.preview-add[aria-busy="true"] .preview-add-spinner { display: flex; }
+.preview-panel .preview-add[aria-busy="true"] { opacity: 1; }
 .preview-actions button {
   display: inline-flex;
   align-items: center;

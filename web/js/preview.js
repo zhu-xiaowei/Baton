@@ -2,25 +2,85 @@ import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { state } from './state.js';
 import { CLOSE_ICON_SVG } from './components/icons.js';
+import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
+import { loadingSpinner } from './components/loading.js';
 import { openBrowserPage } from './browser/page.js';
+import { normalizeBrowserAddress } from './browser/address.js';
 import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
 import '../css/preview.css';
+import '../css/loading.css';
 
 const connections = new Map();
+const connectionRefreshes = new Map();
 const storageKey = 'baton-preview-ports';
 const icons = {
-  local: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  local: '<path d="M2 12c2.5-4.5 5.8-7 10-7s7.5 2.5 10 7c-2.5 4.5-5.8 7-10 7S4.5 16.5 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   browser: '<path d="M15 3h6v6m0-6L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>',
   delete: '<path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6m4-6v6"/>',
 };
 let overlay = null;
 let selected = null;
 let browserView = null;
+let cachedBrowser = null;
 let navigationVersion = 0;
 let restored = false;
 let previousFocus = null;
 let cancelClose = null;
+let prewarmedEntry = null;
+let prewarmVersion = 0;
+
+function adoptPrewarm(entry) {
+  prewarmVersion++;
+  if (prewarmedEntry && prewarmedEntry !== entry) void cancelPreviewPrewarm();
+  if (prewarmedEntry === entry) {
+    prewarmedEntry = null;
+  }
+  entry.speculative = false;
+}
+
+async function releasePrewarm() {
+  const entry = prewarmedEntry;
+  prewarmedEntry = null;
+  if (!entry || !entry.speculative) return;
+  const closing = disconnect(entry);
+  entry.closing = closing;
+  try {
+    await closing;
+  } finally {
+    if (entry.closing === closing) entry.closing = null;
+    const key = JSON.stringify([entry.device, entry.target.port]);
+    if (entry.speculative && !entry.listed && connections.get(key) === entry) connections.delete(key);
+  }
+}
+
+export function cancelPreviewPrewarm() {
+  prewarmVersion++;
+  return releasePrewarm();
+}
+
+export async function prewarmPreviewLink(value, device) {
+  const target = parsePreviewTarget(value);
+  if (!target || !device || device !== state.appState.device || !state.appState.session
+    || document.hidden || browserView || overlay || !state.KEY
+    || !(window.isTauri || window.__TAURI_INTERNALS__)) return;
+  const key = JSON.stringify([device, target.port]);
+  const existing = connections.get(key);
+  if (existing && (existing.pending || (existing.origin && !existing.tunnel?.closed))) return;
+  const version = ++prewarmVersion;
+  await releasePrewarm();
+  if (version !== prewarmVersion || device !== state.appState.device || document.hidden) return;
+  if (Array.from(connections.values()).filter(entry =>
+    entry.pending || (entry.tunnel && !entry.tunnel.closed)).length >= 3) return;
+  restorePorts();
+  const entry = getConnection(target, device);
+  entry.speculative = true;
+  prewarmedEntry = entry;
+  const origin = await connect(entry, { speculative: true });
+  if (!origin && prewarmedEntry === entry) {
+    prewarmedEntry = null;
+  }
+}
 
 function actionButtons() {
   return [
@@ -91,7 +151,10 @@ function ensureOverlay(device) {
   overlay.innerHTML = `
     <section class="preview-panel" role="dialog" aria-modal="true" aria-label="Remote preview">
       <header class="preview-heading">
-        <strong class="preview-title"></strong>
+        <div class="preview-heading-title">
+          <strong class="preview-title">Remote preview</strong>
+          <button type="button" class="path-breadcrumb-item preview-device" title="Refresh port connections"></button>
+        </div>
         <button class="preview-close file-modal-close" type="button" aria-label="Close preview" title="Close">
           ${CLOSE_ICON_SVG}
         </button>
@@ -100,9 +163,12 @@ function ensureOverlay(device) {
         <form class="preview-form">
           <label for="previewAddress">Remote port</label>
           <div class="preview-input-row">
-            <input id="previewAddress" class="modal-input" name="port" placeholder="5173" inputmode="numeric"
+            <input id="previewAddress" class="modal-input" name="port" placeholder="3000" inputmode="numeric"
               pattern="[0-9]{1,5}" maxlength="5" autocomplete="off" required>
-            <button type="submit">Add</button>
+            <button type="submit" class="preview-add" aria-label="Add port">
+              <span class="preview-add-label">Add</span>
+              <span class="preview-add-spinner">${loadingSpinner({ size: 'small', label: 'Connecting port' })}</span>
+            </button>
           </div>
           <p class="preview-form-error" role="alert" hidden></p>
         </form>
@@ -114,6 +180,9 @@ function ensureOverlay(device) {
     </section>`;
   document.body.appendChild(overlay);
   overlay.querySelector('.preview-close').addEventListener('click', goBack);
+  overlay.querySelector('.preview-device').addEventListener('click', event => {
+    void refreshConnections(event.currentTarget.closest('#previewOverlay'));
+  });
   overlay.addEventListener('click', event => {
     if (event.target === overlay) goBack();
     const button = event.target.closest('[data-preview-action]');
@@ -140,7 +209,7 @@ function ensureOverlay(device) {
     }
     const entry = getConnection(target, view.closest('#previewOverlay').dataset.device);
     button.disabled = true;
-    button.textContent = 'Checking…';
+    button.setAttribute('aria-busy', 'true');
     try {
       const origin = await connect(entry);
       if (origin) {
@@ -153,7 +222,7 @@ function ensureOverlay(device) {
       }
     } finally {
       button.disabled = false;
-      button.textContent = 'Add';
+      button.removeAttribute('aria-busy');
     }
   });
   return overlay;
@@ -187,6 +256,66 @@ function renderList() {
   }
   overlay.querySelector('.preview-connections').replaceChildren(...entries.map(entry => entry.row));
   overlay.querySelector('.preview-port-list').hidden = !entries.length;
+}
+
+async function refreshConnection(entry) {
+  const key = JSON.stringify([entry.device, entry.target.port]);
+  if (!entry.listed || connections.get(key) !== entry) return null;
+  if (entry.pending) {
+    await entry.pending;
+  } else if (!entry.origin || entry.tunnel?.closed) {
+    await connect(entry);
+  } else {
+    const version = entry.version;
+    const tunnel = entry.tunnel;
+    try {
+      await tunnel.checkPort();
+      if (entry.version === version) entry.status = 'Connected.';
+    } catch (error) {
+      if (entry.version !== version || entry.tunnel !== tunnel) return null;
+      const closing = disconnect(entry);
+      const stoppedVersion = entry.version;
+      await closing;
+      if (entry.version === stoppedVersion && entry.listed) return error.message || String(error);
+    }
+  }
+  if (entry.listed && connections.get(key) === entry && (!entry.origin || entry.tunnel?.closed)) {
+    return entry.status;
+  }
+  return null;
+}
+
+async function refreshConnections(view) {
+  const device = view.dataset.device;
+  const button = view.querySelector('.preview-device');
+  const error = view.querySelector('.preview-form-error');
+  if (button.disabled) return;
+  button.disabled = true;
+  error.hidden = true;
+  setBreadcrumbItemsLoading([button], true);
+  let task = connectionRefreshes.get(device);
+  if (!task) {
+    const entries = Array.from(connections.values()).filter(entry => entry.listed && entry.device === device);
+    task = Promise.all(entries.map(refreshConnection));
+    connectionRefreshes.set(device, task);
+  }
+  try {
+    const failures = (await task).filter(Boolean);
+    if (overlay === view && view.dataset.device === device) {
+      renderList();
+      error.textContent = failures.join(' ');
+      error.hidden = !failures.length;
+    }
+  } catch (failure) {
+    if (overlay === view && view.dataset.device === device) {
+      error.textContent = failure.message || String(failure);
+      error.hidden = false;
+    }
+  } finally {
+    if (connectionRefreshes.get(device) === task) connectionRefreshes.delete(device);
+    button.disabled = false;
+    setBreadcrumbItemsLoading([button], false);
+  }
 }
 
 function goBack() {
@@ -233,8 +362,17 @@ async function wsUrl() {
   return config.wsUrl;
 }
 
-async function connect(entry) {
-  if (entry.origin && !entry.tunnel?.closed) return entry.origin;
+async function connect(entry, { speculative = false } = {}) {
+  if (!speculative) adoptPrewarm(entry);
+  if (entry.closing) await entry.closing;
+  if (entry.origin && !entry.tunnel?.closed) {
+    if (!speculative && !entry.listed) {
+      entry.listed = true;
+      savePorts();
+      renderList();
+    }
+    return entry.origin;
+  }
   if (entry.pending) return entry.pending;
   const version = ++entry.version;
   entry.origin = '';
@@ -267,7 +405,7 @@ async function connect(entry) {
         return null;
       }
       entry.origin = new URL(url).origin;
-      entry.listed = true;
+      if (!entry.speculative) entry.listed = true;
       entry.status = 'Connected.';
       savePorts();
       renderList();
@@ -302,13 +440,32 @@ async function openInline(entry, fromList) {
   goBack();
   const version = ++navigationVersion;
   selected = entry;
+  const requestUrl = entry.target.displayUrl;
+  if (cachedBrowser?.entry === entry && cachedBrowser.requestUrl === requestUrl
+    && cachedBrowser.page.ready && entry.origin && !entry.tunnel?.closed
+    && new URL(cachedBrowser.page.url).origin === entry.origin) {
+    cachedBrowser.fromList = fromList;
+    if (cachedBrowser.page.resume()) {
+      browserView = cachedBrowser.page;
+      return;
+    }
+  }
+  cachedBrowser?.page.destroy();
+  cachedBrowser = null;
   const page = openBrowserPage({
+    keepAlive: true,
+    initialAddress: entry.origin && !entry.tunnel?.closed
+      ? localUrl(entry.origin, entry.target) : entry.target.displayUrl,
     resolveAddress: async (value, currentUrl) => {
       let target = parsePreviewInput(value);
-      if (!target && currentUrl) {
-        try { target = parsePreviewTarget(new URL(value, currentUrl).href); } catch {}
+      if (!target) {
+        const url = normalizeBrowserAddress(value, currentUrl);
+        target = parsePreviewTarget(url);
+        if (!target) {
+          if (browserView === page) selected = null;
+          return url;
+        }
       }
-      if (!target) throw new Error('Enter a localhost URL or remote port.');
       const origin = new URL(target.displayUrl).origin;
       const existing = Array.from(connections.values()).find(connection =>
         connection.device === entry.device && connection.origin === origin);
@@ -320,15 +477,25 @@ async function openInline(entry, fromList) {
       savePorts();
       return localUrl(localOrigin, target);
     },
+    onLocationChange(url) {
+      if (browserView !== page) return;
+      const origin = new URL(url).origin;
+      selected = Array.from(connections.values()).find(connection =>
+        connection.device === entry.device && connection.origin === origin) || null;
+    },
     onExternal: launchBrowser,
+    onStop() {
+      if (browserView === page) navigationVersion++;
+    },
     onClose() {
       if (browserView !== page) return;
       browserView = null;
       selected = null;
       navigationVersion++;
-      if (fromList) showPreviewInput(entry.device);
+      if (cachedBrowser?.fromList) showPreviewInput(entry.device);
     },
   });
+  cachedBrowser = { page, entry, requestUrl, fromList };
   browserView = page;
   const target = entry.target;
   const origin = await connect(entry);
@@ -368,12 +535,20 @@ async function disconnect(entry) {
 }
 
 async function deleteConnection(entry) {
+  if (prewarmedEntry === entry) {
+    prewarmedEntry = null;
+    prewarmVersion++;
+  }
   entry.listed = false;
   connections.delete(JSON.stringify([entry.device, entry.target.port]));
   savePorts();
   const closing = disconnect(entry);
   if (selected === entry && browserView) browserView.close();
   else renderList();
+  if (cachedBrowser?.entry === entry) {
+    cachedBrowser.page.destroy();
+    cachedBrowser = null;
+  }
   await closing;
 }
 
@@ -393,7 +568,8 @@ export function showPreviewInput(device) {
   const opening = !view.classList.contains('bottom-sheet-overlay') || !view.classList.contains('open');
   view.classList.add('modal-overlay', 'bottom-sheet-overlay');
   view.querySelector('.preview-panel').classList.add('modal-box', 'bottom-sheet-panel');
-  view.querySelector('.preview-title').textContent = `Remote preview · ${deviceName(device)}`;
+  view.querySelector('.preview-device').textContent = deviceName(device);
+  view.querySelector('.preview-device').setAttribute('aria-label', `Refresh port connections for ${deviceName(device)}`);
   renderList();
   if (opening) {
     view.classList.remove('open');
@@ -411,6 +587,11 @@ document.addEventListener('keydown', event => {
 }, true);
 
 function closeConnections() {
+  connectionRefreshes.clear();
+  prewarmVersion++;
+  prewarmedEntry = null;
+  cachedBrowser?.page.destroy();
+  cachedBrowser = null;
   browserView?.destroy();
   browserView = null;
   selected = null;
