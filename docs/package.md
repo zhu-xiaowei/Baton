@@ -30,26 +30,35 @@ Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA,
 
 The Windows NSIS installer is currently unsigned, as it was with the previous local Windows cross compile script. Distributing a signed Windows installer requires a separate Windows code signing certificate.
 
-## One test package without a PR
+## One platform package without a PR
 
-From any clean branch pushed to GitHub, choose a single test package:
+From any clean branch pushed to GitHub, choose a single release package:
 
 ```sh
-npm run package:test -- android  # disposable-key APK
-npm run package:test -- ios      # unsigned IPA for device testing
-npm run package:test -- macos    # unsigned DMG
-npm run package:test -- windows  # unsigned NSIS installer
+npm run package:android
+npm run package:macos
+npm run package:windows
 ```
 
-Append `--dry-run` to check the pushed SHA without dispatching. Downloads go
-to the ignored `release/test/<first 12 characters of SHA>/` directory. The
-script verifies the workflow run's SHA and downloads only the chosen artifact.
-GitHub Actions' manual **Package** workflow has one optional `package`
-selection: `release` (the existing default) or `test-android`, `test-ios`,
-`test-macos`, `test-windows`. No PR or release signing secrets are required
-for the test choices.
+For a development test package, use:
 
-`$package` still builds the existing three release installers. iOS release
-signing and TestFlight remain separate. The Android test APK uses a
-disposable signing key, so it may need the previously installed Baton app
-removed before installation.
+```sh
+npm run package:dev:android  # disposable-key APK
+npm run package:dev:ios      # unsigned IPA
+npm run package:dev:macos    # unsigned DMG
+npm run package:dev:windows  # unsigned NSIS installer
+```
+
+`npm run package` and `$package` still build the original three release
+installers. There is no `package:ios`: signed iOS releases use the existing
+TestFlight flow. The `dev` packages are installable test builds, not live
+development servers. The Android dev APK uses a disposable signing key, so
+it may require removing a previously installed Baton app.
+
+The command checks that the branch is pushed, starts the selected GitHub
+Actions job, verifies its source SHA, and downloads only its artifact.
+Release packages go to `release/<version>/`; dev packages go to the ignored
+`release/dev/<first 12 characters of SHA>/`. Use
+`node scripts/package-cloud.mjs --dev --platform ios --dry-run` to check a
+selection without starting a build. The manual **Package** workflow offers
+the same selections and defaults to the three release packages.
