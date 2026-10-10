@@ -4,6 +4,7 @@ import { parsePreviewTarget } from './preview-link.js';
 
 const status = document.getElementById('status');
 const traffic = document.getElementById('traffic');
+window.__skelReady = 1;
 const embeddedKey = __PREVIEW_SMOKE_KEY__;
 const embeddedWsUrl = __PREVIEW_SMOKE_WS_URL__;
 const embeddedDevice = __PREVIEW_SMOKE_DEVICE__;

@@ -46,6 +46,18 @@ appear in the rendered view. The iOS test kept the App WebView in the
 foreground and displayed the remote page in an iframe. The production
 iOS preview entry now uses the same approach.
 
+An initial screenshot was captured while the App's launch skeleton was
+still visible. The tested iOS IPA's test page did not send the normal
+Web UI's `window.__skelReady` signal, so the native launch skeleton
+remained above it for a few seconds. The test page now sends the signal.
+A separate Device Farm run
+`arn:aws:devicefarm:us-west-2:949580910056:run:235b7700-e8db-43f3-b086-8a834566ba9f/ae3c92fe-332b-4624-8c20-a6aca996df8f`
+verified that the completion text was `visible=true` at x=52, y=631
+inside the iPhone screen and was still present eight seconds later. Its
+delayed screenshot visibly shows the remote page and "Large JavaScript
+file loaded through preview", with 695,010 transferred bytes. The
+image is at `.test-runs/preview-mobile/artifacts-ios-visual-online/marker-after-8s.png`.
+
 ## Browser scope
 
 The native App starts a TCP listener on the phone or desktop and opens
