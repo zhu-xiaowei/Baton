@@ -109,6 +109,11 @@ function getConnection(target, device) {
   return entry;
 }
 
+function portNotListening(entry, status = entry.status) {
+  const message = `Port ${entry.target.port} is not listening on ${entry.device}`;
+  return status === message || status === `Preview failed: ${message}`;
+}
+
 function savedPorts() {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
@@ -212,7 +217,7 @@ function ensureOverlay(device) {
     button.setAttribute('aria-busy', 'true');
     try {
       const origin = await connect(entry);
-      if (origin) {
+      if (origin || portNotListening(entry)) {
         input.value = '';
         if (view.isConnected && overlay?.classList.contains('open') && !browserView
           && document.activeElement === button) input.focus();
@@ -231,7 +236,11 @@ function ensureOverlay(device) {
 function updateEntry(entry) {
   const connected = !!entry.origin && !entry.tunnel?.closed;
   if (entry.row) {
-    entry.row.querySelector('.preview-remote').textContent = String(entry.target.port);
+    const remote = entry.row.querySelector('.preview-remote');
+    const unavailable = portNotListening(entry);
+    remote.textContent = String(entry.target.port);
+    remote.classList.toggle('unavailable', unavailable);
+    remote.title = unavailable ? entry.status.replace(/^Preview failed: /, '') : '';
     entry.row.querySelector('.preview-local').textContent = connected
       ? new URL(entry.origin).port || '80' : '—';
     entry.row.querySelector('.preview-local').title = connected ? entry.origin : '';
@@ -276,11 +285,19 @@ async function refreshConnection(entry) {
       const closing = disconnect(entry);
       const stoppedVersion = entry.version;
       await closing;
-      if (entry.version === stoppedVersion && entry.listed) return error.message || String(error);
+      if (entry.version === stoppedVersion && entry.listed) {
+        const message = error.message || String(error);
+        if (portNotListening(entry, message)) {
+          entry.status = `Preview failed: ${message}`;
+          updateEntry(entry);
+          return null;
+        }
+        return message;
+      }
     }
   }
   if (entry.listed && connections.get(key) === entry && (!entry.origin || entry.tunnel?.closed)) {
-    return entry.status;
+    return portNotListening(entry) ? null : entry.status;
   }
   return null;
 }
@@ -417,7 +434,15 @@ async function connect(entry, { speculative = false } = {}) {
         await entry.tunnel?.close();
         if (entry.version === version) {
           entry.tunnel = null;
-          if (!entry.listed) connections.delete(JSON.stringify([entry.device, entry.target.port]));
+          if (!entry.listed) {
+            if (!entry.speculative && portNotListening(entry)) {
+              entry.listed = true;
+              savePorts();
+              renderList();
+            } else {
+              connections.delete(JSON.stringify([entry.device, entry.target.port]));
+            }
+          }
         }
       }
       return null;
@@ -499,19 +524,36 @@ async function openInline(entry, fromList) {
   browserView = page;
   const target = entry.target;
   const origin = await connect(entry);
-  if (!origin || browserView !== page || selected !== entry || version !== navigationVersion) return;
+  if (browserView !== page || selected !== entry || version !== navigationVersion) return;
+  if (!origin) {
+    page.setError(entry.status);
+    return;
+  }
   page.setUrl(localUrl(origin, target));
 }
 
 async function openBrowser(entry) {
   const target = entry.target;
   const origin = await connect(entry);
-  if (!origin) return;
+  if (!origin) {
+    if (overlay?.isConnected) {
+      const message = overlay.querySelector('.preview-form-error');
+      message.hidden = portNotListening(entry);
+      if (!message.hidden) message.textContent = entry.status;
+    }
+    return;
+  }
   try {
     await launchBrowser(localUrl(origin, target));
+    if (overlay?.isConnected) overlay.querySelector('.preview-form-error').hidden = true;
   } catch (error) {
     entry.status = `Could not open browser: ${error.message || error}`;
     updateEntry(entry);
+    if (overlay?.isConnected) {
+      const message = overlay.querySelector('.preview-form-error');
+      message.textContent = entry.status;
+      message.hidden = false;
+    }
   }
 }
 

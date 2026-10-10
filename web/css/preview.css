@@ -65,6 +65,7 @@
 .preview-connection { padding: 10px 0; border-bottom: 1px solid #30363d; }
 .preview-endpoints { flex: 1; min-width: 0; }
 .preview-endpoints code { font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.preview-remote.unavailable { color: #f85149; }
 .preview-local { color: #58a6ff; }
 
 @media (hover: hover) {
