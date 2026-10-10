@@ -1,314 +1,314 @@
-# Header 签名直转与项目共享终端
+# Header-Signed Direct Forwarding and Project Shared Terminals
 
-更新：2026-09-18。单项目多终端已实现；正式发布使用 `server/install.sh --region ap-northeast-1 --stack Baton`。
-多终端仍复用已有 Header 签名直转，不需要新增云端 API 或常驻 EC2 / Fargate 中继。
+Updated: 2026-09-18. Multiple terminals per project are implemented; production releases use `server/install.sh --region ap-northeast-1 --stack Baton`.
+Multiple terminals still reuse the existing Header-signed direct forwarding and need no new cloud API or always-on EC2 / Fargate relay.
 
-## 启动与快速返回优化（待配套发布）
+## Startup and Fast-Return Optimization (Pending Coordinated Release)
 
-- 页面返回保留一个已同步终端实例与连接，最多 60 秒；隐藏页面仍处理输出和 ACK，但不接收输入、抢焦点或改变共享尺寸。
-  同账号、服务器、项目且连接仍有效时直接恢复原实例。过期、应用进入后台、离线、切换账号或连接出错时释放，重新进入走完整恢复。
-  正在连接、同步或执行管理操作时不缓存；释放连接仍不结束 Bridge 中的 Shell。
-- 配置按服务器与 API Key 在内存中缓存，共享并发请求。若已有同账号应用控制 WS 则借用，不另建控制连接；
-  终端关闭仅释放自己的 attachment，不关闭主应用 WS。收到服务端关闭确认前不再次借用同一控制连接。
-- Bridge 通过 `terminalStartup=1` 声明支持启动参数。App 首次 `terminal_direct/open` 携带选中 sessionId 与尺寸，
-  服务端验证并随 offer 下发；Bridge 在数据通道授权后直接 attach 和发送屏幕，App 不再发送第二次数据 open。
-  任一旧服务端或旧 Bridge 不支持此能力时，保留原来的数据 open 流程，不提前创建 Shell。
-- 服务端先完成四条连接记录的归属校验，再并行申请 App / Bridge 的两份 STS 凭据；全部成功且状态仍有效才激活。
-  API Key、join token、数据 API 隔离、STS 权限范围、HMAC 与会话序号均不变；数据仍通过 HTTP integration 直转。
-- 快照按最多四个未确认块发送；最后一块排入发送队列后，立即发送有序的 synced 和缓存增量。
-  前端仍等待所有快照块实际写入 xterm 后才处理 synced。render_ack 继续释放在途字节并推进大快照窗口，
-  不再额外阻塞小快照的输入解锁；超限与断线保护保留。
+- Returning to the page keeps one synced terminal instance and its connection for at most 60 seconds; a hidden page still processes output and ACKs, but does not accept input, steal focus, or change the shared size.
+  When the account, server, and project are the same and the connection is still valid, the original instance is restored directly. It is released on expiry, app backgrounding, going offline, account switch, or connection error, and re-entry goes through full recovery.
+  Nothing is cached while connecting, syncing, or running a management operation; releasing the connection still does not end the Shell in the Bridge.
+- Config is cached in memory per server and API Key, and concurrent requests are shared. If a same-account app control WS already exists it is borrowed, without creating another control connection;
+  closing the terminal only releases its own attachment and does not close the main app WS. The same control connection is not borrowed again until the server's close confirmation is received.
+- The Bridge declares support for startup parameters via `terminalStartup=1`. The App's first `terminal_direct/open` carries the selected sessionId and size,
+  which the server validates and delivers with the offer; once the data channel is authorized, the Bridge attaches and sends the screen directly, and the App no longer sends a second data open.
+  When either an old server or an old Bridge does not support this capability, the original data open flow is kept and no Shell is created early.
+- The server first completes ownership checks on all four connection records, then requests the two STS credentials for App / Bridge in parallel; it activates only if all succeed and the state is still valid.
+  API Key, join token, data API isolation, STS permission scope, HMAC, and session sequence numbers are unchanged; data is still forwarded directly through the HTTP integration.
+- Snapshots are sent with at most four unacknowledged chunks; once the last chunk is queued for sending, the ordered synced and cached deltas are sent immediately.
+  The frontend still waits until all snapshot chunks are actually written to xterm before processing synced. render_ack still releases in-flight bytes and advances the large-snapshot window,
+  but no longer additionally blocks input unlock for small snapshots; overflow and disconnect protection are retained.
 
-前端、Bridge 与服务端改动需配套发布才能获得完整的冷启动收益；仅更新前端即可验证快速返回、配置缓存与控制连接复用。
-正式 Bridge 重启会结束已有 PTY，发布前应确认终端中的工作已保存。
+Frontend, Bridge, and server changes must be released together to get the full cold-start benefit; updating only the frontend is enough to validate fast return, config caching, and control connection reuse.
+A production Bridge restart ends existing PTYs; confirm that work in the terminal is saved before releasing.
 
-### 本次验证（2026-09-18）
+### Validation for This Change (2026-09-18)
 
-- 本地新版前端连接未更新的线上服务与正式 Bridge，确认旧协议回退可用。最终五轮快速返回均无配置请求、
-  无新 WS；点击到输入状态恢复为 1.1–5.1ms，首个 requestAnimationFrame 回调为 41–79ms。
-  客户端为 Chrome 移动视口，动画帧回调不是绘制完成或 iOS 键盘动画测量。
-- 主应用控制连接复用的两轮旧协议启动为 3611ms、2971ms；关闭 terminal 后主连接仍可用于下一次打开。
-  这不是新服务端 / Bridge 完整部署后的冷启动成绩。完整冷启动仍待配套发布后复测。
-- 隔离验证使用真实 PTY 和当前 DirectDataChannel，确认新协议无第二次数据 open，旧协议正常回退；
-  小快照无需等待渲染 ACK 才下发 synced，大快照仍受四块窗口约束，退出仅断开 attachment、不结束 Shell。
-- 缓存验证覆盖隐藏期间输出与 ACK、隐藏输入拒绝、60 秒过期、断线、后台、离线、页面退出与账号变化。
-  服务端验证覆盖先检查四条连接归属再并行 STS、拒绝跨账号连接、启动参数校验与能力协商。
-- 账号 / 服务器边界复核通过：变化或退出登录会关闭主连接与终端缓存、清空内存和本地存储中的 WS 地址；
-  迟到的旧配置不会恢复连接，控制连接地址、API Key 或角色不匹配时不借用。同身份设置不破坏已有连接。
-- 提交前全量测试 806 项通过，生产构建通过；仅有既有警告，未新增仓库测试文件。
-- iOS 模拟器存在并行页面操作，键盘回归结果不作为最终验收；原点击聚焦逻辑未改，缓存不额外切换 textarea 只读状态。
+- The local new frontend connected to the not-yet-updated online service and the production Bridge, confirming that the old-protocol fallback works. In the final five fast-return rounds there were no config requests
+  and no new WS; click-to-input-state recovery was 1.1–5.1ms, and the first requestAnimationFrame callback was 41–79ms.
+  The client was a Chrome mobile viewport; the animation frame callback is not a measurement of paint completion or the iOS keyboard animation.
+- Two old-protocol startups with main app control connection reuse took 3611ms and 2971ms; after closing the terminal, the main connection was still usable for the next open.
+  These are not cold-start results after a full deployment of the new server / Bridge. Full cold start still needs re-testing after the coordinated release.
+- Isolated validation used a real PTY and the current DirectDataChannel, confirming no second data open under the new protocol and normal fallback under the old protocol;
+  small snapshots send synced without waiting for render ACK, large snapshots are still bound by the four-chunk window, and exiting only disconnects the attachment without ending the Shell.
+- Cache validation covered output and ACK while hidden, rejection of hidden input, 60-second expiry, disconnect, background, offline, page exit, and account change.
+  Server validation covered checking ownership of all four connections before parallel STS, rejecting cross-account connections, startup parameter validation, and capability negotiation.
+- Account / server boundary review passed: a change or logout closes the main connection and terminal cache and clears the WS address from memory and local storage;
+  late-arriving old config does not restore a connection, and the control connection is not borrowed when the address, API Key, or role does not match. Settings with the same identity do not break existing connections.
+- Before commit, all 806 tests passed and the production build passed; only pre-existing warnings, and no new repository test files were added.
+- The iOS simulator had concurrent page operations, so the keyboard regression result is not treated as final acceptance; the original tap-to-focus logic is unchanged, and the cache does not additionally toggle the textarea read-only state.
 
-### 两个终端切换复测（2026-09-18）
+### Two-Terminal Switching Re-Test (2026-09-18)
 
-- Chrome 移动视口通过现有线上数据通道连接同一个正式 Bridge，交替测试旧版线上页面与本地新版页面，
-  各切换九次。旧版平均 944ms、中位数 942ms；新版平均 949ms、中位数 920ms，均未新建 WebSocket。
-  此处测量选择终端到输入控件解锁，不包含软键盘动画；本轮未复现持续的前端切换性能回退。
-- 新版平均分布：点击到发出选择请求 2ms、请求到快照到达 491ms、快照处理到 ACK 4ms、
-  ACK 到 synced 448ms、最后解锁 5ms。首轮非交替采样还出现过 6410ms / 8841ms 长尾，
-  主要落在请求响应与确认等待阶段，未进一步定位到网络或远端处理的具体环节。
-- 正式 Bridge 当时仍运行 `snapshot.acked === snapshot.chunks` 的旧结束条件；本地源码已改为全部块
-  排入发送队列即发送有序 synced。60 秒页面缓存只优化退出再进入，不缓存每个未选中终端的实时屏幕。
-- 隔离真实 PTY 验证对比两种结束条件，模拟 App 与 Bridge 间每方向 200ms 数据延迟，各切换六次：
-  旧条件 809–820ms，新条件 407–413ms；Bridge 处理约 0.6–6.1ms。两种条件均正确恢复各自屏幕，
-  保持原来的两个 Shell，切换不新建连接。这是受控延迟验证，不是新版 Bridge 的线上实测。
-- 本轮未更新或重启正式 Bridge；实际切换收益仍需保存终端工作、更新 Bridge 后复测。
+- A Chrome mobile viewport connected to the same production Bridge through the existing online data channel, alternately testing the old online page and the local new page,
+  nine switches each. Old: mean 944ms, median 942ms; new: mean 949ms, median 920ms; neither created a new WebSocket.
+  This measures selecting a terminal until the input control unlocks, excluding the soft keyboard animation; this round did not reproduce a persistent frontend switching performance regression.
+- New-version mean breakdown: click to selection request sent 2ms, request to snapshot arrival 491ms, snapshot processing to ACK 4ms,
+  ACK to synced 448ms, final unlock 5ms. The first non-alternating samples also showed 6410ms / 8841ms long tails,
+  mostly in the request-response and acknowledgement-wait stages; not further localized to a specific network or remote-processing step.
+- The production Bridge was still running the old completion condition `snapshot.acked === snapshot.chunks`; local source has been changed to send the ordered synced once all chunks
+  are queued for sending. The 60-second page cache only optimizes exit and re-entry; it does not cache the live screen of each unselected terminal.
+- Isolated real-PTY validation compared the two completion conditions, simulating 200ms data latency in each direction between App and Bridge, six switches each:
+  old condition 809–820ms, new condition 407–413ms; Bridge processing about 0.6–6.1ms. Both conditions correctly restored their respective screens,
+  kept the original two Shells, and switching created no new connections. This is a controlled-latency validation, not an online measurement of the new Bridge.
+- This round did not update or restart the production Bridge; the actual switching benefit still needs re-testing after saving terminal work and updating the Bridge.
 
-## 项目共享终端（当前实现）
+## Project Shared Terminal (Current Implementation)
 
-用户选择所有页面都能输入，不增加单写入者锁、接管按钮或输入预测。通常只有一个人在操作；
-如果两个页面同时敲键，Bridge 按各自连续序号排序后，将输入按处理顺序写入同一 PTY，
-不承诺将整条命令作为跨设备互斥事务。
+The user chose that all pages can type, with no single-writer lock, takeover button, or input prediction. Usually only one person is operating;
+if two pages type at the same time, the Bridge orders each by its contiguous sequence numbers and writes input into the same PTY in processing order,
+with no promise of treating a whole command as a cross-device mutually exclusive transaction.
 
-### 页面与会话
+### Pages and Sessions
 
-- 每个项目会话列表右上角新增 Terminal 图标，按需加载 `web/js/terminal.js` 与 xterm。
-- 同一 Bridge 上相同规范化真实目录最多保留 5 个 Shell；不同终端的进程、目录与屏幕隔离，选中同一个
-  `sessionId` 的所有页面仍可以同时输入并同步输出。列表由 Bridge 维护，不由各浏览器自行编号。
-- 名称为 Terminal 1～5，使用最小空闲编号；关闭后复用名字但绝不复用 `sessionId` 或 `epoch`。
-- 初次进入没有终端时原子地创建一个；已有终端时优先恢复页面 sessionStorage 中的选择，否则选择第一个。
-  首次进入或 Bridge 重启后重连没有终端时也会创建默认终端，列表同步后显示 1/5。
-- 返回页面短期保留有效连接；关闭页面、缓存过期或网络断线只 detach，不结束 Shell；后加入页面先恢复屏幕，再接收实时输出。
-- 移除页面 Reset，右侧使用当前终端名称的下拉按钮；浮层顶部显示数量和新建按钮，每行支持选择和关闭。
-  关闭复用确认弹窗，会终止选中终端并让其所有查看者切到剩余的第一个；其他终端和查看者不受影响。
-  只剩一个时，关闭改为重新启动：先成功启动替代 Shell，再停止旧进程，重新从 1 分配最小空闲编号并更换 ID / epoch，
-  所有查看者恢复新屏幕。新 Shell 启动失败则保留原终端，不会进入 0/5 空状态。
-- 浮层宽度限制在视口内、支持缩短高度滚动，每个操作行/关闭/新建按钮至少 44px；支持 Escape、Tab 和方向键。
-- 输入同时绑定 `sessionId` / `epoch`；切换、关闭后的旧输入不会进入另一个 Shell。管理操作结果不确定时
-  只重连恢复列表，不自动重发新建/关闭操作，避免重复执行。
-- 暂时移除底部 Esc、Tab、Ctrl、方向键等快捷键栏，保留正常键盘输入；手机交互后续统一适配。
-- 标题栏复用 Git Changes / Project Files 的单行高度和项目胶囊；不显示 Connected、连接人数或绿点。
-  连接、同步和自动重试期间复用胶囊边框 loading，成功后恢复普通胶囊；仅错误或 Shell 退出等情况显示提示。
-- 新页面加入不立即改变共享尺寸；实际输入、聚焦或活动页面尺寸变化时采用该页面尺寸，广播给其他端。
-- 暂支持 macOS / Linux。Bridge 重启或退出会结束 PTY，不宣称具备 tmux 式跨进程恢复。
+- A Terminal icon is added to the top right of each project's session list, lazily loading `web/js/terminal.js` and xterm.
+- On the same Bridge, the same normalized real directory keeps at most 5 Shells; different terminals have isolated processes, directories, and screens, and all pages selecting the same
+  `sessionId` can still type simultaneously and receive synced output. The list is maintained by the Bridge, not numbered independently by each browser.
+- Names are Terminal 1-5, using the smallest free number; after closing, names are reused but `sessionId` or `epoch` are never reused.
+- On first entry with no terminal, one is created atomically; when terminals exist, the selection in the page's sessionStorage is restored first, otherwise the first one is selected.
+  On first entry or reconnect after a Bridge restart with no terminal, a default terminal is also created, and 1/5 is shown after the list syncs.
+- Returning to the page keeps a valid connection briefly; closing the page, cache expiry, or network disconnect only detaches without ending the Shell; a later-joining page restores the screen first, then receives live output.
+- The page Reset is removed; the right side uses a dropdown button labeled with the current terminal name; the top of the overlay shows the count and a create button, and each row supports select and close.
+  Close reuses the confirmation dialog, terminates the selected terminal, and switches all its viewers to the first remaining one; other terminals and viewers are unaffected.
+  When only one remains, close becomes restart: the replacement Shell is started successfully first, then the old process is stopped, the smallest free number is reallocated from 1, and the ID / epoch are changed;
+  all viewers restore the new screen. If the new Shell fails to start, the original terminal is kept and the 0/5 empty state is never entered.
+- The overlay width is constrained to the viewport, it supports scrolling at reduced heights, and each action row/close/create button is at least 44px; Escape, Tab, and arrow keys are supported.
+- Input is bound to both `sessionId` / `epoch`; old input after switching or closing never reaches another Shell. When a management operation's result is uncertain,
+  only reconnect and restore the list; create/close operations are not automatically resent, to avoid duplicate execution.
+- The bottom shortcut bar for Esc, Tab, Ctrl, arrow keys, etc. is temporarily removed, keeping normal keyboard input; mobile interaction will be adapted uniformly later.
+- The title bar reuses the single-row height and project pill of Git Changes / Project Files; Connected, connection count, or a green dot are not shown.
+  During connecting, syncing, and automatic retry, the pill border loading is reused, and the normal pill is restored on success; a notice is shown only for errors or Shell exit and similar cases.
+- A newly joining page does not immediately change the shared size; on actual input, focus, or a size change of the active page, that page's size is adopted and broadcast to the other ends.
+- Only macOS / Linux for now. A Bridge restart or exit ends the PTY; no claim of tmux-style cross-process recovery.
 
-### 连接、认证与事件
+### Connection, Authentication, and Events
 
-1. 主 Bridge 控制 WS 通过 `terminal=2` 声明能力，服务端保存 `terminalProtocol=2`。
-2. 每个页面借用可用 app 控制连接或创建专用连接发送 `terminal_direct/open`，包含 device、projectHash、随机 terminalId。
-3. Lambda 校验同账号、设备唯一且在线、主 Bridge 能力。Bridge 控制连接保存多个 attachment ID；
-   每个 attachment 独占自己的两条数据端连接，一个 app 控制连接同时最多绑定一个 attachment。每个 attachment 都有独立 join token、STS 和 HMAC key。
-4. 数据业务 action 为 `terminal_shared, v1`，外层仍是 `terminal_direct_frame`，继续 Header 签名 HTTP integration。
-   `terminalId` 是页面 attachment ID；Bridge 下发的 `sessionId` 才是共享 PTY 标识。
-5. 输入事件：open、input、resize、heartbeat、render_ack、detach、create_session、select_session、close_session；
-   输出事件：ready、snapshot、synced、output、resized、peers、exit、error、ack、sessions、session_result。
-   业务帧绑定 device、projectHash、terminalId；Shell 输入还绑定 sessionId 和 epoch。
-6. 每页拥有独立 `clientSeq` / `eventSeq`。ACK 的 eventSeq 为 0，不参与输出排序；输入发送不等待逐字 ACK。
-   ready / snapshot / synced 构成一次快照事务；output 在快照完成之后按序应用。
-7. 服务端关闭一个 attachment 只从 Bridge 的集合释放该 ID，不清理其他页面。Bridge 控制断开会关闭这些
-   数据连接，但本地 PTY 与屏幕镜像保留；主控制连接恢复后，页面重新 attach 同一项目。
-8. 独立 `terminal_poc` 验证入口未改动，项目页面不使用它的“断线杀 PTY”语义。
-9. `open` 可传 `sessionId`；管理事件携带 `requestId`，选择/关闭携带目标 `sessionId`，
-   新建携带 cols/rows。Bridge 仅允许访问已认证项目规范化目录下的会话，并按页面 clientSeq 顺序处理。
-   同一项目的创建/容量检查同步完成，多个页面竞态也不能创建第 6 个。
-10. `sessions` 广播 `{limit:5,sessions:[{id,name,exited}]}`；`session_result` 返回
-    `{requestId,error?}`。切换复用原数据通道并重新发送快照；项目至少保留一个终端。
-    不做新旧版本兼容或能力协商，前端与 Bridge 需配套更新；移除项目共享终端的 reset 事件。
-    云端鉴权、数据集成、IAM 和逐帧签名均未改变。
+1. The main Bridge control WS declares the capability via `terminal=2`, and the server stores `terminalProtocol=2`.
+2. Each page borrows an available app control connection or creates a dedicated one to send `terminal_direct/open`, containing device, projectHash, and a random terminalId.
+3. Lambda validates same account, a unique and online device, and main Bridge capability. The Bridge control connection stores multiple attachment IDs;
+   each attachment exclusively owns its own two data-side connections, and one app control connection binds at most one attachment at a time. Each attachment has its own join token, STS, and HMAC key.
+4. The data business action is `terminal_shared, v1`, the outer layer is still `terminal_direct_frame`, continuing the Header-signed HTTP integration.
+   `terminalId` is the page attachment ID; the `sessionId` delivered by the Bridge is the shared PTY identifier.
+5. Input events: open, input, resize, heartbeat, render_ack, detach, create_session, select_session, close_session;
+   output events: ready, snapshot, synced, output, resized, peers, exit, error, ack, sessions, session_result.
+   Business frames are bound to device, projectHash, terminalId; Shell input is additionally bound to sessionId and epoch.
+6. Each page has its own `clientSeq` / `eventSeq`. ACK's eventSeq is 0 and does not participate in output ordering; input sending does not wait for per-character ACK.
+   ready / snapshot / synced form one snapshot transaction; output is applied in order after the snapshot completes.
+7. When the server closes an attachment, it only releases that ID from the Bridge's set and does not clean up other pages. A Bridge control disconnect closes these
+   data connections, but the local PTY and screen mirror are kept; after the main control connection recovers, pages re-attach to the same project.
+8. The standalone `terminal_poc` validation entry is unchanged; project pages do not use its "kill PTY on disconnect" semantics.
+9. `open` may pass `sessionId`; management events carry `requestId`, select/close carry the target `sessionId`,
+   and create carries cols/rows. The Bridge only allows access to sessions under the authenticated project's normalized directory, and processes in page clientSeq order.
+   Creation/capacity checks for the same project complete synchronously, so even with multiple racing pages a 6th cannot be created.
+10. `sessions` broadcasts `{limit:5,sessions:[{id,name,exited}]}`; `session_result` returns
+    `{requestId,error?}`. Switching reuses the original data channel and resends the snapshot; a project always keeps at least one terminal.
+    No old/new version compatibility or capability negotiation; frontend and Bridge must be updated together; the reset event of the project shared terminal is removed.
+    Cloud authentication, data integration, IAM, and per-frame signing are all unchanged.
 
-凭据仍沿用原账号 API Key。IAM 的 API 级限制与 HMAC 安全边界没有变化，见后文；
-共享终端不构成独立的多租户安全升级，也不应直接开放给不可信租户。
+Credentials still use the original account API Key. The API-level IAM restriction and the HMAC security boundary are unchanged, see below;
+the shared terminal does not constitute an independent multi-tenant security upgrade and should not be directly exposed to untrusted tenants.
 
-### Bridge 屏幕、限制与流控
+### Bridge Screen, Limits, and Flow Control
 
-`bridge/terminal-shared.mjs` 使用 node-pty 1.1.0、@xterm/headless 6.0.0、@xterm/addon-serialize 0.14.0。
-主 Bridge 仍保留现有消息与项目处理逻辑；共享终端按需初始化，有活跃 Shell 时推迟自动升级。
+`bridge/terminal-shared.mjs` uses node-pty 1.1.0, @xterm/headless 6.0.0, @xterm/addon-serialize 0.14.0.
+The main Bridge still keeps the existing message and project handling logic; the shared terminal initializes on demand, and automatic upgrade is deferred while there are active Shells.
 
-| 项目 | 当前限制 / 行为 |
+| Item | Current limit / behavior |
 |---|---|
-| 每个项目 | 最多 5 个终端（包括已退出但尚未关闭的终端），由 Bridge 强制执行 |
-| 同一 Bridge | 总量保护上限 20 个终端、16 个页面 attachment；总量不足时仅清理其他无人查看项目中已退出的记录 |
-| 输入 | 每帧原始 bytes ≤4 KiB；单次页面输入 / 粘贴 ≤64 KiB，超限整次拒绝 |
-| 输出 | 每块原始 bytes ≤16 KiB；签名后最终 WS frame ≤28 KiB |
-| 镜像 | 1000 行 scrollback；进入 xterm 镜像后立即广播，无人为输出合并等待 |
-| 快照 | 最多 4 MiB、16 KiB 分块、4 块窗口；超限先舍弃 scrollback，并明确告知历史截断 |
-| 消费确认 | 快照逐块解析后确认；实时输出每 16 KiB 或最多 100ms 确认，只影响流控，不延迟显示 |
-| 慢页面 | 每页未确认 / 待发输出上限 512 KiB，超限只断该页；不阻塞其他设备或杀 Shell |
-| Mirror 背压 | 排队 >256 KiB 暂停读取 PTY，<64 KiB 恢复，1 MiB 硬上限 |
-| 生命周期 | 页面 heartbeat 10 秒，Bridge 超过 45 秒无消息释放 attachment；PTY 保留 |
-| 输入 / 输出缺口 | 有界排序队列；缺口 10 秒仍未补齐则断开并明确提示，再用快照恢复 |
+| Per project | At most 5 terminals (including exited but not yet closed terminals), enforced by the Bridge |
+| Same Bridge | Total protection cap of 20 terminals and 16 page attachments; when the total is insufficient, only exited records in other unviewed projects are cleaned up |
+| Input | Raw bytes per frame ≤4 KiB; a single page input / paste ≤64 KiB, rejected entirely if exceeded |
+| Output | Raw bytes per chunk ≤16 KiB; final signed WS frame ≤28 KiB |
+| Mirror | 1000 lines of scrollback; broadcast immediately after entering the xterm mirror, with no artificial output-coalescing wait |
+| Snapshot | At most 4 MiB, 16 KiB chunks, 4-chunk window; on overflow scrollback is dropped first, with explicit notice of history truncation |
+| Consumption ACK | Snapshots are acknowledged per chunk after parsing; live output is acknowledged every 16 KiB or at most 100ms, affecting only flow control, not delaying display |
+| Slow page | Per-page unacknowledged / pending output cap of 512 KiB; overflow disconnects only that page, without blocking other devices or killing the Shell |
+| Mirror backpressure | Pause reading the PTY when queued >256 KiB, resume at <64 KiB, 1 MiB hard cap |
+| Lifecycle | Page heartbeat 10 seconds; the Bridge releases the attachment after more than 45 seconds without messages; PTY kept |
+| Input / output gaps | Bounded reorder queue; if a gap is still not filled after 10 seconds, disconnect with an explicit notice, then recover via snapshot |
 
-终端查询统一由 Bridge 的权威镜像回复。浏览器屏蔽 DA、DSR、DECRQM 和 DECRQSS 自动回复，
-避免多个页面向 Vim 重复回复模式查询、被 Vim 当作普通按键。颜色查询由 Bridge 按默认终端主题回复。
-这不等于覆盖所有可选 VT 扩展；完整窗口操作、调色板查询等仍须单独评估，不能宣称完全兼容。
+Terminal queries are uniformly answered by the Bridge's authoritative mirror. The browser suppresses automatic DA, DSR, DECRQM, and DECRQSS replies,
+preventing multiple pages from replying repeatedly to Vim's mode queries, which Vim would treat as ordinary keystrokes. Color queries are answered by the Bridge using the default terminal theme.
+This does not cover all optional VT extensions; full window operations, palette queries, etc. still need separate evaluation, and full compatibility cannot be claimed.
 
-### 验证记录
+### Validation Record
 
-- 本次五终端验证：真实 PTY 覆盖默认终端并发创建、五个上限竞态、会话/项目隔离、切换屏幕恢复、
-  跨页面关闭、名字复用但 ID 不复用、旧输入拦截、自然退出与列表同步、断线保留进程。
-- 真实浏览器经过已部署 Header 直转连接独立测试 Bridge，验证双端输入、创建/选择/关闭、关闭取消、
-  页面返回恢复选择、第五个上限和空状态重新创建；未改动云端接口或运行中的主 Bridge。
-- 手机布局检查包含 320px、390px、横屏、缩短视口和 native safe-area；标题栏保持 44px（24px inset 下
-  68px），浮层不超出视口，菜单操作至少 44px。桌面切换后恢复输入焦点，手机不主动弹出软键盘。
-- 无换行 read 提示与跨端 Enter 正常；手机切换离开 Vim 再返回，可编辑、保存文件并让双方回到 Shell。
-  验收基于文件内容与后续 Shell 输出，不依赖 Vim 短暂的 written 提示；完整 HAR/WS 保留在仓库外，
-  对该提示的检查还用实际前端重放 527 帧确认了保存后屏幕恢复。
-- 本次前端 371 项、打包 5 项检查通过，生产构建通过；未添加新的仓库测试文件。
+- This five-terminal validation: real PTY covering concurrent default-terminal creation, five-cap races, session/project isolation, screen restore on switch,
+  cross-page close, name reuse without ID reuse, old-input interception, natural exit and list sync, and process retention on disconnect.
+- A real browser connected through the deployed Header direct forwarding to an isolated test Bridge, validating dual-end input, create/select/close, close cancel,
+  selection restore on page return, the fifth-terminal cap, and re-creation from the empty state; cloud interfaces and the running main Bridge were not changed.
+- Mobile layout checks covered 320px, 390px, landscape, reduced viewport, and native safe-area; the title bar stays 44px (68px with a 24px
+  inset), the overlay does not exceed the viewport, and menu actions are at least 44px. After switching on desktop, input focus is restored; on mobile the soft keyboard is not proactively opened.
+- read prompts without newline and cross-end Enter work; on mobile, switching away from Vim and back allows editing, saving the file, and returning both sides to the Shell.
+  Acceptance is based on file contents and subsequent Shell output, not on Vim's brief written notice; the full HAR/WS is kept outside the repository,
+  and the check of that notice also replayed 527 frames through the actual frontend to confirm screen restore after save.
+- This round, 371 frontend checks and 5 packaging checks passed, and the production build passed; no new repository test files were added.
 
-以下为此前单终端阶段的历史验证记录（其中 Reset 和快捷键现已从新 UI 移除）：
+The following is the historical validation record from the earlier single-terminal phase (Reset and shortcuts in it have since been removed from the new UI):
 
-- 私有临时验证覆盖真实 PTY：双端输入、共享环境、目录隔离、关闭一端保留进程、全端 Reset、旧 epoch
-  输入拒绝、同步 resize、Vim alternate screen 恢复与保存、大快照分块、Bridge 控制断线后重新 attach。
-- 已通过真实 Chromium → 已部署 API Gateway Header integration → 隔离本机 Bridge 的双端与手机尺寸验证。
-  验证项目入口、无换行 read 提示、另一端 Enter、返回后恢复、Reset 确认 / 取消、第三端 Vim 保存及快捷键。
-- 多页面 Vim 检查发现 DECRQM 重复回复；保留完整 HAR、全部 WS 帧并用实际前端重放后修复，复测通过。
-- 前后台切换曾触发项目列表刷新而关闭终端覆盖层；同样保留记录、重放后修复，切回前台保留终端页面。
-- 原有前端 / 打包测试 350 项通过，原直转及服务端兼容检查 37 项通过，生产构建和全新 Bridge 依赖安装通过。
-- 验证程序和包含短期凭据的原始记录只在仓库外私有目录；未新增仓库测试文件。
-- 手机尺寸的 Chromium 不等于 iOS / Android 软键盘真机；中文 IME、后台切换和虚拟键盘仍需用户实机测试。
+- Private temporary validation covered a real PTY: dual-end input, shared environment, directory isolation, process retention when one end closes, all-end Reset, old epoch
+  input rejection, synced resize, Vim alternate screen restore and save, large snapshot chunking, and re-attach after Bridge control disconnect.
+- Passed dual-end and mobile-size validation via real Chromium → deployed API Gateway Header integration → isolated local Bridge.
+  Validated the project entry, read prompt without newline, Enter from the other end, restore after return, Reset confirm / cancel, Vim save from a third end, and shortcuts.
+- Multi-page Vim checks found duplicate DECRQM replies; the full HAR and all WS frames were kept and replayed through the actual frontend, then fixed, and the re-test passed.
+- Foreground/background switching once triggered a project list refresh that closed the terminal overlay; likewise the record was kept, replayed, and fixed, and the terminal page is kept when returning to the foreground.
+- 350 existing frontend / packaging tests passed, 37 existing direct-forwarding and server compatibility checks passed, and the production build and fresh Bridge dependency install passed.
+- The validation programs and raw records containing short-lived credentials are only in a private directory outside the repository; no new repository test files were added.
+- Mobile-size Chromium is not the same as real iOS / Android soft keyboards; Chinese IME, background switching, and virtual keyboards still need real-device testing by the user.
 
-### 部署范围（2026-09-17）
+### Deployment Scope (2026-09-17)
 
-前端与 Bridge 需要配套更新，不兼容旧的单终端协议。安装脚本将共享协议文件加入前端构建上下文，
-同时打包 API 运行时需要的终端模块；WS 代码以唯一 S3 key 交给 CloudFormation 更新和回滚，避免
-将运行中的 handler 暂时覆盖为占位代码。CloudFormation 更新失败会直接报错，不再误报成功。
-下列为此前共享单终端的部署记录；本次发布结果见提交和部署日志。
+Frontend and Bridge must be updated together; the old single-terminal protocol is not compatible. The install script adds the shared protocol file to the frontend build context,
+and also packages the terminal module needed by the API runtime; WS code is handed to CloudFormation under a unique S3 key for update and rollback, avoiding
+temporarily overwriting the running handler with placeholder code. A CloudFormation update failure now errors out directly instead of falsely reporting success.
+The following is the deployment record of the earlier shared single terminal; results of this release are in the commit and deployment logs.
 
-- 云端控制接口已增量部署，保留旧 Lambda 文件和原业务路由；终端数据继续走 Header HTTP integration。
-- 正式首页项目入口及终端资源已部署到 CloudFront，刷新首页缓存；只叠加静态资源，不替换原 API 业务代码，
-  landing / setup、API 集成与 IAM 策略均检查为未变。
-- 本机 `MacBook-Pro` 主 Bridge 已更新依赖并重启，控制记录已声明 `terminalProtocol=2`。安装目录保留原配置
-  与旧管道路由兼容层，终端核心文件与本分支一致；独立旧 POC Bridge 未重启。
-- 本机安装标记为 `TERMINAL_BUILD=shared-20260917`。本次没有发布全局 Bridge 自动升级包，保留已发布
-  `BRIDGE_VERSION=1.0.0-term2`，不会让其他机器未经验证自动升级。
-- 正式 CloudFront 页面连接本机主 Bridge，实际 `pwd` 为本项目目录；桌面和手机尺寸的独立浏览器上下文
-  共用同一 sessionId，两端均可输入并收到输出，全部页面退出后再进入仍恢复同一 Shell 和屏幕。
-- 真实 Shell 可能先加载用户登录配置；`Connected` 表示通道与屏幕已同步，不代表 Shell 已显示命令提示符。
-  自动化命令验收在初始提示符出现后输入，不把输入 ACK 当作命令已执行的证明。
+- The cloud control interface was deployed incrementally, keeping the old Lambda files and original business routes; terminal data continues through the Header HTTP integration.
+- The production homepage project entry and terminal assets were deployed to CloudFront, and the homepage cache was refreshed; only static assets were layered on, without replacing original API business code,
+  and landing / setup, API integration, and IAM policies were checked as unchanged.
+- The local `MacBook-Pro` main Bridge had dependencies updated and was restarted, and the control record declares `terminalProtocol=2`. The install directory keeps the original config
+  and the old pipe-route compatibility layer, with terminal core files matching this branch; the standalone old POC Bridge was not restarted.
+- The local install is marked `TERMINAL_BUILD=shared-20260917`. No global Bridge auto-update package was released this time, keeping the published
+  `BRIDGE_VERSION=1.0.0-term2`, so other machines will not auto-upgrade without validation.
+- The production CloudFront page connected to the local main Bridge, with actual `pwd` being this project directory; independent browser contexts at desktop and mobile sizes
+  shared the same sessionId, both ends could type and receive output, and after all pages exited and re-entered the same Shell and screen were restored.
+- A real Shell may first load the user's login config; `Connected` means the channel and screen are synced, not that the Shell has shown a command prompt.
+  Automated command acceptance types after the initial prompt appears, and does not treat an input ACK as proof that the command executed.
 
-以下章节保留 2026-09-16 的独占 POC 设计和历史测量；会话生命周期以本节为准。
+The following sections keep the 2026-09-16 exclusive POC design and historical measurements; for session lifecycle, this section is authoritative.
 
-## 实测纠正的假设
+## Assumptions Corrected by Measurement
 
-**API Gateway ManageConnections 无法用实际 connection ID 做 IAM Resource 隔离。**
-给 STS session policy 写 `/POST/@connections/<具体ID>` 实测返回 403，AWS 的鉴权资源是
-`/POST/@connections/{connectionId}`。同一 API 内分开控制 / 数据 WS 仍不够安全：不能把原 Baton API
-的通配 POST 权限交给浏览器，否则它能向聊天 / Bridge 控制连接注入事件。
+**API Gateway ManageConnections cannot use an actual connection ID for IAM Resource isolation.**
+Writing `/POST/@connections/<specific ID>` in the STS session policy returned 403 in testing; AWS's authorization resource is
+`/POST/@connections/{connectionId}`. Separating control / data WS within the same API is still not secure enough: the original Baton API's
+wildcard POST permission cannot be given to the browser, otherwise it could inject events into chat / Bridge control connections.
 
-固定目标 Header 签名 + `UNSIGNED-PAYLOAD` 也实测失败：改变 body 后返回 InvalidSignatureException。
-先前延迟测试仅证明 Header 转发可行，没有证明每连接 IAM 隔离可行；此文修正这个设计假设。
+Fixed-target Header signing + `UNSIGNED-PAYLOAD` also failed in testing: changing the body returned InvalidSignatureException.
+Earlier latency tests only proved that Header forwarding is feasible, not that per-connection IAM isolation is feasible; this document corrects that design assumption.
 
-## 当前架构
+## Current Architecture
 
 ```text
-控制面：Web ── 原 Baton WS / Lambda ── Bridge
-                 身份、配对、STS、续期、关闭
+Control plane: Web ── original Baton WS / Lambda ── Bridge
+                 identity, pairing, STS, renewal, close
 
-数据面：Web xterm ── 独立 Terminal Data API ── Bridge PTY
+Data plane: Web xterm ── standalone Terminal Data API ── Bridge PTY
                         Header SigV4 HTTP integration
                         POST @connections
-                        无逐消息 Lambda
+                        no per-message Lambda
 ```
 
-- 新增一个 AWS 托管 WebSocket API，只允许 terminal_data 角色，不承载任何聊天、工具或控制连接。
-- 每端有一条原 API 控制 WS、一条新 API 数据 WS；旧实验直转 route 从原 API 迁走。
-- STS 900 秒有效，仅允许独立数据 API 的 `POST /v1/@connections/*`，不允许 GET / DELETE 或原 API。
-  **这是 API 级权限，不是单连接权限。**
-- 每个终端另有 256 位随机 frameKey，只从可信控制面下发。数据 body 必须通过会话 HMAC-SHA256，
-  再检查 terminal ID、device、方向、类型和序号，最后才交给 PTY / xterm。
-- 错误 MAC、未签名、其他会话的数据直接忽略；不能执行 Shell，也不能以假 ready / closed 改变控制状态。
-- 继续沿用原 API Key / account hash 账号模型；不声称已重构整个产品身份系统。
+- A new AWS-managed WebSocket API is added, allowing only the terminal_data role and carrying no chat, tool, or control connections.
+- Each end has one original-API control WS and one new-API data WS; the old experimental direct-forwarding route is moved off the original API.
+- STS is valid for 900 seconds and only allows `POST /v1/@connections/*` on the standalone data API, not GET / DELETE or the original API.
+  **This is an API-level permission, not a per-connection permission.**
+- Each terminal additionally has a 256-bit random frameKey, delivered only from the trusted control plane. Data bodies must pass the session HMAC-SHA256,
+  then terminal ID, device, direction, type, and sequence number are checked, before being handed to the PTY / xterm.
+- Wrong-MAC, unsigned, or other-session data is ignored directly; it cannot execute in the Shell, nor change control state with a fake ready / closed.
+- The original API Key / account hash account model continues to be used; no claim of having refactored the whole product identity system.
 
-### 安全边界
+### Security Boundary
 
-有效 STS 仍能向独立数据 API 的其他 connection ID 发送垃圾流量。MAC 防止跨会话命令 / 输出注入，
-**不能消除带宽滥用、资源消耗或拒绝服务风险**。有界队列 / 丢帧超时保护内存，不保证攻击下可用性。
+A valid STS can still send junk traffic to other connection IDs on the standalone data API. MAC prevents cross-session command / output injection,
+**but cannot eliminate bandwidth abuse, resource consumption, or denial-of-service risk**. Bounded queues / frame-drop timeouts protect memory, but do not guarantee availability under attack.
 
-当前适合受控本地 POC，不应直接开放给不可信多租户。若需要服务端逐会话发送 ACL、租户级配额和
-抗滥用，需选择支持 topic / channel ACL 的托管服务，或保留服务端逐消息授权。
-禁止将此角色扩权至原 Baton API，也不能将 HMAC 描述成 IAM 单连接权限。
+This currently suits a controlled local POC and should not be directly exposed to untrusted multi-tenants. If server-side per-session send ACLs, tenant-level quotas, and
+abuse resistance are needed, choose a managed service that supports topic / channel ACLs, or keep server-side per-message authorization.
+Expanding this role's permissions to the original Baton API is forbidden, and HMAC must not be described as IAM per-connection permission.
 
-## 初始化与回收
+## Initialization and Teardown
 
-1. Web 经原 API 的 app 控制连接发送 terminal_direct/open，明确选择测试 Bridge。
-2. Lambda 校验同 account、唯一设备、xterm-direct-1 版本，并对双方控制记录做条件锁，一 Bridge 一个 POC。
-3. 创建 UUID、两个不同 join token 和 frameKey；DDB 只存 token hash。frameKey 作为短期会话秘密存入
-   已有加密 DDB，关闭时删除，TTL 兜底；不写日志。STS secret 不存 DDB / localStorage。
-4. 两端从可信控制面收到 offer / data endpoint，连接新 API 后 join。Lambda 检查真实 API endpoint、
-   角色、账号、token、45 秒期限，并条件绑定 data connection ID。
-5. 两端加入后，仅从原控制连接下发 STS、frameKey、自己和对端 data ID；Web 发 open 后才创建本机 PTY。
-6. Web 最迟每 5 分钟经控制面续期，核验全部绑定，保留同一 peer / frameKey；Bridge 控制 heartbeat 60 秒。
-7. 任意连接关闭时销毁 PTY、释放条件锁、关闭数据 WS、删除 frameKey；凭据过期前客户端主动停止。
-   不恢复断线 PTY、不重放输入、不自动切回 Lambda。
+1. Web sends terminal_direct/open over the original API's app control connection, explicitly selecting the test Bridge.
+2. Lambda validates same account, unique device, xterm-direct-1 version, and takes a conditional lock on both control records, one POC per Bridge.
+3. Create a UUID, two distinct join tokens, and a frameKey; DDB only stores token hashes. The frameKey is stored as a short-lived session secret in
+   the existing encrypted DDB, deleted on close, with TTL as backstop; never logged. The STS secret is not stored in DDB / localStorage.
+4. Both ends receive the offer / data endpoint from the trusted control plane, connect to the new API, and join. Lambda checks the real API endpoint,
+   role, account, token, 45-second deadline, and conditionally binds the data connection ID.
+5. After both ends join, STS, frameKey, and their own and peer data IDs are delivered only over the original control connection; the local PTY is created only after Web sends open.
+6. Web renews via the control plane at least every 5 minutes, verifying all bindings and keeping the same peer / frameKey; Bridge control heartbeat is 60 seconds.
+7. When any connection closes, the PTY is destroyed, the conditional lock released, the data WS closed, and the frameKey deleted; clients stop proactively before credentials expire.
+   No recovery of disconnected PTYs, no input replay, no automatic fallback to Lambda.
 
-## 协议与限制
+## Protocol and Limits
 
-- 控制：terminal_direct, v1, open / join / renew / close。
-- 数据 route：terminal_direct_data，HTTP POST integration，无 CredentialsArn。
-- 外层 JSON：target、body、authorization、date、token。
-- body：`{payload: "准确的 JSON 字符串", mac: "HMAC-SHA256 hex"}`，整个 body 同时参与 SigV4。
-- payload：terminal_direct_frame, v1, terminalId, device, message；message 保留 terminal_poc 序号 / ACK0。
-- Bridge 覆盖客户端 replyConnectionId，使用控制面绑定的 peer data ID。
-- 单次输入 4KiB，输出块 16KiB，含 MAC / 签名的最终 WS frame 不超过 28KiB；控制请求 8KiB。
-- 预授权缓存和接收验签队列各 256KiB，签名发送队列 1MiB，PTY 待输出 1MiB，总输出上限 16MiB。
-- 数据 heartbeat 10 秒，ACK deadline 30 秒，Bridge lease 45 秒；不是无限输出 / 长连接恢复成品。
-- 签名及验 MAC 使用有界顺序 Promise 队列；没有新增固定 flush 等待。
-- Web / Node 共用 WebCrypto；SigV4 使用 Gateway 实际 raw callback path，保留 botocore 固定向量测试，
-  避免 connection ID 末尾 `=` / `%3D` 重复编码。
+- Control: terminal_direct, v1, open / join / renew / close.
+- Data route: terminal_direct_data, HTTP POST integration, no CredentialsArn.
+- Outer JSON: target, body, authorization, date, token.
+- body: `{payload: "exact JSON string", mac: "HMAC-SHA256 hex"}`, the whole body also participates in SigV4.
+- payload: terminal_direct_frame, v1, terminalId, device, message; message keeps the terminal_poc sequence numbers / ACK0.
+- The Bridge overrides the client's replyConnectionId, using the peer data ID bound by the control plane.
+- Single input 4KiB, output chunk 16KiB, final WS frame including MAC / signature no more than 28KiB; control request 8KiB.
+- Pre-authorization cache and receive-verification queue 256KiB each, signed send queue 1MiB, PTY pending output 1MiB, total output cap 16MiB.
+- Data heartbeat 10 seconds, ACK deadline 30 seconds, Bridge lease 45 seconds; not a finished product for unlimited output / long-connection recovery.
+- Signing and MAC verification use a bounded sequential Promise queue; no new fixed flush wait was added.
+- Web / Node share WebCrypto; SigV4 uses the Gateway's actual raw callback path, keeping the botocore fixed-vector test,
+  to avoid double-encoding a trailing `=` / `%3D` in the connection ID.
 
-## 使用入口
+## Entry Point
 
-通过正式 App 的项目文件页面或 Session 顶部的 Terminal 按钮打开项目共享终端。
-早期独立 POC 页面及其测试 Bridge 启动脚本已移除，构建不再包含单独的自测入口。
+Open the project shared terminal via the Terminal button on the production App's project files page or at the top of a Session.
+The early standalone POC page and its test Bridge startup script have been removed, and the build no longer includes a separate self-test entry.
 
-## 输入回显与移动端
+## Input Echo and Mobile
 
-2026-09-16 按要求移除输入预览组件、开关和覆盖层，桌面和手机统一使用真实 PTY 回显。
-输入立即发送，不等待 Enter；只有远端 PTY 返回的数据才能写入 xterm，ACK 不控制字符显示。
-不再预测普通文字、退格或回车，不用本地显示掩盖公网延迟。
+On 2026-09-16, as requested, the input preview component, toggle, and overlay were removed; desktop and mobile uniformly use real PTY echo.
+Input is sent immediately without waiting for Enter; only data returned by the remote PTY may be written to xterm, and ACK does not control character display.
+Ordinary text, backspace, or Enter are no longer predicted, and local display is not used to mask public-network latency.
 
-移动端后续先验证 composition / beforeinput、软键盘退格和粘贴，再处理 viewport / fit、焦点保持，
-以及 Esc / Ctrl / Tab / 方向键工具条。本轮没有新增移动端易用性功能。
+Mobile will next validate composition / beforeinput, soft-keyboard backspace, and paste, then handle viewport / fit, focus retention,
+and the Esc / Ctrl / Tab / arrow-key toolbar. This round added no mobile usability features.
 
-## EC2 真实 PTY 回显测量（2026-09-16）
+## EC2 Real PTY Echo Measurement (2026-09-16)
 
-在现有 `test-ec2-ap` 的临时 Docker 容器内运行 Node v20.20.2 / Linux x64，以及与项目相同的
-`node-pty@1.1.0`。没有安装系统编译工具或增加常驻服务。客户端与 Bridge 均位于该 EC2，
-使用已部署的 Header 签名 WS / HTTP integration 和真实前端传输排序代码；PTY 运行关闭行缓冲、
-关闭内核 echo 的 `cat`，按收到的真实字节计时。计时不包含 SSH 启动、浏览器绘制或本机 VPN。
+Ran Node v20.20.2 / Linux x64 inside a temporary Docker container on the existing `test-ec2-ap`, with the same
+`node-pty@1.1.0` as the project. No system build tools were installed and no always-on service was added. Client and Bridge were both on that EC2,
+using the deployed Header-signed WS / HTTP integration and the real frontend transport ordering code; the PTY ran `cat` with line buffering disabled
+and kernel echo disabled, timed by the real bytes received. Timing excludes SSH startup, browser painting, or local VPN.
 
-| 场景 | 样本 | p50 | p95 | 最大值 |
+| Scenario | Samples | p50 | p95 | Max |
 | --- | ---: | ---: | ---: | ---: |
-| EC2 进程内直接写入 / 读取真实 PTY 对照 | 60 | 0.064ms | 0.103ms | 0.248ms |
-| EC2 → 云端 Header 转发 → EC2 PTY → 云端转发 → EC2 | 180 | 34.10ms | 56.59ms | 142.76ms |
-| 同上，每 8ms 连续输入一个字符 | 186 | 38.13ms | 133.68ms | 157.04ms |
+| EC2 in-process direct write / read of real PTY baseline | 60 | 0.064ms | 0.103ms | 0.248ms |
+| EC2 → cloud Header forwarding → EC2 PTY → cloud forwarding → EC2 | 180 | 34.10ms | 56.59ms | 142.76ms |
+| Same as above, one character every 8ms continuously | 186 | 38.13ms | 133.68ms | 157.04ms |
 
-云端数据来自同一会话中的三轮采样，每轮先预热 8 次，再进行 60 次逐字符往返和 62 次连续输入。
-表中分位数从合并后的原始样本计算，不平均各轮分位数；超长样本未剔除。
-连续输入中仍有约 100–157ms 的长尾，不能将 34ms 中位数当作无卡顿保证。
-该结果隔离了本机代理网络，但不等于用户关 VPN 后的浏览器端到端延迟，也不是本机 SSH 的对照。
-用户侧网络的实际效果需通过上述 CloudFront 页面关闭 VPN 后验证。
+Cloud data comes from three sampling rounds in the same session; each round first warmed up 8 times, then ran 60 per-character round trips and 62 continuous inputs.
+Percentiles in the table are computed from the merged raw samples, not by averaging per-round percentiles; long samples were not excluded.
+Continuous input still has a long tail of about 100–157ms, so the 34ms median cannot be taken as a no-stutter guarantee.
+This result isolates the local proxy network, but is not equal to end-to-end browser latency after the user disables VPN, nor a local SSH baseline.
+The actual effect on the user's network must be validated via the CloudFront page above with VPN disabled.
 
-原始报告及完整 WS 帧保存在仓库外私有验收目录，原始帧含凭据，不应提交或分享。
+The raw report and full WS frames are kept in a private acceptance directory outside the repository; raw frames contain credentials and must not be committed or shared.
 
-## 部署边界
+## Deployment Boundary
 
-`python3 scripts/deploy-terminal-direct.py --run` 显式增量部署，默认不执行。
-以线上模板 / ZIP 为基底，保留旧 pipe 模块及其他路由。只新增终端相关资源并补丁 WsHandler；
-WsIntegration 仅允许模板内容不变的引用更新。允许将三个实验 HTTP integration / route 迁至新 API。
+`python3 scripts/deploy-terminal-direct.py --run` explicitly deploys incrementally and does not execute by default.
+It uses the online template / ZIP as the base, keeping the old pipe module and other routes. It only adds terminal-related resources and patches WsHandler;
+WsIntegration only allows reference updates with unchanged template content. Moving the three experimental HTTP integrations / routes to the new API is allowed.
 
-代码包放入现有私有桶的唯一加密对象，由 CloudFormation 更新 Code 和环境变量，部署后校验 SHA-256。
-不新建桶、不放开权限、不运行整个 install.sh。代码对象保留供模板引用。
-首次旧模板为 placeholder ZIP 时禁止自动回滚，避免覆盖线上代码；后续真实 S3 代码版本支持安全回滚。
+The code package is placed as a unique encrypted object in the existing private bucket, CloudFormation updates Code and environment variables, and SHA-256 is verified after deployment.
+No new bucket is created, no permissions are opened, and the whole install.sh is not run. Code objects are kept for template references.
+When the old template is a placeholder ZIP the first time, automatic rollback is forbidden to avoid overwriting online code; subsequent real S3 code versions support safe rollback.
 
-## 验证与文件清理
+## Validation and File Cleanup
 
-2026-09-16 按要求删除这批改动新增的 23 个测试、单元测试和临时测量脚本，撤销对原有打包测试的
-新增断言；项目原有测试不在本次清理范围。历史测量结果保留在设计文档中，不再保留实验执行器。
-本轮构建检查使用 `npm run build`；一次性云端和 EC2 验收工具仅放在仓库外的私有临时目录。
+On 2026-09-16, as requested, the 23 tests, unit tests, and temporary measurement scripts added by this batch of changes were deleted, and newly added assertions to the original packaging tests
+were reverted; the project's original tests are outside the scope of this cleanup. Historical measurement results are kept in the design document, and the experiment runners are no longer kept.
+This round's build check uses `npm run build`; one-off cloud and EC2 acceptance tools are only in a private temporary directory outside the repository.
 
-浏览器检查保存原始完整 HAR / WS 帧及截图到私有临时目录。原始记录含 API Key / 短期凭据，
-不能打印、提交仓库或作为公开附件。报告只列行为和统计数据。
+Browser checks saved the raw full HAR / WS frames and screenshots to a private temporary directory. Raw records contain API Key / short-lived credentials
+and must not be printed, committed to the repository, or used as public attachments. Reports list only behavior and statistics.
 
-覆盖真实 xterm → HTTP integration → Bridge PTY、无换行 read 提示、ANSI、中文、Enter、Ctrl-C、resize、
-Vim 保存、第二页面占用保护、刷新回收、按键回显延迟，以及控制 API 的 IAM 拒绝与数据 MAC 防注入。
+Coverage: real xterm → HTTP integration → Bridge PTY, read prompt without newline, ANSI, Chinese, Enter, Ctrl-C, resize,
+Vim save, second-page occupancy protection, refresh teardown, keystroke echo latency, and IAM denial on the control API plus data MAC anti-injection.
 
-### 先前已完成的验证（历史记录）
+### Previously Completed Validation (Historical Record)
 
-- CloudFormation `UPDATE_COMPLETE`；原 API 无 terminal_direct_data route，新数据 route 的 integration 为 HTTP。
-- 线上旧 Lambda ZIP 的既有文件除必要 bridge_ws.py 补丁外逐字节保留；新模块加入，内存仍为 128MB。
-- 本机测试 Bridge 已重启到新实现；真实 Chromium / localhost 完成上述 12 项检查，截图确认红色 ANSI
-  及无换行的 `Enter your email (default: demo):` 提示可见，Vim 修改真实临时文件并成功保存。
-- 真实浏览器按键 → 本机 PTY 回显 20 次：p50 **430.37ms**、p95 **435.36ms**、max **437.69ms**。
-  包含浏览器自动化 / 25ms 轮询观察误差和本机公网链路，不是纯 Gateway RTT，也不代表 EC2 延迟。
-- `npm test`、`npm run build` 通过；保留原有 1 个跳过测试、日期弃用及 bundle 大小告警。
-- 原始成功验收目录：`terminal-direct-browser-4gnt2yg7`（系统私有临时目录），HAR / WS 记录权限 0600。
+- CloudFormation `UPDATE_COMPLETE`; the original API has no terminal_direct_data route, and the new data route's integration is HTTP.
+- Existing files in the online old Lambda ZIP were preserved byte-for-byte except for the necessary bridge_ws.py patch; new modules were added, and memory is still 128MB.
+- The local test Bridge was restarted onto the new implementation; real Chromium / localhost completed the 12 checks above, and screenshots confirmed red ANSI
+  and the newline-less `Enter your email (default: demo):` prompt were visible, and Vim modified a real temporary file and saved successfully.
+- Real browser keystroke → local PTY echo, 20 times: p50 **430.37ms**, p95 **435.36ms**, max **437.69ms**.
+  Includes browser automation / 25ms polling observation error and the local public-network link; not pure Gateway RTT, and not representative of EC2 latency.
+- `npm test` and `npm run build` passed; the original 1 skipped test, date deprecation, and bundle size warnings remain.
+- Original successful acceptance directory: `terminal-direct-browser-4gnt2yg7` (system private temporary directory), HAR / WS record permissions 0600.

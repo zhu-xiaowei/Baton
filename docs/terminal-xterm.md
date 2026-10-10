@@ -1,284 +1,284 @@
-# xterm.js + PTY 远程终端设计
+# xterm.js + PTY Remote Terminal Design
 
-> 状态：已实现项目入口、Header 直转及多端共享 PTY；仍需手机真机兼容性验收。
+> Status: the project entry, Header direct relay, and multi-client shared PTY are implemented; on-device phone compatibility acceptance is still required.
 >
-> 连续输出优化：普通 output 按接收顺序连续提交给 xterm，不逐包等待解析回调；非 output
-> 消息仍等待此前写入完成，保持 resize、快照及会话切换的顺序。render_ack 和积压字节扣减
-> 仍在写入完成后执行；关闭页面释放等待，旧连接回调不确认新连接的数据。未增加合包延迟、
-> 字节拼接或 WebGL，也未修改通信协议。
+> Continuous output optimization: ordinary output is submitted to xterm continuously in receive order, without waiting for a per-packet parse callback; non-output
+> messages still wait for prior writes to complete, preserving the order of resize, snapshots, and session switches. render_ack and backlog byte deduction
+> still run after the write completes; closing the page releases the wait, and callbacks from an old connection do not acknowledge data from a new connection. No coalescing delay,
+> byte concatenation, or WebGL was added, and the communication protocol was not changed.
 >
-> 2026-09-22 手机输入第一版：仅原生 Android / iOS App 挂载手机控件，键盘弹起时显示
-> `Esc / Tab / Ctrl / Shift / Alt / Paste / Enter` 单行栏；键盘收起时隐藏，不占终端空间。
-> 终端原地长按 450ms 启用四向摇杆，四周额外留出 10px，空间不足时居中；避让后仍以
-> 显示中心计算方向。沿主方向偏移不足
-> 25px 停发，25/40/60px 起分别以 300/150/70ms 连发，最高速度在箭头按钮内部即可达到。
-> 松手停止发送但保留方向盘，可点按方向键，或按住 300ms 后以 70ms 间隔连发；点外部只
-> 收起方向盘，不同时开关键盘，外部滑动仍正常滚动。取消、切换会话和后台停止并隐藏。
-> 摇杆只发送方向键，未唤醒时普通短按和滑动继续走原逻辑。
-> 2026-09-29 Paste 改为通过 Tauri clipboard-manager 原生读取文本，再交给 xterm `paste()`，
-> 不再在 App 内调用 WebView Clipboard API，避免额外的 WebKit Paste 确认气泡；系统仍可能
-> 要求粘贴授权。仅移动端启用文本读取权限，仅在点击时读取；原生读取失败时显示错误，
-> 不回退触发 WebView 确认。浏览器保留 Clipboard API。需重新构建 App；iOS 用户已确认
-> 粘贴正常，Android 仍待验收。本次不改滚动库、后端和传输协议。
+> 2026-09-22 phone input, first version: only the native Android / iOS App mounts phone controls; when the keyboard is up it shows a
+> single-row bar of `Esc / Tab / Ctrl / Shift / Alt / Paste / Enter`; when the keyboard is dismissed it is hidden and takes no terminal space.
+> A long press in place on the terminal for 450ms enables a four-way joystick, with an extra 10px margin on all sides, centered when space is insufficient; after avoidance, direction is still
+> computed from the displayed center. When the offset along the primary direction is under
+> 25px it stops sending; from 25/40/60px it repeats at 300/150/70ms respectively, and the top speed is reachable inside the arrow buttons.
+> Releasing stops sending but keeps the joystick; you can tap a direction key, or hold for 300ms to repeat at 70ms intervals; tapping outside only
+> dismisses the joystick without toggling the keyboard, and swiping outside still scrolls normally. Cancel, session switch, and backgrounding stop and hide it.
+> The joystick only sends arrow keys; when not activated, ordinary short taps and swipes keep the original logic.
+> 2026-09-29 Paste now reads text natively through Tauri clipboard-manager and then hands it to xterm `paste()`,
+> no longer calling the WebView Clipboard API inside the App, avoiding the extra WebKit Paste confirmation bubble; the system may still
+> require paste authorization. The text-read permission is enabled only on mobile, and reading happens only on tap; if the native read fails an error is shown,
+> without falling back to triggering the WebView confirmation. Browsers keep the Clipboard API. The App must be rebuilt; iOS users have confirmed
+> paste works, Android is still pending acceptance. This change does not touch the scroll library, backend, or transport protocol.
 >
-> 2026-09-21 手机滚动试验：前端固定使用官方 `@xterm/xterm@6.1.0-beta.304` 和配套
-> `@xterm/addon-fit@0.12.0-beta.301`，停用项目自写的 `attachTerminalTouchScroll`，由官方手势处理接管。
-> 保留 14px 字号、6px 滚动条和现有 PTY 协议；旧触摸模块及测试暂留作回退参考，不再挂载。
-> 此为用户验收用 beta，不代表手机体验已验证。上游 #6059 / #6108 仍报告鼠标上报模式下
-> 甩动可能发送 `NaN` 坐标，先测普通 Shell 历史，再单独验收全屏程序；未引入未合并补丁。
+> 2026-09-21 phone scrolling experiment: the frontend pins the official `@xterm/xterm@6.1.0-beta.304` and the matching
+> `@xterm/addon-fit@0.12.0-beta.301`, disables the project's own `attachTerminalTouchScroll`, and lets the official gesture handling take over.
+> The 14px font size, 6px scrollbar, and existing PTY protocol are kept; the old touch module and tests remain for now as fallback reference and are no longer mounted.
+> This is a beta for user acceptance and does not mean the phone experience is verified. Upstream #6059 / #6108 still report that in mouse-reporting mode
+> flinging may send `NaN` coordinates; test ordinary Shell history first, then accept full-screen programs separately; no unmerged patches were introduced.
 >
-> 2026-09-22 Paseo 对照（主干 `83f9fba`）：App lockfile 的 xterm 为 `6.1.0-beta.213`，
-> FitAddon 为 `0.12.0-beta.213`。其 Web / 旧 WebView runtime 仍挂载自写触摸处理，
-> 把纵向位移按行高累积后交给 `scrollLines()`；该处理松手即清状态，没有额外惯性阶段。
-> 新原生网格另用 `@xterm/headless` 和 React Native PanResponder。因此与我们停用自写
-> 滚动、交给 beta.304 官方手势的最新方案不同，本次不移植或叠加这些滚动处理。
+> 2026-09-22 Paseo comparison (trunk `83f9fba`): the App lockfile has xterm `6.1.0-beta.213`,
+> FitAddon `0.12.0-beta.213`. Its Web / legacy WebView runtime still mounts self-written touch handling,
+> accumulating vertical displacement by line height and passing it to `scrollLines()`; that handling clears state on release, with no extra inertia phase.
+> The new native grid separately uses `@xterm/headless` and React Native PanResponder. This differs from our latest approach of disabling self-written
+> scrolling and handing over to beta.304 official gestures, so this change does not port or layer on those scroll handlers.
 >
-> 2026-09-17 更新：当前实现以 `docs/terminal-direct-integration.md` 的“项目共享终端”章节为准。
-> 下文原始方案中的单写入者、接管租约、统一 terminal action 和 replay 协议不是当前实现。
-> 用户已明确选择所有已连接页面均可输入，通常只有一人操作，不增加抢占或写入锁。
+> 2026-09-17 update: the current implementation follows the "Project Shared Terminal" section of `docs/terminal-direct-integration.md`.
+> The single writer, takeover lease, unified terminal action, and replay protocol in the original design below are not the current implementation.
+> The user explicitly chose that all connected pages can type; usually only one person operates, so no preemption or write lock is added.
 >
-> 最初基线：2026-09-16，`main` / `f3fd719`；设计分支：`xterm`。
-> 旧管道方案保存在 `checkpoint/terminal-pipe-baseline-20260915` / `f8c22f9`。
+> Original baseline: 2026-09-16, `main` / `f3fd719`; design branch: `xterm`.
+> The old pipe approach is saved in `checkpoint/terminal-pipe-baseline-20260915` / `f8c22f9`.
 >
-> 最初验证使用隔离的本地 POC（§15.2）及云端 WS POC（§15.3），没有重启原有 Bridge。
-> 2026-09-17 已部署项目终端页面、更新云端控制接口，并更新 / 重启本机主 Bridge；
-> 线上页面直连该主 Bridge 的桌面 / 手机尺寸双端输入、断开后恢复均已验证。
+> Initial validation used an isolated local POC (§15.2) and a cloud WS POC (§15.3), without restarting the existing Bridge.
+> On 2026-09-17 the project terminal page was deployed, the cloud control interface updated, and the local main Bridge updated / restarted;
+> on the live page connected directly to that main Bridge, dual-client input at desktop / phone sizes and recovery after disconnect were both verified.
 >
-> 后续 Header 直转 POC 已实现：见 `docs/terminal-direct-integration.md`。
-> 因实测 IAM 无法限制单个 connection ID，数据使用独立托管 WS API + 会话 HMAC，原 API 只做控制。
-> 受控 POC 已通过浏览器验收；不把 API 级 STS 权限误称为可面向不可信多租户的连接级 ACL。
+> The subsequent Header direct relay POC is implemented: see `docs/terminal-direct-integration.md`.
+> Because testing showed IAM cannot restrict a single connection ID, data uses a separate hosted WS API + session HMAC, and the original API only does control.
+> The controlled POC passed browser acceptance; API-level STS permissions are not to be mislabeled as connection-level ACLs suitable for untrusted multi-tenancy.
 
-## 1. 结论与范围
+## 1. Conclusion and Scope
 
-长期采用 **xterm.js + 本机 PTY + 现有 WebSocket 通道**，将终端作为一个独立子系统实现。
+Long term, adopt **xterm.js + local PTY + the existing WebSocket channel**, implementing the terminal as an independent subsystem.
 
-- xterm.js 负责浏览器端的终端屏幕、VT 控制序列、光标、选区和键盘输入。
-- PTY 负责让本机 Shell / CLI 获得终端接口，而不是普通 stdin/stdout 管道。
-- WebSocket 负责带鉴权、排序、流控和恢复机制的数据传输。
-- 云端不创建 PTY、不执行命令、不解析终端画面。命令仍在用户选中的设备上运行。
+- xterm.js handles the browser-side terminal screen, VT control sequences, cursor, selection, and keyboard input.
+- PTY gives the local Shell / CLI a terminal interface rather than ordinary stdin/stdout pipes.
+- WebSocket handles data transport with authentication, ordering, flow control, and recovery.
+- The cloud does not create PTYs, execute commands, or parse terminal screens. Commands still run on the device the user selected.
 
-只替换前端渲染库不能解决非 TTY 程序拒绝启动、提示未输出的问题；只加 PTY 而继续
-使用普通日志区域，也不能完整呈现 Vim 等应用。xterm.js 官方推荐的典型接法就是将其
-与 PTY 双向连接。[R1][R2]
+Replacing only the frontend rendering library cannot fix non-TTY programs refusing to start or prompts not being printed; adding only a PTY while still
+using an ordinary log area cannot fully present applications such as Vim. The typical integration officially recommended by xterm.js is to connect it
+bidirectionally with a PTY.[R1][R2]
 
-### 1.1 首个可发布版本的目标
+### 1.1 Goals of the first releasable version
 
-1. macOS、Linux 上的持久交互式 Shell，正确显示安装向导和无换行提示。
-2. 支持 Vim、分页器、交互式选择、方向键、Tab、Esc、Ctrl 组合键。
-3. 支持桌面浏览器、手机浏览器及现有 Tauri 移动端容器；手机兼容性须实机验收。
-4. 支持窗口尺寸变化、同一会话的短线重连和明确的会话生命周期。
-5. 输入不重复执行，VT 数据不静默丢弃；无法恢复时明确提示，不伪造完整屏幕。
-6. 保留 Reset 确认弹窗；返回页面只断开订阅，不终止 PTY。
+1. Persistent interactive Shell on macOS and Linux, correctly displaying install wizards and prompts without newlines.
+2. Support Vim, pagers, interactive selection, arrow keys, Tab, Esc, Ctrl combinations.
+3. Support desktop browsers, phone browsers, and the existing Tauri mobile container; phone compatibility must be accepted on real devices.
+4. Support window size changes, short reconnects to the same session, and a clear session lifecycle.
+5. Input is never executed twice and VT data is never silently dropped; when recovery is impossible, say so clearly instead of faking a complete screen.
+6. Keep the Reset confirmation dialog; going back only drops the subscription and does not terminate the PTY.
 
-### 1.2 本轮不做
+### 1.2 Not in this round
 
-- 不增加 `Need input`。PTY 不提供通用的“应用正在等待用户输入”业务事件。
-- 不增加 Clear 按钮，不移植旧版命令卡片、退出码统计和 Git 候选条。
-- 不模拟 Vim 编辑器，不通过识别命令后切换自定义编辑组件。
-- 不实现多用户协同编辑、多终端标签、文件传输、ZMODEM、录屏或终端磁盘历史。
-- 不保证 Bridge 重启后进程仍存活；这需要额外的 tmux / 会话守护层。
-- Windows ConPTY 放在后续独立验收阶段，不因 node-pty 声称支持就默认上线。
+- No `Need input`. A PTY provides no general "application is waiting for user input" business event.
+- No Clear button; do not port the old command cards, exit-code statistics, or Git suggestion bar.
+- Do not emulate a Vim editor, and do not switch to a custom editing component after recognizing a command.
+- No multi-user collaborative editing, multiple terminal tabs, file transfer, ZMODEM, screen recording, or on-disk terminal history.
+- No guarantee that processes survive a Bridge restart; that requires an additional tmux / session daemon layer.
+- Windows ConPTY is deferred to a later, separate acceptance phase; it does not ship by default just because node-pty claims support.
 
-## 2. 从 main 出发，哪些代码可以借鉴
+## 2. Starting from main, which code can be borrowed
 
-禁止把旧分支整个 cherry-pick 后再替换渲染器。旧版的数据模型是“执行一条命令”，
-新版的数据模型是“连接一个持续存在的终端”。
+Do not cherry-pick the whole old branch and then swap the renderer. The old data model is "execute one command";
+the new data model is "connect to a persistent terminal".
 
-| 位置 | main 现状 / 可复用部分 | 本次设计的处理 |
+| Location | main status / reusable part | Handling in this design |
 |---|---|---|
-| `bridge/ws.mjs` | 已有鉴权连接、心跳、消息分发、退出清理 | 只增加 terminal 分发和会话清理入口 |
-| `bridge/session.mjs` | `projectHashToPath` | 复用定位，随后 realpath、目录检查和权限校验 |
-| `bridge/project/ws-frames.mjs` | 根据完整 JSON 大小检查帧 | 借鉴大小检查；不直接复用文本 RPC 分片协议 |
-| `bridge/bridge.mjs` | 下载更新、替换文件并重启 | 必须增加活跃 PTY 的更新延迟策略 |
-| `server/src/bridge_ws.py` | 按 action 分发、连接身份查询、定向发送 | 保留现有入口，增加独立 terminal handler |
-| `server/src/project/git_ws.py` | 请求白名单、可信路由字段构造 | 借鉴校验和定向路由方式 |
-| `web/js/ws.js` | 共享 WS、重连、移动端 viewport 处理 | 复用连接；终端输入不用它的离线通用发送队列 |
-| `web/js/ws-rpc.js` | 有限请求/响应的 Promise 和超时 | 可借鉴控制请求；不能用来组装无限终端流 |
-| `web/js/edge-back.js`、公共 Header | 页面返回、手势和项目导航 | 复用，不重新实现全局导航 |
-| `web/js/git/discard-confirm.js`、`.modal-*` | 已有确认弹窗样式 | 复用样式，借鉴旧终端 Reset 的交互测试 |
-| 旧分支 `web/js/terminal/page.js` | 顶部入口、Reset 弹窗、页面壳 | 只选择性借鉴，不复制旧输入和输出模型 |
-| 旧分支 `bridge/config.mjs` | CLI 启动时保留用户配置 | 保留这一修复思路，避免升级丢失 terminal 开关 |
+| `bridge/ws.mjs` | Existing authenticated connection, heartbeat, message dispatch, exit cleanup | Only add terminal dispatch and a session cleanup entry |
+| `bridge/session.mjs` | `projectHashToPath` | Reuse for location, then realpath, directory check, and permission validation |
+| `bridge/project/ws-frames.mjs` | Checks frames by full JSON size | Borrow the size check; do not directly reuse the text RPC chunking protocol |
+| `bridge/bridge.mjs` | Downloads updates, replaces files, and restarts | Must add an update-deferral policy for active PTYs |
+| `server/src/bridge_ws.py` | Dispatch by action, connection identity lookup, targeted send | Keep the existing entry, add an independent terminal handler |
+| `server/src/project/git_ws.py` | Request whitelist, trusted routing field construction | Borrow the validation and targeted routing approach |
+| `web/js/ws.js` | Shared WS, reconnect, mobile viewport handling | Reuse the connection; terminal input does not use its offline generic send queue |
+| `web/js/ws-rpc.js` | Promise and timeout for bounded request/response | Can borrow for control requests; cannot be used to assemble an unbounded terminal stream |
+| `web/js/edge-back.js`, shared Header | Page back, gestures, and project navigation | Reuse; do not reimplement global navigation |
+| `web/js/git/discard-confirm.js`, `.modal-*` | Existing confirmation dialog styles | Reuse styles; borrow the old terminal Reset interaction tests |
+| Old branch `web/js/terminal/page.js` | Top entry, Reset dialog, page shell | Borrow selectively only; do not copy the old input and output model |
+| Old branch `bridge/config.mjs` | Preserves user config at CLI startup | Keep this fix idea to avoid losing the terminal switch on upgrade |
 
-明确不沿用旧版的 fd 3 / nonce 命令执行循环、`eval`、`execId` 命令卡片、Bash `read`
-覆盖函数、stdin 手工回显、输出达到 2 MB 后丢弃、每次全量 `innerHTML` 渲染。
+Explicitly not carried over from the old version: the fd 3 / nonce command execution loop, `eval`, `execId` command cards, the Bash `read`
+override function, manual stdin echo, dropping output after it reaches 2 MB, and full `innerHTML` re-render every time.
 
-旧版的 `PYTHONUNBUFFERED=1`、`PAGER=cat`、`GIT_TERMINAL_PROMPT=0`、`ls -C` 等设置，
-也不能直接复制到完整终端；应让程序根据真实 PTY 和用户 Shell 配置自行工作。
+The old settings such as `PYTHONUNBUFFERED=1`, `PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `ls -C`
+also cannot be copied directly into a full terminal; programs should work on their own based on the real PTY and the user's Shell configuration.
 
-## 3. 总体架构
+## 3. Overall Architecture
 
 ```mermaid
 flowchart LR
-    User[键盘 / 手机快捷键] --> Xterm[浏览器 xterm.js]
-    Xterm <--> Client[终端协议适配层]
-    Client <-->|JSON 文本帧| API[现有 API Gateway WS + Lambda]
-    API <-->|JSON 文本帧| Bridge[本机 Bridge 终端管理器]
+    User[Keyboard / phone shortcuts] --> Xterm[Browser xterm.js]
+    Xterm <--> Client[Terminal protocol adapter]
+    Client <-->|JSON text frames| API[Existing API Gateway WS + Lambda]
+    API <-->|JSON text frames| Bridge[Local Bridge terminal manager]
     Bridge <--> PTY[node-pty]
-    PTY <--> Shell[交互式 Shell / CLI]
-    Bridge --> Mirror[有界输出日志 / 屏幕镜像]
+    PTY <--> Shell[Interactive Shell / CLI]
+    Bridge --> Mirror[Bounded output log / screen mirror]
 ```
 
-这是 Bridge 创建的新 PTY 会话，不是读取用户已经打开的 Terminal.app 窗口。
-浏览器运行在手机上，也不意味着 Shell 在手机上运行。
+This is a new PTY session created by the Bridge, not a reading of a Terminal.app window the user already has open.
+The browser running on a phone does not mean the Shell runs on the phone either.
 
-### 3.1 两条路径必须分开
+### 3.1 The two paths must be separate
 
-- **控制路径**：能力探测、open、attach、Reset、close、查询状态，有请求 ID 和结果。
-- **数据路径**：键盘字节、终端输出、尺寸事件、ACK、补发，采用显式序号和窗口。
+- **Control path**: capability probing, open, attach, Reset, close, status query; has request IDs and results.
+- **Data path**: keyboard bytes, terminal output, size events, ACK, replay; uses explicit sequence numbers and windows.
 
-继续使用当前连接，不再打开一条未经鉴权的裸 WS。不要直接使用 addon-attach 连接
-当前共享 WS：该 addon 默认把 WS 内容当终端数据，而现有连接还承载聊天、Files、Git
-等 JSON 消息。需要一个薄的、专属终端协议适配层。[R3]
+Keep using the current connection; do not open another unauthenticated bare WS. Do not use addon-attach directly on
+the current shared WS: that addon treats WS content as terminal data by default, while the existing connection also carries chat, Files, Git
+and other JSON messages. A thin, dedicated terminal protocol adapter is needed.[R3]
 
-## 4. 依赖与技术选型
+## 4. Dependencies and Technology Choices
 
-以下是 2026-09-15 调研时从 npm 发布元数据查询到的稳定候选，不等于已经验证互相兼容：
+The following are stable candidates found in npm publish metadata during the 2026-09-15 research; this does not mean they are verified to be mutually compatible:
 
-| 依赖 | 候选版本 | 用途 | 安装位置 |
+| Dependency | Candidate version | Purpose | Install location |
 |---|---|---|---|
-| `@xterm/xterm` | `6.0.0` | 浏览器终端 | 根 package.json，懒加载 |
-| `@xterm/addon-fit` | `0.11.0` | 根据容器计算行列数 | 根 package.json |
-| `node-pty` | `1.1.0` | 本机 PTY | bridge/package.json |
-| `@xterm/headless` | `6.0.0` | 后端屏幕镜像候选 | bridge/package.json，恢复阶段引入 |
-| `@xterm/addon-serialize` | `0.14.0` | 屏幕序列化候选 | bridge/package.json，恢复阶段引入 |
+| `@xterm/xterm` | `6.0.0` | Browser terminal | Root package.json, lazy-loaded |
+| `@xterm/addon-fit` | `0.11.0` | Compute rows/cols from the container | Root package.json |
+| `node-pty` | `1.1.0` | Local PTY | bridge/package.json |
+| `@xterm/headless` | `6.0.0` | Backend screen mirror candidate | bridge/package.json, introduced in the recovery phase |
+| `@xterm/addon-serialize` | `0.14.0` | Screen serialization candidate | bridge/package.json, introduced in the recovery phase |
 
-这些包的发布元数据标注为 MIT。实施前锁定准确版本及 lockfile，并在对应版本上运行
-API、渲染和原生模块测试；不依赖 master 分支或未经验证的 experimental API。[R1][R2][R16]
+The publish metadata for these packages states MIT. Before implementation, lock exact versions and the lockfile, and run
+API, rendering, and native module tests on those versions; do not depend on the master branch or unverified experimental APIs.[R1][R2][R16]
 
-- 不引入 WebGL、搜索、超链接、剪贴板等全部 addon；基础功能稳定后按需增加。
-- xterm 自带终端解析和增量写入能力，不再使用 Anser 为这个页面生成 HTML。
-- `node-pty` 有原生依赖，必须验证 macOS arm64/x64、Linux 目标架构的安装和升级。
-- `node-pty` 候选版本支持 `encoding: null` 和 `write(string | Buffer)`；其 `onData`
-  类型声明仍需结合实际运行结果检查。字节适配不能仅凭类型声明猜测。[R17]
+- Do not introduce all addons such as WebGL, search, hyperlinks, clipboard; add them as needed once basic functionality is stable.
+- xterm has its own terminal parsing and incremental writing; Anser is no longer used to generate HTML for this page.
+- `node-pty` has native dependencies; installation and upgrade must be verified on macOS arm64/x64 and target Linux architectures.
+- The `node-pty` candidate version supports `encoding: null` and `write(string | Buffer)`; its `onData`
+  type declaration still needs to be checked against actual runtime results. Byte adaptation cannot be guessed from type declarations alone.[R17]
 
-## 5. Bridge 会话与 Shell 启动
+## 5. Bridge Session and Shell Startup
 
-### 5.1 会话身份
+### 5.1 Session identity
 
-- `terminalId`：Bridge 生成的 UUID，标识一个终端会话。
-- `epoch`：每次创建/重置底层 PTY 都更换的 UUID，旧 epoch 的输入一律拒绝。
-- `bridgeInstanceId`：Bridge 启动时生成，用于识别服务重启，不作为鉴权凭证。
-- `clientId`：浏览器标签页的随机 ID，可放 sessionStorage；不保存输入内容。
-- `attachmentId`：每次 attach 成功生成的随机 ID，绑定当前连接和控制权。
+- `terminalId`: UUID generated by the Bridge, identifying one terminal session.
+- `epoch`: UUID changed every time the underlying PTY is created/reset; input from an old epoch is always rejected.
+- `bridgeInstanceId`: generated at Bridge startup, used to detect service restarts, not an authentication credential.
+- `clientId`: random ID for a browser tab, may be stored in sessionStorage; input content is not saved.
+- `attachmentId`: random ID generated on each successful attach, bound to the current connection and control.
 
-第一版每个设备、每个项目只有一个终端；全设备最多 4 个。没有空位时返回明确错误，
-不通过“看起来空闲”推断并杀掉已有 Shell。
+In the first version each device and each project has only one terminal; at most 4 per device. When no slot is available, return a clear error,
+rather than inferring that an existing Shell "looks idle" and killing it.
 
-内部状态至少包含：PTY handle、项目实际路径、Shell、行列数、epoch、输出序号、
-输入序号、控制者、恢复窗口、镜像写队列、流控原因集合、退出结果和请求去重表。
+Internal state includes at least: PTY handle, actual project path, Shell, rows/cols, epoch, output sequence number,
+input sequence number, controller, recovery window, mirror write queue, flow-control reason set, exit result, and request dedup table.
 
-### 5.2 Shell 与环境
+### 5.2 Shell and environment
 
-1. Bridge 根据本机用户配置选择 Shell；优先用户显式配置，其次系统登录 Shell。
-2. 初期仅支持已验收的 macOS/Linux Shell。不得接收前端传来的任意 executable/argv/env。
-3. 初始 cwd 由项目定位后 `realpath`，检查存在且为目录；失败不退回一个无关目录。
-4. 以登录、交互模式在 PTY 内启动 Shell，不再执行 Bash bootstrap 命令循环。
-5. 环境保留必要的 `HOME/USER/LOGNAME/SHELL/PATH/LANG/LC_*`，设置终端类型；
-   用户的 pyenv/nvm 等由实际登录 Shell 初始化，避免再次用另一个 Shell 重排 PATH。
-6. 不把 Bridge 的 API key、安装参数和服务专用环境整体传给子进程。
-7. xterm 主题、TERM、字符宽度与后端镜像配置一致；以 UTF-8 终端作为第一版范围。
+1. The Bridge selects the Shell from the local user configuration; prefer the user's explicit configuration, then the system login Shell.
+2. Initially only accepted macOS/Linux Shells are supported. Arbitrary executable/argv/env from the frontend must not be accepted.
+3. The initial cwd is `realpath`-ed after project location, and checked to exist and be a directory; on failure, do not fall back to an unrelated directory.
+4. Start the Shell inside the PTY in login, interactive mode; no more Bash bootstrap command loop.
+5. The environment keeps the necessary `HOME/USER/LOGNAME/SHELL/PATH/LANG/LC_*` and sets the terminal type;
+   the user's pyenv/nvm etc. are initialized by the actual login Shell, avoiding PATH being reordered again by another Shell.
+6. Do not pass the Bridge's API key, install parameters, or service-specific environment wholesale to child processes.
+7. xterm theme, TERM, and character width match the backend mirror configuration; a UTF-8 terminal is the first-version scope.
 
-`TERM=xterm-256color` 现在对应真实 PTY，而不是拿环境变量假装管道是终端。
-环境一致性须比较新 Shell 的解释器路径与用户本机登录 Shell，不能只检查命令能否找到。
+`TERM=xterm-256color` now corresponds to a real PTY, rather than using an environment variable to pretend a pipe is a terminal.
+Environment consistency must compare the new Shell's interpreter paths against the user's local login Shell, not just check whether commands can be found.
 
-### 5.3 输入输出与回显
+### 5.3 Input, output, and echo
 
-- 输出：PTY bytes → 分片/镜像/序号 → WS → `terminal.write(Uint8Array)`。
-- 普通输入：`terminal.onData` 的字符串用 UTF-8 编码，进入有序输入队列。
-- 二进制输入事件：`terminal.onBinary` 按单字节值转换，不能再做 UTF-8 二次编码。
-- Bridge 使用 byte-preserving 适配层写入 PTY；Buffer 行为是 P0 必测项。
-- 不统一追加 `\n`；回车、方向键、控制键均发送实际终端输入序列。
-- 终端只显示真实 PTY 输出，不手工写入输入回显。2026-09-16 已移除桌面输入预览，保留真实网络延迟，
-  便于比较 EC2 与本机公网链路；当前范围见 `docs/terminal-direct-integration.md`。
+- Output: PTY bytes → chunking/mirror/sequence number → WS → `terminal.write(Uint8Array)`.
+- Ordinary input: strings from `terminal.onData` are UTF-8 encoded and enter the ordered input queue.
+- Binary input events: `terminal.onBinary` is converted by single byte value and must not be UTF-8 encoded a second time.
+- The Bridge writes to the PTY through a byte-preserving adapter layer; Buffer behavior is a P0 must-test item.
+- Do not uniformly append `\n`; Enter, arrow keys, and control keys all send the actual terminal input sequences.
+- The terminal only displays real PTY output and does not manually write input echo. On 2026-09-16 the desktop input preview was removed, keeping the real network latency,
+  to make it easier to compare the EC2 and local public-internet links; for the current scope see `docs/terminal-direct-integration.md`.
 
-### 5.4 生命周期
+### 5.4 Lifecycle
 
-| 操作 | 语义 |
+| Operation | Semantics |
 |---|---|
-| open | 对项目创建或找到已有终端；重复请求不重复启动进程 |
-| attach | 绑定控制者，恢复屏幕，恢复完成后才允许输入 |
-| 返回 / detach | 停止页面订阅，PTY 保留；不调用 Reset |
-| 网络断开 | 禁止新输入，进入重连状态；不把积攒按键自动发给新会话 |
-| Reset | 弹窗确认后终止旧 PTY、清屏、换 epoch，在项目初始目录启动新 Shell |
-| close | 显式关闭终端，释放进程与内存，不立即自动重开 |
-| Shell 自身退出 | 发出有序 exit，页面只读；用户主动选择重新打开 |
-| Bridge 重启 | 原 PTY 不保证存活；旧会话失效，不自动重放命令 |
+| open | Create or find an existing terminal for the project; repeated requests do not start the process again |
+| attach | Bind the controller, restore the screen, allow input only after recovery completes |
+| Back / detach | Stop the page subscription, keep the PTY; do not call Reset |
+| Network disconnect | Block new input, enter reconnecting state; do not automatically send accumulated keystrokes to the new session |
+| Reset | After dialog confirmation, terminate the old PTY, clear the screen, change epoch, start a new Shell in the project's initial directory |
+| close | Explicitly close the terminal, release process and memory, do not immediately reopen automatically |
+| Shell exits on its own | Emit an ordered exit, page becomes read-only; the user actively chooses to reopen |
+| Bridge restart | Original PTY not guaranteed to survive; old session becomes invalid, commands are not replayed automatically |
 
-“Reset 回项目初始目录”是新方案的明确语义，不依赖旧版偶然保留的 cwd。
-第一版不根据无输出、无按键判断命令已空闲，也不自动清理仍存活的 PTY。
+"Reset returns to the project's initial directory" is an explicit semantic of the new design, not relying on the cwd the old version happened to keep.
+The first version does not judge a command idle based on no output or no keystrokes, and does not automatically clean up still-alive PTYs.
 
-退出清理须测试前台进程组与子进程，不能只验证 Shell PID 消失。主动 `nohup/setsid`
-脱离会话的任务不承诺由 Reset 全部回收；PTY 不是进程或文件系统沙箱。
+Exit cleanup must test the foreground process group and child processes, not just verify that the Shell PID disappears. Tasks that actively `nohup/setsid`
+to detach from the session are not promised to be fully reclaimed by Reset; a PTY is not a process or filesystem sandbox.
 
-自动升级在存在活跃 PTY 时延迟：可以检查新版，但不得先替换原生依赖再推迟重启。
-所有终端关闭后才安装并重启，或由用户显式确认中断升级。
+Auto-upgrade is deferred while active PTYs exist: it may check for a new version, but must not replace native dependencies first and then postpone the restart.
+Install and restart only after all terminals are closed, or when the user explicitly confirms interrupting for the upgrade.
 
-## 6. WebSocket 协议 v1
+## 6. WebSocket Protocol v1
 
-采用一个新 action：`terminal`，通过 `v: 1` 与 `op` 区分消息。它不兼容旧版
-`terminal_exec/terminal_stdin/...` 的含义，也不复用聊天 Session 的 turnId/seq。
+Use one new action: `terminal`, distinguishing messages by `v: 1` and `op`. It is not compatible with the meaning of the old
+`terminal_exec/terminal_stdin/...`, and does not reuse the chat Session's turnId/seq.
 
-### 6.1 通用字段与信任边界
+### 6.1 Common fields and trust boundary
 
-| 字段 | 规则 |
+| Field | Rule |
 |---|---|
-| action / v / op | 固定 action、整数版本、按角色验证 op 白名单 |
-| device | 现有设备标识，不使用展示名称；服务器必须定向到唯一 Bridge |
-| projectHash | 最大 2048 UTF-8 bytes；Bridge 验证其与终端绑定项目一致 |
-| requestId | 控制请求 UUID，重试必须复用原值 |
-| terminalId / epoch | UUID；已有终端的操作必须携带 |
-| clientId / attachmentId | 控制权和重连身份；不能代替账号鉴权 |
-| seq | Bridge 的有序终端事件序号，每个 epoch 从 1 开始 |
-| clientSeq | 当前 attachment 的输入/resize 序号，从 1 开始 |
-| data | 终端 bytes 的标准 Base64；不是转义后的 ANSI 文本 |
+| action / v / op | Fixed action, integer version, op whitelist validated per role |
+| device | Existing device identifier, not the display name; the server must target exactly one Bridge |
+| projectHash | Max 2048 UTF-8 bytes; the Bridge verifies it matches the project bound to the terminal |
+| requestId | Control request UUID; retries must reuse the original value |
+| terminalId / epoch | UUID; required for operations on an existing terminal |
+| clientId / attachmentId | Control and reconnect identity; cannot replace account authentication |
+| seq | The Bridge's ordered terminal event sequence number, starting at 1 for each epoch |
+| clientSeq | Input/resize sequence number of the current attachment, starting at 1 |
+| data | Standard Base64 of terminal bytes; not escaped ANSI text |
 
-客户端不能指定可信 `accountId/sourceConnectionId/replyConnectionId`。服务器从当前
-连接记录得到账号和角色，按白名单重建请求，并注入可信路由信息。Bridge 的响应目标
-来自已绑定的 attachment，不采用输入数据中的任意连接 ID。
+The client cannot specify trusted `accountId/sourceConnectionId/replyConnectionId`. The server derives account and role from the current
+connection record, rebuilds the request from a whitelist, and injects trusted routing information. The Bridge's response target
+comes from the bound attachment, not from an arbitrary connection ID in the input data.
 
 ### 6.2 App → Bridge
 
-| op | 必需的业务字段 | 语义 |
+| op | Required business fields | Semantics |
 |---|---|---|
-| probe | device, requestId | 返回启用状态、协议、平台、限制和实际可用能力 |
-| open | projectHash, requestId, cols, rows | 创建/找到项目终端，不直接取得控制权 |
-| attach | terminalId, epoch, clientId, requestId, screenPresent, lastSeq, takeover | 恢复屏幕并取得 attachment |
-| input | terminalId, epoch, attachmentId, clientSeq, data | 有序写入原始输入 bytes |
-| resize | 同 input 的身份/序号，cols, rows | 与输入共用顺序，调整 PTY 和屏幕尺寸 |
-| ack | 身份字段，seq，可选 syncId | 确认已应用到 xterm 的连续事件序号 |
-| replay | 身份字段，fromSeq | 请求从缺口起补发，不能请求其他终端的数据 |
-| snapshot_ack | 身份字段，snapshotId, nextChunk | 确认连续收到的快照块，释放快照发送窗口 |
-| keepalive | 身份字段 | 续期控制权；建议每 30 秒一次 |
-| detach | 身份字段，requestId | 释放当前控制权，不终止进程 |
-| state | terminalId, epoch, requestId | 查询当前会话/请求结果，不执行命令 |
-| reset / close | 身份字段，requestId | 有去重保障的显式破坏性操作 |
+| probe | device, requestId | Return enabled state, protocol, platform, limits, and actually available capabilities |
+| open | projectHash, requestId, cols, rows | Create/find the project terminal, without directly taking control |
+| attach | terminalId, epoch, clientId, requestId, screenPresent, lastSeq, takeover | Restore the screen and obtain an attachment |
+| input | terminalId, epoch, attachmentId, clientSeq, data | Write raw input bytes in order |
+| resize | Same identity/sequence as input, cols, rows | Shares ordering with input, resizes PTY and screen |
+| ack | Identity fields, seq, optional syncId | Confirm the contiguous event sequence number applied to xterm |
+| replay | Identity fields, fromSeq | Request replay from the gap; cannot request data of other terminals |
+| snapshot_ack | Identity fields, snapshotId, nextChunk | Confirm contiguously received snapshot chunks, releasing the snapshot send window |
+| keepalive | Identity fields | Renew control; recommended once every 30 seconds |
+| detach | Identity fields, requestId | Release current control without terminating the process |
+| state | terminalId, epoch, requestId | Query current session/request result, does not execute commands |
+| reset / close | Identity fields, requestId | Explicit destructive operations with dedup guarantees |
 
-以上为最初的单写入者协议草案，已被 2026-09-17 的共享终端实现替代。
-当前没有 `takeover`、写入租约或 `terminal_in_use`；每个页面具有独立连接和输入序号，
-Bridge 按每条连接的连续序号排序，再按到达顺序写入同一 PTY。跨设备不提供命令级原子性。
-断线只释放当前页面连接，不杀 PTY；重新连接通过权威屏幕快照恢复，不重放输入。
+The above is the original single-writer protocol draft, superseded by the 2026-09-17 shared terminal implementation.
+Currently there is no `takeover`, write lease, or `terminal_in_use`; each page has its own connection and input sequence numbers;
+the Bridge orders by each connection's contiguous sequence numbers, then writes to the same PTY in arrival order. No command-level atomicity across devices.
+Disconnect only releases the current page connection and does not kill the PTY; reconnect recovers via an authoritative screen snapshot without replaying input.
 
 ### 6.3 Bridge → App
 
-| op | 是否进入 seq 流 | 含义 |
+| op | In seq stream? | Meaning |
 |---|---|---|
-| capabilities | 否，匹配 requestId | backend、协议版本、启用状态、能力和限制 |
-| opened / attached / result / state | 否，匹配 requestId | 控制请求结果、epoch、attachment 或状态 |
-| output | 是 | Base64 终端输出 |
-| resized | 是 | 权威 cols/rows 和对应 clientSeq |
-| flow | 是 | 数据通道流控状态，不代表命令等待输入 |
-| exit | 是 | PTY 退出结果；不是任意一条 Shell 命令的退出码 |
-| input_ack | 否 | 当前 attachment 已接受的连续 clientSeq |
-| lease | 否 | 当前 attachment 的续期结果 |
-| snapshot_begin / snapshot_chunk / snapshot_end | 独立 chunkIndex | 同一个同步事务的屏幕快照 |
-| error | 否，关联请求或序号 | 明确错误，不靠永久 loading 表示失败 |
+| capabilities | No, matches requestId | backend, protocol version, enabled state, capabilities, and limits |
+| opened / attached / result / state | No, matches requestId | Control request result, epoch, attachment, or state |
+| output | Yes | Base64 terminal output |
+| resized | Yes | Authoritative cols/rows and the corresponding clientSeq |
+| flow | Yes | Data channel flow-control state; does not mean a command is waiting for input |
+| exit | Yes | PTY exit result; not the exit code of an arbitrary Shell command |
+| input_ack | No | Contiguous clientSeq accepted for the current attachment |
+| lease | No | Renewal result for the current attachment |
+| snapshot_begin / snapshot_chunk / snapshot_end | Independent chunkIndex | Screen snapshot of one sync transaction |
+| error | No, linked to a request or sequence number | Explicit error, rather than signaling failure with a permanent loading state |
 
-控制结果在 JSON 中使用 `ok: true/false`。错误至少带 `errorCode`，按需要带 requestId、
-clientSeq、expectedClientSeq、terminalId、epoch；错误消息不得包含输入正文或凭证。
+Control results use `ok: true/false` in JSON. Errors carry at least `errorCode`, and as needed requestId,
+clientSeq, expectedClientSeq, terminalId, epoch; error messages must not contain input content or credentials.
 
-### 6.4 示例
+### 6.4 Examples
 
-以下为结构示例，UUID 是占位示例；服务器注入的内部路由字段不出现在客户端请求中。
+The following are structural examples; UUIDs are placeholders; internal routing fields injected by the server do not appear in client requests.
 
 ```json
 {
@@ -308,8 +308,8 @@ clientSeq、expectedClientSeq、terminalId、epoch；错误消息不得包含输
 }
 ```
 
-上例 data 表示 `ls` 后跟一个回车 byte。生产代码必须对真实输入 bytes 编码，不能把
-`\\r` 等可见字符当作回车。单独的回车 byte `0x0d` 编码为 `DQ==`，Ctrl+C `0x03` 为 `Aw==`。
+In the example above, data represents `ls` followed by a carriage-return byte. Production code must encode the real input bytes, and must not treat
+visible characters such as `\\r` as a carriage return. A lone carriage-return byte `0x0d` encodes as `DQ==`, and Ctrl+C `0x03` as `Aw==`.
 
 ```json
 {
@@ -324,443 +324,443 @@ clientSeq、expectedClientSeq、terminalId、epoch；错误消息不得包含输
 }
 ```
 
-output 例子表示 `hello` 加 CRLF。数据帧只由当前终端适配层消费，不进入聊天渲染器。
+The output example represents `hello` plus CRLF. Data frames are consumed only by the current terminal adapter layer and do not enter the chat renderer.
 
-### 6.5 排序、幂等与输入安全
+### 6.5 Ordering, idempotency, and input safety
 
-1. 不假定经过多个 Lambda 调用的结果仍按原始顺序到达。输出、resized、exit 共用 seq。
-2. 浏览器只按连续 seq 应用；重复丢弃，缺口先补发，不能跳过控制序列继续绘制。
-3. input 与 resize 共用 clientSeq；Bridge 按顺序执行，有限缓存乱序项并报告缺口。
-4. 同一个 attachment 中，重复 clientSeq 不再次写 PTY；相同序号不同 payload 拒绝。
-5. input_ack 表示 Bridge 接受并提交给 PTY 写入路径，不表示应用已经读到或完成命令。
-6. 去重是同一 Bridge/epoch 内的保证，不宣称跨进程崩溃 exactly-once。
-7. 重连后的 attachment、epoch 变化时，未确认输入不得自动重发；提示执行状态可能未知。
-8. open/reset/close 使用 requestId 去重；同一请求重试返回原结果，不重复创建或杀进程。
-9. Reset 去重表须先于旧 epoch 拒绝逻辑查询，使已成功 Reset 的原请求能获得相同结果。
-10. 序号必须是安全范围内的整数；ACK 不得超过当前 attachment 已发送的边界，重复和
-    倒退 ACK 不释放额外额度。补发区间、乱序缓存和控制请求去重表都必须有数量/时限上限。
+1. Do not assume results passing through multiple Lambda invocations still arrive in the original order. output, resized, and exit share seq.
+2. The browser applies only contiguous seq; duplicates are dropped, gaps are replayed first, and drawing must not skip control sequences to continue.
+3. input and resize share clientSeq; the Bridge executes in order, buffers a bounded number of out-of-order items, and reports gaps.
+4. Within the same attachment, a duplicate clientSeq does not write to the PTY again; the same sequence number with a different payload is rejected.
+5. input_ack means the Bridge accepted and submitted to the PTY write path, not that the application has read it or completed the command.
+6. Dedup is a guarantee within the same Bridge/epoch; exactly-once across process crashes is not claimed.
+7. When the attachment or epoch changes after reconnect, unacknowledged input must not be resent automatically; indicate that execution state may be unknown.
+8. open/reset/close dedup by requestId; retrying the same request returns the original result without re-creating or killing processes.
+9. The Reset dedup table must be queried before the old-epoch rejection logic, so the original request of a successful Reset gets the same result.
+10. Sequence numbers must be integers in the safe range; an ACK must not exceed the boundary already sent for the current attachment, and duplicate and
+    backward ACKs do not release extra credit. Replay ranges, out-of-order buffers, and control request dedup tables must all have count/time limits.
 
-main 的 `wsSendReliable` 会把非 OPEN 状态的数据加入队列并在重连后发出。终端 input
-不能直接调用它。新增终端发送适配器复用 socket，只在 OPEN 且 attachment 已同步时发送，
-由终端自己的 ACK/去重逻辑管理有限重试。此规则不改变聊天等现有功能的发送行为。
+main's `wsSendReliable` queues data when not OPEN and sends it after reconnect. Terminal input
+must not call it directly. A new terminal send adapter reuses the socket, sends only when OPEN and the attachment is synced,
+and bounded retries are managed by the terminal's own ACK/dedup logic. This rule does not change the send behavior of chat or other existing features.
 
-## 7. WS 大小限制、编码与流控
+## 7. WS Size Limits, Encoding, and Flow Control
 
-### 7.1 当前 AWS 限制
+### 7.1 Current AWS limits
 
-按本次核对的 AWS 官方文档：[R6][R7]
+According to the AWS official documentation checked this time:[R6][R7]
 
-| 项目 | 官方限制 / 行为 | 设计影响 |
+| Item | Official limit / behavior | Design impact |
 |---|---|---|
-| WebSocket frame | 32 KB | 每一个应用发送包都必须低于限制 |
-| 消息 payload | 128 KB | 不能据此发送一个 128 KB 的单帧 |
-| 入站二进制帧 | 不支持，可能以 1003 断开 | 使用 JSON 文本帧，bytes 放 Base64 |
-| 超大帧/消息 | 可能以 1009 断开 | 编码完成后检查长度，不依赖底层自动分片 |
-| 最大连接时长 | 2 小时 | 必须支持正常轮换连接和重新 attach |
-| 空闲超时 | 10 分钟 | 复用心跳，不能认为永久不输出也不会断线 |
-| integration timeout | 50 ms–29 秒 | Lambda 只处理单次转发；命令不能在 Lambda 中等待完成 |
+| WebSocket frame | 32 KB | Every application send packet must be below the limit |
+| Message payload | 128 KB | Cannot use this to send a single 128 KB frame |
+| Inbound binary frames | Not supported, may disconnect with 1003 | Use JSON text frames, bytes in Base64 |
+| Oversized frame/message | May disconnect with 1009 | Check length after encoding, do not rely on underlying automatic fragmentation |
+| Maximum connection duration | 2 hours | Must support normal connection rotation and re-attach |
+| Idle timeout | 10 minutes | Reuse heartbeat; cannot assume no output means never disconnecting |
+| integration timeout | 50 ms–29 seconds | Lambda only handles a single forward; commands cannot wait for completion in Lambda |
 
-不能直接移植 ttyd 的二进制 WS 协议。其输入/输出/流控思路可以借鉴，传输封装必须
-适配现有 API Gateway。AWS 配置未来变动时重新核验，不把调研数值当永远不变的常量。
+ttyd's binary WS protocol cannot be ported directly. Its input/output/flow-control ideas can be borrowed, but the transport encapsulation must
+adapt to the existing API Gateway. Re-verify when AWS configuration changes in the future; do not treat researched values as constants that never change.
 
-### 7.2 我们自己的初始预算
+### 7.2 Our own initial budget
 
-以下为待压测的设计值，不是 AWS 配额：
+The following are design values pending load testing, not AWS quotas:
 
-| 参数 | 初值 |
+| Parameter | Initial value |
 |---|---|
-| 完整 JSON 帧预算 | 28 KiB，包含可信路由字段和最终序列化结果 |
-| 单个 output/snapshot 块原始数据 | 最多 16 KiB |
-| 单个 input 块原始数据 | 最多 4 KiB |
-| 元数据预算 | 最多 4 KiB，所有可变字段另有长度限制 |
-| 单次粘贴 | 最多 256 KiB，切成有序 input 块；超限拒绝而非截断 |
-| 输出合并 | 第一块及时发；连续小块最多合并约 16 ms |
-| 输入合并 | 普通连续输入最多约 8 ms；Enter/Esc/Ctrl+C 及时 flush |
-| 客户端未应用输出高/低水位 | 512 KiB / 128 KiB 原始 bytes |
-| 单次恢复快照上限 | 4 MiB，分块且有独立窗口 |
-| 每个 PTY 重放日志 | 8 MiB，有界；只有存在正确恢复路径才允许淘汰旧段 |
-| 屏幕镜像 scrollback | 初始 1000 行；另行监测实际堆内存 |
-| 行列范围 | cols 20–400，rows 5–200；拒绝 bool、非整数、极大值 |
+| Full JSON frame budget | 28 KiB, including trusted routing fields and the final serialized result |
+| Raw data per output/snapshot chunk | At most 16 KiB |
+| Raw data per input chunk | At most 4 KiB |
+| Metadata budget | At most 4 KiB, with separate length limits on all variable fields |
+| Single paste | At most 256 KiB, split into ordered input chunks; reject rather than truncate when over limit |
+| Output coalescing | First chunk sent promptly; consecutive small chunks coalesced for at most about 16 ms |
+| Input coalescing | Ordinary consecutive input at most about 8 ms; Enter/Esc/Ctrl+C flushed promptly |
+| Client unapplied-output high/low watermark | 512 KiB / 128 KiB raw bytes |
+| Single recovery snapshot limit | 4 MiB, chunked with an independent window |
+| Replay log per PTY | 8 MiB, bounded; old segments may be evicted only when a correct recovery path exists |
+| Screen mirror scrollback | Initially 1000 lines; actual heap memory monitored separately |
+| Rows/cols range | cols 20–400, rows 5–200; reject bool, non-integers, huge values |
 
-Base64 长度是 `4 × ceil(rawBytes / 3)`。16 KiB 数据编码为 21,848 bytes，加 4 KiB
-元数据仍低于 28 KiB；但发送前仍必须测量完整 JSON 的 UTF-8 byteLength。
-Bridge 发给 API 和 Lambda 发给 App 两处都检查，不能只按字符数或编码前文本长度判断。
+Base64 length is `4 × ceil(rawBytes / 3)`. 16 KiB of data encodes to 21,848 bytes, which plus 4 KiB
+of metadata is still below 28 KiB; but the UTF-8 byteLength of the full JSON must still be measured before sending.
+Check both where the Bridge sends to the API and where Lambda sends to the App; do not judge only by character count or pre-encoding text length.
 
-不要对超大 terminal 帧调用聊天消息的“压缩/截断”兜底；分片失败应返回明确错误。
-Base64 解码须严格校验字符、padding 和解码长度，不能接受宽松解码后悄悄丢字节。
+Do not invoke the chat message "compress/truncate" fallback on oversized terminal frames; a chunking failure should return an explicit error.
+Base64 decoding must strictly validate characters, padding, and decoded length, and must not accept lenient decoding that silently drops bytes.
 
-### 7.3 流控与内存
+### 7.3 Flow control and memory
 
-- xterm 的 `write` 是异步处理；收到网络包不等于已应用到终端缓冲区。[R4]
-- ACK 在 write callback 后推进连续 seq；不等待每个包的独立网络 ACK 才发下一个包。
-- 到高水位时 Bridge 暂停 PTY 读取，低于低水位再恢复；使用原因集合避免一个模块
-  resume 掉另一个模块施加的暂停。
-- 镜像队列、快照期间的增量队列、WS bufferedAmount 都要有独立上限。
-- 脱离订阅时不再等旧客户端 ACK；镜像和有界恢复日志继续维护。没有可用恢复检查点时，
-  到上限必须暂停并明确报状态，不能像旧日志方案一样静默丢掉后续输出。
-- `handleFlowControl` 不自动开启为解释用户 Ctrl+S/Ctrl+Q 的旁路；使用适配器明确控制
-  pause/resume，并验收 PTY/程序自己的终端流控语义。
+- xterm's `write` is processed asynchronously; receiving a network packet does not mean it has been applied to the terminal buffer.[R4]
+- ACK advances the contiguous seq after the write callback; do not wait for a separate network ACK per packet before sending the next packet.
+- At the high watermark the Bridge pauses PTY reads, resuming below the low watermark; use a reason set to avoid one module
+  resuming a pause applied by another module.
+- The mirror queue, the incremental queue during snapshots, and WS bufferedAmount each need independent limits.
+- When detached, stop waiting for the old client's ACK; the mirror and bounded recovery log continue to be maintained. When no usable recovery checkpoint exists,
+  reaching the limit must pause and clearly report status, not silently drop subsequent output like the old log approach.
+- `handleFlowControl` is not automatically enabled as a bypass that interprets the user's Ctrl+S/Ctrl+Q; use the adapter to explicitly control
+  pause/resume, and accept the PTY/program's own terminal flow-control semantics.
 
-## 8. 重连与屏幕恢复
+## 8. Reconnect and Screen Recovery
 
-### 8.1 不能只恢复“最后几行文字”
+### 8.1 Cannot just restore "the last few lines of text"
 
-终端状态包括 normal/alternate screen、光标、颜色、滚动区域、模式和解析中的控制序列。
-文本 ring buffer 截掉前半段后直接写入一个新 xterm，不能视为正确恢复。
+Terminal state includes the normal/alternate screen, cursor, colors, scroll regions, modes, and control sequences mid-parse.
+Writing a text ring buffer with its front half cut off directly into a new xterm cannot be considered correct recovery.
 
-两条合法恢复路径：
+Two valid recovery paths:
 
-1. **同一 xterm 实例还在**：记录屏幕实际应用的 seq，补发其后的连续事件。
-2. **新实例/整页刷新/换设备**：从完整 epoch 起点重放，或使用经过验证的屏幕检查点加增量。
+1. **The same xterm instance still exists**: record the seq actually applied to the screen and replay contiguous events after it.
+2. **New instance / full page refresh / device switch**: replay from the full epoch start, or use a verified screen checkpoint plus increments.
 
-仅在本地持有对应屏幕状态时才允许 `screenPresent: true`；不能单独把 lastSeq 存入
-localStorage，刷新后拿一个空屏幕继续跳过旧数据。
+`screenPresent: true` is allowed only when the corresponding screen state is held locally; do not store lastSeq alone in
+localStorage and, after refresh, continue skipping old data with an empty screen.
 
-### 8.2 同步事务
+### 8.2 Sync transaction
 
-1. attach 绑定新 attachmentId，暂停输入，浏览器显示“正在恢复终端”。
-2. Bridge 在有序事件队列上确定恢复边界 `S`，返回 syncId 与 replay/snapshot 模式。
-3. replay 模式补齐至 S；snapshot 模式发送 begin/chunks/end，均绑定 snapshotId。
-4. snapshot_begin 包含 epoch、baseSeq、cols、rows、chunkCount、totalBytes、SHA-256。
-5. 客户端按 chunkIndex 组装并校验大小/哈希；end 先到不代表内容已经齐全。
-6. 重置 xterm 状态、应用尺寸和快照，等待 write callback，再应用 S 之后的连续增量。
-7. 客户端确认同步边界后，Bridge 开放 live 窗口；输入恢复。恢复期间产生的输出不能漏掉。
+1. attach binds a new attachmentId, pauses input, and the browser shows "Restoring terminal".
+2. The Bridge determines the recovery boundary `S` on the ordered event queue and returns a syncId with replay/snapshot mode.
+3. Replay mode fills up to S; snapshot mode sends begin/chunks/end, all bound to the snapshotId.
+4. snapshot_begin contains epoch, baseSeq, cols, rows, chunkCount, totalBytes, SHA-256.
+5. The client assembles by chunkIndex and validates size/hash; end arriving first does not mean the content is complete.
+6. Reset xterm state, apply size and snapshot, wait for the write callback, then apply contiguous increments after S.
+7. After the client confirms the sync boundary, the Bridge opens the live window; input resumes. Output produced during recovery must not be missed.
 
-快照块使用 snapshot_ack 确认连续接收块，避免未完成快照无法产生 seq ACK 而死锁。
-普通 seq ACK 只能确认已经应用的事件，不能借快照 ACK 假称画面已恢复。
-取消、超时、旧 attachment 的快照都应释放内存；单个缺块可以重发，不无限累积事务。
+Snapshot chunks use snapshot_ack to confirm contiguously received chunks, avoiding deadlock where an incomplete snapshot cannot produce a seq ACK.
+Ordinary seq ACKs can only confirm events already applied, and must not use a snapshot ACK to falsely claim the screen has been restored.
+Snapshots that are canceled, timed out, or belong to an old attachment should release memory; a single missing chunk may be resent, but transactions must not accumulate indefinitely.
 
-### 8.3 不能跳过的恢复验证门槛 D1
+### 8.3 Recovery validation gate D1 that cannot be skipped
 
-`@xterm/headless + addon-serialize` 是官方提供的恢复构建工具，不等于完整恢复协议。
-必须在实现普通重连前验证以下问题：[R1][R5]
+`@xterm/headless + addon-serialize` is an officially provided recovery building tool, not a complete recovery protocol.
+The following must be verified before implementing ordinary reconnect:[R1][R5]
 
-- 快照是否包含所需的 alternate buffer、终端模式、光标和滚动区域；不能排除 modes/alt。
-- **write callback 不等于控制序列边界**：UTF-8、CSI、OSC、DCS 可能被网络块切开。
-  缓冲区序列化不应被假定能保存任意“解析到一半”的状态。
-- 镜像与浏览器的 xterm 版本、宽字符规则和尺寸历史必须一致。
-- 快照边界、resize 和增量须在同一串行队列定义，不能用一个定时器估计“已经处理完”。
+- Whether the snapshot includes the required alternate buffer, terminal modes, cursor, and scroll regions; modes/alt cannot be excluded.
+- **A write callback is not a control sequence boundary**: UTF-8, CSI, OSC, DCS may be split by network chunks.
+  Buffer serialization should not be assumed able to preserve arbitrary "half-parsed" state.
+- The mirror and browser xterm versions, wide-character rules, and size history must match.
+- Snapshot boundaries, resize, and increments must be defined in the same serial queue; do not use a timer to estimate "already processed".
 
-候选生产实现是在已验证的解析安全边界建立检查点，保留其后的完整 byte 流。
-如果需要额外的 VT 边界跟踪器，必须单独设计和测试；禁止通过未经封装的 xterm 私有字段
-读取 parser 状态。未验证前不能将“最近日志 + serialize”宣称为完整恢复。
+The candidate production implementation establishes checkpoints at verified parse-safe boundaries and keeps the complete byte stream after them.
+If an additional VT boundary tracker is needed, it must be designed and tested separately; reading parser state through unencapsulated xterm private fields
+is forbidden. Until verified, "recent log + serialize" cannot be claimed as complete recovery.
 
-P0/P1 原型先允许从 epoch 起点完整重放；日志不足时返回 `screen_restore_unavailable`，
-保持进程并向用户解释，绝不自动 Reset。完整恢复未通过 D1 前，不以“支持刷新恢复”的
-名义发布，也不能无限增加内存来掩盖问题。
+P0/P1 prototypes first allow full replay from the epoch start; when the log is insufficient, return `screen_restore_unavailable`,
+keep the process and explain to the user, never auto-Reset. Until complete recovery passes D1, do not release under the
+name of "supports refresh recovery", and do not grow memory without bound to mask the problem.
 
-### 8.4 自动终端响应只允许一个来源
+### 8.4 Automatic terminal responses may come from only one source
 
-xterm 解析终端查询时可能产生回复。live 状态由当前前端控制者返回；headless 镜像的
-onData/onBinary 不接回 PTY，避免重复响应。恢复重放期间禁止把重放产生的自动回复和
-键盘事件发送给 PTY。
+xterm may produce replies when parsing terminal queries. In live state, the current frontend controller returns them; the headless mirror's
+onData/onBinary is not wired back to the PTY, avoiding duplicate responses. During recovery replay, auto-replies produced by the replay and
+keyboard events must not be sent to the PTY.
 
-这可能影响断开期间发出并等待应答的终端查询。P0 必须专项验证 DA/DSR 等协商，以及
-Vim 在后台启动后再 attach 的行为。如果需要脱离客户端仍回答查询，必须重新设计一个
-唯一响应者及交接机制，不能简单把前后两个 xterm 的 onData 都接到 PTY。
+This may affect terminal queries issued during disconnection that wait for an answer. P0 must specifically verify DA/DSR and similar negotiations, as well as
+the behavior of Vim started in the background and then attached. If queries must be answered even when detached from clients, a
+single responder and handoff mechanism must be redesigned; do not simply wire both xterms' onData to the PTY.
 
-## 9. 尺寸与键盘事件
+## 9. Size and Keyboard Events
 
-- `ResizeObserver` 观察终端容器；使用 fit addon 计算候选尺寸，去重并适度 debounce。
-- 第一版以 Bridge 的有序 resized 事件作为权威尺寸。前端不能先任意 resize、再把旧尺寸
-  的待处理输出塞进新屏幕而不记录顺序。
-- resize 与 input 共用 clientSeq；Bridge 将尺寸变化纳入输出 seq 历史，并同步 PTY 与镜像。
-- 不从 xterm.onResize 回调再次无条件发 resize，避免客户端/服务端循环放大。
-- 外接键盘正常走 xterm 自己的输入处理。中文输入不能通过全局 keydown 按字符手工拼装。
+- `ResizeObserver` observes the terminal container; use the fit addon to compute candidate size, dedupe, and debounce moderately.
+- The first version uses the Bridge's ordered resized event as the authoritative size. The frontend must not resize arbitrarily first and then stuff pending output of the old size
+  into the new screen without recording order.
+- resize and input share clientSeq; the Bridge includes size changes in the output seq history and syncs the PTY and mirror.
+- Do not unconditionally send resize again from the xterm.onResize callback, avoiding client/server loop amplification.
+- External keyboards go through xterm's own input handling normally. Chinese input must not be manually assembled per character through a global keydown.
 
-## 10. API / Server 的修改边界
+## 10. API / Server Change Boundaries
 
 ### 10.1 REST
 
-第一版不新增“执行命令”HTTP 接口。复用 `/api/bridge/config` 获取 WS 地址，复用设备和
-项目列表。终端能力通过所选设备的 terminal/probe 确认，不能由一个全局服务器版本号推断。
+The first version adds no "execute command" HTTP endpoint. Reuse `/api/bridge/config` to get the WS address, and reuse the device and
+project lists. Terminal capability is confirmed via terminal/probe on the selected device, not inferred from a global server version number.
 
-能力至少包含：enabled、backend=`pty`、protocols、platform、bridgeInstanceId、可用功能
-和限制。`snapshot` 能力只有通过 D1 后才声明为 true。旧 Bridge 不响应时有限超时并提示升级。
+Capabilities include at least: enabled, backend=`pty`, protocols, platform, bridgeInstanceId, available features,
+and limits. The `snapshot` capability is declared true only after passing D1. When an old Bridge does not respond, time out within a bounded period and prompt an upgrade.
 
 ### 10.2 WebSocket Lambda
 
-新增 `server/src/project/terminal_ws.py`，只做以下工作：
+Add `server/src/project/terminal_ws.py`, which only does the following:
 
-1. 按连接角色验证 op、版本、字段、数值、Base64 和最终帧大小。
-2. 从连接记录取得可信账号和角色，拒绝 App 伪造 output 或 Bridge 伪造客户端请求。
-3. 将请求定向到同账号、指定设备的一条 Bridge 连接；不得向多台 Bridge 广播键盘输入。
-4. 同一设备标识出现多个无法判定的活动连接时返回 `ambiguous_device`，不重复执行 open。
-5. 验证响应目标仍为同账号 App 连接，剥离内部路由字段后转发。
-6. 不查询/保存终端文本，不解码 VT，不持有 PTY，不在一次 Lambda 调用里等命令结束。
+1. Validate op, version, fields, numbers, Base64, and final frame size by connection role.
+2. Get trusted account and role from the connection record; reject an App forging output or a Bridge forging client requests.
+3. Target the request to one Bridge connection of the same account and the specified device; keyboard input must not be broadcast to multiple Bridges.
+4. When the same device identifier has multiple indistinguishable active connections, return `ambiguous_device` and do not execute open repeatedly.
+5. Verify the response target is still an App connection of the same account, strip internal routing fields, then forward.
+6. Do not query/store terminal text, decode VT, hold a PTY, or wait for commands to finish within one Lambda invocation.
 
-在 `server/src/bridge_ws.py` 增加一个 action route。现有 `$request.body.action` 路由与
-默认集成可以复用；要部署 Lambda 新逻辑，但不因接入 xterm 自动要求新建 WS 服务。
+Add one action route in `server/src/bridge_ws.py`. The existing `$request.body.action` route and
+default integration can be reused; the new Lambda logic must be deployed, but integrating xterm does not automatically require a new WS service.
 
-### 10.3 性能和错误处理
+### 10.3 Performance and error handling
 
-当前消息路径会查询发送连接，返回 App 时还会查询目标连接。每个输出帧都经 Lambda/
-连接查询/管理 API，不能把它当成纯 TCP 字节隧道。先测数据，再决定是否优化路由缓存或
-引入持续连接 relay；不能为提速直接跳过账号与目标连接校验。
+The current message path queries the sending connection, and when returning to the App also queries the target connection. Every output frame goes through Lambda/
+connection lookup/management API, so it cannot be treated as a pure TCP byte tunnel. Measure first, then decide whether to optimize with a routing cache or
+introduce a persistent-connection relay; do not skip account and target connection validation just for speed.
 
-明确错误码至少包括：`terminal_disabled`、`unsupported_protocol`、`pty_unavailable`、
-`bridge_offline`、`ambiguous_device`、`invalid_project`、`terminal_not_found`、
-`terminal_in_use`、`stale_epoch`、`stale_attachment`、`input_gap`、`invalid_frame`、
-`frame_too_large`、`terminal_limit_reached`、`screen_restore_unavailable`、
-`snapshot_too_large`、`sync_timeout`。前端均须结束对应请求的 loading。
+Explicit error codes include at least: `terminal_disabled`, `unsupported_protocol`, `pty_unavailable`,
+`bridge_offline`, `ambiguous_device`, `invalid_project`, `terminal_not_found`,
+`terminal_in_use`, `stale_epoch`, `stale_attachment`, `input_gap`, `invalid_frame`,
+`frame_too_large`, `terminal_limit_reached`, `screen_restore_unavailable`,
+`snapshot_too_large`, `sync_timeout`. The frontend must end the loading state of the corresponding request in all cases.
 
-## 11. Web UI 与手机端
+## 11. Web UI and Phone
 
-### 11.1 页面布局
+### 11.1 Page layout
 
 ```text
-┌──────────────────────────────────────┐
-│ ‹  Terminal / 项目   连接状态  Reset  │
-├──────────────────────────────────────┤
-│                                      │
-│             xterm 屏幕               │
-│                                      │
-│ 光标、提示、密码输入由真实终端呈现    │
-├──────────────────────────────────────┤
-│ Esc Tab Ctrl Alt ← ↓ ↑ →  Paste  …   │  ← 窄屏可横向滑动
-└──────────────────────────────────────┘
-                系统软键盘
+┌──────────────────────────────────────────────────────┐
+│ ‹  Terminal / project   connection state   Reset     │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│                     xterm screen                     │
+│                                                      │
+│ Cursor/prompts/password input shown by real terminal │
+├──────────────────────────────────────────────────────┤
+│ Esc Tab Ctrl Alt ← ↓ ↑ →  Paste  …                   │  ← horizontally scrollable on narrow screens
+└──────────────────────────────────────────────────────┘
+                   System soft keyboard
 ```
 
-- 不再保留“输入整条命令后点击发送”的主 textarea。xterm 的输入区域是主输入来源。
-- 底部只有快捷键条；宽度不足时横向滚动，不把按钮压缩成难以点击的小图标。
-- 触控目标至少约 44×44 CSS px；隐藏滚动条可以，但用边缘溢出提示让用户知道还能滑动。
-- Header 只展示 connected / reconnecting / syncing / closed 等已知状态，不猜“命令忙闲”。
-- Reset 复用现有 `.modal-overlay/.modal-box/.modal-btn`，默认焦点在 Cancel，明确提示终止任务。
-- 点击返回 detach；取消 Reset 不清屏、不影响输入、不退出页面。不新增 Clear。
-- 只自动跟随正在底部的视图，用户查看 scrollback 时不每帧强制跳到底部。
+- No longer keep the main textarea of "type a whole command then tap send". xterm's input area is the primary input source.
+- At the bottom there is only the shortcut bar; when width is insufficient it scrolls horizontally, instead of compressing buttons into hard-to-tap small icons.
+- Touch targets at least about 44×44 CSS px; hiding the scrollbar is fine, but use an edge overflow hint so users know they can still swipe.
+- The Header only shows known states such as connected / reconnecting / syncing / closed, and does not guess "command busy/idle".
+- Reset reuses the existing `.modal-overlay/.modal-box/.modal-btn`, with default focus on Cancel, clearly warning that tasks will be terminated.
+- Tapping back detaches; canceling Reset does not clear the screen, affect input, or leave the page. No Clear is added.
+- Only auto-follow a view that is at the bottom; when the user is viewing scrollback, do not force a jump to the bottom every frame.
 
-### 11.2 快捷键第一版
+### 11.2 Shortcuts, first version
 
-| 按钮 | 行为 |
+| Button | Behavior |
 |---|---|
-| Esc | 发送 `0x1b`，不是退出网页 |
-| Tab | 发送 `0x09`，补全由 Shell/程序处理 |
-| ← ↓ ↑ → | 根据 xterm 的 applicationCursorKeysMode 发送 CSI 或 SS3 序列 |
-| Ctrl | 打开紧凑组合键面板：Ctrl+C/D/Z/L/A/E 等；明确发送完整组合 |
-| Alt | 提供经过测试的 Alt+B/Alt+F 等完整组合，不先实现任意“下一键修改” |
-| Paste | 用户手势下读剪贴板，交给 `terminal.paste`，走同一有序输入通道 |
-| 更多 | Home/End/PageUp/PageDown、显示键盘等低频操作 |
+| Esc | Sends `0x1b`, does not exit the web page |
+| Tab | Sends `0x09`, completion handled by the Shell/program |
+| ← ↓ ↑ → | Send CSI or SS3 sequences according to xterm's applicationCursorKeysMode |
+| Ctrl | Opens a compact combination panel: Ctrl+C/D/Z/L/A/E etc.; explicitly sends the full combination |
+| Alt | Provides tested full combinations such as Alt+B/Alt+F, without first implementing an arbitrary "modify next key" |
+| Paste | Reads the clipboard under a user gesture, hands it to `terminal.paste`, through the same ordered input channel |
+| More | Low-frequency operations such as Home/End/PageUp/PageDown, show keyboard |
 
-例如 Up 在普通模式是 `ESC [ A`，应用光标模式是 `ESC O A`。不能所有箭头都硬编码为
-普通 CSI；也不能用浏览器合成 KeyboardEvent 假装所有软键盘行为。[R8]
+For example, Up is `ESC [ A` in normal mode and `ESC O A` in application cursor mode. Not all arrows can be hardcoded as
+normal CSI; nor can browser-synthesized KeyboardEvents be used to pretend all soft keyboard behavior.[R8]
 
-使用公开 `terminal.input(data, true)` 为快捷键注入输入，避免同时直接发 WS 又触发 onData。
-第一版 Ctrl 面板选择完整组合，是为了避免把终端自动回复或中文 composition 错当成
-“Ctrl 后的下一个字符”。后续若要做粘滞 Ctrl/Alt，需单独验证输入来源和清除状态。
+Use the public `terminal.input(data, true)` to inject input for shortcuts, avoiding both sending directly over WS and triggering onData.
+The first version's Ctrl panel selects full combinations to avoid mistaking terminal auto-replies or Chinese composition for
+"the next character after Ctrl". If sticky Ctrl/Alt is added later, the input source and clearing state must be verified separately.
 
-手机快捷键点击不能导致软键盘收起；pointerdown 的焦点处理只作用于快捷键，不全局
-拦截终端的触摸、选区和滚动。所有入口共用一条输入队列。
+Tapping phone shortcuts must not dismiss the soft keyboard; pointerdown focus handling applies only to shortcuts and does not globally
+intercept terminal touch, selection, and scrolling. All entry points share one input queue.
 
-### 11.3 中文、粘贴、选择与虚拟键盘
+### 11.3 Chinese, paste, selection, and virtual keyboard
 
-- 使用 xterm 原有 IME 流程；composition 期间不额外发送 Enter、不把拼音逐键当最终中文。
-- `terminal.paste` 负责 bracketed paste 配合；应用未启用该模式时，多行粘贴有执行风险，
-  UI 要显示确认，不以“支持 bracketed paste”代替安全提示。
-- 剪贴板 API 失败时提供用户显式粘贴的备用面板，不在后台轮询剪贴板。
-- 大粘贴按 byte 大小分块且不能与其他输入乱序交叉；超限拒绝，不丢尾部或漏掉粘贴结束序列。
-- 复制仅来自用户选区操作；长按、拖动选择与终端鼠标模式在手机上必须分别测试。
-- 外接键盘 Ctrl+C 与复制的冲突不能按桌面浏览器惯例猜测，要明确区分用户复制动作和终端输入。
+- Use xterm's existing IME flow; during composition do not send an extra Enter, and do not treat pinyin keystrokes as final Chinese.
+- `terminal.paste` handles bracketed paste cooperation; when the application has not enabled that mode, multi-line paste carries execution risk,
+  so the UI must show a confirmation, rather than substituting "supports bracketed paste" for a safety prompt.
+- When the clipboard API fails, provide a fallback panel for explicit user paste; do not poll the clipboard in the background.
+- Large pastes are chunked by byte size and must not interleave out of order with other input; reject when over limit, without dropping the tail or missing the paste end sequence.
+- Copy comes only from user selection actions; long press, drag selection, and terminal mouse mode must each be tested on phones.
+- The conflict between external keyboard Ctrl+C and copy cannot be guessed by desktop browser convention; explicitly distinguish user copy actions from terminal input.
 
-main 已在 `web/js/ws.js` 中处理 visualViewport、键盘高度及移动端 body 尺寸。终端不能再
-引入一套互相叠加的全局 viewport 改写。复用现有结果或抽出小的共享接口，避免影响聊天页。
+main already handles visualViewport, keyboard height, and mobile body size in `web/js/ws.js`. The terminal must not
+introduce another set of stacking global viewport rewrites. Reuse the existing results or extract a small shared interface to avoid affecting the chat page.
 
-容器尺寸来源需要考虑 visualViewport.height、offsetTop、横竖屏和安全区。Tauri/iOS、
-Safari、Android 的 resize/overlay 行为分别验收；不能同时减去两次键盘高度。[R15]
+Container size sources must consider visualViewport.height, offsetTop, portrait/landscape, and safe areas. Tauri/iOS,
+Safari, and Android resize/overlay behaviors are accepted separately; the keyboard height must not be subtracted twice.[R15]
 
-### 11.4 有哪些现成项目值得借鉴
+### 11.4 Which existing projects are worth borrowing from
 
-这里的比较依据是官方文档和源码，不是本轮已经在真机上体验后的排名。
+The comparison here is based on official documentation and source code, not a ranking after hands-on real-device use in this round.
 
-| 项目 | 查到的可借鉴部分 | 为什么不直接整个嵌入 |
+| Project | Borrowable parts found | Why not embed it wholesale |
 |---|---|---|
-| ttyd | xterm、双向流、resize、pause/resume、onBinary | 自带服务端和二进制 WS 协议，与现有 AWS JSON 通道不同 |
-| WeTTY | xterm + WebSocket 的完整 Web 终端组织方式 | 自带服务端/会话体系，无法替代本项目 Bridge 的设备和鉴权模型 |
-| WebSSH2 | 响应式终端、菜单、viewport/resize、SSH 集成 | 客户端移动端文档仍列有屏幕快捷键、剪贴板等 TODO，不能当作手机体验已全部解决 |
-| Termux | Android 额外按键、Ctrl/Alt/方向键、单/双行布局 | 原生 Android 应用，不是可直接嵌入的 Web 组件 |
-| Blink Shell | iOS SmartKeys、外接键盘、字号手势、移动连接体验 | 原生 iOS 产品；其文档涉及 HTerm/Mosh，不是 xterm 插件 |
+| ttyd | xterm, bidirectional stream, resize, pause/resume, onBinary | Ships its own server and binary WS protocol, different from the existing AWS JSON channel |
+| WeTTY | Full Web terminal organization with xterm + WebSocket | Ships its own server/session system, cannot replace this project's Bridge device and auth model |
+| WebSSH2 | Responsive terminal, menus, viewport/resize, SSH integration | Client mobile docs still list on-screen shortcuts, clipboard, etc. as TODO; cannot be taken as having solved the phone experience |
+| Termux | Android extra keys, Ctrl/Alt/arrow keys, single/double-row layout | Native Android app, not a directly embeddable Web component |
+| Blink Shell | iOS SmartKeys, external keyboard, font-size gestures, mobile connection experience | Native iOS product; its docs involve HTerm/Mosh, not an xterm plugin |
 
-推荐组合：**xterm.js 作终端内核；ttyd 借鉴流控；Termux/Blink 借鉴快捷键 UX；本项目自己
-实现薄的移动端工具条和协议适配。** 没有证据表明一个现成 addon 可以包办所有手机问题。
+Recommended combination: **xterm.js as the terminal core; borrow flow control from ttyd; borrow shortcut UX from Termux/Blink; this project
+implements its own thin mobile toolbar and protocol adapter.** There is no evidence that one existing addon can handle all phone issues.
 
-引用或复制实现前单独核对许可证。调研时 ttyd/WeTTY/WebSSH2 仓库标注 MIT，Blink 标注
-GPL-3.0；这里只借鉴交互原则，不把不同许可的源码直接拷入项目。Termux 以实际许可证
-文件为准，不依据 GitHub 元数据的 NOASSERTION 推断可随意复制。[R9–R14]
+Check licenses separately before citing or copying implementations. At research time the ttyd/WeTTY/WebSSH2 repositories were marked MIT and Blink
+GPL-3.0; here only interaction principles are borrowed, and source code under different licenses is not copied directly into the project. For Termux, the actual license
+file prevails; do not infer free copying from GitHub metadata's NOASSERTION.[R9–R14]
 
-## 12. 安全边界
+## 12. Security Boundaries
 
-1. PTY 和 Shell 以当前用户权限运行，不提升为 root/管理员。
-2. cwd 限定不等于文件系统隔离；拥有终端权限的用户可以执行其系统账号允许的命令。
-3. terminal 功能默认关闭，由 Bridge 用户显式启用；配置更新不能把开关丢失或擅自打开。
-4. 每次路由验证账号、设备、项目绑定和 attachment；随机 ID 不能代替授权。
-5. 不记录输入 payload，不把输入、密码或终端数据加入聊天 JSONL、DDB、S3 或错误日志。
-6. 输出和快照默认仅在有界内存中；它们也可能含秘密，不能当作无敏感信息的日志。
-7. 审核 API Gateway/Lambda 日志设置，禁止请求正文追踪；指标只含长度、序号、耗时、错误码。
-8. WSS 是传输加密，不是端到端加密；当前云端转发仍可接触明文，必须明确这一信任边界。
-9. 不启用未经审核的 OSC 剪贴板访问、自动打开链接或远程 URL 处理；链接只在用户操作下
-   按允许协议处理。终端输出不能拼入 HTML。
-10. 依赖在构建时固定并打包，不为终端页面动态加载未知第三方脚本。XSS 会扩大为终端权限风险。
+1. PTY and Shell run with the current user's privileges, not elevated to root/administrator.
+2. Restricting cwd is not filesystem isolation; a user with terminal permission can run any command their system account allows.
+3. The terminal feature is off by default and explicitly enabled by the Bridge user; config updates must not lose the switch or turn it on unilaterally.
+4. Every route verifies account, device, project binding, and attachment; random IDs cannot replace authorization.
+5. Do not log input payloads; do not add input, passwords, or terminal data to chat JSONL, DDB, S3, or error logs.
+6. Output and snapshots are by default only in bounded memory; they may also contain secrets and cannot be treated as logs without sensitive information.
+7. Audit API Gateway/Lambda log settings and forbid request body tracing; metrics contain only length, sequence numbers, duration, and error codes.
+8. WSS is transport encryption, not end-to-end encryption; the current cloud forwarding can still see plaintext, and this trust boundary must be stated clearly.
+9. Do not enable unaudited OSC clipboard access, automatic link opening, or remote URL handling; links are handled only on user action
+   according to allowed protocols. Terminal output must not be concatenated into HTML.
+10. Dependencies are pinned and bundled at build time; do not dynamically load unknown third-party scripts for the terminal page. XSS would escalate into a terminal privilege risk.
 
-PTY 的“密码不回显”只能避免画面显示，不能让网页 JS 或云端天然看不到密码输入。[R18]
+A PTY's "passwords are not echoed" only keeps them off the screen; it does not make the web page JS or cloud inherently unable to see password input.[R18]
 
-## 13. 代码组织与具体修改路径
+## 13. Code Organization and Concrete Change Paths
 
-下列均为拟新增/修改文件，不代表本分支已有实现。单文件按职责拆分，避免再堆进大型 ws.js。
+The following are all proposed new/modified files and do not mean this branch already has an implementation. Single files are split by responsibility to avoid piling more into the large ws.js.
 
-| 文件 | 职责 |
+| File | Responsibility |
 |---|---|
-| `bridge/terminal/index.mjs` | terminal op 分发、能力、项目会话注册表 |
-| `bridge/terminal/pty-session.mjs` | PTY 启动、环境、进程生命周期、尺寸 |
-| `bridge/terminal/protocol.mjs` | 白名单、编码、大小、身份、错误 |
-| `bridge/terminal/stream.mjs` | seq、clientSeq、ACK、去重、输出队列、流控 |
-| `bridge/terminal/recovery.mjs` | 有界 journal、同步事务、快照和镜像；D1 后完善 |
-| `bridge/ws.mjs` | 懒加载分发、断线/退出挂钩；不用通用断线队列存终端 bytes |
-| `bridge/config.mjs`、`bridge/bridge.mjs` | 显式启用、配置保留、活跃 PTY 升级保护 |
-| `bridge/package.json`、lockfile | PTY 与经过验证的恢复依赖 |
-| `server/src/project/terminal_ws.py` | server 请求/响应校验与唯一目标路由 |
-| `server/src/bridge_ws.py` | 新 action 的薄分发入口 |
-| `web/js/terminal/page.js` | 页面壳、状态、Reset modal，不放传输 |
-| `web/js/terminal/controller.js` | xterm 生命周期、会话状态、attach 和恢复 |
-| `web/js/terminal/transport.js` | 共享 WS 上的终端编解码、ACK、序号和请求 |
-| `web/js/terminal/shortcuts.js` | 手机快捷键、模式相关编码、粘贴 |
-| `web/js/terminal/viewport.js` | 容器测量，与现有 viewport 逻辑协调 |
-| `web/css/terminal.css` | 布局、工具条、主题；复用公共 modal |
-| `web/js/app.js`、`state.js`、`entry-index.js`、`ws.js` | 项目入口、懒加载、页面状态、路由和重连挂钩 |
+| `bridge/terminal/index.mjs` | terminal op dispatch, capabilities, project session registry |
+| `bridge/terminal/pty-session.mjs` | PTY startup, environment, process lifecycle, size |
+| `bridge/terminal/protocol.mjs` | Whitelist, encoding, size, identity, errors |
+| `bridge/terminal/stream.mjs` | seq, clientSeq, ACK, dedup, output queue, flow control |
+| `bridge/terminal/recovery.mjs` | Bounded journal, sync transactions, snapshots, and mirror; completed after D1 |
+| `bridge/ws.mjs` | Lazy-loaded dispatch, disconnect/exit hooks; do not store terminal bytes in the generic disconnect queue |
+| `bridge/config.mjs`, `bridge/bridge.mjs` | Explicit enablement, config preservation, upgrade protection for active PTYs |
+| `bridge/package.json`, lockfile | PTY and verified recovery dependencies |
+| `server/src/project/terminal_ws.py` | Server request/response validation and unique target routing |
+| `server/src/bridge_ws.py` | Thin dispatch entry for the new action |
+| `web/js/terminal/page.js` | Page shell, state, Reset modal; no transport |
+| `web/js/terminal/controller.js` | xterm lifecycle, session state, attach, and recovery |
+| `web/js/terminal/transport.js` | Terminal encode/decode, ACK, sequence numbers, and requests on the shared WS |
+| `web/js/terminal/shortcuts.js` | Phone shortcuts, mode-dependent encoding, paste |
+| `web/js/terminal/viewport.js` | Container measurement, coordinated with existing viewport logic |
+| `web/css/terminal.css` | Layout, toolbar, theme; reuses the shared modal |
+| `web/js/app.js`, `state.js`, `entry-index.js`, `ws.js` | Project entry, lazy loading, page state, routing, and reconnect hooks |
 
-终端库只在打开终端时加载。可以先沿用现有 WS 模块加载入口，但不要为优化终端顺手
-大规模重写聊天模块；是否抽离公共连接管理器由性能数据另行决定。
+The terminal library is loaded only when the terminal is opened. The existing WS module loading entry can be used initially, but do not casually
+rewrite the chat modules at scale while optimizing the terminal; whether to extract a shared connection manager is decided separately based on performance data.
 
-## 14. 延迟、吞吐和验收指标
+## 14. Latency, Throughput, and Acceptance Metrics
 
-旧方案在此前本机实验中，关闭 Python 缓冲后，“程序生成日志 → 同机 WS 客户端收到”的
-中位延迟约 285–303 ms。这不是当前版本 SLA，不包含浏览器绘制，也不是按键回显延迟。
+In earlier local experiments with the old approach, with Python buffering disabled, the "program generates log → same-machine WS client receives"
+median latency was about 285–303 ms. This is not the current version's SLA, does not include browser painting, and is not keystroke echo latency.
 
-完整终端的按键回显需要来回两程。由上述实验推断，现有 Lambda 转发路径可能成为明显
-瓶颈；不能等全部 UI 实现完才验证，也不能承诺换 xterm 就消除网络延迟。
+Keystroke echo in a full terminal requires a round trip. Inferring from the experiment above, the existing Lambda forwarding path may become a significant
+bottleneck; this cannot wait until the whole UI is implemented to verify, nor can switching to xterm be promised to eliminate network latency.
 
-P0 必须区分并记录：
+P0 must distinguish and record:
 
-- 输入产生、Bridge 收到、PTY 写入、PTY 输出、客户端收到、xterm 应用完成。
-- 只用同一时钟/往返测量统计跨机延迟，不直接相减未经同步的两台机器时间。
-- 小字节输入 p50/p95/p99、粘贴吞吐、大日志持续吞吐、帧数、重试、队列水位和内存。
-- 测试本地测试链路与当前云端链路，区分 PTY/渲染开销和网络/转发开销。
+- Input generated, Bridge received, PTY written, PTY output, client received, xterm apply complete.
+- Measure cross-machine latency only with the same clock/round trip; do not directly subtract times from two unsynchronized machines.
+- Small-byte input p50/p95/p99, paste throughput, sustained large-log throughput, frame count, retries, queue watermarks, and memory.
+- Test the local test link and the current cloud link, separating PTY/rendering overhead from network/forwarding overhead.
 
-暂定产品目标是正常网络下按键到回显 p50 ≤150 ms、p95 ≤300 ms；这是目标而非实测结果。
-若当前链路持续明显超过目标，先评审是否接受或改造 relay，不以功能能运行就宣告体验达标。
-高频输入持续接近/超过 500 ms 是明确的风险信号，需要优先处理。
+The tentative product target is keystroke-to-echo p50 ≤150 ms and p95 ≤300 ms under normal networks; this is a target, not a measured result.
+If the current link persistently and clearly exceeds the target, first review whether to accept it or rework the relay, rather than declaring the experience acceptable just because it works.
+High-frequency input persistently near/over 500 ms is a clear risk signal and needs priority handling.
 
-如果必须改传输，可评估持久连接 relay，或受严格鉴权约束的本地直连。第一阶段不决定
-替换 AWS 基础设施；任何直连都要重新设计 TLS、Origin、权限和浏览器访问限制，不能裸露端口。
+If the transport must change, a persistent-connection relay could be evaluated, or a local direct connection under strict authentication. The first phase does not decide
+to replace AWS infrastructure; any direct connection must redesign TLS, Origin, permissions, and browser access restrictions, and must not expose bare ports.
 
-## 15. 实施阶段与完成条件
+## 15. Implementation Phases and Completion Criteria
 
-| 阶段 | 工作 | 完成条件 / 阻塞条件 |
+| Phase | Work | Completion criteria / blocking conditions |
 |---|---|---|
-| P0：关键验证 | 固定依赖；字节链路；手机 IME；按键延迟；恢复边界与查询响应验证 | 产出可复现记录，评审 D1/D2/D3；不能以演示截图代替 |
-| P1：最小纵向链路 | Bridge PTY、API terminal route、xterm 页面、open/attach/input/output/resize/exit | 安装向导、Vim、Tab、Esc、Ctrl+C 在 macOS/Linux 正常；输入不手工回显 |
-| P2：可靠性 | 双向排序、去重、ACK、流控、断线、接管、稳定恢复 | 故障注入通过；完整刷新恢复需通过 D1，否则功能明确不可用且不得冒充 |
-| P3：移动端 | 工具条、Ctrl/Alt 面板、粘贴、选区、软键盘、旋转 | iPhone Safari/WKWebView、Android Chrome/WebView 实机通过 |
-| P4：发布 | 原生包安装、升级延迟、协议能力探测、回滚、旧客户端过渡 | 新旧客户端和其他功能不受破坏，具备明确回滚操作 |
+| P0: key validation | Pin dependencies; byte path; phone IME; keystroke latency; recovery boundary and query response validation | Produce reproducible records, review D1/D2/D3; demo screenshots do not substitute |
+| P1: minimal vertical slice | Bridge PTY, API terminal route, xterm page, open/attach/input/output/resize/exit | Install wizard, Vim, Tab, Esc, Ctrl+C work on macOS/Linux; input not manually echoed |
+| P2: reliability | Bidirectional ordering, dedup, ACK, flow control, disconnect, takeover, stable recovery | Fault injection passes; full refresh recovery must pass D1, otherwise the feature is clearly unavailable and must not pretend otherwise |
+| P3: mobile | Toolbar, Ctrl/Alt panel, paste, selection, soft keyboard, rotation | Passes on real iPhone Safari/WKWebView and Android Chrome/WebView devices |
+| P4: release | Native package install, upgrade deferral, protocol capability probing, rollback, old-client transition | New and old clients and other features are not broken, with explicit rollback steps |
 
-跨阶段约束：P1 的隔离原型可以使用全量 epoch journal 和显式上限；不能把它作为已解决
-长期恢复的生产版本。发布前必须关闭所有阻塞性问题或明确缩小目标并重新评审。
+Cross-phase constraint: the P1 isolated prototype may use a full epoch journal and explicit limits; it cannot be treated as a production version that has solved
+long-term recovery. Before release, all blocking issues must be closed, or the goal explicitly narrowed and re-reviewed.
 
-### 15.1 三个必须先验证的决策门槛
+### 15.1 Three decision gates that must be validated first
 
-| 门槛 | 问题 | 不通过时怎么处理 |
+| Gate | Question | What to do if it fails |
 |---|---|---|
-| D1 恢复正确性 | serialize、解析边界、alternate screen、自动查询响应是否可靠 | 不承诺完整恢复；先解决安全检查点/唯一响应者设计，不读取私有字段凑功能 |
-| D2 按键延迟 | 当前 AWS 链路是否达到交互目标 | 分离 relay 性能改造评审，不归因给 xterm，不继续盲调发送间隔 |
-| D3 手机输入 | 中文、软键盘、快捷键和选区能否在目标容器稳定使用 | 调整工具条/输入方案，不能仅凭桌面 Chrome 测试发布手机能力 |
+| D1 recovery correctness | Whether serialize, parse boundaries, alternate screen, and automatic query responses are reliable | Do not promise complete recovery; first solve the safe checkpoint/single responder design, do not read private fields to cobble the feature together |
+| D2 keystroke latency | Whether the current AWS link meets the interaction target | Review a separate relay performance rework; do not blame xterm, do not keep blindly tuning send intervals |
+| D3 phone input | Whether Chinese, soft keyboard, shortcuts, and selection are stable in target containers | Adjust the toolbar/input approach; do not release phone capability based only on desktop Chrome tests |
 
-### 15.2 当前实现与验证
+### 15.2 Current implementation and validation
 
-项目共享终端已接入正式 App，当前实现与生命周期见 `docs/terminal-direct-integration.md`。
-早期独立 POC 页面、本地测试监听器和专用 Bridge 启动脚本已移除，不再作为使用或构建入口。
-正式终端的协议、流控、恢复和平台行为仍由 `test/bridge/`、`test/frontend/` 与
-`test/server/` 中的自动化测试覆盖。
+The project shared terminal is integrated into the official App; for the current implementation and lifecycle see `docs/terminal-direct-integration.md`.
+The early standalone POC page, local test listener, and dedicated Bridge startup script have been removed and are no longer usage or build entry points.
+The official terminal's protocol, flow control, recovery, and platform behavior are still covered by automated tests in `test/bridge/`, `test/frontend/`, and
+`test/server/`.
 
-### 15.3 延迟优化验证
+### 15.3 Latency optimization validation
 
-后续完整记录见 `docs/terminal-latency.md`。已去掉固定输出等待，并把 ACK 移出画面排序流；
-实测 Bridge 输入到 PTY 回显发出中位约 0.7ms。当前 128MB 配置的完整回显中位约 604ms；
-512/1024MB 短时对照最快观测约 446ms，结束后已恢复 128MB。不是所有延迟都来自人为等待，
-不能把原生 WS Ping 的约 187ms 与完整远程终端回显混为一谈。D2 原目标仍未通过。
+For the subsequent full record see `docs/terminal-latency.md`. The fixed output wait has been removed and ACK moved out of the screen ordering stream;
+measured Bridge input to PTY echo emission median is about 0.7ms. With the current 128MB configuration, full echo median is about 604ms;
+in a short 512/1024MB comparison the fastest observation was about 446ms, and it was restored to 128MB afterward. Not all latency comes from artificial waits,
+and the native WS Ping of about 187ms must not be conflated with full remote terminal echo. The original D2 target has still not passed.
 
-## 16. 测试矩阵
+## 16. Test Matrix
 
-### 16.1 Bridge / 协议自动化
+### 16.1 Bridge / protocol automation
 
-- PTY 内 stdin/stdout 确为终端；登录 Shell、cwd、pyenv/nvm 路径、配置启用/关闭。
-- 普通输出、无换行提示、密码不回显、Ctrl+C、EOF、Ctrl+Z、foreground job、正常 exit。
-- `encoding: null` 下 bytes 精确传递；UTF-8 多字节、ESC、NUL、onBinary 数据不二次编码。
-- 重复/乱序/丢失 input、resize、ACK；旧 epoch/attachment、不同 payload 同序号。
-- open/reset/close 重试只执行一次；Bridge 重启后未确认输入不自动恢复。
-- 包含大量 ANSI、Unicode 和最长允许元数据时，最终 JSON 仍小于预算。
-- 高低水位、多重暂停原因、慢客户端、慢镜像、离线、快照期间输出洪峰，有界内存。
-- Reset、关闭页面、客户端断线、Bridge 退出和更新分别验证生命周期，不混为一个操作。
+- stdin/stdout inside the PTY are indeed terminals; login Shell, cwd, pyenv/nvm paths, config enabled/disabled.
+- Ordinary output, prompts without newline, password not echoed, Ctrl+C, EOF, Ctrl+Z, foreground job, normal exit.
+- Bytes pass through exactly under `encoding: null`; UTF-8 multibyte, ESC, NUL, onBinary data not double-encoded.
+- Duplicate/out-of-order/lost input, resize, ACK; old epoch/attachment, same sequence number with different payload.
+- open/reset/close retries execute only once; unacknowledged input is not automatically recovered after a Bridge restart.
+- With heavy ANSI, Unicode, and the longest allowed metadata, the final JSON is still under budget.
+- High/low watermarks, multiple pause reasons, slow client, slow mirror, offline, output flood during snapshot, bounded memory.
+- Reset, page close, client disconnect, Bridge exit, and update each verify lifecycle separately, not conflated into one operation.
 
-### 16.2 Server 自动化
+### 16.2 Server automation
 
-- action/op/版本/字段白名单、Base64 严格解码、数字范围和大小限制。
-- 跨账号、伪造角色、伪造 replyConnectionId、错误设备和项目，全部拒绝。
-- 单设备多活动连接不广播；Gone 连接清理；任何失败都有可处理的错误结果。
-- 验证不记录输入输出正文；现有 Git/Files/聊天路由回归。
+- action/op/version/field whitelist, strict Base64 decoding, numeric ranges, and size limits.
+- Cross-account, forged role, forged replyConnectionId, wrong device and project, all rejected.
+- No broadcast with multiple active connections for one device; Gone connection cleanup; every failure has a handleable error result.
+- Verify input/output content is not logged; regression of existing Git/Files/chat routes.
 
-### 16.3 屏幕与恢复
+### 16.3 Screen and recovery
 
-- 对同一事件日志做“持续运行”与“快照+恢复”对比，比较屏幕单元格、属性、光标和模式。
-- Vim 进入/退出备用屏幕、分页器、进度条覆盖、滚动区、终端 resize 历史。
-- 在 UTF-8、CSI、OSC、DCS 的每个关键字节位置切片/断线，不只测试整行输出。
-- 快照 begin/end 乱序、缺块、重复块、错误 hash、尺寸变化、快照后继续输出。
-- DA/DSR 等查询在 live、断线、重放和镜像中只产生正确的一次响应。
+- For the same event log, compare "continuous run" vs "snapshot + recovery", comparing screen cells, attributes, cursor, and modes.
+- Vim entering/leaving the alternate screen, pagers, progress bar overwrite, scroll regions, terminal resize history.
+- Slice/disconnect at every key byte position of UTF-8, CSI, OSC, DCS, not just testing whole-line output.
+- Snapshot begin/end out of order, missing chunks, duplicate chunks, wrong hash, size changes, output continuing after snapshot.
+- DA/DSR and similar queries produce exactly one correct response across live, disconnect, replay, and mirror.
 
-### 16.4 手机实机清单
+### 16.4 Real phone checklist
 
-- 至少 320/360 CSS px 的窄屏布局；按钮可点，不挡最后一行，横向键条可发现。
-- iOS Safari 与 Tauri WKWebView；Android Chrome 与 Tauri WebView 分别测试。
-- 中文拼音、候选确认、删除、emoji、多行粘贴、外接键盘。
-- 快捷键不收键盘；收起/弹出键盘、横竖屏、地址栏变化和安全区只补偿一次。
-- Vim 插入/普通模式切换，Ctrl+C 不被当复制，箭头模式正确；长按选择与滚动不冲突。
-- 后台 30 秒、后台数分钟、网络切换、整页刷新、另一设备接管；不重复输入，不偷偷 Reset。
+- Narrow layouts of at least 320/360 CSS px; buttons tappable, do not cover the last line, horizontal key bar discoverable.
+- iOS Safari and Tauri WKWebView; Android Chrome and Tauri WebView tested separately.
+- Chinese pinyin, candidate confirmation, delete, emoji, multi-line paste, external keyboard.
+- Shortcuts do not dismiss the keyboard; keyboard dismiss/show, portrait/landscape, address bar changes, and safe areas compensated only once.
+- Vim insert/normal mode switching, Ctrl+C not treated as copy, arrow mode correct; long-press selection does not conflict with scrolling.
+- 30 seconds in background, several minutes in background, network switch, full page refresh, takeover by another device; no duplicate input, no silent Reset.
 
-文档中的手机项目参考不能替代这份验收清单。本轮未运行这些新方案的实机测试。
+The phone project references in this document cannot replace this acceptance checklist. Real-device tests of this new approach were not run in this round.
 
-## 17. 发布、兼容与回滚
+## 17. Release, Compatibility, and Rollback
 
-1. 当前基线仍可在旧 checkpoint 分支找回；`xterm` 从 main 独立演进。
-2. API 先发布新 terminal action，保留其他路由兼容性；Bridge 再发布，最后开放 Web 入口。
-3. 如果线上仍有旧 `terminal_*` 客户端，必须保留临时旧路由适配或安排明确迁移窗口。
-   main 源码不等于线上版本，不能部署时无意删除旧接口。
-4. 新 UI probe 未获得 PTY 能力时显示升级/启用提示，不向旧 Bridge 发送新输入协议。
-5. Bridge 包必须带正确依赖和 lockfile；验证实际安装后的 native addon，而非只复制 mjs。
-6. 有活跃 PTY 时推迟自动安装/重启；显式更新要说明会话会终止。
-7. 回滚先关闭新入口，再按已验证程序回滚服务/Bridge；不能对活跃 PTY 默默换实现。
-8. 当前本机已安装的旧 Bridge 不因切换 Git 分支而改变；本轮没有更新它。
+1. The current baseline can still be recovered from the old checkpoint branch; `xterm` evolves independently from main.
+2. The API releases the new terminal action first, keeping other routes compatible; then the Bridge is released, and finally the Web entry is opened.
+3. If old `terminal_*` clients still exist in production, a temporary old-route adapter must be kept or an explicit migration window arranged.
+   main source is not the production version; old interfaces must not be unintentionally removed during deployment.
+4. When the new UI probe does not get PTY capability, show an upgrade/enable prompt, and do not send the new input protocol to an old Bridge.
+5. The Bridge package must carry the correct dependencies and lockfile; verify the native addon after actual installation, not just copying mjs.
+6. Defer automatic install/restart while active PTYs exist; explicit updates must state that sessions will be terminated.
+7. Rollback first closes the new entry, then rolls back the service/Bridge by the verified procedure; do not silently swap implementations under active PTYs.
+8. The old Bridge currently installed locally is not changed by switching Git branches; this round did not update it.
 
-本地与云端最小闭环已按后续确认实施，记录见 §15.2–15.3。其余部分仍先做 P0，依据结果更新本文件，
-再冻结协议与进入 P1；不是先写完所有模块，最后才发现手机或恢复机制不成立。
+The local and cloud minimal closed loop has been implemented per subsequent confirmation, recorded in §15.2–15.3. The rest still does P0 first, updates this file based on the results,
+and then freezes the protocol and enters P1; not writing all modules first and only at the end discovering that phone or recovery mechanisms do not hold.
 
-## 18. 调研依据
+## 18. Research Basis
 
-调研时间为 2026-09-15 至 2026-09-16。以下为官方项目、发布包或平台文档；项目 README
-的能力描述不等于本项目已经验证。动态分支内容实施前需再次核对并固定版本。
+Research was conducted from 2026-09-15 to 2026-09-16. The following are official projects, published packages, or platform documentation; capability descriptions in project READMEs
+do not mean this project has verified them. Dynamic branch content must be rechecked and versions pinned before implementation.
 
-- [R1 xterm.js 官方 README](https://github.com/xtermjs/xterm.js)：职责、PTY 接法、浏览器范围、headless/serialize。
-- [R2 Microsoft node-pty](https://github.com/microsoft/node-pty)：平台、读写/resize、原生构建和安全边界。
-- [R3 xterm AttachAddon 源码](https://github.com/xtermjs/xterm.js/blob/master/addons/addon-attach/src/AttachAddon.ts)：裸流 WS 绑定行为。
-- [R4 xterm Flow Control](https://xtermjs.org/docs/guides/flowcontrol/)：异步 write、回调、水位与 WS 流控。
-- [R5 SerializeAddon API](https://github.com/xtermjs/xterm.js/blob/master/addons/addon-serialize/typings/addon-serialize.d.ts)：scrollback、modes、alternate buffer 选项。
-- [R6 AWS WebSocket quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-execution-service-websocket-limits-table.html)：帧/消息、时长、空闲与 integration 限制。
-- [R7 AWS WebSocket binary media](https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-develop-binary-media-types.html)：入站二进制限制和文本编码方式。
-- [R8 xterm 6.0.0 公共 API](https://github.com/xtermjs/xterm.js/blob/6.0.0/typings/xterm.d.ts)：input、paste、onData/onBinary、终端模式。
-- [R9 ttyd](https://github.com/tsl0922/ttyd) 与 [终端适配源码](https://github.com/tsl0922/ttyd/blob/main/html/src/components/terminal/xterm/index.ts)：resize、流控、二进制输入。
-- [R10 WeTTY](https://github.com/butlerx/wetty)：Web 终端组织方式。
-- [R11 WebSSH2](https://github.com/billchurch/webssh2)：响应式客户端和 SSH/WS 架构。
-- [R12 WebSSH2 mobile TODO](https://github.com/billchurch/webssh2_client/blob/main/DOCS/develop/MOBILE-TODO.md)：区分已完成 viewport 工作和待做屏幕按键等功能。
-- [R13 Termux extra-keys 配置源码](https://github.com/termux/termux-app/blob/master/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java)：单/双行额外按键配置。wiki 本轮访问超时，未作为已核验来源。
-- [R14 Blink Shell](https://github.com/blinksh/blink)：iOS SmartKeys、键盘、手势及 HTerm/Mosh 相关说明。
-- [R15 MDN Visual Viewport API](https://developer.mozilla.org/en-US/docs/Web/API/Visual_Viewport_API)：visual viewport 与 offset 等接口。
-- [R16 npm 发布元数据](https://registry.npmjs.org/)：按包名查询 latest，仅用于记录候选版本，不代表兼容性认证。
-- [R17 node-pty 1.1.0 发布包类型](https://unpkg.com/node-pty@1.1.0/typings/node-pty.d.ts)：encoding、write(Buffer)、pause/resume。
-- [R18 xterm Security](https://xtermjs.org/docs/guides/security/)：网页脚本、终端权限、输入和转发的信任边界。
+- [R1 xterm.js official README](https://github.com/xtermjs/xterm.js): responsibilities, PTY integration, browser scope, headless/serialize.
+- [R2 Microsoft node-pty](https://github.com/microsoft/node-pty): platforms, read/write/resize, native build, and security boundaries.
+- [R3 xterm AttachAddon source](https://github.com/xtermjs/xterm.js/blob/master/addons/addon-attach/src/AttachAddon.ts): raw-stream WS binding behavior.
+- [R4 xterm Flow Control](https://xtermjs.org/docs/guides/flowcontrol/): async write, callbacks, watermarks, and WS flow control.
+- [R5 SerializeAddon API](https://github.com/xtermjs/xterm.js/blob/master/addons/addon-serialize/typings/addon-serialize.d.ts): scrollback, modes, alternate buffer options.
+- [R6 AWS WebSocket quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-execution-service-websocket-limits-table.html): frame/message, duration, idle, and integration limits.
+- [R7 AWS WebSocket binary media](https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-develop-binary-media-types.html): inbound binary limits and text encoding approach.
+- [R8 xterm 6.0.0 public API](https://github.com/xtermjs/xterm.js/blob/6.0.0/typings/xterm.d.ts): input, paste, onData/onBinary, terminal modes.
+- [R9 ttyd](https://github.com/tsl0922/ttyd) and [terminal adapter source](https://github.com/tsl0922/ttyd/blob/main/html/src/components/terminal/xterm/index.ts): resize, flow control, binary input.
+- [R10 WeTTY](https://github.com/butlerx/wetty): Web terminal organization.
+- [R11 WebSSH2](https://github.com/billchurch/webssh2): responsive client and SSH/WS architecture.
+- [R12 WebSSH2 mobile TODO](https://github.com/billchurch/webssh2_client/blob/main/DOCS/develop/MOBILE-TODO.md): distinguishes completed viewport work from pending features such as on-screen keys.
+- [R13 Termux extra-keys config source](https://github.com/termux/termux-app/blob/master/termux-shared/src/main/java/com/termux/shared/termux/settings/properties/TermuxPropertyConstants.java): single/double-row extra key configuration. The wiki timed out this round and was not used as a verified source.
+- [R14 Blink Shell](https://github.com/blinksh/blink): iOS SmartKeys, keyboard, gestures, and HTerm/Mosh-related notes.
+- [R15 MDN Visual Viewport API](https://developer.mozilla.org/en-US/docs/Web/API/Visual_Viewport_API): visual viewport and offset interfaces.
+- [R16 npm publish metadata](https://registry.npmjs.org/): latest queried by package name, used only to record candidate versions, not a compatibility certification.
+- [R17 node-pty 1.1.0 published package types](https://unpkg.com/node-pty@1.1.0/typings/node-pty.d.ts): encoding, write(Buffer), pause/resume.
+- [R18 xterm Security](https://xtermjs.org/docs/guides/security/): web page scripts, terminal privileges, and trust boundaries for input and forwarding.
