@@ -11,10 +11,16 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repo = process.env.PACKAGE_GITHUB_REPO || 'zhu-xiaowei/Baton';
 const workflow = 'package.yml';
-const targets = [
-  { label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },
-  { label: 'macOS', artifact: 'Baton-macOS', file: 'Baton.dmg', job: 'macOS notarized DMG' },
-  { label: 'Windows', artifact: 'Baton-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+const releaseTargets = [
+  { platform: 'android', label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },
+  { platform: 'macos', label: 'macOS', artifact: 'Baton-macOS', file: 'Baton.dmg', job: 'macOS notarized DMG' },
+  { platform: 'windows', label: 'Windows', artifact: 'Baton-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+];
+const testTargets = [
+  { platform: 'android', label: 'Android', artifact: 'Baton-test-Android', file: 'Baton.apk', job: 'Android APK' },
+  { platform: 'ios', label: 'iOS', artifact: 'Baton-test-iOS', file: 'Baton.ipa', job: 'iOS unsigned IPA' },
+  { platform: 'macos', label: 'macOS', artifact: 'Baton-test-macOS', file: 'Baton.dmg', job: 'macOS test DMG' },
+  { platform: 'windows', label: 'Windows', artifact: 'Baton-test-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
 ];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -46,10 +52,21 @@ function humanSize(bytes) {
 }
 
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== '--dry-run') || args.length > 1) {
-  die('Usage: node scripts/package-cloud.mjs [--dry-run]');
+const usage = 'Usage: node scripts/package-cloud.mjs [--test] [--platform android|ios|macos|windows|all] [--dry-run]';
+let dryRun = false;
+let testMode = false;
+let platform = 'all';
+for (let index = 0; index < args.length; index++) {
+  const arg = args[index];
+  if (arg === '--dry-run' && !dryRun) dryRun = true;
+  else if (arg === '--test' && !testMode) testMode = true;
+  else if (arg === '--platform' && platform === 'all' && args[index + 1]) platform = args[++index];
+  else die(usage);
 }
-const dryRun = args[0] === '--dry-run';
+if (!['all', 'android', 'ios', 'macos', 'windows'].includes(platform)) die(usage);
+const targets = (testMode ? testTargets : releaseTargets).filter((target) =>
+  platform === 'all' || target.platform === platform);
+if (!targets.length) die(`No release package for ${platform}; use --test for an unsigned iOS IPA`);
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) die(`Invalid PACKAGE_GITHUB_REPO: ${repo}`);
 
 const branch = command('git', ['branch', '--show-current']);
@@ -66,34 +83,40 @@ if (sha !== remoteSha) {
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const tauriVersion = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8')).version;
 if (version !== tauriVersion) die(`package.json version ${version} differs from Tauri version ${tauriVersion}`);
-const destination = path.join(root, 'release', version);
+const destination = testMode
+  ? path.join(root, 'release', 'test', sha.slice(0, 12))
+  : path.join(root, 'release', version);
 
-const availableSecrets = new Set(JSON.parse(gh(['secret', 'list', '--json', 'name'])).map((item) => item.name));
-const neededSecrets = [
-  'ANDROID_KEYSTORE_BASE64',
-  'ANDROID_KEYSTORE_PASSWORD',
-  'ANDROID_KEY_PASSWORD',
-  'MACOS_CERTIFICATE_P12_BASE64',
-  'MACOS_CERTIFICATE_PASSWORD',
-  'APPSTORE_PRIVATE_KEY_BASE64',
-];
-const availableVariables = new Set(JSON.parse(gh(['variable', 'list', '--json', 'name'])).map((item) => item.name));
-const neededVariables = ['APPLE_SIGNING_IDENTITY', 'APPSTORE_KEY_ID', 'APPSTORE_ISSUER_ID'];
-const missingSecrets = neededSecrets.filter((name) => !availableSecrets.has(name));
-const missingVariables = neededVariables.filter((name) => !availableVariables.has(name));
-if (missingSecrets.length) {
-  console.warn(`Missing GitHub Actions secrets: ${missingSecrets.join(', ')}`);
+if (!testMode) {
+  const neededSecrets = [
+    ...(targets.some((target) => target.platform === 'android')
+      ? ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_PASSWORD'] : []),
+    ...(targets.some((target) => target.platform === 'macos')
+      ? ['MACOS_CERTIFICATE_P12_BASE64', 'MACOS_CERTIFICATE_PASSWORD', 'APPSTORE_PRIVATE_KEY_BASE64'] : []),
+  ];
+  const neededVariables = targets.some((target) => target.platform === 'macos')
+    ? ['APPLE_SIGNING_IDENTITY', 'APPSTORE_KEY_ID', 'APPSTORE_ISSUER_ID'] : [];
+  const availableSecrets = new Set(JSON.parse(gh(['secret', 'list', '--json', 'name'])).map((item) => item.name));
+  const availableVariables = new Set(JSON.parse(gh(['variable', 'list', '--json', 'name'])).map((item) => item.name));
+  const missingSecrets = neededSecrets.filter((name) => !availableSecrets.has(name));
+  const missingVariables = neededVariables.filter((name) => !availableVariables.has(name));
+  if (missingSecrets.length) console.warn(`Missing GitHub Actions secrets: ${missingSecrets.join(', ')}`);
+  if (missingVariables.length) console.warn(`Missing GitHub Actions variables: ${missingVariables.join(', ')}`);
+  if (missingSecrets.length || missingVariables.length) {
+    console.warn('Affected platforms will fail; see docs/package.md for setup.');
+  }
 }
-if (missingVariables.length) console.warn(`Missing GitHub Actions variables: ${missingVariables.join(', ')}`);
-if (missingSecrets.length || missingVariables.length) console.warn('Affected platforms will fail; see docs/package.md for setup.');
-console.log(`==> Packaging Baton v${version} from ${repo}@${branch} (${sha.slice(0, 7)})`);
+console.log(`==> Packaging Baton ${testMode ? 'test' : `v${version}`} ${platform} from ${repo}@${branch} (${sha.slice(0, 7)})`);
 if (dryRun) {
   console.log('Dry run: source and version checked; no workflow started.');
   process.exit(0);
 }
 
 const requestId = crypto.randomUUID();
-gh(['workflow', 'run', workflow, '--ref', branch, '-f', `expected_sha=${sha}`, '-f', `request_id=${requestId}`]);
+const dispatch = ['workflow', 'run', workflow, '--ref', branch,
+  '-f', `expected_sha=${sha}`, '-f', `request_id=${requestId}`];
+if (testMode || platform !== 'all') dispatch.push('-f', `mode=${testMode ? 'test' : 'release'}`, '-f', `platform=${platform}`);
+gh(dispatch);
 console.log(`==> Dispatched ${workflow} (${requestId})`);
 
 let run;
@@ -150,6 +173,6 @@ try {
   fs.rmSync(stage, { recursive: true, force: true });
 }
 
-console.log(`==================== SUMMARY (v${version}) ====================`);
+console.log(`==================== SUMMARY (${testMode ? `test ${platform} at ${sha.slice(0, 7)}` : `v${version}`}) ====================`);
 for (const result of results) console.log(`  - ${result}`);
 if (results.some((result) => result.includes('FAILED') || result.includes('download failed'))) process.exitCode = 1;

@@ -12,6 +12,18 @@ on:
         description: Unique invocation ID
         required: true
         type: string
+      mode:
+        description: Package type
+        required: false
+        type: choice
+        default: release
+        options: [release, test]
+      platform:
+        description: Build only this platform
+        required: false
+        type: choice
+        default: all
+        options: [all, android, ios, macos, windows]
 
 permissions:
   contents: read
@@ -25,9 +37,21 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
+      - name: Verify package selection
+        env:
+          MODE: ${{ inputs.mode }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          mode="${MODE:-release}"
+          platform="${PLATFORM:-all}"
+          case "$mode:$platform" in
+            release:all|release:android|release:macos|release:windows|test:all|test:android|test:ios|test:macos|test:windows) ;;
+            *) echo "Unsupported package selection: $mode / $platform" >&2; exit 1 ;;
+          esac
 
   android:
     name: Android APK
+    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'android' }}
     needs: source
     runs-on: ubuntu-24.04
     steps:
@@ -48,6 +72,7 @@ jobs:
       - run: rustup target add aarch64-linux-android
       - run: npm ci
       - name: Restore Android release keystore
+        if: ${{ inputs.mode != 'test' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -55,10 +80,16 @@ jobs:
           umask 077
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/baton.keystore
           test -s src-tauri/gen/android/baton.keystore
-      - name: Build signed Android APK
+      - name: Create disposable Android test key
+        if: ${{ inputs.mode == 'test' }}
+        run: >-
+          keytool -genkeypair -noprompt -keystore src-tauri/gen/android/baton.keystore
+          -storepass baton123 -keypass baton123 -alias baton -keyalg RSA -keysize 2048
+          -validity 1 -dname "CN=Baton CI"
+      - name: Build Android APK
         env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.mode == 'test' && 'baton123' || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.mode == 'test' && 'baton123' || secrets.ANDROID_KEY_PASSWORD }}
         run: |
           test -n "$ANDROID_KEYSTORE_PASSWORD" && test -n "$ANDROID_KEY_PASSWORD"
           npm run build:android -- --ci
@@ -70,13 +101,47 @@ jobs:
           cp "$apk" artifacts/Baton.apk
       - uses: actions/upload-artifact@v6
         with:
-          name: Baton-Android
+          name: ${{ inputs.mode == 'test' && 'Baton-test-Android' || 'Baton-Android' }}
           path: artifacts/Baton.apk
           if-no-files-found: error
           retention-days: 7
 
+  ios:
+    name: iOS unsigned IPA
+    if: ${{ inputs.mode == 'test' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    needs: source
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - run: rustup target add aarch64-apple-ios
+      - run: npm ci
+      - run: mkdir -p src-tauri/gen/apple/assets
+      - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - name: Stage unsigned IPA
+        run: |
+          archive="$(find src-tauri/gen/apple/build -maxdepth 1 -name '*.xcarchive' -type d -print -quit)"
+          test -n "$archive"
+          app="$archive/Products/Applications/Baton.app"
+          test -d "$app"
+          mkdir -p artifacts/Payload
+          cp -R "$app" artifacts/Payload/Baton.app
+          (cd artifacts && zip -qry Baton.ipa Payload)
+          test -s artifacts/Baton.ipa
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Baton-test-iOS
+          path: artifacts/Baton.ipa
+          if-no-files-found: error
+          retention-days: 7
+
   macos:
-    name: macOS notarized DMG
+    name: ${{ inputs.mode == 'test' && 'macOS test DMG' || 'macOS notarized DMG' }}
+    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     needs: source
     runs-on: macos-26
     steps:
@@ -89,6 +154,7 @@ jobs:
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
       - name: Restore macOS signing and notarization keys
+        if: ${{ inputs.mode != 'test' }}
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -113,7 +179,8 @@ jobs:
           security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security list-keychains -d user -s "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
-      - name: Sign, notarize, and stage DMG
+      - name: Sign and notarize DMG
+        if: ${{ inputs.mode != 'test' }}
         env:
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -122,6 +189,11 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
           npm run build:mac
+      - name: Build unsigned macOS test DMG
+        if: ${{ inputs.mode == 'test' }}
+        run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
+      - name: Stage DMG
+        run: |
           dmg="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
           test -n "$dmg" && test -s "$dmg"
           mkdir -p artifacts
@@ -133,13 +205,14 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/baton.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v6
         with:
-          name: Baton-macOS
+          name: ${{ inputs.mode == 'test' && 'Baton-test-macOS' || 'Baton-macOS' }}
           path: artifacts/Baton.dmg
           if-no-files-found: error
           retention-days: 7
 
   windows:
     name: Windows NSIS
+    if: ${{ inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'windows' }}
     needs: source
     runs-on: windows-2022
     steps:
@@ -159,7 +232,7 @@ jobs:
           Copy-Item $installer.FullName artifacts/Baton.exe
       - uses: actions/upload-artifact@v6
         with:
-          name: Baton-Windows
+          name: ${{ inputs.mode == 'test' && 'Baton-test-Windows' || 'Baton-Windows' }}
           path: artifacts/Baton.exe
           if-no-files-found: error
           retention-days: 7

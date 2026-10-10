@@ -33,19 +33,29 @@ const path = require('path');
 const args = process.argv.slice(2);
 const root = process.env.PACKAGE_TEST_DIR;
 if (args[0] === 'secret' && args[1] === 'list') {
+  fs.writeFileSync(path.join(root, 'secret-query'), '1');
   process.stdout.write(JSON.stringify(['ANDROID_KEYSTORE_BASE64','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_PASSWORD','MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPSTORE_PRIVATE_KEY_BASE64'].map(name => ({name}))));
 } else if (args[0] === 'variable' && args[1] === 'list') {
   process.stdout.write(JSON.stringify((process.env.PACKAGE_TEST_MISSING_VARIABLES ? [] : ['APPLE_SIGNING_IDENTITY','APPSTORE_KEY_ID','APPSTORE_ISSUER_ID']).map(name => ({name}))));
 } else if (args[0] === 'workflow' && args[1] === 'run') {
   fs.writeFileSync(path.join(root, 'request-id'), args.find(arg => arg.startsWith('request_id=')).slice(11));
+  fs.writeFileSync(path.join(root, 'dispatch-args'), JSON.stringify(args));
 } else if (args[0] === 'run' && args[1] === 'list') {
   process.stdout.write(JSON.stringify([{databaseId: 42, displayTitle: 'Package ' + fs.readFileSync(path.join(root, 'request-id'), 'utf8'), headSha: process.env.PACKAGE_TEST_SHA}]));
 } else if (args[0] === 'run' && args[1] === 'view') {
-  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:['Android APK','macOS notarized DMG','Windows NSIS'].map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
+  const dispatch = JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8'));
+  const selection = (key, fallback) => (dispatch.find(arg => arg.startsWith(key + '=')) || '').slice(key.length + 1) || fallback;
+  const mode = selection('mode', 'release');
+  const platform = selection('platform', 'all');
+  const available = mode === 'test'
+    ? {android:'Android APK',ios:'iOS unsigned IPA',macos:'macOS test DMG',windows:'Windows NSIS'}
+    : {android:'Android APK',macos:'macOS notarized DMG',windows:'Windows NSIS'};
+  const names = platform === 'all' ? Object.values(available) : [available[platform]].filter(Boolean);
+  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:names.map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
 } else if (args[0] === 'run' && args[1] === 'download') {
   const artifact = args[args.indexOf('--name') + 1];
   const dir = args[args.indexOf('--dir') + 1];
-  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe'}[artifact];
+  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-test-Android':'Baton.apk','Baton-test-iOS':'Baton.ipa','Baton-test-macOS':'Baton.dmg','Baton-test-Windows':'Baton.exe'}[artifact];
   fs.writeFileSync(path.join(dir, file), 'fixture-' + file);
 } else process.exit(2);
 `;
@@ -115,4 +125,52 @@ test('dry run identifies missing GitHub variables separately from secrets', (t) 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /Missing GitHub Actions variables: APPLE_SIGNING_IDENTITY, APPSTORE_KEY_ID, APPSTORE_ISSUER_ID/);
   assert.doesNotMatch(result.stderr, /Missing GitHub Actions secrets:/);
+});
+
+for (const [platform, file] of Object.entries({
+  android: 'Baton.apk', ios: 'Baton.ipa', macos: 'Baton.dmg', windows: 'Baton.exe',
+})) {
+  test(`test mode dispatches and downloads only ${platform}`, (t) => {
+    const root = fixture(t);
+    const result = run(root, {}, ['--test', '--platform', platform]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      fs.readFileSync(path.join(root, 'release/test', sha.slice(0, 12), file), 'utf8'),
+      `fixture-${file}`,
+    );
+    const dispatch = JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8'));
+    assert.ok(dispatch.includes('mode=test'));
+    assert.ok(dispatch.includes(`platform=${platform}`));
+    assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
+    assert.ok(!fs.existsSync(path.join(root, 'release/1.2.3')));
+    assert.match(result.stdout, new RegExp(`SUMMARY \\(test ${platform} at ${sha.slice(0, 7)}\\)`));
+  });
+}
+
+test('individual release build selects one release installer', (t) => {
+  const root = fixture(t);
+  const result = run(root, {}, ['--platform', 'android']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(root, 'release/1.2.3/Baton.apk')));
+  assert.ok(!fs.existsSync(path.join(root, 'release/1.2.3/Baton.dmg')));
+  const dispatch = JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8'));
+  assert.ok(dispatch.includes('mode=release'));
+  assert.ok(dispatch.includes('platform=android'));
+});
+
+test('invalid package selection fails before dispatch', (t) => {
+  const root = fixture(t);
+  const result = run(root, {}, ['--platform', 'ios']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /No release package for ios/);
+  assert.ok(!fs.existsSync(path.join(root, 'request-id')));
+});
+
+test('test dry run does not require release signing secrets', (t) => {
+  const root = fixture(t);
+  const result = run(root, {}, ['--test', '--platform', 'ios', '--dry-run']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Dry run/);
+  assert.ok(!fs.existsSync(path.join(root, 'request-id')));
+  assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
 });

@@ -29,3 +29,28 @@ To set a base64 secret without creating another local copy, run `base64 < existi
 Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA, version, and secret names without starting a build. A real run reports every platform separately. GitHub stores workflow artifacts for seven days; the command copies them into the ignored local `release/` directory. A failed platform makes the command exit nonzero while retaining other downloaded installers.
 
 The Windows NSIS installer is currently unsigned, as it was with the previous local Windows cross compile script. Distributing a signed Windows installer requires a separate Windows code signing certificate.
+
+## Individual test packages without a PR
+
+The same `package.yml` workflow can build one test package from any clean branch
+pushed to GitHub. No pull request or release signing secrets are required:
+
+```sh
+npm run package:test -- --platform android  # disposable-key APK
+npm run package:test -- --platform ios      # unsigned IPA for device testing
+npm run package:test -- --platform macos    # unsigned DMG
+npm run package:test -- --platform windows  # unsigned NSIS installer
+```
+
+Use `--platform all` for all four test packages, or append `--dry-run` to
+check the pushed SHA without dispatching. Downloads go to the ignored
+`release/test/<first 12 characters of SHA>/` directory. The script verifies
+the workflow run's SHA and downloads only the chosen artifact. The same
+choices are available in GitHub Actions' manual **Package** workflow:
+select `mode=test` and the desired `platform`. The `gh workflow run`
+command calls the same workflow dispatch API; it does not need a PR.
+
+Leaving `mode=release` and `platform=all` preserves the existing three
+release installers. iOS release signing and TestFlight remain separate.
+The Android test APK uses a disposable signing key, so it may need the
+previously installed Baton app removed before installation.

@@ -28,7 +28,8 @@
     "release:ios:cloud": "node scripts/release-ios-cloud.mjs",
     "build:mac": "./scripts/release-mac.sh",
     "build:windows": "./scripts/release-windows.sh",
-    "package": "bash scripts/package-all.sh"
+    "package": "bash scripts/package-all.sh",
+    "package:test": "node scripts/package-cloud.mjs --test"
   },
   "dependencies": {
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
