@@ -86,7 +86,9 @@ export class PreviewTunnel {
         }
         this.unlisteners.push(unlisten);
       }
-      this.localOrigin = await invoke('preview_start', { tunnelId: this.tunnelId });
+      this.localOrigin = await invoke('preview_start', {
+        tunnelId: this.tunnelId, preferredPort: this.target.port,
+      });
       if (this.closed) {
         await invoke('preview_stop', { tunnelId: this.tunnelId }).catch(() => {});
         throw new Error('Preview closed');

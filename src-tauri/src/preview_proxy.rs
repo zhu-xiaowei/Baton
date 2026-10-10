@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
 use std::{
   collections::{HashMap, HashSet},
-  io::{Read, Write},
+  io::{ErrorKind, Read, Write},
   net::{Shutdown, TcpListener, TcpStream},
   sync::{atomic::{AtomicBool, Ordering}, Arc, Condvar, Mutex},
   thread,
@@ -15,6 +15,60 @@ const CHUNK_BYTES: usize = 16 * 1024;
 const WINDOW_BYTES: usize = 128 * 1024;
 const MAX_STREAMS: usize = 24;
 const MAX_TUNNELS: usize = 4;
+const MAX_PORT_ATTEMPTS: usize = 1024;
+
+fn local_origin(port: u16) -> String {
+  let host = if cfg!(target_os = "macos") { "localhost" } else { "127.0.0.1" };
+  format!("http://{host}:{port}")
+}
+
+fn bind_local_listeners(preferred_port: u16) -> Result<(Vec<TcpListener>, u16), String> {
+  if preferred_port == 0 { return Err("Invalid preview port".into()); }
+  for port in (preferred_port..=u16::MAX).take(MAX_PORT_ATTEMPTS) {
+    let ipv4 = match TcpListener::bind(("127.0.0.1", port)) {
+      Ok(listener) => listener,
+      Err(error) if error.kind() == ErrorKind::AddrInUse
+        || (port < 1024 && error.kind() == ErrorKind::PermissionDenied) => continue,
+      Err(error) => return Err(format!("Could not bind local preview port {port}: {error}")),
+    };
+    let mut listeners = vec![ipv4];
+    match TcpListener::bind(("::1", port)) {
+      Ok(listener) => listeners.push(listener),
+      Err(error) if error.kind() == ErrorKind::AddrNotAvailable
+        || (port >= 1024 && error.kind() == ErrorKind::PermissionDenied) => {}
+      Err(error) if error.kind() == ErrorKind::AddrInUse
+        || (port < 1024 && error.kind() == ErrorKind::PermissionDenied) => continue,
+      Err(error) => return Err(format!("Could not bind local preview port {port}: {error}")),
+    }
+    return Ok((listeners, port));
+  }
+  Err(format!("No local preview port available starting at {preferred_port}"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::bind_local_listeners;
+  use std::net::{TcpListener, TcpStream};
+
+  #[test]
+  fn uses_requested_port_then_falls_forward_when_occupied() {
+    let occupied = loop {
+      let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+      if listener.local_addr().unwrap().port() < u16::MAX { break listener; }
+    };
+    let requested = occupied.local_addr().unwrap().port();
+    let (fallback_listeners, fallback) = bind_local_listeners(requested).unwrap();
+    assert!(fallback > requested);
+    drop(occupied);
+    let (listeners, available) = bind_local_listeners(requested).unwrap();
+    assert_eq!(available, requested);
+    TcpStream::connect(("127.0.0.1", available)).unwrap();
+    if listeners.len() == 2 {
+      TcpStream::connect(("::1", available)).unwrap();
+    }
+    drop(fallback_listeners);
+  }
+}
 
 #[derive(Default)]
 pub struct PreviewProxy {
@@ -26,6 +80,7 @@ struct PreviewSession {
   port: u16,
   owner: String,
   stopped: AtomicBool,
+  accept_threads: Mutex<Vec<thread::JoinHandle<()>>>,
   sockets: Mutex<HashSet<String>>,
 }
 
@@ -199,27 +254,39 @@ impl PreviewProxy {
 
 #[tauri::command]
 pub fn preview_start(app: AppHandle, window: WebviewWindow,
-    manager: State<'_, Arc<PreviewProxy>>, tunnel_id: String) -> Result<String, String> {
+    manager: State<'_, Arc<PreviewProxy>>, tunnel_id: String,
+    preferred_port: u16) -> Result<String, String> {
   Uuid::parse_str(&tunnel_id).map_err(|_| "Invalid preview tunnel ID".to_string())?;
+  if preferred_port == 0 { return Err("Invalid preview port".into()); }
   let mut sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
   if let Some(session) = sessions.get(&tunnel_id) {
     if session.owner != window.label() { return Err("Preview already open in another window".into()); }
-    return Ok(format!("http://127.0.0.1:{}", session.port));
+    return Ok(local_origin(session.port));
   }
   if sessions.len() >= MAX_TUNNELS { return Err("Too many active previews".into()); }
-  let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-  listener.set_nonblocking(true).map_err(|error| error.to_string())?;
-  let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+  let (listeners, port) = bind_local_listeners(preferred_port)?;
+  for listener in &listeners {
+    listener.set_nonblocking(true).map_err(|error| error.to_string())?;
+  }
   let session = Arc::new(PreviewSession {
     port, owner: window.label().to_string(), stopped: AtomicBool::new(false),
+    accept_threads: Mutex::new(Vec::new()),
     sockets: Mutex::new(HashSet::new()),
   });
+  let mut accept_threads = session.accept_threads.lock().map_err(|_| "Preview state unavailable")?;
   sessions.insert(tunnel_id.clone(), Arc::clone(&session));
   drop(sessions);
   let manager = Arc::clone(manager.inner());
-  thread::spawn(move || manager.accept_loop(app, tunnel_id, listener, session));
+  for listener in listeners {
+    let manager = Arc::clone(&manager);
+    let app = app.clone();
+    let tunnel_id = tunnel_id.clone();
+    let session = Arc::clone(&session);
+    accept_threads.push(thread::spawn(move || manager.accept_loop(app, tunnel_id, listener, session)));
+  }
+  drop(accept_threads);
   if cfg!(debug_assertions) { log::info!("BATON_PREVIEW_NATIVE_LISTEN"); }
-  Ok(format!("http://127.0.0.1:{port}"))
+  Ok(local_origin(port))
 }
 
 #[tauri::command]
@@ -264,15 +331,22 @@ pub fn preview_close_socket(manager: State<'_, Arc<PreviewProxy>>,
 }
 
 #[tauri::command]
-pub fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
-    tunnel_id: String) {
-  let session = manager.sessions.lock().ok().and_then(|mut sessions| sessions.remove(&tunnel_id));
-  if let Some(session) = session {
-    session.stopped.store(true, Ordering::Release);
-    let stream_ids: Vec<String> = session.sockets.lock()
-      .map(|sockets| sockets.iter().cloned().collect()).unwrap_or_default();
-    for stream_id in stream_ids {
-      manager.close_socket(&stream_id);
+pub async fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
+    tunnel_id: String) -> Result<(), String> {
+  let manager = Arc::clone(manager.inner());
+  tauri::async_runtime::spawn_blocking(move || {
+    let session = manager.sessions.lock().ok().and_then(|mut sessions| sessions.remove(&tunnel_id));
+    if let Some(session) = session {
+      session.stopped.store(true, Ordering::Release);
+      let accept_threads = session.accept_threads.lock()
+        .map(|mut threads| std::mem::take(&mut *threads)).unwrap_or_default();
+      for thread in accept_threads { let _ = thread.join(); }
+      let stream_ids: Vec<String> = session.sockets.lock()
+        .map(|sockets| sockets.iter().cloned().collect()).unwrap_or_default();
+      for stream_id in stream_ids {
+        manager.close_socket(&stream_id);
+      }
     }
-  }
+  }).await.map_err(|error| error.to_string())?;
+  Ok(())
 }

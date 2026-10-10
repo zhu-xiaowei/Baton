@@ -4,6 +4,7 @@ import { parsePreviewTarget } from './preview-link.js';
 
 const status = document.getElementById('status');
 const traffic = document.getElementById('traffic');
+window.__skelReady = 1;
 const debugLog = document.createElement('pre');
 debugLog.setAttribute('aria-label', 'Preview transport diagnostics');
 debugLog.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;font:12px monospace;';
