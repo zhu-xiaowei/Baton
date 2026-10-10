@@ -29,3 +29,36 @@ To set a base64 secret without creating another local copy, run `base64 < existi
 Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA, version, and secret names without starting a build. A real run reports every platform separately. GitHub stores workflow artifacts for seven days; the command copies them into the ignored local `release/` directory. A failed platform makes the command exit nonzero while retaining other downloaded installers.
 
 The Windows NSIS installer is currently unsigned, as it was with the previous local Windows cross compile script. Distributing a signed Windows installer requires a separate Windows code signing certificate.
+
+## One platform package without a PR
+
+From any clean branch pushed to GitHub, choose a single release package:
+
+```sh
+npm run package:android
+npm run package:macos
+npm run package:windows
+```
+
+For a development test package, use:
+
+```sh
+npm run package:dev:android  # disposable-key APK
+npm run package:dev:ios      # unsigned IPA
+npm run package:dev:macos    # unsigned DMG
+npm run package:dev:windows  # unsigned NSIS installer
+```
+
+`npm run package` and `$package` still build the original three release
+installers. There is no `package:ios`: signed iOS releases use the existing
+TestFlight flow. The `dev` packages are installable test builds, not live
+development servers. The Android dev APK uses a disposable signing key, so
+it may require removing a previously installed Baton app.
+
+The command checks that the branch is pushed, starts the selected GitHub
+Actions job, verifies its source SHA, and downloads only its artifact.
+Release packages go to `release/<version>/`; dev packages go to the ignored
+`release/dev/<first 12 characters of SHA>/`. Use
+`node scripts/package-cloud.mjs --dev --platform ios --dry-run` to check a
+selection without starting a build. The manual **Package** workflow offers
+the same selections and defaults to the three release packages.
