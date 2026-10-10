@@ -4,7 +4,6 @@
 //   https://<server>/?key=<apiKey>         (issued by setup page, permanent)
 import { state } from './state.js';
 import './api.js';
-import { openDevelopmentBrowser } from './browser/dev-preview.js';
 
 (function () {
   function releaseNativeSkeleton() {
@@ -14,11 +13,6 @@ import { openDevelopmentBrowser } from './browser/dev-preview.js';
         window.__skelReady = 1;
       });
     });
-  }
-
-  if (openDevelopmentBrowser()) {
-    releaseNativeSkeleton();
-    return;
   }
 
   // Tauri/native (non-http origin) lets the QR scanner button show, and we

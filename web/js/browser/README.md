@@ -49,6 +49,5 @@ The parent checks the frame, navigation token and message origin. Same-origin
 web previews install the same bridge after loading; arbitrary cross-origin
 web previews require the native injection for complete history tracking.
 
-For a local visual check, open the existing `/landing.html?browser=<URL>` page
-while Vite is running. This development-only entry renders the actual site,
-not a separate demonstration page.
+Local development uses the same device-level Remote preview entry and
+session links as the production app; there is no separate self-test page.

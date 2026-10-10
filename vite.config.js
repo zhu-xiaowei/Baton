@@ -19,9 +19,6 @@ export default defineConfig({
   cacheDir: '../node_modules/.vite',
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
-    __PREVIEW_SMOKE_KEY__: JSON.stringify(process.env.BATON_PREVIEW_SMOKE_KEY || ''),
-    __PREVIEW_SMOKE_WS_URL__: JSON.stringify(process.env.BATON_PREVIEW_SMOKE_WS_URL || ''),
-    __PREVIEW_SMOKE_DEVICE__: JSON.stringify(process.env.BATON_PREVIEW_SMOKE_DEVICE || 'test-ec2-preview'),
   },
   build: {
     outDir: '../dist',
@@ -31,8 +28,6 @@ export default defineConfig({
         index:   resolve(__dirname, 'web/index.html'),
         landing: resolve(__dirname, 'web/landing.html'),
         setup:   resolve(__dirname, 'web/setup.html'),
-        previewLiveCheck: resolve(__dirname, 'web/preview-live-check.html'),
-        terminal: resolve(__dirname, 'web/terminal-poc.html'),
       },
     },
   },

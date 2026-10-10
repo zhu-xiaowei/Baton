@@ -245,22 +245,10 @@
 - Web / Node 共用 WebCrypto；SigV4 使用 Gateway 实际 raw callback path，保留 botocore 固定向量测试，
   避免 connection ID 末尾 `=` / `%3D` 重复编码。
 
-## 本地使用
+## 使用入口
 
-```bash
-npm run dev
-npm run poc:terminal:direct
-```
-
-测试 Bridge 读取 `~/.baton-bridge/config.json`，注册 `<deviceName>-xterm-direct-poc`。
-先在主页面登录，再打开：
-
-```text
-http://localhost:5173/terminal-poc.html?transport=direct&device=MacBook-Pro-xterm-direct-poc
-```
-
-只更新仓库测试 Bridge，不覆盖已安装主 Bridge 的文件、PID 或配置。
-`transport=remote` 保留旧 Lambda 转发 POC，需手动选择，不自动 fallback。
+通过正式 App 的项目文件页面或 Session 顶部的 Terminal 按钮打开项目共享终端。
+早期独立 POC 页面及其测试 Bridge 启动脚本已移除，构建不再包含单独的自测入口。
 
 ## 输入回显与移动端
 
@@ -270,29 +258,6 @@ http://localhost:5173/terminal-poc.html?transport=direct&device=MacBook-Pro-xter
 
 移动端后续先验证 composition / beforeinput、软键盘退格和粘贴，再处理 viewport / fit、焦点保持，
 以及 Esc / Ctrl / Tab / 方向键工具条。本轮没有新增移动端易用性功能。
-
-## 云端页面
-
-Vite 生产构建已加入独立 `terminal-poc.html` 入口，不需要 localhost 开发服务器。
-先在同一 CloudFront 域名的主页面登录，再打开终端页面并指定测试 Bridge：
-
-```text
-https://d32poxfz857qbl.cloudfront.net/terminal-poc.html?transport=direct&device=MacBook-Pro-xterm-direct-poc
-```
-
-页面仍连接该设备的真实 PTY；部署网页不代表将 Shell 移到云端。关闭或刷新页面会关闭旧会话，
-不会恢复命令。测试前先退出旧 localhost POC，避免两个页面争用同一个测试 Bridge。
-
-此次前端发布以线上 API 容器的不可变镜像为基底，只增加终端 HTML 及其哈希资源。
-不替换既有页面、不改变后端 Python 文件、不更新 WS Lambda 或已安装的主 Bridge。
-CloudFormation 仅改变 APIHandler 的镜像参数；关联 Role / Method 的 ARN 引用刷新经前后比较，
-实际 IAM 策略和 API integration 均未改变。现有运行配置、版本变量和原三张页面保持不变。
-静态增量层须确保目录 0755、文件 0644，并以非 root 用户读取检查，避免私有暂存目录的权限
-进入 Lambda 镜像。首次发布发现权限问题后已回滚，修正权限、增加非 root 检查后重新发布成功。
-
-已通过真实 Chromium 访问 CloudFront（非 localhost）验收：终端资源可加载、没有输入预览覆盖层，
-快速输入加回车能执行、ANSI 颜色显示正常、无换行 `Enter your email` 提示可见且空回车能继续。
-验收使用隔离临时 Bridge，不占用用户的测试终端；现有本地测试 Bridge 的线上连接已单独确认。
 
 ## EC2 真实 PTY 回显测量（2026-09-16）
 

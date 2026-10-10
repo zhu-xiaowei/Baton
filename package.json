@@ -5,9 +5,6 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "poc:terminal": "node bridge/terminal-poc.mjs",
-    "poc:terminal:remote": "node bridge/terminal-remote-poc.mjs",
-    "poc:terminal:direct": "node bridge/terminal-direct-poc.mjs",
     "build": "vite build",
     "test": "npm run test:bridge && npm run test:codex && npm run test:frontend && npm run test:server && npm run test:packaging",
     "test:bridge": "node --test test/bridge/*.test.mjs",
