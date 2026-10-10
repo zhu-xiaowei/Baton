@@ -44,9 +44,9 @@ npm run release:ios:cloud
 
 The cloud script commits and pushes its own build-number bump before starting
 Xcode Cloud, so running it on protected `main` fails before packaging or upload.
-A PR is not required to publish. Create or reuse a PR targeting `main` only when
-the user asks for one; do not wait for a PR or merge before releasing. Do not
-bypass branch protection. Creating a PR is not proof of upload.
+A PR is not required to publish. Finish and verify the release before the
+optional PR workflow below. Do not bypass branch protection. Creating a PR is
+not proof of upload.
 
 If a protected-branch push already failed after the bump commit was created,
 preserve that commit. Automatically create an unprotected release branch from
@@ -59,3 +59,16 @@ The dry-run is not completion of `/testflight`. Report the cloud run ID,
 build number, and TestFlight state; include a PR URL only if one exists.
 If upload succeeded but group assignment
 failed, do not start another release for that error.
+
+After a successful release, summarize the build number, upload status, and
+internal **Test** group status. Then ask whether to create a PR targeting `main`
+and automatically merge it after CI passes. If a PR already exists, ask whether
+to reuse it and merge after CI. Wait for approval before creating a PR or
+enabling auto-merge.
+
+On approval, create or reuse the release PR, including the build-number bump
+and release changes. Wait for the required CI checks and repository review
+requirements, resolve relevant failures within the approved scope, and merge
+automatically when allowed. Use the repository's supported merge method without
+bypassing branch protection. Confirm the actual merge before reporting it as
+complete.

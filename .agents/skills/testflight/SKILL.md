@@ -23,9 +23,8 @@ On Linux, run the release from an unprotected release branch, not `main`:
   `npm run release:ios:cloud` on that same branch in the same invocation.
   The cloud script commits and pushes its build-number bump before starting
   Xcode Cloud; a protected branch would reject that push.
-- A PR is not required to publish. Create or reuse one only when the user asks
-  for a PR; do not wait for a PR or merge before releasing. Preserve branch
-  protection and verify the cloud run separately.
+- A PR is not required to publish. Finish and verify the release before the
+  optional PR workflow below. Preserve branch protection.
 
 If a protected-branch push fails after the script creates its bump commit,
 preserve that commit. Move it onto an unprotected release branch automatically
@@ -39,3 +38,15 @@ only if one exists. The cloud script adds valid
 builds to the internal **Test** group; confirm that state before saying testers
 can install the build. If group assignment fails after upload, report the
 existing build instead of starting another release.
+
+After a successful release, summarize the build number, upload status, and
+internal **Test** group status, then ask whether to create a PR and automatically
+merge it after CI passes. Do not create a PR or enable auto-merge before the user
+agrees. If a PR already exists, ask whether to reuse it and merge after CI.
+
+On approval, create or reuse a PR from the release branch to `main`, including
+the build-number bump and release changes. Wait for its required CI checks and
+repository review requirements, resolve relevant failures within the approved
+scope, and merge automatically when allowed. Use the repository's supported
+merge method and never bypass branch protection. Confirm the merge result;
+do not treat enabling auto-merge as a completed merge.
