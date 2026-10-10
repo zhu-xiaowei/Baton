@@ -30,6 +30,7 @@ function ensureOverlay() {
       </form>
       <p class="preview-status" role="status">Enter a port or open a localhost link in this session.</p>
       <code class="preview-local-url" hidden></code>
+      <iframe class="preview-frame" title="Remote preview page" hidden></iframe>
       <div class="preview-actions">
         <button class="preview-reopen" type="button" disabled>Open browser again</button>
         <button class="preview-stop" type="button">Stop preview</button>
@@ -73,13 +74,11 @@ async function openPreviewBrowser(url) {
       payload: { url, toolbarColor: '#161b22' },
     });
   } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-    await invoke('plugin:in-app-browser|open_safari', {
-      payload: {
-        url, modalPresentationStyle: 'pageSheet',
-        preferredBarTintColor: '#161b22ff',
-        preferredControlTintColor: '#58a6ffff',
-      },
-    });
+    const view = ensureOverlay();
+    const frame = view.querySelector('.preview-frame');
+    view.querySelector('.preview-panel').classList.add('preview-inline');
+    frame.hidden = false;
+    frame.src = url;
   } else {
     await openUrl(url);
   }
@@ -88,6 +87,12 @@ async function openPreviewBrowser(url) {
 async function stopPreview(invalidate = true) {
   if (invalidate) generation++;
   currentUrl = null;
+  const frame = overlay?.querySelector('.preview-frame');
+  if (frame) {
+    frame.src = 'about:blank';
+    frame.hidden = true;
+    overlay.querySelector('.preview-panel').classList.remove('preview-inline');
+  }
   overlay?.querySelector('.preview-reopen')?.setAttribute('disabled', '');
   overlay?.querySelector('.preview-local-url')?.setAttribute('hidden', '');
   const previous = active;

@@ -22,8 +22,14 @@ async function openBrowser(url) {
       payload: { url, toolbarColor: '#161b22' },
     });
   } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-    await invoke('plugin:in-app-browser|open_safari', {
-      payload: { url, modalPresentationStyle: 'pageSheet' },
+    const frame = document.createElement('iframe');
+    frame.title = 'Remote preview test page';
+    frame.style.cssText = 'display:block;width:100%;height:60vh;border:0;background:#fff;';
+    frame.src = url;
+    document.body.appendChild(frame);
+    await new Promise((resolve, reject) => {
+      frame.addEventListener('load', resolve, { once: true });
+      frame.addEventListener('error', () => reject(new Error('Preview frame did not load')), { once: true });
     });
   } else {
     throw new Error('Mobile runtime required');

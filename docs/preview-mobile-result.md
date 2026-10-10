@@ -27,25 +27,24 @@ KiB of traffic was replaced with the rendered page check above.
 Draft PR #21 uses GitHub Actions on `macos-26` to build and upload an
 unsigned test IPA. AWS Device Farm accepted and installed that IPA on an
 iPhone 16. The temporary test account was injected during the PR build;
-its GitHub Actions secrets have since been deleted.
+the GitHub Actions secrets are temporary.
 
-The iPhone opened the local proxy in Safari, but Safari reported that
-the network connection was lost. An iframe in the App WebView also
-remained blank. In both cases the App received zero response bytes.
+Initial iOS runs opened the local proxy but received zero response bytes.
 Diagnostic frames showed that the browser sent an HTTP request through
 the tunnel to the EC2 Bridge. The Bridge wrote it to Vite and queued
-both ACK and response frames. The iPhone's local TCP socket closed
-before the response reached the browser.
+ACK and response frames. The iPhone's local TCP socket closed before
+the response reached the browser.
 
 The native listener is nonblocking. BSD systems can pass `O_NONBLOCK`
 to accepted sockets, while Linux need not. The proxy now explicitly
 sets each accepted browser socket to blocking mode before reading it.
-This is a targeted fix for the observed premature close, but it has
-not yet been verified on an iPhone. The next iOS IPA must include this
-change before claiming iOS preview support.
-
-TestFlight builds 34, 35, 36, 37, and 38 are expired. App Store Connect
-rejected an attempt to un-expire build 34 with HTTP 409.
+With this fix, Device Farm Appium run
+`arn:aws:devicefarm:us-west-2:949580910056:run:235b7700-e8db-43f3-b086-8a834566ba9f/00e41a8e-5f9a-4856-8249-796a10a38839`
+printed `BATON_REMOTE_PREVIEW_PASS` on the iPhone 16. The test
+required the remote page's large JavaScript completion message to
+appear in the rendered view. The iOS test kept the App WebView in the
+foreground and displayed the remote page in an iframe. The production
+iOS preview entry now uses the same approach.
 
 ## Browser scope
 
