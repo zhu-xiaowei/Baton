@@ -1,16 +1,6 @@
 // Multi-window is macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
-mod preview_feasibility;
 mod preview_proxy;
-
-#[tauri::command]
-fn record_local_preview_probe_result(passed: bool) {
-  if passed {
-    log::info!("BATON_LOCAL_PREVIEW_PROBE_PASS");
-  } else {
-    log::error!("BATON_LOCAL_PREVIEW_PROBE_FAIL");
-  }
-}
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -75,8 +65,6 @@ pub fn run() {
     .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
-      preview_feasibility::start_local_preview_probe,
-      record_local_preview_probe_result,
       preview_proxy::preview_start,
       preview_proxy::preview_credit,
       preview_proxy::preview_write,

@@ -31,7 +31,6 @@ export default defineConfig({
         index:   resolve(__dirname, 'web/index.html'),
         landing: resolve(__dirname, 'web/landing.html'),
         setup:   resolve(__dirname, 'web/setup.html'),
-        previewFeasibility: resolve(__dirname, 'web/preview-feasibility.html'),
         previewLiveCheck: resolve(__dirname, 'web/preview-live-check.html'),
         terminal: resolve(__dirname, 'web/terminal-poc.html'),
       },
