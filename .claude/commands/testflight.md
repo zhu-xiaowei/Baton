@@ -7,11 +7,12 @@ For TestFlight update notes (`whatsNew`), default to exactly
 `Bug fixes and improvements.` when there are no major new user-facing features.
 Use feature-specific notes for major additions, or the user's supplied wording.
 
-Before publishing, inspect `git status --short`, including untracked files.
-If there are changes, show the files that would be included and ask whether
-to commit them and continue. Wait for the answer. Commit only agreed files;
-if the user declines, stop. When the worktree is clean, continue with the
-release in the same invocation.
+A request to publish authorizes the release's source commits, branch creation,
+pushes, build-number bump, cloud run, and TestFlight group assignment. Continue
+without routine approval prompts. Before publishing, inspect `git status
+--short`, including untracked files. Automatically commit changes within the
+requested release scope and preserve unrelated work, using an isolated checkout
+when needed. Continue with the release in the same invocation.
 
 **On macOS:**
 
@@ -30,9 +31,9 @@ path, and whether validation + upload succeeded. If it fails, show the error.
 Do not commit the `project.yml` version bump unless asked.
 
 **On Linux:** Run the release from an unprotected release branch, not `main`.
-Reuse the current release branch, or obtain approval to create a branch such as
-`release/testflight-<build-number>` if branch creation is not already authorized.
-After the agreed changes are committed, push the source commit to the GitHub
+Reuse the current unprotected release branch, or automatically create a branch
+such as `release/testflight-<build-number>`.
+After the release changes are committed, push the source commit to the GitHub
 repository connected to Xcode Cloud. Run
 `node scripts/release-ios-cloud.mjs --dry-run` as a preflight, then continue
 with the real release on that same branch:
@@ -43,17 +44,18 @@ npm run release:ios:cloud
 
 The cloud script commits and pushes its own build-number bump before starting
 Xcode Cloud, so running it on protected `main` fails before packaging or upload.
-Create or reuse a PR targeting `main` for the release branch, including the bump;
-do not bypass branch protection. The PR can be created once the bump is pushed
-while the cloud run is in progress. Creating a PR is not proof of upload.
+A PR is not required to publish. Create or reuse a PR targeting `main` only when
+the user asks for one; do not wait for a PR or merge before releasing. Do not
+bypass branch protection. Creating a PR is not proof of upload.
 
 If a protected-branch push already failed after the bump commit was created,
-preserve that commit. With approval, create an unprotected release branch from
-it, push the branch, and create or reuse its PR. Rerun the dry-run and release
+preserve that commit. Automatically create an unprotected release branch from
+it and push the branch. Rerun the dry-run and release
 there; the script decides whether to reuse the prepared version. Do not manually
 bump again just because the push failed.
 
 The script waits for a valid upload and adds it to the internal **Test** group.
-The dry-run is not completion of `/testflight`. Report the PR URL, cloud run ID,
-build number, and TestFlight state. If upload succeeded but group assignment
+The dry-run is not completion of `/testflight`. Report the cloud run ID,
+build number, and TestFlight state; include a PR URL only if one exists.
+If upload succeeded but group assignment
 failed, do not start another release for that error.
