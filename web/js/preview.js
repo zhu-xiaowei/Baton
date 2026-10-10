@@ -1,9 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { state } from './state.js';
-import { backButtonHtml } from './components/back-button.js';
 import { CLOSE_ICON_SVG } from './components/icons.js';
-import { registerEdgeBackLayer } from './edge-back.js';
+import { openBrowserPage } from './browser/page.js';
 import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
 import '../css/preview.css';
@@ -17,17 +16,11 @@ const icons = {
 };
 let overlay = null;
 let selected = null;
-let returnToList = false;
+let browserView = null;
 let navigationVersion = 0;
 let restored = false;
 let previousFocus = null;
 let cancelClose = null;
-const edgeBack = registerEdgeBackLayer({
-  navigateBack: goBack,
-  foregroundSelectors: ['#previewOverlay'],
-  underlaySelectors: ['body > .top-bar', '#breadcrumb', '#content'],
-  guardZIndex: 1201,
-});
 
 function actionButtons() {
   return [
@@ -97,10 +90,8 @@ function ensureOverlay(device) {
   overlay.dataset.device = device;
   overlay.innerHTML = `
     <section class="preview-panel" role="dialog" aria-modal="true" aria-label="Remote preview">
-      <header class="preview-heading path-breadcrumb">
-        ${backButtonHtml()}
+      <header class="preview-heading">
         <strong class="preview-title"></strong>
-        <div class="preview-actions" hidden>${actionButtons()}</div>
         <button class="preview-close file-modal-close" type="button" aria-label="Close preview" title="Close">
           ${CLOSE_ICON_SVG}
         </button>
@@ -120,15 +111,8 @@ function ensureOverlay(device) {
           <div class="preview-connections"></div>
         </div>
       </div>
-      <div class="preview-content" hidden>
-        <p class="preview-status" role="status"></p>
-        <iframe class="preview-frame" title="Remote preview page"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
-          allow="clipboard-read; clipboard-write" hidden></iframe>
-      </div>
     </section>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('.back-button').addEventListener('click', goBack);
   overlay.querySelector('.preview-close').addEventListener('click', goBack);
   overlay.addEventListener('click', event => {
     if (event.target === overlay) goBack();
@@ -136,7 +120,7 @@ function ensureOverlay(device) {
     if (!button) return;
     const entry = button.closest('.preview-connection')?.previewConnection || selected;
     if (!entry) return;
-    if (button.dataset.previewAction === 'local') void openInline(entry, !selected || returnToList);
+    if (button.dataset.previewAction === 'local') void openInline(entry, true);
     if (button.dataset.previewAction === 'browser') void openBrowser(entry);
     if (button.dataset.previewAction === 'delete') void deleteConnection(entry);
   });
@@ -161,7 +145,8 @@ function ensureOverlay(device) {
       const origin = await connect(entry);
       if (origin) {
         input.value = '';
-        if (view.isConnected) input.focus();
+        if (view.isConnected && overlay?.classList.contains('open') && !browserView
+          && document.activeElement === button) input.focus();
       } else if (view.isConnected) {
         error.textContent = entry.status;
         error.hidden = false;
@@ -182,15 +167,8 @@ function updateEntry(entry) {
       ? new URL(entry.origin).port || '80' : '—';
     entry.row.querySelector('.preview-local').title = connected ? entry.origin : '';
   }
-  if (selected !== entry || !overlay) return;
-  const mapping = connected && Number(new URL(entry.origin).port) !== entry.target.port
-    ? `Remote ${entry.target.port} → ${new URL(entry.origin).host}. ` : '';
-  overlay.querySelector('.preview-status').textContent = mapping + entry.status;
-  if (!connected) {
-    const frame = overlay.querySelector('.preview-frame');
-    frame.hidden = true;
-    frame.removeAttribute('src');
-  }
+  if (selected === entry && browserView && !connected && !entry.pending
+    && /^(Preview failed:|Forwarding stopped)/.test(entry.status)) browserView.setError(entry.status);
 }
 
 function renderList() {
@@ -214,13 +192,6 @@ function renderList() {
 function goBack() {
   cancelClose?.();
   navigationVersion++;
-  if (selected && returnToList) {
-    selected = null;
-    showPreviewInput(overlay.dataset.device);
-    return;
-  }
-  selected = null;
-  edgeBack.deactivate();
   const view = overlay;
   if (!view) return;
   const panel = view.querySelector('.preview-panel');
@@ -238,7 +209,7 @@ function goBack() {
     cleanup();
     view.remove();
     if (overlay === view) overlay = null;
-    previousFocus?.focus({ preventScroll: true });
+    if (!browserView) previousFocus?.focus({ preventScroll: true });
   }
   cancelClose = cleanup;
   if (!animated) return finish();
@@ -328,31 +299,41 @@ function localUrl(origin, target) {
 }
 
 async function openInline(entry, fromList) {
-  const view = ensureOverlay(entry.device);
+  goBack();
   const version = ++navigationVersion;
   selected = entry;
-  returnToList = fromList;
-  view.classList.remove('modal-overlay', 'bottom-sheet-overlay', 'open');
-  view.querySelector('.preview-panel').classList.remove('modal-box', 'bottom-sheet-panel');
-  view.querySelector('.preview-heading').classList.add('path-breadcrumb');
-  view.querySelector('.back-button').hidden = false;
-  view.querySelector('.preview-close').hidden = true;
-  view.querySelector('.preview-title').textContent = `${deviceName(entry.device)} · ${entry.target.port}`;
-  view.querySelector('.preview-panel').classList.add('preview-inline');
-  view.querySelector('.preview-manager').hidden = true;
-  view.querySelector('.preview-content').hidden = false;
-  view.querySelector('.preview-heading .preview-actions').hidden = false;
-  edgeBack.activate();
-  const frame = view.querySelector('.preview-frame');
+  const page = openBrowserPage({
+    resolveAddress: async (value, currentUrl) => {
+      let target = parsePreviewInput(value);
+      if (!target && currentUrl) {
+        try { target = parsePreviewTarget(new URL(value, currentUrl).href); } catch {}
+      }
+      if (!target) throw new Error('Enter a localhost URL or remote port.');
+      const origin = new URL(target.displayUrl).origin;
+      const existing = Array.from(connections.values()).find(connection =>
+        connection.device === entry.device && connection.origin === origin);
+      if (existing) target = parsePreviewTarget(`http://127.0.0.1:${existing.target.port}${target.pathname}${target.search}${target.hash}`);
+      const connection = getConnection(target, entry.device);
+      const localOrigin = await connect(connection);
+      if (!localOrigin) throw new Error(connection.status);
+      if (browserView === page) selected = connection;
+      savePorts();
+      return localUrl(localOrigin, target);
+    },
+    onExternal: launchBrowser,
+    onClose() {
+      if (browserView !== page) return;
+      browserView = null;
+      selected = null;
+      navigationVersion++;
+      if (fromList) showPreviewInput(entry.device);
+    },
+  });
+  browserView = page;
   const target = entry.target;
-  frame.hidden = true;
-  frame.removeAttribute('src');
-  updateEntry(entry);
   const origin = await connect(entry);
-  if (!origin || !overlay || selected !== entry || version !== navigationVersion) return;
-  frame.src = localUrl(origin, target);
-  frame.hidden = false;
-  view.querySelector('.back-button').focus();
+  if (!origin || browserView !== page || selected !== entry || version !== navigationVersion) return;
+  page.setUrl(localUrl(origin, target));
 }
 
 async function openBrowser(entry) {
@@ -360,15 +341,18 @@ async function openBrowser(entry) {
   const origin = await connect(entry);
   if (!origin) return;
   try {
-    const url = localUrl(origin, target);
-    if (/Android/i.test(navigator.userAgent)) {
-      await invoke('plugin:in-app-browser|open_chrome', { payload: { url, toolbarColor: '#161b22' } });
-    } else {
-      await openUrl(url);
-    }
+    await launchBrowser(localUrl(origin, target));
   } catch (error) {
     entry.status = `Could not open browser: ${error.message || error}`;
     updateEntry(entry);
+  }
+}
+
+async function launchBrowser(url) {
+  if (/Android/i.test(navigator.userAgent)) {
+    await invoke('plugin:in-app-browser|open_chrome', { payload: { url, toolbarColor: '#161b22' } });
+  } else {
+    await openUrl(url);
   }
 }
 
@@ -388,7 +372,7 @@ async function deleteConnection(entry) {
   connections.delete(JSON.stringify([entry.device, entry.target.port]));
   savePorts();
   const closing = disconnect(entry);
-  if (selected === entry) goBack();
+  if (selected === entry && browserView) browserView.close();
   else renderList();
   await closing;
 }
@@ -396,7 +380,7 @@ async function deleteConnection(entry) {
 export function openPreviewLink(value, device) {
   const target = parsePreviewTarget(value);
   if (!target || !device) return false;
-  ensureOverlay(device);
+  restorePorts();
   const entry = getConnection(target, device);
   void openInline(entry, false);
   return true;
@@ -406,39 +390,30 @@ export function showPreviewInput(device) {
   if (!device) return;
   const view = ensureOverlay(device);
   navigationVersion++;
-  selected = null;
   const opening = !view.classList.contains('bottom-sheet-overlay') || !view.classList.contains('open');
   view.classList.add('modal-overlay', 'bottom-sheet-overlay');
   view.querySelector('.preview-panel').classList.add('modal-box', 'bottom-sheet-panel');
-  view.querySelector('.preview-heading').classList.remove('path-breadcrumb');
-  view.querySelector('.back-button').hidden = true;
-  view.querySelector('.preview-close').hidden = false;
   view.querySelector('.preview-title').textContent = `Remote preview · ${deviceName(device)}`;
-  view.querySelector('.preview-panel').classList.remove('preview-inline');
-  view.querySelector('.preview-manager').hidden = false;
-  view.querySelector('.preview-content').hidden = true;
-  view.querySelector('.preview-heading .preview-actions').hidden = true;
-  view.querySelector('.preview-frame').removeAttribute('src');
   renderList();
-  edgeBack.deactivate();
   if (opening) {
     view.classList.remove('open');
     void view.offsetWidth;
     view.classList.add('open');
   }
-  const focusTarget = window.matchMedia('(max-width: 600px)').matches ? '.preview-close' : '#previewAddress';
-  view.querySelector(focusTarget).focus({ preventScroll: true });
+  view.querySelector('.preview-close').focus({ preventScroll: true });
 }
 
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape' || !overlay) return;
+  if (event.key !== 'Escape' || !overlay || browserView) return;
   event.preventDefault();
   event.stopPropagation();
   goBack();
 }, true);
 
 function closeConnections() {
-  returnToList = false;
+  browserView?.destroy();
+  browserView = null;
+  selected = null;
   goBack();
   for (const entry of connections.values()) void disconnect(entry);
   connections.clear();

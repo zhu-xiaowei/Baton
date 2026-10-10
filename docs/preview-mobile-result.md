@@ -80,9 +80,12 @@ remote port, independently of projects and sessions.
 The manager closes with its top-right close button. On narrow screens it
 reuses the existing bottom-sheet layout and enter/exit animation.
 
-Opening a localhost link in session prose or inline code opens the in-app
-preview directly, preserving the path, query, and fragment. Fenced code blocks
-are left unchanged. The preview header has the same three actions. Returning
+Opening a localhost link in session prose or inline code opens the full-page
+internal browser directly, preserving the path, query, and fragment. Fenced code blocks
+are left unchanged. Its single toolbar provides browser back, forward, reload,
+an editable address, external browser, and close. The reusable component lives
+in `web/js/browser/`; its native frame bridge tracks document and History API navigation.
+Returning
 from a preview or closing the manager leaves its tunnel running; deleting a
 connection releases its port and removes its saved entry. Exiting the app releases all tunnels. Saved port
 entries are restored without automatically reconnecting. The existing limit

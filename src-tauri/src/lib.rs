@@ -62,6 +62,9 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_in_app_browser::init())
     .plugin(tauri_plugin_file_download::init())
+    .plugin(tauri::plugin::Builder::<_, ()>::new("browser-frame")
+      .js_init_script_on_all_frames(include_str!("../../web/js/browser/frame-bridge.js"))
+      .build())
     .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
