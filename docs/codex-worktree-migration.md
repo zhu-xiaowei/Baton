@@ -1,29 +1,29 @@
-# Codex worktree 项目归并
+# Codex worktree project merging
 
-Bridge 采用 Codex `rust-v0.156.0` 的仓库身份规则：
+Bridge adopts the repository identity rules from Codex `rust-v0.156.0`:
 
-- `commonDir + relativeCwd` 标识同一工作区。
-- 原项目目录是 `primaryRoot / relativeCwd`，继续使用现有 Claude 兼容 hash。
-- session 的实际 `cwd` 不变；发送消息和执行命令使用 worktree，不反解项目 hash。
-- 校验 `.git → gitdir → commondir`、注册位置和反向指针；缺失、损坏或不支持的结构不猜测关联。
-- 普通非 Git 目录沿用原规则，不根据仓库名称或 remote URL 合并独立 clone。
+- `commonDir + relativeCwd` identifies the same workspace.
+- The original project directory is `primaryRoot / relativeCwd` and keeps using the existing Claude-compatible hash.
+- The session's actual `cwd` is unchanged; sending messages and running commands use the worktree, without reverse-resolving the project hash.
+- Validate `.git → gitdir → commondir`, the registration location, and the back pointer; missing, corrupted, or unsupported structures are never associated by guessing.
+- Ordinary non-Git directories keep the original rules; independent clones are not merged based on repository name or remote URL.
 
-源码依据：
-[repository_identity](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/git-utils/src/worktree.rs)、
-[AgentsOverviewProjectGroup](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/tui/src/app/agents_overview_view.rs)。
+Source references:
+[repository_identity](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/git-utils/src/worktree.rs),
+[AgentsOverviewProjectGroup](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/tui/src/app/agents_overview_view.rs).
 
-## 一次性迁移，不增加旧 hash 兼容层
+## One-time migration, no compatibility layer for old hashes
 
-`server/migrate-codex-worktrees.py` 仅迁移已确认映射的 session 元数据，不部署服务、不重启 bridge，也不修改 Codex 文件。
-服务端查询无需改动。消息表、消息 TTL、session ID、父子关系和自定义字段保持不变。
+`server/migrate-codex-worktrees.py` only migrates session metadata with a confirmed mapping; it does not deploy the service, restart the bridge, or modify Codex files.
+Server queries need no changes. The messages table, message TTL, session IDs, parent/child relationships, and custom fields stay unchanged.
 
-需要 Node.js、Python 3、`boto3` 以及目标 AWS 账号的 DynamoDB 读取/事务写入权限。
-账号由本机 `~/.baton-bridge/config.json` 的 API key 推导；不会打印或备份 API key。
-可用 `--config` 指定同一账号的其他 bridge 配置，`--profile` 指定 AWS profile。
+Requires Node.js, Python 3, `boto3`, and DynamoDB read/transactional-write permissions on the target AWS account.
+The account is derived from the API key in the local `~/.baton-bridge/config.json`; the API key is never printed or backed up.
+Use `--config` to specify another bridge config for the same account, and `--profile` to specify the AWS profile.
 
-### 1. 在 worktree 所在机器确认映射
+### 1. Confirm the mapping on the machine hosting the worktree
 
-在包含新版 bridge 源码的仓库根目录执行，最后一个参数是实际 worktree cwd；远程 worktree 必须在其所在机器执行。
+Run from the root of a repository containing the new bridge source; the last argument is the actual worktree cwd. A remote worktree must be checked on the machine where it lives.
 
 ```bash
 node --input-type=module - /absolute/path/to/worktree/repo <<'JS'
@@ -42,13 +42,13 @@ console.log(JSON.stringify({
 JS
 ```
 
-从 DDB/项目列表核对旧 hash，尤其是 Windows 的两种盘符编码。目标必须是已存在的原项目。
-不存在或已被清理的 worktree 不自动迁移；先恢复目录并校验。这里不引入持久化推断缓存，目录不可用时遵循 Codex 的原 cwd 回退规则。
+Cross-check the old hashes against DDB/the project list, especially the two drive-letter encodings on Windows. The target must be an existing original project.
+Worktrees that no longer exist or have been cleaned up are not migrated automatically; restore the directory and validate first. No persisted inference cache is introduced here; when the directory is unavailable, Codex's original-cwd fallback rule applies.
 
-### 2. 预览
+### 2. Preview
 
-默认只有一致性读取，**没有任何写入**。参数中的 hash 通常以 `-` 开头，使用 `--参数=值`。
-一次处理同一设备、同一目标项目的一个或多个旧项目。
+By default it performs only consistent reads, with **no writes at all**. Hashes in the arguments usually start with `-`, so use `--arg=value`.
+One run handles one or more old projects for the same device and the same target project.
 
 ```bash
 python3 server/migrate-codex-worktrees.py \
@@ -59,35 +59,35 @@ python3 server/migrate-codex-worktrees.py \
   --to-project=-home-ec2-user-workspace-github-agentpeek
 ```
 
-输出包含待迁移的 session ID、来源/目标、迁移后的计数和事务操作数。
-脚本读取该设备的 session/project 元数据以重算计数，但只写受影响行；其他空项目及设备属性保留。
-包含非 Codex session、用户显式创建的源项目、缺失目标项目或不同内容的目标 session 时拒绝操作。
-同一目标已存在且内容完全相同可以去重；其他冲突须人工确认，脚本不会覆盖较新记录。
+The output includes the session IDs to migrate, source/target, post-migration counts, and the number of transaction operations.
+The script reads the device's session/project metadata to recompute counts, but only writes affected rows; other empty projects and device attributes are preserved.
+It refuses to proceed when there are non-Codex sessions, source projects explicitly created by the user, a missing target project, or target sessions with different content.
+A target that already exists with exactly identical content can be deduplicated; other conflicts require manual confirmation, and the script never overwrites newer records.
 
-### 3. 切换并执行
+### 3. Switch over and apply
 
-1. 暂停受影响设备的 bridge，等在途同步结束；不要停止或删除用户的 Codex session。
-2. 更新 bridge 文件，包括新增的 `repository-identity.mjs`，暂不启动；不要在迁移后恢复旧版本。
-3. 在预览命令后加 `--apply --bridges-stopped --backup /absolute/path/to/new-backup.json`。
-4. 不带 `--apply` 再执行一次，确认 `moves` 为空、`transactionWrites` 为 0。
-5. 启动新版 bridge，刷新 App/Web 的设备和项目列表，并退出旧项目地址、清理旧项目缓存。
+1. Pause the bridge on the affected device and wait for in-flight syncs to finish; do not stop or delete the user's Codex sessions.
+2. Update the bridge files, including the new `repository-identity.mjs`, but do not start it yet; do not restore the old version after migration.
+3. Append `--apply --bridges-stopped --backup /absolute/path/to/new-backup.json` to the preview command.
+4. Run once more without `--apply` and confirm `moves` is empty and `transactionWrites` is 0.
+5. Start the new bridge, refresh the device and project lists in the App/Web, leave old project URLs, and clear old project caches.
 
-`--bridges-stopped` 是操作者确认，不会自动停止或检测进程。
-备份使用原生 DynamoDB JSON 类型，包含所有受影响键的 before/after；新文件权限为 0600，不覆盖已有备份。
-修改在单个带快照条件的 DynamoDB 事务中提交；检测到并发更新则整个事务失败，重新预览后使用新备份文件重试。
-网络超时后先重新 dry-run 判断是否已经提交，不要手工覆盖目标。
-一次最多 100 个事务操作，并保守检查 4 MiB 请求预算；超过限制时拆分源项目。单个源项目过大则停止，不能用部分迁移绕开安全检查。
-GSI 是最终一致的，提交后列表索引可能短暂延迟；重跑验证读取基表，不受此延迟影响。
+`--bridges-stopped` is an operator confirmation; it does not automatically stop or detect processes.
+The backup uses native DynamoDB JSON types and contains before/after for every affected key; new files get 0600 permissions, and existing backups are never overwritten.
+Changes are committed in a single DynamoDB transaction with snapshot conditions; if a concurrent update is detected the whole transaction fails, so re-run the preview and retry with a new backup file.
+After a network timeout, first re-run the dry-run to determine whether it was already committed; do not manually overwrite the target.
+At most 100 transaction operations per run, with a conservative check against the 4 MiB request budget; split source projects when exceeding the limits. If a single source project is too large, stop; partial migration must not be used to bypass the safety checks.
+The GSI is eventually consistent, so list indexes may lag briefly after commit; the verification re-run reads the base table and is unaffected by this lag.
 
-迁移包含根 session 和其同项目子线程，重写 `SESS#`、`projectHash`、`projectName`、`listPk/listSk`、`threadRootPk/threadRootSk`，清理旧 `PROJ#` 并更新目标项目和设备计数。
-旧地址不重定向，旧项目删除请求也不会被扩大为原项目删除。
-需要回滚时先停 bridge，核对备份 after 与当前记录一致，再恢复 before（before 为 null 表示删除该新键）；不要盲目覆盖恢复后的新会话活动。
+The migration covers root sessions and their same-project child threads, rewrites `SESS#`, `projectHash`, `projectName`, `listPk/listSk`, `threadRootPk/threadRootSk`, removes the old `PROJ#`, and updates target project and device counts.
+Old URLs are not redirected, and a delete request for an old project is never widened into deleting the original project.
+To roll back, first stop the bridge, verify that the backup's after matches the current records, then restore before (before = null means deleting that new key); do not blindly overwrite new session activity that occurred after the bridge resumed.
 
-## 验证
+## Verification
 
 ```bash
 node --test test/bridge/repository-identity.test.mjs test/bridge/session-identity.test.mjs test/codex/phase1/session.test.mjs
 python3 -m pytest -q test/server/test_migrate_codex_worktrees.py
 ```
 
-上线验收：原项目包含原有及 worktree sessions，旧 worktree 项目消失；历史消息正常；从 worktree session 执行 `/diff` 仍查看该 worktree，而不是主 checkout。不要为验收向用户的 session 自动发送消息。
+Rollout acceptance: the original project contains both the original and worktree sessions, and the old worktree projects disappear; history messages are intact; running `/diff` from a worktree session still shows that worktree, not the main checkout. Do not automatically send messages to the user's sessions for acceptance.

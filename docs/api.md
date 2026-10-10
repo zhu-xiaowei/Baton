@@ -843,7 +843,7 @@ Reply to a permission confirmation or user choice.
   "sessionId": "a1ca0870-xxxx",
   "requestId": "ctrl_123",
   "decision": "answer",
-  "answerText": "西瓜",
+  "answerText": "Watermelon",
   "device": "MacBook-Pro"
 }
 ```
@@ -1124,9 +1124,9 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
   "toolName": "AskUserQuestion",
   "questions": [
     {
-      "question": "你最喜欢哪种水果？",
-      "header": "水果",
-      "options": [{ "label": "西瓜", "description": "水分充足" }],
+      "question": "Which fruit do you like best?",
+      "header": "Fruit",
+      "options": [{ "label": "Watermelon", "description": "Very juicy" }],
       "multiSelect": false
     }
   ],

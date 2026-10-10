@@ -117,15 +117,15 @@ container.querySelector('[data-tool-id="' + tool_use_id + '"]')
 
 ## 5. Message Ordering & Insertion
 
-消息使用两条明确分离的插入路径：
+Messages use two clearly separated insertion paths:
 
-- 带 `turnId + seq` 的 active turn 由 `TurnEventQueue` 排序，并按
-  `data-anchor=turnId` 插入对应问题下方。
-- 无 seq 的 REST 历史与外部 TUI/IDE JSONL 消息携带 `data-ts`，按 timestamp
-  插入历史时间线。
+- An active turn carrying `turnId + seq` is ordered by `TurnEventQueue` and
+  inserted below its question by `data-anchor=turnId`.
+- REST history without seq and external TUI/IDE JSONL messages carry `data-ts`
+  and are inserted into the history timeline by timestamp.
 
-timestamp 只用于历史展示顺序，不参与 active turn 的归属、传输排序或 DOM
-接管。
+Timestamps only order history for display; they take no part in active-turn
+ownership, transport ordering, or DOM adoption.
 
 ### 5.1 Assistant Message Insertion
 

@@ -1,101 +1,101 @@
-# 实时消息 Header 签名直转
+# Real-time Messages via Header-Signed Direct Forwarding
 
-2026-09-20：代码实现完成；此文不表示已经部署上线或测得新的聊天端到端时延。
+2026-09-20: Code implementation complete; this document does not imply it has been deployed or that new end-to-end chat latency has been measured.
 
-## 改造边界
+## Scope of the Change
 
-只替换 Bridge → App 的实时传输。保留现有事件结构、turnId/seq、前端 TurnEventQueue、历史屏障、渲染和 JSONL 持久化。
-不创建新的常驻服务、DynamoDB 表或 WebSocket API；复用终端现有独立数据 API 和签名角色。
+Only the Bridge → App real-time transport is replaced. Existing event structure, turnId/seq, the frontend TurnEventQueue, history barrier, rendering, and JSONL persistence are kept.
+No new long-running service, DynamoDB table, or WebSocket API is created; the terminal's existing independent data API and signing role are reused.
 
-直转范围：
+Direct forwarding scope:
 
-- 六种 `stream_*` turn 事件。
-- 带有效 turnId/seq 的 `permission_request`、`permission_resolved`。
-- 带有效 turnId/seq 且 `noCache: true` 的实时完整 `messages`。
+- The six `stream_*` turn events.
+- `permission_request` and `permission_resolved` with a valid turnId/seq.
+- Real-time complete `messages` with a valid turnId/seq and `noCache: true`.
 
-需要存储及 `messages_ack` 的普通 `messages`、JSONL 同步、用户命令、文件/Git RPC、会话状态通知仍走原链路。
-没有修改 watcher、HTTP 历史上传、DDB 写入或前端排序算法。
+Ordinary `messages` that require storage and `messages_ack`, JSONL sync, user commands, file/Git RPC, and session status notifications still use the original path.
+The watcher, HTTP history upload, DDB writes, and frontend ordering algorithm are unchanged.
 
-## 数据与控制
+## Data and Control
 
 ```text
-实时：Bridge 原控制 WS → realtime_direct_data HTTP integration
-                     → 独立数据 API 的 POST @connections → App 数据 WS
+Real-time: Bridge original control WS → realtime_direct_data HTTP integration
+                     → independent data API POST @connections → App data WS
 
-控制：原控制 WS → WsHandler Lambda
-      open/join、STS hello、resolve、订阅失效通知
+Control: original control WS → WsHandler Lambda
+      open/join, STS hello, resolve, subscription invalidation notices
 
-历史：原 JSONL/watcher → 原 WS 存储路径或 HTTP 上传 → 原 Lambda/DDB
+History: original JSONL/watcher → original WS storage path or HTTP upload → original Lambda/DDB
 ```
 
-Bridge 不增加第二条 WS；每个新版 App 控制连接增加一条只用于接收的数据 WS。多个 tab 各自绑定数据连接。
-主 API 新增 `realtime_direct_data` HTTP route，但其目标是独立数据 API，STS 权限没有扩展到原控制 API。
+Bridge does not add a second WS; each new-version App control connection adds one receive-only data WS. Multiple tabs each bind their own data connection.
+The main API adds a `realtime_direct_data` HTTP route, but its target is the independent data API; STS permissions are not extended to the original control API.
 
-1. Bridge 在原控制连接声明 `realtime=1`，通过 `hello` 获取 900 秒短期凭据，在到期前 60 秒申请刷新。
-2. App 经可信控制连接申请 `open`，收到 bindingId、一次性 join token 和数据 endpoint。
-3. 数据连接 `$connect` 使用 `realtime_data` 角色，`join` 校验同账号、真实 endpoint、绑定、45 秒期限及 token hash。
-4. Lambda 通过条件更新消费 token，HMAC key 只通过可信控制 WS 发给 App。App 不获得 STS 凭据。
-5. Bridge 首次发送某个 session/发起者组合时请求 `resolve`。服务端复用现有订阅查询和 replyConnectionId 归属检查，
-   返回同账号接收者及其数据绑定；未就绪或旧客户端只返回控制连接 ID。
-6. 路由缓存最多 128 项、30 秒。订阅、退订、数据绑定变化和断线通过控制面通知 Bridge 失效。
-7. Bridge 按原事件顺序排队签名，经 HTTP integration 下发。接收端验证 MAC、bindingId 和事件类型，再交回原 `handleWsMessage()`。
+1. Bridge declares `realtime=1` on the original control connection, obtains 900-second short-lived credentials via `hello`, and requests a refresh 60 seconds before expiry.
+2. The App requests `open` over the trusted control connection and receives a bindingId, a one-time join token, and the data endpoint.
+3. The data connection's `$connect` uses the `realtime_data` role; `join` verifies same account, real endpoint, binding, the 45-second deadline, and the token hash.
+4. Lambda consumes the token via a conditional update; the HMAC key is sent to the App only over the trusted control WS. The App never receives STS credentials.
+5. The first time Bridge sends for a given session/initiator combination, it requests `resolve`. The server reuses the existing subscription query and replyConnectionId ownership check,
+   returning same-account receivers and their data bindings; not-ready or old clients return only the control connection ID.
+6. The route cache holds at most 128 entries for 30 seconds. Subscribe, unsubscribe, data binding changes, and disconnects notify Bridge of invalidation through the control plane.
+7. Bridge queues and signs in original event order and delivers via the HTTP integration. The receiver verifies the MAC, bindingId, and event type, then hands off to the original `handleWsMessage()`.
 
-初次路由发现、授权及绑定需要控制面往返，因此本改造不承诺冷启动首帧一定更快。
-稳定状态下，接收者均支持直转时，正常大小的上述实时事件不触发转发 Lambda。
+Initial route discovery, authorization, and binding require control-plane round trips, so this change does not promise a faster first frame on cold start.
+In steady state, when all receivers support direct forwarding, normally sized real-time events of the types above do not trigger the forwarding Lambda.
 
-## 回退与恢复
+## Fallback and Recovery
 
-- 老服务端不响应新协议，或返回 unsupported：Bridge/App 的原控制 WS 继续工作。
-- 老 Bridge：仍通过原 Lambda 给所有 App 下发；新 App 的额外数据连接不影响原消息入口。
-- 新旧 App 混用：新版目标直转，旧版目标继续通过 Lambda。
-- 未授权、路由解析超时、凭据过期、本地排队过多或签名后的帧超过 28 KiB：回退到原发送路径。
-- 混合回退携带内部 `directDeliveredTo`，Lambda 跳过已经排队直转的目标，并在下发前移除此字段，保持 seq 去重的 payload 一致。
-- 控制连接重建会清空旧授权、路由和待解析请求；不把旧连接队列自动重放到新连接。
-- 数据连接断开会清理绑定并重建，新的 bindingId/key 拒绝旧绑定的延迟帧。断开、重新就绪或回退控制链路时，前端复用历史快照恢复，补回丢失的回答和结束状态；恢复保留未获历史回声确认的待发送问题。
-- 控制或数据 WS 重连时，只在 header 的 Git 按钮左侧显示 loading 圈；连接恢复或数据通道回退后隐藏。回答 spinner 只由运行状态控制，发送/停止按钮不承担连接提示。
+- Old server does not respond to the new protocol, or returns unsupported: the original Bridge/App control WS keeps working.
+- Old Bridge: still delivers to all Apps through the original Lambda; the new App's extra data connection does not affect the original message entry.
+- Mixed old and new Apps: new-version targets get direct forwarding, old-version targets continue through Lambda.
+- Unauthorized, route resolution timeout, expired credentials, too much local queueing, or a signed frame over 28 KiB: fall back to the original send path.
+- Mixed fallback carries an internal `directDeliveredTo`; Lambda skips targets already queued for direct forwarding and removes this field before delivery, keeping the payload consistent for seq dedup.
+- Rebuilding the control connection clears old authorization, routes, and pending resolve requests; the old connection's queue is not automatically replayed onto the new connection.
+- A data connection disconnect cleans up the binding and rebuilds it; the new bindingId/key rejects delayed frames from the old binding. On disconnect, becoming ready again, or falling back to the control path, the frontend reuses the history snapshot to recover, filling in lost answers and end states; recovery keeps pending questions not yet confirmed by a history echo.
+- When the control or data WS reconnects, a loading ring is shown only to the left of the Git button in the header; it hides once the connection recovers or the data channel falls back. The answer spinner is controlled only by running state, and the send/stop buttons carry no connection indication.
 
-发送成功仍不是“浏览器已消费”或“DDB 已持久化”的确认。本次没有新增逐事件 ACK、无限重传或 exactly-once 机制。
-HTTP integration 仍可能失败或乱序；现有 seq/gap/checkpoint/历史恢复仍然必要。
+A successful send is still not confirmation that "the browser consumed it" or "DDB persisted it". This change adds no per-event ACK, unlimited retransmission, or exactly-once mechanism.
+The HTTP integration can still fail or reorder; the existing seq/gap/checkpoint/history recovery remains necessary.
 
-## 安全边界
+## Security Boundary
 
-数据 API 禁止 app/bridge 控制角色连接；`realtime_data` 连接不能执行聊天命令或申请 Bridge 凭据。
-客户端只接受通过会话 HMAC 验证的实时事件，不接受数据通道中的裸控制消息。
-同一个 API 中的终端和聊天数据使用不同的消息类型及独立绑定 key，不能把未验证帧交给聊天入口。
+The data API forbids connections from the app/bridge control roles; `realtime_data` connections cannot execute chat commands or request Bridge credentials.
+The client only accepts real-time events that pass session HMAC verification, and does not accept bare control messages on the data channel.
+Terminal and chat data in the same API use different message types and independent binding keys, so unverified frames cannot be handed to the chat entry.
 
-与既有 Terminal Direct 一样，ManageConnections 权限是独立数据 API 范围，不是严格的单 connection ID IAM ACL。
-HMAC 防内容注入，不消除持有该 API 权限者造成的带宽或资源滥用；不能据此宣称支持不可信多租户。
-密钥不写日志或前端持久化存储。
+As with the existing Terminal Direct, the ManageConnections permission is scoped to the independent data API, not a strict per-connection-ID IAM ACL.
+HMAC prevents content injection but does not eliminate bandwidth or resource abuse by holders of that API permission; it cannot be used to claim support for untrusted multi-tenancy.
+Keys are not written to logs or to frontend persistent storage.
 
-## 文件与部署
+## Files and Deployment
 
-- `bridge/realtime-direct.mjs`：Bridge 路由缓存、签名队列、直接发送和兼容回退。
-- `bridge/realtime-direct-protocol.mjs`：事件契约及 App 接收/绑定状态机。
-- `server/src/realtime_direct_ws.py`：低频控制面；使用已有 ConnectionsTable。
-- `server/src/bridge_ws.py`：控制面接入、订阅失效和混合客户端回退。
-- `server/template/Baton.template`：新增主 API 的 HTTP integration/route，并设置 `REALTIME_DIRECT_ENABLED=1`。
-- `server/install.sh`：WS Lambda ZIP 包含新控制模块。
+- `bridge/realtime-direct.mjs`: Bridge route cache, signing queue, direct send, and compatibility fallback.
+- `bridge/realtime-direct-protocol.mjs`: event contract and App receive/binding state machine.
+- `server/src/realtime_direct_ws.py`: low-frequency control plane; uses the existing ConnectionsTable.
+- `server/src/bridge_ws.py`: control-plane integration, subscription invalidation, and mixed-client fallback.
+- `server/template/Baton.template`: adds the main API's HTTP integration/route and sets `REALTIME_DIRECT_ENABLED=1`.
+- `server/install.sh`: the WS Lambda ZIP includes the new control module.
 
-先按原发布流程更新服务端模板和 Lambda ZIP，等待 route 部署完成，再更新 Bridge 和前端。
-仅更新 Python 文件不够；仅更新前端/Bridge 也不能启用新的 HTTP route。
-不要使用旧的 `deploy-terminal-direct.py` 代替此次完整模板更新，它只负责历史终端增量部署。
-Bridge 启动和 WebSocket 重连后检查一次更新；现有 4 分钟心跳回应携带 `bridgeVersion`，仅版本不一致时再次检查，不设置独立更新定时器。服务端 API 和 WS Lambda 必须同步传入 `AppVersion`。新包校验通过后自动重启，不因已有进程/终端延后更新，运行中的会话可能被中断。
+First update the server template and Lambda ZIP through the original release flow, wait for the route deployment to finish, then update Bridge and the frontend.
+Updating only the Python files is not enough; updating only the frontend/Bridge cannot enable the new HTTP route either.
+Do not use the old `deploy-terminal-direct.py` in place of this full template update; it only handles the historical terminal incremental deployment.
+Bridge checks for updates once at startup and after WebSocket reconnect; existing 4-minute heartbeat replies carry `bridgeVersion`, and only a version mismatch triggers another check, with no dedicated update timer. The server API and WS Lambdas must both receive `AppVersion`. After the new package validates it restarts automatically, without deferring the update for existing processes/terminals; running sessions may be interrupted.
 
-回滚可关闭 WsHandler 的 `REALTIME_DIRECT_ENABLED` 并重连 Bridge/页面，或回退 Bridge/前端版本。
-保留原消息路由和历史存储接口，不需要迁移数据。
+To roll back, disable WsHandler's `REALTIME_DIRECT_ENABLED` and reconnect Bridge/pages, or roll back the Bridge/frontend version.
+The original message routing and history storage interfaces are kept, so no data migration is needed.
 
-## 验证
+## Verification
 
 ```bash
 npm test
 npm run build
 ```
 
-新增测试覆盖真实签名帧、多接收端/旧端混用、原始到达顺序、原 seq 排序和渲染、凭据过期、大帧回退、
-解析超时、发送时快照、订阅失效、断线、跨账号/过期/重放 join 拒绝及原控制 API 隔离。
-部署模板另外通过 AWS CloudFormation validate-template 校验。
+New tests cover real signed frames, multiple receivers/mixed old clients, original arrival order, original seq ordering and rendering, credential expiry, large-frame fallback,
+resolve timeout, snapshot at send time, subscription invalidation, disconnects, cross-account/expired/replayed join rejection, and isolation of the original control API.
+The deployment template is additionally validated with AWS CloudFormation validate-template.
 
-本轮未自动部署到线上。上线后应确认 Bridge WS 的高频帧 action 为 `realtime_direct_data`，
-App 经独立数据 WS 收到已认证实时帧，同时核对 WsHandler 的调用量。
-再使用相同 streaming 负载 A/B 比较旧/新链路时延与 seq 队列等待时间；不能把终端历史测量的 30 多 ms
-直接当成本机聊天端到端验收结果。
+This round was not automatically deployed to production. After rollout, confirm that the Bridge WS high-frequency frame action is `realtime_direct_data`,
+that the App receives authenticated real-time frames over the independent data WS, and check WsHandler invocation counts.
+Then use the same streaming load to A/B compare old/new path latency and seq queue wait time; the 30-odd ms from historical terminal measurements
+must not be taken directly as the local chat end-to-end acceptance result.
