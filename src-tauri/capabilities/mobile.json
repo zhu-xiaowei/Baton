@@ -11,6 +11,7 @@
     "barcode-scanner:allow-check-permissions",
     "barcode-scanner:allow-request-permissions",
     "speech:default",
+    "in-app-browser:allow-open-chrome",
     { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
   ]
 }

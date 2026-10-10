@@ -112,6 +112,30 @@ let _terminalRemote = null;
 let _terminalRemoteLoading = null;
 let _sharedTerminals = null;
 let _sharedTerminalsLoading = null;
+let _previewBridge = null;
+let _previewBridgeLoading = null;
+
+async function handlePreviewTunnelMessage(message) {
+  if (!_previewBridgeLoading) {
+    _previewBridgeLoading = import('./preview-bridge.mjs').then(({ createPreviewBridge }) => {
+      _previewBridge = createPreviewBridge({
+        endpoint: _config.wsUrl, key: _config.apiKey, device: _config.deviceName,
+        sendControl: wsSend,
+        socketFactory: url => new WebSocket(url, {
+          handshakeTimeout: 15000, maxPayload: 28 * 1024, perMessageDeflate: false,
+        }),
+      });
+      return _previewBridge;
+    }).catch(error => { _previewBridgeLoading = null; throw error; });
+  }
+  const connection = _ws;
+  try {
+    const manager = await _previewBridgeLoading;
+    if (_ws === connection) manager.handle(message);
+  } catch {
+    wsSend({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId: message.tunnelId });
+  }
+}
 
 async function handleSharedTerminalMessage(message) {
   if (!_sharedTerminalsLoading) {
@@ -211,6 +235,7 @@ export async function shutdownInteractions() {
   _realtime?.dispose();
   _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
+  _previewBridge?.dispose();
   _pool.shutdownAll();
   await _claudeHookServer?.close();
   _claudeHookServer = null;
@@ -692,7 +717,7 @@ function connect() {
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + '&terminal=2&terminalStartup=1';
+    + '&terminal=2&terminalStartup=1&preview=1';
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
@@ -802,6 +827,7 @@ function resetConnection() {
   _realtime = null;
   _terminalRemote?.closeAll();
   _sharedTerminals?.detachAll();
+  _previewBridge?.detachAll();
 }
 
 function scheduleReconnect() {
@@ -828,6 +854,9 @@ async function handleMessage(msg) {
       break;
     case 'terminal_direct':
       await handleSharedTerminalMessage(msg);
+      break;
+    case 'preview_tunnel':
+      await handlePreviewTunnelMessage(msg);
       break;
     case 'terminal_poc':
       await handleTerminalPocMessage(msg);

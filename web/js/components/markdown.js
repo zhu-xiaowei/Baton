@@ -210,9 +210,55 @@
     });
   }
 
+  function linkifyPreviewAddresses(html) {
+    if (!/(?:localhost|127\.0\.0\.1|\[::1\]):\d/i.test(html)) return html;
+    var template = document.createElement('template');
+    template.innerHTML = html;
+    var walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement?.closest('a, pre, .mermaid-block, .katex, .file-link')) {
+        nodes.push(walker.currentNode);
+      }
+    }
+    nodes.forEach(function (node) {
+      var text = node.textContent;
+      var pattern = /(?:http:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?!\d)(?:[/?#][^\s<>"`\\]*)?/gi;
+      var fragment = document.createDocumentFragment();
+      var offset = 0;
+      var match;
+      while ((match = pattern.exec(text))) {
+        if (/[\w./:@-]/.test(text[match.index - 1] || '')
+          || /[\w:@-]/.test(text[pattern.lastIndex] || '')) continue;
+        var address = match[0].replace(/[.,;!，。；！？、）]+$/, '');
+        while (address.endsWith(')')
+          && address.split(')').length > address.split('(').length) address = address.slice(0, -1);
+        var url;
+        try { url = new URL(/^http:/i.test(address) ? address : 'http://' + address); }
+        catch (error) { continue; }
+        if (url.port === '0') continue;
+        fragment.appendChild(document.createTextNode(text.slice(offset, match.index)));
+        var link = document.createElement('a');
+        link.href = url.href;
+        link.className = 'ext-link';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = address;
+        fragment.appendChild(link);
+        offset = match.index + address.length;
+      }
+      if (!offset) return;
+      fragment.appendChild(document.createTextNode(text.slice(offset)));
+      node.replaceWith(fragment);
+    });
+    return template.innerHTML;
+  }
+
+  window.linkifyPreviewAddresses = linkifyPreviewAddresses;
+
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
-    return rewriteFileLinks(marked.parse(text));
+    return linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
   };
 
   window.renderAssistantText = function (text) {
