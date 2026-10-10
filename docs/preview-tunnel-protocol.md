@@ -39,6 +39,5 @@ pending bytes to 512 KiB, each tunnel to 24 streams, and each connection to
 four tunnels. An existing TCP stream is closed when its tunnel closes or its
 data channel disconnects; the app must open a new stream after reconnecting.
 
-This backend phase supplies the control and Bridge data paths. The native
-loopback listener, browser socket mapping, links in sessions, and in-app
-preview navigation are the next frontend phase.
+The native loopback listener, browser socket mapping, session links, and in-app
+preview navigation use this protocol.
