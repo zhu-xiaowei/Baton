@@ -222,7 +222,12 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Build Windows release installer
+        if: ${{ inputs.mode != 'test' }}
+        run: npm run tauri -- build --ci --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Build Windows unsigned test installer
+        if: ${{ inputs.mode == 'test' }}
+        run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis
       - name: Stage installer
         shell: pwsh
         run: |
