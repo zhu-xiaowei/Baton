@@ -89,6 +89,7 @@ test('cloud package collects three artifacts from the verified run', (t) => {
     assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3', file), 'utf8'), `fixture-${file}`);
   }
   assert.match(result.stdout, /SUMMARY \(v1\.2\.3\)/);
+  assert.ok(result.stdout.includes('release/1.2.3/Baton.apk'));
 });
 
 test('a failed job does not discard successful installers', (t) => {
@@ -144,6 +145,7 @@ for (const [platform, file] of Object.entries({
     assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
     assert.ok(!fs.existsSync(path.join(root, 'release/1.2.3')));
     assert.match(result.stdout, new RegExp(`SUMMARY \\(test ${platform} at ${sha.slice(0, 7)}\\)`));
+    assert.ok(result.stdout.includes(`release/test/${sha.slice(0, 12)}/${file}`));
   });
 }
 

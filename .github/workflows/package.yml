@@ -1,5 +1,5 @@
 name: Package
-run-name: Package ${{ inputs.request_id }} at ${{ inputs.expected_sha }}
+run-name: Package ${{ inputs.mode || 'release' }} ${{ inputs.platform || 'all' }} ${{ inputs.request_id }} at ${{ inputs.expected_sha }}
 
 on:
   workflow_dispatch:

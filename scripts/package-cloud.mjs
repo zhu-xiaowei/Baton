@@ -164,7 +164,7 @@ try {
       const source = path.join(extract, target.file);
       if (!fs.existsSync(source) || !fs.statSync(source).size) throw new Error(`${target.file} missing or empty`);
       fs.copyFileSync(source, output);
-      results.push(`${target.label}: release/${version}/${target.file} (${humanSize(fs.statSync(output).size)})`);
+      results.push(`${target.label}: ${path.relative(root, output)} (${humanSize(fs.statSync(output).size)})`);
     } catch (error) {
       results.push(`${target.label}: artifact download failed (${error.message})`);
     }
