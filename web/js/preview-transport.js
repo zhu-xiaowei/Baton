@@ -31,6 +31,7 @@ export class PreviewTunnel {
     this.inboundBytes = 0;
     this.tunnelId = crypto.randomUUID();
     this.streams = new Map();
+    this.portChecks = new Map();
     this.unlisteners = [];
     this.closed = false;
     this.started = false;
@@ -72,6 +73,7 @@ export class PreviewTunnel {
       this.sendControl('open');
       await ready;
       if (this.closed) throw new Error('Preview closed');
+      await this.checkPort();
       for (const [name, handler] of [
         ['preview-socket-open', event => this.nativeOpen(event.payload)],
         ['preview-socket-bytes', event => this.nativeBytes(event.payload)],
@@ -99,6 +101,26 @@ export class PreviewTunnel {
       await this.close();
       throw error;
     }
+  }
+
+  checkPort() {
+    if (this.closed) return Promise.reject(new Error('Preview closed'));
+    this.status(`Checking port ${this.target.port} on ${this.device}…`);
+    return new Promise((resolve, reject) => {
+      const streamId = crypto.randomUUID();
+      const timer = setTimeout(() => finish(new Error(`Port check timed out on ${this.device}:${this.target.port}`)), 5000);
+      const finish = error => {
+        clearTimeout(timer);
+        this.portChecks.delete(streamId);
+        this.channel?.send({ type: 'close', streamId });
+        if (error) reject(error);
+        else resolve();
+      };
+      this.portChecks.set(streamId, finish);
+      if (!this.channel?.send({ type: 'open', streamId })) {
+        finish(new Error('Could not check the remote port'));
+      }
+    });
   }
 
   handleControl(value) {
@@ -190,6 +212,17 @@ export class PreviewTunnel {
   }
 
   remoteMessage(message) {
+    if (this.closed) return;
+    const portCheck = this.portChecks.get(message.streamId);
+    if (portCheck) {
+      if (message.type === 'opened') portCheck();
+      else if (message.type === 'error' || message.type === 'close' || message.type === 'fin') {
+        portCheck(new Error(message.code === 'connection_refused'
+          ? `Port ${this.target.port} is not listening on ${this.device}`
+          : `Could not connect to port ${this.target.port} on ${this.device}`));
+      }
+      return;
+    }
     const stream = this.streams.get(message.streamId);
     if (!stream || this.closed) return;
     if (message.type === 'opened') {
@@ -300,6 +333,7 @@ export class PreviewTunnel {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    for (const finish of this.portChecks.values()) finish(new Error('Preview closed'));
     clearTimeout(this.pairTimer);
     clearTimeout(this.renewTimer);
     this.sendControl('close');

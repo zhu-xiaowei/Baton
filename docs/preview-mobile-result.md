@@ -64,9 +64,30 @@ The native App starts a TCP listener on the phone or desktop and opens
 the chosen local port in a browser view. It tries the remote service's
 port first, then increments if that port is in use. The Mac browser URL
 uses `localhost`; Android and iOS use `127.0.0.1`. Both loopback
-addresses are listened on when available. The proxy starts when a
-localhost link is opened or a port is entered in Baton, and the Stop
-preview button releases the port before another preview starts.
+addresses are listened on when available.
+
+The device's project list has a Remote preview entry next to the new-project
+button. Its panel keeps a list of remote ports and their actual local addresses,
+hidden until a port is added. Manual entry accepts a remote port number only;
+paths and query parameters are preserved when opening a link from a session.
+Adding a port first asks the Bridge to open a temporary TCP connection to the
+remote loopback port over the existing preview channel. Refused or timed-out
+checks display an error without adding a record; successful checks save the
+entry and keep its forwarding connection ready. No HTTP request is sent by
+the check. Each row has Open in app,
+Open in browser, and Delete connection actions; connections are shared by device and
+remote port, independently of projects and sessions.
+The manager closes with its top-right close button. On narrow screens it
+reuses the existing bottom-sheet layout and enter/exit animation.
+
+Opening a localhost link in session prose or inline code opens the in-app
+preview directly, preserving the path, query, and fragment. Fenced code blocks
+are left unchanged. The preview header has the same three actions. Returning
+from a preview or closing the manager leaves its tunnel running; deleting a
+connection releases its port and removes its saved entry. Exiting the app releases all tunnels. Saved port
+entries are restored without automatically reconnecting. The existing limit
+of four simultaneous tunnels still applies.
+
 If the chosen port differs from the remote port, hardcoded callback
 URLs must be updated or the original port freed. A standalone
 Baton tab in mobile Safari or Chrome cannot start that TCP listener,

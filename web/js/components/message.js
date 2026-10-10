@@ -172,6 +172,9 @@ import { systemEventId } from '../timeline.js';
     const attachHtml = badges.length ? `<div class="msg-attachments">${badges.join('')}</div>` : '';
 
     const displayText = slashCmd ? `/${slashCmd}${text.trim() ? ' ' + text.trim() : ''}` : text.trim();
+    const escapedText = esc(displayText);
+    const displayHtml = window.linkifyPreviewAddresses
+      ? window.linkifyPreviewAddresses(escapedText) : escapedText;
 
     if (!displayText && !attachHtml) return '';
     const nativeTurn = String(msg.nativeId || '')
@@ -183,7 +186,7 @@ import { systemEventId } from '../timeline.js';
     const className = `msg-user${extraClass ? ` ${extraClass}` : ''}`;
     return `<div class="${className}"${anchorAttr}${messageAttr}${nativeAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
       ${attachHtml}
-      ${displayText ? `<div class="msg-text" onclick="toggleExpand(this)">${esc(displayText)}</div>` : ''}
+      ${displayText ? `<div class="msg-text" onclick="if(!event.target.closest('a'))toggleExpand(this)">${displayHtml}</div>` : ''}
       <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span></div>
     </div>`;
   };

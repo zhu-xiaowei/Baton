@@ -41,3 +41,33 @@ AWS CloudFormation template validation passed. The local Tauri listener and
 session-link UI are the next frontend phase. The installed Bridges have not
 been updated to advertise `preview=1`; only the temporary smoke Bridge used
 the new backend.
+
+## Release update — 2026-10-10
+
+The `Baton` stack was published as `1.0.0-preview-20261010044636` and finished
+`UPDATE_COMPLETE`. The existing resources and WS handler sources matched the
+deployment checkout before publication. The server build context now includes
+`bridge/preview-protocol.mjs`, required by the web preview client.
+
+The installed `test-ec2` Bridge was upgraded to the same version and advertises
+`preview=1`. Vite runs on that device at `127.0.0.1:5173`. An App-side client
+using the current preview transport and the installed Bridge verified:
+
+- The remote-port check succeeds before starting the local listener.
+- A 546,405-byte `/js/ws.js` response matches a direct request byte-for-byte.
+- Vite's HMR WebSocket upgrades with `101 Switching Protocols`.
+- A closed remote port is rejected before creating the local listener.
+
+The App-side smoke substitutes only the native listener; these results verify
+the installed Bridge and deployed control/data APIs, not native UI interaction.
+The published CDN entry script also matches the current frontend build.
+
+The initial API image omitted `preview_tunnel_ws.py`. The device availability
+helper imports `bridge_ws` lazily, so this missing dependency made connected
+devices appear offline even though their WebSockets were still connected.
+The previous API image was restored while retaining the deployed WS service
+and Bridge versions. The Dockerfile now includes the module, and the existing
+packaging checks verify both this runtime file and the web preview protocol
+module. Subsequent releases use a committed source version and the normal
+`server/install.sh` flow, including verification of all five devices after
+their automatic update.

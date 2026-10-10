@@ -75,6 +75,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation create-stack'));
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
   assert.match(install, /preview_tunnel_ws\.py/);
+  assert.match(install, /"\$ROOT_DIR\/bridge\/preview-protocol\.mjs"/);
   const previewRoute = JSON.parse(read('server/template/Baton.template')).Resources.PreviewDataRoute;
   assert.equal(previewRoute.Properties.ApiId.Ref, 'TerminalDirectApi');
   assert.equal(previewRoute.Properties.RouteKey, 'preview_data');
@@ -83,6 +84,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
   assert.match(dockerfile, /^COPY project\/ project\/$/m);
+  assert.match(dockerfile, /^COPY .*preview_tunnel_ws\.py .*\.\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });
 
