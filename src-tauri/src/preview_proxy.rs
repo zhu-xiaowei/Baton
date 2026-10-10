@@ -332,9 +332,9 @@ pub fn preview_close_socket(manager: State<'_, Arc<PreviewProxy>>,
 
 #[tauri::command]
 pub async fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
-    tunnel_id: String) {
+    tunnel_id: String) -> Result<(), String> {
   let manager = Arc::clone(manager.inner());
-  let _ = tauri::async_runtime::spawn_blocking(move || {
+  tauri::async_runtime::spawn_blocking(move || {
     let session = manager.sessions.lock().ok().and_then(|mut sessions| sessions.remove(&tunnel_id));
     if let Some(session) = session {
       session.stopped.store(true, Ordering::Release);
@@ -347,5 +347,6 @@ pub async fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
         manager.close_socket(&stream_id);
       }
     }
-  }).await;
+  }).await.map_err(|error| error.to_string())?;
+  Ok(())
 }
