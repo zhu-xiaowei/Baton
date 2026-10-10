@@ -30,6 +30,7 @@ function ensureOverlay() {
       </form>
       <p class="preview-status" role="status">Enter a port or open a localhost link in this session.</p>
       <code class="preview-local-url" hidden></code>
+      <small class="preview-port-note" hidden></small>
       <iframe class="preview-frame" title="Remote preview page" hidden></iframe>
       <div class="preview-actions">
         <button class="preview-reopen" type="button" disabled>Open browser again</button>
@@ -95,6 +96,7 @@ async function stopPreview(invalidate = true) {
   }
   overlay?.querySelector('.preview-reopen')?.setAttribute('disabled', '');
   overlay?.querySelector('.preview-local-url')?.setAttribute('hidden', '');
+  overlay?.querySelector('.preview-port-note')?.setAttribute('hidden', '');
   const previous = active;
   active = null;
   await previous?.close();
@@ -134,6 +136,11 @@ async function startPreview(target, device) {
     const link = view.querySelector('.preview-local-url');
     link.textContent = url;
     link.hidden = false;
+    const chosenPort = Number(new URL(url).port) || 80;
+    const note = view.querySelector('.preview-port-note');
+    note.hidden = chosenPort === target.port;
+    if (!note.hidden) note.textContent =
+      `Local port ${target.port} was unavailable. Using ${chosenPort}; update fixed callback URLs.`;
     view.querySelector('.preview-reopen').disabled = false;
     await openPreviewBrowser(url);
   } catch (error) {

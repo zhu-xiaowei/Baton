@@ -65,4 +65,6 @@
 .preview-status { min-height: 2.5em; margin: 18px 0 10px; line-height: 1.5; }
 .preview-local-url { display: block; overflow-wrap: anywhere; color: #58a6ff; font-size: 13px; }
 .preview-local-url[hidden] { display: none; }
+.preview-port-note { display: block; margin-top: 8px; color: #d29922; font-size: 13px; }
+.preview-port-note[hidden] { display: none; }
 .preview-actions { justify-content: flex-end; flex-wrap: wrap; margin-top: 20px; }

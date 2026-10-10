@@ -61,7 +61,14 @@ image is at `.test-runs/preview-mobile/artifacts-ios-visual-online/marker-after-
 ## Browser scope
 
 The native App starts a TCP listener on the phone or desktop and opens
-`http://127.0.0.1:<dynamic port>/` in a browser view. A standalone
+the chosen local port in a browser view. It tries the remote service's
+port first, then increments if that port is in use. The Mac browser URL
+uses `localhost`; Android and iOS use `127.0.0.1`. Both loopback
+addresses are listened on when available. The proxy starts when a
+localhost link is opened or a port is entered in Baton, and the Stop
+preview button releases the port before another preview starts.
+If the chosen port differs from the remote port, hardcoded callback
+URLs must be updated or the original port freed. A standalone
 Baton tab in mobile Safari or Chrome cannot start that TCP listener,
 so this native path is unavailable there. A standalone web version
 would need an authenticated HTTPS and WebSocket gateway with a separate
