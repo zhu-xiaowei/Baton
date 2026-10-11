@@ -35,6 +35,8 @@
   transition: opacity 120ms ease-out;
 }
 .browser-button:disabled { opacity: .3; cursor: default; }
+.browser-navigation .browser-button { color: var(--action-icon-hover-color); }
+.browser-navigation .browser-button:disabled { color: var(--action-icon-color); opacity: 1; }
 .browser-page .browser-button:not(:disabled):is(:hover, :active) { color: var(--action-icon-hover-color); background: transparent; }
 .browser-button:not(:disabled):active::before { opacity: 1; }
 .browser-button svg { position: relative; width: 20px; height: 20px; pointer-events: none; transform: translateX(var(--browser-icon-offset)); }

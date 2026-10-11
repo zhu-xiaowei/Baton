@@ -9,16 +9,16 @@ Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex
 Baton provides non-intrusive, real-time streaming and rendering for Claude Code and Codex sessions across your devices. Your session data stays in your own AWS account.
 
 
-## Rich rendering
+### Rich rendering
 
 <p align="center">
   <img src="docs/assets/mobile-rendering.avif" alt="Baton mobile rendering: interactive prompts, Mermaid diagrams, HTML, and Markdown previews" width="100%">
 </p>
 
-## Developer tools
+### Developer tools
 
 <p align="center">
-  <img src="docs/assets/mobile-capabilities.avif" alt="Baton developer tools: project files, Git changes, terminal controls, and session management" width="100%">
+  <img src="docs/assets/mobile-capabilities.avif" alt="Baton developer tools: project files, Git changes, terminal controls, and remote localhost previews" width="100%">
 </p>
 
 ---
