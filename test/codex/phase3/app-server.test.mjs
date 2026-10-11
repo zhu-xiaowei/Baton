@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { EventEmitter } from 'events';
+import { EventEmitter, once } from 'events';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -151,15 +151,16 @@ test('app-server client reuses a managed Unix WebSocket daemon', async (t) => {
   });
   assert.equal((await resumed).thread.id, 'thread-managed');
 
-  const requests = [];
-  client.on('serverRequest', (request) => requests.push(request));
+  const serverRequest = once(client, 'serverRequest', {
+    signal: AbortSignal.timeout(1000),
+  });
   appServer.send({
     id: 21,
     method: 'item/commandExecution/requestApproval',
     params: { threadId: 'thread-managed', turnId: 'turn-active' },
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(requests[0].id, 21);
+  const [request] = await serverRequest;
+  assert.equal(request.id, 21);
 
   client.respond(21, { decision: 'cancel' });
   await waitForMessage(
