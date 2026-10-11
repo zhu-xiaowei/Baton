@@ -229,9 +229,10 @@ export function openBrowserPage(options = {}) {
     if (data.type === 'baton-browser-available') {
       if (documentId !== data.documentId) {
         const redirected = documentId !== null;
-        // Navigation before the previous document finished loading is a redirect, not a new entry.
-        replaceDocument = redirected && !pendingDelta
-          && (!documentLoaded || ['replace', 'reload'].includes(data.navigationType));
+        // Trust the browser's navigation type; without it, navigation during load is a redirect.
+        replaceDocument = redirected && !pendingDelta && (data.navigationType
+          ? ['replace', 'reload'].includes(data.navigationType)
+          : !documentLoaded);
         documentLoaded = false;
         documentId = data.documentId;
         token = crypto.randomUUID();
