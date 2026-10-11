@@ -66,7 +66,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Multi-device session control** — track running, needs input, and done states, then continue work from any connected device
 - **Remote interaction** — send follow-ups while Claude Code or Codex is running, interrupt turns, answer questions, and approve or deny tool calls
 - **Project terminals** — open and switch between up to five shells per project, share live terminals across devices, and restore their screens when returning (macOS / Linux Bridge)
-- **Remote localhost previews** — open a Bridge machine's `http://localhost:3000` (or another local HTTP port) inside the native app from a session link or the device's port picker; desktop apps also expose a local URL for browser debugging
+- **Remote localhost previews** — open a Bridge machine's `http://localhost:3000` (or another local HTTP port) inside the native app by tapping a session link or entering the port on the device page; desktop apps also expose a local URL for browser debugging
 - **Mobile terminal controls** — use an on-screen Esc / Tab / Ctrl / Shift / Alt / Paste / Enter keybar, a directional joystick, and touch scrolling
 - **Multi-agent session aggregation** — keep one main session in the catalog while viewing and switching between its nested Claude Code or Codex subagents
 - **Live agent status** — follow running, needs input, and completed subagents through a real-time status indicator and hierarchical thread list
