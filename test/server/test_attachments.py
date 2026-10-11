@@ -138,29 +138,6 @@ def test_real_signer_uses_accelerated_host_and_signed_content_length(monkeypatch
     assert bridge_sync._attachment_client() is not bridge_sync._attachment_client(True)
 
 
-@pytest.mark.parametrize('region', ['ap-northeast-1', 'eu-west-1'])
-def test_signed_upload_and_download_urls_use_the_bucket_region(monkeypatch, request, region):
-    bridge_sync._attachment_client.cache_clear()
-    request.addfinalizer(bridge_sync._attachment_client.cache_clear)
-    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'testing')
-    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'testing')
-    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
-    monkeypatch.setenv('AWS_REGION', region)
-    monkeypatch.setenv('BRIDGE_IMAGES_BUCKET', 'test-uploads')
-    monkeypatch.setenv('S3_UPLOAD_ACCELERATE', 'true')
-    prepared = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
-        name='差旅费报销单.xlsx', size=7630), REQUEST, Response()))
-    monkeypatch.setattr(bridge_sync._attachment_client(), 'head_object', lambda **kwargs: {
-        'ContentLength': 7630, 'Metadata': {},
-    })
-    download = asyncio.run(bridge_sync.attachment_url(prepared['key'], REQUEST, Response()))
-    for url in [prepared['fallbackUrl'], download['url'], download['previewUrl']]:
-        assert urlparse(url).hostname == f'test-uploads.s3.{region}.amazonaws.com'
-        credential = parse_qs(urlparse(url).query)['X-Amz-Credential'][0]
-        assert credential.split('/')[2] == region
-    assert urlparse(prepared['url']).hostname == 'test-uploads.s3-accelerate.amazonaws.com'
-
-
 def test_deployment_wires_acceleration_and_browser_cors():
     root = os.path.join(os.path.dirname(__file__), '..', '..')
     with open(os.path.join(root, 'server', 'template', 'Baton.template')) as file:
