@@ -918,7 +918,7 @@ export class StreamingDomRenderer {
     this.frameId = null;
     this.now = options.now || Date.now;
     this.scheduleTimer = options.scheduleTimer || ((callback) => setTimeout(callback, 1000));
-    this.cancelTimer = options.cancelTimer || clearTimeout;
+    this.cancelTimer = options.cancelTimer || ((id) => clearTimeout(id));
     this.thinkingTimer = null;
   }
 
@@ -1324,10 +1324,12 @@ export class StreamingDomRenderer {
     if (options.remove === false) {
       for (var view of this.blockViews.values()) this.updateThinking(view, true);
     }
-    if (this.frameId != null) this.cancelFrame(this.frameId);
+    var frameId = this.frameId;
+    var thinkingTimer = this.thinkingTimer;
     this.frameId = null;
-    if (this.thinkingTimer != null) this.cancelTimer(this.thinkingTimer);
     this.thinkingTimer = null;
+    if (frameId != null) this.cancelFrame(frameId);
+    if (thinkingTimer != null) this.cancelTimer(thinkingTimer);
     if (options.remove !== false) {
       for (var turnId of this.turnElements.keys()) {
         for (var turn of this.managedTurnRows(turnId)) turn.remove();
