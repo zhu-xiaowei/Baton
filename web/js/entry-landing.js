@@ -55,6 +55,14 @@ import './api.js';
 
   releaseNativeSkeleton();
 
+  // iOS keeps the keyboard open on taps that land on non-focusable areas.
+  if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    document.addEventListener('pointerdown', function (event) {
+      var active = document.activeElement;
+      if (active?.matches('input') && !event.target.closest('input, button, a, label')) active.blur();
+    }, true);
+  }
+
   async function doConnect() {
     var input = document.getElementById('startUrlInput');
     var raw = (input.value || '').trim();

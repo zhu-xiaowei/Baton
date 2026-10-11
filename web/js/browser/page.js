@@ -60,6 +60,7 @@ export function openBrowserPage(options = {}) {
       <iframe class="browser-frame" title="Preview page"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
         allow="clipboard-read; clipboard-write" hidden></iframe>
+      <div class="browser-focus-shield" hidden></div>
     </main>`;
   document.body.appendChild(root);
   const frame = root.querySelector('.browser-frame');
@@ -77,6 +78,8 @@ export function openBrowserPage(options = {}) {
   let pendingDelta = 0;
   let awaitingLoad = false;
   let bridgeReady = false;
+  let documentLoaded = false;
+  let replaceDocument = false;
   let destroyed = false;
   let suspended = false;
   let navigationVersion = 0;
@@ -226,6 +229,10 @@ export function openBrowserPage(options = {}) {
     if (data.type === 'baton-browser-available') {
       if (documentId !== data.documentId) {
         const redirected = documentId !== null;
+        // Navigation before the previous document finished loading is a redirect, not a new entry.
+        replaceDocument = redirected && !pendingDelta
+          && (!documentLoaded || ['replace', 'reload'].includes(data.navigationType));
+        documentLoaded = false;
         documentId = data.documentId;
         token = crypto.randomUUID();
         setLoading(true, true, redirected);
@@ -242,11 +249,12 @@ export function openBrowserPage(options = {}) {
       return;
     }
     bridgeReady = true;
+    if (data.readyState === 'complete') documentLoaded = true;
     if (pendingDelta) {
       position += pendingDelta;
       urls[position] = url;
       pendingDelta = 0;
-    } else if (awaitingLoad || data.mode === 'replace') {
+    } else if (awaitingLoad || replaceDocument || data.mode === 'replace') {
       if (position >= 0) urls[position] = url;
     } else if (data.mode === 'pop') {
       const previous = urls.lastIndexOf(url, position - 1);
@@ -259,6 +267,7 @@ export function openBrowserPage(options = {}) {
       position = urls.length - 1;
     }
     awaitingLoad = false;
+    replaceDocument = false;
     currentUrl = url;
     options.onLocationChange?.(url);
     if (data.mode === 'stopped') loadStopped = true;
@@ -279,6 +288,16 @@ export function openBrowserPage(options = {}) {
     if (!documentId && !installed) setLoading(false);
   });
   window.addEventListener('message', receive);
+  // Taps on the frame never reach this document, so a shield catches them while editing.
+  const shield = root.querySelector('.browser-focus-shield');
+  address.addEventListener('focus', () => { shield.hidden = false; });
+  address.addEventListener('blur', () => { shield.hidden = true; });
+  root.addEventListener('pointerdown', event => {
+    if (document.activeElement !== address || event.target.closest('.browser-address-form')) return;
+    if (event.target === shield) event.preventDefault();
+    address.value = currentUrl || initialAddress;
+    address.blur();
+  });
   root.addEventListener('selectstart', event => {
     if (!event.target.closest?.('.browser-address')) event.preventDefault();
   });

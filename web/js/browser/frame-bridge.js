@@ -47,5 +47,6 @@
   });
   window.parent.postMessage({
     type: 'baton-browser-available', documentId, url: location.href,
+    navigationType: window.navigation?.activation?.navigationType,
   }, '*');
 })();

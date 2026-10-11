@@ -146,7 +146,7 @@ if (window.visualViewport && _isMobile) {
     }
     var chromeHeight = 0;
     if (_isIOS && kbUp
-      && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden])')) {
+      && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
       if (topBar) chromeHeight += topBar.offsetHeight;
@@ -1439,8 +1439,14 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   if (!keepHistoryRequest) _historyFetchBarriers.invalidate();
   _messagePaginationGeneration++;
   state.wsLoadingOlder = false;
-  if (_strictStreamRenderer) _strictStreamRenderer.reset({ remove: !keepHistoryRequest });
+  var renderer = _strictStreamRenderer;
   _strictStreamRenderer = null;
+  // A renderer teardown failure must not abort the navigation that is resetting it.
+  try {
+    renderer?.reset({ remove: !keepHistoryRequest });
+  } catch (error) {
+    console.error('Stream renderer reset failed', error);
+  }
   _streamCoordinator.resetSession('');
   _turnEventQueue.reset();
   _checkpointResumedTurns.clear();
