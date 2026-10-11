@@ -112,6 +112,13 @@ test('file staging retains the escaped name, icon and uppercase extension in one
   assert.equal(badge.disabled, false);
 });
 
+test('an uploaded slide deck starts converting before it is opened', async () => {
+  const posts = [];
+  window.apiPost = async path => { posts.push(path); return path.endsWith('/file-prepare') ? prepared : { status: 'converting' }; };
+  await window.stageAttachmentFile(new File(['12345'], 'deck.pptx'));
+  assert.deepEqual(posts, ['/api/bridge/file-prepare', '/api/bridge/file-preview/' + key]);
+});
+
 test('mixed attachments share one ordered row and preserve its scroll position', () => {
   state.stagedImages = [
     { kind: 'file', key, name: 'demo.Mp4', uploaded: true },
@@ -319,14 +326,63 @@ test('live and historical user bubbles show the original filename without markup
   assert.equal(extractAttachments('[%](baton-file:' + key + ')').files.length, 0);
 });
 
-test('Office uses the existing preview overlay without sharing files with a third party', async () => {
+test('a converting slide deck shows elapsed time under the spinner, then the converted PDF', async () => {
+  const polls = [];
+  const statuses = [{ status: 'converting' }, { status: 'ready', previewUrl: 'https://bucket.test/deck.pdf', size: 9 }];
+  window.apiPost = async path => { polls.push(path); return statuses.shift(); };
   window.openFile('baton-file:' + key, 'deck.pptx');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
   assert.equal(document.getElementById('fileOverlayTitle').textContent, 'deck.pptx');
-  assert.match(document.getElementById('fileOverlayBody').textContent, /No inline preview/);
-  assert.equal(document.querySelector('.attachment-preview-info'), null);
-  assert.equal(document.querySelector('iframe'), null);
+  const status = document.querySelector('#fileOverlayBody .file-loading-content .file-loading-status');
+  assert.equal(status.textContent, 'Converting… 0s');
+  assert.ok(status.previousElementSibling.classList.contains('loading-spinner'));
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.deepEqual(polls, ['/api/bridge/file-preview/' + key, '/api/bridge/file-preview/' + key]);
+  assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/deck.pdf');
+  assert.equal(document.querySelector('.file-loading-status'), null);
+  window.closeFileViewer();
+});
+
+test('an already converted slide deck shows only the spinner', async () => {
+  window.apiPost = async () => ({ status: 'ready', previewUrl: 'https://bucket.test/deck.pdf', size: 9 });
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  assert.equal(document.querySelector('.file-loading-status'), null);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.querySelector('.file-loading-status'), null);
+  assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/deck.pdf');
+  window.closeFileViewer();
+});
+
+test('a project PDF is uploaded through the download operation, then previewed as an attachment', async () => {
+  const { handleProjectFilesMessage } = await vite.ssrLoadModule('/js/project/rpc.js');
+  const pdfKey = 'b'.repeat(32) + '.pdf';
+  const sent = [];
+  window.wsSendReliable = payload => {
+    sent.push(payload);
+    queueMicrotask(() => handleProjectFilesMessage({ action: 'project_files', requestId: payload.requestId, ok: true, key: pdfKey }));
+  };
+  const metadata = [];
+  window.api = async path => { metadata.push(path); return { name: 'spec.pdf', size: 20, previewType: 'application/pdf', previewUrl: 'https://bucket.test/spec.pdf' }; };
+  try {
+    window.openFile('/repo/docs/spec.pdf', 'spec.pdf', '', '', { projectHash: 'project' });
+    assert.ok(document.querySelector('#fileOverlayBody .file-loading-content .loading-spinner'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(sent.map(payload => [payload.operation, payload.path]), [['download', '/repo/docs/spec.pdf']]);
+    assert.deepEqual(metadata, ['/api/bridge/file-url/' + pdfKey]);
+    assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/spec.pdf');
+  } finally {
+    delete window.wsSendReliable;
+    window.closeFileViewer();
+  }
+});
+
+test('a failed slide conversion shows the cached error', async () => {
+  window.apiPost = async () => ({ status: 'failed', error: 'Could not convert this file.' });
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.querySelector('#fileOverlayBody .file-error').textContent, 'Could not convert this file.');
+  window.closeFileViewer();
 });
 
 test('PDF previews use the same overlay and closing ignores stale responses', async () => {

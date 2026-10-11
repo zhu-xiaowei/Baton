@@ -693,6 +693,25 @@ Return a short-lived presigned **GET** URL so the browser `<video>` element stre
 
 ---
 
+### POST /api/bridge/file-preview/{key}
+
+Convert an account-scoped slide attachment (`.ppt/.pptx/.pps/.ppsx/.odp`) to PDF once, then serve the cached PDF. The app polls this endpoint every second; project files are first uploaded through the existing `download` operation and use the resulting attachment key.
+
+**Response** `200` (`Cache-Control: no-store`):
+- `{ "status": "ready", "previewUrl": "https://...", "size": 123 }` — presigned inline `application/pdf` URL (1h), opened by the existing PDF.js viewer
+- `{ "status": "converting" }`
+- `{ "status": "failed", "error": "Conversion timed out." }` — cached failure, never retried for the same key
+
+**Logic**: the preview is keyed by content, not by attachment key: `previews/{accountHash}/{converter}/{etag}-{size}.pdf`, where `etag` is the source object's S3 ETag (uploads are single-part SSE-S3 PUTs, so it is the MD5 of the whole file) and `converter` is the first 12 hex digits of the converter image digest. Re-uploading the same file reuses the preview, and a new converter image invalidates old renderings. `.pdf` → ready; `.error` → failed. Otherwise the request claims `.pending` with a conditional put (`If-None-Match: *`, or `If-Match` on a claim older than 3 minutes), and only the winner invokes the converter Lambda asynchronously. The app also calls this endpoint once right after a slide attachment finishes uploading, so conversion usually completes before the user opens it. The viewer shows only its spinner, plus `Converting… Ns` centred under it (absolutely positioned, so the spinner never moves) only while the server reports `converting`; cache hits never show text.
+
+**Errors**: `400` unsupported type, `404` missing attachment, `503` converter not configured.
+
+Keynote (`.key`) is intentionally unsupported: LibreOffice renders Keynote 6+ (2013+) files with leaked master placeholder text ("Body Level One"), different line wrapping and missing gradient backgrounds. Such files show the standard "no inline preview" note and can still be downloaded.
+
+**Converter Lambda** (`server/converter/`): arm64, 1769 MB (1 vCPU — LibreOffice is single-threaded, more memory is not faster), 120 s, no async retries, reserved concurrency 5, 100 MB source limit. Debian + LibreOffice Impress (no GUI) with Liberation/Carlito/Caladea metric-compatible fonts and Noto CJK; common Chinese font names map to the SC faces. Images are downsampled to 220 DPI on export (PowerPoint's default picture resolution: sharp on tablets, desktop and when zoomed; about 25% smaller PDFs; 150 DPI halves the size again but did not convert faster on Lambda). The app downloads converted PDFs in one request, and ordinary PDFs up to 8 MB too — LibreOffice output is not linearized, so 64 KB range reads would need many sequential round trips; larger ordinary PDFs keep range loading so the first page appears without the whole file. `fonts.conf` also pins the generic `sans-serif`/`serif` fallbacks to Liberation Sans/Serif: without it fontconfig resolves unknown fonts (Amazon Ember, Roboto, Segoe UI…) to Liberation Mono and text is laid out with monospaced spacing. Its image tag is a hash of the converter files, so ordinary deploys reuse the same digest and keep Lambda's image cache; `install.sh` builds it in parallel with the API image and asynchronously invokes `{"warmup": true}` after every deploy, so a new image's first pull (~20 s) happens before a user's first preview without delaying the deploy.
+
+---
+
 ## WebSocket API
 
 **Connection URL**: `wss://{ws-api-id}.execute-api.{region}.amazonaws.com/v1?apiKey=xxx&role=app`

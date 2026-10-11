@@ -8,6 +8,7 @@ import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
 import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
+import { isSlideDeck, waitForSlidePdf } from '../components/slide-preview.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -20,16 +21,11 @@ var _view = null;
 var _downloadTarget = null;
 var _pdfPreview = null;
 var _pdfLoadController = null;
-var _viewedPdfKeys = new Set();
 var _clearPdfRanges = null;
 
 function clearAttachmentPreviewCache(key) {
   if (!key) return;
-  const prefix = state.SERVER + '|' + state.KEY + '|' + key + '|';
-  for (const viewed of _viewedPdfKeys) {
-    if (viewed.startsWith(prefix)) _viewedPdfKeys.delete(viewed);
-  }
-  _clearPdfRanges?.(prefix);
+  _clearPdfRanges?.(state.SERVER + '|' + state.KEY + '|' + key + '|');
 }
 
 function downloadStatus(text) {
@@ -50,14 +46,28 @@ function updateDownloadButtons() {
   });
 }
 
-async function prepareViewedDownload(target) {
-  if (!target.key) {
-    const result = await requestProjectFiles('download', {
+function uploadedKey(target) {
+  if (!target.keyPromise) {
+    target.keyPromise = target.key ? Promise.resolve(target.key) : requestProjectFiles('download', {
       projectHash: target.projectHash, path: target.path,
-    }, { timeout: 30 * 60_000 });
-    target.key = result.key;
+    }, { timeout: 30 * 60_000 }).then(result => (target.key = result.key));
+    target.keyPromise.catch(() => { target.keyPromise = null; });
   }
-  return window.api('/api/bridge/file-url/' + target.key);
+  return target.keyPromise;
+}
+
+async function prepareViewedDownload(target) {
+  return window.api('/api/bridge/file-url/' + await uploadedKey(target));
+}
+
+async function showUploadedProjectFile(target) {
+  const token = ++_fileRequestToken;
+  try {
+    const key = await uploadedKey(target);
+    if (token === _fileRequestToken) showAttachment(key);
+  } catch (error) {
+    if (token === _fileRequestToken) setBody('<div class="file-error">' + esc(String(error.message || error)) + '</div>');
+  }
 }
 
 async function downloadViewedFile() {
@@ -197,11 +207,15 @@ function setFileViewMode(mode) {
   if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
   if (!_current) {
     const attachment = _view.path.startsWith('baton-file:');
-    setBody('<div class="file-loading' + (attachment ? ' file-loading-delayed' : '') + '">'
-      + (attachment ? '<span class="file-loading-content">' : '')
+    // PDFs and slide decks cannot be read as text: upload them as for a download, then preview the attachment.
+    const uploaded = !attachment && !!_downloadTarget && (isSlideDeck(_view.path) || /\.pdf$/i.test(_view.path));
+    const viaAttachment = attachment || uploaded;
+    setBody('<div class="file-loading' + (viaAttachment ? ' file-loading-delayed' : '') + '">'
+      + (viaAttachment ? '<span class="file-loading-content">' : '')
       + loadingSpinner({ label: 'Loading file' })
-      + (attachment ? '</span>' : '') + '</div>');
-    if (_view.path.startsWith('baton-file:')) return showAttachment(_view.path.slice('baton-file:'.length));
+      + (viaAttachment ? '</span>' : '') + '</div>');
+    if (attachment) return showAttachment(_view.path.slice('baton-file:'.length));
+    if (uploaded) return showUploadedProjectFile(_downloadTarget);
     return sendFileRequest(_view.path, _view.line, _view.snippet, 1);
   }
   if (mode !== 'preview') {
@@ -400,11 +414,35 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   return true;
 }
 
+// Elapsed conversion time under the existing spinner; positioned absolutely so the spinner never moves.
+function showConversionTimer(token) {
+  const content = document.querySelector('#fileOverlayBody .file-loading-content');
+  if (!content || content.querySelector('.file-loading-status')) return;
+  const status = document.createElement('span');
+  status.className = 'file-loading-status';
+  content.appendChild(status);
+  const started = Date.now();
+  const tick = () => {
+    if (!status.isConnected || token !== _fileRequestToken) return clearInterval(timer);
+    status.textContent = 'Converting… ' + Math.floor((Date.now() - started) / 1000) + 's';
+  };
+  const timer = setInterval(tick, 1000);
+  tick();
+}
+
 async function showAttachment(key) {
   const token = ++_fileRequestToken;
   let pdfFallbackUrl = '';
+  let failed = false;
+  let slidePdf = null;
   try {
     if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
+    if (isSlideDeck(key)) {
+      // Poll the converted PDF alongside the metadata request instead of after it.
+      slidePdf = waitForSlidePdf(key, () => token === _fileRequestToken && !failed,
+        () => showConversionTimer(token));
+      slidePdf.catch(() => {});
+    }
     const file = await window.api('/api/bridge/file-url/' + key);
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
@@ -418,43 +456,36 @@ async function showAttachment(key) {
     }
     let preview = '<div class="attachment-preview-note">No inline preview for this file type. Download to open it.</div>';
     const url = escapeAttachment(file.previewUrl);
-    if (file.previewType === 'application/pdf') {
-      pdfFallbackUrl = url;
+    let pdf = file.previewType === 'application/pdf' ? file : null;
+    if (!pdf && slidePdf) {
+      pdf = await slidePdf;
+      if (!pdf) return;
+      document.querySelector('#fileOverlayBody .file-loading-status')?.remove();
+    }
+    if (pdf) {
+      pdfFallbackUrl = escapeAttachment(pdf.previewUrl);
       if (!window.ResizeObserver || !window.requestAnimationFrame) {
-        setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + url + '"></iframe>');
+        setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
         return;
       }
       const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
       _clearPdfRanges = clearPdfRangeCache;
-      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size;
-      const showLoadingText = !_viewedPdfKeys.has(cacheKey);
+      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + pdf.size;
       const body = document.getElementById('fileOverlayBody');
-      const loading = body.querySelector('.file-loading');
-      if (loading) {
-        loading.querySelector('.loading-spinner')?.setAttribute('aria-label', 'Loading PDF');
-        if (showLoadingText) {
-          (loading.querySelector('.file-loading-content') || loading)
-            .insertAdjacentHTML('beforeend', '<span>Loading PDF…</span>');
-        }
-      } else {
+      if (!body.querySelector('.file-loading')) {
         setBody('<div class="file-loading file-loading-delayed"><span class="file-loading-content">'
-          + loadingSpinner({ label: 'Loading PDF' })
-          + (showLoadingText ? '<span>Loading PDF…</span>' : '') + '</span></div>');
+          + loadingSpinner({ label: 'Loading' }) + '</span></div>');
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
+      // Converted slides are small and not linearized, so always fetch them in one request.
       const pdfPreview = await mountPdfPreview(body,
-        file.previewUrl, file.size, controller.signal, cacheKey);
+        pdf.previewUrl, pdf.size, controller.signal, cacheKey, { wholeFile: pdf !== file });
       if (_pdfLoadController === controller) _pdfLoadController = null;
       if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
       _pdfPreview = pdfPreview;
       await pdfPreview.ready;
-      if (token === _fileRequestToken) {
-        _viewedPdfKeys.delete(cacheKey);
-        _viewedPdfKeys.add(cacheKey);
-        if (_viewedPdfKeys.size > 100) _viewedPdfKeys.delete(_viewedPdfKeys.values().next().value);
-      }
       return;
     } else if (file.previewType?.startsWith('image/')) {
       preview = '<img class="file-image" alt="" src="' + url + '">';
@@ -465,6 +496,7 @@ async function showAttachment(key) {
     }
     setBody(preview);
   } catch (error) {
+    failed = true;
     if (token !== _fileRequestToken) return;
     if (pdfFallbackUrl) {
       setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');

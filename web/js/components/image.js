@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
 import { showImageViewer, closeImageViewer } from './image-viewer.js';
+import { prefetchSlidePdf } from './slide-preview.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -59,6 +60,7 @@ async function uploadStagedFile(entry) {
     if (!state.stagedImages.includes(entry)) return;
     entry.progress = 100;
     entry.uploaded = true;
+    prefetchSlidePdf(entry.key);
   } catch (error) {
     if (!entry.controller.signal.aborted) entry.error = error.message || 'Upload failed';
   }
