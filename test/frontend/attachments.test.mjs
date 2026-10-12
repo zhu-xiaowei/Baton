@@ -288,11 +288,13 @@ test('progress remains attached to the right file after an earlier card is remov
   const second = window.stageAttachmentFile(new File(['12345'], 'second.mp4'));
   await until(() => FakeUpload.requests.length === 2);
   window.removeStagedImage(0);
-  const request = FakeUpload.requests[1];
+  // Hashing finishes in either order, so find each upload by its file.
+  const upload = name => FakeUpload.requests.find(item => item.body.name === name);
+  const request = upload('second.mp4');
   request.upload.onprogress({ lengthComputable: true, loaded: 60, total: 100 });
   assert.equal(document.querySelector('.staged-file-name').textContent, 'second.mp4');
   assert.equal(document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '60');
-  assert.equal(FakeUpload.requests[0].aborted, true);
+  assert.equal(upload('first.mp4').aborted, true);
   request.status = 200;
   request.onload();
   request.onloadend();
