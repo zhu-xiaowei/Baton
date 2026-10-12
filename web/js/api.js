@@ -80,7 +80,7 @@ async function _do(path, params, opts, init) {
 }
 
 async function api(path, params, opts) {
-  return (await _do(path, params, opts)).json();
+  return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();
 }
 
 async function apiText(path, params, opts) {

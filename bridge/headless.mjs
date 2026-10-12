@@ -123,6 +123,8 @@ class HeadlessProc {
         this._cb?.onInputConsumed?.([this.inputs.get(o.uuid).streamId]);
         return;
       }
+      // isSynthetic = JSONL isMeta (model-only, e.g. Read image scale note); history drops it too.
+      if (t === 'user' && o.isSynthetic) return;
       this._cb?.onMessage?.(this.streamId, o);
       return;
     }
