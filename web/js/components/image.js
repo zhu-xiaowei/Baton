@@ -47,9 +47,11 @@ async function uploadStagedFile(entry) {
   renderStagedImages();
   try {
     if (entry.size > FILE_MAX_BYTES) throw new Error('File exceeds the 512 MB limit');
+    const hash = await contentHash(entry.file, entry.controller.signal);
+    if (!state.stagedImages.includes(entry)) return;
     const prepared = await window.apiPost('/api/bridge/file-prepare', {
       name: entry.name, size: entry.size, contentType: entry.file.type || 'application/octet-stream',
-      contentHash: await contentHash(entry.file),
+      contentHash: hash,
     });
     if (!state.stagedImages.includes(entry)) return;
     entry.key = prepared.key;

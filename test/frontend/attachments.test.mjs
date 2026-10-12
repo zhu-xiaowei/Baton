@@ -313,9 +313,9 @@ test('removal during preparation prevents starting an upload', async () => {
   window.apiPost = () => new Promise(resolve => { finish = resolve; });
   const pending = window.stageAttachmentFile(new File(['12345'], 'deck.pptx'));
   window.removeStagedImage(0);
-  await until(() => finish);
-  finish(prepared);
   await pending;
+  // Removed while hashing: neither prepared nor uploaded.
+  assert.equal(finish, undefined);
   assert.equal(FakeUpload.requests.length, 0);
 });
 
