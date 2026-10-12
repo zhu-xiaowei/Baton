@@ -1,9 +1,10 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
-import { contentHash } from '../content-hash.mjs';
+import { contentHash, hashFile } from '../content-hash.mjs';
 import { post } from '../http.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
@@ -33,26 +34,37 @@ async function prepareFileDownload(message, { projectRoot, postFn = post, fetchF
   let key = downloadFileKeys.get(identity);
   if (!key) {
     sendProgress(message, send, { downloading: true });
+    const hash = await contentHash(absPath, stat, home);
     const prepared = await postFn('/api/bridge/file-prepare', {
-      name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream',
-      contentHash: await contentHash(absPath, stat, home),
+      name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream', contentHash: hash,
     });
     if (!prepared?.ok) throw new Error('Could not prepare file download');
     const info = await prepared.json();
     if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
     const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
     let uploaded = !!info.exists;
-    for (const url of urls) {
-      const body = fs.createReadStream(absPath);
-      const closed = finished(body).catch(() => {});
-      try {
-        const response = await fetchFn(url, {
-          method: 'PUT', headers: { ...info.headers, 'Content-Length': String(stat.size) },
-          body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
-        });
-        await response.body?.cancel();
-        if (response.ok) { uploaded = true; break; }
-      } catch {} finally { body.destroy(); await closed; }
+    // Upload a private snapshot hashed again, so the stored bytes always match their content key even if
+    // the file is edited meanwhile (a copy-on-write clone where the file system supports it).
+    const snapshot = urls.length ? path.join(os.tmpdir(), `baton-upload-${crypto.randomUUID()}`) : '';
+    try {
+      if (snapshot) {
+        await fs.promises.copyFile(absPath, snapshot, fs.constants.COPYFILE_FICLONE);
+        if (await hashFile(snapshot) !== hash) throw new Error('File changed while preparing the download. Try again.');
+      }
+      for (const url of urls) {
+        const body = fs.createReadStream(snapshot);
+        const closed = finished(body).catch(() => {});
+        try {
+          const response = await fetchFn(url, {
+            method: 'PUT', headers: { ...info.headers, 'Content-Length': String(stat.size) },
+            body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
+          });
+          await response.body?.cancel();
+          if (response.ok) { uploaded = true; break; }
+        } catch {} finally { body.destroy(); await closed; }
+      }
+    } finally {
+      if (snapshot) await fs.promises.rm(snapshot, { force: true });
     }
     if (!uploaded) throw new Error('File upload failed. Try downloading again.');
     const current = await fs.promises.stat(absPath);

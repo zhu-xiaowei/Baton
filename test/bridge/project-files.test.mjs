@@ -127,6 +127,28 @@ test('a project file whose content is already stored is not uploaded, and its ha
   }
 });
 
+test('a project file edited while preparing is never uploaded under its earlier hash', async () => {
+  const { root } = fixture();
+  const file = path.join(root, 'notes.pdf');
+  fs.writeFileSync(file, 'original');
+  const options = {
+    home: fs.mkdtempSync(path.join(os.tmpdir(), 'baton-home-')),
+    postFn: async () => {
+      fs.writeFileSync(file, 'modified');
+      return Response.json({ key: 'b'.repeat(32) + '.pdf', url: 'https://s3.test', headers: {} });
+    },
+    fetchFn: async () => { assert.fail('must not upload bytes that do not match the hash'); },
+  };
+  try {
+    const result = await request(root, { operation: 'download', path: 'notes.pdf' }, options);
+    assert.equal(result.at(-1).ok, false);
+    assert.match(result.at(-1).error, /changed/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(options.home, { recursive: true, force: true });
+  }
+});
+
 test('downloads reject traversal and oversized files before requesting S3 access', async () => {
   const { root } = fixture();
   const large = path.join(root, 'large.pptx');
