@@ -47,8 +47,31 @@ fn bind_local_listeners(preferred_port: u16) -> Result<(Vec<TcpListener>, u16), 
 
 #[cfg(test)]
 mod tests {
-  use super::bind_local_listeners;
-  use std::net::{TcpListener, TcpStream};
+  use super::{bind_local_listeners, PreviewProxy, PreviewSession};
+  use std::{
+    collections::HashSet,
+    net::{TcpListener, TcpStream},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+  };
+
+  #[test]
+  fn reset_releases_only_the_owner_sessions() {
+    let proxy = PreviewProxy::default();
+    let mut owned = Vec::new();
+    for (id, owner) in [("a", "main"), ("b", "other"), ("c", "main")] {
+      let session = Arc::new(PreviewSession {
+        port: 1, owner: owner.into(), stopped: AtomicBool::new(false),
+        accept_threads: Mutex::new(Vec::new()), sockets: Mutex::new(HashSet::new()),
+      });
+      if owner == "main" { owned.push(Arc::clone(&session)); }
+      proxy.sessions.lock().unwrap().insert(id.into(), session);
+    }
+    for session in proxy.remove_owned("main") { proxy.stop_session(&session); }
+    let sessions = proxy.sessions.lock().unwrap();
+    assert_eq!(sessions.keys().collect::<Vec<_>>(), ["b"]);
+    assert!(!sessions["b"].stopped.load(Ordering::Acquire));
+    assert!(owned.iter().all(|session| session.stopped.load(Ordering::Acquire)));
+  }
 
   #[test]
   fn uses_requested_port_then_falls_forward_when_occupied() {
@@ -138,6 +161,25 @@ impl PreviewProxy {
           }
         }
       }
+    }
+  }
+
+  fn remove_owned(&self, owner: &str) -> Vec<Arc<PreviewSession>> {
+    let Ok(mut sessions) = self.sessions.lock() else { return Vec::new() };
+    let ids: Vec<String> = sessions.iter()
+      .filter(|(_, session)| session.owner == owner).map(|(id, _)| id.clone()).collect();
+    ids.iter().filter_map(|id| sessions.remove(id)).collect()
+  }
+
+  fn stop_session(&self, session: &PreviewSession) {
+    session.stopped.store(true, Ordering::Release);
+    let accept_threads = session.accept_threads.lock()
+      .map(|mut threads| std::mem::take(&mut *threads)).unwrap_or_default();
+    for thread in accept_threads { let _ = thread.join(); }
+    let stream_ids: Vec<String> = session.sockets.lock()
+      .map(|sockets| sockets.iter().cloned().collect()).unwrap_or_default();
+    for stream_id in stream_ids {
+      self.close_socket(&stream_id);
     }
   }
 
@@ -336,17 +378,19 @@ pub async fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
   let manager = Arc::clone(manager.inner());
   tauri::async_runtime::spawn_blocking(move || {
     let session = manager.sessions.lock().ok().and_then(|mut sessions| sessions.remove(&tunnel_id));
-    if let Some(session) = session {
-      session.stopped.store(true, Ordering::Release);
-      let accept_threads = session.accept_threads.lock()
-        .map(|mut threads| std::mem::take(&mut *threads)).unwrap_or_default();
-      for thread in accept_threads { let _ = thread.join(); }
-      let stream_ids: Vec<String> = session.sockets.lock()
-        .map(|sockets| sockets.iter().cloned().collect()).unwrap_or_default();
-      for stream_id in stream_ids {
-        manager.close_socket(&stream_id);
-      }
-    }
+    if let Some(session) = session { manager.stop_session(&session); }
+  }).await.map_err(|error| error.to_string())?;
+  Ok(())
+}
+
+// A reloaded webview loses its tunnel IDs, so it releases everything its window still owns.
+#[tauri::command]
+pub async fn preview_reset(window: WebviewWindow,
+    manager: State<'_, Arc<PreviewProxy>>) -> Result<(), String> {
+  let manager = Arc::clone(manager.inner());
+  let owner = window.label().to_string();
+  tauri::async_runtime::spawn_blocking(move || {
+    for session in manager.remove_owned(&owner) { manager.stop_session(&session); }
   }).await.map_err(|error| error.to_string())?;
   Ok(())
 }

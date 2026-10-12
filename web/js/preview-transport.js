@@ -11,6 +11,9 @@ const RETRANSMIT_CHECK_MS = 500;
 const RECONNECT_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Native listeners outlive a webview reload; release this window's leftovers before the first start.
+let nativeReset = null;
+
 function decodedLength(value) {
   return value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
 }
@@ -150,6 +153,7 @@ export class PreviewTunnel {
         }
         this.unlisteners.push(unlisten);
       }
+      await (nativeReset ??= invoke('preview_reset').catch(() => {}));
       this.localOrigin = await invoke('preview_start', {
         tunnelId: this.localId, preferredPort: this.target.port,
       });

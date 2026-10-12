@@ -73,7 +73,8 @@ pub fn run() {
       preview_proxy::preview_write,
       preview_proxy::preview_shutdown_write,
       preview_proxy::preview_close_socket,
-      preview_proxy::preview_stop
+      preview_proxy::preview_stop,
+      preview_proxy::preview_reset
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
