@@ -348,5 +348,5 @@ try {
     await Promise.race([exited, pause(3000)]);
   }
   await server?.close();
-  await fs.rm(fixture, { recursive: true, force: true });
+  await fs.rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
