@@ -424,6 +424,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
 async function showAttachment(key) {
   const token = ++_fileRequestToken;
   let pdfFallbackUrl = '';
+  let cachedPdf = false;
   try {
     if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
     const office = officeKind(key);
@@ -448,6 +449,7 @@ async function showAttachment(key) {
     const url = escapeAttachment(file.previewUrl || '');
     if (file.previewType === 'application/pdf') {
       pdfFallbackUrl = url;
+      cachedPdf = !!file.data;
       if (!window.ResizeObserver || !window.requestAnimationFrame) {
         setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
         return;
@@ -486,6 +488,12 @@ async function showAttachment(key) {
     setBody(preview);
   } catch (error) {
     if (token !== _fileRequestToken) return;
+    if (cachedPdf) {
+      // A cache hit has no URL; the browser's own viewer needs a fresh one.
+      pdfFallbackUrl = await window.api('/api/bridge/file-url/' + key)
+        .then(file => escapeAttachment(file.previewUrl || ''), () => '');
+      if (token !== _fileRequestToken) return;
+    }
     if (pdfFallbackUrl) {
       setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
     } else {
