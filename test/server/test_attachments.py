@@ -69,6 +69,35 @@ def test_standard_upload_when_acceleration_is_disabled(clients, monkeypatch):
     assert not clients[1].signed
 
 
+def test_known_content_hash_reuses_the_stored_file_and_never_overwrites_a_mismatch(clients, monkeypatch):
+    content_hash = 'c' * 32
+    result = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
+        name='deck.pptx', size=8 * 1024 * 1024, contentHash=content_hash), REQUEST, Response()))
+    assert result == {'key': content_hash + '.pptx', 'exists': True}
+    assert clients[0].heads[0]['Key'].endswith('/' + content_hash + '.pptx')
+    assert not clients[0].signed
+    mismatch = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
+        name='deck.pptx', size=5, contentHash=content_hash), REQUEST, Response()))
+    assert mismatch['key'] != content_hash + '.pptx' and 'url' in mismatch
+
+    def missing(**kwargs):
+        raise ClientError({'Error': {'Code': '404'}}, 'HeadObject')
+    monkeypatch.setattr(clients[0], 'head_object', missing)
+    new = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
+        name='deck.pptx', size=5, contentHash=content_hash), REQUEST, Response()))
+    assert new['key'] == content_hash + '.pptx' and 'url' in new
+    with pytest.raises(ValidationError):
+        bridge_sync.FilePrepareRequest(name='deck.pptx', size=5, contentHash='../x')
+
+
+def test_download_name_follows_the_caller_for_shared_content(clients):
+    result = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, Response(), name='v2 计划.pptx'))
+    assert result['name'] == 'v2 计划.pptx'
+    assert 'v2%20' in clients[0].signed[0][1]['Params']['ResponseContentDisposition']
+    unsafe = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, Response(), name='../x\n'))
+    assert unsafe['name'] == '计划.pptx'
+
+
 def test_download_checks_account_and_returns_private_no_store_links(clients):
     response = Response()
     result = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, response))

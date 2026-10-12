@@ -699,6 +699,10 @@ Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, and the same files 
 
 Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no `file-url` request and no download; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
 
+### Attachment content IDs (`POST /file-prepare`, `GET /file-url/{key}`)
+
+The app and Bridge send `contentHash`: the first 32 hex digits of SHA-256 over the concatenated SHA-256 digests of each 4 MB block (an empty file is one empty block). The key becomes `<contentHash><.ext>`. The server HEADs that object in the account's prefix: if it exists with the same size the response is `{ "key", "exists": true }` with no upload URL, and the client treats the file as uploaded; if it is missing, the presigned PUT targets that key; a size mismatch falls back to a random key so a stored file is never overwritten. Requests without `contentHash` keep random keys. `GET /file-url/{key}?name=` overrides the stored file name (used for the title and `Content-Disposition`), because identical content uploaded under another name shares one object.
+
 ---
 
 ## WebSocket API

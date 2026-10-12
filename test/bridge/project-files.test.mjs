@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { handleProjectFilesMessage } from '../../bridge/project/files.mjs';
+import { hashFile } from '../../bridge/content-hash.mjs';
 
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -45,6 +46,7 @@ async function request(root, message, options = {}) {
     send: (payload) => sent.push(payload),
     postFn: options.postFn,
     fetchFn: options.fetchFn,
+    home: options.home,
   });
   return sent;
 }
@@ -83,6 +85,46 @@ test('download exports original binary files over 6 MB with accelerated upload f
     await request(root, { operation: 'download', path: 'slides.pptx' }, options);
     assert.equal(preparations, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Must match the app's web/js/components/content-hash.js (same vectors in test/frontend/attachments.test.mjs).
+test('content IDs hash 4 MB blocks, shared with the app', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-hash-'));
+  const data = Buffer.alloc(9 * 1024 * 1024 + 7);
+  for (let i = 0; i < data.length; i++) data[i] = (i * 31 + (i >> 12)) & 255;
+  fs.writeFileSync(path.join(dir, 'vector.bin'), data);
+  fs.writeFileSync(path.join(dir, 'empty.bin'), '');
+  try {
+    assert.equal(await hashFile(path.join(dir, 'vector.bin')), '23eacdbbed46be6a09a3edab75a50b2c');
+    assert.equal(await hashFile(path.join(dir, 'empty.bin')), '5df6e0e2761359d30a8275058e299fcc');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a project file whose content is already stored is not uploaded, and its hash is remembered', async () => {
+  const { root } = fixture();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-home-'));
+  const file = path.join(root, 'report.pdf');
+  fs.writeFileSync(file, 'same content');
+  // Freshly written files are not remembered (Git's racy window).
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  const hash = await hashFile(file);
+  const options = {
+    home,
+    postFn: async (endpoint, body) => {
+      assert.equal(body.contentHash, hash);
+      return Response.json({ key: hash + '.pdf', exists: true });
+    },
+    fetchFn: async () => { assert.fail('must not upload stored content'); },
+  };
+  try {
+    const result = await request(root, { operation: 'download', path: 'report.pdf' }, options);
+    assert.equal(result.at(-1).ok, true);
+    assert.equal(result.at(-1).key, hash + '.pdf');
+    assert.deepEqual(Object.values(JSON.parse(fs.readFileSync(path.join(home, 'file-hashes.json'), 'utf8'))), [hash]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('downloads reject traversal and oversized files before requesting S3 access', async () => {

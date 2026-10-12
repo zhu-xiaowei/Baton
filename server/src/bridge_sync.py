@@ -883,6 +883,8 @@ class FilePrepareRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     size: int = Field(ge=0, le=512 * 1024 * 1024)
     contentType: str = Field(default="application/octet-stream", max_length=255)
+    # Content ID shared by the app and Bridge (block SHA-256); the same file maps to the same key.
+    contentHash: str = Field(default="", pattern=r"^(?:[0-9a-f]{32})?$")
 
 
 def _attachment_bucket():
@@ -913,7 +915,21 @@ async def file_prepare(req: FilePrepareRequest, request: Request, response: Resp
     if not name or any(ord(character) < 32 for character in name):
         raise HTTPException(status_code=400, detail="Invalid file name")
     extension = re.search(r"\.[a-z0-9]{1,16}$", name.lower())
-    key = uuid.uuid4().hex + (extension.group() if extension else "")
+    extension = extension.group() if extension else ""
+    key = uuid.uuid4().hex + extension
+    if req.contentHash:
+        hashed = req.contentHash + extension
+        try:
+            existing = _attachment_client().head_object(Bucket=bucket, Key=_attachment_key(hashed, request))
+        except ClientError as error:
+            if error.response["Error"]["Code"] not in ("404", "NoSuchKey", "NotFound", "403", "AccessDenied"):
+                raise
+            key = hashed
+        else:
+            # A size mismatch means a bad hash: never overwrite the stored file, keep the random key.
+            if existing["ContentLength"] == req.size:
+                response.headers["Cache-Control"] = "no-store"
+                return {"key": hashed, "exists": True}
     params = {
         "Bucket": bucket, "Key": _attachment_key(key, request),
         "ContentType": "application/octet-stream", "ContentLength": req.size,
@@ -932,7 +948,7 @@ async def file_prepare(req: FilePrepareRequest, request: Request, response: Resp
 
 
 @bridge_router.get("/file-url/{key}")
-async def attachment_url(key: str, request: Request, response: Response):
+async def attachment_url(key: str, request: Request, response: Response, name: str = ""):
     bucket = _attachment_bucket()
     storage_key = _attachment_key(key, request)
     client = _attachment_client()
@@ -942,7 +958,9 @@ async def attachment_url(key: str, request: Request, response: Response):
         if error.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound", "403", "AccessDenied"):
             raise HTTPException(status_code=404, detail="File not found") from error
         raise
-    name = unquote(obj.get("Metadata", {}).get("filename", key))
+    # Deduplicated files keep the first uploader's name; the caller's own name wins.
+    name = name if name and len(name) <= 255 and not any(ord(c) < 32 or c in "/\\" for c in name) \
+        else unquote(obj.get("Metadata", {}).get("filename", key))
     content_type = unquote(obj.get("Metadata", {}).get("content-type", "application/octet-stream"))
     params = {
         "Bucket": bucket, "Key": storage_key,

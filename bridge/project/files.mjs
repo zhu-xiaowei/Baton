@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
+import { contentHash } from '../content-hash.mjs';
 import { post } from '../http.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
@@ -23,7 +24,7 @@ const VIDEO_EXTENSIONS = new Set([
 const uploadedFileKeys = new Set();
 const downloadFileKeys = new Map();
 
-async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send }) {
+async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);
   const stat = await fs.promises.stat(absPath);
   if (!stat.isFile()) throw new Error('not a regular file');
@@ -34,12 +35,13 @@ async function prepareFileDownload(message, { projectRoot, postFn = post, fetchF
     sendProgress(message, send, { downloading: true });
     const prepared = await postFn('/api/bridge/file-prepare', {
       name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream',
+      contentHash: await contentHash(absPath, stat, home),
     });
     if (!prepared?.ok) throw new Error('Could not prepare file download');
     const info = await prepared.json();
-    if (!info.key || !info.url || !info.headers) throw new Error('Invalid upload response');
-    const urls = [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
-    let uploaded = false;
+    if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
+    const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
+    let uploaded = !!info.exists;
     for (const url of urls) {
       const body = fs.createReadStream(absPath);
       const closed = finished(body).catch(() => {});

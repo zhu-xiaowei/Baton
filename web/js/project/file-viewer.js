@@ -59,8 +59,13 @@ function uploadedKey(target) {
   return target.keyPromise;
 }
 
+// Identical content shares one stored file, so the name it was opened under wins over the stored one.
+function attachmentUrl(key, name) {
+  return '/api/bridge/file-url/' + key + (name ? '?name=' + encodeURIComponent(name) : '');
+}
+
 async function prepareViewedDownload(target) {
-  return window.api('/api/bridge/file-url/' + await uploadedKey(target));
+  return window.api(attachmentUrl(await uploadedKey(target), target.name));
 }
 
 async function showUploadedProjectFile(target) {
@@ -403,9 +408,11 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   if (!o) return;
   closeFileViewer({ refresh: false });
   options = options || {};
-  _view = { path: absPath, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', options: options };
+  // Attachment links carry the real file name; project views may label a file differently (e.g. "a.pdf @ 1a2b3c4").
+  var fileName = absPath.startsWith('baton-file:') ? displayName : absPath.split(/[\\/]/).pop();
+  _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', options: options };
   _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
-    key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '' };
+    key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
   downloadStatus('');
   updateDownloadButtons();
   var titleEl = document.getElementById('fileOverlayTitle');
@@ -433,8 +440,8 @@ async function showAttachment(key) {
     const cached = cachedType && await cachedAttachment(key);
     if (token !== _fileRequestToken) return;
     const file = cached
-      ? { name: cached.name, size: cached.data.byteLength, previewType: cachedType, data: cached.data }
-      : await window.api('/api/bridge/file-url/' + key);
+      ? { name: _view?.name || cached.name, size: cached.data.byteLength, previewType: cachedType, data: cached.data }
+      : await window.api(attachmentUrl(key, _view?.name));
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
     if (isTextAttachment(file)) {
@@ -488,7 +495,7 @@ async function showAttachment(key) {
     if (token !== _fileRequestToken) return;
     if (cachedPdf) {
       // A cache hit has no URL; the browser's own viewer needs a fresh one.
-      pdfFallbackUrl = await window.api('/api/bridge/file-url/' + key)
+      pdfFallbackUrl = await window.api(attachmentUrl(key, _view?.name))
         .then(file => escapeAttachment(file.previewUrl || ''), () => '');
       if (token !== _fileRequestToken) return;
     }
@@ -515,9 +522,9 @@ async function showOfficeAttachment(key, kind, token) {
   const cached = await cachedAttachment(key);
   if (token !== _fileRequestToken) return;
   let source = cached?.data;
-  let name = cached?.name;
+  let name = _view?.name || cached?.name;
   if (!cached) {
-    const file = await window.api('/api/bridge/file-url/' + key);
+    const file = await window.api(attachmentUrl(key, _view?.name));
     if (token !== _fileRequestToken) return;
     name = file.name;
     source = downloadAttachment(key, file);

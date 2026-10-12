@@ -4,6 +4,7 @@ import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
 import { showImageViewer, closeImageViewer } from './image-viewer.js';
 import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
+import { contentHash } from './content-hash.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -48,15 +49,19 @@ async function uploadStagedFile(entry) {
     if (entry.size > FILE_MAX_BYTES) throw new Error('File exceeds the 512 MB limit');
     const prepared = await window.apiPost('/api/bridge/file-prepare', {
       name: entry.name, size: entry.size, contentType: entry.file.type || 'application/octet-stream',
+      contentHash: await contentHash(entry.file),
     });
     if (!state.stagedImages.includes(entry)) return;
     entry.key = prepared.key;
-    entry.uploadPhase = 'uploading';
-    updateStagedUpload(entry);
-    await uploadAttachment(entry.file, prepared, progress => {
-      entry.progress = progress;
+    // The same content is already stored: nothing to upload.
+    if (!prepared.exists) {
+      entry.uploadPhase = 'uploading';
       updateStagedUpload(entry);
-    }, entry.controller.signal);
+      await uploadAttachment(entry.file, prepared, progress => {
+        entry.progress = progress;
+        updateStagedUpload(entry);
+      }, entry.controller.signal);
+    }
     if (!state.stagedImages.includes(entry)) return;
     entry.progress = 100;
     entry.uploaded = true;
