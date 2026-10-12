@@ -14,10 +14,13 @@ preserve unrelated work, using an isolated checkout when needed.
 
 On macOS, run `npm run release:ios`.
 
-On Linux, run the release from an unprotected release branch, not `main`:
+On Linux, publish from the persistent, unprotected `release/testflight` branch,
+not `main`:
 
-- Reuse the current unprotected release branch, or automatically create one such
-  as `release/testflight-<build-number>`.
+- Reuse `release/testflight` for every release. Fetch and merge the latest
+  `origin/main` into it while preserving its release commits. If it does not
+  exist, create it from the prepared release commit or latest `origin/main`.
+  Do not create a new branch for each build number or force-push this branch.
 - Push the release source commit to Xcode Cloud's connected GitHub repository.
   Run `node scripts/release-ios-cloud.mjs --dry-run` as a preflight, then run
   `npm run release:ios:cloud` on that same branch in the same invocation.
@@ -27,7 +30,7 @@ On Linux, run the release from an unprotected release branch, not `main`:
   optional PR workflow below. Preserve branch protection.
 
 If a protected-branch push fails after the script creates its bump commit,
-preserve that commit. Move it onto an unprotected release branch automatically
+preserve that commit. Move it onto `release/testflight` automatically
 and push the branch. Rerun the dry-run and release on
 that branch; let the script decide whether the prepared build number is reusable
 instead of manually bumping again. No cloud run starts when that push fails.
@@ -50,3 +53,7 @@ repository review requirements, resolve relevant failures within the approved
 scope, and merge automatically when allowed. Use the repository's supported
 merge method and never bypass branch protection. Confirm the merge result;
 do not treat enabling auto-merge as a completed merge.
+
+Keep `release/testflight` after publishing and merging. If the repository
+automatically deletes merged PR branches, create the optional PR from a
+temporary branch at the same release commit instead.

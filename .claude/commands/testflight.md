@@ -30,9 +30,11 @@ path, and whether validation + upload succeeded. If it fails, show the error.
 
 Do not commit the `project.yml` version bump unless asked.
 
-**On Linux:** Run the release from an unprotected release branch, not `main`.
-Reuse the current unprotected release branch, or automatically create a branch
-such as `release/testflight-<build-number>`.
+**On Linux:** Publish from the persistent, unprotected `release/testflight`
+branch, not `main`. Reuse it for every release, fetching and merging the latest
+`origin/main` while preserving release commits. If it does not exist, create it
+from the prepared release commit or latest `origin/main`. Do not create a new
+branch for each build number or force-push this branch.
 After the release changes are committed, push the source commit to the GitHub
 repository connected to Xcode Cloud. Run
 `node scripts/release-ios-cloud.mjs --dry-run` as a preflight, then continue
@@ -49,8 +51,8 @@ optional PR workflow below. Do not bypass branch protection. Creating a PR is
 not proof of upload.
 
 If a protected-branch push already failed after the bump commit was created,
-preserve that commit. Automatically create an unprotected release branch from
-it and push the branch. Rerun the dry-run and release
+preserve that commit. Automatically move it onto `release/testflight`
+and push the branch. Rerun the dry-run and release
 there; the script decides whether to reuse the prepared version. Do not manually
 bump again just because the push failed.
 
@@ -72,3 +74,7 @@ requirements, resolve relevant failures within the approved scope, and merge
 automatically when allowed. Use the repository's supported merge method without
 bypassing branch protection. Confirm the actual merge before reporting it as
 complete.
+
+Keep `release/testflight` after publishing and merging. If the repository
+automatically deletes merged PR branches, create the optional PR from a
+temporary branch at the same release commit instead.
