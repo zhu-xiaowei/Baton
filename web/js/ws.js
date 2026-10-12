@@ -1928,6 +1928,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     try {
       if (!restError && barrier.preserveLive) {
         commitMessages(data.messages || [], { liveStateChanged: true });
+        if (data.status === 'completed' && !hasOutstandingTurns()) state.wsRunning = false;
         if (!state.wsOldestTimestamp) {
           state.wsHasMore = !!data.hasMore;
           state.wsOldestTimestamp = data.oldestTimestamp || '';
@@ -1935,6 +1936,15 @@ async function loadLatestMessages(sessionId, options = {}) {
       } else if (!restError) {
         var snapshot = replaceHistoryTail(state.wsAllMessages,
           dedupeCodexUserMessages(data.messages || []));
+        // The snapshot dropped live rows DDB has not persisted yet (e.g. refresh
+        // while the final reply is still revealing): re-fetch until it catches up.
+        var droppedLive = state.wsAllMessages.some(function (message) {
+          return message._strictLifecycle && !snapshot.messages.includes(message)
+            && !snapshot.messages.some(function (kept) {
+              return (message.uuid && kept.uuid === message.uuid)
+                || (message.nativeId && kept.nativeId === message.nativeId);
+            });
+        });
         changed = JSON.stringify(state.wsAllMessages) !== JSON.stringify(snapshot.messages)
           || !!document.querySelector('.stream-preview, .stream-committed, [data-pending], .skeleton-messages')
           || !document.querySelector('.messages')?.childElementCount;
@@ -1976,6 +1986,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     } finally {
       _historyFetchBarriers.close(barrier);
     }
+    if (droppedLive) scheduleTurnEndRecovery(sessionId);
     if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
       displayHistorySnapshot({}, []);
     }

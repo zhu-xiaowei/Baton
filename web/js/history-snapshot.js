@@ -1,13 +1,22 @@
-// Live turn rows (e.g. Claude's noCache prompt) reach DDB only after the JSONL
-// watcher persists them; keep ones newer than the snapshot it doesn't have yet.
+const METADATA_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
+
+const LIVE_PROMPT_PREFIXES = ['live:user:', 'codex:user:'];
+
+// Live prompts (noCache) reach DDB only after the JSONL/rollout watcher persists
+// them under the same identity; keep them until the snapshot has them. Other
+// live rows may persist under a different identity, so only prompts.
 function unpersistedLiveTail(localMessages, snapshot) {
-  const last = snapshot.at(-1)?.timestamp || '';
+  let last = '';
   const ids = new Set();
   for (const message of snapshot) {
+    if (!METADATA_TYPES.has(message.type) && (message.timestamp || '') > last) {
+      last = message.timestamp;
+    }
     if (message.uuid) ids.add('uuid:' + message.uuid);
     if (message.nativeId) ids.add('native:' + message.nativeId);
   }
   return localMessages.filter(message => message._strictLifecycle
+    && LIVE_PROMPT_PREFIXES.some(prefix => String(message.nativeId || '').startsWith(prefix))
     && (message.timestamp || '') > last
     && !ids.has('uuid:' + message.uuid)
     && !(message.nativeId && ids.has('native:' + message.nativeId)));

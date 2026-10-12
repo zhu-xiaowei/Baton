@@ -531,9 +531,12 @@ export function createMessageDom(options) {
             );
             if (!alreadyPresent) {
               var position = elementOrder(recoveredChild, order);
-              var before = Array.from(streamRow.children).find(function (candidate) {
-                return elementOrder(candidate, order) > position;
-              }) || null;
+              // An interrupt ends its turn, even before still-revealing blocks.
+              var before = recoveredChild.classList.contains('msg-interrupt')
+                ? null
+                : Array.from(streamRow.children).find(function (candidate) {
+                  return elementOrder(candidate, order) > position;
+                }) || null;
               streamRow.insertBefore(recoveredChild, before);
             }
           }
