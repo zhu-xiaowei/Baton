@@ -232,6 +232,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - App opens session → REST from DDB (instant, <100ms) + WS subscribe for real-time
 - WS subscribe + buffer during REST load → merge/dedup → resolve running state from newer applied
   WS lifecycle or `/messages.status` → render → subsequent WS direct append
+- A REST snapshot replaces the local tail, except live-turn rows (`_strictLifecycle`) newer than
+  the snapshot and absent from it: Claude's `noCache` prompt reaches DDB only after the JSONL
+  watcher persists it and is excluded from `stream_end`, so dropping it made the sent message
+  vanish until a later refresh (`history-snapshot.js` `replaceHistoryTail`).
 - Server broadcasts to ALL app connections subscribed to a sessionId (multi-device)
 - See `docs/claude-code-bridge.md` for full protocol and flow diagrams
 

@@ -1,4 +1,26 @@
+// Live turn rows (e.g. Claude's noCache prompt) reach DDB only after the JSONL
+// watcher persists them; keep ones newer than the snapshot it doesn't have yet.
+function unpersistedLiveTail(localMessages, snapshot) {
+  const last = snapshot.at(-1)?.timestamp || '';
+  const ids = new Set();
+  for (const message of snapshot) {
+    if (message.uuid) ids.add('uuid:' + message.uuid);
+    if (message.nativeId) ids.add('native:' + message.nativeId);
+  }
+  return localMessages.filter(message => message._strictLifecycle
+    && (message.timestamp || '') > last
+    && !ids.has('uuid:' + message.uuid)
+    && !(message.nativeId && ids.has('native:' + message.nativeId)));
+}
+
 export function replaceHistoryTail(localMessages, snapshot) {
+  const result = replaceHistoryTailFromSnapshot(localMessages, snapshot);
+  const liveTail = unpersistedLiveTail(localMessages, result.messages);
+  if (liveTail.length) result.messages = result.messages.concat(liveTail);
+  return result;
+}
+
+function replaceHistoryTailFromSnapshot(localMessages, snapshot) {
   const boundary = snapshot[0];
   if (boundary) {
     for (const field of ['uuid', 'nativeId']) {
