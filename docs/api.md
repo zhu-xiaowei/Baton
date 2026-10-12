@@ -976,6 +976,7 @@ the Session.
 
 **Bridge handling**: create the path → derive `projectHash` → call REST `create-project` → reply
 `create_project_result`.
+The hash uses the directory's real path so symbolic-link aliases resolve to the same project.
 
 ---
 

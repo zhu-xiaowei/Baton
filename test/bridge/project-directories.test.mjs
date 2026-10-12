@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { handleProjectFilesMessage } from '../../bridge/project/files.mjs';
 import { createProjectDirectory, resolveProjectPath } from '../../bridge/project-path.mjs';
+import { projectHashToPath } from '../../bridge/session.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-directories-'));
@@ -79,13 +80,45 @@ test('path resolution and creation agree for relative, tilde, and external absol
   ]) {
     assert.equal(resolveProjectPath(input, home), expected);
     const created = createProjectDirectory(input, home);
-    assert.equal(created.projectPath, expected);
+    const realPath = fs.realpathSync(expected);
+    assert.equal(created.projectPath, realPath);
     assert.equal(created.projectName, path.basename(expected));
-    assert.equal(created.projectHash, expected.replace(/[^a-zA-Z0-9-]/g, '-'));
+    assert.equal(created.projectHash, realPath.replace(/[^a-zA-Z0-9-]/g, '-'));
     assert.equal(fs.statSync(expected).isDirectory(), true);
     assert.deepEqual(createProjectDirectory(input, home), created);
   }
   assert.equal(resolveProjectPath('~', home), home);
   assert.throws(() => resolveProjectPath('bad\0path', home), /Invalid path/);
   assert.throws(() => createProjectDirectory('', home), /empty/);
+});
+
+test('projects created through a symlink resolve to the real directory for the first session', async t => {
+  const { root, home } = fixture(t);
+  const real = path.join(root, 'real');
+  const alias = path.join(root, 'alias');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const selected = path.join(alias, 'project');
+  const preview = await browse(home, selected);
+  assert.equal(preview.exists, false);
+  const created = createProjectDirectory(selected, home);
+  const canonical = fs.realpathSync(selected);
+  assert.equal(created.projectPath, canonical);
+  assert.equal(created.projectHash, canonical.replace(/[^a-zA-Z0-9-]/g, '-'));
+  fs.writeFileSync(path.join(canonical, 'session-marker.txt'), 'correct project');
+  const sessionPath = projectHashToPath(created.projectHash);
+  assert.equal(fs.realpathSync(sessionPath), canonical);
+  assert.equal(fs.readFileSync(path.join(sessionPath, 'session-marker.txt'), 'utf8'), 'correct project');
+});
+
+test('selecting an existing symlink uses its target hash and keeps the selected display name', t => {
+  const { root, home } = fixture(t);
+  const target = path.join(root, 'actual-project');
+  const selected = path.join(home, 'project-shortcut');
+  fs.mkdirSync(target);
+  fs.symlinkSync(target, selected, process.platform === 'win32' ? 'junction' : 'dir');
+  const created = createProjectDirectory(selected, home);
+  assert.equal(created.projectName, 'project-shortcut');
+  assert.equal(created.projectHash, createProjectDirectory(target, home).projectHash);
+  assert.equal(fs.realpathSync(projectHashToPath(created.projectHash)), fs.realpathSync(target));
 });

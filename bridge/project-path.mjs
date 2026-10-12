@@ -13,9 +13,11 @@ export function createProjectDirectory(value, home = os.homedir()) {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Path cannot be empty');
   const projectPath = resolveProjectPath(value, home);
   fs.mkdirSync(projectPath, { recursive: true });
+  // Session path recovery matches real directories, not symlink names.
+  const realPath = fs.realpathSync(projectPath);
   return {
-    projectPath,
-    projectHash: projectPath.replace(/[^a-zA-Z0-9-]/g, '-'),
+    projectPath: realPath,
+    projectHash: realPath.replace(/[^a-zA-Z0-9-]/g, '-'),
     projectName: path.basename(projectPath),
   };
 }

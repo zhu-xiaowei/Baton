@@ -243,7 +243,7 @@ try {
   await click('#newProjectModal .confirm');
   await waitFor(() => evaluate('newProjectModal.style.display==="none" && document.body.classList.contains("new-session")'));
   assert.equal((await fs.stat(target)).isDirectory(), true);
-  assert.equal(creations.at(-1).projectPath, target);
+  assert.equal(creations.at(-1).projectPath, await fs.realpath(target));
   await screenshot('created-session');
   results.push('New folder created only on Create, correct external path, failure retry, session opened');
 

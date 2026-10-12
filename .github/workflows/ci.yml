@@ -90,6 +90,7 @@ jobs:
       - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm ci
+      - run: node --test test/bridge/project-directories.test.mjs
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib preview_proxy::tests::uses_requested_port_then_falls_forward_when_occupied
       - run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
 
@@ -103,4 +104,5 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - run: node --test test/bridge/project-directories.test.mjs
       - run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis
