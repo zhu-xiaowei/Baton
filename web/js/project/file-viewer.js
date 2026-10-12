@@ -8,7 +8,8 @@ import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
 import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
-import { isSlideDeck, waitForSlidePdf } from '../components/slide-preview.js';
+import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
+import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -21,6 +22,8 @@ var _view = null;
 var _downloadTarget = null;
 var _pdfPreview = null;
 var _pdfLoadController = null;
+var _officePreview = null;
+var _objectUrl = '';
 var _clearPdfRanges = null;
 
 function clearAttachmentPreviewCache(key) {
@@ -142,6 +145,10 @@ function clearFileBody() {
   _pdfLoadController = null;
   _pdfPreview?.destroy();
   _pdfPreview = null;
+  _officePreview?.destroy();
+  _officePreview = null;
+  if (_objectUrl) URL.revokeObjectURL(_objectUrl);
+  _objectUrl = '';
   body.querySelectorAll('video, audio').forEach(media => {
     media.pause();
     media.removeAttribute('src');
@@ -207,8 +214,8 @@ function setFileViewMode(mode) {
   if (mode === 'diff') return showDiff(_view.options.loadDiff, token);
   if (!_current) {
     const attachment = _view.path.startsWith('baton-file:');
-    // PDFs and slide decks cannot be read as text: upload them as for a download, then preview the attachment.
-    const uploaded = !attachment && !!_downloadTarget && (isSlideDeck(_view.path) || /\.pdf$/i.test(_view.path));
+    // PDFs and Office documents cannot be read as text: upload them as for a download, then preview the attachment.
+    const uploaded = !attachment && !!_downloadTarget && (officeKind(_view.path) || /\.pdf$/i.test(_view.path));
     const viaAttachment = attachment || uploaded;
     setBody('<div class="file-loading' + (viaAttachment ? ' file-loading-delayed' : '') + '">'
       + (viaAttachment ? '<span class="file-loading-content">' : '')
@@ -414,36 +421,19 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   return true;
 }
 
-// Elapsed conversion time under the existing spinner; positioned absolutely so the spinner never moves.
-function showConversionTimer(token) {
-  const content = document.querySelector('#fileOverlayBody .file-loading-content');
-  if (!content || content.querySelector('.file-loading-status')) return;
-  const status = document.createElement('span');
-  status.className = 'file-loading-status';
-  content.appendChild(status);
-  const started = Date.now();
-  const tick = () => {
-    if (!status.isConnected || token !== _fileRequestToken) return clearInterval(timer);
-    status.textContent = 'Converting… ' + Math.floor((Date.now() - started) / 1000) + 's';
-  };
-  const timer = setInterval(tick, 1000);
-  tick();
-}
-
 async function showAttachment(key) {
   const token = ++_fileRequestToken;
   let pdfFallbackUrl = '';
-  let failed = false;
-  let slidePdf = null;
   try {
     if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
-    if (isSlideDeck(key)) {
-      // Poll the converted PDF alongside the metadata request instead of after it.
-      slidePdf = waitForSlidePdf(key, () => token === _fileRequestToken && !failed,
-        () => showConversionTimer(token));
-      slidePdf.catch(() => {});
-    }
-    const file = await window.api('/api/bridge/file-url/' + key);
+    const office = officeKind(key);
+    if (office) return await showOfficeAttachment(key, office, token);
+    const cachedType = CACHED_PREVIEW_TYPES[key.split('.').pop()];
+    const cached = cachedType && await cachedAttachment(key);
+    if (token !== _fileRequestToken) return;
+    const file = cached
+      ? { name: cached.name, size: cached.data.byteLength, previewType: cachedType, data: cached.data }
+      : await window.api('/api/bridge/file-url/' + key);
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
     if (isTextAttachment(file)) {
@@ -455,15 +445,9 @@ async function showAttachment(key) {
       }
     }
     let preview = '<div class="attachment-preview-note">No inline preview for this file type. Download to open it.</div>';
-    const url = escapeAttachment(file.previewUrl);
-    let pdf = file.previewType === 'application/pdf' ? file : null;
-    if (!pdf && slidePdf) {
-      pdf = await slidePdf;
-      if (!pdf) return;
-      document.querySelector('#fileOverlayBody .file-loading-status')?.remove();
-    }
-    if (pdf) {
-      pdfFallbackUrl = escapeAttachment(pdf.previewUrl);
+    const url = escapeAttachment(file.previewUrl || '');
+    if (file.previewType === 'application/pdf') {
+      pdfFallbackUrl = url;
       if (!window.ResizeObserver || !window.requestAnimationFrame) {
         setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
         return;
@@ -471,7 +455,7 @@ async function showAttachment(key) {
       const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
       _clearPdfRanges = clearPdfRangeCache;
-      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + pdf.size;
+      const cacheKey = state.SERVER + '|' + state.KEY + '|' + key + '|' + file.size;
       const body = document.getElementById('fileOverlayBody');
       if (!body.querySelector('.file-loading')) {
         setBody('<div class="file-loading file-loading-delayed"><span class="file-loading-content">'
@@ -479,16 +463,21 @@ async function showAttachment(key) {
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
-      // Converted slides are small and not linearized, so always fetch them in one request.
-      const pdfPreview = await mountPdfPreview(body,
-        pdf.previewUrl, pdf.size, controller.signal, cacheKey, { wholeFile: pdf !== file });
+      const pdfPreview = await mountPdfPreview(body, file.previewUrl, file.size, controller.signal, cacheKey, {
+        data: file.data, onFile: !file.data && (bytes => cacheAttachment(key, file.name, bytes)),
+      });
       if (_pdfLoadController === controller) _pdfLoadController = null;
       if (token !== _fileRequestToken) { pdfPreview.destroy(); return; }
       _pdfPreview = pdfPreview;
       await pdfPreview.ready;
       return;
     } else if (file.previewType?.startsWith('image/')) {
-      preview = '<img class="file-image" alt="" src="' + url + '">';
+      const data = file.data || await downloadAttachment(key, file);
+      if (token !== _fileRequestToken) return;
+      const objectUrl = URL.createObjectURL(new Blob([data], { type: file.previewType }));
+      setBody('<img class="file-image" alt="" src="' + objectUrl + '">');
+      _objectUrl = objectUrl;
+      return;
     } else if (file.previewType?.startsWith('video/')) {
       preview = '<video class="file-video" controls playsinline preload="metadata" src="' + url + '"></video>';
     } else if (file.previewType?.startsWith('audio/')) {
@@ -496,7 +485,6 @@ async function showAttachment(key) {
     }
     setBody(preview);
   } catch (error) {
-    failed = true;
     if (token !== _fileRequestToken) return;
     if (pdfFallbackUrl) {
       setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
@@ -504,6 +492,36 @@ async function showAttachment(key) {
       setBody('<div class="file-error">' + escapeAttachment(error.message) + '</div>');
     }
   }
+}
+
+async function downloadAttachment(key, file) {
+  const response = await fetch(file.previewUrl);
+  if (!response.ok) throw new Error('Download failed (' + response.status + ')');
+  const buffer = await response.arrayBuffer();
+  cacheAttachment(key, file.name, buffer);
+  return buffer;
+}
+
+// Office files are parsed in the page: a cached copy opens without any request, otherwise the viewer
+// module, the URL request and the download all run at once.
+async function showOfficeAttachment(key, kind, token) {
+  loadOfficeViewer(kind).catch(() => {});
+  const cached = await cachedAttachment(key);
+  if (token !== _fileRequestToken) return;
+  let source = cached?.data;
+  let name = cached?.name;
+  if (!cached) {
+    const file = await window.api('/api/bridge/file-url/' + key);
+    if (token !== _fileRequestToken) return;
+    name = file.name;
+    source = downloadAttachment(key, file);
+    source.catch(() => {});
+  }
+  document.getElementById('fileOverlayTitle').textContent = name;
+  const officePreview = await mountOfficePreview(document.getElementById('fileOverlayBody'), source, kind);
+  if (token !== _fileRequestToken) { officePreview.destroy(); return; }
+  _officePreview = officePreview;
+  await officePreview.ready;
 }
 
 // Find the Edit/Write tool_use by id and return the text it wrote (new_string / content).

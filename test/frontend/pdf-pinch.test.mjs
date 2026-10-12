@@ -44,3 +44,29 @@ test('pinch scale is clamped and a still pinch keeps fit-width', () => {
   assert.equal(viewer.currentScale, MAX_SCALE);
   assert.equal(zoomed, 2);
 });
+
+test('positioned page elements share one pinch origin, offset by their own position', () => {
+  const scroller = window.document.createElement('div');
+  const pages = [0, 500].map(top => {
+    const page = window.document.createElement('div');
+    Object.defineProperty(page, 'offsetTop', { value: top });
+    Object.defineProperty(page, 'offsetLeft', { value: 16 });
+    scroller.appendChild(page);
+    return page;
+  });
+  scroller.getBoundingClientRect = () => ({ left: 0, top: 0 });
+  const office = { pagesCount: 1, currentScale: 0.5 };
+  attachPinchZoom(scroller, () => pages, office, () => {});
+  const fire = (type, spread) => {
+    const event = new window.Event(type, { cancelable: true });
+    event.touches = spread ? [{ clientX: 200 - spread, clientY: 600 }, { clientX: 200 + spread, clientY: 600 }] : [];
+    scroller.dispatchEvent(event);
+  };
+  fire('touchstart', 50);
+  assert.deepEqual(pages.map(page => page.style.transformOrigin), ['184px 600px', '184px 100px']);
+  fire('touchmove', 100);
+  assert.deepEqual(pages.map(page => page.style.transform), ['scale(2)', 'scale(2)']);
+  fire('touchend');
+  assert.deepEqual(pages.map(page => page.style.transform), ['', '']);
+  assert.equal(office.currentScale, 1);
+});

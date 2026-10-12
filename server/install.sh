@@ -227,18 +227,6 @@ cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" \
   "$ROOT_DIR/bridge/live-turn-stream.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
-CONVERTER_FILES=(Dockerfile handler.py fonts.conf warmup.fodp)
-mkdir -p "$BUILD_CTX/converter"
-(cd "$SCRIPT_DIR/converter" && cp "${CONVERTER_FILES[@]}" "$BUILD_CTX/converter/")
-
-# The converter image is tagged by content: unchanged deploys skip the LibreOffice build and keep
-# the same digest, so Lambda keeps its warm image cache.
-CONVERTER_TAG="converter-$(cd "$SCRIPT_DIR/converter" && cat "${CONVERTER_FILES[@]}" | openssl dgst -sha256 | awk '{print $NF}' | cut -c1-16)"
-BUILD_CONVERTER=true
-if aws ecr describe-images --repository-name "$REPO_NAME" --region "$REGION" \
-    --image-ids "imageTag=$CONVERTER_TAG" >/dev/null 2>&1; then
-  BUILD_CONVERTER=false
-fi
 
 SRC_ZIP="/tmp/baton-src-$$.zip"
 (cd "$BUILD_CTX" && zip -qr "$SRC_ZIP" .)
@@ -274,11 +262,11 @@ phases:
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPO_URI
   build:
     commands:
-      - if [ "$BUILD_CONVERTER" = "true" ]; then docker build -t $REPO_URI:$CONVERTER_TAG converter & C=$!; fi; docker build --no-cache --build-arg APP_VERSION=$APP_VERSION -t $REPO_NAME:$TAG -f Dockerfile . && wait ${C:-}
+      - docker build --no-cache --build-arg APP_VERSION=$APP_VERSION -t $REPO_NAME:$TAG -f Dockerfile .
       - docker tag $REPO_NAME:$TAG $REPO_URI:$TAG
   post_build:
     commands:
-      - if [ "$BUILD_CONVERTER" = "true" ]; then docker push $REPO_URI:$CONVERTER_TAG & C=$!; fi; docker push $REPO_URI:$TAG && wait ${C:-}'
+      - docker push $REPO_URI:$TAG'
 BUILDSPEC_JSON=$(printf '%s' "$BUILDSPEC" | awk 'BEGIN{printf "\""} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); if(NR>1) printf "\\n"; printf "%s",$0} END{printf "\""}')
 
 PROJECT_EXISTS=$(aws codebuild batch-get-projects --names "$CODEBUILD_PROJECT" --region "$REGION" \
@@ -311,8 +299,6 @@ BUILD_ID=$(aws codebuild start-build --project-name "$CODEBUILD_PROJECT" --regio
     "name=REPO_NAME,value=${REPO_NAME},type=PLAINTEXT" \
     "name=TAG,value=${TAG},type=PLAINTEXT" \
     "name=APP_VERSION,value=${APP_VERSION},type=PLAINTEXT" \
-    "name=CONVERTER_TAG,value=${CONVERTER_TAG},type=PLAINTEXT" \
-    "name=BUILD_CONVERTER,value=${BUILD_CONVERTER},type=PLAINTEXT" \
   --query 'build.id' --output text)
 
 # Poll CodeBuild phases asynchronously — single-line spinner that updates the phase name in place.
@@ -438,7 +424,6 @@ image_uri() {
   echo "${REPO_URI}@${digest}"
 }
 IMAGE_URI=$(image_uri "$TAG") || exit 1
-CONVERTER_IMAGE_URI=$(image_uri "$CONVERTER_TAG") || exit 1
 
 cfn_dump_failure() {
   echo ""
@@ -458,7 +443,6 @@ if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
     --template-body "file://$TEMPLATE" \
     --parameters \
       "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
-      "ParameterKey=ConverterImageUri,ParameterValue=$CONVERTER_IMAGE_URI" \
       "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
       "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
       "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
@@ -471,7 +455,6 @@ else
        --template-body "file://$TEMPLATE" \
        --parameters \
          "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
-         "ParameterKey=ConverterImageUri,ParameterValue=$CONVERTER_IMAGE_URI" \
          "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
          "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
          "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
@@ -484,17 +467,6 @@ else
   fi
 fi
 echo "  ${C_GREEN}✓${C_RESET} Stack ready"
-
-# A new converter image is pulled on its first invocation (~20s). Start that asynchronously so it
-# finishes before a user's first preview without making the deploy wait for it.
-CONVERTER_FN=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ConverterFunctionName`].OutputValue' --output text)
-if aws lambda invoke --function-name "$CONVERTER_FN" --region "$REGION" --invocation-type Event \
-     --cli-binary-format raw-in-base64-out --payload '{"warmup":true}' /dev/null >/dev/null 2>&1; then
-  echo "  ${C_GREEN}✓${C_RESET} Preview converter warm-up started"
-else
-  echo "  Preview converter warm-up could not start (previews still work, the first one is slower)"
-fi
 
 # ===== Step 4: Fetch outputs =====
 echo "[4/4] Fetching outputs..."

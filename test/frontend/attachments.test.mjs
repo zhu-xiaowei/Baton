@@ -112,13 +112,6 @@ test('file staging retains the escaped name, icon and uppercase extension in one
   assert.equal(badge.disabled, false);
 });
 
-test('an uploaded slide deck starts converting before it is opened', async () => {
-  const posts = [];
-  window.apiPost = async path => { posts.push(path); return path.endsWith('/file-prepare') ? prepared : { status: 'converting' }; };
-  await window.stageAttachmentFile(new File(['12345'], 'deck.pptx'));
-  assert.deepEqual(posts, ['/api/bridge/file-prepare', '/api/bridge/file-preview/' + key]);
-});
-
 test('mixed attachments share one ordered row and preserve its scroll position', () => {
   state.stagedImages = [
     { kind: 'file', key, name: 'demo.Mp4', uploaded: true },
@@ -326,31 +319,73 @@ test('live and historical user bubbles show the original filename without markup
   assert.equal(extractAttachments('[%](baton-file:' + key + ')').files.length, 0);
 });
 
-test('a converting slide deck shows elapsed time under the spinner, then the converted PDF', async () => {
-  const polls = [];
-  const statuses = [{ status: 'converting' }, { status: 'ready', previewUrl: 'https://bucket.test/deck.pdf', size: 9 }];
-  window.apiPost = async path => { polls.push(path); return statuses.shift(); };
+const { ooxml } = await vite.ssrLoadModule('/js/components/office-preview.js');
+// Stands in for the @silurus/ooxml viewers, which load from the CDN in the app. The module is cached per
+// format after the first load, so the fake reads the current test's behaviour from shared state.
+const fakeViewers = { list: [], load: async () => {} };
+ooxml.load = async kind => {
+  const name = { docx: 'DocxScrollViewer', pptx: 'PptxScrollViewer', xlsx: 'XlsxViewer' }[kind];
+  return { [name]: class {
+    constructor(host, options) { Object.assign(this, { kind, host, options, destroyed: 0 }); fakeViewers.list.push(this); }
+    load(url) { this.url = url; return fakeViewers.load(); }
+    destroy() { this.destroyed++; }
+    getScale() { return 1; }
+    setScale() {}
+  } };
+};
+function fakeOoxml(load) {
+  fakeViewers.list = [];
+  fakeViewers.load = load;
+  return fakeViewers.list;
+}
+
+test('Word, PowerPoint and Excel open in the OOXML viewer from our own storage', async () => {
+  const viewers = fakeOoxml(async () => {});
+  const fetched = [];
+  globalThis.fetch = async url => { fetched.push(url); return new Response('PK'); };
+  for (const [ext, kind] of [['pptx', 'pptx'], ['docx', 'docx'], ['xlsx', 'xlsx']]) {
+    window.openFile('baton-file:' + 'a'.repeat(32) + '.' + ext, 'file.' + ext);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const viewer = viewers.at(-1);
+    assert.equal(viewer.kind, kind);
+    assert.equal(fetched.at(-1), 'https://bucket.s3.test/preview');
+    assert.equal(new TextDecoder().decode(viewer.url), 'PK');
+    assert.equal(viewer.options.cjkFallback, 'sc');
+    assert.equal(viewer.options.progressiveLayout, kind === 'docx' ? true : undefined);
+    assert.equal(viewer.host.parentElement.id, 'fileOverlayBody');
+    assert.equal(document.querySelector('#fileOverlayBody .file-loading'), null);
+    window.closeFileViewer();
+    assert.equal(viewer.destroyed, 1);
+    assert.equal(viewer.host.isConnected, false);
+  }
+});
+
+test('an Office preview closed while loading is destroyed, and over-limit files ask for a download', async () => {
+  let finish;
+  const viewers = fakeOoxml(() => new Promise(resolve => { finish = resolve; }));
+  globalThis.fetch = async () => new Response('PK');
   window.openFile('baton-file:' + key, 'deck.pptx');
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
-  assert.equal(document.getElementById('fileOverlayTitle').textContent, 'deck.pptx');
-  const status = document.querySelector('#fileOverlayBody .file-loading-content .file-loading-status');
-  assert.equal(status.textContent, 'Converting… 0s');
-  assert.ok(status.previousElementSibling.classList.contains('loading-spinner'));
-  await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.deepEqual(polls, ['/api/bridge/file-preview/' + key, '/api/bridge/file-preview/' + key]);
-  assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/deck.pdf');
-  assert.equal(document.querySelector('.file-loading-status'), null);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(document.querySelector('#fileOverlayBody .loading-spinner'));
+  window.closeFileViewer();
+  assert.equal(viewers[0].destroyed, 1);
+  finish();
+  fakeOoxml(async () => { throw Object.assign(new Error('cells 250001 > 250000'), { name: 'OoxmlResourceLimitError' }); });
+  window.openFile('baton-file:' + 'b'.repeat(32) + '.xlsx', 'big.xlsx');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(document.querySelector('#fileOverlayBody .file-error').textContent,
+    'This file is too large to preview. Download to open it.');
   window.closeFileViewer();
 });
 
-test('an already converted slide deck shows only the spinner', async () => {
-  window.apiPost = async () => ({ status: 'ready', previewUrl: 'https://bucket.test/deck.pdf', size: 9 });
-  window.openFile('baton-file:' + key, 'deck.pptx');
-  assert.equal(document.querySelector('.file-loading-status'), null);
+test('legacy Office formats are not decoded and offer the download instead', async () => {
+  const viewers = fakeOoxml(async () => {});
+  window.openFile('baton-file:' + 'c'.repeat(32) + '.ppt', 'old.ppt');
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(document.querySelector('.file-loading-status'), null);
-  assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/deck.pdf');
+  assert.match(document.getElementById('fileOverlayBody').textContent, /No inline preview/);
+  assert.equal(viewers.length, 0);
   window.closeFileViewer();
 });
 
@@ -377,23 +412,18 @@ test('a project PDF is uploaded through the download operation, then previewed a
   }
 });
 
-test('a failed slide conversion shows the cached error', async () => {
-  window.apiPost = async () => ({ status: 'failed', error: 'Could not convert this file.' });
-  window.openFile('baton-file:' + key, 'deck.pptx');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(document.querySelector('#fileOverlayBody .file-error').textContent, 'Could not convert this file.');
-  window.closeFileViewer();
-});
-
 test('PDF previews use the same overlay and closing ignores stale responses', async () => {
   let resolveFile;
+  const pdfKey = 'd'.repeat(32) + '.pdf';
   window.api = () => new Promise(resolve => { resolveFile = resolve; });
-  window.openFile('baton-file:' + key, 'test.pdf');
+  window.openFile('baton-file:' + pdfKey, 'test.pdf');
+  await new Promise(resolve => setTimeout(resolve, 0));
   resolveFile({ name: 'test.pdf', size: 20, previewType: 'application/pdf',
     url: 'https://bucket.test/download', previewUrl: 'https://bucket.test/preview' });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/preview');
-  window.openFile('baton-file:' + key, 'next.pdf');
+  window.openFile('baton-file:' + pdfKey, 'next.pdf');
+  await new Promise(resolve => setTimeout(resolve, 0));
   window.closeFileViewer();
   assert.equal(document.getElementById('fileOverlayBody').childElementCount, 0);
   resolveFile({ name: 'stale.pdf' });
@@ -409,7 +439,7 @@ test('text previews use the source viewer while Office is not decoded as text', 
   assert.equal(isTextAttachment({ name: 'data.csv' }), true);
   window.api = async () => ({ name: 'notes.md', size: 8, url: 'https://bucket.test/text' });
   globalThis.fetch = async () => new Response('# Notes\n');
-  window.openFile('baton-file:' + key, 'notes.md');
+  window.openFile('baton-file:' + 'a'.repeat(32) + '.md', 'notes.md');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.match(document.getElementById('fileOverlayBody').textContent, /# Notes/);
   assert.equal(document.getElementById('fileOverlayTabs').style.display, '');

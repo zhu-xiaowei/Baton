@@ -92,12 +92,13 @@ async function fetchPdfRange(url, begin, end, signal, cacheKey) {
   return result;
 }
 
-export async function mountPdfPreview(body, url, size, signal, cacheKey, { wholeFile = false } = {}) {
+// `data` is the whole file from the attachment cache; `onFile` receives it when one request fetched it all.
+export async function mountPdfPreview(body, url, size, signal, cacheKey, { data, onFile } = {}) {
   const hasSize = Number.isSafeInteger(size) && size > 0;
-  const firstEnd = wholeFile || size <= WHOLE_FILE_LIMIT ? size : Math.min(size, RANGE_CHUNK_SIZE);
-  const initialRange = hasSize
-    ? fetchPdfRange(url, 0, firstEnd, signal, cacheKey)
-    : Promise.resolve(null);
+  const firstEnd = size <= WHOLE_FILE_LIMIT ? size : Math.min(size, RANGE_CHUNK_SIZE);
+  const initialRange = data ? Promise.resolve({ bytes: new Uint8Array(data), partial: false })
+    : hasSize ? fetchPdfRange(url, 0, firstEnd, signal, cacheKey)
+      : Promise.resolve(null);
   const [{ pdfjs, pdfjsViewer, css: pdfViewerCss, worker }, firstRange] =
     await Promise.all([loadPdfModules(), initialRange]);
   activePreview?.destroy();
@@ -238,6 +239,7 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { whole
       const first = firstRange;
       if (disposed) return;
       if (!first.partial || first.bytes.length === size) {
+        if (onFile) onFile(first.bytes);
         loadingTask = pdfjs.getDocument({ data: first.bytes, worker, isEvalSupported: false });
       } else {
         const transport = new class extends pdfjs.PDFDataRangeTransport {

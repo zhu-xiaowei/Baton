@@ -10,10 +10,6 @@
       "Type": "String",
       "Description": "The ECR image URI for the Lambda function"
     },
-    "ConverterImageUri": {
-      "Type": "String",
-      "Description": "The ECR image URI for the slide preview converter Lambda"
-    },
     "ImagesBucketName": {
       "Type": "String",
       "Description": "S3 bucket name for images (lowercase)"
@@ -85,60 +81,11 @@
                     "s3:GetObject"
                   ],
                   "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/*" }
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": "lambda:InvokeFunction",
-                  "Resource": { "Fn::GetAtt": ["ConverterFunction", "Arn"] }
                 }
               ]
             }
           }
         ]
-      }
-    },
-    "ConverterRole": {
-      "Type": "AWS::IAM::Role",
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Version": "2012-10-17",
-          "Statement": [{ "Action": "sts:AssumeRole", "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" } }]
-        },
-        "ManagedPolicyArns": [
-          { "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }
-        ],
-        "Policies": [{
-          "PolicyName": "PreviewObjects",
-          "PolicyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [
-              { "Effect": "Allow", "Action": "s3:GetObject", "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/attachments/*" } },
-              { "Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/previews/*" } }
-            ]
-          }
-        }]
-      }
-    },
-    "ConverterFunction": {
-      "Type": "AWS::Lambda::Function",
-      "Properties": {
-        "Architectures": ["arm64"],
-        "Code": { "ImageUri": { "Ref": "ConverterImageUri" } },
-        "Environment": { "Variables": { "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" } } },
-        "EphemeralStorage": { "Size": 2048 },
-        "MemorySize": 1769,
-        "PackageType": "Image",
-        "ReservedConcurrentExecutions": 5,
-        "Role": { "Fn::GetAtt": ["ConverterRole", "Arn"] },
-        "Timeout": 120
-      }
-    },
-    "ConverterInvokeConfig": {
-      "Type": "AWS::Lambda::EventInvokeConfig",
-      "Properties": {
-        "FunctionName": { "Ref": "ConverterFunction" },
-        "Qualifier": "$LATEST",
-        "MaximumRetryAttempts": 0
       }
     },
     "APIHandler": {
@@ -156,8 +103,6 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
-            "PREVIEW_CONVERTER_FUNCTION": { "Ref": "ConverterFunction" },
-            "PREVIEW_CONVERTER_IMAGE": { "Ref": "ConverterImageUri" },
             "APP_VERSION": { "Ref": "AppVersion" }
           }
         },
@@ -846,10 +791,6 @@
     "WsURL": {
       "Description": "WebSocket URL",
       "Value": { "Fn::Sub": "wss://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
-    },
-    "ConverterFunctionName": {
-      "Description": "Slide preview converter Lambda (warmed after deploy)",
-      "Value": { "Ref": "ConverterFunction" }
     },
     "ApiKeyConsole": {
       "Description": "Find your API Key here",
