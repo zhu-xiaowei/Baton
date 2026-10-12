@@ -10,6 +10,7 @@ from boto3.dynamodb.conditions import Key
 import boto3
 import os
 import json
+import base64
 import hashlib
 from datetime import datetime
 from functools import lru_cache
@@ -883,8 +884,8 @@ class FilePrepareRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     size: int = Field(ge=0, le=512 * 1024 * 1024)
     contentType: str = Field(default="application/octet-stream", max_length=255)
-    # Content ID shared by the app and Bridge (block SHA-256); the same file maps to the same key.
-    contentHash: str = Field(default="", pattern=r"^(?:[0-9a-f]{32})?$")
+    # SHA-256 of the file (hex); its first 32 digits name the stored file, so identical content is stored once.
+    contentHash: str = Field(default="", pattern=r"^(?:[0-9a-f]{64})?$")
 
 
 def _attachment_bucket():
@@ -917,27 +918,32 @@ async def file_prepare(req: FilePrepareRequest, request: Request, response: Resp
     extension = re.search(r"\.[a-z0-9]{1,16}$", name.lower())
     extension = extension.group() if extension else ""
     key = uuid.uuid4().hex + extension
-    if req.contentHash:
-        hashed = req.contentHash + extension
+    # S3 rejects an upload whose bytes do not match this SHA-256, so a content key always holds its content.
+    checksum = base64.b64encode(bytes.fromhex(req.contentHash)).decode() if req.contentHash else ""
+    if checksum:
+        hashed = req.contentHash[:32] + extension
         try:
-            existing = _attachment_client().head_object(Bucket=bucket, Key=_attachment_key(hashed, request))
+            existing = _attachment_client().head_object(
+                Bucket=bucket, Key=_attachment_key(hashed, request), ChecksumMode="ENABLED")
         except ClientError as error:
             if error.response["Error"]["Code"] not in ("404", "NoSuchKey", "NotFound", "403", "AccessDenied"):
                 raise
             key = hashed
         else:
-            # A size mismatch means a bad hash: never overwrite the stored file, keep the random key.
-            if existing["ContentLength"] == req.size:
+            # Reuse only what S3 verified as this content; anything else keeps the random key, never overwriting.
+            if existing.get("ChecksumSHA256") == checksum and existing["ContentLength"] == req.size:
                 response.headers["Cache-Control"] = "no-store"
                 return {"key": hashed, "exists": True}
     params = {
         "Bucket": bucket, "Key": _attachment_key(key, request),
         "ContentType": "application/octet-stream", "ContentLength": req.size,
         "Metadata": {"filename": quote(name, safe=""), "content-type": quote(req.contentType, safe="")},
+        **({"ChecksumSHA256": checksum} if checksum else {}),
     }
     headers = {
         "Content-Type": params["ContentType"],
         **{f"x-amz-meta-{key}": value for key, value in params["Metadata"].items()},
+        **({"x-amz-checksum-sha256": checksum} if checksum else {}),
     }
     standard = _attachment_client().generate_presigned_url("put_object", Params=params, ExpiresIn=3600)
     url = standard

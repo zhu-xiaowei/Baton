@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -69,25 +70,34 @@ def test_standard_upload_when_acceleration_is_disabled(clients, monkeypatch):
     assert not clients[1].signed
 
 
-def test_known_content_hash_reuses_the_stored_file_and_never_overwrites_a_mismatch(clients, monkeypatch):
-    content_hash = 'c' * 32
-    result = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
-        name='deck.pptx', size=8 * 1024 * 1024, contentHash=content_hash), REQUEST, Response()))
-    assert result == {'key': content_hash + '.pptx', 'exists': True}
-    assert clients[0].heads[0]['Key'].endswith('/' + content_hash + '.pptx')
+def test_content_hash_reuses_only_s3_verified_content_and_signs_new_uploads_with_it(clients, monkeypatch):
+    content_hash = 'c' * 64
+    checksum = base64.b64encode(bytes.fromhex(content_hash)).decode()
+    stored = {'ContentLength': 5, 'ChecksumSHA256': checksum}
+    monkeypatch.setattr(clients[0], 'head_object', lambda **kwargs: clients[0].heads.append(kwargs) or stored)
+    def prepare(size):
+        return asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
+            name='deck.pptx', size=size, contentHash=content_hash), REQUEST, Response()))
+    assert prepare(5) == {'key': 'c' * 32 + '.pptx', 'exists': True}
+    assert clients[0].heads[0]['ChecksumMode'] == 'ENABLED'
+    assert clients[0].heads[0]['Key'].endswith('/' + 'c' * 32 + '.pptx')
     assert not clients[0].signed
-    mismatch = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
-        name='deck.pptx', size=5, contentHash=content_hash), REQUEST, Response()))
-    assert mismatch['key'] != content_hash + '.pptx' and 'url' in mismatch
+    # A different or missing checksum (prefix collision, unverified object) is never overwritten.
+    for other in [{'ContentLength': 5, 'ChecksumSHA256': 'other'}, {'ContentLength': 5}]:
+        stored = other
+        result = prepare(5)
+        assert result['key'] != 'c' * 32 + '.pptx' and 'url' in result
 
     def missing(**kwargs):
         raise ClientError({'Error': {'Code': '404'}}, 'HeadObject')
     monkeypatch.setattr(clients[0], 'head_object', missing)
-    new = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
-        name='deck.pptx', size=5, contentHash=content_hash), REQUEST, Response()))
-    assert new['key'] == content_hash + '.pptx' and 'url' in new
+    result = prepare(5)
+    assert result['key'] == 'c' * 32 + '.pptx'
+    assert result['headers']['x-amz-checksum-sha256'] == checksum
+    for client in clients:
+        assert client.signed[-1][1]['Params']['ChecksumSHA256'] == checksum
     with pytest.raises(ValidationError):
-        bridge_sync.FilePrepareRequest(name='deck.pptx', size=5, contentHash='../x')
+        bridge_sync.FilePrepareRequest(name='deck.pptx', size=5, contentHash='c' * 32)
 
 
 def test_download_name_follows_the_caller_for_shared_content(clients):

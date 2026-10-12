@@ -24,6 +24,13 @@ const prepared = {
   headers: { 'Content-Type': 'application/octet-stream', 'x-amz-meta-filename': 'deck.pptx' },
 };
 const { state } = await import('../../web/js/state.js');
+// Stands in for hash-wasm, which loads from the CDN in the app.
+const { hashWasm } = await import('../../web/js/components/content-hash.js');
+const { createHash } = await import('node:crypto');
+hashWasm.load = async () => ({ createSHA256: async () => {
+  const hash = createHash('sha256');
+  return { update: data => hash.update(data), digest: () => hash.digest('hex') };
+} });
 await import('../../web/js/components/image.js');
 await import('../../web/js/components/message.js');
 const vite = await createTestServer({
@@ -98,20 +105,20 @@ test('cancelled uploads do not retry or send content', async () => {
   assert.equal(FakeUpload.requests.length, 0);
 });
 
-// Must match the Bridge's bridge/content-hash.mjs (same vectors in test/bridge/project-files.test.mjs).
-test('content IDs hash 4 MB blocks, shared with the Bridge', async () => {
+// The SHA-256 S3 verifies, hashed in slices (same vectors as the Bridge in test/bridge/project-files.test.mjs).
+test('content IDs are the SHA-256 of the whole file, hashed in slices', async () => {
   const { contentHash } = await import('../../web/js/components/content-hash.js');
   const data = new Uint8Array(9 * 1024 * 1024 + 7);
   for (let i = 0; i < data.length; i++) data[i] = (i * 31 + (i >> 12)) & 255;
-  assert.equal(await contentHash(new File([data], 'vector.bin')), '23eacdbbed46be6a09a3edab75a50b2c');
-  assert.equal(await contentHash(new File([], 'empty.bin')), '5df6e0e2761359d30a8275058e299fcc');
+  assert.equal(await contentHash(new File([data], 'vector.bin')), 'eff34fb403f905467ac2473ee02a191f11306cae280232a7c65482449c44ac61');
+  assert.equal(await contentHash(new File([], 'empty.bin')), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
 });
 
 test('a file whose content is already stored completes without uploading', async () => {
   const bodies = [];
   window.apiPost = async (path, body) => { bodies.push(body); return { key: 'e'.repeat(32) + '.pdf', exists: true }; };
   await window.stageAttachmentFile(new File(['same content'], 'report.pdf'));
-  assert.match(bodies[0].contentHash, /^[0-9a-f]{32}$/);
+  assert.match(bodies[0].contentHash, /^[0-9a-f]{64}$/);
   assert.equal(FakeUpload.requests.length, 0);
   assert.equal(state.stagedImages[0].key, 'e'.repeat(32) + '.pdf');
   assert.equal(state.stagedImages[0].progress, 100);

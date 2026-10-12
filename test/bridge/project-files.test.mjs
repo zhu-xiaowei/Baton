@@ -88,19 +88,19 @@ test('download exports original binary files over 6 MB with accelerated upload f
 });
 
 // Must match the app's web/js/components/content-hash.js (same vectors in test/frontend/attachments.test.mjs).
-test('content IDs hash 4 MB blocks, shared with the app', async () => {
+test('content IDs are the SHA-256 that S3 verifies, shared with the app', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-hash-'));
   const data = Buffer.alloc(9 * 1024 * 1024 + 7);
   for (let i = 0; i < data.length; i++) data[i] = (i * 31 + (i >> 12)) & 255;
   fs.writeFileSync(path.join(dir, 'vector.bin'), data);
   fs.writeFileSync(path.join(dir, 'empty.bin'), '');
   try {
-    assert.equal(await hashFile(path.join(dir, 'vector.bin')), '23eacdbbed46be6a09a3edab75a50b2c');
-    assert.equal(await hashFile(path.join(dir, 'empty.bin')), '5df6e0e2761359d30a8275058e299fcc');
+    assert.equal(await hashFile(path.join(dir, 'vector.bin')), 'eff34fb403f905467ac2473ee02a191f11306cae280232a7c65482449c44ac61');
+    assert.equal(await hashFile(path.join(dir, 'empty.bin')), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a project file whose content is already stored is not uploaded, and its hash is remembered', async () => {
+test('stored content is reused without uploading, and bytes S3 rejects forget the remembered hash', async () => {
   const { root } = fixture();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-home-'));
   const file = path.join(root, 'report.pdf');
@@ -108,44 +108,36 @@ test('a project file whose content is already stored is not uploaded, and its ha
   // Freshly written files are not remembered (Git's racy window).
   await new Promise(resolve => setTimeout(resolve, 2100));
   const hash = await hashFile(file);
+  const remembered = () => Object.values(JSON.parse(fs.readFileSync(path.join(home, 'file-hashes.json'), 'utf8')));
+  const puts = [];
+  let stored = true;
   const options = {
     home,
     postFn: async (endpoint, body) => {
       assert.equal(body.contentHash, hash);
-      return Response.json({ key: hash + '.pdf', exists: true });
+      return Response.json(!stored
+        ? { key: hash.slice(0, 32) + '.pdf', url: 'https://accelerated.test', fallbackUrl: 'https://standard.test', headers: {} }
+        : { key: hash.slice(0, 32) + '.pdf', exists: true });
     },
-    fetchFn: async () => { assert.fail('must not upload stored content'); },
+    fetchFn: async url => { puts.push(url); return new Response('<Error><Code>BadDigest</Code></Error>', { status: 400 }); },
   };
   try {
-    const result = await request(root, { operation: 'download', path: 'report.pdf' }, options);
-    assert.equal(result.at(-1).ok, true);
-    assert.equal(result.at(-1).key, hash + '.pdf');
-    assert.deepEqual(Object.values(JSON.parse(fs.readFileSync(path.join(home, 'file-hashes.json'), 'utf8'))), [hash]);
+    let result = await request(root, { operation: 'download', path: 'report.pdf' }, options);
+    assert.equal(result.at(-1).key, hash.slice(0, 32) + '.pdf');
+    assert.equal(puts.length, 0);
+    assert.deepEqual(remembered(), [hash]);
+    // A second file with the same remembered hash whose bytes S3 rejects: no fallback retry, hash forgotten.
+    stored = false;
+    fs.copyFileSync(file, path.join(root, 'other.pdf'));
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    result = await request(root, { operation: 'download', path: 'other.pdf' }, options);
+    assert.equal(result.at(-1).ok, false);
+    assert.match(result.at(-1).error, /changed/);
+    assert.deepEqual(puts, ['https://accelerated.test']);
+    assert.deepEqual(remembered(), [hash]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('a project file edited while preparing is never uploaded under its earlier hash', async () => {
-  const { root } = fixture();
-  const file = path.join(root, 'notes.pdf');
-  fs.writeFileSync(file, 'original');
-  const options = {
-    home: fs.mkdtempSync(path.join(os.tmpdir(), 'baton-home-')),
-    postFn: async () => {
-      fs.writeFileSync(file, 'modified');
-      return Response.json({ key: 'b'.repeat(32) + '.pdf', url: 'https://s3.test', headers: {} });
-    },
-    fetchFn: async () => { assert.fail('must not upload bytes that do not match the hash'); },
-  };
-  try {
-    const result = await request(root, { operation: 'download', path: 'notes.pdf' }, options);
-    assert.equal(result.at(-1).ok, false);
-    assert.match(result.at(-1).error, /changed/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(options.home, { recursive: true, force: true });
   }
 });
 
