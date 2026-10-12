@@ -450,10 +450,8 @@ async function showAttachment(key) {
     if (file.previewType === 'application/pdf') {
       pdfFallbackUrl = url;
       cachedPdf = !!file.data;
-      if (!window.ResizeObserver || !window.requestAnimationFrame) {
-        setBody('<iframe class="attachment-pdf" title="PDF preview" src="' + pdfFallbackUrl + '"></iframe>');
-        return;
-      }
+      // Without PDF.js support, the fallback below opens the browser's own viewer.
+      if (!window.ResizeObserver || !window.requestAnimationFrame) throw new Error('Could not preview this file. Download to open it.');
       const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
       if (token !== _fileRequestToken) return;
       _clearPdfRanges = clearPdfRangeCache;

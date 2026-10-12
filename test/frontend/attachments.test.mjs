@@ -433,21 +433,25 @@ test('PDF previews use the same overlay and closing ignores stale responses', as
   assert.notEqual(document.getElementById('fileOverlayTitle').textContent, 'stale.pdf');
 });
 
-test('a cached PDF that PDF.js cannot open falls back to the browser viewer with a fresh URL', async () => {
+test('a cached PDF shown by the browser viewer gets a fresh URL, after a PDF.js failure or without PDF.js support', async () => {
   const pdfKey = 'e'.repeat(32) + '.pdf';
   // Just enough IndexedDB for one cache hit.
   const request = result => { const r = { result }; queueMicrotask(() => r.onsuccess()); return r; };
   const files = { get: id => request(id.endsWith(pdfKey) ? { name: 'locked.pdf', data: new Blob(['%PDF']) } : undefined), put() {} };
   globalThis.indexedDB = { open: () => request({ transaction: () => ({ objectStore: () => files }) }) };
-  Object.assign(window, { ResizeObserver: class {}, requestAnimationFrame: () => 0 });
   globalThis.fetch = async () => { throw new Error('No password given'); };
-  const metadata = [];
-  window.api = async path => { metadata.push(path); return { name: 'locked.pdf', size: 4, previewType: 'application/pdf', previewUrl: 'https://bucket.test/locked.pdf' }; };
   try {
-    window.openFile('baton-file:' + pdfKey, 'locked.pdf');
-    for (let i = 0; i < 20 && !document.querySelector('.attachment-pdf'); i++) await new Promise(resolve => setTimeout(resolve, 0));
-    assert.deepEqual(metadata, ['/api/bridge/file-url/' + pdfKey]);
-    assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/locked.pdf');
+    for (const pdfJs of [true, false]) {
+      if (pdfJs) Object.assign(window, { ResizeObserver: class {}, requestAnimationFrame: () => 0 });
+      else delete window.ResizeObserver;
+      const metadata = [];
+      window.api = async path => { metadata.push(path); return { name: 'locked.pdf', size: 4, previewType: 'application/pdf', previewUrl: 'https://bucket.test/locked.pdf' }; };
+      window.openFile('baton-file:' + pdfKey, 'locked.pdf');
+      for (let i = 0; i < 20 && !document.querySelector('.attachment-pdf'); i++) await new Promise(resolve => setTimeout(resolve, 0));
+      assert.deepEqual(metadata, ['/api/bridge/file-url/' + pdfKey]);
+      assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/locked.pdf');
+      window.closeFileViewer();
+    }
   } finally {
     delete globalThis.indexedDB;
     delete window.ResizeObserver;
