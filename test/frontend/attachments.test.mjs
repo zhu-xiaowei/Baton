@@ -24,13 +24,6 @@ const prepared = {
   headers: { 'Content-Type': 'application/octet-stream', 'x-amz-meta-filename': 'deck.pptx' },
 };
 const { state } = await import('../../web/js/state.js');
-// Stands in for hash-wasm, which loads from the CDN in the app.
-const { hashWasm } = await import('../../web/js/components/content-hash.js');
-const { createHash } = await import('node:crypto');
-hashWasm.load = async () => ({ createSHA256: async () => {
-  const hash = createHash('sha256');
-  return { update: data => hash.update(data), digest: () => hash.digest('hex') };
-} });
 await import('../../web/js/components/image.js');
 await import('../../web/js/components/message.js');
 const vite = await createTestServer({

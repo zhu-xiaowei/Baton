@@ -42,6 +42,7 @@
     "anser": "^2.3.5",
     "diff": "^5.2.0",
     "diff2html": "^3.4.51",
+    "hash-wasm": "^4.12.0",
     "highlight.js": "^11.9.0",
     "lucide": "1.47.0",
     "marked": "^12.0.1",
