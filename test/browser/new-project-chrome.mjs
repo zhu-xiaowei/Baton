@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -243,7 +244,7 @@ try {
   await click('#newProjectModal .confirm');
   await waitFor(() => evaluate('newProjectModal.style.display==="none" && document.body.classList.contains("new-session")'));
   assert.equal((await fs.stat(target)).isDirectory(), true);
-  assert.equal(creations.at(-1).projectPath, await fs.realpath(target));
+  assert.equal(creations.at(-1).projectPath, realpathSync.native(target));
   await screenshot('created-session');
   results.push('New folder created only on Create, correct external path, failure retry, session opened');
 

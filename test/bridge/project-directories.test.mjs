@@ -80,7 +80,7 @@ test('path resolution and creation agree for relative, tilde, and external absol
   ]) {
     assert.equal(resolveProjectPath(input, home), expected);
     const created = createProjectDirectory(input, home);
-    const realPath = fs.realpathSync(expected);
+    const realPath = fs.realpathSync.native(expected);
     assert.equal(created.projectPath, realPath);
     assert.equal(created.projectName, path.basename(expected));
     assert.equal(created.projectHash, realPath.replace(/[^a-zA-Z0-9-]/g, '-'));
@@ -102,12 +102,12 @@ test('projects created through a symlink resolve to the real directory for the f
   const preview = await browse(home, selected);
   assert.equal(preview.exists, false);
   const created = createProjectDirectory(selected, home);
-  const canonical = fs.realpathSync(selected);
+  const canonical = fs.realpathSync.native(selected);
   assert.equal(created.projectPath, canonical);
   assert.equal(created.projectHash, canonical.replace(/[^a-zA-Z0-9-]/g, '-'));
   fs.writeFileSync(path.join(canonical, 'session-marker.txt'), 'correct project');
   const sessionPath = projectHashToPath(created.projectHash);
-  assert.equal(fs.realpathSync(sessionPath), canonical);
+  assert.equal(fs.realpathSync.native(sessionPath), canonical);
   assert.equal(fs.readFileSync(path.join(sessionPath, 'session-marker.txt'), 'utf8'), 'correct project');
 });
 
@@ -120,5 +120,5 @@ test('selecting an existing symlink uses its target hash and keeps the selected 
   const created = createProjectDirectory(selected, home);
   assert.equal(created.projectName, 'project-shortcut');
   assert.equal(created.projectHash, createProjectDirectory(target, home).projectHash);
-  assert.equal(fs.realpathSync(projectHashToPath(created.projectHash)), fs.realpathSync(target));
+  assert.equal(fs.realpathSync.native(projectHashToPath(created.projectHash)), fs.realpathSync.native(target));
 });
