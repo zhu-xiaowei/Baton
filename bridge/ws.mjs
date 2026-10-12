@@ -72,6 +72,7 @@ import {
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
+import { createProjectDirectory } from './project-path.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
@@ -1864,23 +1865,15 @@ async function newAgentSession(cwd, text) {
 }
 
 // Create a new project directory and return its projectHash. No session is
-// spawned — the app enters its new-session input and the user's first real
-// message creates the session (SESS#/PROJ# land then). An empty project has no
-// SESS# row, so it can't appear in the list until that first message anyway.
+// spawned — seed the PROJ# metadata, then enter the new-session input. The user's
+// first real message creates the session and its SESS# row.
 async function handleCreateProject(rawPath, asAgent) {
   if (!rawPath) {
     wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
     return;
   }
   try {
-    const home = os.homedir();
-    let projectPath = rawPath;
-    if (!path.isAbsolute(projectPath)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
-    else if (!projectPath.startsWith(home)) projectPath = path.join(home, projectPath.replace(/^\/+/, ''));
-    fs.mkdirSync(projectPath, { recursive: true });
-    // Hash rule mirrors session.mjs — the dir now exists so projectHashToPath reverses it on first send.
-    const projectHash = path.resolve(projectPath).replace(/[^a-zA-Z0-9-]/g, '-');
-    const projectName = path.basename(projectPath); // breadcrumb label (matches the list's trailing-segment name)
+    const { projectHash, projectName } = createProjectDirectory(rawPath);
     // Seed an empty PROJ# row so the project shows in the list right away (before its first session).
     try {
       await post('/api/bridge/create-project', {

@@ -539,6 +539,21 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .img-placeholder.loaded { background: none; border: none; }
 .img-placeholder img { width: 36px; height: 36px; border-radius: 6px; cursor: pointer; object-fit: cover; }
 /* New Project modal */
+#newProjectModal .modal-box { display: flex; flex-direction: column; max-width: 560px; }
+#newProjectModal .modal-title, #newProjectModal .modal-actions { flex-shrink: 0; }
+#newProjectModal .modal-btn, #newProjectModal .project-file-row { min-height: 44px; }
+.new-project-path { display: flex; align-items: center; gap: 4px; margin-left: -12px; flex-shrink: 0; }
+.new-project-path .modal-input { min-width: 0; min-height: 44px; }
+#newProjectUp { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #c9d1d9; cursor: pointer; }
+#newProjectUp svg { transform: translateX(6px); }
+#newProjectUp:disabled { opacity: 0.35; cursor: default; }
+.new-project-directories { height: 288px; min-height: 80px; flex-shrink: 1; overflow: auto; border: 1px solid #30363d; border-radius: 8px; margin-top: 12px; }
+.new-project-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 100px; padding: 16px; color: #8b949e; font-size: 13px; }
+#newProjectModal:has(input:disabled) .new-project-directories,
+#newProjectModal:has(input:disabled) #newProjectUp { pointer-events: none; opacity: 0.5; }
+@media (max-width: 480px) {
+  #newProjectModal .modal-box { padding-left: 16px; padding-right: 16px; }
+}
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
 .modal-box { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px; width: 90%; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .viewport-centered-modal > .modal-box { max-height: 100%; overflow-y: auto; }

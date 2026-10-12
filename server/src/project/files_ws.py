@@ -1,13 +1,20 @@
 import uuid
 
 
-ALLOWED_OPERATIONS = {"list", "read", "download"}
+ALLOWED_OPERATIONS = {"list", "read", "download", "browse"}
 
 
 def _valid_request(body):
     if body.get("operation") not in ALLOWED_OPERATIONS:
         return False
-    if not body.get("projectHash") or not body.get("requestId"):
+    if body.get("operation") == "browse":
+        if not isinstance(body.get("device"), str) or not body["device"]:
+            return False
+        if not isinstance(body.get("path", ""), str) or "\0" in body.get("path", ""):
+            return False
+    elif not body.get("projectHash"):
+        return False
+    if not body.get("requestId"):
         return False
     try:
         uuid.UUID(body["requestId"])
@@ -35,10 +42,11 @@ def handle_project_files(
             "action": "project_files",
             "operation": body["operation"],
             "requestId": body["requestId"],
-            "projectHash": body["projectHash"],
             "path": body.get("path", ""),
             "replyConnectionId": connection_id,
         }
+        if body.get("operation") != "browse":
+            payload["projectHash"] = body["projectHash"]
         if body.get("cursor"):
             payload["cursor"] = body["cursor"]
         delivered = 0

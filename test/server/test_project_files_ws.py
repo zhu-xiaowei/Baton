@@ -103,3 +103,38 @@ def test_project_file_request_and_response_are_connection_scoped(monkeypatch):
         "ok": True,
         "entries": [{"name": "web", "type": "directory"}],
     })]
+
+
+def test_directory_browse_requires_a_device_but_no_project():
+    from project.files_ws import _valid_request
+    request = {"operation": "browse", "requestId": REQUEST_ID, "device": "Mac"}
+    assert _valid_request(request)
+    assert not _valid_request({**request, "device": ""})
+    assert not _valid_request({**request, "path": None})
+    assert not _valid_request({**request, "path": "/bad\0path"})
+    assert not _valid_request({**request, "operation": "list"})
+    assert not _valid_request({**request, "requestId": "invalid"})
+
+
+def test_directory_browse_routes_to_selected_device_and_reports_offline(monkeypatch):
+    from project.files_ws import handle_project_files
+    delivered = []
+    args = dict(
+        role="app", connection_id="app-1", account_id="account-1", endpoint="endpoint",
+        query_connections=lambda *_: [
+            {"connectionId": "bridge-1", "deviceName": "Mac"},
+            {"connectionId": "bridge-2", "deviceName": "Linux"},
+        ],
+        post_to_connection=lambda endpoint, connection, payload: delivered.append((connection, payload)),
+        connections_table=Connections("app"),
+    )
+    request = {"operation": "browse", "requestId": REQUEST_ID, "device": "Mac", "path": "/tmp"}
+    assert handle_project_files(request, **args) == {"statusCode": 200}
+    assert delivered == [("bridge-1", {
+        "action": "project_files", "operation": "browse", "requestId": REQUEST_ID,
+        "path": "/tmp", "replyConnectionId": "app-1",
+    })]
+    delivered.clear()
+    handle_project_files({**request, "device": "Offline"}, **args)
+    assert delivered[0][0] == "app-1"
+    assert delivered[0][1]["error"] == "Bridge offline"

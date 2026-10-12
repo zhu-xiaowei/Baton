@@ -33,6 +33,12 @@ import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './compo
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
+  browseNewProjectPath,
+  closeNewProjectDirectoryPicker,
+  newProjectParentDirectory,
+  onNewProjectPathInput,
+} from './project/directory-picker.js';
+import {
   activateComposerDraft,
   deactivateComposerDraft,
   initComposerDrafts,
@@ -1500,10 +1506,10 @@ function createNewProject() {
   var modal = document.getElementById('newProjectModal');
   var input = document.getElementById('newProjectInput');
   var err = document.getElementById('newProjectError');
-  // Prefill last-used parent prefix so the user only types the new project name (still editable).
-  input.value = localStorage.getItem('_np_prefix') || '';
+  input.value = '~';
   err.textContent = '';
   showCenteredModal(modal);
+  browseNewProjectPath('');
   setTimeout(function () {
     if (modal.style.display === 'none') return;
     input.focus({ preventScroll: true });
@@ -1512,6 +1518,7 @@ function createNewProject() {
 }
 
 function closeNewProjectModal() {
+  closeNewProjectDirectoryPicker();
   if (state._pendingCreatePath) {
     state._pendingCreatePath = null;
     disconnectWs();
@@ -1532,9 +1539,6 @@ async function submitNewProject() {
   var projectPath = input.value.trim();
   if (!projectPath) { err.textContent = 'Path cannot be empty'; return; }
   err.textContent = '';
-  // Remember the parent prefix (everything up to the last '/') to prefill next time.
-  var slash = projectPath.lastIndexOf('/');
-  localStorage.setItem('_np_prefix', slash >= 0 ? projectPath.slice(0, slash + 1) : '');
   state._pendingCreatePath = projectPath;
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
@@ -2186,6 +2190,7 @@ Object.assign(window, {
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
+  browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,

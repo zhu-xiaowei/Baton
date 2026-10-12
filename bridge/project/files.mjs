@@ -5,6 +5,7 @@ import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { post } from '../http.mjs';
 import { projectHashToPath } from '../session.mjs';
+import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
@@ -134,15 +135,42 @@ function pageEntries(entries, cursor, envelope) {
   };
 }
 
-export async function listProjectDirectory(root, relativePath = '', cursor = '', envelope = {}) {
+export async function listProjectDirectory(root, relativePath = '', cursor = '', envelope = {}, directoriesOnly = false) {
   const directory = resolveDirectory(root, relativePath);
   const entries = (await fs.promises.readdir(directory, { withFileTypes: true }))
     .map((entry) => ({
       name: entry.name,
       type: entryType(directory, entry),
     }))
+    .filter((entry) => !directoriesOnly || entry.type === 'directory')
     .sort(compareEntries);
   return pageEntries(entries, cursor, envelope);
+}
+
+async function browseDirectories(message, options) {
+  const targetPath = resolveProjectPath(message.path, options.homeDir);
+  let directory = targetPath;
+  let exists = true;
+  try {
+    if (!(await fs.promises.stat(targetPath)).isDirectory()) throw new Error('Not a directory');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    directory = path.dirname(targetPath);
+    exists = false;
+  }
+  const envelope = responseBase(message, {
+    ok: true,
+    path: directory,
+    targetPath,
+    parentPath: path.dirname(targetPath),
+    exists,
+  });
+  const result = await listProjectDirectory(directory, '', message.cursor, envelope, true);
+  options.send({
+    ...envelope,
+    entries: result.entries,
+    ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+  });
 }
 
 async function uploadVideo(absPath, key, size, postFn) {
@@ -318,11 +346,15 @@ export async function handleProjectFilesMessage(message, options = {}) {
   const send = options.send;
   if (typeof send !== 'function') throw new TypeError('send is required');
   const operation = message.operation;
-  const resolveProjectRoot = options.resolveProjectRoot || projectHashToPath;
-  const projectRoot = message.projectHash
-    ? resolveProjectRoot(message.projectHash)
-    : '';
   try {
+    if (operation === 'browse') {
+      await browseDirectories(message, options);
+      return;
+    }
+    const resolveProjectRoot = options.resolveProjectRoot || projectHashToPath;
+    const projectRoot = message.projectHash
+      ? resolveProjectRoot(message.projectHash)
+      : '';
     if (!projectRoot) throw new Error('project not found');
     if (operation === 'download') {
       await prepareFileDownload(message, { ...options, send, projectRoot });

@@ -968,7 +968,7 @@ the Session.
 **Fields**:
 | Field | Required | Description |
 |-------|----------|-------------|
-| `projectPath` | Yes | Path relative to `$HOME` (absolute paths under `$HOME` also accepted) |
+| `projectPath` | Yes | Path relative to the Bridge user's home, a `~/` path, or an absolute path, including outside home |
 | `device` | Yes | Target device |
 | `asAgent` | No | Legacy compatibility field echoed for older clients; the current New Project UI does not send it |
 
@@ -976,6 +976,26 @@ the Session.
 
 **Bridge handling**: create the path → derive `projectHash` → call REST `create-project` → reply
 `create_project_result`.
+
+---
+
+#### project_files: browse
+
+List folders for the New Project picker without requiring an existing project.
+The request uses the existing `project_files` RPC and is routed to `device`;
+the response is delivered only to the requesting app connection.
+
+```json
+{ "action": "project_files", "operation": "browse", "requestId": "<UUID>", "device": "MacBook-Pro", "path": "" }
+```
+
+An empty `path` starts at the Bridge user's home. Relative paths and `~/` paths
+resolve against that home; absolute paths are accepted. The response includes
+`path` (listed directory), `targetPath` (resolved input), `parentPath`, `exists`,
+directory-only `entries`, and an optional `nextCursor` for the next request.
+For a new folder whose parent exists, `exists` is false and the parent is listed.
+Browsing never creates a directory. Existing `list`, `read`, and `download`
+operations still require `projectHash`.
 
 ---
 
