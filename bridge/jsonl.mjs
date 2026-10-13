@@ -41,3 +41,23 @@ export function scanJsonlLines(filePath, onLine, options = {}) {
     fs.closeSync(fd);
   }
 }
+
+const SDK_ENTRYPOINT = Buffer.from('"entrypoint":"sdk-cli"');
+const CLI_ENTRYPOINT = Buffer.from('"entrypoint":"cli"    ');
+const RESUME_HEAD_BYTES = 64 * 1024;
+
+// CC's /resume picker hides a session whose first head `entrypoint` is sdk-cli.
+// Rewrite that one value in place at equal length; CC's O_APPEND writes are unaffected.
+export function exposeToResumePicker(filePath) {
+  const fd = fs.openSync(filePath, 'r+');
+  try {
+    const head = Buffer.alloc(RESUME_HEAD_BYTES);
+    const bytesRead = fs.readSync(fd, head, 0, head.length, 0);
+    const offset = head.subarray(0, bytesRead).indexOf('"entrypoint":"');
+    if (offset < 0 || head.indexOf(SDK_ENTRYPOINT, offset) !== offset) return false;
+    fs.writeSync(fd, CLI_ENTRYPOINT, 0, CLI_ENTRYPOINT.length, offset);
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
