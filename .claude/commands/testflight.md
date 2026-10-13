@@ -30,51 +30,34 @@ path, and whether validation + upload succeeded. If it fails, show the error.
 
 Do not commit the `project.yml` version bump unless asked.
 
-**On Linux:** Publish from the persistent, unprotected `release/testflight`
-branch, not `main`. Reuse it for every release, fetching and merging the latest
-`origin/main` while preserving release commits. If it does not exist, create it
-from the prepared release commit or latest `origin/main`. Do not create a new
-branch for each build number or force-push this branch.
-After the release changes are committed, push the source commit to the GitHub
-repository connected to Xcode Cloud. Run
-`node scripts/release-ios-cloud.mjs --dry-run` as a preflight, then continue
-with the real release on that same branch:
+**On Linux:** Always use the fixed branch name `release/testflight`; never create
+per-build branches such as `release/testflight-<N>`. Before each release, fetch
+`origin`, then create `release/testflight` from the latest `origin/main` (delete
+any stale local copy first). Commit release changes there, push it, run
+`node scripts/release-ios-cloud.mjs --dry-run` as a preflight, then start the
+real release in the background on that branch:
 
 ```
 npm run release:ios:cloud
 ```
 
-The cloud script commits and pushes its own build-number bump before starting
-Xcode Cloud, so running it on protected `main` fails before packaging or upload.
-A PR is not required to publish. Finish and verify the release before the
-optional PR workflow below. Do not bypass branch protection. Creating a PR is
-not proof of upload.
+Never use `git merge` or force-push. The cloud script commits and pushes its own
+build-number bump before starting Xcode Cloud, so running it on protected `main`
+fails before packaging or upload. Do not bypass branch protection.
 
-If a protected-branch push already failed after the bump commit was created,
-preserve that commit. Automatically move it onto `release/testflight`
-and push the branch. Rerun the dry-run and release
-there; the script decides whether to reuse the prepared version. Do not manually
-bump again just because the push failed.
+As soon as the script prints `Prepared <version> (<build>)` (the bump is pushed),
+open a PR from `release/testflight` to `main` without asking. Creating a PR is
+not proof of upload. The script waits for a valid upload and adds it to the
+internal **Test** group. The dry-run is not completion of `/testflight`.
 
-The script waits for a valid upload and adds it to the internal **Test** group.
-The dry-run is not completion of `/testflight`. Report the cloud run ID,
-build number, and TestFlight state; include a PR URL only if one exists.
-If upload succeeded but group assignment
-failed, do not start another release for that error.
+When the build finishes, report the cloud run ID, build number, upload status,
+internal **Test** group state, and the PR URL. Once the release has succeeded
+and the PR's required checks pass, squash-merge it (GitHub auto-merge is
+disabled, so merge directly) and confirm the merge. The repository deletes the
+branch on merge; delete it manually if it remains. Do not merge a PR whose
+release failed.
 
-After a successful release, summarize the build number, upload status, and
-internal **Test** group status. Then ask whether to create a PR targeting `main`
-and automatically merge it after CI passes. If a PR already exists, ask whether
-to reuse it and merge after CI. Wait for approval before creating a PR or
-enabling auto-merge.
-
-On approval, create or reuse the release PR, including the build-number bump
-and release changes. Wait for the required CI checks and repository review
-requirements, resolve relevant failures within the approved scope, and merge
-automatically when allowed. Use the repository's supported merge method without
-bypassing branch protection. Confirm the actual merge before reporting it as
-complete.
-
-Keep `release/testflight` after publishing and merging. If the repository
-automatically deletes merged PR branches, create the optional PR from a
-temporary branch at the same release commit instead.
+If the script fails with `Xcode Cloud does not see branch`, wait briefly and
+rerun it on the same branch; it reuses the already-pushed prepared version. Do
+not manually bump again after a failed push. If upload succeeded but group
+assignment failed, do not start another release for that error.
