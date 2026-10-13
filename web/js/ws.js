@@ -1794,14 +1794,7 @@ function commitMessages(messages, options = {}) {
     replaceConflicts: true,
   });
   var pending = reconcilePendingMessages(state.pendingSentMessages, mergeResult.messages);
-  var activity = resolveActivityState({
-    liveStateChanged: !!options.liveStateChanged,
-    liveActivity: currentActivity(),
-    messages: mergeResult.messages,
-    runtime: state.appState.runtime,
-    hasOutstandingTurns: hasOutstandingTurns(),
-    outstandingTurnIds: outstandingTurnIds(),
-  });
+  var liveActivity = currentActivity();
   var streamTurnIds = options.streamTurnIds || _streamCoordinator.activeTurnIds();
   var dom = createMessageDom({
     state: state,
@@ -1826,6 +1819,14 @@ function commitMessages(messages, options = {}) {
   for (var promotion of pending.promoted) {
     promoteEchoedBubble(promotion.pending, promotion.echo);
   }
+  var activity = resolveActivityState({
+    liveStateChanged: !!options.liveStateChanged,
+    liveActivity: liveActivity,
+    messages: mergeResult.messages,
+    runtime: state.appState.runtime,
+    hasOutstandingTurns: hasOutstandingTurns(),
+    outstandingTurnIds: outstandingTurnIds(),
+  });
   if (!options.deferDom || adoptsActiveStreamTurn) dom.applyChanges(mergeResult);
   if (!window.__APEEK_TEST__) {
     for (var conflict of mergeResult.conflicts) {

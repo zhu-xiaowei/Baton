@@ -272,6 +272,11 @@ import { systemEventId } from './timeline.js';
       if (window.isSubagentNotificationMsg?.(msg)) continue;
 
       if (isInterruptMsg(msg)) {
+        // The prompt echo may still be in flight after a quick stop. Its
+        // interrupt must not be grouped with the previous answer.
+        if (msg.turnId && turnItems.some(item => item.turnId !== msg.turnId)) {
+          flushTurn();
+        }
         turnItems.push({
           type: 'interrupt',
           html: renderInterrupt(msg),

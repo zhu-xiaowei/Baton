@@ -550,6 +550,14 @@ export function createMessageDom(options) {
         else streamPlacement.replaceWith(streamRow);
       }
     }
+    // An interrupted turn can have no stream blocks or durable prompt yet.
+    // Attach its rendered row to the restored optimistic question as well.
+    for (var turnRow of Array.from(container.children)) {
+      if (turnRow.classList.contains('assistant-turn') && turnRow.dataset.turnId
+        && turnRow.querySelector(':scope > .msg-interrupt')) {
+        attachTimelineTurn(container, turnRow);
+      }
+    }
     if (olderLoader) container.insertBefore(olderLoader, container.firstChild);
     if (permissionPrompt) container.appendChild(permissionPrompt);
     state.wsRenderedCount = state.wsAllMessages.length;

@@ -394,6 +394,15 @@ function findInsertionIndex(messages, index, incomingMessages, incomingIndex) {
       return Math.max(floor, Math.min.apply(null, positions));
     }
   }
+  // A fast interrupt can arrive before the durable prompt echo. Keep that
+  // prompt before the response already received for its exact turn.
+  var turnId = promptTurnId(incomingMessages[incomingIndex]);
+  if (turnId) {
+    var firstTurnIndex = messages.findIndex(function (message) {
+      return message.turnId === turnId;
+    });
+    if (firstTurnIndex !== -1) return Math.max(floor, firstTurnIndex);
+  }
   return Math.max(floor, messages.length);
 }
 
@@ -513,14 +522,7 @@ export function commitMessageState(state, messages) {
 }
 
 function isUserEcho(message, pending) {
-  if (message?.type !== 'user' || !pending?.id) return false;
-  if (Array.isArray(message.content)
-    && message.content.length
-    && message.content.every(function (block) {
-      return block?.type === 'tool_result';
-    })) {
-    return false;
-  }
+  if (!isPromptUserMessage(message) || !pending?.id) return false;
   var turnId = pending.id;
   var promptUuid = String(turnId).replace(/^sent-/, '');
   if (message.turnId === turnId
