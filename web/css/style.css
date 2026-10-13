@@ -542,6 +542,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 #newProjectModal .modal-box { display: flex; flex-direction: column; max-width: 560px; }
 #newProjectModal .modal-title, #newProjectModal .modal-actions { flex-shrink: 0; }
 #newProjectModal .modal-btn, #newProjectModal .project-file-row { min-height: 44px; }
+#newProjectModal .project-file-row:active { background: #21262d; }
 .new-project-path { display: flex; align-items: center; gap: 4px; margin-left: -12px; flex-shrink: 0; }
 .new-project-path .modal-input { min-width: 0; min-height: 44px; }
 #newProjectUp { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #c9d1d9; cursor: pointer; }
