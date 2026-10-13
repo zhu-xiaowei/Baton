@@ -1421,8 +1421,11 @@ function sessionsHtml(device, projectHash, data, sel) {
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
     var title = attachmentPreviewText(s.preview || (s.isAgent && s.agentName) || 'No preview');
+    var resumeCommand = (runtime === 'codex' ? 'codex resume ' : 'claude --resume ') + nativeId;
+    var sidLabel = '<span class="meta-sid-copy" title="Copy ' + esc(resumeCommand) + '"'
+      + ' data-copy="' + esc(resumeCommand) + '">' + esc(shortId) + '</span>';
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
-      + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span>'
+      + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + sidLabel + '</span>'
       + '<span> &middot; ' + formatSize(s.size) + '</span>';
     var secondary = s.status === 'needs_input' && s.agentDetail
       ? '<span class="session-secondary-toggle" role="button" tabindex="0" aria-label="Show session metadata">'
@@ -1440,6 +1443,25 @@ function sessionsHtml(device, projectHash, data, sel) {
       + '<span class="item-time">' + timeAgo(s.lastActive) + '</span></div></div>'
       + '</a>';
   }).join('') + '</div>';
+}
+
+function attachSessionIdCopy(container) {
+  container.querySelectorAll('.meta-sid-copy').forEach(function (target) {
+    var label = target.textContent;
+    target.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.classList.contains('copied') || !navigator.clipboard?.writeText) return;
+      navigator.clipboard.writeText(target.dataset.copy).then(function () {
+        target.textContent = '✓';
+        target.classList.add('copied');
+        setTimeout(function () {
+          target.textContent = label;
+          target.classList.remove('copied');
+        }, 2000);
+      }, function () {});
+    });
+  });
 }
 
 function attachSessionSecondaryToggles(container) {
@@ -1468,6 +1490,7 @@ function renderSessions(device, projectHash, data) {
     return;
   }
   var list = content.querySelector('.list');
+  attachSessionIdCopy(list);
   attachSessionSecondaryToggles(list);
   attachLongPress(content, 'session');
   showStats(data.sessions.length + ' session(s)');

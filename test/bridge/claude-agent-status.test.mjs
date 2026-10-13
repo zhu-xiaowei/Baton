@@ -728,3 +728,45 @@ test('agent moves from daemon needs_input through web completion to immediate te
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
+
+test('forked skill output written as a system local_command row completes the turn', async () => {
+  const { extractClaudeMessages } = await import('../../bridge/extract.mjs');
+  const sessionId = '47474747-4747-4474-8474-474747474747';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-local-command-'));
+  const project = '-tmp-agent-project';
+  const filePath = path.join(root, project, `${sessionId}.jsonl`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  // Row order CC 2.1.280 writes after a forked /code-review finishes.
+  const rows = [
+    { type: 'queue-operation', operation: 'enqueue', sessionId },
+    {
+      type: 'user', uuid: 'caveat', parentUuid: null, isMeta: true,
+      timestamp: '2026-10-13T05:43:24.588Z',
+      message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' },
+    },
+    {
+      type: 'user', uuid: 'prompt', parentUuid: 'caveat',
+      timestamp: '2026-10-13T05:40:55.289Z',
+      message: { role: 'user', content: '/code-review https://example.test/pull/42' },
+    },
+    {
+      type: 'system', subtype: 'local_command', uuid: 'output', parentUuid: 'prompt',
+      timestamp: '2026-10-13T05:43:24.588Z', isMeta: false,
+      content: '<local-command-stdout>Review result</local-command-stdout>',
+    },
+  ];
+  fs.writeFileSync(filePath, `${rows.map(JSON.stringify).join('\n')}\n`);
+  const runningInfo = { projects: new Set([project]), sessions: new Set([sessionId]) };
+  try {
+    assert.equal(getSessionStatus(sessionId, filePath, runningInfo), 'completed');
+    const { messages } = await extractClaudeMessages(filePath, sessionId, {
+      watermarks: new Map(),
+    });
+    assert.deepEqual(messages.map((m) => [m.uuid, m.type, m.content]), [
+      ['prompt', 'user', '/code-review https://example.test/pull/42'],
+      ['output', 'user', '<local-command-stdout>Review result</local-command-stdout>'],
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

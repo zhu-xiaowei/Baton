@@ -25,6 +25,11 @@ var navigationVersion = 0;
 var returnToGit = false;
 var PROJECT_FILES_VIEW_KEY = 'baton-project-files-view';
 var directoryCache = new Map();
+var pendingDirectories = new Map();
+var preloads = { queue: new Map(), active: 0 };
+var visibilityObserver = null;
+// A directory fetched this recently (usually by a visible-row preload) opens without another request.
+var FRESH_DIRECTORY_MS = 30000;
 var edgeBack = registerEdgeBackLayer({
   navigateBack: closeProjectFiles,
   foregroundSelectors: ['#projectFilesPage'],
@@ -77,6 +82,7 @@ function cacheDirectory(projectHash, path, entries, scrollTop, options) {
   directoryCache.set(key, {
     entries: entries.slice(),
     scrollTop: Math.max(0, scrollTop || 0),
+    fetchedAt: directoryCache.get(key)?.fetchedAt || 0,
   });
   if (options.persist !== false) {
     writeProjectDataCache(
@@ -150,6 +156,7 @@ function rowHtml(entry) {
 function renderEntries(entries) {
   var content = projectFilesContent();
   if (!entries.length) {
+    stopVisiblePreloads();
     content.innerHTML = '<div class="empty">This folder is empty</div>';
     return;
   }
@@ -165,33 +172,96 @@ function renderEntries(entries) {
       }
     });
   });
+  observeVisibleDirectories(content);
+}
+
+// Concurrent callers share one request; the result lands in the memory cache only.
+function fetchDirectory(projectHash, path, onPage) {
+  var key = directoryCacheKey(projectHash, path);
+  if (pendingDirectories.has(key)) return pendingDirectories.get(key);
+  var promise = (async function () {
+    await window.loadViewerLibs();
+    var entries = [];
+    var cursor = '';
+    do {
+      var response = await requestProjectFiles('list', {
+        projectHash: projectHash,
+        path: path,
+        cursor: cursor,
+      });
+      entries = entries.concat(response.entries || []);
+      cursor = response.nextCursor || '';
+      onPage?.(entries);
+    } while (cursor);
+    directoryCache.set(key, {
+      entries: entries.slice(),
+      scrollTop: directoryCache.get(key)?.scrollTop || 0,
+      fetchedAt: Date.now(),
+    });
+    return entries;
+  })().finally(function () {
+    pendingDirectories.delete(key);
+  });
+  pendingDirectories.set(key, promise);
+  return promise;
+}
+
+function stopVisiblePreloads() {
+  visibilityObserver?.disconnect();
+  visibilityObserver = null;
+  preloads.queue.clear();
+}
+
+function runPreloads() {
+  while (preloads.active < 4 && preloads.queue.size) {
+    var [key, path] = preloads.queue.entries().next().value;
+    preloads.queue.delete(key);
+    if (directoryCache.has(key) || pendingDirectories.has(key)) continue;
+    preloads.active++;
+    fetchDirectory(state.appState.project?.hash || '', path).catch(function () {}).finally(function () {
+      preloads.active--;
+      runPreloads();
+    });
+  }
+}
+
+function observeVisibleDirectories(content) {
+  stopVisiblePreloads();
+  if (!window.IntersectionObserver) return;
+  var projectHash = state.appState.project?.hash || '';
+  var directory = currentPath;
+  var observer = new window.IntersectionObserver(function (entries) {
+    if (visibilityObserver !== observer) return;
+    for (var entry of entries) {
+      var path = joinProjectPath(directory, entry.target.dataset.name || '');
+      var key = directoryCacheKey(projectHash, path);
+      if (!entry.isIntersecting) preloads.queue.delete(key);
+      else if (!directoryCache.has(key) && !pendingDirectories.has(key)) preloads.queue.set(key, path);
+    }
+    runPreloads();
+  }, { root: content });
+  visibilityObserver = observer;
+  content.querySelectorAll('.project-file-row[data-type="directory"]').forEach(function (row) {
+    observer.observe(row);
+  });
 }
 
 async function loadDirectory(version, options) {
   options = options || {};
   var projectHash = state.appState.project?.hash || '';
   var path = options.path == null ? currentPath : options.path;
-  var entries = [];
-  var cursor = '';
-  do {
-    var response = await requestProjectFiles('list', {
-      projectHash: projectHash,
-      path: path,
-      cursor: cursor,
-    });
-    if (!state.projectFilesOpen || version !== navigationVersion) return;
-    entries = entries.concat(response.entries || []);
-    cursor = response.nextCursor || '';
-    if (!options.deferRender) renderEntries(entries);
-  } while (cursor);
-  if (options.deferRender
-    && state.projectFilesOpen
-    && version === navigationVersion) {
-    renderEntries(entries);
-  }
-  if (state.projectFilesOpen && version === navigationVersion) {
-    cacheDirectory(projectHash, path, entries, options.scrollTop);
-  }
+  var current = function () {
+    return state.projectFilesOpen && version === navigationVersion;
+  };
+  var rendered = null;
+  var entries = await fetchDirectory(projectHash, path, options.deferRender ? null : function (page) {
+    if (!current()) return;
+    rendered = page;
+    renderEntries(page);
+  });
+  if (!current()) return;
+  if (rendered !== entries) renderEntries(entries);
+  cacheDirectory(projectHash, path, entries, options.scrollTop);
   return entries;
 }
 
@@ -199,6 +269,7 @@ export async function openProjectFilesPath(path) {
   if (!state.appState.project) return;
   rememberDirectoryScroll();
   currentPath = normalizeProjectPath(path);
+  stopVisiblePreloads();
   var projectHash = state.appState.project.hash;
   var cached = cachedDirectory(projectHash, currentPath);
   saveProjectFilesView();
@@ -217,8 +288,15 @@ export async function openProjectFilesPath(path) {
   navigationVersion++;
   var version = navigationVersion;
   renderProjectFilesBreadcrumb(projectBreadcrumbItems(projectName(), currentPath));
-  setProjectFilesLoading(true);
   var content = projectFilesContent();
+  if (cached && Date.now() - cached.fetchedAt < FRESH_DIRECTORY_MS) {
+    setProjectFilesLoading(false);
+    renderEntries(cached.entries);
+    content.scrollTop = cached.scrollTop;
+    cacheDirectory(projectHash, currentPath, cached.entries, cached.scrollTop);
+    return;
+  }
+  setProjectFilesLoading(true);
   if (cached) {
     renderEntries(cached.entries);
     content.scrollTop = cached.scrollTop;
@@ -337,6 +415,7 @@ export function deactivateProjectFiles(keepWs) {
   if (!state.projectFilesOpen) return false;
   state.projectFilesOpen = false;
   clearProjectFilesView();
+  stopVisiblePreloads();
   navigationVersion++;
   edgeBack.deactivate();
   closeProjectFilesPage();

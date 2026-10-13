@@ -112,12 +112,14 @@ for (const identity of [
   });
 }
 
-test('pending reconciliation never matches prompt text or tool results', () => {
+test('pending reconciliation never matches prompt text, tool results or interruptions', () => {
   const pending = [{ id: 'sent-one', text: 'same' }];
   const result = reconcilePendingMessages(pending, [
     { uuid: 'other', type: 'user', content: 'same' },
     { turnId: 'sent-one', type: 'assistant', content: 'same' },
     { turnId: 'sent-one', type: 'user', content: [{ type: 'tool_result', content: 'same' }] },
+    { turnId: 'sent-one', type: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+    { turnId: 'sent-one', type: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] },
   ]);
   assert.deepEqual(result.promoted, []);
   assert.deepEqual(result.remaining, pending);

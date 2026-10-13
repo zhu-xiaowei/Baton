@@ -36,6 +36,7 @@ class HeadlessProc {
     this.busy = false;          // a turn is generating
     this.dead = false;
     this.inputs = new Map();
+    this._heldReplies = [];     // synthetic replies waiting for their prompt replay
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
     this.streamId = null;       // current turn's preview id
     this._initWaiters = [];     // resolve on system/init
@@ -125,7 +126,20 @@ class HeadlessProc {
       }
       // isSynthetic = JSONL isMeta (model-only, e.g. Read image scale note); history drops it too.
       if (t === 'user' && o.isSynthetic) return;
+      // Forked skill's subagent rows; the watcher delivers them to the child thread.
+      if (String(o.parent_tool_use_id || '').startsWith('forked-command-')) return;
+      // Commands emit their synthetic reply before the prompt replay; keep the prompt first.
+      const unconsumed = [...this.inputs.values()].filter((input) => !input.consumed);
+      if (t === 'assistant' && o.message?.model === '<synthetic>'
+        && unconsumed.length && unconsumed.every((input) => !input.replayed)) {
+        this._heldReplies.push(o);
+        return;
+      }
       this._cb?.onMessage?.(this.streamId, o);
+      if (t === 'user' && this.inputs.has(o.uuid)) {
+        this.inputs.get(o.uuid).replayed = true;
+        this._flushHeldReplies();
+      }
       return;
     }
 
@@ -155,6 +169,7 @@ class HeadlessProc {
     // Turn finished
     if (t === 'result') {
       this._framer.finish();
+      this._flushHeldReplies();
       const consumed = Array.isArray(o.user_message_uuids)
         ? o.user_message_uuids
         : [...this.inputs.keys()].filter((uuid) => !this.inputs.get(uuid).consumed).slice(0, 1);
@@ -177,6 +192,10 @@ class HeadlessProc {
       return;
     }
 
+  }
+
+  _flushHeldReplies() {
+    for (const o of this._heldReplies.splice(0)) this._cb?.onMessage?.(this.streamId, o);
   }
 
   _emitFrame(frame) {

@@ -900,7 +900,7 @@ async function handleMessage(msg) {
           requestId: msg.requestId,
           turnId: msg.turnId,
           ok: false,
-          error: 'Previous message did not reach the Bridge. Retry.',
+          error: 'Previous message did not reach the Bridge.',
           errorCode: error.code,
           ...(msg.replyConnectionId
             ? { replyConnectionId: msg.replyConnectionId }

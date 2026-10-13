@@ -807,7 +807,11 @@ function dispatchWsMessage(msg) {
             markPendingTime(pending);
             promoteEchoedBubble(pending, { timestamp: new Date().toISOString() });
           } else {
-            resolvePending(pending, msg.ok, msg.error);
+            // Older Bridges include a plain "Retry" in this error. The
+            // failure renderer already supplies the clickable retry action.
+            resolvePending(pending, msg.ok, msg.errorCode === 'previous_turn_missing'
+              ? 'Previous message did not reach the Bridge.'
+              : msg.error);
             if (msg.ok && pending.turnEnded) {
               promoteEchoedBubble(pending, {});
             }
@@ -1681,20 +1685,18 @@ function outstandingTurnIds() {
   return turnIds;
 }
 
-function latestOutstandingTurnId() {
+function latestPendingSendId() {
   var latestPending = null;
   for (var pending of state.pendingSentMessages) {
-    if (pending.failed || pending.sessionId !== state.wsSessionId) continue;
+    if (pending.failed || pending.delivered || pending.queued
+      || pending.sessionId !== state.wsSessionId) continue;
     if (!latestPending || (pending.seq || 0) > (latestPending.seq || 0)) {
       latestPending = pending;
     }
   }
-  if (latestPending) return latestPending.id;
-  var queued = Array.from(_queuedTurnIds);
-  if (queued.length) return queued[queued.length - 1];
-  var active = _streamCoordinator.activeTurnIds();
-  if (active.length) return active[active.length - 1];
-  return '';
+  // Runtime turn IDs can come from a terminal or another client and are not
+  // necessarily client send IDs known to the Bridge's transport ordering.
+  return latestPending ? latestPending.id : '';
 }
 
 function activeTurnForInterrupt() {
@@ -1792,14 +1794,7 @@ function commitMessages(messages, options = {}) {
     replaceConflicts: true,
   });
   var pending = reconcilePendingMessages(state.pendingSentMessages, mergeResult.messages);
-  var activity = resolveActivityState({
-    liveStateChanged: !!options.liveStateChanged,
-    liveActivity: currentActivity(),
-    messages: mergeResult.messages,
-    runtime: state.appState.runtime,
-    hasOutstandingTurns: hasOutstandingTurns(),
-    outstandingTurnIds: outstandingTurnIds(),
-  });
+  var liveActivity = currentActivity();
   var streamTurnIds = options.streamTurnIds || _streamCoordinator.activeTurnIds();
   var dom = createMessageDom({
     state: state,
@@ -1824,6 +1819,14 @@ function commitMessages(messages, options = {}) {
   for (var promotion of pending.promoted) {
     promoteEchoedBubble(promotion.pending, promotion.echo);
   }
+  var activity = resolveActivityState({
+    liveStateChanged: !!options.liveStateChanged,
+    liveActivity: liveActivity,
+    messages: mergeResult.messages,
+    runtime: state.appState.runtime,
+    hasOutstandingTurns: hasOutstandingTurns(),
+    outstandingTurnIds: outstandingTurnIds(),
+  });
   if (!options.deferDom || adoptsActiveStreamTurn) dom.applyChanges(mergeResult);
   if (!window.__APEEK_TEST__) {
     for (var conflict of mergeResult.conflicts) {
@@ -2368,7 +2371,7 @@ function doSend(fullText, displayText, images) {
     cancelAnimationFrame(restoreScrollFrame);
     restoreScrollFrame = null;
   }
-  var previousTurnId = latestOutstandingTurnId();
+  var previousTurnId = latestPendingSendId();
   state.stickBottom = true;
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result
@@ -2461,7 +2464,6 @@ function showPendingMessage(pending) {
 function acceptPendingReceipt(pending) {
   if (!pending || pending.serverReceived || pending.failed) return;
   pending.serverReceived = true;
-  clearTimeout(pending.transportTimer);
   (pending.images || []).forEach(function (sent) {
     if (sent.kind === 'file' && sent.key) window.clearAttachmentPreviewCache?.(sent.key);
   });
@@ -2486,15 +2488,19 @@ function acceptPendingReceipt(pending) {
 // may well have reached CC and only the ack/echo was lost.
 var SEND_TIMEOUT_MS = 12000;
 var SERVER_RECEIPT_TIMEOUT_MS = window.__APEEK_TEST__ ? 20 : 2000;
+var TRANSPORT_RETRY_LIMIT = Math.ceil(SEND_TIMEOUT_MS / 2000);
 
+// The Server receipt covers only the first hop. Resend the same turnId until
+// the Bridge result arrives; the Bridge replays or ignores duplicates by turnId.
 function schedulePendingTransportRetry(pending) {
-  if (!pending || pending.delivered || pending.transportRetries >= 1) return;
+  if (!pending || pending.delivered) return;
   clearTimeout(pending.transportTimer);
   pending.transportTimer = setTimeout(function () {
-    if (pending.delivered || pending.serverReceived
-      || pending.transportRetries >= 1) return;
+    if (pending.delivered || pending.queued || pending.awaitingTakeover
+      || pending.transportRetries >= TRANSPORT_RETRY_LIMIT) return;
     pending.transportRetries++;
-    wsSendReliable(pending.sendPayload);
+    if (!_wsSendQueue.includes(pending.sendPayload)) wsSendReliable(pending.sendPayload);
+    schedulePendingTransportRetry(pending);
   }, SERVER_RECEIPT_TIMEOUT_MS);
 }
 
@@ -2631,7 +2637,16 @@ function completeLocalCommand(pending, result) {
       ? Object.assign({ rawText: output }, result.commandPanel)
       : null,
   };
-  commitMessages([message], {
+  // The prompt never comes back from the runtime; without it in state the output
+  // groups into the previous assistant turn instead of rendering under its bubble.
+  var prompt = {
+    uuid: 'command-prompt:' + pending.id,
+    turnId: pending.id,
+    type: 'user',
+    content: pending.text,
+    timestamp: new Date(pending.sentAt || Date.now()).toISOString(),
+  };
+  commitMessages([prompt, message], {
     liveStateChanged: true,
   });
   applyResolvedLiveActivity(

@@ -304,6 +304,9 @@ export function statusFromEntry(entry) {
     }
     return 'running';
   }
+  // Newer CC writes forked-skill output as a system row instead of a user row.
+  if (t === 'system' && entry.subtype === 'local_command'
+    && /^<local-command-stdout>/.test(entry.content || '')) return 'completed';
   return null; // file-history-snapshot, queue-operation, etc.
 }
 

@@ -257,6 +257,11 @@ export async function extractForApp(msg) {
 }
 
 export function normalizeClaudeQueuedInput(message) {
+  // Render system local_command output like the older <local-command-stdout> user row.
+  if (message?.type === 'system' && message.subtype === 'local_command'
+    && /^<local-command-stdout>/.test(message.content || '')) {
+    return { ...message, type: 'user', message: { role: 'user', content: message.content } };
+  }
   const attachment = message?.attachment;
   if (message?.type !== 'attachment' || attachment?.type !== 'queued_command'
     || !attachment.source_uuid) return message;
