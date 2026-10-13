@@ -82,4 +82,39 @@ test('quick stop keeps Interrupted below its prompt with the production renderer
       });
     }
   }
+
+  for (const runtime of ['claude', 'codex']) {
+    await context.test(`${runtime}: interrupt stays with the partial REST answer`, async t => {
+      t.after(() => h.window.disconnectWs());
+      const sessionId = `${runtime}:rest-interrupt`;
+      const turnId = 'running-elsewhere';
+      resetSession(h, { sessionId });
+      h.state.appState.runtime = runtime;
+      h.state.ws = { readyState: WebSocket.OPEN, send() {}, close() {} };
+      const history = [
+        { uuid: 'rest-user', nativeId: `${runtime === 'claude' ? 'live' : 'codex'}:user:${turnId}`, type: 'user', content: 'current question' },
+        { uuid: 'rest-answer', type: 'assistant', content: [{ type: 'text', text: 'partial answer' }] },
+      ];
+      h.setApiResponse({ messages: history, hasMore: false, status: 'running' });
+      await h.window.loadLatestMessages(sessionId);
+      h.hooks.handleWsMessage({ action: 'stream_turn_start', sessionId, turnId, seq: 0 });
+      h.window.interruptSession();
+      const interrupt = {
+        uuid: 'live-interrupt', type: 'user',
+        content: [{ type: 'text', text: '[Request interrupted by user]' }],
+      };
+      for (const event of [
+        { action: 'messages', seq: 1 },
+        { action: 'stream_end', seq: 2 },
+      ]) {
+        h.hooks.handleWsMessage({ ...event, sessionId, turnId, messages: [interrupt] });
+        const answer = h.document.querySelector('[data-message-id="rest-answer"]');
+        assert.equal(h.document.querySelector('.msg-interrupt')?.parentElement, answer.parentElement);
+        assert.equal(answer.parentElement.textContent, 'partial answerInterrupted');
+      }
+      h.setApiResponse({ messages: [...history, interrupt], hasMore: false, status: 'completed' });
+      await h.window.loadLatestMessages(sessionId);
+      assert.equal(h.document.querySelector('.assistant-turn').textContent, 'partial answerInterrupted');
+    });
+  }
 });

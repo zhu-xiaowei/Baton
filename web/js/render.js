@@ -272,9 +272,11 @@ import { systemEventId } from './timeline.js';
       if (window.isSubagentNotificationMsg?.(msg)) continue;
 
       if (isInterruptMsg(msg)) {
-        // The prompt echo may still be in flight after a quick stop. Its
-        // interrupt must not be grouped with the previous answer.
-        if (msg.turnId && turnItems.some(item => item.turnId !== msg.turnId)) {
+        // Missing REST turn IDs do not establish a boundary; a pending local
+        // prompt does, even before its authoritative echo arrives.
+        const pendingPrompt = options.pendingTurnIds?.includes(msg.turnId);
+        if (msg.turnId && turnItems.some(item =>
+          item.turnId ? item.turnId !== msg.turnId : pendingPrompt)) {
           flushTurn();
         }
         turnItems.push({

@@ -501,7 +501,10 @@ export function createMessageDom(options) {
     expected.innerHTML = options.renderMessages(
       renderMessages,
       options.runtime(),
-      { realtimeOrder: true },
+      {
+        realtimeOrder: true,
+        pendingTurnIds: pendingNodes.map(node => node.dataset.anchor).filter(Boolean),
+      },
     );
     streamRows = splitStreamRows(streamRows, segments, expected);
     reconcileTopLevel(container, expected);
