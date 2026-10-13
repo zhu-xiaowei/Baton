@@ -204,6 +204,47 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
 });
 
+test('ClaudePool forwards a forked skill reply after its prompt and drops the subagent prompt', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-forked-'));
+  const bin = path.join(root, 'fake-claude.mjs');
+  // Line order captured from CC 2.1.296 for a `context: fork` skill.
+  fs.writeFileSync(bin, `#!/usr/bin/env node
+import readline from 'node:readline';
+const out = (row) => process.stdout.write(JSON.stringify(row) + '\\n');
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const input = JSON.parse(line);
+  if (input.type !== 'user') return;
+  out({ type: 'system', subtype: 'init', session_id: '11111111-1111-4111-8111-111111111111' });
+  out({ type: 'user', uuid: 'subagent-prompt', parent_tool_use_id: 'forked-command-probe',
+    timestamp: '2026-10-13T07:00:40.906Z', message: { role: 'user', content: [{ type: 'text', text: 'Base directory for this skill' }] } });
+  out({ type: 'assistant', uuid: 'skill-output', parent_tool_use_id: null,
+    message: { model: '<synthetic>', stop_reason: 'end_turn', content: [{ type: 'text', text: 'PONG' }] } });
+  out({ type: 'user', uuid: input.uuid, isReplay: true, parent_tool_use_id: null,
+    timestamp: '2026-10-13T07:00:40.907Z', message: { role: 'user', content: '/probe' } });
+  out({ type: 'result', subtype: 'success', user_message_uuids: [input.uuid] });
+});
+`);
+  fs.chmodSync(bin, 0o755);
+
+  const pool = new ClaudePool({ bin, initTimeout: 2000 });
+  try {
+    const uuid = '12345678-1234-4234-8234-123456789abc';
+    const forwarded = [];
+    const done = new Promise((resolve) => pool.send('forked', '/probe', {
+      cwd: root,
+      createId: '11111111-1111-4111-8111-111111111111',
+      streamId: `sent-${uuid}`,
+      onMessage: (sid, row) => forwarded.push(row.uuid),
+      onResult: resolve,
+    }));
+    await done;
+    assert.deepEqual(forwarded, [uuid, 'skill-output']);
+  } finally {
+    pool.shutdownAll();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('disk fallback keeps custom metadata and hides non-invocable skills', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-fallback-'));
   const home = path.join(root, 'home');

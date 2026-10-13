@@ -2637,7 +2637,16 @@ function completeLocalCommand(pending, result) {
       ? Object.assign({ rawText: output }, result.commandPanel)
       : null,
   };
-  commitMessages([message], {
+  // The prompt never comes back from the runtime; without it in state the output
+  // groups into the previous assistant turn instead of rendering under its bubble.
+  var prompt = {
+    uuid: 'command-prompt:' + pending.id,
+    turnId: pending.id,
+    type: 'user',
+    content: pending.text,
+    timestamp: new Date(pending.sentAt || Date.now()).toISOString(),
+  };
+  commitMessages([prompt, message], {
     liveStateChanged: true,
   });
   applyResolvedLiveActivity(
