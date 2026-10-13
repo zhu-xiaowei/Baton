@@ -196,6 +196,9 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .session-secondary-toggle.show-meta { color: #6e7681; text-decoration-color: rgba(110, 118, 129, 0.55); }
 .session-secondary-toggle.show-meta .session-detail-view { display: none; }
 .session-secondary-toggle.show-meta .session-meta-view { display: block; }
+/* inline-block keeps the needs-input toggle's underline off the ID */
+.meta-sid-copy { display: inline-block; cursor: pointer; }
+.meta-sid-copy.copied { color: #3fb950; }
 .project-item .item-top { min-height: 18px; }
 .project-item .subtitle { min-height: 15px; }
 .project-item .item-bottom { min-height: 13px; }
