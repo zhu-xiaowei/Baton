@@ -1422,7 +1422,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     var shortId = shortSessionId(s.sessionId, '', runtime);
     var title = attachmentPreviewText(s.preview || (s.isAgent && s.agentName) || 'No preview');
     var resumeCommand = (runtime === 'codex' ? 'codex resume ' : 'claude --resume ') + nativeId;
-    var sidLabel = '<span class="meta-sid-copy" role="button" title="Copy ' + esc(resumeCommand) + '"'
+    var sidLabel = '<span class="meta-sid-copy" title="Copy ' + esc(resumeCommand) + '"'
       + ' data-copy="' + esc(resumeCommand) + '">' + esc(shortId) + '</span>';
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
       + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + sidLabel + '</span>'
