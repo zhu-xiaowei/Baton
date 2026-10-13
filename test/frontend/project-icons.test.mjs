@@ -31,7 +31,7 @@ test('project icons use shared rounded outlines and consistent toolbar sizing', 
   assert.match(browser, /fileIconHtml\(entry\.name\)/);
   assert.match(
     app,
-    /topRight\.innerHTML = gitButton \+ runtimeMark \+ filesButton \+ terminalButton[\s\S]*new-session-btn/,
+    /topRight\.innerHTML = runtimeMark \+ filesButton \+ gitButton \+ terminalButton[\s\S]*new-session-btn/,
   );
   assert.match(
     css,

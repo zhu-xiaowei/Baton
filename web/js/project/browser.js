@@ -24,6 +24,8 @@ var currentPath = '';
 var navigationVersion = 0;
 var returnToGit = false;
 var PROJECT_FILES_VIEW_KEY = 'baton-project-files-view';
+var RECENT_PROJECT_FILES_KEY = 'baton-recent-project-files';
+var recentProjectFiles = null;
 var directoryCache = new Map();
 var pendingDirectories = new Map();
 var preloads = { queue: new Map(), active: 0 };
@@ -98,11 +100,44 @@ function rememberDirectoryScroll() {
   var cached = cachedDirectory(state.appState.project.hash, currentPath);
   if (!cached) return;
   cached.scrollTop = projectFilesContent().scrollTop;
+  saveRecentProjectFiles(cached.scrollTop);
   writeProjectDataCache(
     persistentDirectoryFields(state.appState.project.hash, currentPath),
     { entries: cached.entries },
     { scrollTop: cached.scrollTop },
   );
+}
+
+// Keep one recent location independently of whether the file browser is open.
+// Directory contents continue to use the existing memory and persistent caches.
+function saveRecentProjectFiles(scrollTop) {
+  recentProjectFiles = {
+    server: state.SERVER,
+    device: state.appState.device,
+    projectHash: state.appState.project?.hash || '',
+    path: currentPath,
+    scrollTop: Math.max(0, scrollTop || 0),
+  };
+  try {
+    sessionStorage.setItem(RECENT_PROJECT_FILES_KEY, JSON.stringify(recentProjectFiles));
+  } catch (error) {}
+}
+
+function readRecentProjectFiles() {
+  var saved = recentProjectFiles;
+  if (!saved) {
+    try {
+      saved = JSON.parse(sessionStorage.getItem(RECENT_PROJECT_FILES_KEY) || 'null');
+    } catch (error) {}
+  }
+  if (!saved
+    || saved.server !== state.SERVER
+    || saved.device !== state.appState.device
+    || saved.projectHash !== state.appState.project?.hash
+    || typeof saved.path !== 'string'
+    || !Number.isFinite(saved.scrollTop)
+    || saved.scrollTop < 0) return null;
+  return saved;
 }
 
 function saveProjectFilesView() {
@@ -272,6 +307,10 @@ export async function openProjectFilesPath(path) {
   stopVisiblePreloads();
   var projectHash = state.appState.project.hash;
   var cached = cachedDirectory(projectHash, currentPath);
+  var recent = readRecentProjectFiles();
+  var scrollTop = cached?.scrollTop
+    ?? (recent?.path === currentPath ? recent.scrollTop : 0);
+  saveRecentProjectFiles(scrollTop);
   saveProjectFilesView();
   state.projectFilesOpen = true;
   edgeBack.activate();
@@ -313,8 +352,9 @@ export async function openProjectFilesPath(path) {
     if (persisted?.data?.entries) {
       cached = {
         entries: persisted.data.entries,
-        scrollTop: persisted.scrollTop || 0,
+        scrollTop: recent?.path === currentPath ? scrollTop : persisted.scrollTop || 0,
       };
+      scrollTop = cached.scrollTop;
       cacheDirectory(
         projectHash,
         currentPath,
@@ -333,11 +373,11 @@ export async function openProjectFilesPath(path) {
     var entries = await loadDirectory(version, {
       path: currentPath,
       deferRender: !!cached,
-      scrollTop: cached?.scrollTop || 0,
+      scrollTop: scrollTop,
     });
-    if (cached && entries && state.projectFilesOpen && version === navigationVersion) {
+    if (entries && state.projectFilesOpen && version === navigationVersion) {
       content.scrollTop = Math.min(
-        cached.scrollTop,
+        scrollTop,
         Math.max(0, content.scrollHeight - content.clientHeight),
       );
       rememberDirectoryScroll();
@@ -389,7 +429,7 @@ export async function refreshProjectFiles() {
 
 export function openProjectFiles() {
   returnToGit = false;
-  return openProjectFilesPath('');
+  return openProjectFilesPath(readRecentProjectFiles()?.path || '');
 }
 
 export function closeProjectFiles() {
@@ -403,16 +443,17 @@ export function closeProjectFiles() {
 
 export function openProjectFilesFromGit() {
   returnToGit = true;
-  return openProjectFilesPath('');
+  return openProjectFilesPath(readRecentProjectFiles()?.path || '');
 }
 
 export function resumeProjectFilesFromGit() {
   returnToGit = false;
-  return openProjectFilesPath(currentPath);
+  return openProjectFilesPath(readRecentProjectFiles()?.path || '');
 }
 
 export function deactivateProjectFiles(keepWs) {
   if (!state.projectFilesOpen) return false;
+  rememberDirectoryScroll();
   state.projectFilesOpen = false;
   clearProjectFilesView();
   stopVisiblePreloads();

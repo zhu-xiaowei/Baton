@@ -6,7 +6,8 @@ import { JSDOM } from 'jsdom';
 import { createTestServer } from './helpers/vite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
-const CSS = readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
+const CSS = readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8')
+  + readFileSync(path.join(ROOT, 'web/css/project-files.css'), 'utf8');
 
 test('session toolbar exposes the terminal without losing runtime or agent controls', async context => {
   const dom = new JSDOM('<!doctype html><head><style>' + CSS + '</style></head><body>'
@@ -67,31 +68,38 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       window.updateBreadcrumb();
     }
 
-    await context.test('runtime and Agent capsules follow the title, leaving three header actions', () => {
-      for (const runtime of ['codex', 'claude']) {
-        showSession(runtime);
-        assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
-          'Git changes', 'Terminal', 'New Session',
-        ]);
-        const meta = document.querySelector('.session-title-meta');
-        assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
-        assert.equal(meta.previousElementSibling.textContent, '这个文档写的是什么 s02-压力测试报告.md');
-        assert.deepEqual([...meta.querySelectorAll('.badge')].map(badge => badge.textContent), [
-          runtime === 'codex' ? 'Codex' : 'Claude', 'Agent',
-        ]);
-        assert.equal(getComputedStyle(meta).display, 'inline-flex');
-        assert.equal(document.querySelector('#top-right .runtime-mark'), null);
-        assert.equal(document.querySelector('.top-logo').outerHTML, brandMarkup);
-        assert.equal(document.getElementById('ws-reconnect-indicator'), null);
-        state.wsStatusText = 'reconnecting';
-        window.updateBreadcrumb();
-        assert.equal(document.getElementById('ws-reconnect-indicator')?.nextElementSibling?.title, 'Git changes');
-        window.updateBreadcrumb();
-        assert.equal(document.querySelectorAll('#ws-reconnect-indicator').length, 1);
-        state.wsStatusText = 'connected';
-        window.updateBreadcrumb();
-        assert.equal(document.getElementById('ws-reconnect-indicator'), null);
+    await context.test('desktop and mobile show files, Git, terminal and new session in order', () => {
+      for (const mobile of [false, true]) {
+        document.documentElement.classList.toggle('native-mobile', mobile);
+        for (const runtime of ['codex', 'claude']) {
+          showSession(runtime);
+          assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
+            'Project files', 'Git changes', 'Terminal', 'New Session',
+          ]);
+          const files = document.querySelector('[aria-label="Project files"]');
+          assert.equal(files.getAttribute('onclick'), 'openProjectFiles()');
+          assert.equal(getComputedStyle(files).width, mobile ? '44px' : '28px');
+          const meta = document.querySelector('.session-title-meta');
+          assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
+          assert.equal(meta.previousElementSibling.textContent, '这个文档写的是什么 s02-压力测试报告.md');
+          assert.deepEqual([...meta.querySelectorAll('.badge')].map(badge => badge.textContent), [
+            runtime === 'codex' ? 'Codex' : 'Claude', 'Agent',
+          ]);
+          assert.equal(getComputedStyle(meta).display, 'inline-flex');
+          assert.equal(document.querySelector('#top-right .runtime-mark'), null);
+          assert.equal(document.querySelector('.top-logo').outerHTML, brandMarkup);
+          assert.equal(document.getElementById('ws-reconnect-indicator'), null);
+          state.wsStatusText = 'reconnecting';
+          window.updateBreadcrumb();
+          assert.equal(document.getElementById('ws-reconnect-indicator')?.nextElementSibling?.title, 'Project files');
+          window.updateBreadcrumb();
+          assert.equal(document.querySelectorAll('#ws-reconnect-indicator').length, 1);
+          state.wsStatusText = 'connected';
+          window.updateBreadcrumb();
+          assert.equal(document.getElementById('ws-reconnect-indicator'), null);
+        }
       }
+      document.documentElement.classList.remove('native-mobile');
     });
 
     await context.test('capsules fit inline or reveal on expansion, and respond to resizing', async () => {
@@ -143,7 +151,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       }
     });
 
-    await context.test('terminal opens from detail and list, but not the new-session composer', async () => {
+    await context.test('project tools are available in detail and list, but not the new-session composer', async () => {
       showSession();
       for (const session of ['codex:root', null, '__new__']) {
         state.appState.session = session;
@@ -151,6 +159,16 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         const button = document.querySelector('.project-terminal-entry');
         assert.equal(!!button, session !== '__new__');
         if (button) assert.equal(button.getAttribute('onclick'), 'openProjectTerminalPage()');
+        const files = document.querySelector('[aria-label="Project files"]');
+        assert.equal(!!files, session !== '__new__');
+        const git = document.querySelector('.git-status-entry');
+        assert.equal(!!git, session !== '__new__');
+        if (git) assert.equal(git.getAttribute('onclick'), 'openGitStatusPage()');
+        if (session !== '__new__') {
+          assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
+            'Project files', 'Git changes', 'Terminal', 'New Session',
+          ]);
+        }
         const count = window.__terminalOpenCalls.length;
         const opening = window.openProjectTerminalPage();
         assert.equal(window.__terminalOpenCalls.length, count + (session === '__new__' ? 0 : 1));
