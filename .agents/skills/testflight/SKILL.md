@@ -1,13 +1,14 @@
 ---
 name: testflight
-description: Automatically publish a new Baton iOS TestFlight build, then create or reuse a PR and merge after required checks pass. Use the macOS release script or an Xcode Cloud release branch on Linux. Check readiness without publishing when the user only asks a question.
+description: Automatically publish a Baton iOS TestFlight build, create or reuse a PR from release/testflight, merge after required checks pass, and delete the branch after merge. Use the macOS release script or Xcode Cloud on Linux. Check readiness without publishing when the user only asks a question.
 ---
 
 # Baton TestFlight
 
 Follow `.claude/commands/testflight.md`. A request to publish authorizes the
 release's source commits, branch creation, pushes, build-number bump, cloud run,
-TestFlight group assignment, and the PR and merge after a successful release.
+TestFlight group assignment, the PR and merge after a successful release,
+and deletion of the release branch after the merge is confirmed.
 Perform these steps without asking for additional approval. Before publishing,
 inspect `git status --short`, including untracked
 files. Commit changes within the requested release scope automatically;
@@ -15,7 +16,7 @@ preserve unrelated work, using an isolated checkout when needed.
 
 On macOS, run `npm run release:ios`.
 
-On Linux, publish from the persistent, unprotected `release/testflight` branch,
+On Linux, publish from the fixed, unprotected `release/testflight` branch,
 not `main`:
 
 - Reuse `release/testflight` for every release. Fetch and merge the latest
@@ -54,7 +55,9 @@ protection. Confirm the merge result; do not treat enabling auto-merge as a
 completed merge. Report the build number, upload and group status, PR URL,
 and merge result. Do not merge a PR whose release failed.
 
-Keep `release/testflight` after publishing and merging. Save its commit before
-merging. If the repository automatically deletes it after merge, restore the
-same branch from the saved commit, then merge the latest `origin/main` into it
-and push normally. Do not force-push or change branch protection.
+After confirming the PR is merged, delete `release/testflight` remotely and
+locally. If GitHub already deleted the remote branch, verify that it is gone.
+Switch the working tree to `main` before deleting the local branch. Do not
+restore the branch after merge; the next release recreates the same fixed
+branch name from the latest `origin/main`. Keep the branch if publication or
+merge fails so the release can be resumed.

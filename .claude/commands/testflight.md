@@ -8,8 +8,9 @@ For TestFlight update notes (`whatsNew`), default to exactly
 Use feature-specific notes for major additions, or the user's supplied wording.
 
 A request to publish authorizes the release's source commits, branch creation,
-pushes, build-number bump, cloud run, TestFlight group assignment, and the PR
-and merge after a successful release. Continue without additional approval
+pushes, build-number bump, cloud run, TestFlight group assignment, the PR
+and merge after a successful release, and deletion of the release branch
+after the merge is confirmed. Continue without additional approval
 prompts. Before publishing, inspect `git status
 --short`, including untracked files. Automatically commit changes within the
 requested release scope and preserve unrelated work, using an isolated checkout
@@ -54,10 +55,7 @@ Wait for that verification before opening the PR. The dry-run and the
 **After successful publication:** Automatically create or reuse a PR from the
 existing `release/testflight` branch to `main` with the build-number bump and
 release changes, without asking for separate approval. Do not create a
-temporary PR branch. Save the release branch's commit before merging; if the
-repository automatically deletes the branch after merge, restore
-`release/testflight` from that commit, merge the latest `origin/main` into it,
-and push normally.
+temporary PR branch.
 Wait for all required CI checks and repository review requirements, resolve
 relevant failures within the release scope, and merge using the repository's
 supported method without bypassing branch protection. This repository supports
@@ -65,6 +63,12 @@ squash merge and has GitHub auto-merge disabled, so merge directly when ready.
 Confirm the actual merge, then report the build number, upload status, internal
 **Test** group state, cloud run ID (or local IPA path), PR URL, and merge result.
 Do not merge a PR whose release failed.
+
+After confirming the PR is merged, delete `release/testflight` remotely and
+locally, verifying GitHub's automatic deletion if applicable. Switch to `main`
+before deleting the local branch. Do not restore it after merge; the next
+release recreates the same fixed branch name from the latest `origin/main`.
+Keep the branch if publication or merge fails so the release can be resumed.
 
 If the script fails with `Xcode Cloud does not see branch`, wait briefly and
 rerun it on the same branch; it reuses the already-pushed prepared version. Do
