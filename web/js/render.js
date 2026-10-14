@@ -293,7 +293,19 @@ import { systemEventId } from './timeline.js';
       // Local command stdout (e.g. /compact result) → render as command output
       if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
         flushTurn();
-        html.push(renderLocalCommandStdout(msg, messages[messageIndex - 1]));
+        const summary = window.renderForkedSkillSummary?.(msg, messages[messageIndex - 1]);
+        if (summary) {
+          turnItems.push({
+            type: 'text',
+            html: summary,
+            messageId: msg.uuid || '',
+            nativeId: msg.nativeId || '',
+            turnId: msg.turnId || '',
+            ts: msg.timestamp,
+          });
+        } else {
+          html.push(renderLocalCommandStdout(msg));
+        }
         continue;
       }
 

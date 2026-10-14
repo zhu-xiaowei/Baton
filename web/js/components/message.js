@@ -237,20 +237,24 @@ import { systemEventId } from '../timeline.js';
     }
     return `<div class="msg-system">${esc(content)}</div>`;
   };
-  window.renderLocalCommandStdout = function (msg, command) {
-    var text = userText(msg)
+  function localCommandStdoutText(msg) {
+    return userText(msg)
       .replace(/<\/?local-command-stdout>/g, '')
       .replace(/\x1b\[[0-9;]*m/g, '') // strip ANSI colour codes
       .replace(/\[\d+m/g, '')         // strip bare [2m/[22m the terminal echoed
       .trim();
+  }
+  // Forked skills echo a plain /command and their stdout is the skill's reply;
+  // built-in local commands use XML tags.
+  window.renderForkedSkillSummary = function (msg, command) {
+    if (command?.type !== 'user' || !/^\/[\w:-]+(?:\s|$)/.test(userText(command).trim())) return '';
+    var text = localCommandStdoutText(msg);
+    return text ? renderAssistantText(text) : '';
+  };
+  window.renderLocalCommandStdout = function (msg) {
+    var text = localCommandStdoutText(msg);
     if (!text) return '';
-    // Forked skills echo a plain /command; built-in local commands use XML tags.
-    const skillSummary = command?.type === 'user'
-      && /^\/[\w:-]+(?:\s|$)/.test(userText(command).trim());
-    const timestamp = msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : '';
-    return skillSummary
-      ? `<div class="assistant-text"${timestamp}>${renderAssistantText(text)}</div>`
-      : `<div class="cmd-output"${timestamp}><pre>${esc(text)}</pre></div>`;
+    return `<div class="cmd-output"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><pre>${esc(text)}</pre></div>`;
   };
 
   var BTN = '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.parentElement)">Show more</span>';
