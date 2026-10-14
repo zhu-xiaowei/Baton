@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { markEditResult } from './tool-preview.mjs';
 import { isCodexContextualUserText } from './codex-session.mjs';
 import { normalizeCodexPlanInput } from './codex-plan.mjs';
 
@@ -202,13 +203,13 @@ function completedToolMessages(item, completedAtMs, context) {
         uuid: codexMessageUuid(toolResultNativeId),
         nativeId: toolResultNativeId,
         type: 'user',
-        content: uses.map((use) => ({
+        content: uses.map((use) => markEditResult({
           type: 'tool_result',
           tool_use_id: use.id,
           content: completedToolResult(item),
           is_error: toolFailed(item),
           ...(Number.isInteger(exitCode) ? { codexExitCode: exitCode } : {}),
-        })),
+        }, use.name)),
         timestamp: at,
       },
     },

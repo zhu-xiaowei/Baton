@@ -902,7 +902,8 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'rename_session') {
       if (msg.ok) window.applySessionTitle?.(msg);
       handleWsRpcMessage(msg);
-    } else if (msg.action === 'project_files' || msg.action === 'git_status') {
+    } else if (msg.action === 'project_files' || msg.action === 'git_status'
+      || msg.action === 'tool_details') {
       handleWsRpcMessage(msg);
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);

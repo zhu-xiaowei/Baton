@@ -76,6 +76,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
   assert.match(install, /preview_tunnel_ws\.py/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/preview-protocol\.mjs"/);
+  assert.match(install, /"\$ROOT_DIR\/bridge\/tool-preview\.mjs"/);
   const previewRoute = JSON.parse(read('server/template/Baton.template')).Resources.PreviewDataRoute;
   assert.equal(previewRoute.Properties.ApiId.Ref, 'TerminalDirectApi');
   assert.equal(previewRoute.Properties.RouteKey, 'preview_data');

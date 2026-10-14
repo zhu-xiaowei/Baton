@@ -66,6 +66,13 @@ class FakeRequest:
     headers = {"x-api-key": "test-key"}
 
 
+async def read_messages(*args, **kwargs):
+    response = await bridge_read.get_messages(*args, **kwargs)
+    assert response.status_code == 200
+    assert response.media_type == "application/json"
+    return json.loads(response.body)
+
+
 class FakeMessageTable:
     def get_item(self, **kwargs):
         return {}
@@ -1069,6 +1076,28 @@ def test_message_reads_return_only_message_fields():
     assert "transient" not in parsed[0]
 
 
+def test_message_reads_omit_only_thinking_signatures():
+    content = [
+        {"type": "thinking", "thinking": "reasoning", "signature": "opaque-signature"},
+        {"type": "tool_use", "id": "tool-1", "input": {"signature": "required-input"}},
+        {"type": "tool_result", "tool_use_id": "tool-1", "content": "preview", "truncated": True},
+        {"type": "text", "text": "signature"},
+        "unrecognized-block",
+    ]
+    stored = json.dumps(content)
+
+    parsed = bridge_read._parse_messages([{
+        "uuid": "m1",
+        "type": "assistant",
+        "content": stored,
+        "timestamp": "2026-08-06T00:00:00.000Z",
+    }])[0]["content"]
+
+    assert parsed[0] == {"type": "thinking", "thinking": "reasoning"}
+    assert parsed[1:] == content[1:]
+    assert json.loads(stored) == content
+
+
 def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
@@ -1186,7 +1215,7 @@ def test_messages_default_to_200_and_preserve_explicit_limits(monkeypatch):
     monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), messages))
 
     def page(limit=None, before=None):
-        return asyncio.run(bridge_read.get_messages(
+        return asyncio.run(read_messages(
             FakeRequest(),
             "session",
             after=None,
@@ -1229,7 +1258,7 @@ def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):
     monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), messages))
 
     first = asyncio.run(
-        bridge_read.get_messages(
+        read_messages(
             FakeRequest(),
             "session",
             after=None,
@@ -1239,7 +1268,7 @@ def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):
         )
     )
     second = asyncio.run(
-        bridge_read.get_messages(
+        read_messages(
             FakeRequest(),
             "session",
             after=None,
@@ -1252,6 +1281,42 @@ def test_message_cursor_preserves_equal_timestamp_rows(monkeypatch):
     assert first["oldestTimestamp"] == f"{timestamp}#b"
     assert [item["uuid"] for item in first["messages"]] == ["b", "c"]
     assert [item["uuid"] for item in second["messages"]] == ["a"]
+
+
+def test_message_projection_is_retained_across_ddb_pages(monkeypatch):
+    class PagedTable:
+        def __init__(self):
+            self.calls = []
+
+        def get_item(self, **kwargs):
+            return {}
+
+        def query(self, **kwargs):
+            self.calls.append(kwargs)
+            index = len(self.calls)
+            row = {
+                "uuid": str(index), "type": "user",
+                "content": json.dumps(f"page {index}"), "sk": f"cursor-{index}",
+            }
+            return {"Items": [row], **({"LastEvaluatedKey": {"sk": row["sk"]}} if index == 1 else {})}
+
+    table = PagedTable()
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (FakeTable(), table))
+    data = asyncio.run(read_messages(
+        FakeRequest(), "session", after=None, before=None,
+        device=None, limit=2, project=None,
+    ))
+
+    assert len(table.calls) == 2
+    assert data["oldestTimestamp"] == "cursor-2"
+    for call in table.calls:
+        assert call["ConsistentRead"] is True
+        attributes = call["ExpressionAttributeNames"]
+        assert set(attributes.values()) == {
+            "sk", "uuid", "type", "content", "timestamp",
+            "nativeId", "orderKey", "stopReason", "toolUseResult",
+        }
+        assert set(call["ProjectionExpression"].split(", ")) == set(attributes)
 
 
 def test_messages_include_strong_session_status(monkeypatch):
@@ -1278,7 +1343,7 @@ def test_messages_include_strong_session_status(monkeypatch):
     monkeypatch.setattr(bridge_read, "_tables", lambda: (sessions, messages))
 
     result = asyncio.run(
-        bridge_read.get_messages(
+        read_messages(
             FakeRequest(),
             "session",
             after="2026-08-19T00:00:00.000Z",

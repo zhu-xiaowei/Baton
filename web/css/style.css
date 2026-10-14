@@ -449,6 +449,11 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .plan-item-in_progress .plan-status-icon { color: var(--runtime-accent, #58a6ff); }
 .plan-item-completed { color: #8b949e; }
 .tool-body-content { cursor: pointer; }
+.tool-detail-error { color: #f85149; font-size: 12px; padding: 4px 0; }
+.tool-detail-loading {
+  display: inline-flex; align-items: center; align-self: center;
+  flex-shrink: 0; font-size: 11px; color: #8b949e;
+}
 .tool-body-content.no-clamp { cursor: default; }
 /* Clamp each value row to 3 lines by default */
 .tool-body-content .tool-value { max-height: 5.2em; overflow: hidden; }
@@ -1604,6 +1609,10 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
   line-height: 1.4;
 }
 .clamp-btn:active { background: #30363d; }
+.tool-preview-more[aria-busy="true"] {
+  display: inline-flex;
+  align-items: center;
+}
 /* User msg: button in meta row (static, not absolute) */
 .msg-meta .clamp-btn { position: static; }
 /* Inside tool body/value: positioned at bottom-right */
@@ -1615,7 +1624,6 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 .tool-value .clamp-btn {
   position: absolute; bottom: 4px; right: 4px;
 }
-
 /* === Scroll-to-bottom button === */
 .scroll-bottom-btn {
   position: fixed; right: 16px;

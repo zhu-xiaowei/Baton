@@ -1,5 +1,6 @@
 import { DDB_ITEM_LIMIT, WS_FRAME_LIMIT } from './config.mjs';
 import { truncateToBytes, uploadMessages } from './extract.mjs';
+import { toolPreviews } from './tool-preview.mjs';
 import {
   createTurnMessagesEvent,
   wsSend,
@@ -44,7 +45,7 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     }
   };
 
-  for (const raw of messages) {
+  for (const raw of toolPreviews(messages)) {
     const message = truncateToBytes(raw, itemLimit);
     const envelope = {
       action: 'messages',

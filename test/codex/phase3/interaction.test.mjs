@@ -1078,7 +1078,7 @@ test('Codex command items use the shared tool preview contract', async () => {
       id: 'command-1',
       command: 'pwd',
       cwd: '/tmp',
-      commandActions: [{ type: 'listFiles', command: 'pwd', path: '/tmp' }],
+      commandActions: [{ type: 'listFiles', command: 'pwd', cmd: 'pwd', path: '/tmp' }],
       status: 'inProgress',
     },
   });

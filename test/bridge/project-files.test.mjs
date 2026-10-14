@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import crypto from 'node:crypto';
 import { handleProjectFilesMessage } from '../../bridge/project/files.mjs';
 import { hashFile } from '../../bridge/content-hash.mjs';
 
@@ -300,4 +301,43 @@ test('text files above 300 KB use the existing S3 upload path', async () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('text file versions detect same-size changes even when modification time is preserved', async () => {
+  const { root } = fixture();
+  const file = path.join(root, 'small.md');
+  const fixedTime = new Date('2026-10-13T00:00:00Z');
+  try {
+    fs.utimesSync(file, fixedTime, fixedTime);
+    const [before] = await request(root, { operation: 'read', path: 'small.md' });
+    assert.equal(before.contentVersion, crypto.createHash('sha256').update('# Small\n').digest('hex'));
+    fs.writeFileSync(file, '# Large\n');
+    fs.utimesSync(file, fixedTime, fixedTime);
+    const [after] = await request(root, { operation: 'read', path: 'small.md' });
+    assert.equal(after.size, before.size);
+    assert.notEqual(after.contentVersion, before.contentVersion);
+    assert.notEqual(after.key, before.key);
+    assert.equal(after.content, '# Large\n');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('large text uploads cannot reuse a stale file when content changes without a timestamp change', async () => {
+  const { root } = fixture();
+  const file = path.join(root, 'oversized.txt');
+  const fixedTime = new Date('2026-10-13T00:00:00Z');
+  const uploads = [];
+  const options = { postFn: async (_endpoint, body) => { uploads.push(body.key); return { ok: true }; } };
+  try {
+    fs.utimesSync(file, fixedTime, fixedTime);
+    const [before] = await request(root, { operation: 'read', path: 'oversized.txt' }, options);
+    const bytes = fs.readFileSync(file);
+    bytes[0] = 'y'.charCodeAt(0);
+    fs.writeFileSync(file, bytes);
+    fs.utimesSync(file, fixedTime, fixedTime);
+    const [after] = await request(root, { operation: 'read', path: 'oversized.txt' }, options);
+    assert.notEqual(after.contentVersion, before.contentVersion);
+    assert.notEqual(after.key, before.key);
+    await request(root, { operation: 'read', path: 'oversized.txt' }, options);
+    assert.equal(uploads.length, 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

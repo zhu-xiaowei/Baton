@@ -1,4 +1,6 @@
 import { state } from '../state.js';
+import { loadingSpinner } from './loading.js';
+import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
 
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
@@ -581,7 +583,7 @@ import { state } from '../state.js';
   }
 
   // Render Edit tool with Diff2HtmlUI
-  function renderEdit(input, result) {
+  function renderEdit(input) {
     const file = shortPath(input.file_path || '');
     const fullPath = input.file_path || file;
     const oldStr = input.old_string || '';
@@ -594,9 +596,7 @@ import { state } from '../state.js';
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
 
-    const status = resultText(result);
-    const statusLabel = status.includes('successfully') ? 'Modified' : (status.includes('Created') ? 'Created' : '');
-    return { name: 'Edit', desc: file, fileLink: fullPath, status: statusLabel, body: diffHtml };
+    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml };
   }
 
   // Render Write tool
@@ -861,6 +861,10 @@ import { state } from '../state.js';
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
     if (!node) return;
+    if (header.hasAttribute('data-edit-details')
+      && !toolDetailsSource(node.dataset.toolId)?.full) {
+      return window.loadToolDetailsMore(header, true);
+    }
     const collapsed = !node.classList.contains('tool-details-collapsed');
     const groupId = node.dataset.toolDetailsGroup;
     const root = node.closest('.messages') || document;
@@ -880,21 +884,87 @@ import { state } from '../state.js';
     }
   };
 
+  window.loadToolDetailsMore = async function (button, edit = false) {
+    if (!button) return;
+    if (button.getAttribute('aria-busy') === 'true') return;
+    let node = button.closest('.tool-node');
+    if (!node) return;
+    const toolId = node.dataset.toolId;
+    const requestedSession = state.wsSessionId;
+    const requestedDevice = state.appState.device;
+    button.setAttribute('aria-busy', 'true');
+    const indicator = document.createElement('span');
+    indicator.className = 'tool-detail-loading';
+    indicator.innerHTML = loadingSpinner({ size: 'small' });
+    if (edit) button.append(indicator);
+    else button.innerHTML = indicator.innerHTML;
+    node.querySelector('.tool-detail-error')?.remove();
+    try {
+      await loadToolDetails(toolId);
+      if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device) return;
+      node = Array.from(document.querySelectorAll('.messages [data-tool-id]'))
+        .find((member) => member.dataset.toolId === toolId);
+      if (!node) return;
+      const source = toolDetailsSource(toolId);
+      if (!source?.full) return;
+      const collapsed = edit || node.classList.contains('tool-details-collapsed');
+      node.innerHTML = window.renderToolNode(
+        source.toolUse, source.toolResult, state.appState.runtime, { collapsed },
+      );
+      window.setToolDetailsCollapsed(node, collapsed);
+      window.markToolRunGroups?.(node.closest('.messages') || document);
+      if (edit) {
+        button.removeAttribute('aria-busy');
+        button = node.querySelector(':scope > .tool-header');
+        button.setAttribute('aria-busy', 'true');
+        button.append(indicator);
+      }
+      await window.initializeToolDetails?.(node);
+      if (edit) window.setToolDetailsCollapsed(node, false);
+      window.clampOverflow?.(node);
+      const body = node.querySelector('.tool-body-content');
+      const more = body?.querySelector('.clamp-btn');
+      if (more) window.toggleExpand?.(more.parentElement);
+      else if (body) {
+        body.classList.add('open');
+        body.querySelectorAll('.read-value').forEach((value) => value.classList.add('expanded'));
+      }
+    } catch (error) {
+      if (node?.isConnected && requestedSession === state.wsSessionId
+        && requestedDevice === state.appState.device) {
+        const errorHtml = '<div class="tool-detail-error">'
+          + esc(error.message || 'Unable to load details. Click to retry.') + '</div>';
+        if (edit) button.insertAdjacentHTML('afterend', errorHtml);
+        else button.insertAdjacentHTML('beforebegin', errorHtml);
+      }
+    } finally {
+      button.removeAttribute('aria-busy');
+      if (edit) indicator.remove();
+      else button.textContent = 'Show more';
+    }
+  };
+
   window.toggleToolDesc = function (header) {
     const expanded = header.classList.toggle('expanded-desc');
     header.setAttribute('aria-expanded', String(expanded));
   };
 
   window.renderToolNode = function (toolUse, toolResult, runtime, options = {}) {
+    ({ toolUse, toolResult } = observeToolDetails(toolUse, toolResult));
+    const truncated = toolUse.truncated === true || toolResult?.truncated === true;
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
+    const source = toolDetailsSource(toolUse.id);
+    const editRemote = name === 'Edit'
+      && (source?.toolUse.truncated === true || source?.toolResult?.truncated === true);
+    const editPending = editRemote && !source?.full;
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
     const detailPolicy = window.getToolDetailPolicy(runtime);
     const requestedDetailsCollapsed = detailPolicy.enabled && !!options.collapsed;
     const dispatchers = {
       Bash: () => renderBash(input, toolResult),
       Read: () => renderRead(input, toolResult),
-      Edit: () => renderEdit(input, toolResult),
+      Edit: () => renderEdit(editPending ? { file_path: input.file_path } : input),
       Write: () => renderWrite(input, toolResult),
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
@@ -928,19 +998,25 @@ import { state } from '../state.js';
 
     const noClamp = name === 'TodoWrite';
     const clampClass = noClamp ? ' no-clamp' : (info.collapsible ? ' collapsible' : '');
-    const bodyHtml = info.body
+    const previewMore = truncated && name !== 'Edit'
+      ? '<span class="clamp-btn tool-preview-more" role="button" tabindex="0"'
+        + ' onclick="event.stopPropagation();loadToolDetailsMore(this)"'
+        + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();event.stopPropagation();loadToolDetailsMore(this)}">Show more</span>'
+      : '';
+    const bodyHtml = !editPending && (info.body || truncated)
       ? `<div class="tool-body">
-          <div class="tool-body-content${clampClass}" id="${id}" ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body}</div>
+          <div class="tool-body-content${clampClass}" id="${id}"${truncated ? ' data-tool-preview="true"' : ''} ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body || ''}${previewMore}</div>
         </div>`
       : '';
-    const detailsEnabled = detailPolicy.enabled && !!info.body;
-    const detailsCollapsed = detailsEnabled && requestedDetailsCollapsed;
+    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || name === 'Edit');
+    const detailsCollapsed = detailsEnabled && (requestedDetailsCollapsed || editPending);
     window._lastToolHasDetails = detailsEnabled;
     const baseHeaderClass = detailsEnabled
       ? 'tool-header tool-details-toggle'
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
     const headerAttrs = detailsEnabled
-      ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"
+      ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"${truncated ? ' data-tool-preview="true"' : ''}
+        ${editRemote ? 'data-edit-details="true"' : ''}
         onclick="toggleToolDetails(this)"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDetails(this)}"`
       : info.expandDesc

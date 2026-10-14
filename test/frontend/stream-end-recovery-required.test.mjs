@@ -5,6 +5,34 @@ import { makeHarness, resetSession } from './harness.mjs';
 
 const h = await makeHarness();
 
+test('content preview truncation does not turn a complete stream_end into REST recovery', async () => {
+  h.window.disconnectWs();
+  const sessionId = 'preview-only';
+  const turnId = 'preview-turn';
+  resetSession(h, { sessionId });
+  let requests = 0;
+  h.setApiHandler(async () => { requests++; return { messages: [], status: 'completed' }; });
+  const user = { uuid: 'preview-user', type: 'user', content: 'run it', turnId };
+  const use = {
+    uuid: 'preview-use', type: 'assistant', turnId,
+    content: [{ type: 'tool_use', id: 'preview-tool', name: 'Bash', input: { command: 'preview' }, truncated: true }],
+  };
+  const result = {
+    uuid: 'preview-result', type: 'user', turnId,
+    content: [{ type: 'tool_result', tool_use_id: 'preview-tool', content: 'preview', truncated: true }],
+  };
+  h.hooks.handleWsMessage({ action: 'stream_turn_start', sessionId, turnId, seq: 0 });
+  for (const [index, message] of [user, use, result].entries()) {
+    h.hooks.handleWsMessage({ action: 'messages', sessionId, turnId, seq: index + 1, messages: [message] });
+  }
+  h.hooks.handleWsMessage({ action: 'stream_end', sessionId, turnId, seq: 4, messages: [user, use, result] });
+  await h.tick(300);
+  assert.equal(requests, 0);
+  assert.equal(h.state.wsRunning, false);
+  assert.ok(h.state.wsAllMessages.some((message) => message.uuid === 'preview-use'));
+  h.window.disconnectWs();
+});
+
 test('compact stream_end stops ordered and gapped turns with REST recovery', async () => {
   var sessionId = 'codex:compact-end';
   var turnId = 'turn-compact-end';

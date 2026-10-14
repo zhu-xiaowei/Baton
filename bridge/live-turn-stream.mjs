@@ -1,3 +1,5 @@
+import { textPreview, toolPreviews, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
+
 export const STREAM_EVENT_ACTIONS = new Set([
   'stream_turn_start',
   'stream_block_start',
@@ -118,6 +120,9 @@ export class LiveTurnStream {
     this.activeSourceBlockId = null;
     this.authoritativeMessages = new Map();
     this.interruptSent = false;
+    this.inputPreviewLength = 0;
+    this.activeToolName = '';
+    this.editToolIds = new Set();
   }
 
   start() {
@@ -133,6 +138,8 @@ export class LiveTurnStream {
     this.activeSourceBlockId = Number.isInteger(frame?.blockId)
       ? frame.blockId
       : 0;
+    this.inputPreviewLength = 0;
+    this.activeToolName = frame?.name || '';
     this.emit('stream_block_start', {
       kind: frame?.kind || '',
       name: frame?.name || '',
@@ -147,9 +154,18 @@ export class LiveTurnStream {
   }
 
   sendToolInput(frame) {
-    return this.sendCurrentBlockEvent('stream_tool_input', frame, {
-      chunk: frame?.chunk || '',
+    if (this.activeToolName === 'Edit') {
+      return this.sendCurrentBlockEvent('stream_tool_input', frame, {
+        chunk: '', previewTruncated: true,
+      });
+    }
+    const preview = textPreview(frame?.chunk || '', TOOL_PREVIEW_CHARACTERS - this.inputPreviewLength);
+    const sent = this.sendCurrentBlockEvent('stream_tool_input', frame, {
+      chunk: preview.text,
+      ...(preview.truncated ? { previewTruncated: true } : {}),
     });
+    if (sent) this.inputPreviewLength += [...preview.text].length;
+    return sent;
   }
 
   sendBlockStop(frame) {
@@ -173,6 +189,7 @@ export class LiveTurnStream {
   createMessagesEvent(messages, options = {}) {
     if (this.ended) return null;
     this.start();
+    messages = toolPreviews(messages || [], this.editToolIds);
     if (options.includeInEnd !== false) {
       for (const message of messages || []) {
         const key = message?.nativeId

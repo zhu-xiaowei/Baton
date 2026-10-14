@@ -4,6 +4,7 @@ Usage: app.include_router(read_router) in main.py
 """
 
 from fastapi import APIRouter, HTTPException, Request, Query, Response
+from fastapi.responses import JSONResponse
 from boto3.dynamodb.conditions import Key
 import asyncio
 import base64
@@ -27,6 +28,14 @@ RECENT_SESSION_LIMIT = 100
 RECENT_PROJECT_LIMIT = 5
 RECENT_PROJECT_EXPANDED_LIMIT = 15
 RECENT_PROJECT_SESSION_LIMIT = 5
+MESSAGE_READ_ATTRIBUTES = {
+    f"#m{index}": name
+    for index, name in enumerate((
+        "sk", "uuid", "type", "content", "timestamp",
+        "nativeId", "orderKey", "stopReason", "toolUseResult",
+    ))
+}
+MESSAGE_READ_PROJECTION = ", ".join(MESSAGE_READ_ATTRIBUTES)
 SESSION_LIST_ATTRIBUTE_NAMES = {
     "#sid": "sessionId",
     "#preview": "preview",
@@ -624,6 +633,10 @@ def _parse_messages(items):
             content = json.loads(content)
         except (json.JSONDecodeError, TypeError):
             pass
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "thinking":
+                    block.pop("signature", None)
         msg = {
             "uuid": item.get("uuid", ""),
             "type": item.get("type", ""),
@@ -709,22 +722,17 @@ async def get_messages(
     project: str = Query(None),
 ):
     sessions_table, messages_table = _tables()
+    status_future = None
+    if device and project:
+        status_future = asyncio.get_running_loop().run_in_executor(
+            None, _message_session_status, request,
+            sessions_table, session, device, project,
+        )
     partition = history_partition(messages_table, session)
     ordered = partition != session
     history_reset = bool(before and (before.startswith("O2#") != ordered))
     if history_reset:
         before = None
-    status_future = None
-    if device and project:
-        status_future = asyncio.get_running_loop().run_in_executor(
-            None,
-            _message_session_status,
-            request,
-            sessions_table,
-            session,
-            device,
-            project,
-        )
 
     async def with_status(payload):
         status = await status_future if status_future else ""
@@ -732,7 +740,7 @@ async def get_messages(
             payload["status"] = status
         if history_reset:
             payload["historyReset"] = True
-        return payload
+        return JSONResponse(payload)
 
     if after:
         if ordered and not after.startswith("O2#"):
@@ -741,6 +749,8 @@ async def get_messages(
         items = _query_all(
             messages_table,
             KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").gt(f"{after}#\xff"),
+            ProjectionExpression=MESSAGE_READ_PROJECTION,
+            ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
         )
         messages = _parse_messages(items)
         return await with_status({
@@ -758,6 +768,8 @@ async def get_messages(
             page_limit,
             KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").lt(f"{before}"),
             ScanIndexForward=False,
+            ProjectionExpression=MESSAGE_READ_PROJECTION,
+            ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
         )
         # items are newest-first; trim the older tail that overflows the 6MB
         # response cap, keeping the newest messages closest to `before`.
@@ -782,6 +794,8 @@ async def get_messages(
         KeyConditionExpression=Key("sessionId").eq(partition),
         ScanIndexForward=False,
         ConsistentRead=True,
+        ProjectionExpression=MESSAGE_READ_PROJECTION,
+        ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
     )
     # items are newest-first; trim the older tail that overflows the 6MB cap.
     messages = _parse_messages(items)

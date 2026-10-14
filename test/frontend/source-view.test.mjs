@@ -46,3 +46,18 @@ test('Git Code reuses the complete file viewer and its source renderer', () => {
   assert.match(viewer, /renderSourceView\(body,/);
   assert.doesNotMatch(diff, /git-full-code/);
 });
+
+test('source view supports separate changed ranges and rejects ambiguous legacy snippets', () => {
+  const dom = new JSDOM('<!doctype html><div id="source"></div>');
+  globalThis.window = dom.window;
+  const container = dom.window.document.getElementById('source');
+  renderSourceView(container, {
+    text: 'one\ntwo\nthree\nfour\nfive',
+    ranges: [{ from: 2, to: 2 }, { from: 5, to: 5 }],
+    snippet: 'one',
+  });
+  assert.deepEqual([...container.querySelectorAll('.file-line-hl')].map(node => node.textContent), ['2', '5']);
+  assert.equal(resolveSourceRange('same\nbetween\nsame', '', 'same'), null);
+  dom.window.close();
+  delete globalThis.window;
+});

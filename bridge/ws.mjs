@@ -866,6 +866,14 @@ async function handleMessage(msg) {
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
+    case 'tool_details': {
+      const identity = parseStorageSessionId(msg.sessionId);
+      const { handleToolDetails } = await import('./tool-details.mjs');
+      handleToolDetails(msg, {
+        identity, adapter: getRuntimeAdapter(identity.runtime), send: wsSend,
+      });
+      break;
+    }
     case 'send_message':
       if (_clientTurnAcks.has(msg.turnId)) {
         wsSend({
