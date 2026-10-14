@@ -4,6 +4,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const assets = new URL('../docs/assets/showcase/', import.meta.url);
+// Match the font stack used by GitHub's .markdown-body.
+const fontFamily = "'Mona Sans VF', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans Backtick Fix', 'Noto Sans', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'";
 const sections = [
   {
     name: 'tools',
@@ -51,7 +53,7 @@ for (const section of sections) {
       const y = Math.floor(index / columns) * rowHeight;
       svg.push(
         `  <image x="${x + 6}" y="${y}" width="288" height="628" href="data:image/avif;base64,${images[index]}"/>`,
-        `  <text class="caption" x="${x + 150}" y="${y + 668}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="${mobile ? 28 : 26}" text-anchor="middle">${mobile ? `${first}<tspan x="${x + 150}" dy="32">${second}</tspan>` : `${first} ${second}`}</text>`,
+        `  <text class="caption" x="${x + 150}" y="${y + 668}" font-family="${fontFamily}" font-weight="400" font-size="${mobile ? 28 : 26}" text-anchor="middle">${mobile ? `${first}<tspan x="${x + 150}" dy="32">${second}</tspan>` : `${first} ${second}`}</text>`,
       );
     });
     svg.push('</svg>', '');
