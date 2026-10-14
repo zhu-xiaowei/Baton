@@ -17,5 +17,5 @@ export function updateWsStatusIndicator() {
     indicator.title = 'Reconnecting';
     indicator.innerHTML = loadingSpinner({ size: 'small', label: 'Reconnecting' });
   }
-  container.insertBefore(indicator, container.querySelector('.git-status-entry') || container.firstChild);
+  container.insertBefore(indicator, container.firstChild);
 }

@@ -457,7 +457,7 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    var filesButton = !state.appState.session
+    var filesButton = state.appState.session !== '__new__'
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
@@ -465,11 +465,11 @@ function updateBreadcrumb() {
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
-    var gitButton = state.appState.session && state.appState.session !== '__new__'
+    var gitButton = state.appState.session !== '__new__'
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
-    topRight.innerHTML = gitButton + runtimeMark + filesButton + terminalButton
+    topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     var previewButton = '<button class="project-files-entry" type="button" onclick="openPreviewPortPrompt()"'
@@ -1313,8 +1313,8 @@ function refreshForegroundView() {
   if (document.getElementById('projectTerminalPage')) return Promise.resolve(false);
   if (_foregroundRefresh) return _foregroundRefresh;
   _foregroundRefresh = Promise.resolve().then(function () {
-    if (state.gitStatusOpen) {
-      var jobs = [window.refreshGitStatus?.()];
+    if (state.projectFilesOpen || state.gitStatusOpen) {
+      var jobs = [state.projectFilesOpen ? window.refreshProjectFiles?.() : window.refreshGitStatus?.()];
       if (state.appState.session && typeof window.resumeSessionForeground === 'function') {
         jobs.push(window.resumeSessionForeground());
       }
@@ -2180,6 +2180,9 @@ async function loadOlderAndPrepend() {
     } catch(e) { loadDevices(); }
   } else {
     loadDevices();
+  }
+  if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
+    openGitStatusPage({ restoring: true });
   }
   if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();

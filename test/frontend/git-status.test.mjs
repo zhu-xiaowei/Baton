@@ -158,10 +158,10 @@ test('Git file rows keep the filename, directory, status, and actions on one com
   delete globalThis.document;
 });
 
-test('Session detail adds Git before runtime and keeps Project Files separate', () => {
+test('Session detail keeps Project Files and Git as separate actions', () => {
   const app = fs.readFileSync(path.join(ROOT, 'web/js/app.js'), 'utf8');
   const project = fs.readFileSync(path.join(ROOT, 'web/js/project/browser.js'), 'utf8');
-  assert.match(app, /topRight\.innerHTML = gitButton \+ runtimeMark \+ filesButton/);
+  assert.match(app, /topRight\.innerHTML = runtimeMark \+ filesButton \+ gitButton/);
   assert.match(app, /onclick="openGitStatusPage\(\)"/);
   assert.match(project, /deactivateProjectFiles\(true\);[\s\S]*?openGitStatusPage/);
 });

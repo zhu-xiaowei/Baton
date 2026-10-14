@@ -11,7 +11,7 @@ test('project files persist their project and directory across a browser refresh
   assert.match(source, /PROJECT_FILES_VIEW_KEY = 'baton-project-files-view'/);
   assert.match(
     source,
-    /sessionStorage\.setItem\(PROJECT_FILES_VIEW_KEY, JSON\.stringify\(\{[\s\S]*device:[\s\S]*projectHash:[\s\S]*path: currentPath/,
+    /savedProjectFilesView = \{[\s\S]*server:[\s\S]*device:[\s\S]*projectHash:[\s\S]*path: currentPath/,
   );
   assert.match(
     source,
@@ -20,7 +20,7 @@ test('project files persist their project and directory across a browser refresh
   assert.match(source, /openProjectFilesPath\(saved\.path \|\| ''\)/);
   assert.match(
     source,
-    /state\.projectFilesOpen = false;\s*clearProjectFilesView\(\);/,
+    /state\.projectFilesOpen = false;\s*saveProjectFilesView\(\);/,
   );
 });
 

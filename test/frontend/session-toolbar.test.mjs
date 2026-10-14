@@ -67,11 +67,11 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       window.updateBreadcrumb();
     }
 
-    await context.test('runtime and Agent capsules follow the title, leaving three header actions', () => {
+    await context.test('runtime and Agent capsules follow the title, leaving four header actions', () => {
       for (const runtime of ['codex', 'claude']) {
         showSession(runtime);
         assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
-          'Git changes', 'Terminal', 'New Session',
+          'Project files', 'Git changes', 'Terminal', 'New Session',
         ]);
         const meta = document.querySelector('.session-title-meta');
         assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
@@ -85,7 +85,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         assert.equal(document.getElementById('ws-reconnect-indicator'), null);
         state.wsStatusText = 'reconnecting';
         window.updateBreadcrumb();
-        assert.equal(document.getElementById('ws-reconnect-indicator')?.nextElementSibling?.title, 'Git changes');
+        assert.equal(document.getElementById('ws-reconnect-indicator')?.nextElementSibling?.title, 'Project files');
         window.updateBreadcrumb();
         assert.equal(document.querySelectorAll('#ws-reconnect-indicator').length, 1);
         state.wsStatusText = 'connected';
