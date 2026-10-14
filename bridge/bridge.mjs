@@ -18,7 +18,6 @@ import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
-import { configureToolPreviews } from './tool-preview.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   cleanupStagedBridge,
@@ -49,7 +48,6 @@ process.on('SIGTERM', () => { shutdownBridge(0).catch(() => process.exit(1)); })
 process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
-configureToolPreviews(CONFIG.toolPreviews);
 cleanupStagedBridge(BRIDGE_HOME);
 initHttp(CONFIG);
 loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0

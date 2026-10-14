@@ -314,8 +314,15 @@ function updateTitleFromMessages() {
 
 // Skeleton → empty state + stop spinner, when a synced session has no real messages. Never wipe mid-send/stream: a fresh session has 0 DDB rows but a live bubble on screen.
 function showEmptyMessages() {
-  if (state.pendingSentMessages.length || state.wsRunning) return;
   var content = document.getElementById('content');
+  if (state.pendingSentMessages.length || state.wsRunning) {
+    // A running forked skill writes nothing to the parent transcript until it ends.
+    if (content?.querySelector('.skeleton-messages')) {
+      content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"></div>';
+      if (typeof updateSpinner === 'function') updateSpinner();
+    }
+    return;
+  }
   if (content && !state.wsAllMessages.length) {
     var promptActive = typeof hasActivePermissionPrompt === 'function'
       && hasActivePermissionPrompt();

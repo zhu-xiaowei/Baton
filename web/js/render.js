@@ -236,6 +236,8 @@ import { systemEventId } from './timeline.js';
     return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${planAttr}${tsAttr}>${item.html}</div>`;
   }
 
+  const METADATA_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
+
   // Main: render all messages, merging consecutive assistant messages into one timeline
   window.renderMessages = function (messages, runtime, options = {}) {
     const resultMap = buildToolMaps(messages);
@@ -293,7 +295,22 @@ import { systemEventId } from './timeline.js';
       // Local command stdout (e.g. /compact result) → render as command output
       if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
         flushTurn();
-        html.push(renderLocalCommandStdout(msg, messages[messageIndex - 1]));
+        let commandIndex = messageIndex - 1;
+        while (METADATA_TYPES.has(messages[commandIndex]?.type)) commandIndex--;
+        const summary = window.renderForkedSkillSummary?.(msg, messages[commandIndex]);
+        if (summary) {
+          turnItems.push({
+            type: 'text',
+            html: summary,
+            messageId: msg.uuid || '',
+            nativeId: msg.nativeId || '',
+            turnId: msg.turnId || '',
+            ts: msg.timestamp,
+          });
+          flushTurn();
+        } else {
+          html.push(renderLocalCommandStdout(msg));
+        }
         continue;
       }
 
@@ -354,7 +371,7 @@ import { systemEventId } from './timeline.js';
         continue;
       }
       // Metadata types: skip rendering (used for title only)
-      if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') continue;
+      if (METADATA_TYPES.has(msg.type)) continue;
     }
     flushTurn();
 
