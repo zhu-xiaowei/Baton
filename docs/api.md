@@ -641,23 +641,24 @@ fields are not persisted.
 
 ---
 
-### GET /api/bridge/image/{key}
+### GET /api/bridge/image-url/{key}
 
-Get image (proxied from S3).
+Get a one-hour signed S3 URL. The browser or Bridge downloads image bytes directly from S3.
 
 **Path params**:
 | Param | Description |
 |-------|-------------|
 | `key` | Image filename, e.g. `903158ab.jpg` |
 
-**Logic**: Read from S3 `images/{key}` and return
+**Query**: `attachment=true` selects account-scoped `attachments/{account}/{key}` storage;
+otherwise the key refers to a previously uploaded image in `images/{key}`.
 
-**Response** `200`: **base64-encoded JPEG as `text/plain`** (NOT raw binary)
+**Response** `200`: `{ "url": "https://..." }`, with `Cache-Control: no-store`.
 
 **Notes**:
-- App loads images via this endpoint to avoid exposing S3 directly
-- Returns base64 text rather than binary to avoid API Gateway binary-encoding pitfalls and stay compatible with GZip middleware. Frontend (`loadOneImage`) reads `res.text()` and assembles a `data:image/jpeg;base64,...` URL
-- `404` if key not found
+- The signed response overrides the image MIME type and uses inline disposition.
+- Invalid keys return `400`; missing objects return `404` from S3 when downloaded.
+- This replaces the removed `/image/{key}` Base64 download endpoint; clients must be updated together.
 
 ---
 
@@ -1305,11 +1306,12 @@ Bridge has uploaded a requested file to S3 and notifies the app. Sent in respons
 |-------|-------------|
 | `requestId` | Echoed from `request_file`, matches the open viewer |
 | `sessionId` | Used by the server to scope forwarding to this session's subscribers |
-| `key` | S3 key. Fetch text via `GET /api/bridge/file/{key}`, images via `GET /api/bridge/image/{key}` |
+| `key` | S3 key. Fetch text via `GET /api/bridge/file/{key}`; resolve images with `GET /api/bridge/image-url/{key}` |
 | `path` | Resolved absolute path (shown in the viewer header) |
 | `size` | Full byte size of the file (not the post-truncation size) |
 | `truncated` | Text only: `true` if the file exceeded 5 MB (first 5 MB synced, partial last line dropped). Always `false` for images |
-| `image` | `true` if the file is an image — the app fetches `GET /image/{key}` and opens the image viewer instead of the highlighted text viewer |
+| `image` | `true` if the file is an image — the app resolves its signed S3 URL and opens the image viewer |
+| `attachment` | For images, `true` selects account-scoped storage through `image-url?attachment=true`; new project image reads always set this |
 | `video` | `true` if the file is a video — the app fetches `GET /video-url/{key}` and plays it in a `<video>` element streaming directly from S3 |
 | `error` | Present (instead of `key`) when the read failed — `not found`, `is a directory`, `binary file`, `image too large`, `video too large`, `upload failed` |
 
@@ -1647,4 +1649,7 @@ See [codex.md](codex.md) for validation.
 
 ### Image & file endpoints have no account isolation
 
-`GET /api/bridge/image/{key}`, `GET /api/bridge/file/{key}`, and `GET /api/bridge/video-url/{key}` do not verify accountId — any valid API key can access any image/file/video. Relies on the key being a hash value that is not guessable. `POST /upload-image` / `POST /upload-file` / `POST /video-prepare` similarly do not associate with an account.
+Legacy `GET /api/bridge/image-url/{key}` (without `attachment=true`), `GET /api/bridge/file/{key}`,
+and `GET /api/bridge/video-url/{key}` do not verify object ownership. They rely on unguessable
+hash keys. `POST /upload-image`, `POST /upload-file`, and `POST /video-prepare` likewise use
+legacy storage. New project image uploads and `image-url?attachment=true` use account-scoped attachments.

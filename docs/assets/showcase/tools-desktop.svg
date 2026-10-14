@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="32">
+  <title>Developer tools captions</title>
+  <style>
+    text { fill: #1f2328; font-size: 16px; }
+    @media (prefers-color-scheme: dark) { text { fill: #e6edf3; } }
+    @media (max-width: 660px) { text { font-size: 14px; } }
+    @media (max-width: 576px) { text { font-size: 12px; } }
+  </style>
+  <g font-family="'Mona Sans VF', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans Backtick Fix', 'Noto Sans', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" font-weight="400" text-anchor="middle">
+    <text x="12.5%" y="21">Project files</text>
+    <text x="37.5%" y="21">Git changes</text>
+    <text x="62.5%" y="21">Mobile terminal</text>
+    <text x="87.5%" y="21">Remote preview</text>
+  </g>
+</svg>

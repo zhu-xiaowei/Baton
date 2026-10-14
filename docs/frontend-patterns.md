@@ -358,8 +358,8 @@ Bridge receives → download from S3 → replace with local path → CC Read too
 ### Displaying Images
 ```
 Image block { type: 'image', key } in message → render as .img-placeholder[data-key]
-IntersectionObserver (rootMargin 200px) → load via GET /api/bridge/image/:key when entering viewport
-LRU cache (max 200)
+IntersectionObserver (rootMargin 200px) → GET /api/bridge/image-url/:key → download directly from the signed S3 URL
+Signed URL cache (max 200, refreshed before its one-hour expiry)
 ```
 
 ## 13. User Message XML Tag Filtering

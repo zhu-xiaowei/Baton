@@ -255,7 +255,8 @@ export async function loadVisualization(block, reload = false) {
   block.querySelector('.visualization-surface')?.remove();
   const status = block.querySelector('.visualization-status');
   status.hidden = false;
-  status.textContent = 'Loading preview…';
+  status.removeAttribute('role');
+  status.innerHTML = window.loadingSpinner?.({ label: 'Loading preview' }) || '';
   try {
     if (!current.device || !current.projectHash || !current.sessionId) {
       throw new Error('Open the original session to load this preview.');
@@ -303,6 +304,7 @@ export async function loadVisualization(block, reload = false) {
   } catch (error) {
     if (previews.get(block) !== preview) return;
     preview.failed = true;
+    status.setAttribute('role', 'status');
     status.textContent = 'Preview unavailable: ' + error.message;
   }
 }

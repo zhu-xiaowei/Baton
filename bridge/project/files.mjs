@@ -280,8 +280,17 @@ async function readProjectFile(message, context) {
 
   const image = IMAGE_EXTENSIONS.has(extension);
   if (image && stat.size > IMAGE_MAX_BYTES) throw new Error('image too large');
-  const truncated = !image && stat.size > FILE_MAX_BYTES;
-  const cap = image ? stat.size : Math.min(stat.size, FILE_MAX_BYTES);
+  if (image) {
+    await prepareFileDownload(message, {
+      ...context,
+      send: response => send(response.progress ? response : {
+        ...response, ...base, image: true, attachment: true, truncated: false,
+      }),
+    });
+    return;
+  }
+  const truncated = stat.size > FILE_MAX_BYTES;
+  const cap = Math.min(stat.size, FILE_MAX_BYTES);
   const handle = await fs.promises.open(absPath, 'r');
   let buffer;
   try {
@@ -292,7 +301,7 @@ async function readProjectFile(message, context) {
     await handle.close();
   }
 
-  if (!image && buffer.subarray(0, 8192).includes(0)) {
+  if (buffer.subarray(0, 8192).includes(0)) {
     throw new Error('binary file');
   }
   if (truncated) {
@@ -300,9 +309,9 @@ async function readProjectFile(message, context) {
     if (newline > 0) buffer = buffer.subarray(0, newline);
   }
 
-  const contentVersion = image ? '' : crypto.createHash('sha256').update(buffer).digest('hex');
+  const contentVersion = crypto.createHash('sha256').update(buffer).digest('hex');
   const key = crypto.createHash('sha256')
-    .update(image ? `${absPath}#${stat.mtimeMs}#${stat.size}` : `${absPath}\0${contentVersion}`)
+    .update(`${absPath}\0${contentVersion}`)
     .digest('hex').slice(0, 16) + extension;
   const metadata = {
     ...base,
@@ -310,14 +319,14 @@ async function readProjectFile(message, context) {
     path: absPath,
     size: stat.size,
     truncated,
-    image,
-    ...(contentVersion ? { contentVersion } : {}),
+    image: false,
+    contentVersion,
   };
-  if (!image && !message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
+  if (!message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
     sendTextFrames(metadata, buffer.toString('utf8'), send);
     return;
   }
-  if (!image && message.legacy) {
+  if (message.legacy) {
     const inline = { ...metadata, content: buffer.toString('utf8') };
     if (Buffer.byteLength(JSON.stringify(inline)) <= INLINE_FRAME_LIMIT) {
       send(inline);
@@ -326,10 +335,7 @@ async function readProjectFile(message, context) {
   }
 
   if (!uploadedFileKeys.has(key)) {
-    const endpoint = image
-      ? '/api/bridge/upload-image'
-      : '/api/bridge/upload-file';
-    const response = await postFn(endpoint, {
+    const response = await postFn('/api/bridge/upload-file', {
       key,
       data: buffer.toString('base64'),
     });
