@@ -170,12 +170,22 @@ export function mergeMessages(options = {}) {
     var lastMatched = matchedIndexes.length
       ? Math.max.apply(null, matchedIndexes)
       : firstMatched - 1;
-    var localWithin = messages.slice(firstMatched, lastMatched + 1).filter(
-      function (message) { return !used.has(message); },
-    );
-    var ordered = messages.slice(0, firstMatched)
-      .concat(orderedMatches, localWithin)
-      .concat(messages.slice(lastMatched + 1));
+    // Local-only rows (e.g. DDB-only waits) stay right after their previous match.
+    var followers = new Map();
+    var anchor = null;
+    for (var withinMessage of messages.slice(firstMatched, lastMatched + 1)) {
+      if (used.has(withinMessage)) {
+        anchor = withinMessage;
+        followers.set(anchor, []);
+      } else {
+        followers.get(anchor).push(withinMessage);
+      }
+    }
+    var ordered = messages.slice(0, firstMatched);
+    for (var match of orderedMatches) {
+      ordered.push(match, ...followers.get(match));
+    }
+    ordered = ordered.concat(messages.slice(lastMatched + 1));
     reordered = ordered.some(function (message, index) {
       return message !== messages[index];
     });

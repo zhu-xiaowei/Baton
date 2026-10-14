@@ -439,6 +439,18 @@ test('history recovery merges canonical interrupt identity and authoritative sto
   assert.equal(result.conflicts.length, 0);
 });
 
+test('authoritative merge keeps local-only rows after their previous match', () => {
+  const local = ['run', 'wait', 'sleep', 'final'].map((uuid, index) =>
+    message(uuid, `2026-10-14T00:00:0${index}.000Z`));
+  const result = mergeMessages({
+    localMessages: local,
+    incomingMessages: [local[0], local[2], local[3]].map((item) => ({ ...item })),
+    authoritative: true,
+  });
+
+  assert.deepEqual(result.messages.map((item) => item.uuid), ['run', 'wait', 'sleep', 'final']);
+});
+
 test('mergeMessages preserves different UUIDs that reuse one nativeId', () => {
   const result = mergeMessages({
     localMessages: [message('local-user', '2026-08-27T02:00:00.000Z', {
