@@ -266,9 +266,13 @@ test('Codex image views and sleeps render live with their rollout identity', () 
     line({ type: 'function_call', name: 'sleep', namespace: 'clock', arguments: '{"duration_ms":2000}', call_id: 'call_sleep' }),
     line({ type: 'function_call_output', call_id: 'call_sleep', output: 'Sleep completed.' }),
   ].join('\n') + '\n');
-  const history = extractCodexMessages(rollout, 'thread-1').messages
-    .filter((message) => message.type === 'assistant');
-  fs.rmSync(directory, { recursive: true, force: true });
+  let history;
+  try {
+    history = extractCodexMessages(rollout, 'thread-1').messages
+      .filter((message) => message.type === 'assistant');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 
   const live = [
     { type: 'imageView', id: 'call_image', path: '/tmp/a.png' },
