@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import sharp from 'sharp';
 import { post, postRequired } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
-import { toolPreview, toolPreviews } from './tool-preview.mjs';
+import { prepareToolMessage, prepareToolMessages } from './tool-preview.mjs';
 
 // Track sync position: sessionId → line number (the watcher's per-session read watermark).
 export const synced = new Map();
@@ -76,9 +76,9 @@ function collectStrings(node, out) {
 
 // Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
 // preserving tool previews before applying the transport's hard limit.
-export function truncateToBytes(msg, maxBytes) {
+export function truncateToBytes(msg, maxBytes, prepared = false) {
   if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
-  const clone = structuredClone(toolPreview(msg));
+  const clone = structuredClone(prepared ? msg : prepareToolMessage(msg));
   if (Buffer.byteLength(JSON.stringify(clone)) <= maxBytes) return clone;
   const fields = [];
   collectStrings(clone, fields);
@@ -256,9 +256,9 @@ export async function uploadMessages(sessionId, messages, options = {}) {
     ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
   };
 
-  for (const raw of toolPreviews(messages)) {
+  for (const raw of prepareToolMessages(messages, undefined, options.previewsPrepared)) {
     // Cap every message before WS fallback or initial sync reaches DDB.
-    const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
+    const msg = truncateToBytes(raw, DDB_ITEM_LIMIT, true);
     const msgJson = JSON.stringify(msg);
     const msgBytes = Buffer.byteLength(msgJson);
     if (batchSize + msgBytes > MAX_POST_BYTES && batch.length > 0) {

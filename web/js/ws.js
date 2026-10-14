@@ -1042,6 +1042,7 @@ function renderStrictToolBlock(element, block) {
       id: block.toolUseId || '',
       name: block.name || 'Tool',
       input: input,
+      ...(block.truncated ? { truncated: true } : {}),
     };
     window._lastToolState = '';
     element.innerHTML = renderToolNode(toolUse, null, state.appState.runtime, {
@@ -1266,6 +1267,8 @@ function handleStrictFrame(message, type) {
     kind: message.kind,
     name: message.name,
     chunk: message.chunk,
+    replaceInput: message.replaceInput,
+    previewTruncated: message.previewTruncated,
   });
   drainStrictStreamOperations();
 }

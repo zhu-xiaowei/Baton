@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactToolFields, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
+import { compactToolFields, configureToolPreviews, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
 import { prepareWsPayload } from '../../bridge/ws.mjs';
 import { uploadMessages } from '../../bridge/extract.mjs';
 import { initHttp } from '../../bridge/http.mjs';
 import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
+
+configureToolPreviews(true);
 
 function message() {
   return {
@@ -102,12 +104,32 @@ test('Edit keeps paths and status without storing code in input or result metada
   const preview = toolPreviews(original);
   assert.deepEqual(preview[0].content[0].input, { file_path: '/file.js' });
   assert.equal(preview[0].content[0].truncated, true);
-  assert.equal(preview[1].content[0].content, 'Edit failed.');
+  assert.equal(preview[1].content[0].content, 'code from a failed patch');
   assert.equal(preview[1].content[0].is_error, true);
   assert.equal(Object.hasOwn(preview[1], 'toolUseResult'), false);
   assert.equal(original[0].content[0].input.old_string, 'before');
   assert.equal(original[1].toolUseResult.originalFile, 'large original source');
   assert.deepEqual(toolPreviews(preview), preview);
+});
+
+test('long streamed JSON is replaced by a valid structured preview before block stop', () => {
+  for (const name of ['Bash', 'Write', 'Edit']) {
+    const events = [];
+    const stream = new LiveTurnStream({ sessionId: 's', turnId: name, send: event => events.push(event) });
+    const input = { file_path: '/file.js', command: 'x'.repeat(1000), content: 'y'.repeat(1000) };
+    const json = JSON.stringify(input);
+    stream.sendBlockStart({ blockId: 1, kind: 'tool_use', name });
+    stream.sendToolInput({ blockId: 1, chunk: json.slice(0, 400) });
+    stream.sendToolInput({ blockId: 1, chunk: json.slice(400) });
+    stream.sendBlockStop({ blockId: 1 });
+    const replacement = events.find(event => event.replaceInput);
+    assert.ok(replacement);
+    const preview = JSON.parse(replacement.chunk);
+    assert.equal(preview.file_path, '/file.js');
+    assert.equal(preview.command?.length, name === 'Edit' ? undefined : 500);
+    assert.equal(events.at(-1).action, 'stream_block_stop');
+    assert.deepEqual(events.map(event => event.seq), events.map((_, index) => index));
+  }
 });
 
 test('Edit stream sends no code while preserving sequence and terminal summaries', () => {
@@ -122,7 +144,9 @@ test('Edit stream sends no code while preserving sequence and terminal summaries
   stream.sendEnd();
   assert.doesNotMatch(JSON.stringify(sent), /secret/);
   assert.deepEqual(sent.map(event => event.seq), sent.map((_, index) => index));
-  assert.ok(sent.filter(event => event.action === 'stream_tool_input').every(event => event.chunk === '' && event.previewTruncated));
+  const inputs = sent.filter(event => event.action === 'stream_tool_input');
+  assert.ok(inputs.filter(event => !event.replaceInput).every(event => event.chunk === '' && event.previewTruncated));
+  assert.deepEqual(JSON.parse(inputs.find(event => event.replaceInput).chunk), { file_path: '/file.js' });
   assert.equal(sent.at(-1).recoveryRequired, undefined);
 });
 

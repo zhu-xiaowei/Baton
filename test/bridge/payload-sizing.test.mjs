@@ -4,6 +4,9 @@ import test from 'node:test';
 import { truncateToBytes } from '../../bridge/extract.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
 import { fitWsPayload, prepareWsPayload } from '../../bridge/ws.mjs';
+import { configureToolPreviews } from '../../bridge/tool-preview.mjs';
+
+configureToolPreviews(true);
 
 function toolMessage(input, output) {
   return {

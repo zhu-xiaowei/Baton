@@ -16,8 +16,17 @@ function currentEntries() {
 
 export function observeToolDetails(toolUse, toolResult) {
   const cache = currentEntries();
+  if (!toolUse?.id) return { toolUse, toolResult };
+  if (!toolUse.truncated && !toolResult?.truncated) {
+    cache.delete(toolUse.id);
+    return { toolUse, toolResult };
+  }
+  const existing = cache.get(toolUse.id);
+  if (existing?.toolUse === toolUse && existing.toolResult === toolResult) {
+    return existing.full || { toolUse, toolResult };
+  }
   const key = JSON.stringify([toolUse, toolResult]);
-  let entry = cache.get(toolUse.id);
+  let entry = existing;
   if (!entry || entry.key !== key) {
     entry = { key, toolUse, toolResult, full: null, pending: null };
     cache.set(toolUse.id, entry);
@@ -44,6 +53,9 @@ export async function loadToolDetails(toolId) {
   }, { assemble: assembleTextFrames }).then((response) => {
     const full = JSON.parse(response.content).details?.find((item) => item.toolUse?.id === toolId);
     if (!full) throw new Error('Incomplete tool details response.');
+    if (entry.toolResult && !full.toolResult) {
+      throw new Error('Tool output is not available yet. Click to retry.');
+    }
     if (state.wsSessionId === requestedSession && state.appState.device === requestedDevice) {
       if (entries.get(toolId) !== entry) throw new Error('Tool changed while loading. Click to retry.');
       entry.full = full;

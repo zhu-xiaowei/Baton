@@ -134,6 +134,27 @@ test('authority arriving before its block waits for the matching start', () => {
   assert.equal(coordinator.getTurn('turn-1').blocks.get(2).authorityAssigned, true);
 });
 
+test('authoritative tool previews retain truncation after structured input replacement', () => {
+  const coordinator = new StreamCoordinator();
+  coordinator.startTurn(event('stream_turn_start', 0));
+  frame(coordinator, 'stream_block_start', 1, { kind: 'tool_use', name: 'Bash' });
+  frame(coordinator, 'stream_tool_input', 2, { chunk: '{"command":"incomplete' });
+  frame(coordinator, 'stream_tool_input', 3, {
+    chunk: '{"command":"preview"}', replaceInput: true, previewTruncated: true,
+  });
+  frame(coordinator, 'stream_block_stop', 4);
+  coordinator.ingestAuthoritative({
+    ...event('messages', 5), messageId: 'tool-message',
+    message: { uuid: 'tool-message', type: 'assistant', content: [{
+      type: 'tool_use', id: 'tool-id', name: 'Bash', input: { command: 'preview' }, truncated: true,
+    }] },
+  });
+  const block = coordinator.getTurn('turn-1').blocks.get(1).snapshot();
+  assert.equal(block.inputJson, '{"command":"preview"}');
+  assert.equal(block.truncated, true);
+  assert.equal(block.toolUseId, 'tool-id');
+});
+
 test('authority dedupes different UUIDs that share one native identity', () => {
   const coordinator = new StreamCoordinator();
   coordinator.startTurn(event('stream_turn_start', 0));

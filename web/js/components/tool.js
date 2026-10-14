@@ -583,12 +583,16 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
   }
 
   // Render Edit tool with Diff2HtmlUI
-  function renderEdit(input) {
+  function renderEdit(input, result) {
     const file = shortPath(input.file_path || '');
     const fullPath = input.file_path || file;
     const oldStr = input.old_string || '';
     const newStr = input.new_string || '';
 
+    if (result?.is_error) return {
+      name: 'Edit', desc: file, fileLink: fullPath,
+      body: grid([['OUT', esc(resultText(result))]]),
+    };
     let diffHtml = '';
     if ((oldStr || newStr)
       && normalizedDiffText(oldStr) !== normalizedDiffText(newStr)) {
@@ -596,7 +600,8 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
 
-    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml };
+    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml,
+      status: /^Created\b/i.test(resultText(result).trim()) ? 'Created' : '' };
   }
 
   // Render Write tool
@@ -935,7 +940,12 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         const errorHtml = '<div class="tool-detail-error">'
           + esc(error.message || 'Unable to load details. Click to retry.') + '</div>';
         if (edit) button.insertAdjacentHTML('afterend', errorHtml);
-        else button.insertAdjacentHTML('beforebegin', errorHtml);
+        else {
+          const body = button.closest('.tool-body-content');
+          body?.classList.add('open');
+          body?.querySelectorAll('.read-value').forEach(value => value.classList.add('expanded'));
+          button.insertAdjacentHTML('beforebegin', errorHtml);
+        }
       }
     } finally {
       button.removeAttribute('aria-busy');
@@ -955,7 +965,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     const name = toolUse.name || 'Tool';
     const input = toolUse.input || {};
     const source = toolDetailsSource(toolUse.id);
-    const editRemote = name === 'Edit'
+    const editRemote = name === 'Edit' && !toolResult?.is_error
       && (source?.toolUse.truncated === true || source?.toolResult?.truncated === true);
     const editPending = editRemote && !source?.full;
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
@@ -964,7 +974,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     const dispatchers = {
       Bash: () => renderBash(input, toolResult),
       Read: () => renderRead(input, toolResult),
-      Edit: () => renderEdit(editPending ? { file_path: input.file_path } : input),
+      Edit: () => renderEdit(editPending ? { file_path: input.file_path } : input, toolResult),
       Write: () => renderWrite(input, toolResult),
       Grep: () => renderSearch('Grep', input, toolResult),
       Glob: () => renderSearch('Glob', input, toolResult),
@@ -998,7 +1008,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
 
     const noClamp = name === 'TodoWrite';
     const clampClass = noClamp ? ' no-clamp' : (info.collapsible ? ' collapsible' : '');
-    const previewMore = truncated && name !== 'Edit'
+    const previewMore = truncated && (name !== 'Edit' || toolResult?.is_error)
       ? '<span class="clamp-btn tool-preview-more" role="button" tabindex="0"'
         + ' onclick="event.stopPropagation();loadToolDetailsMore(this)"'
         + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();event.stopPropagation();loadToolDetailsMore(this)}">Show more</span>'

@@ -10,6 +10,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 const { state } = await import('../../web/js/state.js');
 const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
+const { observeToolDetails, toolDetailsSource } = await import('../../web/js/tool-details.js');
 await import('../../web/js/components/tool.js');
 await import('../../web/js/components/message.js');
 await import('../../web/js/render.js');
@@ -75,6 +76,26 @@ test('Agent cards keep duration and tool counts with only the compact metadata',
   }, 'claude');
   assert.match(html, /12 tool calls, 3s/);
   assert.equal(sent.length, 0);
+});
+
+test('failed Edit exposes its local error and create-style Edit retains Created', () => {
+  setup('edit-status');
+  const use = { type: 'tool_use', id: 'edit', name: 'Edit',
+    input: { file_path: '/file.js' }, truncated: true };
+  const result = { type: 'tool_result', tool_use_id: 'edit',
+    content: 'String to replace not found in file', is_error: true, truncated: true };
+  const node = document.createElement('div');
+  node.className = 'tool-node tool-details-collapsed';
+  node.innerHTML = window.renderToolNode(use, result, 'claude', { collapsed: true });
+  document.querySelector('.messages').append(node);
+  const header = node.querySelector('.tool-header');
+  assert.equal(header.hasAttribute('data-edit-details'), false);
+  window.toggleToolDetails(header);
+  assert.match(node.textContent, /String to replace not found/);
+  assert.ok(node.querySelector('.tool-preview-more'));
+  assert.equal(sent.length, 0);
+  const created = window.renderToolNode(use, { ...result, content: 'Created successfully.', is_error: false }, 'claude');
+  assert.match(created, /Created/);
 });
 
 test('command compaction preserves Bash output, summaries, and explore classification', () => {
@@ -193,6 +214,7 @@ test('failed loading keeps the preview and a later click retries', async () => {
   assert.equal(button.hasAttribute('aria-busy'), false);
   assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
   assert.match(tool.node.textContent, /preview/);
+  assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), true);
   const retry = window.loadToolDetailsMore(button);
   assert.equal(sent.length, 2);
   complete(sent[1], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
@@ -217,7 +239,32 @@ test('timeout leaves the local preview visible and restores Show more', async ()
   assert.match(tool.node.textContent, /preview/);
   assert.equal(button.textContent, 'Show more');
   assert.equal(button.hasAttribute('aria-busy'), false);
-  assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), false);
+  assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), true);
+});
+
+test('missing expected output is not cached as complete and can be retried', async () => {
+  setup('pending-result');
+  const tool = addTool('pending-result');
+  window.toggleToolDetails(tool.node.querySelector('.tool-header'));
+  const button = tool.node.querySelector('.tool-preview-more');
+  const first = window.loadToolDetailsMore(button);
+  complete(sent[0], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: null }]);
+  await first;
+  assert.equal(toolDetailsSource('pending-result').full, null);
+  assert.match(tool.node.textContent, /not available yet/);
+  const second = window.loadToolDetailsMore(button);
+  complete(sent[1], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
+  await second;
+  assert.ok(toolDetailsSource('pending-result').full);
+});
+
+test('ordinary full tools and unidentified streamed tools do not enter the preview cache', () => {
+  setup('cache-scope');
+  const use = { type: 'tool_use', id: 'full', name: 'Bash', input: { command: 'x'.repeat(100000) } };
+  observeToolDetails(use, null);
+  observeToolDetails({ ...use, id: '', truncated: true }, null);
+  assert.equal(toolDetailsSource('full'), undefined);
+  assert.equal(toolDetailsSource(''), undefined);
 });
 
 test('late responses do not open a tool after navigating to a different session', async () => {

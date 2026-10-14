@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readToolDetails, handleToolDetails } from '../../bridge/tool-details.mjs';
+import { createToolDetailsReader, readToolIndex, readToolDetails, readToolDetailsAsync, handleToolDetails } from '../../bridge/tool-details.mjs';
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
 import { WS_FRAME_LIMIT } from '../../bridge/config.mjs';
 import { toolPreview } from '../../bridge/tool-preview.mjs';
 import { findClaudeSubagentFile } from '../../bridge/claude-subagent.mjs';
 import { parseStorageSessionId } from '../../bridge/session-identity.mjs';
 
-test('Claude details preserve full input/output and use existing bounded text frames', () => {
+test('Claude details preserve full input/output and use existing bounded text frames', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-details-'));
   const file = path.join(directory, 'session.jsonl');
   const input = '🙂"\\'.repeat(15000);
@@ -22,7 +22,7 @@ test('Claude details preserve full input/output and use existing bounded text fr
   ].join('\n'));
   try {
     const frames = [];
-    handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one', 'two'] }, {
+    await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one', 'two'] }, {
       identity: { sessionId: 'session', nativeSessionId: 'session', runtime: 'claude' },
       adapter: { findSessionFile: () => file },
       send: (frame) => frames.push(frame),
@@ -57,9 +57,9 @@ test('Codex details reuse stable normalized tool IDs from the native rollout', (
   assert.equal(result.details[0].toolResult.tool_use_id, tool.id);
 });
 
-test('missing original data returns an RPC error without a history message', () => {
+test('missing original data returns an RPC error without a history message', async () => {
   const sent = [];
-  handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one'] }, {
+  await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one'] }, {
     identity: { sessionId: 'session', nativeSessionId: 'session', runtime: 'claude' },
     adapter: { findSessionFile: () => null },
     send: (frame) => sent.push(frame),
@@ -69,7 +69,7 @@ test('missing original data returns an RPC error without a history message', () 
   assert.equal(sent[0].action, 'tool_details');
 });
 
-test('Claude subagent details use the original child-session file', () => {
+test('Claude subagent details use the original child-session file', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-details-'));
   const parent = '22222222-2222-4222-8222-222222222222';
   const session = `${parent}:subagent:agent-a1b2c3`;
@@ -80,7 +80,7 @@ test('Claude subagent details use the original child-session file', () => {
   }) + '\n');
   try {
     const frames = [];
-    handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['child-tool'] }, {
+    await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['child-tool'] }, {
       identity: parseStorageSessionId(session),
       adapter: { findSessionFile: id => findClaudeSubagentFile(id, directory) },
       send: frame => frames.push(frame),
@@ -109,11 +109,34 @@ test('incremental Codex Edit results omit code while detail reads keep the origi
     assert.ok(result);
     assert.equal(result.content[0].content, 'after code from patch output');
     assert.equal(toolPreview(result).content[0].content, 'Applied changes successfully.');
+    assert.equal(toolPreview(structuredClone(result)).content[0].content, 'Applied changes successfully.');
+    assert.equal(toolPreview(JSON.parse(JSON.stringify(result))).content[0]._toolName, undefined);
     const use = extractCodexMessages(file, session).messages
       .flatMap(message => message.content || []).find(block => block.type === 'tool_use');
     const details = readToolDetails(file, session, 'codex', [use.id]);
     assert.equal(details.details[0].toolUse.input.old_string, 'before code');
     assert.equal(details.details[0].toolUse.input.new_string, 'after code');
     assert.equal(details.details[0].toolResult.content, 'after code from patch output');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('the detail reader indexes a stable file once and rebuilds after it changes', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'detail-index-'));
+  const file = path.join(directory, 'session.jsonl');
+  const row = id => JSON.stringify({ message: { content: [{
+    type: 'tool_use', id, name: 'Bash', input: { command: id },
+  }] } });
+  fs.writeFileSync(file, Array.from({ length: 20 }, (_, id) => row(String(id))).join('\n'));
+  let reads = 0;
+  const read = createToolDetailsReader((...args) => { reads++; return readToolIndex(...args); });
+  try {
+    for (let id = 0; id < 20; id++) assert.equal(read(file, 'session', 'claude', [String(id)]).details[0].toolUse.id, String(id));
+    assert.equal(reads, 1);
+    fs.appendFileSync(file, '\n' + row('new'));
+    assert.equal(read(file, 'session', 'claude', ['new']).details[0].toolUse.id, 'new');
+    assert.equal(reads, 2);
+    const pending = readToolDetailsAsync(file, 'session', 'claude', ['new']);
+    assert.ok(pending instanceof Promise);
+    assert.equal((await pending).details[0].toolUse.id, 'new');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

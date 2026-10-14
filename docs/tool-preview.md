@@ -1,6 +1,13 @@
 # Tool previews and on-demand details
 
-Newly synchronized tool data keeps the first 500 Unicode characters of each
+Preview storage is opt-in: set `"toolPreviews": true` in
+`~/.baton-bridge/config.json` and restart the Bridge only after its clients have
+upgraded to a build supporting `tool_details`. The default preserves full tool
+data for existing native clients. Tauri bundles `dist`, so updating the server
+alone does not update an installed app's renderer. This flag cannot restore
+already cropped historical data.
+
+When enabled, newly synchronized tool data keeps the first 500 Unicode characters of each
 large text field in IN/OUT. Object structure, tool IDs, paths and status metadata
 are preserved. Truncated `tool_use` or `tool_result` blocks carry
 `truncated: true` inside `content`; `thinking.signature` is omitted.
@@ -17,12 +24,17 @@ replies; original JSONL data is unchanged.
 
 Edit is loaded on demand: only its file path and status are synchronized, with
 `truncated: true`. Old/new code, the original file and structured patch metadata
-are omitted. Its live input deltas carry no code, while preserving event sequence.
+are omitted. Failed Edit output preserves its error preview rather than replacing
+the reason with a generic message; successful create-style edits retain Created.
+Its live input deltas carry no code, while preserving event sequence.
 
-The same preview function runs before HTTP persistence, watcher delivery and
+Messages are prepared once and reused for HTTP persistence, watcher delivery and
 live authoritative messages. Streaming input keeps its first 500 characters;
 later events retain their sequence numbers with empty text and
-`previewTruncated: true`. Assistant text and permission events are unaffected.
+`previewTruncated: true`. At block stop, a `replaceInput` event supplies valid JSON
+containing the structured preview (including Edit paths), replacing the partial
+JSON prefix. Authority preserves block-level flags. Assistant text and permission
+events are unaffected.
 
 These content flags are separate from the existing event/message-level
 transport `truncated` flag. Existing frame-size protection, `stream_end`,
@@ -52,6 +64,10 @@ Opening a group only exposes its local previews. Show more requests its own tool
 not the whole group. The server routes to that device and returns replies only to
 the requesting app.
 The Bridge locates the native session file and matches the normalized tool IDs.
+Reading and parsing happen in a worker so they do not block streaming or heartbeats.
+The worker retains one file's tool index, keyed by path, runtime, session and file
+stat version; an unchanged file is indexed once across detail requests. File changes
+invalidate the index. This is not an incremental parser.
 It returns full `toolUse` / `toolResult` pairs using the existing text-frame RPC:
 `sequence`, `content`, and a final `complete: true`.
 Frame limits are checked after JSON encoding, including multibyte text.
@@ -59,7 +75,10 @@ Frame limits are checked after JSON encoding, including multibyte text.
 The browser keeps the preview visible while loading and assembles all frames before
 rendering the full details. It caches details for the
 current device/session and reuses them while their preview data is unchanged.
-Failed requests keep the preview and can be retried. A late response cannot
+If an expected tool result is not persisted yet, the response is not cached as
+complete and can be retried. Input-only tools can load before a result exists;
+the later result invalidates that cache.
+Failed requests expand the available local preview and can be retried. A late response cannot
 update a different session. Details are never sent through the normal history
 write path or persisted back to DynamoDB.
 

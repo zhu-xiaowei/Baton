@@ -673,10 +673,10 @@ export function wsSendWithAck(data, timeout = 5000) {
   return _messageAckQueue.enqueue(data, timeout);
 }
 
-export function createTurnMessagesEvent(sessionId, turnId, messages) {
+export function createTurnMessagesEvent(sessionId, turnId, messages, options) {
   const liveTurn = _activeTurns.get(sessionId, turnId);
   if (!liveTurn || !Array.isArray(messages) || !messages.length) return null;
-  return liveTurn.createMessagesEvent(messages);
+  return liveTurn.createMessagesEvent(messages, options);
 }
 
 function probeConnection() {
@@ -869,7 +869,7 @@ async function handleMessage(msg) {
     case 'tool_details': {
       const identity = parseStorageSessionId(msg.sessionId);
       const { handleToolDetails } = await import('./tool-details.mjs');
-      handleToolDetails(msg, {
+      await handleToolDetails(msg, {
         identity, adapter: getRuntimeAdapter(identity.runtime), send: wsSend,
       });
       break;
