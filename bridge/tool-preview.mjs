@@ -1,12 +1,12 @@
 export const TOOL_PREVIEW_CHARACTERS = 500;
 let previewsEnabled = false;
+let prepared = new WeakSet();
 
-export function configureToolPreviews(enabled) { previewsEnabled = enabled === true; }
-export function toolPreviewsEnabled() { return previewsEnabled; }
-export function prepareToolMessage(message) { return toolPreview(message, undefined, previewsEnabled); }
-export function prepareToolMessages(messages, editToolIds, prepared = false) {
-  return toolPreviews(messages, editToolIds, previewsEnabled, prepared);
+export function configureToolPreviews(enabled) {
+  if (previewsEnabled !== (enabled === true)) prepared = new WeakSet();
+  previewsEnabled = enabled === true;
 }
+export function toolPreviewsEnabled() { return previewsEnabled; }
 
 const IDENTITY_FIELDS = new Set(['id', 'tool_use_id', 'session_id', 'file_path', 'path']);
 
@@ -22,6 +22,14 @@ export function toolResultStats(metadata) {
 export function markEditResult(block, toolName) {
   if (toolName === 'Edit') block._toolName = 'Edit';
   return block;
+}
+
+// Tool-result images render through their S3 key; the inline base64 is unused.
+export function stripToolResultBase64(block) {
+  if (!Array.isArray(block.content)) return block;
+  const content = block.content.map((c) =>
+    c.type === 'image' && c.source?.data ? { ...c, source: { ...c.source, data: '' } } : c);
+  return { ...block, content };
 }
 
 export function compactToolFields(block) {
@@ -53,14 +61,8 @@ export function compactToolFields(block) {
   return block.type === 'tool_use' ? { ...block, input: compact } : compact;
 }
 
-export function toolPreviews(messages, editToolIds = new Set(), enabled = true, prepared = false) {
-  for (const message of messages) {
-    for (const block of Array.isArray(message.content) ? message.content : []) {
-      if (block?.type === 'tool_use' && block.name === 'Edit') editToolIds.add(block.id);
-    }
-  }
-  if (prepared) return messages;
-  return messages.map((message) => toolPreview(message, editToolIds, enabled));
+export function toolPreviews(messages) {
+  return messages.map(toolPreview);
 }
 
 export function textPreview(text, limit = TOOL_PREVIEW_CHARACTERS) {
@@ -94,26 +96,21 @@ function previewValue(value) {
   return { value: truncated ? result : value, truncated };
 }
 
-export function toolPreview(message, editToolIds, enabled = true) {
+export function toolPreview(message) {
   if (!message || typeof message !== 'object') return message;
-  if (!enabled) {
-    let changed = false;
-    const content = Array.isArray(message.content) ? message.content.map(block => {
-      if (!block || !Object.hasOwn(block, '_toolName')) return block;
-      const { _toolName, ...rest } = block;
-      changed = true;
-      return rest;
-    }) : message.content;
-    return changed ? { ...message, content } : message;
-  }
+  if (prepared.has(message)) return message;
   let changed = false;
-  const editMetadata = message.toolUseResult
+  const editMetadata = previewsEnabled && message.toolUseResult
     && (Object.hasOwn(message.toolUseResult, 'oldString') || Object.hasOwn(message.toolUseResult, 'newString'));
-  const metadata = toolResultStats(message.toolUseResult);
-  const metadataChanged = Object.hasOwn(message, 'toolUseResult') && metadata !== message.toolUseResult;
+  const metadata = previewsEnabled ? toolResultStats(message.toolUseResult) : message.toolUseResult;
+  const metadataChanged = previewsEnabled && Object.hasOwn(message, 'toolUseResult') && metadata !== message.toolUseResult;
   const content = Array.isArray(message.content) ? message.content.map((original) => {
     if (!original || typeof original !== 'object') return original;
     let block = compactToolFields(original);
+    if (!previewsEnabled) {
+      changed ||= block !== original;
+      return block;
+    }
     if (block.type === 'thinking' && Object.hasOwn(block, 'signature')) {
       block = { ...block };
       delete block.signature;
@@ -124,12 +121,11 @@ export function toolPreview(message, editToolIds, enabled = true) {
       changed = true;
       return { ...block, input, truncated: true };
     }
-    if (block.type === 'tool_result'
-      && (original._toolName === 'Edit' || editMetadata || editToolIds instanceof Set && editToolIds.has(block.tool_use_id))) {
+    if (block.type === 'tool_result' && !block.is_error
+      && (original._toolName === 'Edit' || editMetadata)) {
       changed = true;
-      const content = block.is_error ? previewValue(block.content).value
-        : typeof block.content === 'string' && /^Created\b/i.test(block.content.trim())
-          ? 'Created successfully.' : 'Applied changes successfully.';
+      const content = typeof block.content === 'string' && /^Created\b/i.test(block.content.trim())
+        ? 'Created successfully.' : 'Applied changes successfully.';
       return { ...block, content, truncated: true };
     }
     const field = block.type === 'tool_use' ? 'input'
@@ -148,11 +144,11 @@ export function toolPreview(message, editToolIds, enabled = true) {
     changed ||= block !== original;
     return block;
   }) : message.content;
-  if (!changed && !metadataChanged) return message;
-  const { toolUseResult, ...rest } = message;
-  return {
-    ...rest,
-    content,
-    ...(metadata ? { toolUseResult: metadata } : {}),
-  };
+  let result = message;
+  if (changed || metadataChanged) {
+    const { toolUseResult, ...rest } = message;
+    result = { ...rest, content, ...(metadata ? { toolUseResult: metadata } : {}) };
+  }
+  prepared.add(result);
+  return result;
 }

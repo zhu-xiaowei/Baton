@@ -1,4 +1,4 @@
-import { textPreview, prepareToolMessage, prepareToolMessages, toolPreviewsEnabled, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
+import { textPreview, toolPreview, toolPreviews, toolPreviewsEnabled, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
 
 export const STREAM_EVENT_ACTIONS = new Set([
   'stream_turn_start',
@@ -124,7 +124,6 @@ export class LiveTurnStream {
     this.inputJson = '';
     this.inputWasTruncated = false;
     this.activeToolName = '';
-    this.editToolIds = new Set();
   }
 
   start() {
@@ -179,7 +178,7 @@ export class LiveTurnStream {
   sendBlockStop(frame) {
     if (this.inputWasTruncated && this.inputJson) {
       try {
-        const preview = prepareToolMessage({ content: [{
+        const preview = toolPreview({ content: [{
           type: 'tool_use', name: this.activeToolName, input: JSON.parse(this.inputJson),
         }] }).content[0];
         this.sendCurrentBlockEvent('stream_tool_input', frame, {
@@ -210,7 +209,7 @@ export class LiveTurnStream {
   createMessagesEvent(messages, options = {}) {
     if (this.ended) return null;
     this.start();
-    messages = prepareToolMessages(messages || [], this.editToolIds, options.previewsPrepared);
+    messages = toolPreviews(messages || []);
     if (options.includeInEnd !== false) {
       for (const message of messages || []) {
         const key = message?.nativeId

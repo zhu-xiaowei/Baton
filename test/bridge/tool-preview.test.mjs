@@ -39,7 +39,8 @@ test('preview preserves structure, identifiers and text without mutating the sou
   assert.deepEqual(preview.content[1], original.content[1]);
   assert.equal([...original.content[2].input.command].length, 600);
   assert.equal(original.content[0].signature, 'unused');
-  assert.deepEqual(toolPreview(preview), preview);
+  assert.equal(toolPreview(preview), preview);
+  assert.deepEqual(toolPreview(structuredClone(preview)), preview);
 });
 
 test('short input remains unmarked and ordinary text remains complete', () => {
@@ -106,10 +107,29 @@ test('Edit keeps paths and status without storing code in input or result metada
   assert.equal(preview[0].content[0].truncated, true);
   assert.equal(preview[1].content[0].content, 'code from a failed patch');
   assert.equal(preview[1].content[0].is_error, true);
+  assert.equal(preview[1].content[0].truncated, undefined);
   assert.equal(Object.hasOwn(preview[1], 'toolUseResult'), false);
   assert.equal(original[0].content[0].input.old_string, 'before');
   assert.equal(original[1].toolUseResult.originalFile, 'large original source');
   assert.deepEqual(toolPreviews(preview), preview);
+});
+
+test('failed Edit output has the same truncation in live and single-message history paths', () => {
+  for (const content of ['String to replace not found', '🙂'.repeat(600)]) {
+    const result = { uuid: 'result', content: [{
+      type: 'tool_result', tool_use_id: 'edit', content, is_error: true,
+    }] };
+    const history = toolPreview(result);
+    const sent = [];
+    const stream = new LiveTurnStream({ sessionId: 's', turnId: 't', send: event => sent.push(event) });
+    stream.sendAuthoritative({ uuid: 'use', content: [{
+      type: 'tool_use', id: 'edit', name: 'Edit', input: { file_path: '/file', old_string: 'old', new_string: 'new' },
+    }] });
+    stream.sendAuthoritative({ ...result, toolUseResult: { oldString: 'old', newString: 'new' } });
+    assert.deepEqual(sent.at(-1).messages[0].content, history.content);
+    assert.equal(!!history.content[0].truncated, [...content].length > 500);
+    assert.equal([...history.content[0].content].length, Math.min([...content].length, 500));
+  }
 });
 
 test('long streamed JSON is replaced by a valid structured preview before block stop', () => {
@@ -140,7 +160,8 @@ test('Edit stream sends no code while preserving sequence and terminal summaries
   stream.sendToolInput({ blockId: 1, chunk: '"new_string":"secret new"}' });
   stream.sendAuthoritative({ uuid: 'use', content: [{ type: 'tool_use', name: 'Edit', id: 'edit',
     input: { file_path: '/file.js', old_string: 'secret old', new_string: 'secret new' } }] });
-  stream.sendAuthoritative({ uuid: 'result', content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'secret diff output' }] });
+  stream.sendAuthoritative({ uuid: 'result', content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'secret diff output' }],
+    toolUseResult: { oldString: 'secret old', newString: 'secret new' } });
   stream.sendEnd();
   assert.doesNotMatch(JSON.stringify(sent), /secret/);
   assert.deepEqual(sent.map(event => event.seq), sent.map((_, index) => index));

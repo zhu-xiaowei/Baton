@@ -541,8 +541,9 @@ async function showOfficeAttachment(key, kind, token) {
 
 // Find the Edit/Write tool_use by id and return the text it wrote (new_string / content).
 function snippetForTool(toolId) {
-  var loadedInput = toolDetailsSource(toolId)?.full?.toolUse?.input;
-  if (loadedInput) return loadedInput.new_string || loadedInput.content || '';
+  // Loaded Edit uses explicit ranges in renderSource; Write still needs its full text.
+  var loadedTool = toolDetailsSource(toolId)?.full?.toolUse;
+  if (loadedTool?.name === 'Write') return loadedTool.input?.content || '';
   var msgs = state.wsAllMessages || [];
   for (var i = 0; i < msgs.length; i++) {
     var c = msgs[i].content;

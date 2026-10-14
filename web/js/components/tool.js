@@ -961,8 +961,9 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
 
   window.renderToolNode = function (toolUse, toolResult, runtime, options = {}) {
     ({ toolUse, toolResult } = observeToolDetails(toolUse, toolResult));
-    const truncated = toolUse.truncated === true || toolResult?.truncated === true;
     const name = toolUse.name || 'Tool';
+    const truncated = toolResult?.truncated === true
+      || (toolUse.truncated === true && !(name === 'Edit' && toolResult?.is_error));
     const input = toolUse.input || {};
     const source = toolDetailsSource(toolUse.id);
     const editRemote = name === 'Edit' && !toolResult?.is_error
@@ -1018,7 +1019,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
           <div class="tool-body-content${clampClass}" id="${id}"${truncated ? ' data-tool-preview="true"' : ''} ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body || ''}${previewMore}</div>
         </div>`
       : '';
-    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || name === 'Edit');
+    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || editPending);
     const detailsCollapsed = detailsEnabled && (requestedDetailsCollapsed || editPending);
     window._lastToolHasDetails = detailsEnabled;
     const baseHeaderClass = detailsEnabled

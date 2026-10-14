@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { configureToolPreviews, prepareToolMessages } from '../../bridge/tool-preview.mjs';
+import { configureToolPreviews, toolPreviews } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
 import { extractForApp, uploadMessages } from '../../bridge/extract.mjs';
 import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
@@ -11,7 +11,7 @@ test('existing clients retain complete data unless preview storage is explicitly
     type: 'tool_use', id: 'edit', name: 'Edit',
     input: { file_path: '/file', old_string: 'old'.repeat(1000), new_string: 'new'.repeat(1000) },
   }] };
-  assert.equal(prepareToolMessages([source])[0], source);
+  assert.equal(toolPreviews([source])[0], source);
   const metadata = { stdout: 'complete output', file: { base64: 'unused image', name: 'image.png' } };
   const extracted = await extractForApp({ type: 'user', toolUseResult: metadata });
   assert.deepEqual(extracted.toolUseResult, {
@@ -46,6 +46,6 @@ test('existing clients retain complete data unless preview storage is explicitly
   } finally { globalThis.fetch = previousFetch; }
   configureToolPreviews(true);
   try {
-    assert.deepEqual(prepareToolMessages([source])[0].content[0].input, { file_path: '/file' });
+    assert.deepEqual(toolPreviews([source])[0].content[0].input, { file_path: '/file' });
   } finally { configureToolPreviews(false); }
 });

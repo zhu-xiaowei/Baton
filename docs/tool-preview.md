@@ -26,10 +26,14 @@ Edit is loaded on demand: only its file path and status are synchronized, with
 `truncated: true`. Old/new code, the original file and structured patch metadata
 are omitted. Failed Edit output preserves its error preview rather than replacing
 the reason with a generic message; successful create-style edits retain Created.
+Failed output is marked truncated only when it exceeds the preview limit, so a
+short failure does not offer redundant Show more. Codex identifies Edit results
+with an internal tool-name marker; Claude uses its existing edit-result metadata.
 Its live input deltas carry no code, while preserving event sequence.
 
 Messages are prepared once and reused for HTTP persistence, watcher delivery and
-live authoritative messages. Streaming input keeps its first 500 characters;
+live authoritative messages. A module-local WeakSet recognizes already prepared
+message objects; changing the preview setting clears it. Streaming input keeps its first 500 characters;
 later events retain their sequence numbers with empty text and
 `previewTruncated: true`. At block stop, a `replaceInput` event supplies valid JSON
 containing the structured preview (including Edit paths), replacing the partial

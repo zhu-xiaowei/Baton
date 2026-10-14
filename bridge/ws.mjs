@@ -74,6 +74,7 @@ import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
+import { handleToolDetails } from './tool-details.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
@@ -673,10 +674,10 @@ export function wsSendWithAck(data, timeout = 5000) {
   return _messageAckQueue.enqueue(data, timeout);
 }
 
-export function createTurnMessagesEvent(sessionId, turnId, messages, options) {
+export function createTurnMessagesEvent(sessionId, turnId, messages) {
   const liveTurn = _activeTurns.get(sessionId, turnId);
   if (!liveTurn || !Array.isArray(messages) || !messages.length) return null;
-  return liveTurn.createMessagesEvent(messages, options);
+  return liveTurn.createMessagesEvent(messages);
 }
 
 function probeConnection() {
@@ -868,7 +869,6 @@ async function handleMessage(msg) {
       break;
     case 'tool_details': {
       const identity = parseStorageSessionId(msg.sessionId);
-      const { handleToolDetails } = await import('./tool-details.mjs');
       await handleToolDetails(msg, {
         identity, adapter: getRuntimeAdapter(identity.runtime), send: wsSend,
       });

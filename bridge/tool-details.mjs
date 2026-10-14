@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extractCodexMessages } from './codex-extract.mjs';
 import { sendTextFrames } from './project/ws-frames.mjs';
-import { stripToolResultBase64 } from './extract.mjs';
-import { compactToolFields, toolResultStats } from './tool-preview.mjs';
+import { compactToolFields, stripToolResultBase64, toolResultStats } from './tool-preview.mjs';
 
 export function readToolIndex(filePath, nativeSessionId, runtime) {
   const tools = new Map();

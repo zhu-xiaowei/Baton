@@ -236,7 +236,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   the first 500 Unicode characters per text field, Edit keeps paths and status,
   thinking signatures are omitted, and `toolUseResult` keeps only numeric Agent
   duration/tool-count statistics. Failed Edit results retain their error preview.
-  This same prepared representation is reused for HTTP, WS and live authority.
+  This same prepared representation is reused for HTTP, WS and live authority;
+  a module-local WeakSet skips repeated processing of the same message object.
 - Block-level `truncated` means on-demand tool content, independently of transport
   truncation/recovery. A final structured input event replaces any incomplete
   streamed JSON preview when its block stops. `tool_details` reads original JSONL

@@ -1,6 +1,6 @@
 import { DDB_ITEM_LIMIT, WS_FRAME_LIMIT } from './config.mjs';
 import { truncateToBytes, uploadMessages } from './extract.mjs';
-import { prepareToolMessages } from './tool-preview.mjs';
+import { toolPreviews } from './tool-preview.mjs';
 import {
   createTurnMessagesEvent,
   wsSend,
@@ -16,7 +16,6 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
   const identity = {
     ...(options.runtime ? { runtime: options.runtime } : {}),
     ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
-    previewsPrepared: true,
   };
   const turnId = options.turnId || '';
   let batch = [];
@@ -26,7 +25,7 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     const outgoing = batch;
     batch = [];
     const event = turnId
-      ? createTurnMessagesEvent(sessionId, turnId, outgoing, { previewsPrepared: true })
+      ? createTurnMessagesEvent(sessionId, turnId, outgoing)
       : null;
     if (turnId && !event) {
       await upload(sessionId, outgoing, identity);
@@ -46,8 +45,8 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     }
   };
 
-  for (const raw of prepareToolMessages(messages)) {
-    const message = truncateToBytes(raw, itemLimit, true);
+  for (const raw of toolPreviews(messages)) {
+    const message = truncateToBytes(raw, itemLimit);
     const envelope = {
       action: 'messages',
       sessionId,
@@ -55,10 +54,10 @@ export async function deliverRealtimeMessages(sessionId, messages, options = {})
     };
     if (Buffer.byteLength(JSON.stringify(envelope)) > frameLimit) {
       await flush();
-      const preview = truncateToBytes(message, frameLimit - 512, true);
+      const preview = truncateToBytes(message, frameLimit - 512);
       preview.truncated = true;
       const event = turnId
-        ? createTurnMessagesEvent(sessionId, turnId, [preview], { previewsPrepared: true })
+        ? createTurnMessagesEvent(sessionId, turnId, [preview])
         : null;
       if (turnId && !event) {
         await upload(sessionId, [message], identity);

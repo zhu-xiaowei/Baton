@@ -4,10 +4,12 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { toolPreview } from '../../bridge/tool-preview.mjs';
+import { configureToolPreviews, toolPreview } from '../../bridge/tool-preview.mjs';
 import { readToolDetails } from '../../bridge/tool-details.mjs';
 import { sendTextFrames } from '../../bridge/project/ws-frames.mjs';
 import { createTestServer } from '../frontend/helpers/vite.mjs';
+
+configureToolPreviews(true);
 
 const directory = await mkdtemp(path.join(tmpdir(), 'baton-chrome-tool-preview-'));
 const server = await createTestServer({ server: { host: '127.0.0.1', port: 0, strictPort: false, open: false } });
