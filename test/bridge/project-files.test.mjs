@@ -52,31 +52,35 @@ async function request(root, message, options = {}) {
   return sent;
 }
 
-test('large image previews reuse direct uploads instead of base64 POST bodies', async () => {
+test('small and large image previews use the same direct upload flow', async () => {
   const { root } = fixture();
-  const content = Buffer.alloc(5 * 1024 * 1024, 0x84);
   const key = 'd'.repeat(32) + '.png';
-  fs.writeFileSync(path.join(root, 'large.png'), content);
-  let uploaded;
   try {
-    const result = await request(root, { operation: 'read', path: 'large.png' }, {
-      postFn: async (endpoint, body) => {
-        assert.equal(endpoint, '/api/bridge/file-prepare');
-        assert.equal(body.data, undefined);
-        assert.equal(body.size, content.length);
-        return Response.json({ key, url: 'https://uploads.test/image', headers: {} });
-      },
-      fetchFn: async (_url, init) => {
-        const chunks = [];
-        for await (const chunk of init.body) chunks.push(chunk);
-        uploaded = Buffer.concat(chunks);
-        return new Response('');
-      },
-    });
-    assert.deepEqual(uploaded, content);
-    assert.equal(result.at(-1).image, true);
-    assert.equal(result.at(-1).attachment, true);
-    assert.equal(result.at(-1).key, key);
+    for (const size of [32, 5 * 1024 * 1024]) {
+      const content = Buffer.alloc(size, 0x84);
+      const imagePath = `image-${size}.png`;
+      fs.writeFileSync(path.join(root, imagePath), content);
+      let uploaded;
+      const result = await request(root, { operation: 'read', path: imagePath }, {
+        postFn: async (endpoint, body) => {
+          assert.equal(endpoint, '/api/bridge/file-prepare');
+          assert.equal(body.data, undefined);
+          assert.equal(body.size, content.length);
+          return Response.json({ key, url: 'https://uploads.test/image', headers: {} });
+        },
+        fetchFn: async (_url, init) => {
+          const chunks = [];
+          for await (const chunk of init.body) chunks.push(chunk);
+          uploaded = Buffer.concat(chunks);
+          return new Response('');
+        },
+      });
+      assert.deepEqual(uploaded, content);
+      assert.equal(result.at(-1).image, true);
+      assert.equal(result.at(-1).attachment, true);
+      assert.equal(result.at(-1).truncated, false);
+      assert.equal(result.at(-1).key, key);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

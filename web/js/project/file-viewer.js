@@ -309,7 +309,7 @@ function inlineImages(container, dir) {
     if (!isRelativeUrl(src)) return;
     jobs.push(requestFileAsync(resolvePath(dir, src), context).then(function (m) {
       if (m && m.ok !== false && m.image) {
-        return window.getImageDataUrl(m.key, imageMimeType(m.key), m.attachment).then(function (url) {
+        return window.getImageUrl(m.key, m.attachment).then(function (url) {
           el.setAttribute('src', url);
         });
       }
@@ -634,10 +634,10 @@ function handleFileResponse(msg, line, snippet, token) {
   if (msg.video) return showVideo(msg.key, token);
 
   if (msg.image) {
-    return window.getImageDataUrl(msg.key, imageMimeType(msg.key), msg.attachment).then(function (dataUrl) {
+    return window.getImageUrl(msg.key, msg.attachment).then(function (url) {
       if (token !== _fileRequestToken) return;
       closeFileViewer({ refresh: false });
-      if (window.viewImage) window.viewImage(dataUrl);
+      if (window.viewImage) window.viewImage(url);
     }).catch(function () {
       if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download image.</div>');
     });

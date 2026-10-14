@@ -6,7 +6,6 @@ import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
 import { loadingSpinner } from './components/loading.js';
-import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 
@@ -106,6 +105,7 @@ var localImageCache = new Map();
 var pendingLocalImages = new Map();
 var imageContexts = new WeakMap();
 var IMAGE_CACHE_MAX = 200;
+var IMAGE_URL_CACHE_MS = 50 * 60 * 1000;
 var LOCAL_IMAGE_CACHE_MS = 30000;
 var imageObserver = new IntersectionObserver(function (entries) {
   entries.forEach(function (entry) {
@@ -115,36 +115,34 @@ var imageObserver = new IntersectionObserver(function (entries) {
   });
 }, { rootMargin: '200px' });
 
-// Fetch an image as a data URL, reusing the shared in-memory imageCache.
-// mime lets non-JPEG previews (svg/png/etc.) build a correct data: prefix.
 function imageStorageKey(key, attachment = false) {
   return JSON.stringify([state.SERVER, state.KEY, attachment, key]);
 }
 
-async function getImageDataUrl(key, mime, attachment = false) {
+function cachedImageUrl(key) {
+  var entry = imageCache.get(key);
+  if (entry?.expiresAt > Date.now()) return entry.url;
+  imageCache.delete(key);
+  return null;
+}
+
+async function getImageUrl(key, attachment = false) {
   var cacheKey = imageStorageKey(key, attachment);
-  if (imageCache.has(cacheKey)) return imageCache.get(cacheKey);
+  var cached = cachedImageUrl(cacheKey);
+  if (cached) return cached;
   if (pendingImages.has(cacheKey)) return pendingImages.get(cacheKey);
   var promise = (async function () {
-    var dataUrl;
-    if (attachment) {
-      var file = await api('/api/bridge/file-url/' + encodeURIComponent(key));
-      var response = await fetch(file.previewUrl || file.url);
-      if (!response.ok) throw new Error('Failed to download image.');
-      var blob = await response.blob();
-      dataUrl = await new Promise(function (resolve, reject) {
-        var reader = new FileReader();
-        reader.onload = function () { resolve(reader.result); };
-        reader.onerror = function () { reject(new Error('Failed to read image.')); };
-        reader.readAsDataURL(new Blob([blob], { type: mime || imageMimeType(key) }));
-      });
-    } else {
-      var b64 = await apiText('/api/bridge/image/' + key);
-      dataUrl = 'data:' + (mime || imageMimeType(key) || 'image/jpeg') + ';base64,' + b64;
-    }
+    var file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
+      attachment ? { attachment: 'true' } : undefined);
+    await new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = resolve;
+      image.onerror = function () { reject(new Error('Failed to load image.')); };
+      image.src = file.url;
+    });
     if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
-    imageCache.set(cacheKey, dataUrl);
-    return dataUrl;
+    imageCache.set(cacheKey, { url: file.url, expiresAt: Date.now() + IMAGE_URL_CACHE_MS });
+    return file.url;
   })().finally(function () { pendingImages.delete(cacheKey); });
   pendingImages.set(cacheKey, promise);
   return promise;
@@ -164,12 +162,12 @@ function localImageKey(path, context) {
 function cachedLocalImage(path, context) {
   var key = localImageKey(path, context);
   var entry = localImageCache.get(key);
-  if (entry?.expiresAt > Date.now()) return entry.dataUrl;
+  if (entry?.expiresAt > Date.now()) return entry.url;
   localImageCache.delete(key);
   return null;
 }
 
-async function getLocalImageDataUrl(path, context) {
+async function getLocalImageUrl(path, context) {
   if (!context.device || !context.projectHash) throw new Error('Open the original project to load this image.');
   var cacheKey = localImageKey(path, context);
   var cached = cachedLocalImage(path, context);
@@ -177,18 +175,18 @@ async function getLocalImageDataUrl(path, context) {
   if (pendingLocalImages.has(cacheKey)) return pendingLocalImages.get(cacheKey);
   var promise = requestProjectFiles('read', { ...context, path }).then(async function (response) {
     if (!response.image || !response.key) throw new Error('The file is not an image.');
-    var dataUrl = await getImageDataUrl(response.key, imageMimeType(response.key), response.attachment);
+    var url = await getImageUrl(response.key, response.attachment);
     if (localImageCache.size >= IMAGE_CACHE_MAX) localImageCache.delete(localImageCache.keys().next().value);
-    localImageCache.set(cacheKey, { dataUrl, expiresAt: Date.now() + LOCAL_IMAGE_CACHE_MS });
-    return dataUrl;
+    localImageCache.set(cacheKey, { url, expiresAt: Date.now() + LOCAL_IMAGE_CACHE_MS });
+    return url;
   }).finally(function () { pendingLocalImages.delete(cacheKey); });
   pendingLocalImages.set(cacheKey, promise);
   return promise;
 }
 
-function showLoadedImage(el, dataUrl) {
+function showLoadedImage(el, url) {
   var image = document.createElement('img');
-  image.src = dataUrl;
+  image.src = url;
   image.alt = el.dataset.alt || '';
   image.onclick = function (event) {
     event.preventDefault();
@@ -227,9 +225,9 @@ async function loadOneImage(el, manual = false) {
     return;
   }
   try {
-    var dataUrl = path ? await getLocalImageDataUrl(requestPath, context)
-      : await getImageDataUrl(el.dataset.key);
-    showLoadedImage(el, dataUrl);
+    var url = path ? await getLocalImageUrl(requestPath, context)
+      : await getImageUrl(el.dataset.key);
+    showLoadedImage(el, url);
   } catch(e) {
     el.dataset.failed = '1';
     imageLoadAction(el, 'Retry', e.message || 'Image unavailable', manual);
@@ -251,7 +249,7 @@ function loadImages(container, contextOverride) {
       }
       cached = cachedLocalImage(path, context);
     } else {
-      cached = imageCache.get(imageStorageKey(el.dataset.key));
+      cached = cachedImageUrl(imageStorageKey(el.dataset.key));
     }
     if (cached) { showLoadedImage(el, cached); return; }
     imageObserver.observe(el);
@@ -267,5 +265,5 @@ function viewImage(src) {
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
   api, apiText, apiPost, loadingSpinner,
-  loadOneImage, loadImages, viewImage, getImageDataUrl,
+  loadOneImage, loadImages, viewImage, getImageUrl,
 });
