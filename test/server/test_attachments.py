@@ -129,6 +129,43 @@ def test_pdf_preview_uses_signed_inline_type(clients):
     assert clients[0].signed[-1][1]['Params']['ResponseContentDisposition'] == 'inline'
 
 
+def test_avif_preview_uses_signed_image_type(clients):
+    result = asyncio.run(bridge_sync.attachment_url('b' * 32 + '.avif', REQUEST, Response()))
+    assert result['previewType'] == 'image/avif'
+    params = clients[0].signed[-1][1]['Params']
+    assert params['ResponseContentType'] == 'image/avif'
+    assert params['ResponseContentDisposition'] == 'inline'
+
+
+@pytest.mark.parametrize("attachment", [False, True])
+def test_images_return_only_signed_s3_urls(clients, attachment):
+    key = 'b' * (32 if attachment else 16) + '.avif'
+    response = Response()
+    result = asyncio.run(bridge_sync.image_url(key, REQUEST, response, attachment=attachment))
+    assert set(result) == {'url'}
+    assert response.headers['Cache-Control'] == 'no-store'
+    assert not clients[0].heads
+    operation, arguments = clients[0].signed[-1]
+    assert operation == 'get_object'
+    assert arguments['ExpiresIn'] == 3600
+    params = arguments['Params']
+    assert params['Key'] == (bridge_sync._attachment_key(key, REQUEST) if attachment else f'images/{key}')
+    assert params['ResponseContentType'] == 'image/avif'
+    assert params['ResponseContentDisposition'] == 'inline'
+
+
+def test_image_signing_rejects_invalid_keys_and_scopes_new_images_to_the_account(clients):
+    for key in ['../secret.png', 'b' * 32 + '.html', 'not-an-image', 'b' * 32 + '.png/../../secret']:
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(bridge_sync.image_url(key, REQUEST, Response()))
+        assert error.value.status_code == 400
+    key = 'b' * 32 + '.png'
+    for api_key in ['account-one', 'account-two']:
+        request = SimpleNamespace(headers={'x-api-key': api_key})
+        asyncio.run(bridge_sync.image_url(key, request, Response(), attachment=True))
+        assert clients[0].signed[-1][1]['Params']['Key'] == bridge_sync._attachment_key(key, request)
+
+
 def test_invalid_size_key_and_filename_are_rejected(clients):
     for size in [-1, 513 * 1024 * 1024]:
         with pytest.raises(ValidationError):

@@ -52,6 +52,57 @@ async function request(root, message, options = {}) {
   return sent;
 }
 
+test('small and large image previews use the same direct upload flow', async () => {
+  const { root } = fixture();
+  const key = 'd'.repeat(32) + '.png';
+  try {
+    for (const size of [32, 5 * 1024 * 1024]) {
+      const content = Buffer.alloc(size, 0x84);
+      const imagePath = `image-${size}.png`;
+      fs.writeFileSync(path.join(root, imagePath), content);
+      let uploaded;
+      const result = await request(root, { operation: 'read', path: imagePath }, {
+        postFn: async (endpoint, body) => {
+          assert.equal(endpoint, '/api/bridge/file-prepare');
+          assert.equal(body.data, undefined);
+          assert.equal(body.size, content.length);
+          return Response.json({ key, url: 'https://uploads.test/image', headers: {} });
+        },
+        fetchFn: async (_url, init) => {
+          const chunks = [];
+          for await (const chunk of init.body) chunks.push(chunk);
+          uploaded = Buffer.concat(chunks);
+          return new Response('');
+        },
+      });
+      assert.deepEqual(uploaded, content);
+      assert.equal(result.at(-1).image, true);
+      assert.equal(result.at(-1).attachment, true);
+      assert.equal(result.at(-1).truncated, false);
+      assert.equal(result.at(-1).key, key);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('automatic relative image reads reject traversal and symlinks outside the project before uploading', async () => {
+  const { root } = fixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-private-image-'));
+  fs.writeFileSync(path.join(outside, 'private.png'), 'private');
+  try {
+    fs.symlinkSync(path.join(outside, 'private.png'), path.join(root, 'linked.png'));
+    for (const imagePath of ['../private.png', 'linked.png']) {
+      const result = await request(root, { operation: 'read', path: imagePath }, {
+        postFn: async () => assert.fail('must not upload files outside the project'),
+      });
+      assert.equal(result.at(-1).ok, false);
+      assert.match(result.at(-1).error, /outside the project/);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('download exports original binary files over 6 MB with accelerated upload fallback', async () => {
   const { root } = fixture();
   const content = Buffer.alloc(8 * 1024 * 1024, 0x84);

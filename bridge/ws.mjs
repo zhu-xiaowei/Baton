@@ -2021,19 +2021,13 @@ async function downloadBridgeImage(key) {
     const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
-    const url = `${_config.server}/api/bridge/image/${key}`;
-    const res = await fetch(url, { headers: { 'x-api-key': _config.apiKey } });
+    const metadata = await fetch(`${_config.server}/api/bridge/image-url/${encodeURIComponent(key)}`,
+      { headers: { 'x-api-key': _config.apiKey } });
+    if (!metadata.ok) return null;
+    const { url } = await metadata.json();
+    const res = await fetch(url);
     if (!res.ok) return null;
-    // API Gateway returns base64-encoded body for binary responses
-    const text = await res.text();
-    const buf = Buffer.from(text, 'base64');
-    // Verify it's a valid image (JPEG starts with FF D8)
-    if (buf[0] === 0xFF && buf[1] === 0xD8) {
-      fs.writeFileSync(localPath, buf);
-    } else {
-      // Might be raw binary (local dev), save as-is
-      fs.writeFileSync(localPath, buf.length > 0 ? buf : text);
-    }
+    fs.writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
     return localPath;
   } catch { return null; }
 }

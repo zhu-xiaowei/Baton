@@ -14,7 +14,7 @@ export function requestProjectFiles(operation, fields, options) {
     projectHash: fields.projectHash,
     path: fields.path || '',
     ...(fields.cursor ? { cursor: fields.cursor } : {}),
-    device: state.appState.device || '',
+    device: fields.device ?? state.appState.device ?? '',
   }, {
     timeout: options.timeout,
     onProgress: options.onProgress,

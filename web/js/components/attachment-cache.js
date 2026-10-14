@@ -2,6 +2,7 @@
 // A key never changes content (uploads mint a new key), so entries never go stale; the oldest-opened
 // files are evicted past the size budget. Every failure just means a cache miss.
 import { state } from '../state.js';
+import { IMAGE_MIME_TYPES } from './image-type.js';
 
 const DB_NAME = 'agentpeek-attachments-v1';
 const STORE = 'files';
@@ -36,8 +37,7 @@ const scoped = key => state.SERVER + '|' + state.KEY + '|' + key;
 
 // Previews that open from the cache besides Office files; large PDFs still load by range uncached.
 export const CACHED_PREVIEW_TYPES = {
-  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-  gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  pdf: 'application/pdf', ...IMAGE_MIME_TYPES,
 };
 
 export function isCachedPreview(key) {

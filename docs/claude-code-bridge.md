@@ -324,7 +324,7 @@ Bridge: resolve path (relative → projectHashToPath), stat, dedup by key (LRU 1
 Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId: "abc",
                           key: "<sha>.ext", path: "/abs/path", size: N, truncated: false, image: false }
 App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
-     image → GET /api/bridge/image/{key} → reuse the image overlay (viewImage)
+     image → GET /api/bridge/image-url/{key} → signed S3 URL → reuse the image overlay (viewImage)
      video → GET /api/bridge/video-url/{key} (presigned, no-store, ~50min app cache) → <video> streams from S3
      (text/image content travels via REST/S3, never over WS — avoids the ~31KB frame budget;
       video bytes stream browser↔S3 directly, bypassing the Lambda 6MB payload limit)

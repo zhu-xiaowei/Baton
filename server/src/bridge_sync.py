@@ -953,6 +953,27 @@ async def file_prepare(req: FilePrepareRequest, request: Request, response: Resp
     return {"key": key, "url": url, "fallbackUrl": standard, "headers": headers}
 
 
+_IMAGE_CONTENT_TYPES = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "gif": "image/gif", "webp": "image/webp", "avif": "image/avif",
+    "bmp": "image/bmp", "svg": "image/svg+xml", "ico": "image/x-icon",
+}
+
+
+@bridge_router.get("/image-url/{key}")
+async def image_url(key: str, request: Request, response: Response, attachment: bool = False):
+    content_type = _IMAGE_CONTENT_TYPES.get(key.rsplit(".", 1)[-1])
+    if not re.fullmatch(r"[0-9a-f]{8,64}\.[a-z]+", key) or not content_type:
+        raise HTTPException(status_code=400, detail="Invalid image key")
+    storage_key = _attachment_key(key, request) if attachment else f"images/{key}"
+    url = _attachment_client().generate_presigned_url("get_object", Params={
+        "Bucket": _attachment_bucket(), "Key": storage_key,
+        "ResponseContentDisposition": "inline", "ResponseContentType": content_type,
+    }, ExpiresIn=3600)
+    response.headers["Cache-Control"] = "no-store"
+    return {"url": url}
+
+
 @bridge_router.get("/file-url/{key}")
 async def attachment_url(key: str, request: Request, response: Response, name: str = ""):
     bucket = _attachment_bucket()
@@ -974,8 +995,7 @@ async def attachment_url(key: str, request: Request, response: Response, name: s
     }
     url = client.generate_presigned_url("get_object", Params=params, ExpiresIn=3600)
     preview_type = {
-        "pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "pdf": "application/pdf", **_IMAGE_CONTENT_TYPES,
         "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
         "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "ogg": "audio/ogg",
     }.get(key.rsplit(".", 1)[-1], "application/octet-stream")
