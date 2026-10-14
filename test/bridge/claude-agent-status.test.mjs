@@ -400,6 +400,46 @@ test('Claude inline subagents are discovered as child threads', () => {
   }
 });
 
+test('forked skills appear before the parent prompt is persisted', () => {
+  const parentId = '67676767-1111-4111-8111-676767676767';
+  const fixture = sessionFixture(parentId);
+  const discover = () => discoverClaudeSessions({
+    claudeProjectsRoot: fixture.root,
+    runningInfo: noProcesses(),
+    daemonMeta: new Map(),
+  }).sessions;
+  try {
+    writeRows(fixture.filePath, [
+      { type: 'queue-operation', operation: 'enqueue', sessionId: parentId },
+      { type: 'queue-operation', operation: 'dequeue', sessionId: parentId },
+    ]);
+    const subagentsDir = path.join(path.dirname(fixture.filePath), parentId, 'subagents');
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    const childFile = path.join(subagentsDir, 'agent-review.jsonl');
+    fs.writeFileSync(childFile, '');
+    fs.writeFileSync(childFile.replace('.jsonl', '.meta.json'), '{"agentType":"general-purpose"}');
+    assert.equal(discover().length, 0);
+
+    writeRows(childFile, [{
+      type: 'user', uuid: 'skill-prompt', isMeta: true,
+      message: { content: 'Review target: example PR' },
+    }]);
+    const sessions = discover();
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0].id, parentId);
+    assert.equal(sessions[0].preview, 'New session');
+    assert.equal(sessions[1].parentSessionId, parentId);
+
+    fs.appendFileSync(fixture.filePath, JSON.stringify({
+      type: 'user', uuid: 'command',
+      message: { content: '/code-review example PR' },
+    }) + '\n');
+    assert.equal(discover()[0].preview, '/code-review example PR');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('stopped polling settles an inactive historical agent without dropping its identity', () => {
   const sessionId = '67676767-6767-4676-8676-676767676767';
   const fixture = sessionFixture(sessionId, 'running');

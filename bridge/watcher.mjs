@@ -16,7 +16,7 @@ import {
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { extractFirstPromptFromMsg, getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import {
   headlessRoute,
@@ -252,7 +252,8 @@ async function readAndSend(config, filename, sessionId) {
       continue;
     }
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
-    if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
+    if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt'
+      || extractFirstPromptFromMsg(raw)) gotNewTitle = true;
 
     let msg = await extractForApp(raw);
     if (!msg.uuid) continue;
@@ -321,6 +322,31 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
   if (lines.at(-1) === '') lines.pop();
   const lastLine = synced.get(sessionId) ?? 0;
   if (lines.length <= lastLine) return;
+  const parts = String(filename).split(path.sep);
+  const subagentIndex = parts.indexOf('subagents');
+  if (subagentIndex < 2) return;
+  const projectHash = normalizeProjectHash(parts[0]);
+  const rootSessionId = parts[subagentIndex - 1];
+  const agentId = path.basename(filename, '.jsonl');
+  const meta = readClaudeSubagentMeta(filePath);
+  const parentFilename = path.join(parts[0], `${rootSessionId}.jsonl`);
+  const parentFile = path.join(CLAUDE_PROJECTS, parentFilename);
+  const parentMetadata = fs.existsSync(parentFile)
+    ? getSessionMetadata(parentFile)
+    : {};
+  // Forked skills may not write the parent prompt until they finish.
+  if (parentMetadata.preview && !recentSessions.has(rootSessionId)) {
+    await postSessionMeta(
+      config,
+      parentFile,
+      parentFilename,
+      rootSessionId,
+      poolOwns(rootSessionId) ? 'running'
+        : getSessionStatus(rootSessionId, parentFile, getRunningInfo()),
+      getDaemonSessions().get(rootSessionId),
+      false,
+    );
+  }
   let lastParsedLine = lastLine;
   let lastStatus = null;
   for (let i = lastLine; i < lines.length; i++) {
@@ -343,21 +369,6 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
   if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
 
-  const parts = String(filename).split(path.sep);
-  const subagentIndex = parts.indexOf('subagents');
-  if (subagentIndex < 2) return;
-  const projectHash = normalizeProjectHash(parts[0]);
-  const rootSessionId = parts[subagentIndex - 1];
-  const agentId = path.basename(filename, '.jsonl');
-  const meta = readClaudeSubagentMeta(filePath);
-  const parentFile = path.join(
-    CLAUDE_PROJECTS,
-    parts[0],
-    `${rootSessionId}.jsonl`,
-  );
-  const parentMetadata = fs.existsSync(parentFile)
-    ? getSessionMetadata(parentFile)
-    : {};
   const stat = fs.statSync(filePath);
   const status = lastStatus
     || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');

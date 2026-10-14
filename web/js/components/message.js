@@ -237,8 +237,7 @@ import { systemEventId } from '../timeline.js';
     }
     return `<div class="msg-system">${esc(content)}</div>`;
   };
-  // Render a <local-command-stdout> user message (e.g. /compact result) as command
-  // output: strip the wrapper tags + ANSI escape codes, show as a clean cmd-output.
+  // Local commands include Markdown summaries from forked skills.
   window.renderLocalCommandStdout = function (msg) {
     var text = userText(msg)
       .replace(/<\/?local-command-stdout>/g, '')
@@ -246,7 +245,7 @@ import { systemEventId } from '../timeline.js';
       .replace(/\[\d+m/g, '')         // strip bare [2m/[22m the terminal echoed
       .trim();
     if (!text) return '';
-    return `<div class="cmd-output"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><pre>${esc(text)}</pre></div>`;
+    return `<div class="assistant-text"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>${renderAssistantText(text)}</div>`;
   };
 
   var BTN = '<span class="clamp-btn" onclick="event.stopPropagation();toggleExpand(this.parentElement)">Show more</span>';

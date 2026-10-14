@@ -92,6 +92,20 @@ export function extractFirstPromptFromMsg(msg) {
   return '';
 }
 
+function subagentSessionPreview(filePath) {
+  const dir = path.join(path.dirname(filePath), path.basename(filePath, '.jsonl'), 'subagents');
+  try {
+    const hasHistory = fs.readdirSync(dir).some((name) => {
+      if (!/^agent-.+\.jsonl$/.test(name)) return false;
+      try {
+        const stat = fs.statSync(path.join(dir, name));
+        return stat.isFile() && stat.size > 0;
+      } catch { return false; }
+    });
+    return hasHistory ? 'New session' : '';
+  } catch { return ''; }
+}
+
 export function getSessionMetadata(filePath, options = {}) {
   try {
     let customTitle = '';
@@ -131,7 +145,8 @@ export function getSessionMetadata(filePath, options = {}) {
         || summary
         || indexedFirstPrompt
         || firstUserMsg
-        || lastPrompt,
+        || lastPrompt
+        || subagentSessionPreview(filePath),
       ),
       model,
       lineCount,
