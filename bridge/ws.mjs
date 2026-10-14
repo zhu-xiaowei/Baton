@@ -16,6 +16,7 @@ import {
   resolveClaudeBin,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
+import { exposeToResumePicker } from './jsonl.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
@@ -1799,6 +1800,11 @@ async function newRegularSession(
     waitForFile: true,
     registerNew: true,
     fileReady: (filePath) => !!getSessionMetadata(filePath).preview,
+  }).then(() => {
+    const filePath = getRuntimeAdapter('claude').findSessionFile(sessionId);
+    if (filePath) exposeToResumePicker(filePath);
+  }).catch((error) => {
+    console.warn(`[ws] could not expose ${sessionId} to /resume: ${error.message}`);
   });
   const cb = createStreamCallbacks(
     sessionId,
