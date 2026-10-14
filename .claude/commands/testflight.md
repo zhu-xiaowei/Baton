@@ -51,10 +51,13 @@ The script waits for a valid upload and adds it to the internal **Test** group.
 Wait for that verification before opening the PR. The dry-run and the
 `Prepared <version> (<build>)` message are not completion of `/testflight`.
 
-**After successful publication:** Automatically create or reuse a PR to `main`
-with the build-number bump and release changes, without asking for separate
-approval. Preserve `release/testflight`: if the repository automatically deletes
-merged PR branches, use a temporary PR branch at the same release commit.
+**After successful publication:** Automatically create or reuse a PR from the
+existing `release/testflight` branch to `main` with the build-number bump and
+release changes, without asking for separate approval. Do not create a
+temporary PR branch. Save the release branch's commit before merging; if the
+repository automatically deletes the branch after merge, restore
+`release/testflight` from that commit, merge the latest `origin/main` into it,
+and push normally.
 Wait for all required CI checks and repository review requirements, resolve
 relevant failures within the release scope, and merge using the repository's
 supported method without bypassing branch protection. This repository supports

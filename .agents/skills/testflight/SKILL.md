@@ -44,8 +44,9 @@ can install the build. If group assignment fails after upload, report the
 existing build instead of starting another release.
 
 After a successful release, confirm the upload and internal **Test** group
-status, then automatically create or reuse a PR to `main`, including the
-build-number bump and release changes. Do not ask for separate approval.
+status, then automatically create or reuse a PR from the existing
+`release/testflight` branch to `main`, including the build-number bump and
+release changes. Do not create a temporary PR branch or ask for separate approval.
 Wait for its required CI checks and repository review requirements, resolve
 relevant failures within the release scope, and merge automatically when
 allowed. Use the repository's supported merge method and never bypass branch
@@ -53,6 +54,7 @@ protection. Confirm the merge result; do not treat enabling auto-merge as a
 completed merge. Report the build number, upload and group status, PR URL,
 and merge result. Do not merge a PR whose release failed.
 
-Keep `release/testflight` after publishing and merging. If the repository
-automatically deletes merged PR branches, create the PR from a
-temporary branch at the same release commit instead.
+Keep `release/testflight` after publishing and merging. Save its commit before
+merging. If the repository automatically deletes it after merge, restore the
+same branch from the saved commit, then merge the latest `origin/main` into it
+and push normally. Do not force-push or change branch protection.
