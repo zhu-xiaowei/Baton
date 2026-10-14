@@ -1627,13 +1627,14 @@ test('strict authority without an OUT retains lazy Edit and Bash expansion', () 
     });
     sendEvent(0, 'stream_turn_start');
     sendEvent(1, 'stream_block_start', { kind: 'tool_use', name });
-    sendEvent(2, 'stream_tool_input', { chunk: JSON.stringify(input), previewTruncated: true });
-    sendEvent(3, 'stream_block_stop');
+    sendEvent(2, 'stream_tool_input', { chunk: '{"incomplete' });
+    sendEvent(3, 'stream_tool_input', { chunk: JSON.stringify(input), replaceInput: true, previewTruncated: true });
+    sendEvent(4, 'stream_block_stop');
     const message = { uuid: `use-${name}`, type: 'assistant', content: [{
       type: 'tool_use', id: `tool-${name}`, name, input, truncated: true,
     }] };
-    sendEvent(4, 'messages', { messages: [message] });
-    sendEvent(5, 'stream_end', { messages: [message] });
+    sendEvent(5, 'messages', { messages: [message] });
+    sendEvent(6, 'stream_end', { messages: [message] });
     const node = document.querySelector(`[data-tool-id="tool-${name}"]`);
     assert.ok(node);
     assert.ok(node.querySelector(name === 'Edit' ? '[data-edit-details]' : '.tool-preview-more'));

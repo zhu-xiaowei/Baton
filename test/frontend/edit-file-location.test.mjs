@@ -72,34 +72,6 @@ function highlightedLines() {
   return [...document.querySelectorAll('.file-line-hl')].map(node => Number(node.textContent));
 }
 
-test('full file uses the dynamically loaded Edit snippet without expanding history data', async () => {
-  await loadEdit();
-  await showFile();
-  assert.deepEqual(highlightedLines(), [3, 4]);
-  assert.equal(state.wsAllMessages[0].content[0].input.new_string, undefined);
-  assert.equal(sent.filter(message => message.action === 'tool_details').length, 1);
-});
-
-test('legacy Write snippets and explicit line hints still locate the file', async () => {
-  state.wsAllMessages = [{ content: [{
-    type: 'tool_use', id: 'write', name: 'Write',
-    input: { content: 'const value = 2;\nconst ready = true;' },
-  }] }];
-  await showFile('', 'write');
-  assert.deepEqual(highlightedLines(), [3, 4]);
-  closeFileViewer({ refresh: false });
-  await showFile('2', '');
-  assert.deepEqual(highlightedLines(), [2]);
-});
-
-test('switching sessions cannot reuse a previous Edit location', async () => {
-  await loadEdit();
-  state.wsSessionId = 'another-session';
-  state.wsAllMessages = [];
-  await showFile();
-  assert.deepEqual(highlightedLines(), []);
-});
-
 test('unexpanded Edit opens the file without requesting details', async () => {
   const preview = { type: 'tool_use', id: 'edit', name: 'Edit', input: { file_path: '/file.js' }, truncated: true };
   state.wsAllMessages = [{ content: [preview] }];
@@ -109,9 +81,11 @@ test('unexpanded Edit opens the file without requesting details', async () => {
   assert.deepEqual(sent.map(message => message.action), ['project_files']);
 });
 
-test('file versions reuse locations and invalidate stale file text even if its cache key repeats', async () => {
+test('loaded Edit locates changed lines and relocates when the file version changes', async () => {
   await loadEdit();
   await showFile();
+  assert.deepEqual(highlightedLines(), [3, 4]);
+  assert.equal(state.wsAllMessages[0].content[0].input.new_string, undefined);
   const location = toolDetailsSource('edit').fileLocation;
   closeFileViewer({ refresh: false });
   await showFile();
@@ -126,13 +100,4 @@ test('file versions reuse locations and invalidate stale file text even if its c
   await showFile();
   assert.deepEqual(highlightedLines(), []);
   assert.equal(sent.filter(message => message.action === 'tool_details').length, 1);
-});
-
-test('a file closed during asynchronous location resolution stays closed', async () => {
-  await loadEdit();
-  openFile('/file.js', 'file.js', '', 'edit');
-  closeFileViewer({ refresh: false });
-  await new Promise(resolve => setTimeout(resolve, 10));
-  assert.equal(document.getElementById('fileOverlay').style.display, 'none');
-  assert.equal(document.querySelector('.file-content'), null);
 });

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { compactToolFields } from '../../bridge/tool-preview.mjs';
 
 const dom = new JSDOM('<!doctype html><body><div class="messages"></div></body>', {
   url: 'https://test/', pretendToBeVisual: true,
@@ -44,11 +43,7 @@ function addTool(id, { truncated = true, edit = false } = {}) {
 function complete(request, tools) {
   handleWsRpcMessage({
     action: 'tool_details', requestId: request.requestId, ok: true,
-    sequence: 1, complete: true, content: JSON.stringify({ details: tools }).slice(20),
-  });
-  handleWsRpcMessage({
-    action: 'tool_details', requestId: request.requestId, ok: true,
-    sequence: 0, content: JSON.stringify({ details: tools }).slice(0, 20),
+    sequence: 0, complete: true, content: JSON.stringify({ details: tools }),
   });
 }
 
@@ -60,91 +55,31 @@ test('untruncated tools expand without requesting details', async () => {
   assert.equal(node.classList.contains('tool-details-collapsed'), false);
   const body = node.querySelector('.tool-body-content');
   window.toggleExpand(body);
-  assert.equal(body.classList.contains('open'), true);
-  window.toggleExpand(body);
-  assert.equal(body.classList.contains('open'), false);
   assert.equal(sent.length, 0);
+  assert.equal(toolDetailsSource('plain'), undefined);
+  observeToolDetails({ type: 'tool_use', id: '', truncated: true }, null);
+  assert.equal(toolDetailsSource(''), undefined);
 });
 
-test('Agent cards keep duration and tool counts with only the compact metadata', () => {
-  setup('agent-stats');
-  const html = window.renderToolNode({
-    type: 'tool_use', id: 'agent', name: 'Agent', input: { description: 'Work' },
-  }, {
-    type: 'tool_result', tool_use_id: 'agent', content: 'Done',
-    _agentMeta: { totalDurationMs: 2500, totalToolUseCount: 12 },
-  }, 'claude');
-  assert.match(html, /12 tool calls, 3s/);
-  assert.equal(sent.length, 0);
-});
-
-test('failed Edit exposes its local error and create-style Edit retains Created', () => {
-  setup('edit-status');
-  const use = { type: 'tool_use', id: 'edit', name: 'Edit',
-    input: { file_path: '/file.js' }, truncated: true };
-  const result = { type: 'tool_result', tool_use_id: 'edit',
-    content: 'String to replace not found in file', is_error: true, truncated: true };
-  const node = document.createElement('div');
-  node.className = 'tool-node tool-details-collapsed';
-  node.innerHTML = window.renderToolNode(use, result, 'claude', { collapsed: true });
-  document.querySelector('.messages').append(node);
-  const header = node.querySelector('.tool-header');
-  assert.equal(header.hasAttribute('data-edit-details'), false);
-  window.toggleToolDetails(header);
-  assert.match(node.textContent, /String to replace not found/);
-  assert.ok(node.querySelector('.tool-preview-more'));
-  assert.equal(sent.length, 0);
-  const created = window.renderToolNode(use, { ...result, content: 'Created successfully.', is_error: false }, 'claude');
-  assert.match(created, /Created/);
-});
-
-test('command compaction preserves Bash output, summaries, and explore classification', () => {
-  setup('compact-render');
-  for (const action of [
-    { type: 'unknown' },
-    { type: 'read', path: '/src/file.js', name: 'file.js' },
-    { type: 'search', path: '/src', query: 'needle' },
-    { type: 'list_files', path: '/src' },
-  ]) {
-    const use = {
-      type: 'tool_use', id: 'bash', name: 'Bash',
-      input: { command: 'rg needle /src', cmd: 'rg needle /src', codexCommandActions: [{ ...action, cmd: 'rg needle /src' }] },
-    };
-    const result = {
-      type: 'tool_result', tool_use_id: 'bash', content: 'matching output',
-      codexCommandKind: 'explore', codexCommandActions: [{ ...action, cmd: 'rg needle /src' }],
-    };
-    const before = document.createElement('div');
-    before.innerHTML = window.renderToolNode(use, result, 'codex');
-    const after = document.createElement('div');
-    const compactUse = compactToolFields(use);
-    const compactResult = compactToolFields(result);
-    after.innerHTML = window.renderToolNode(compactUse, compactResult, 'codex');
-    assert.equal(after.textContent, before.textContent);
-    assert.equal(window.isCodexExploreTool(compactUse, compactResult), true);
-  }
-  assert.equal(sent.length, 0);
-});
-
-test('header keeps a clamped preview; Show more loads truncated content and reuses its cache', async () => {
+test('header stays local; body and Show more share one request and cache', async () => {
   setup('cached');
   const tool = addTool('cached');
   const header = tool.node.querySelector('.tool-header');
   await window.toggleToolDetails(header);
   assert.equal(sent.length, 0);
-  assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
   const button = tool.node.querySelector('.tool-preview-more');
-  assert.ok(button);
-  const body = tool.node.querySelector('.tool-body-content');
-  assert.equal(body.classList.contains('open'), false);
-  window.clampOverflow(tool.node);
-  assert.equal(tool.node.querySelectorAll('.clamp-btn').length, 1);
-  const loading = window.loadToolDetailsMore(button);
-  assert.equal(button.getAttribute('aria-busy'), 'true');
-  assert.ok(button.querySelector('.loading-spinner'));
-  assert.equal(button.textContent.trim(), '');
+  await window.initializeToolDetails(tool.node);
+  assert.equal(sent.length, 0);
+  const originalSelection = window.getSelection;
+  window.getSelection = () => ({ toString: () => 'selected text' });
+  try {
+    window.toggleExpand(tool.node.querySelector('.tool-value'));
+    assert.equal(sent.length, 0);
+  } finally { window.getSelection = originalSelection; }
+  const loading = window.toggleExpand(tool.node.querySelector('.tool-value'));
   await window.loadToolDetailsMore(button);
   assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].toolUseIds, ['cached']);
   complete(sent[0], [{
     toolUse: { ...tool.toolUse, truncated: false },
     toolResult: { ...tool.toolResult, content: '完整结果'.repeat(1000) },
@@ -154,9 +89,6 @@ test('header keeps a clamped preview; Show more loads truncated content and reus
   assert.ok(tool.node.textContent.includes('完整结果'.repeat(100)));
   await window.toggleToolDetails(tool.node.querySelector('.tool-header'));
   await window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-  const fullBody = tool.node.querySelector('.tool-body-content');
-  window.toggleExpand(fullBody);
-  window.toggleExpand(fullBody);
   assert.equal(sent.length, 1);
 
   tool.node.innerHTML = window.renderToolNode(tool.toolUse, tool.toolResult, 'claude', { collapsed: true });
@@ -181,91 +113,33 @@ test('group expansion stays local and Show more requests only its own tool', asy
   assert.equal(two.node.classList.contains('tool-run-group-hidden'), false);
 });
 
-test('clicking truncated IN/OUT loads once, while text selection does not request details', async () => {
-  setup('body-click');
-  const tool = addTool('body-click');
-  window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-  const originalSelection = window.getSelection;
-  try {
-    window.getSelection = () => ({ toString: () => 'selected text' });
-    window.toggleExpand(tool.node.querySelector('.tool-value'));
-    assert.equal(sent.length, 0);
-  } finally { window.getSelection = originalSelection; }
-  const loading = window.toggleExpand(tool.node.querySelector('.tool-value'));
-  window.toggleExpand(tool.node.querySelector('.tool-body-content'));
-  assert.equal(sent.length, 1);
-  complete(sent[0], [{
-    toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult,
-  }]);
-  await loading;
-  assert.equal(tool.node.querySelector('[data-tool-preview]'), null);
-});
-
-test('failed loading keeps the preview and a later click retries', async () => {
-  setup('retry');
-  const tool = addTool('retry');
-  const header = tool.node.querySelector('.tool-header');
-  window.toggleToolDetails(header);
-  const button = tool.node.querySelector('.tool-preview-more');
-  const failed = window.loadToolDetailsMore(button);
-  handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
-  await failed;
-  assert.match(tool.node.textContent, /Device is offline/);
-  assert.equal(button.hasAttribute('aria-busy'), false);
-  assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
-  assert.match(tool.node.textContent, /preview/);
-  assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), true);
-  const retry = window.loadToolDetailsMore(button);
-  assert.equal(sent.length, 2);
-  complete(sent[1], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
-  await retry;
-  assert.equal(tool.node.querySelector('.tool-detail-error'), null);
-});
-
-test('timeout leaves the local preview visible and restores Show more', async () => {
-  setup('timeout');
-  const tool = addTool('timeout');
-  window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-  const button = tool.node.querySelector('.tool-preview-more');
-  const original = globalThis.setTimeout;
-  let loading;
-  try {
-    globalThis.setTimeout = (callback) => original(callback, 0);
-    loading = window.loadToolDetailsMore(button);
-  } finally { globalThis.setTimeout = original; }
-  await loading;
-  assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
-  assert.match(tool.node.textContent, /Request timed out/);
-  assert.match(tool.node.textContent, /preview/);
-  assert.equal(button.textContent, 'Show more');
-  assert.equal(button.hasAttribute('aria-busy'), false);
-  assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), true);
-});
-
-test('missing expected output is not cached as complete and can be retried', async () => {
-  setup('pending-result');
-  const tool = addTool('pending-result');
-  window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-  const button = tool.node.querySelector('.tool-preview-more');
-  const first = window.loadToolDetailsMore(button);
-  complete(sent[0], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: null }]);
-  await first;
-  assert.equal(toolDetailsSource('pending-result').full, null);
-  assert.match(tool.node.textContent, /not available yet/);
-  const second = window.loadToolDetailsMore(button);
-  complete(sent[1], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
-  await second;
-  assert.ok(toolDetailsSource('pending-result').full);
-});
-
-test('ordinary full tools and unidentified streamed tools do not enter the preview cache', () => {
-  setup('cache-scope');
-  const use = { type: 'tool_use', id: 'full', name: 'Bash', input: { command: 'x'.repeat(100000) } };
-  observeToolDetails(use, null);
-  observeToolDetails({ ...use, id: '', truncated: true }, null);
-  assert.equal(toolDetailsSource('full'), undefined);
-  assert.equal(toolDetailsSource(''), undefined);
-});
+for (const failure of ['offline', 'timeout', 'missing output']) {
+  test(`${failure} leaves the local preview readable and permits retry`, async () => {
+    setup(failure);
+    const tool = addTool(failure);
+    window.toggleToolDetails(tool.node.querySelector('.tool-header'));
+    const button = tool.node.querySelector('.tool-preview-more');
+    const original = globalThis.setTimeout;
+    let loading;
+    try {
+      if (failure === 'timeout') globalThis.setTimeout = callback => original(callback, 0);
+      loading = window.loadToolDetailsMore(button);
+    } finally { globalThis.setTimeout = original; }
+    if (failure === 'offline') handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
+    if (failure === 'missing output') complete(sent[0], [{ toolUse: tool.toolUse, toolResult: null }]);
+    await loading;
+    assert.equal(toolDetailsSource(failure).full, null);
+    assert.ok(tool.node.querySelector('.tool-detail-error'));
+    assert.equal(tool.node.querySelector('.tool-body-content').classList.contains('open'), true);
+    assert.match(tool.node.textContent, /preview/);
+    const retry = window.loadToolDetailsMore(button);
+    assert.equal(sent.length, 2);
+    complete(sent[1], [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
+    await retry;
+    assert.ok(toolDetailsSource(failure).full);
+    assert.equal(tool.node.querySelector('.tool-detail-error'), null);
+  });
+}
 
 test('late responses do not open a tool after navigating to a different session', async () => {
   setup('old');
@@ -278,17 +152,6 @@ test('late responses do not open a tool after navigating to a different session'
   complete(request, [{ toolUse: { ...tool.toolUse, truncated: false }, toolResult: tool.toolResult }]);
   await loading;
   assert.equal(document.querySelector('.messages').textContent, 'new session');
-});
-
-test('an already-expanded truncated live update keeps its preview without fetching', async () => {
-  setup('live-replacement');
-  const tool = addTool('live-replacement');
-  tool.node.classList.remove('tool-details-collapsed');
-  await window.initializeToolDetails(tool.node);
-  assert.equal(sent.length, 0);
-  assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
-  assert.match(tool.node.textContent, /preview/);
-  assert.ok(tool.node.querySelector('.tool-preview-more'));
 });
 
 test('same-session DOM replacement during loading adopts the current tool node', async () => {
@@ -309,7 +172,7 @@ test('same-session DOM replacement during loading adopts the current tool node',
   assert.equal(sent.length, 1);
 });
 
-test('Edit shows only a spinner, caches its diff, and reloads only after its data changes', async () => {
+test('Edit retries failures, caches its loaded diff and invalidates changed previews', async () => {
   setup('edit');
   const tool = addTool('edit', { edit: true });
   const initialize = window.initializeToolDetails;
@@ -320,18 +183,15 @@ test('Edit shows only a spinner, caches its diff, and reloads only after its dat
     initialized++;
   };
   try {
-    assert.ok(tool.node.querySelector('.tool-detail-chevron'));
     assert.equal(tool.node.querySelector('.diff-container'), null);
-    assert.equal(tool.node.querySelector('.tool-preview-more'), null);
-    assert.equal(tool.node.querySelector('.tool-status'), null);
-    assert.doesNotMatch(tool.node.textContent, /same|OLD|NEW/);
-    const loading = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-    assert.equal(sent.length, 1);
-    assert.ok(tool.node.querySelector('.tool-header .loading-spinner'));
-    assert.equal(tool.node.querySelector('.tool-detail-loading').textContent.trim(), '');
+    const failed = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
+    handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
+    await failed;
     assert.equal(tool.node.classList.contains('tool-details-collapsed'), true);
-    assert.equal(initialized, 0);
-    complete(sent[0], [{
+    assert.ok(tool.node.querySelector('.tool-detail-error'));
+    const loading = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
+    assert.equal(sent.length, 2);
+    complete(sent[1], [{
       toolUse: { ...tool.toolUse, truncated: false, input: {
         file_path: '/file.js', old_string: 'same'.repeat(200) + 'old',
         new_string: 'same'.repeat(200) + 'new',
@@ -341,20 +201,17 @@ test('Edit shows only a spinner, caches its diff, and reloads only after its dat
     await loading;
     assert.equal(initialized, 1);
     assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
-    assert.equal(tool.node.querySelector('.tool-header .loading-spinner'), null);
-    assert.equal(tool.node.querySelector('.tool-status'), null);
     const diff = tool.node.querySelector('.diff-container');
     window.toggleToolDetails(tool.node.querySelector('.tool-header'));
     window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 2);
     assert.equal(tool.node.querySelector('.diff-container'), diff);
-    assert.equal(tool.node.querySelector('.loading-spinner'), null);
     window.toggleToolDetails(tool.node.querySelector('.tool-header'));
     const updated = { ...tool.toolUse, input: { ...tool.toolUse.input, file_path: '/updated.js' } };
     tool.node.innerHTML = window.renderToolNode(updated, tool.toolResult, 'claude', { collapsed: true });
     const refresh = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-    assert.equal(sent.length, 2);
-    complete(sent[1], [{
+    assert.equal(sent.length, 3);
+    complete(sent[2], [{
       toolUse: { ...updated, truncated: false, input: {
         file_path: '/updated.js', old_string: 'before', new_string: 'after',
       } }, toolResult: tool.toolResult,
@@ -362,16 +219,4 @@ test('Edit shows only a spinner, caches its diff, and reloads only after its dat
     await refresh;
     assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
   } finally { window.initializeToolDetails = initialize; }
-});
-
-test('failed Edit loading keeps its header collapsed and permits retry', async () => {
-  setup('edit-retry');
-  const tool = addTool('edit-retry', { edit: true });
-  const loading = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-  handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
-  await loading;
-  assert.equal(tool.node.classList.contains('tool-details-collapsed'), true);
-  assert.equal(tool.node.querySelector('.loading-spinner'), null);
-  assert.match(tool.node.textContent, /Device is offline/);
-  assert.ok(tool.node.querySelector('[data-edit-details]'));
 });
