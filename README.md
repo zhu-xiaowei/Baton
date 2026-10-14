@@ -11,49 +11,23 @@ Baton provides non-intrusive, real-time streaming and rendering for Claude Code 
 
 ### Rich rendering
 
-<table align="center" width="100%">
-  <tr>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="190"><br>
-      <sub>Permission approvals</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="190"><br>
-      <sub>Mermaid diagrams</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="190"><br>
-      <sub>Inline HTML preview</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="190"><br>
-      <sub>File preview</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="24%"><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/showcase/rendering-labels-dark.svg">
+    <img src="docs/assets/showcase/rendering-labels.svg" alt="Permission approvals · Mermaid diagrams · Inline HTML preview · File preview" width="100%">
+  </picture>
+</p>
 
 ### Developer tools
 
-<table align="center" width="100%">
-  <tr>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/project-files.avif" alt="Project files" width="190"><br>
-      <sub>Project files</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/git.avif" alt="Git changes" width="190"><br>
-      <sub>Git changes</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="190"><br>
-      <sub>Mobile terminal</sub>
-    </td>
-    <td align="center" valign="top" width="25%">
-      <img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="190"><br>
-      <sub>Remote preview</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/assets/showcase/project-files.avif" alt="Project files" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/git.avif" alt="Git changes" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="24%"><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/showcase/tools-labels-dark.svg">
+    <img src="docs/assets/showcase/tools-labels.svg" alt="Project files · Git changes · Mobile terminal · Remote preview" width="100%">
+  </picture>
+</p>
 
 ---
 
