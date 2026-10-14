@@ -15,12 +15,18 @@ test('a running forked-skill session with no history leaves the loading skeleton
   await harness.window.loadLatestMessages('skill-session');
   assert.ok(harness.document.querySelector('.skeleton-messages'));
 
+  // updateSpinner hides the spinner while the skeleton is present.
+  const spinnerChecks = [];
+  globalThis.updateSpinner = harness.window.updateSpinner = () => {
+    spinnerChecks.push(!harness.document.querySelector('.skeleton-messages'));
+  };
   harness.hooks.handleWsMessage({
     action: 'sync_complete', sessionId: 'skill-session', status: 'ok', count: 0,
   });
   assert.equal(harness.document.querySelector('.skeleton-messages'), null);
   assert.ok(harness.document.querySelector('.messages'));
   assert.equal(harness.state.wsRunning, true);
+  assert.equal(spinnerChecks.at(-1), true, 'the spinner is re-evaluated after the skeleton clears');
 });
 
 test.after(() => {

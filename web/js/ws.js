@@ -319,6 +319,7 @@ function showEmptyMessages() {
     // A running forked skill writes nothing to the parent transcript until it ends.
     if (content?.querySelector('.skeleton-messages')) {
       content.innerHTML = '<div class="messages runtime-' + state.appState.runtime + '"></div>';
+      if (typeof updateSpinner === 'function') updateSpinner();
     }
     return;
   }
