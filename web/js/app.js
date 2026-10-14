@@ -1313,8 +1313,8 @@ function refreshForegroundView() {
   if (document.getElementById('projectTerminalPage')) return Promise.resolve(false);
   if (_foregroundRefresh) return _foregroundRefresh;
   _foregroundRefresh = Promise.resolve().then(function () {
-    if (state.gitStatusOpen) {
-      var jobs = [window.refreshGitStatus?.()];
+    if (state.projectFilesOpen || state.gitStatusOpen) {
+      var jobs = [state.projectFilesOpen ? window.refreshProjectFiles?.() : window.refreshGitStatus?.()];
       if (state.appState.session && typeof window.resumeSessionForeground === 'function') {
         jobs.push(window.resumeSessionForeground());
       }
@@ -2180,6 +2180,9 @@ async function loadOlderAndPrepend() {
     } catch(e) { loadDevices(); }
   } else {
     loadDevices();
+  }
+  if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
+    openGitStatusPage({ restoring: true });
   }
   if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();

@@ -158,7 +158,7 @@ test('Git file rows keep the filename, directory, status, and actions on one com
   delete globalThis.document;
 });
 
-test('Session detail shows Project Files before Git as separate actions', () => {
+test('Session detail keeps Project Files and Git as separate actions', () => {
   const app = fs.readFileSync(path.join(ROOT, 'web/js/app.js'), 'utf8');
   const project = fs.readFileSync(path.join(ROOT, 'web/js/project/browser.js'), 'utf8');
   assert.match(app, /topRight\.innerHTML = runtimeMark \+ filesButton \+ gitButton/);

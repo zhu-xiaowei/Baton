@@ -14,8 +14,8 @@ export function clearGitStatusView(storage) {
 export function saveGitStatusView(appState, storage) {
   var device = appState?.device || '';
   var projectHash = appState?.project?.hash || '';
-  var session = appState?.session || '';
-  if (!device || !projectHash || !session || session === '__new__') {
+  var session = appState?.session || null;
+  if (!device || !projectHash || session === '__new__') {
     clearGitStatusView(storage);
     return;
   }
@@ -39,7 +39,7 @@ export function shouldRestoreGitStatus(appState, storage) {
   var matches = !!saved
     && saved.device === appState?.device
     && saved.projectHash === appState?.project?.hash
-    && saved.session === appState?.session
+    && (saved.session || null) === (appState?.session || null)
     && saved.session !== '__new__';
   if (!matches && saved) clearGitStatusView(storage);
   return matches;
@@ -54,10 +54,10 @@ export function clearGitDiffView(storage) {
 export function saveGitDiffView(appState, view, storage) {
   var device = appState?.device || '';
   var projectHash = appState?.project?.hash || '';
-  var session = appState?.session || '';
+  var session = appState?.session || null;
   var path = view?.path || '';
   var group = view?.group || '';
-  if (!device || !projectHash || !session || session === '__new__' || !path || !group) {
+  if (!device || !projectHash || session === '__new__' || !path || !group) {
     clearGitDiffView(storage);
     return;
   }
@@ -85,7 +85,7 @@ export function readGitDiffView(appState, storage) {
   var matches = !!saved
     && saved.device === appState?.device
     && saved.projectHash === appState?.project?.hash
-    && saved.session === appState?.session
+    && (saved.session || null) === (appState?.session || null)
     && saved.session !== '__new__'
     && typeof saved.path === 'string'
     && !!saved.path
