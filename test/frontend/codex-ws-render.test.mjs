@@ -1615,6 +1615,32 @@ test('strict no-op Edit input does not render an empty diff body', () => {
   assert.equal(edit.querySelector('.tool-body'), null);
 });
 
+test('strict authority without an OUT retains lazy Edit and Bash expansion', () => {
+  for (const name of ['Edit', 'Bash']) {
+    reset();
+    const turnId = `preview-${name}`;
+    document.querySelector('.messages').innerHTML =
+      `<div class="msg-user" data-anchor="${turnId}">run</div>`;
+    const input = name === 'Edit' ? { file_path: '/source.js' } : { command: 'preview' };
+    const sendEvent = (seq, action, extra = {}) => window.__wsTest.handleWsMessage({
+      action, seq, sessionId: state.wsSessionId, turnId, ...extra,
+    });
+    sendEvent(0, 'stream_turn_start');
+    sendEvent(1, 'stream_block_start', { kind: 'tool_use', name });
+    sendEvent(2, 'stream_tool_input', { chunk: '{"incomplete' });
+    sendEvent(3, 'stream_tool_input', { chunk: JSON.stringify(input), replaceInput: true, previewTruncated: true });
+    sendEvent(4, 'stream_block_stop');
+    const message = { uuid: `use-${name}`, type: 'assistant', content: [{
+      type: 'tool_use', id: `tool-${name}`, name, input, truncated: true,
+    }] };
+    sendEvent(5, 'messages', { messages: [message] });
+    sendEvent(6, 'stream_end', { messages: [message] });
+    const node = document.querySelector(`[data-tool-id="tool-${name}"]`);
+    assert.ok(node);
+    assert.ok(node.querySelector(name === 'Edit' ? '[data-edit-details]' : '.tool-preview-more'));
+  }
+});
+
 test('structured Codex plan updates render immediately as one TodoWrite checklist', () => {
   reset();
   const turnId = 'turn-plan-update';

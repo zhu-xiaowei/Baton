@@ -16,6 +16,7 @@ export function resolveSourceRange(fileText, lineHint, snippet) {
     if (snippetLines.length && snippetLines[0]) {
       var fileLines = fileText.split('\n');
       var last = fileLines.length - snippetLines.length;
+      var found = null;
       for (var index = 0; index <= last; index++) {
         if (fileLines[index].trim() !== snippetLines[0]) continue;
         var matches = true;
@@ -25,8 +26,12 @@ export function resolveSourceRange(fileText, lineHint, snippet) {
             break;
           }
         }
-        if (matches) return { from: index + 1, to: index + snippetLines.length };
+        if (matches) {
+          if (found) { found = null; break; }
+          found = { from: index + 1, to: index + snippetLines.length };
+        }
       }
+      if (found) return found;
     }
   }
   var range = String(lineHint || '').match(/(\d+)(?:-(\d+))?/);
@@ -61,11 +66,18 @@ export function renderSourceView(container, options) {
   var text = String(options.text == null ? '' : options.text);
   var code = highlightedSource(options.path || '', text);
   var lineCount = code.split('\n').length;
-  var range = resolveSourceRange(text, options.lineHint, options.snippet);
+  var range = Array.isArray(options.ranges) ? null : resolveSourceRange(text, options.lineHint, options.snippet);
+  var ranges = Array.isArray(options.ranges) ? options.ranges : (range ? [range] : []);
+  ranges = ranges.slice().sort((left, right) => left.from - right.from);
+  var rangeIndex = 0;
   var lineNumbers = Array.from({ length: lineCount }, function (_, index) {
     var line = index + 1;
-    var highlighted = range && line >= range.from && line <= range.to;
-    return highlighted ? '<span class="file-line-hl">' + line + '</span>' : String(line);
+    while (ranges[rangeIndex] && line > ranges[rangeIndex].to) rangeIndex++;
+    var currentRange = ranges[rangeIndex];
+    var highlighted = currentRange && line >= currentRange.from && line <= currentRange.to;
+    return highlighted ? '<span class="file-line-hl"'
+      + (currentRange.deletion ? ' title="Deleted content at this position"' : '')
+      + '>' + line + '</span>' : String(line);
   }).join('\n');
   var warning = options.truncated
     ? '<div class="file-truncated">⚠ Truncated — showing first 5 MB</div>'
@@ -73,5 +85,5 @@ export function renderSourceView(container, options) {
   container.innerHTML = '<div class="file-code"><pre class="file-lineno">'
     + lineNumbers + '</pre><pre class="file-content"><code>' + code
     + '</code></pre></div>' + warning;
-  if (range) scrollToSourceLine(container, range.from, lineCount);
+  if (ranges.length) scrollToSourceLine(container, ranges[0].from, lineCount);
 }

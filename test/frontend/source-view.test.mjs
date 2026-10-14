@@ -27,6 +27,13 @@ test('shared source view renders line numbers, highlights, and truncation', () =
     resolveSourceRange('one\ntwo\nthree', '', 'two\nthree'),
     { from: 2, to: 3 },
   );
+  renderSourceView(container, {
+    text: 'one\ntwo\nthree\nfour\nfive',
+    ranges: [{ from: 2, to: 2 }, { from: 5, to: 5 }],
+    snippet: 'one',
+  });
+  assert.deepEqual([...container.querySelectorAll('.file-line-hl')].map(node => node.textContent), ['2', '5']);
+  assert.equal(resolveSourceRange('same\nbetween\nsame', '', 'same'), null);
   dom.window.close();
   delete globalThis.window;
 });

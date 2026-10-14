@@ -4,6 +4,9 @@ import test from 'node:test';
 import { truncateToBytes } from '../../bridge/extract.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
 import { fitWsPayload, prepareWsPayload } from '../../bridge/ws.mjs';
+import { configureToolPreviews } from '../../bridge/tool-preview.mjs';
+
+configureToolPreviews(true);
 
 function toolMessage(input, output) {
   return {
@@ -44,18 +47,10 @@ test('oversized messages compact tool IN and OUT before generic truncation', () 
   const compactOutput = compact.content[1].content;
 
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) <= 7000);
-  assert.ok(compactInput.startsWith(input.slice(0, 1000)));
-  assert.ok(compactInput.endsWith(input.slice(-1000)));
-  assert.match(
-    compactInput,
-    new RegExp(`\\n\\n…\\[truncated ${input.length - 2000} chars\\]…\\n\\n`),
-  );
-  assert.ok(compactOutput.startsWith(output.slice(0, 1500)));
-  assert.ok(compactOutput.endsWith(output.slice(-2500)));
-  assert.match(
-    compactOutput,
-    new RegExp(`\\n\\n…\\[truncated ${output.length - 4000} chars\\]…\\n\\n`),
-  );
+  assert.equal(compactInput, input.slice(0, 500));
+  assert.equal(compactOutput, output.slice(0, 500));
+  assert.equal(compact.content[0].truncated, true);
+  assert.equal(compact.content[1].truncated, true);
 });
 
 test('oversized messages events keep compact tool IN and OUT on the wire', () => {
@@ -73,14 +68,10 @@ test('oversized messages events keep compact tool IN and OUT on the wire', () =>
   assert.equal(compact.messages.length, 1);
   assert.equal(compact.messages[0].uuid, 'message-1');
   assert.equal(compact.messages[0].nativeId, 'native-1');
-  assert.match(
-    compact.messages[0].content[0].input.command,
-    /…\[truncated \d+ chars\]…/,
-  );
-  assert.match(
-    compact.messages[0].content[1].content,
-    /…\[truncated \d+ chars\]…/,
-  );
+  assert.equal(compact.messages[0].content[0].input.command, input.slice(0, 500));
+  assert.equal(compact.messages[0].content[1].content, output.slice(0, 500));
+  assert.equal(compact.messages[0].content[0].truncated, true);
+  assert.equal(compact.messages[0].content[1].truncated, true);
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) <= 7000);
 });
 

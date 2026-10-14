@@ -12,6 +12,7 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 from project.files_ws import handle_project_files
+from project.tool_details_ws import handle_tool_details
 from project.git_ws import handle_git_status
 from project.session_ws import handle_session_rename
 from terminal_ws import handle_terminal_poc
@@ -573,6 +574,13 @@ def _handle_message(event, connection_id, endpoint):
             connection_id,
             account_id,
             endpoint,
+            query_connections=_query_connections,
+            post_to_connection=_post_to_connection,
+            connections_table=_connections_table,
+        )
+    elif action == "tool_details":
+        return handle_tool_details(
+            body, role, connection_id, account_id, endpoint,
             query_connections=_query_connections,
             post_to_connection=_post_to_connection,
             connections_table=_connections_table,

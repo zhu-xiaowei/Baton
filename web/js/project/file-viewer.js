@@ -10,6 +10,8 @@ import { escapeAttachment, isTextAttachment, readAttachmentText } from '../compo
 import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
 import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
+import { toolDetailsSource } from '../tool-details.js';
+import { resolveEditLocation } from './edit-location.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -410,7 +412,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   options = options || {};
   // Attachment links carry the real file name; project views may label a file differently (e.g. "a.pdf @ 1a2b3c4").
   var fileName = absPath.startsWith('baton-file:') ? displayName : absPath.split(/[\\/]/).pop();
-  _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', options: options };
+  _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', matchId, options: options };
   _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
   downloadStatus('');
@@ -539,6 +541,9 @@ async function showOfficeAttachment(key, kind, token) {
 
 // Find the Edit/Write tool_use by id and return the text it wrote (new_string / content).
 function snippetForTool(toolId) {
+  // Loaded Edit uses explicit ranges in renderSource; Write still needs its full text.
+  var loadedTool = toolDetailsSource(toolId)?.full?.toolUse;
+  if (loadedTool?.name === 'Write') return loadedTool.input?.content || '';
   var msgs = state.wsAllMessages || [];
   for (var i = 0; i < msgs.length; i++) {
     var c = msgs[i].content;
@@ -553,15 +558,31 @@ function snippetForTool(toolId) {
   return '';
 }
 
-function render(absPath, text, truncated, lineHint, snippet) {
-  _current = { path: absPath, text: text, truncated: truncated, line: lineHint, snippet: snippet };
+function render(absPath, text, truncated, lineHint, snippet, contentVersion) {
+  _current = { path: absPath, text: text, truncated: truncated, line: lineHint, snippet: snippet, contentVersion };
   updateTabs();
   setFileViewMode(_view.mode);
 }
 
-function renderSource(absPath, text, truncated, lineHint, snippet) {
+async function renderSource(absPath, text, truncated, lineHint, snippet) {
   var body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  const view = _view;
+  const current = _current;
+  const token = _previewToken;
+  const entry = view.matchId && toolDetailsSource(view.matchId);
+  let ranges;
+  if (entry?.full?.toolUse.name === 'Edit') {
+    try {
+      const previous = entry.fileLocation?.path === absPath ? entry.fileLocation : null;
+      const location = await resolveEditLocation(text, entry.full.toolUse.input, current.contentVersion, previous);
+      ranges = location.ranges;
+      if (_view === view && _current === current) {
+        entry.fileLocation = location === previous ? previous : { ...location, path: absPath };
+      }
+    } catch { ranges = []; }
+  }
+  if (_view !== view || _current !== current || token !== _previewToken || view.mode !== 'source') return;
   clearFileBody();
   renderSourceView(body, {
     path: absPath,
@@ -569,6 +590,7 @@ function renderSource(absPath, text, truncated, lineHint, snippet) {
     truncated: truncated,
     lineHint: lineHint,
     snippet: snippet,
+    ranges,
   });
 }
 
@@ -610,7 +632,9 @@ function handleFileResponse(msg, line, snippet, token) {
   }
 
   var cached = state.fileCache.get(msg.key);
-  if (cached) return render(cached.path, cached.text, cached.truncated, line, snippet);
+  if (cached && (!msg.contentVersion || cached.contentVersion === msg.contentVersion)) {
+    return render(cached.path, cached.text, msg.truncated, line, snippet, cached.contentVersion);
+  }
 
   var contentPromise = msg.content != null
     ? Promise.resolve(msg.content)
@@ -618,8 +642,8 @@ function handleFileResponse(msg, line, snippet, token) {
   contentPromise.then(function (text) {
     if (token !== _fileRequestToken) return;
     if (state.fileCache.size > 50) state.fileCache.delete(state.fileCache.keys().next().value);
-    state.fileCache.set(msg.key, { text: text, path: msg.path, truncated: msg.truncated });
-    render(msg.path, text, msg.truncated, line, snippet);
+    state.fileCache.set(msg.key, { text: text, path: msg.path, truncated: msg.truncated, contentVersion: msg.contentVersion });
+    render(msg.path, text, msg.truncated, line, snippet, msg.contentVersion);
   }).catch(function () {
     if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download file.</div>');
   });

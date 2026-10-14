@@ -22,9 +22,10 @@ export const AGENTS_POLL_INTERVAL_MS = 8000;  // scan for agent state changes â†
 export const MAX_POST_BYTES = 4 * 1024 * 1024;
 // API Gateway WS single-frame cap is 32768 bytes; exceeding it drops the whole
 // connection with code 1009 â†’ reconnect storm. Send truncated copies over WS,
-// full copies over HTTP to DDB. Leave headroom for the JSON envelope.
+// authoritative prepared copies over HTTP to DDB (compact if toolPreviews is on).
+// Leave headroom for the JSON envelope.
 export const WS_FRAME_LIMIT = 31_000;
-// DDB single-item cap is 400KB; keep full messages safely under it.
+// DDB single-item cap is 400KB; keep persisted messages safely under it.
 export const DDB_ITEM_LIMIT = 360_000;
 
 // WSL detection: fs.watch inotify doesn't work on /mnt/ (9P filesystem)

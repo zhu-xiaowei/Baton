@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import { markEditResult } from './tool-preview.mjs';
 import {
   codexCompletedLiveMessages,
   codexItemNativeId,
@@ -921,13 +922,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           pair.occurrence,
         ),
         type: 'user',
-        content: pair.uses.map((use) => ({
+        content: pair.uses.map((use) => markEditResult({
           type: 'tool_result',
           tool_use_id: use.id,
           content: resultMeta.codexSuperseded ? '' : content,
           is_error: payload.status === 'failed',
           ...resultMeta,
-        })),
+        }, use.name)),
         timestamp,
       }, codexItemLiveKey(pair.callId)));
       continue;
@@ -945,12 +946,12 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           pair.occurrence,
         ),
         type: 'user',
-        content: pair.uses.map((use) => ({
+        content: pair.uses.map((use) => markEditResult({
           type: 'tool_result',
           tool_use_id: use.id,
           content: patchResult(payload),
           is_error: payload.success === false,
-        })),
+        }, use.name)),
         timestamp: identity.timestamp,
       }, codexItemLiveKey(pair.callId)));
       continue;

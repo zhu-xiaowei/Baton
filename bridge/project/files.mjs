@@ -256,16 +256,15 @@ async function readProjectFile(message, context) {
   if (stat.isDirectory()) throw new Error('is a directory');
 
   const extension = path.extname(absPath).toLowerCase();
-  const key = crypto.createHash('sha256')
-    .update(`${absPath}#${stat.mtimeMs}#${stat.size}`)
-    .digest('hex')
-    .slice(0, 16) + extension;
   const base = message.legacy
     ? legacyBase(message)
     : responseBase(message, { ok: true });
 
   if (VIDEO_EXTENSIONS.has(extension)) {
     if (stat.size > VIDEO_MAX_BYTES) throw new Error('video too large');
+    const key = crypto.createHash('sha256')
+      .update(`${absPath}#${stat.mtimeMs}#${stat.size}`)
+      .digest('hex').slice(0, 16) + extension;
     sendProgress(message, send, { video: true });
     const uploaded = await uploadVideo(absPath, key, stat.size, postFn);
     if (!uploaded) throw new Error('upload failed');
@@ -301,6 +300,10 @@ async function readProjectFile(message, context) {
     if (newline > 0) buffer = buffer.subarray(0, newline);
   }
 
+  const contentVersion = image ? '' : crypto.createHash('sha256').update(buffer).digest('hex');
+  const key = crypto.createHash('sha256')
+    .update(image ? `${absPath}#${stat.mtimeMs}#${stat.size}` : `${absPath}\0${contentVersion}`)
+    .digest('hex').slice(0, 16) + extension;
   const metadata = {
     ...base,
     key,
@@ -308,6 +311,7 @@ async function readProjectFile(message, context) {
     size: stat.size,
     truncated,
     image,
+    ...(contentVersion ? { contentVersion } : {}),
   };
   if (!image && !message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
     sendTextFrames(metadata, buffer.toString('utf8'), send);

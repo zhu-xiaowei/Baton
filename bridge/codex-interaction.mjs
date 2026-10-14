@@ -20,6 +20,7 @@ import {
 } from './codex-plan.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { compactToolFields } from './tool-preview.mjs';
 
 const CODEX_GOAL_RESUME_APPROVAL_TYPE = 'codex-goal-resume';
 const RESUMABLE_GOAL_STATUSES = new Set(['paused', 'blocked', 'usageLimited']);
@@ -1692,7 +1693,10 @@ export class CodexInteraction {
       state.blocks.push(blockId);
       turn.framer.start(blockId, preview.kind, preview.name || null);
       if (preview.input) {
-        turn.framer.input(blockId, JSON.stringify(preview.input));
+        const { input } = compactToolFields({
+          type: 'tool_use', name: preview.name, input: preview.input,
+        });
+        turn.framer.input(blockId, JSON.stringify(input));
         turn.framer.stop(blockId);
       }
     }

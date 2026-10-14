@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import sharp from 'sharp';
 import { post, postRequired } from './http.mjs';
 import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
+import { stripToolResultBase64, toolPreview, toolPreviews } from './tool-preview.mjs';
 
 // Track sync position: sessionId → line number (the watcher's per-session read watermark).
 export const synced = new Map();
@@ -54,12 +55,6 @@ export function countJsonlLines(filePath) {
 }
 
 const TRUNC_MARK = '\n…[truncated]';
-const TOOL_INPUT_MAX_CHARS = 2000;
-const TOOL_INPUT_HEAD_CHARS = 1000;
-const TOOL_INPUT_TAIL_CHARS = 1000;
-const TOOL_OUTPUT_MAX_CHARS = 4000;
-const TOOL_OUTPUT_HEAD_CHARS = 1500;
-const TOOL_OUTPUT_TAIL_CHARS = 2500;
 
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
@@ -79,71 +74,11 @@ function collectStrings(node, out) {
   }
 }
 
-function truncateMiddle(text, maxChars, headChars, tailChars) {
-  if (typeof text !== 'string' || text.length <= maxChars) return text;
-  const truncatedChars = text.length - headChars - tailChars;
-  const marker = `\n\n…[truncated ${truncatedChars} chars]…\n\n`;
-  return text.slice(0, headChars)
-    + marker
-    + text.slice(-tailChars);
-}
-
-function truncateNestedStrings(node, maxChars, headChars, tailChars) {
-  if (!node || typeof node !== 'object') return;
-  for (const key of Object.keys(node)) {
-    const value = node[key];
-    if (typeof value === 'string') {
-      node[key] = truncateMiddle(value, maxChars, headChars, tailChars);
-    } else if (value && typeof value === 'object') {
-      truncateNestedStrings(value, maxChars, headChars, tailChars);
-    }
-  }
-}
-
-function truncateToolIo(message) {
-  for (const block of Array.isArray(message?.content) ? message.content : []) {
-    if (block?.type === 'tool_use' && block.input && typeof block.input === 'object') {
-      truncateNestedStrings(
-        block.input,
-        TOOL_INPUT_MAX_CHARS,
-        TOOL_INPUT_HEAD_CHARS,
-        TOOL_INPUT_TAIL_CHARS,
-      );
-    } else if (block?.type === 'tool_result') {
-      if (typeof block.content === 'string') {
-        block.content = truncateMiddle(
-          block.content,
-          TOOL_OUTPUT_MAX_CHARS,
-          TOOL_OUTPUT_HEAD_CHARS,
-          TOOL_OUTPUT_TAIL_CHARS,
-        );
-      } else if (block.content && typeof block.content === 'object') {
-        truncateNestedStrings(
-          block.content,
-          TOOL_OUTPUT_MAX_CHARS,
-          TOOL_OUTPUT_HEAD_CHARS,
-          TOOL_OUTPUT_TAIL_CHARS,
-        );
-      }
-    }
-  }
-  if (message?.toolUseResult && typeof message.toolUseResult === 'object') {
-    truncateNestedStrings(
-      message.toolUseResult,
-      TOOL_OUTPUT_MAX_CHARS,
-      TOOL_OUTPUT_HEAD_CHARS,
-      TOOL_OUTPUT_TAIL_CHARS,
-    );
-  }
-}
-
 // Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
-// prioritizing readable tool IN/OUT previews before trimming the longest
-// remaining strings until the whole message fits.
+// preserving tool previews before applying the transport's hard limit.
 export function truncateToBytes(msg, maxBytes) {
   if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
-  const clone = JSON.parse(JSON.stringify(msg));
-  truncateToolIo(clone);
+  const clone = structuredClone(toolPreview(msg));
   if (Buffer.byteLength(JSON.stringify(clone)) <= maxBytes) return clone;
   const fields = [];
   collectStrings(clone, fields);
@@ -181,22 +116,6 @@ async function processImage(base64Data) {
 
   await post('/api/bridge/upload-image', { key, data: compressed.toString('base64') });
   return key;
-}
-
-// Drop image base64 from a tool_result block's nested content (app renders via S3 key).
-function stripToolResultBase64(block) {
-  if (!Array.isArray(block.content)) return block;
-  const content = block.content.map((c) =>
-    c.type === 'image' && c.source?.data ? { ...c, source: { ...c.source, data: '' } } : c);
-  return { ...block, content };
-}
-
-// Drop the big base64 payload from a toolUseResult (image/file), keep metadata.
-function stripToolUseResultBase64(tur) {
-  if (tur && tur.file && tur.file.base64) {
-    return { ...tur, file: { ...tur.file, base64: '' } };
-  }
-  return tur;
 }
 
 export async function extractForApp(msg) {
@@ -251,7 +170,9 @@ export async function extractForApp(msg) {
   };
   // jsonl uses camelCase toolUseResult; headless stream uses snake_case — accept either.
   const tur = msg.toolUseResult ?? msg.tool_use_result;
-  if (tur) extracted.toolUseResult = stripToolUseResultBase64(tur);
+  if (tur) extracted.toolUseResult = tur.file?.base64
+    ? { ...tur, file: { ...tur.file, base64: '' } }
+    : tur;
   if (msg.message?.stop_reason) extracted.stopReason = msg.message.stop_reason;
   return extracted;
 }
@@ -329,7 +250,7 @@ export async function uploadMessages(sessionId, messages, options = {}) {
     ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
   };
 
-  for (const raw of messages) {
+  for (const raw of toolPreviews(messages)) {
     // Cap every message before WS fallback or initial sync reaches DDB.
     const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
     const msgJson = JSON.stringify(msg);

@@ -1,3 +1,5 @@
+import { textPreview, toolPreview, toolPreviews, toolPreviewsEnabled, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
+
 export const STREAM_EVENT_ACTIONS = new Set([
   'stream_turn_start',
   'stream_block_start',
@@ -118,6 +120,10 @@ export class LiveTurnStream {
     this.activeSourceBlockId = null;
     this.authoritativeMessages = new Map();
     this.interruptSent = false;
+    this.inputPreviewLength = 0;
+    this.inputJson = '';
+    this.inputWasTruncated = false;
+    this.activeToolName = '';
   }
 
   start() {
@@ -133,6 +139,10 @@ export class LiveTurnStream {
     this.activeSourceBlockId = Number.isInteger(frame?.blockId)
       ? frame.blockId
       : 0;
+    this.inputPreviewLength = 0;
+    this.inputJson = '';
+    this.inputWasTruncated = false;
+    this.activeToolName = frame?.name || '';
     this.emit('stream_block_start', {
       kind: frame?.kind || '',
       name: frame?.name || '',
@@ -147,14 +157,40 @@ export class LiveTurnStream {
   }
 
   sendToolInput(frame) {
-    return this.sendCurrentBlockEvent('stream_tool_input', frame, {
+    if (!toolPreviewsEnabled()) return this.sendCurrentBlockEvent('stream_tool_input', frame, {
       chunk: frame?.chunk || '',
     });
+    const preview = this.activeToolName === 'Edit'
+      ? { text: '', truncated: true }
+      : textPreview(frame?.chunk || '', TOOL_PREVIEW_CHARACTERS - this.inputPreviewLength);
+    const sent = this.sendCurrentBlockEvent('stream_tool_input', frame, {
+      chunk: preview.text,
+      ...(preview.truncated ? { previewTruncated: true } : {}),
+    });
+    if (sent) {
+      this.inputJson += frame?.chunk || '';
+      this.inputPreviewLength += [...preview.text].length;
+      this.inputWasTruncated ||= preview.truncated;
+    }
+    return sent;
   }
 
   sendBlockStop(frame) {
+    if (this.inputWasTruncated && this.inputJson) {
+      try {
+        const preview = toolPreview({ content: [{
+          type: 'tool_use', name: this.activeToolName, input: JSON.parse(this.inputJson),
+        }] }).content[0];
+        this.sendCurrentBlockEvent('stream_tool_input', frame, {
+          chunk: JSON.stringify(preview.input),
+          replaceInput: true,
+          previewTruncated: preview.truncated === true,
+        });
+      } catch {}
+    }
     if (!this.sendCurrentBlockEvent('stream_block_stop', frame)) return false;
     this.activeSourceBlockId = null;
+    this.inputJson = '';
     return true;
   }
 
@@ -173,6 +209,7 @@ export class LiveTurnStream {
   createMessagesEvent(messages, options = {}) {
     if (this.ended) return null;
     this.start();
+    messages = toolPreviews(messages || []);
     if (options.includeInEnd !== false) {
       for (const message of messages || []) {
         const key = message?.nativeId

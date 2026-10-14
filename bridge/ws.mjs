@@ -74,6 +74,7 @@ import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
+import { handleToolDetails } from './tool-details.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
@@ -866,6 +867,13 @@ async function handleMessage(msg) {
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
+    case 'tool_details': {
+      const identity = parseStorageSessionId(msg.sessionId);
+      await handleToolDetails(msg, {
+        identity, adapter: getRuntimeAdapter(identity.runtime), send: wsSend,
+      });
+      break;
+    }
     case 'send_message':
       if (_clientTurnAcks.has(msg.turnId)) {
         wsSend({
