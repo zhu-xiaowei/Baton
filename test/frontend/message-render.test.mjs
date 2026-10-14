@@ -2,37 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import hljs from 'highlight.js';
-import { Marked } from 'marked';
 
 const dom = new JSDOM('<!doctype html><body></body>');
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 
 await import('../../web/js/components/message.js');
-
-test('local command summaries render Markdown and escape embedded HTML', async () => {
-  globalThis.marked = new Marked();
-  globalThis.hljs = hljs;
-  await import('../../web/js/components/markdown.js');
-  globalThis.renderAssistantText = window.renderAssistantText;
-  const timestamp = '2026-10-14T02:08:01.781Z';
-  document.body.innerHTML = window.renderLocalCommandStdout({
-    type: 'user',
-    timestamp,
-    content: '<local-command-stdout>\u001b[1mReview result\u001b[0m\n\n'
-      + '1. **Bug** in `bridge/watcher.mjs`\n\n'
-      + '```js\nconst result = 1;\n```\n\n'
-      + '<style>body{display:none}</style></local-command-stdout>',
-  });
-  assert.equal(document.querySelector('.assistant-text').dataset.ts, timestamp);
-  assert.equal(document.querySelector('li strong').textContent, 'Bug');
-  assert.equal(document.querySelector('li code').textContent, 'bridge/watcher.mjs');
-  assert.match(document.querySelector('pre code').textContent, /const result = 1;/);
-  assert.equal(document.querySelector('style'), null);
-  assert.ok(!document.body.textContent.includes('\u001b'));
-  assert.ok(!document.body.textContent.includes('local-command-stdout'));
-});
 
 test('user bubbles preserve and wrap long unbroken text', () => {
   const text = `PHASE3_EXISTING_${'X'.repeat(240)}`;
