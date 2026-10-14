@@ -400,7 +400,7 @@ test('Claude inline subagents are discovered as child threads', () => {
   }
 });
 
-test('forked skills appear before the parent prompt is persisted', () => {
+test('forked skills appear before the parent prompt and publish their initial history', async () => {
   const parentId = '67676767-1111-4111-8111-676767676767';
   const fixture = sessionFixture(parentId);
   const discover = () => discoverClaudeSessions({
@@ -429,6 +429,18 @@ test('forked skills appear before the parent prompt is persisted', () => {
     assert.equal(sessions[0].id, parentId);
     assert.equal(sessions[0].preview, 'New session');
     assert.equal(sessions[1].parentSessionId, parentId);
+    assert.equal(sessions[1].status, 'running');
+
+    const watermarks = new Map([[parentId, 2]]);
+    assert.equal(claudeRuntime.shouldSkipInitial(sessions[0], {
+      storageSessionId: parentId, watermarks,
+    }), false);
+    const uploads = [];
+    await claudeRuntime.syncInitialMessages(sessions[0], {
+      storageSessionId: parentId, watermarks,
+      uploader: async (...args) => uploads.push(args),
+    });
+    assert.deepEqual(uploads, [[parentId, [], { historyComplete: true }]]);
 
     fs.appendFileSync(fixture.filePath, JSON.stringify({
       type: 'user', uuid: 'command',

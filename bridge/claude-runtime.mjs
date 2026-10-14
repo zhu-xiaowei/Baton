@@ -81,7 +81,6 @@ export function discoverClaudeSessions(options = {}) {
       const metadata = getSessionMetadata(filePath, {
         firstPrompt: firstPrompts.get(nativeSessionId),
       });
-      if (!metadata.preview) continue;
       const projectHash = normalizeProjectHash(project);
       const session = {
         id: nativeSessionId,
@@ -91,16 +90,20 @@ export function discoverClaudeSessions(options = {}) {
         projectName: readableProjectName(projectHash),
         lastActive: stat.mtime.toISOString(),
         size: stat.size,
-        preview: metadata.preview,
+        preview: metadata.preview || 'New session',
         model: metadata.model,
         status: getSessionStatus(nativeSessionId, filePath, runningInfo),
         _filePath: filePath,
         _lineCount: metadata.lineCount,
       };
-      sessions.push(session);
-      sessions.push(...discoverClaudeSubagents(projectDir, session, {
+      const children = discoverClaudeSubagents(projectDir, session, {
         now: options.now,
-      }));
+        parentRunning: runningInfo.sessions.has(nativeSessionId)
+          || (runningInfo.projects.has(project) && runningInfo.sessions.size === 0),
+      });
+      if (!metadata.preview && !children.length) continue;
+      if (!metadata.preview) session._provisional = true;
+      sessions.push(session, ...children);
     }
   }
 
@@ -209,8 +212,8 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
   findSessionFile: findClaudeSessionFile,
 
-  shouldSkipInitial(_session, context) {
-    return context.watermarks.has(context.storageSessionId);
+  shouldSkipInitial(session, context) {
+    return !session._provisional && context.watermarks.has(context.storageSessionId);
   },
 
   baselineToEnd(session, context) {
@@ -219,7 +222,7 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   syncInitialMessages(session, context) {
-    const startLine = context.watermarks.get(context.storageSessionId) ?? 0;
+    const startLine = session._provisional ? 0 : (context.watermarks.get(context.storageSessionId) ?? 0);
     return syncClaudeMessages(session, context, startLine);
   },
 

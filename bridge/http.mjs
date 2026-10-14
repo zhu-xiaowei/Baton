@@ -12,12 +12,13 @@ export async function get(endpoint) {
   } catch { return null; }
 }
 
-export async function post(endpoint, data) {
+export async function post(endpoint, data, options = {}) {
   try {
     const res = await fetch(`${_config.server}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': _config.apiKey },
       body: JSON.stringify(data),
+      signal: options.signal,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -30,8 +31,8 @@ export async function post(endpoint, data) {
   }
 }
 
-export async function postRequired(endpoint, data) {
-  const response = await post(endpoint, data);
+export async function postRequired(endpoint, data, options) {
+  const response = await post(endpoint, data, options);
   if (!response?.ok) throw new Error(`POST ${endpoint} failed`);
   return response;
 }

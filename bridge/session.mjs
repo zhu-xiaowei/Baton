@@ -92,20 +92,6 @@ export function extractFirstPromptFromMsg(msg) {
   return '';
 }
 
-function subagentSessionPreview(filePath) {
-  const dir = path.join(path.dirname(filePath), path.basename(filePath, '.jsonl'), 'subagents');
-  try {
-    const hasHistory = fs.readdirSync(dir).some((name) => {
-      if (!/^agent-.+\.jsonl$/.test(name)) return false;
-      try {
-        const stat = fs.statSync(path.join(dir, name));
-        return stat.isFile() && stat.size > 0;
-      } catch { return false; }
-    });
-    return hasHistory ? 'New session' : '';
-  } catch { return ''; }
-}
-
 export function getSessionMetadata(filePath, options = {}) {
   try {
     let customTitle = '';
@@ -113,9 +99,11 @@ export function getSessionMetadata(filePath, options = {}) {
     let summary = '';
     let lastPrompt = '';
     let firstUserMsg = '';
+    let firstPromptLine = -1;
     let model = '';
+    let status = null;
 
-    const lineCount = scanJsonlLines(filePath, (line) => {
+    const lineCount = scanJsonlLines(filePath, (line, index) => {
       if (!line.trim()) return;
       try {
         const msg = JSON.parse(line);
@@ -125,9 +113,13 @@ export function getSessionMetadata(filePath, options = {}) {
         if (msg.type === 'last-prompt' && msg.lastPrompt) lastPrompt = msg.lastPrompt;
         if (!firstUserMsg) {
           const fp = extractFirstPromptFromMsg(msg);
-          if (fp) firstUserMsg = fp;
+          if (fp) {
+            firstUserMsg = fp;
+            firstPromptLine = index;
+          }
         }
         if (msg.type === 'assistant' && msg.message?.model) model = msg.message.model;
+        if (options.includeStatus) status = statusFromEntry(msg) || status;
       } catch {}
     });
     const sessionId = path.basename(filePath, '.jsonl');
@@ -145,11 +137,12 @@ export function getSessionMetadata(filePath, options = {}) {
         || summary
         || indexedFirstPrompt
         || firstUserMsg
-        || lastPrompt
-        || subagentSessionPreview(filePath),
+        || lastPrompt,
       ),
       model,
       lineCount,
+      ...(options.includeFirstPromptLine ? { firstPromptLine } : {}),
+      ...(options.includeStatus ? { status } : {}),
     };
   } catch {}
   return { preview: '', model: '', lineCount: 0 };

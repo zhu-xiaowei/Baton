@@ -64,7 +64,7 @@ export function isRecentSession(lastActive, now = Date.now()) {
 }
 
 function publicSession(session) {
-  const { _filePath, _lineCount, ...item } = session;
+  const { _filePath, _lineCount, _provisional, ...item } = session;
   return item;
 }
 

@@ -7,6 +7,7 @@ import {
 } from '../../bridge/live-message-registry.mjs';
 import {
   correlateClaudeInterruptMessage,
+  createClaudeFileQueue,
   pollAgentStates,
   resetAgentPollState,
   shouldPersistClaudeJsonlMessage,
@@ -14,6 +15,52 @@ import {
 } from '../../bridge/watcher.mjs';
 
 test.afterEach(clearLiveMessageRegistry);
+
+test('parent file updates share one queue while child delivery stays independent', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  let parentReads = 0;
+  let active = 0;
+  let maxActive = 0;
+  let delivered = 0;
+  const enqueue = createClaudeFileQueue({}, async (_config, _file, id, queue) => {
+    if (id !== 'parent') {
+      delivered++;
+      queue('parent.jsonl', 'parent');
+      return;
+    }
+    parentReads++;
+    maxActive = Math.max(maxActive, ++active);
+    if (parentReads === 1) await blocked;
+    active--;
+  });
+  await Promise.all([enqueue('child-a.jsonl', 'child-a'), enqueue('child-b.jsonl', 'child-b')]);
+  assert.equal(delivered, 2);
+  assert.equal(parentReads, 1);
+  release();
+  await enqueue('parent.jsonl', 'parent');
+  assert.equal(parentReads, 2);
+  assert.equal(maxActive, 1);
+});
+
+test('failed parent updates retry without waiting for another file event', { timeout: 2000 }, async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let attempts = 0;
+  let delivered = 0;
+  let resolveRetry;
+  const retried = new Promise(resolve => { resolveRetry = resolve; });
+  const enqueue = createClaudeFileQueue({}, async (_config, _file, id) => {
+    if (id !== 'parent') { delivered++; return; }
+    if (++attempts === 1) throw new Error('HTTP 500');
+    resolveRetry();
+  }, 10);
+  await enqueue('parent.jsonl', 'parent');
+  await enqueue('child.jsonl', 'child');
+  assert.equal(delivered, 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await retried;
+  assert.equal(attempts, 2);
+});
 
 test('runtime-owned Claude JSONL rows are persistence-only', () => {
   assert.equal(shouldPersistClaudeJsonlMessage(true, null), true);

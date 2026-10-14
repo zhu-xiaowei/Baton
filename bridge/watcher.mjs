@@ -16,7 +16,7 @@ import {
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
-import { extractFirstPromptFromMsg, getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import {
   headlessRoute,
@@ -37,6 +37,8 @@ import {
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 const _lastActivitySyncAt = new Map();
+// Preserve child changes that arrive while the first parent POST is in flight.
+const _subagentParents = new Map();
 const CLAUDE_INTERRUPT_TEXTS = new Set([
   '[Request interrupted by user]',
   '[Request interrupted by user for tool use]',
@@ -73,14 +75,13 @@ export function shouldSkipClaudeSession(preview, daemonMeta) {
 
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
-  const busy = new Map(); // sessionId → { pending }
-  const retries = new Map();
+  const enqueue = createClaudeFileQueue(config);
 
   if (NEEDS_POLLING) {
     // WSL2: inotify doesn't work on /mnt/ (9P filesystem), use polling
     const mtimes = new Map(); // filePath → mtimeMs
     console.log('[watcher] WSL detected, using polling (2s interval)');
-    setInterval(() => pollProjects(config, busy, mtimes, retries), 2000);
+    setInterval(() => pollProjects(enqueue, mtimes), 2000);
   } else {
     fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
       if (!filename?.endsWith('.jsonl')) return;
@@ -93,10 +94,7 @@ export function startWatcher(config) {
         )
         : path.basename(filename, '.jsonl');
 
-      const state = busy.get(sessionId);
-      if (state) { state.pending = true; return; }
-      busy.set(sessionId, { pending: false });
-      processClaudeLoop(config, busy, retries, filename, sessionId);
+      enqueue(filename, sessionId);
     });
   }
 }
@@ -107,12 +105,31 @@ export function preferPendingInteraction(status, detail) {
     : { status: 'needs_input', detail };
 }
 
-async function processClaudeLoop(config, busy, retries, filename, sessionId) {
+export function createClaudeFileQueue(config, readFile = readAndSend, retryMs = 1000) {
+  const busy = new Map();
+  const retries = new Map();
+  function enqueue(filename, sessionId) {
+    const existing = busy.get(sessionId);
+    if (existing) {
+      existing.pending = true;
+      return existing.promise;
+    }
+    const state = { pending: false };
+    busy.set(sessionId, state);
+    state.promise = processClaudeLoop(
+      config, busy, retries, filename, sessionId, readFile, enqueue, retryMs,
+    );
+    return state.promise;
+  }
+  return enqueue;
+}
+
+async function processClaudeLoop(config, busy, retries, filename, sessionId, readFile, enqueue, retryMs) {
   const state = busy.get(sessionId);
   try {
     do {
       state.pending = false;
-      await readAndSend(config, filename, sessionId);
+      await readFile(config, filename, sessionId, enqueue);
     } while (state.pending);
     clearTimeout(retries.get(sessionId));
     retries.delete(sessionId);
@@ -121,10 +138,8 @@ async function processClaudeLoop(config, busy, retries, filename, sessionId) {
     if (!retries.has(sessionId)) {
       const timer = setTimeout(() => {
         retries.delete(sessionId);
-        if (busy.has(sessionId)) return;
-        busy.set(sessionId, { pending: false });
-        processClaudeLoop(config, busy, retries, filename, sessionId);
-      }, 1000);
+        enqueue(filename, sessionId);
+      }, retryMs);
       timer.unref();
       retries.set(sessionId, timer);
     }
@@ -132,7 +147,7 @@ async function processClaudeLoop(config, busy, retries, filename, sessionId) {
   busy.delete(sessionId);
 }
 
-function pollProjects(config, busy, mtimes, retries) {
+function pollProjects(enqueue, mtimes) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   try {
     for (const project of fs.readdirSync(CLAUDE_PROJECTS)) {
@@ -157,10 +172,8 @@ function pollProjects(config, busy, mtimes, retries) {
               path.basename(subagentFile, '.jsonl'),
             );
             queuePolledClaudeFile(
-              config,
-              busy,
+              enqueue,
               mtimes,
-              retries,
               filePath,
               filename,
               sessionId,
@@ -174,10 +187,8 @@ function pollProjects(config, busy, mtimes, retries) {
           const filename = path.join(project, file);
           const sessionId = path.basename(file, '.jsonl');
           queuePolledClaudeFile(
-            config,
-            busy,
+            enqueue,
             mtimes,
-            retries,
             filePath,
             filename,
             sessionId,
@@ -189,10 +200,8 @@ function pollProjects(config, busy, mtimes, retries) {
 }
 
 function queuePolledClaudeFile(
-  config,
-  busy,
+  enqueue,
   mtimes,
-  retries,
   filePath,
   filename,
   sessionId,
@@ -203,31 +212,30 @@ function queuePolledClaudeFile(
   if (prev === mtime) return;
   mtimes.set(filePath, mtime);
   if (prev === undefined) return;
-  const state = busy.get(sessionId);
-  if (state) {
-    state.pending = true;
-    return;
-  }
-  busy.set(sessionId, { pending: false });
-  processClaudeLoop(config, busy, retries, filename, sessionId);
+  enqueue(filename, sessionId);
 }
 
-async function readAndSend(config, filename, sessionId) {
+async function readAndSend(config, filename, sessionId, enqueue) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
   if (String(filename).split(path.sep).includes('subagents')) {
-    return readAndSendSubagent(config, filename, filePath, sessionId);
+    return readAndSendSubagent(config, filename, filePath, sessionId, enqueue);
   }
 
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-  const lastLine = synced.get(sessionId) ?? 0;
-  if (lines.length <= lastLine) return;
+  const lastLine = recentSessions.has(sessionId) ? (synced.get(sessionId) ?? 0) : 0;
+  const parentUpdate = _subagentParents.get(sessionId) || 0;
+  if (lines.length <= lastLine && recentSessions.has(sessionId) && !parentUpdate) return;
 
-  const metadata = getSessionMetadata(filePath);
+  const metadata = getSessionMetadata(filePath, { includeFirstPromptLine: true });
+  if (!metadata.preview && _subagentParents.has(sessionId)) metadata.preview = 'New session';
   const daemonMeta = metadata.preview ? null : getDaemonSessions().get(sessionId);
-  const skipSession = shouldSkipClaudeSession(metadata.preview, daemonMeta);
+  if (shouldSkipClaudeSession(metadata.preview, daemonMeta)) {
+    synced.delete(sessionId);
+    return;
+  }
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
   let gotActivity = false;
@@ -243,7 +251,6 @@ async function readAndSend(config, filename, sessionId) {
     const s = statusFromEntry(raw);
     if (s) lastStatus = s;
 
-    if (skipSession) continue;
     raw = normalizeClaudeQueuedInput(raw);
     if (!VALID_TYPES.has(raw.type)) continue;
     // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
@@ -253,7 +260,7 @@ async function readAndSend(config, filename, sessionId) {
     }
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt'
-      || extractFirstPromptFromMsg(raw)) gotNewTitle = true;
+      || i === metadata.firstPromptLine) gotNewTitle = true;
 
     let msg = await extractForApp(raw);
     if (!msg.uuid) continue;
@@ -275,22 +282,21 @@ async function readAndSend(config, filename, sessionId) {
     if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
-  if (skipSession) {
-    synced.set(sessionId, lastParsedLine);
-    return;
-  }
   if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
-  synced.set(sessionId, lastParsedLine);
 
-  const forceActivity = gotActivity
-    && activitySyncDue(_lastActivitySyncAt, sessionId);
+  const forceActivity = !!parentUpdate
+    || (gotActivity && activitySyncDue(_lastActivitySyncAt, sessionId));
   // Sync metadata on lifecycle/title changes, plus throttled message activity.
-  if (lastParsedLine > lastLine && (lastStatus || gotNewTitle || forceActivity)) {
+  if (!recentSessions.has(sessionId) || parentUpdate
+    || (lastParsedLine > lastLine && (lastStatus || gotNewTitle || forceActivity))) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
     const poolOwned = poolOwns(sessionId);
-    if (poolOwned && !gotNewTitle && !forceActivity) return;
+    if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
+      synced.set(sessionId, lastParsedLine);
+      return;
+    }
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
@@ -313,40 +319,18 @@ async function readAndSend(config, filename, sessionId) {
       gotNewTitle,
       effective.detail,
       forceActivity,
+      metadata,
     );
   }
+  synced.set(sessionId, lastParsedLine);
+  if (_subagentParents.get(sessionId) === parentUpdate) _subagentParents.delete(sessionId);
 }
 
-async function readAndSendSubagent(config, filename, filePath, sessionId) {
+async function readAndSendSubagent(config, filename, filePath, sessionId, enqueue) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.at(-1) === '') lines.pop();
   const lastLine = synced.get(sessionId) ?? 0;
   if (lines.length <= lastLine) return;
-  const parts = String(filename).split(path.sep);
-  const subagentIndex = parts.indexOf('subagents');
-  if (subagentIndex < 2) return;
-  const projectHash = normalizeProjectHash(parts[0]);
-  const rootSessionId = parts[subagentIndex - 1];
-  const agentId = path.basename(filename, '.jsonl');
-  const meta = readClaudeSubagentMeta(filePath);
-  const parentFilename = path.join(parts[0], `${rootSessionId}.jsonl`);
-  const parentFile = path.join(CLAUDE_PROJECTS, parentFilename);
-  const parentMetadata = fs.existsSync(parentFile)
-    ? getSessionMetadata(parentFile)
-    : {};
-  // Forked skills may not write the parent prompt until they finish.
-  if (parentMetadata.preview && !recentSessions.has(rootSessionId)) {
-    await postSessionMeta(
-      config,
-      parentFile,
-      parentFilename,
-      rootSessionId,
-      poolOwns(rootSessionId) ? 'running'
-        : getSessionStatus(rootSessionId, parentFile, getRunningInfo()),
-      getDaemonSessions().get(rootSessionId),
-      false,
-    );
-  }
   let lastParsedLine = lastLine;
   let lastStatus = null;
   for (let i = lastLine; i < lines.length; i++) {
@@ -369,6 +353,16 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
   if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
 
+  const parts = String(filename).split(path.sep);
+  const subagentIndex = parts.indexOf('subagents');
+  if (subagentIndex < 2) return;
+  const projectHash = normalizeProjectHash(parts[0]);
+  const rootSessionId = parts[subagentIndex - 1];
+  const agentId = path.basename(filename, '.jsonl');
+  const meta = readClaudeSubagentMeta(filePath);
+  const parentFilename = path.join(parts[0], `${rootSessionId}.jsonl`);
+  const parentFile = path.join(CLAUDE_PROJECTS, parentFilename);
+  const parentMetadata = fs.existsSync(parentFile) ? getSessionMetadata(parentFile) : {};
   const stat = fs.statSync(filePath);
   const status = lastStatus
     || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
@@ -394,6 +388,11 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
     canSend: false,
   };
   const agentCountUpdates = trackAgentSession(sessionMeta);
+  // Use the parent's own queue for metadata, retries, and status precedence.
+  if (!recentSessions.has(rootSessionId) && fs.existsSync(parentFile)) {
+    _subagentParents.set(rootSessionId, (_subagentParents.get(rootSessionId) || 0) + 1);
+    enqueue(parentFilename, rootSessionId);
+  }
   await post('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
@@ -413,20 +412,19 @@ async function postSessionMeta(
   gotNewTitle,
   interactionDetail = null,
   forceActivity = false,
+  metadata = getSessionMetadata(filePath),
 ) {
   const oldStatus = lastKnownStatus.get(sessionId);
   const statusChanged = newStatus !== oldStatus;
   const isNew = !recentSessions.has(sessionId);
 
   // Skip empty-shell sessions even if process detection briefly marks them running.
-  const metadata = getSessionMetadata(filePath);
   const preview = metadata.preview;
   if (shouldSkipClaudeSession(preview, dm)) return;
   if (!(statusChanged || isNew || gotNewTitle || forceActivity)) return;
 
   const stat = fs.statSync(filePath);
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
-  lastKnownStatus.set(sessionId, newStatus);
   // Counter delta — server uses this to ADD/SUBTRACT counters; 'new' means += 1.
   const statusDelta = (statusChanged || isNew) ? {
     deviceName: config.deviceName,
@@ -455,12 +453,13 @@ async function postSessionMeta(
     sessionMeta.agentDetail = interactionDetail;
   }
   trackAgentSession(sessionMeta);
-  await post('/api/bridge/sync-sessions', {
+  await postRequired('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
     sessions: [sessionMeta],
     ...(statusDelta ? { statusDelta } : {}),
-  });
+  }, { signal: AbortSignal.timeout(5000) });
+  lastKnownStatus.set(sessionId, newStatus);
   markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
   // First session of a brand-new project → recount totals so projectCount stays accurate.

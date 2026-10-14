@@ -193,6 +193,12 @@ test('Claude metadata scan returns preview, latest model, and line count in one 
       model: 'claude-test',
       lineCount: 2,
     });
+    fs.appendFileSync(filePath, JSON.stringify({
+      type: 'user', message: { content: 'Later prompt' },
+    }) + '\n');
+    assert.equal(getSessionMetadata(filePath, {
+      includeFirstPromptLine: true,
+    }).firstPromptLine, 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

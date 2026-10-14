@@ -63,7 +63,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     }
     const agentId = file.slice(0, -'.jsonl'.length);
     const meta = readClaudeSubagentMeta(filePath);
-    const metadata = getSessionMetadata(filePath);
+    const metadata = getSessionMetadata(filePath, { includeStatus: true });
     const fresh = now - stat.mtimeMs < 15_000;
     return [{
       id: claudeSubagentSessionId(parentSession.nativeSessionId, agentId),
@@ -78,8 +78,8 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       size: stat.size,
       preview: meta.description || metadata.preview || agentId,
       model: metadata.model || parentSession.model,
-      status: parentSession.status === 'running' && fresh
-        ? 'running'
+      status: (options.parentRunning || parentSession.status === 'running' || fresh)
+        ? (metadata.status || 'running')
         : 'completed',
       isAgent: true,
       threadKind: 'subagent',
