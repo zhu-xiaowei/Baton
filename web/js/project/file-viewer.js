@@ -196,6 +196,7 @@ function setActiveTab(mode) {
 
 function isHtml(path) { return /\.html?$/i.test(path || ''); }
 function isMarkdown(path) { return /\.(md|markdown)$/i.test(path || ''); }
+function isImage(path) { return /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i.test(path || ''); }
 function isPreviewable(path) { return isHtml(path) || isMarkdown(path); }
 
 function showPreview(html) {
@@ -291,6 +292,12 @@ function resolvePath(dir, u) {
 // Replace relative <img src> in a live container with synced data URLs.
 function inlineImages(container, dir) {
   var jobs = [];
+  container.querySelectorAll('.img-placeholder[data-path]').forEach(function (el) {
+    if (!/^(?:\/|[a-z]:[\\/])/i.test(el.dataset.path)) {
+      el.dataset.path = resolvePath(dir, el.dataset.path);
+    }
+  });
+  window.loadImages?.(container);
   container.querySelectorAll('img[src]').forEach(function (el) {
     var src = el.getAttribute('src');
     if (!isRelativeUrl(src)) return;
@@ -426,7 +433,8 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   o.style.display = 'flex';
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
-  setFileViewMode(options.loadDiff && options.mode !== 'source' ? 'diff' : 'source');
+  var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
+  setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff' : 'source');
   return true;
 }
 

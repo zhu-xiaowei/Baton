@@ -5,6 +5,8 @@ import { state } from './state.js';
 import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
+import { loadingSpinner } from './components/loading.js';
+import { requestProjectFiles } from './project/rpc.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -97,6 +99,9 @@ async function apiPost(path, body, opts) {
 
 // ---- Image loading ----
 var imageCache = new Map();
+var localImageCache = new Map();
+var pendingLocalImages = new Map();
+var imageContexts = new WeakMap();
 var IMAGE_CACHE_MAX = 200;
 var imageObserver = new IntersectionObserver(function (entries) {
   entries.forEach(function (entry) {
@@ -117,24 +122,70 @@ async function getImageDataUrl(key, mime) {
   return dataUrl;
 }
 
+function currentImageContext(el) {
+  var project = state.appState.project;
+  var owner = el?.closest('[data-block-id], [data-native-id], [data-message-id]');
+  return {
+    device: state.appState.device || '',
+    projectHash: (typeof project === 'string' ? project : project?.hash) || state.wsProjectHash || '',
+    scope: [
+      state.activeThreadId || state.wsSessionId || state.appState.session || '',
+      el?.closest('[data-turn-id]')?.dataset.turnId || '',
+      owner?.dataset.blockId || owner?.dataset.nativeId || owner?.dataset.messageId || '',
+    ],
+  };
+}
+
+async function getLocalImageDataUrl(path, context) {
+  if (!context.device || !context.projectHash) throw new Error('Open the original project to load this image.');
+  var cacheKey = JSON.stringify([state.SERVER, state.KEY, context.device, context.projectHash, context.scope, path]);
+  if (localImageCache.has(cacheKey)) return localImageCache.get(cacheKey);
+  if (pendingLocalImages.has(cacheKey)) return pendingLocalImages.get(cacheKey);
+  var promise = requestProjectFiles('read', { ...context, path }).then(async function (response) {
+    if (!response.image || !response.key) throw new Error('The file is not an image.');
+    var ext = response.key.split('.').pop().toLowerCase();
+    var mime = ext === 'svg' ? 'image/svg+xml' : ext === 'ico' ? 'image/x-icon'
+      : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
+    var dataUrl = await getImageDataUrl(response.key, mime);
+    if (localImageCache.size >= IMAGE_CACHE_MAX) localImageCache.delete(localImageCache.keys().next().value);
+    localImageCache.set(cacheKey, dataUrl);
+    return dataUrl;
+  }).finally(function () { pendingLocalImages.delete(cacheKey); });
+  pendingLocalImages.set(cacheKey, promise);
+  return promise;
+}
+
 async function loadOneImage(el) {
   var key = el.dataset.key;
-  if (imageCache.has(key)) {
-    el.classList.add('loaded');
-    el.innerHTML = '<img src="' + imageCache.get(key) + '" onclick="viewImage(this.src)" />';
-    return;
-  }
   try {
-    var dataUrl = await getImageDataUrl(key);
+    var dataUrl = el.dataset.path
+      ? await getLocalImageDataUrl(el.dataset.path, imageContexts.get(el) || currentImageContext(el))
+      : await getImageDataUrl(key);
+    var image = document.createElement('img');
+    image.src = dataUrl;
+    image.alt = el.dataset.alt || '';
+    image.setAttribute('onclick', 'event.preventDefault();event.stopPropagation();viewImage(this.src)');
     el.classList.add('loaded');
-    el.innerHTML = '<img src="' + dataUrl + '" onclick="viewImage(this.src)" />';
-  } catch(e) { el.textContent = '[Image error]'; }
+    el.replaceChildren(image);
+  } catch(e) {
+    el.textContent = '[Image unavailable · Retry]';
+    el.title = e.message || 'Image unavailable';
+    el.dataset.failed = '1';
+    el.onclick = function () {
+      delete el.dataset.failed;
+      el.onclick = null;
+      el.removeAttribute('title');
+      el.innerHTML = loadingSpinner({ label: 'Loading image' });
+      loadOneImage(el);
+    };
+  }
 }
 
 function loadImages(container) {
-  container.querySelectorAll('.img-placeholder[data-key]').forEach(function (el) {
+  container.querySelectorAll('.img-placeholder[data-key], .img-placeholder[data-path]').forEach(function (el) {
     if (el.dataset.loaded) return;
     el.dataset.loaded = '1';
+    if (el.dataset.path) imageContexts.set(el, currentImageContext(el));
     imageObserver.observe(el);
   });
 }
@@ -147,6 +198,6 @@ function viewImage(src) {
 // State (KEY/SERVER/WS_URL) lives in state.js, not on window.
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
-  api, apiText, apiPost,
+  api, apiText, apiPost, loadingSpinner,
   loadOneImage, loadImages, viewImage, getImageDataUrl,
 });

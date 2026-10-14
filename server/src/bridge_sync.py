@@ -976,6 +976,7 @@ async def attachment_url(key: str, request: Request, response: Response, name: s
     preview_type = {
         "pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
         "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "avif": "image/avif",
         "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime",
         "mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "ogg": "audio/ogg",
     }.get(key.rsplit(".", 1)[-1], "application/octet-stream")

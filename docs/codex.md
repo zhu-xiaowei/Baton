@@ -437,6 +437,14 @@ Codex `ViewImage` is the agent viewing a local image, not the user sending an im
 upload base64 during initialization. When the user clicks, the existing `request_file` flow is reused: the Bridge uploads to S3 on demand,
 and the existing preview component displays it.
 
+Assistant Markdown images use the same on-demand file transport. Local absolute paths,
+project-relative paths, and `file://` URLs render through `project_files/read` when the image
+enters the viewport; PNG, JPEG, GIF, WebP, AVIF, BMP, SVG, and ICO keep their original bytes
+and MIME type. The first load requires the source Bridge to be online and the file to exist.
+Concurrent requests and subsequent streaming renders reuse the image cache; failures can be
+retried by clicking the placeholder. Historical messages use this rendering path without
+resyncing. Clicking a loaded image opens the existing fullscreen image viewer and zoom gestures.
+
 ### 8.3 Runtime Presentation Differences
 
 Both runtimes reuse the list, detail, message, tool, diff, todo, and file preview components. Codex only adds:

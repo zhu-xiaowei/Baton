@@ -6,6 +6,33 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  function imageHtml(href, title, text) {
+    var attr = function (value) { return escHtml(value || '').replace(/"/g, '&quot;'); };
+    var label = ' alt="' + attr(text) + '"' + (title ? ' title="' + attr(title) + '"' : '');
+    if (/^(?:https?:\/\/|\/\/|data:image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml|x-icon)[;,])/i.test(href)) {
+      return '<img class="markdown-image-external" src="' + attr(href) + '"' + label
+        + ' loading="lazy" onclick="event.preventDefault();event.stopPropagation();viewImage(this.src)">';
+    }
+    var key = /^baton-bridge:([a-z0-9._-]+)$/i.exec(href);
+    var filePath = href;
+    if (/^file:/i.test(filePath)) {
+      try {
+        var url = new URL(filePath);
+        if (url.hostname && url.hostname !== 'localhost') return escHtml(text || '');
+        filePath = url.pathname.replace(/^\/([a-z]:\/)/i, '$1');
+      } catch (error) { return escHtml(text || ''); }
+    } else if (/^[a-z][a-z\d+.-]*:/i.test(filePath) && !/^[a-z]:[\\/]/i.test(filePath) && !key) {
+      return escHtml(text || '');
+    }
+    try { filePath = decodeURIComponent(filePath); } catch (error) {}
+    if (!key && (!/\.(?:png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i.test(filePath)
+      || /[\x00-\x1f]/.test(filePath))) return escHtml(text || '');
+    return '<span class="img-placeholder markdown-image"'
+      + (key ? ' data-key="' + attr(key[1]) : ' data-path="' + attr(filePath))
+      + '" data-alt="' + attr(text) + '"' + (title ? ' title="' + attr(title) + '"' : '')
+      + '>' + (window.loadingSpinner?.({ label: 'Loading image' }) || '') + '</span>';
+  }
+
   function standaloneJson(text) {
     var value = String(text || '').trim();
     if (!value || !((value[0] === '{' && value[value.length - 1] === '}')
@@ -103,6 +130,7 @@
       },
     },
     renderer: {
+      image: imageHtml,
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
       // being inserted into Baton's document where <style>/<meta> can alter the UI.
       html: function (html) {
@@ -142,7 +170,7 @@
   window.visualizationHtml = function (filePath) {
     var safePath = escHtml(filePath).replace(/"/g, '&quot;');
     return '<span class="codex-visualization" data-visualization-path="' + safePath + '">'
-      + '<span class="visualization-status" role="status">Loading preview…</span>'
+      + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
       + '</span>';
   };
 

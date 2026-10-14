@@ -129,6 +129,14 @@ def test_pdf_preview_uses_signed_inline_type(clients):
     assert clients[0].signed[-1][1]['Params']['ResponseContentDisposition'] == 'inline'
 
 
+def test_avif_preview_uses_signed_image_type(clients):
+    result = asyncio.run(bridge_sync.attachment_url('b' * 32 + '.avif', REQUEST, Response()))
+    assert result['previewType'] == 'image/avif'
+    params = clients[0].signed[-1][1]['Params']
+    assert params['ResponseContentType'] == 'image/avif'
+    assert params['ResponseContentDisposition'] == 'inline'
+
+
 def test_invalid_size_key_and_filename_are_rejected(clients):
     for size in [-1, 513 * 1024 * 1024]:
         with pytest.raises(ValidationError):

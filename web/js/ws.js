@@ -1018,6 +1018,7 @@ function getStrictStreamRenderer() {
     renderMarkdown: function (element, text) {
       if (window.renderStreamMd) window.renderStreamMd(element, text);
       else element.textContent = text;
+      window.loadImages?.(element);
       if (window.renderMermaidBlocks && element.querySelector('.mermaid-block')) {
         window.renderMermaidBlocks(element);
       }

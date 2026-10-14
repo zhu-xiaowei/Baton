@@ -37,7 +37,7 @@ const scoped = key => state.SERVER + '|' + state.KEY + '|' + key;
 // Previews that open from the cache besides Office files; large PDFs still load by range uncached.
 export const CACHED_PREVIEW_TYPES = {
   pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-  gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif',
 };
 
 export function isCachedPreview(key) {
