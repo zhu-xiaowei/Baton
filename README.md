@@ -11,15 +11,49 @@ Baton provides non-intrusive, real-time streaming and rendering for Claude Code 
 
 ### Rich rendering
 
-<p align="center">
-  <img src="docs/assets/mobile-rendering.avif" alt="Baton mobile rendering: interactive prompts, Mermaid diagrams, HTML, and Markdown previews" width="100%">
-</p>
+<table align="center" width="100%">
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="190"><br>
+      <sub>Permission approvals</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="190"><br>
+      <sub>Mermaid diagrams</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="190"><br>
+      <sub>Inline HTML preview</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="190"><br>
+      <sub>File preview</sub>
+    </td>
+  </tr>
+</table>
 
 ### Developer tools
 
-<p align="center">
-  <img src="docs/assets/mobile-capabilities.avif" alt="Baton developer tools: project files, Git changes, terminal controls, and remote localhost previews" width="100%">
-</p>
+<table align="center" width="100%">
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/project-files.avif" alt="Project files" width="190"><br>
+      <sub>Project files</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/git.avif" alt="Git changes" width="190"><br>
+      <sub>Git changes</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="190"><br>
+      <sub>Mobile terminal</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="190"><br>
+      <sub>Remote preview</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
