@@ -12,6 +12,7 @@ import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 import { toolDetailsSource } from '../tool-details.js';
 import { resolveEditLocation } from './edit-location.js';
+import { imageMimeType } from '../components/image-type.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -136,11 +137,15 @@ var _edgeBack = registerEdgeBackLayer({
   guardZIndex: 1001,
 });
 
-function requestFileAsync(absPath) {
-  return requestProjectFiles('read', {
-    projectHash: currentProjectHash(),
-    path: absPath,
-  }).catch(function () { return null; });
+function fileContext() {
+  return {
+    projectHash: _view?.options.projectHash || currentProjectHash(),
+    device: _view?.options.device ?? state.appState.device ?? '',
+  };
+}
+
+function requestFileAsync(absPath, context = fileContext()) {
+  return requestProjectFiles('read', { ...context, path: absPath }).catch(function () { return null; });
 }
 
 function overlay() { return document.getElementById('fileOverlay'); }
@@ -196,7 +201,7 @@ function setActiveTab(mode) {
 
 function isHtml(path) { return /\.html?$/i.test(path || ''); }
 function isMarkdown(path) { return /\.(md|markdown)$/i.test(path || ''); }
-function isImage(path) { return /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i.test(path || ''); }
+function isImage(path) { return !!imageMimeType(path); }
 function isPreviewable(path) { return isHtml(path) || isMarkdown(path); }
 
 function showPreview(html) {
@@ -292,21 +297,22 @@ function resolvePath(dir, u) {
 // Replace relative <img src> in a live container with synced data URLs.
 function inlineImages(container, dir) {
   var jobs = [];
+  var context = fileContext();
   container.querySelectorAll('.img-placeholder[data-path]').forEach(function (el) {
     if (!/^(?:\/|[a-z]:[\\/])/i.test(el.dataset.path)) {
       el.dataset.path = resolvePath(dir, el.dataset.path);
     }
   });
-  window.loadImages?.(container);
+  window.loadImages?.(container, context);
   container.querySelectorAll('img[src]').forEach(function (el) {
     var src = el.getAttribute('src');
     if (!isRelativeUrl(src)) return;
-    jobs.push(requestFileAsync(resolvePath(dir, src)).then(function (m) {
-      if (m && m.ok !== false && m.image) return window.apiText('/api/bridge/image/' + m.key).then(function (b64) {
-        var ext = (m.key.split('.').pop() || '').toLowerCase();
-        var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
-        el.setAttribute('src', 'data:' + mime + ';base64,' + b64);
-      });
+    jobs.push(requestFileAsync(resolvePath(dir, src), context).then(function (m) {
+      if (m && m.ok !== false && m.image) {
+        return window.getImageDataUrl(m.key, imageMimeType(m.key), m.attachment).then(function (url) {
+          el.setAttribute('src', url);
+        });
+      }
     }));
   });
   return Promise.all(jobs);
@@ -378,7 +384,7 @@ async function sendFileRequest(absPath, line, snippet, retriesLeft) {
   var token = ++_fileRequestToken;
   try {
     var message = await requestProjectFiles('read', {
-      projectHash: _view.options.projectHash || currentProjectHash(),
+      ...fileContext(),
       path: absPath,
     }, {
       timeout: FILE_REQ_TIMEOUT,
@@ -628,9 +634,7 @@ function handleFileResponse(msg, line, snippet, token) {
   if (msg.video) return showVideo(msg.key, token);
 
   if (msg.image) {
-    var ext = (msg.key.split('.').pop() || '').toLowerCase();
-    var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
-    return window.getImageDataUrl(msg.key, mime).then(function (dataUrl) {
+    return window.getImageDataUrl(msg.key, imageMimeType(msg.key), msg.attachment).then(function (dataUrl) {
       if (token !== _fileRequestToken) return;
       closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(dataUrl);

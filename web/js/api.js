@@ -6,7 +6,9 @@ import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
 import { loadingSpinner } from './components/loading.js';
+import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
+import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -99,10 +101,12 @@ async function apiPost(path, body, opts) {
 
 // ---- Image loading ----
 var imageCache = new Map();
+var pendingImages = new Map();
 var localImageCache = new Map();
 var pendingLocalImages = new Map();
 var imageContexts = new WeakMap();
 var IMAGE_CACHE_MAX = 200;
+var LOCAL_IMAGE_CACHE_MS = 30000;
 var imageObserver = new IntersectionObserver(function (entries) {
   entries.forEach(function (entry) {
     if (!entry.isIntersecting) return;
@@ -113,79 +117,143 @@ var imageObserver = new IntersectionObserver(function (entries) {
 
 // Fetch an image as a data URL, reusing the shared in-memory imageCache.
 // mime lets non-JPEG previews (svg/png/etc.) build a correct data: prefix.
-async function getImageDataUrl(key, mime) {
-  if (imageCache.has(key)) return imageCache.get(key);
-  var b64 = await apiText('/api/bridge/image/' + key);
-  var dataUrl = 'data:' + (mime || 'image/jpeg') + ';base64,' + b64;
-  if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
-  imageCache.set(key, dataUrl);
-  return dataUrl;
+function imageStorageKey(key, attachment = false) {
+  return JSON.stringify([state.SERVER, state.KEY, attachment, key]);
 }
 
-function currentImageContext(el) {
-  var project = state.appState.project;
-  var owner = el?.closest('[data-block-id], [data-native-id], [data-message-id]');
+async function getImageDataUrl(key, mime, attachment = false) {
+  var cacheKey = imageStorageKey(key, attachment);
+  if (imageCache.has(cacheKey)) return imageCache.get(cacheKey);
+  if (pendingImages.has(cacheKey)) return pendingImages.get(cacheKey);
+  var promise = (async function () {
+    var dataUrl;
+    if (attachment) {
+      var file = await api('/api/bridge/file-url/' + encodeURIComponent(key));
+      var response = await fetch(file.previewUrl || file.url);
+      if (!response.ok) throw new Error('Failed to download image.');
+      var blob = await response.blob();
+      dataUrl = await new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () { resolve(reader.result); };
+        reader.onerror = function () { reject(new Error('Failed to read image.')); };
+        reader.readAsDataURL(new Blob([blob], { type: mime || imageMimeType(key) }));
+      });
+    } else {
+      var b64 = await apiText('/api/bridge/image/' + key);
+      dataUrl = 'data:' + (mime || imageMimeType(key) || 'image/jpeg') + ';base64,' + b64;
+    }
+    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
+    imageCache.set(cacheKey, dataUrl);
+    return dataUrl;
+  })().finally(function () { pendingImages.delete(cacheKey); });
+  pendingImages.set(cacheKey, promise);
+  return promise;
+}
+
+function currentImageContext(override = {}) {
   return {
-    device: state.appState.device || '',
-    projectHash: (typeof project === 'string' ? project : project?.hash) || state.wsProjectHash || '',
-    scope: [
-      state.activeThreadId || state.wsSessionId || state.appState.session || '',
-      el?.closest('[data-turn-id]')?.dataset.turnId || '',
-      owner?.dataset.blockId || owner?.dataset.nativeId || owner?.dataset.messageId || '',
-    ],
+    device: override.device ?? state.appState.device ?? '',
+    projectHash: override.projectHash || currentProjectHash(),
   };
+}
+
+function localImageKey(path, context) {
+  return JSON.stringify([state.SERVER, state.KEY, context.device, context.projectHash, path]);
+}
+
+function cachedLocalImage(path, context) {
+  var key = localImageKey(path, context);
+  var entry = localImageCache.get(key);
+  if (entry?.expiresAt > Date.now()) return entry.dataUrl;
+  localImageCache.delete(key);
+  return null;
 }
 
 async function getLocalImageDataUrl(path, context) {
   if (!context.device || !context.projectHash) throw new Error('Open the original project to load this image.');
-  var cacheKey = JSON.stringify([state.SERVER, state.KEY, context.device, context.projectHash, context.scope, path]);
-  if (localImageCache.has(cacheKey)) return localImageCache.get(cacheKey);
+  var cacheKey = localImageKey(path, context);
+  var cached = cachedLocalImage(path, context);
+  if (cached) return cached;
   if (pendingLocalImages.has(cacheKey)) return pendingLocalImages.get(cacheKey);
   var promise = requestProjectFiles('read', { ...context, path }).then(async function (response) {
     if (!response.image || !response.key) throw new Error('The file is not an image.');
-    var ext = response.key.split('.').pop().toLowerCase();
-    var mime = ext === 'svg' ? 'image/svg+xml' : ext === 'ico' ? 'image/x-icon'
-      : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
-    var dataUrl = await getImageDataUrl(response.key, mime);
+    var dataUrl = await getImageDataUrl(response.key, imageMimeType(response.key), response.attachment);
     if (localImageCache.size >= IMAGE_CACHE_MAX) localImageCache.delete(localImageCache.keys().next().value);
-    localImageCache.set(cacheKey, dataUrl);
+    localImageCache.set(cacheKey, { dataUrl, expiresAt: Date.now() + LOCAL_IMAGE_CACHE_MS });
     return dataUrl;
   }).finally(function () { pendingLocalImages.delete(cacheKey); });
   pendingLocalImages.set(cacheKey, promise);
   return promise;
 }
 
-async function loadOneImage(el) {
-  var key = el.dataset.key;
+function showLoadedImage(el, dataUrl) {
+  var image = document.createElement('img');
+  image.src = dataUrl;
+  image.alt = el.dataset.alt || '';
+  image.onclick = function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    viewImage(image.src);
+  };
+  el.classList.add('loaded');
+  delete el.dataset.failed;
+  el.replaceChildren(image);
+}
+
+function imageLoadAction(el, label, detail, manual) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'image-load-action';
+  button.textContent = label;
+  button.title = detail || label;
+  button.setAttribute('aria-label', label === 'Retry' ? 'Retry image' : label);
+  button.onclick = function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    delete el.dataset.failed;
+    el.innerHTML = loadingSpinner({ label: 'Loading image' });
+    loadOneImage(el, manual);
+  };
+  el.classList.remove('loaded');
+  el.replaceChildren(button);
+}
+
+async function loadOneImage(el, manual = false) {
+  var context = imageContexts.get(el) || currentImageContext();
+  var path = el.dataset.path;
+  var requestPath = path && (manual ? path : relativeProjectImagePath(path, context.projectHash));
+  if (path && requestPath === null) {
+    imageLoadAction(el, 'Load image', 'Load image from this device', true);
+    return;
+  }
   try {
-    var dataUrl = el.dataset.path
-      ? await getLocalImageDataUrl(el.dataset.path, imageContexts.get(el) || currentImageContext(el))
-      : await getImageDataUrl(key);
-    var image = document.createElement('img');
-    image.src = dataUrl;
-    image.alt = el.dataset.alt || '';
-    image.setAttribute('onclick', 'event.preventDefault();event.stopPropagation();viewImage(this.src)');
-    el.classList.add('loaded');
-    el.replaceChildren(image);
+    var dataUrl = path ? await getLocalImageDataUrl(requestPath, context)
+      : await getImageDataUrl(el.dataset.key);
+    showLoadedImage(el, dataUrl);
   } catch(e) {
-    el.textContent = '[Image unavailable · Retry]';
-    el.title = e.message || 'Image unavailable';
     el.dataset.failed = '1';
-    el.onclick = function () {
-      delete el.dataset.failed;
-      el.onclick = null;
-      el.removeAttribute('title');
-      el.innerHTML = loadingSpinner({ label: 'Loading image' });
-      loadOneImage(el);
-    };
+    imageLoadAction(el, 'Retry', e.message || 'Image unavailable', manual);
   }
 }
 
-function loadImages(container) {
+function loadImages(container, contextOverride) {
   container.querySelectorAll('.img-placeholder[data-key], .img-placeholder[data-path]').forEach(function (el) {
     if (el.dataset.loaded) return;
     el.dataset.loaded = '1';
-    if (el.dataset.path) imageContexts.set(el, currentImageContext(el));
+    var cached;
+    if (el.dataset.path) {
+      var context = currentImageContext(contextOverride);
+      imageContexts.set(el, context);
+      var path = relativeProjectImagePath(el.dataset.path, context.projectHash);
+      if (path === null) {
+        imageLoadAction(el, 'Load image', 'Load image from this device', true);
+        return;
+      }
+      cached = cachedLocalImage(path, context);
+    } else {
+      cached = imageCache.get(imageStorageKey(el.dataset.key));
+    }
+    if (cached) { showLoadedImage(el, cached); return; }
     imageObserver.observe(el);
   });
 }

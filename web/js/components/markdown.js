@@ -8,7 +8,7 @@
 
   function imageHtml(href, title, text) {
     var attr = function (value) { return escHtml(value || '').replace(/"/g, '&quot;'); };
-    var label = ' alt="' + attr(text) + '"' + (title ? ' title="' + attr(title) + '"' : '');
+    var label = ' alt="' + (text || '') + '"' + (title ? ' title="' + title + '"' : '');
     if (/^(?:https?:\/\/|\/\/|data:image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml|x-icon)[;,])/i.test(href)) {
       return '<img class="markdown-image-external" src="' + attr(href) + '"' + label
         + ' loading="lazy" onclick="event.preventDefault();event.stopPropagation();viewImage(this.src)">';
@@ -18,18 +18,19 @@
     if (/^file:/i.test(filePath)) {
       try {
         var url = new URL(filePath);
-        if (url.hostname && url.hostname !== 'localhost') return escHtml(text || '');
+        if (url.hostname && url.hostname !== 'localhost') return text || '';
         filePath = url.pathname.replace(/^\/([a-z]:\/)/i, '$1');
-      } catch (error) { return escHtml(text || ''); }
+      } catch (error) { return text || ''; }
     } else if (/^[a-z][a-z\d+.-]*:/i.test(filePath) && !/^[a-z]:[\\/]/i.test(filePath) && !key) {
-      return escHtml(text || '');
+      return text || '';
     }
+    filePath = filePath.replace(/[?#].*$/, '');
     try { filePath = decodeURIComponent(filePath); } catch (error) {}
     if (!key && (!/\.(?:png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i.test(filePath)
-      || /[\x00-\x1f]/.test(filePath))) return escHtml(text || '');
+      || /[\x00-\x1f]/.test(filePath))) return text || '';
     return '<span class="img-placeholder markdown-image"'
       + (key ? ' data-key="' + attr(key[1]) : ' data-path="' + attr(filePath))
-      + '" data-alt="' + attr(text) + '"' + (title ? ' title="' + attr(title) + '"' : '')
+      + '" data-alt="' + (text || '') + '"' + (title ? ' title="' + title + '"' : '')
       + '>' + (window.loadingSpinner?.({ label: 'Loading image' }) || '') + '</span>';
   }
 
@@ -320,7 +321,37 @@
     return segs;
   }
 
-  // Streaming reconciler: text segments rebuild each call, but each mermaid segment is a persistent .mermaid-block reused across calls (SVG layer never torn down). No fence → plain innerHTML.
+  function updateMarkdownHtml(host, html) {
+    var selector = '.img-placeholder, img.markdown-image-external';
+    var images = new Map();
+    var identity = function (node) {
+      return node.dataset.path ? 'path:' + node.dataset.path
+        : node.dataset.key ? 'key:' + node.dataset.key : 'src:' + node.getAttribute('src');
+    };
+    host.querySelectorAll(selector).forEach(function (node) {
+      var key = identity(node);
+      if (!images.has(key)) images.set(key, []);
+      images.get(key).push(node);
+    });
+    if (!images.size) { host.innerHTML = html; return; }
+    var template = document.createElement('template');
+    template.innerHTML = html;
+    template.content.querySelectorAll(selector).forEach(function (node) {
+      var previous = images.get(identity(node))?.shift();
+      if (!previous) return;
+      if (node.hasAttribute('title')) previous.title = node.title;
+      else previous.removeAttribute('title');
+      if (node.dataset.alt != null) {
+        previous.dataset.alt = node.dataset.alt;
+        var image = previous.querySelector('img');
+        if (image) image.alt = node.dataset.alt;
+      } else if (node.tagName === 'IMG') previous.alt = node.alt;
+      node.replaceWith(previous);
+    });
+    host.replaceChildren(template.content);
+  }
+
+  // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
@@ -341,7 +372,7 @@
     }
     var hasPersistentBlocks = false;
     for (var i = 0; i < segs.length; i++) if (segs[i].type !== 'text') { hasPersistentBlocks = true; break; }
-    if (!hasPersistentBlocks) { host.innerHTML = window.renderMd(text); return; }
+    if (!hasPersistentBlocks) { updateMarkdownHtml(host, window.renderMd(text)); return; }
 
     var children = host.childNodes;
     for (var s = 0; s < segs.length; s++) {
@@ -354,7 +385,7 @@
           w.className = 'md-seg'; w.innerHTML = html; w.dataset.h = html;
           if (node) host.replaceChild(w, node); else host.appendChild(w);
         } else if (node.dataset.h !== html) { // reuse in place, rewrite only on change
-          node.innerHTML = html; node.dataset.h = html;
+          updateMarkdownHtml(node, html); node.dataset.h = html;
         }
       } else if (seg.type === 'visualization') {
         if (!node || node.nodeType !== 1 || node.dataset.visualizationPath !== seg.text) {

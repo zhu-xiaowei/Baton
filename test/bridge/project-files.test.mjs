@@ -52,6 +52,53 @@ async function request(root, message, options = {}) {
   return sent;
 }
 
+test('large image previews reuse direct uploads instead of base64 POST bodies', async () => {
+  const { root } = fixture();
+  const content = Buffer.alloc(5 * 1024 * 1024, 0x84);
+  const key = 'd'.repeat(32) + '.png';
+  fs.writeFileSync(path.join(root, 'large.png'), content);
+  let uploaded;
+  try {
+    const result = await request(root, { operation: 'read', path: 'large.png' }, {
+      postFn: async (endpoint, body) => {
+        assert.equal(endpoint, '/api/bridge/file-prepare');
+        assert.equal(body.data, undefined);
+        assert.equal(body.size, content.length);
+        return Response.json({ key, url: 'https://uploads.test/image', headers: {} });
+      },
+      fetchFn: async (_url, init) => {
+        const chunks = [];
+        for await (const chunk of init.body) chunks.push(chunk);
+        uploaded = Buffer.concat(chunks);
+        return new Response('');
+      },
+    });
+    assert.deepEqual(uploaded, content);
+    assert.equal(result.at(-1).image, true);
+    assert.equal(result.at(-1).attachment, true);
+    assert.equal(result.at(-1).key, key);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('automatic relative image reads reject traversal and symlinks outside the project before uploading', async () => {
+  const { root } = fixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-private-image-'));
+  fs.writeFileSync(path.join(outside, 'private.png'), 'private');
+  try {
+    fs.symlinkSync(path.join(outside, 'private.png'), path.join(root, 'linked.png'));
+    for (const imagePath of ['../private.png', 'linked.png']) {
+      const result = await request(root, { operation: 'read', path: imagePath }, {
+        postFn: async () => assert.fail('must not upload files outside the project'),
+      });
+      assert.equal(result.at(-1).ok, false);
+      assert.match(result.at(-1).error, /outside the project/);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('download exports original binary files over 6 MB with accelerated upload fallback', async () => {
   const { root } = fixture();
   const content = Buffer.alloc(8 * 1024 * 1024, 0x84);

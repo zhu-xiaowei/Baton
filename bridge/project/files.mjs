@@ -11,6 +11,7 @@ import { sendTextFrames } from './ws-frames.mjs';
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_INLINE_MAX_BYTES = 4 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 const INLINE_FRAME_LIMIT = Math.min(28_000, WS_FRAME_LIMIT - 3_000);
 const TEXT_WS_MAX_BYTES = 300 * 1024;
@@ -280,6 +281,13 @@ async function readProjectFile(message, context) {
 
   const image = IMAGE_EXTENSIONS.has(extension);
   if (image && stat.size > IMAGE_MAX_BYTES) throw new Error('image too large');
+  if (image && stat.size > IMAGE_INLINE_MAX_BYTES) {
+    await prepareFileDownload(message, {
+      ...context,
+      send: response => send(response.progress ? response : { ...response, ...base, image: true, attachment: true }),
+    });
+    return;
+  }
   const truncated = !image && stat.size > FILE_MAX_BYTES;
   const cap = image ? stat.size : Math.min(stat.size, FILE_MAX_BYTES);
   const handle = await fs.promises.open(absPath, 'r');
