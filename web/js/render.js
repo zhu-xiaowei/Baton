@@ -170,7 +170,7 @@ import { systemEventId } from './timeline.js';
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
           codexPlan: runtime === 'codex' && block.name === 'TodoWrite',
-          displayOrder: result?.codexBackground === 'complete'
+          displayOrder: result?.codexBackground === 'complete' && !msg._strictLifecycle
             ? Number(result._messageIndex)
             : Number(options.messageIndex),
           blockIndex,

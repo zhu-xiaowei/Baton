@@ -1757,3 +1757,37 @@ test('Codex exploration grouping spans adjacent realtime assistant turns', () =>
   assert.equal(explores[1].parentElement.classList.contains('codex-explore-row-hidden'), true);
   assert.equal(explores[2].classList.contains('codex-explore-continuation'), false);
 });
+
+test('Codex realtime order keeps a streamed background Ran at its start', () => {
+  const messages = (strict) => [
+    {
+      uuid: 'run-use',
+      type: 'assistant',
+      content: [{ type: 'tool_use', id: 'run', name: 'Bash', input: { command: 'sleep 12', codexCommandKind: 'ran' } }],
+      ...(strict ? { turnId: 'turn', _strictLifecycle: true } : {}),
+    },
+    {
+      uuid: 'wait-use',
+      type: 'assistant',
+      content: [{ type: 'tool_use', id: 'wait', name: 'WriteStdin', input: { session_id: 7, chars: '' } }],
+    },
+    {
+      uuid: 'wait-result',
+      type: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'wait', content: 'Process running with session ID 7', codexWait: 'waiting', codexProcessId: '7' }],
+    },
+    {
+      uuid: 'run-result',
+      type: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'run', content: 'done', codexBackground: 'complete', codexCommandKind: 'ran', codexProcessId: '7' }],
+    },
+  ];
+  const order = (strict) => {
+    const container = document.createElement('div');
+    container.innerHTML = window.renderMessages(messages(strict), 'codex', { realtimeOrder: true });
+    return Array.from(container.querySelectorAll('[data-tool-id]')).map((node) => node.dataset.toolId);
+  };
+
+  assert.deepEqual(order(false), ['wait', 'run']);
+  assert.deepEqual(order(true), ['run', 'wait']);
+});

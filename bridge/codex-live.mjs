@@ -119,8 +119,10 @@ function commandResult(item) {
 const CODEX_TOOL_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
+  'imageView',
   'mcpToolCall',
   'planUpdate',
+  'sleep',
   'webSearch',
 ]);
 
@@ -487,6 +489,13 @@ export function codexPreviewBlocks(item) {
         ...(item.action ? { action: item.action.type || 'search' } : {}),
       },
     }];
+  }
+  // Same name and input as the rollout rows, so live and history share one card.
+  if (item.type === 'imageView') {
+    return [{ kind: 'tool_use', name: 'ViewImage', input: { path: item.path || '' } }];
+  }
+  if (item.type === 'sleep') {
+    return [{ kind: 'tool_use', name: 'sleep', input: { duration_ms: item.durationMs } }];
   }
   return [];
 }

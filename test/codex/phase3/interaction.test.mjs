@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
+import { extractCodexMessages } from '../../../bridge/codex-extract.mjs';
 import {
   codexCompletedLiveMessages,
   codexItemNativeId,
@@ -246,6 +250,34 @@ test('Codex fileChange previews preserve add, delete, and update semantics', () 
     old_string: 'before',
     new_string: 'after',
   }]);
+});
+
+test('Codex image views and sleeps render live with their rollout identity', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-live-tools-'));
+  const rollout = path.join(directory, 'rollout.jsonl');
+  const line = (payload) => JSON.stringify({
+    timestamp: '2026-10-14T04:11:32.413Z',
+    type: 'response_item',
+    payload,
+  });
+  fs.writeFileSync(rollout, [
+    line({ type: 'function_call', name: 'view_image', arguments: '{"path":"/tmp/a.png"}', call_id: 'call_image' }),
+    line({ type: 'function_call_output', call_id: 'call_image', output: [] }),
+    line({ type: 'function_call', name: 'sleep', namespace: 'clock', arguments: '{"duration_ms":2000}', call_id: 'call_sleep' }),
+    line({ type: 'function_call_output', call_id: 'call_sleep', output: 'Sleep completed.' }),
+  ].join('\n') + '\n');
+  const history = extractCodexMessages(rollout, 'thread-1').messages
+    .filter((message) => message.type === 'assistant');
+  fs.rmSync(directory, { recursive: true, force: true });
+
+  const live = [
+    { type: 'imageView', id: 'call_image', path: '/tmp/a.png' },
+    { type: 'sleep', id: 'call_sleep', durationMs: 2000 },
+  ].map((item) => codexCompletedLiveMessages(item, 0, '', { sessionId: 'thread-1' })[0].message);
+
+  const identity = (message) => ({ nativeId: message.nativeId, content: message.content });
+  assert.deepEqual(live.map(identity), history.map(identity));
+  assert.deepEqual(live.map((message) => message.content[0].name), ['ViewImage', 'sleep']);
 });
 
 test('Codex live messages hide internal goal context', () => {
