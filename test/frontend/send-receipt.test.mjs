@@ -52,9 +52,11 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
   h.window.doSend('retry', 'retry', []);
   await h.tick(30);
 
-  assert.equal(retriedSent.length, 2);
-  assert.equal(retriedSent[1].turnId, retriedSent[0].turnId);
-  assert.deepEqual(retriedSent[1], retriedSent[0]);
+  // A missing receipt also probes the socket.
+  assert.ok(retriedSent.some((frame) => frame.action === 'heartbeat'));
+  const retriedSends = retriedSent.filter((frame) => frame.action === 'send_message');
+  assert.equal(retriedSends.length, 2);
+  assert.deepEqual(retriedSends[1], retriedSends[0]);
   await failPendingTurns();
 
   resetSession(h, { sessionId: '__new__', mode: 'new' });

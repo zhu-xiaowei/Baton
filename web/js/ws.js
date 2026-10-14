@@ -77,7 +77,11 @@ var MESSAGE_PAGE_SIZE = 200;
 var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
 // iOS background sockets can stay OPEN with no traffic; no reply in time → reconnect.
 var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
+// A send on a socket silent this long probes it, so a dead socket is rebuilt within the send window.
+var WS_SEND_STALE_MS = 15000;
+var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
 var _wsProbeTimer = null;
+var _wsLastInboundAt = 0;
 var _bottomFollowFrame = null;
 var _pendingBottomFollow = null;
 
@@ -381,12 +385,12 @@ function connectWs(_, projectHash) {
     });
     _realtimeReceiver = receiver;
     setWsStatus('connected');
+    _wsLastInboundAt = Date.now();
     recoverSubscribedSession();
-    if (_wsSendQueue.length) {
-      var queued = _wsSendQueue;
-      _wsSendQueue = [];
-      for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
-    }
+    var queued = _wsSendQueue;
+    _wsSendQueue = [];
+    for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
+    resendUnreceiptedSends(queued);
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
     _realtimeReceiver.start();
@@ -394,6 +398,7 @@ function connectWs(_, projectHash) {
 
   state.ws.onmessage = function (e) {
     clearWsProbe();
+    _wsLastInboundAt = Date.now();
     var message = JSON.parse(e.data);
     if (_realtimeReceiver?.handle(message)) return;
     handleWsMessage(message);
@@ -445,7 +450,7 @@ function clearWsProbe() {
 }
 
 // Any inbound frame proves the socket is alive; the server answers app heartbeats.
-function probeWsLiveness() {
+function probeWsLiveness(timeoutMs) {
   clearWsProbe();
   var socket = state.ws;
   _wsProbeTimer = setTimeout(function () {
@@ -456,8 +461,28 @@ function probeWsLiveness() {
     try { socket.close(); } catch (error) {}
     state.ws = null;
     connectWs();
-  }, WS_PROBE_TIMEOUT_MS);
+  }, timeoutMs || WS_PROBE_TIMEOUT_MS);
   wsSend({ action: 'heartbeat' });
+}
+
+// A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
+function probeSocketForSend() {
+  if (_wsProbeTimer || state.ws?.readyState !== WebSocket.OPEN) return;
+  probeWsLiveness(WS_SEND_PROBE_TIMEOUT_MS);
+}
+
+function probeSocketIfStale() {
+  if (_wsLastInboundAt && Date.now() - _wsLastInboundAt > WS_SEND_STALE_MS) probeSocketForSend();
+}
+
+// Sends are idempotent by turnId; a rebuilt socket carries every send the Server has not receipted.
+function resendUnreceiptedSends(alreadySent) {
+  for (var pending of state.pendingSentMessages) {
+    if (pending.serverReceived || pending.delivered || pending.queued
+      || pending.awaitingTakeover || pending.sessionId !== state.wsSessionId
+      || alreadySent.includes(pending.sendPayload)) continue;
+    wsSend(pending.sendPayload);
+  }
 }
 
 function handleWsMessage(msg) {
@@ -1467,8 +1492,10 @@ function consumeExecutionInputs(envelope) {
     var echo = messageEchoed(pending);
     if (echo) promoteEchoedBubble(pending, echo);
     else {
-      document.getElementById(id)?.remove();
-      removePending(pending);
+      // Consumed before its echo (the echo is usually the next frame): keep the bubble so the echo promotes it in place.
+      acceptPendingReceipt(pending);
+      markPendingTime(pending);
+      pending.consumed = true;
     }
   }
 }
@@ -1684,7 +1711,7 @@ function outstandingTurnIds() {
   for (var executionId of _activeExecutionIds) add(executionId);
   for (var queuedTurnId of _queuedTurnIds) add(queuedTurnId);
   for (var pendingMessage of state.pendingSentMessages) {
-    if (!pendingMessage.failed) add(pendingMessage.id);
+    if (!pendingMessage.failed && !pendingMessage.consumed) add(pendingMessage.id);
   }
   return turnIds;
 }
@@ -2115,14 +2142,14 @@ function sendMessage() {
   // at line start triggers Ink's shell-out mode in CC, causing bash syntax errors.
   var readyImages = images.filter(function (img) { return img.uploaded && img.key; });
   flushComposerDraft();
-  if (readyImages.length) {
-    var refs = readyImages.map(function (img) {
+  var fullText = readyImages.length
+    ? text + ' ' + readyImages.map(function (img) {
       return img.kind === 'file' ? attachmentRef(img) : '![](baton-bridge:' + img.key + ')';
-    }).join(' ');
-    doSend(text + ' ' + refs, text, readyImages);
-  } else {
-    doSend(text, text, []);
-  }
+    }).join(' ')
+    : text;
+  var rolledBack = findRolledBackSend(fullText);
+  if (rolledBack) resendRolledBackSend(rolledBack);
+  else doSend(fullText, text, readyImages);
 
   if (typeof stopDictation === 'function') stopDictation();  // sending ends dictation too
   if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
@@ -2432,6 +2459,7 @@ function doSend(fullText, displayText, images) {
   }
   updateSendBtn();
   wsSendReliable(sendPayload);
+  probeSocketIfStale();
   schedulePendingTransportRetry(pendingSend);
   scheduleSendTimeout(msgId);
 }
@@ -2466,14 +2494,17 @@ function showPendingMessage(pending) {
 }
 
 function acceptPendingReceipt(pending) {
-  if (!pending || pending.serverReceived || pending.failed) return;
+  if (!pending || pending.serverReceived) return;
+  // A late receipt/echo proves a rolled-back send was delivered after all.
+  if (pending.rolledBack) reviveRolledBackSend(pending);
+  else if (pending.failed) return;
   pending.serverReceived = true;
   (pending.images || []).forEach(function (sent) {
     if (sent.kind === 'file' && sent.key) window.clearAttachmentPreviewCache?.(sent.key);
   });
-  if (!showPendingMessage(pending)) return;
+  // Empty the composer even when the bubble node is gone: the message itself was delivered.
   var input = document.getElementById('msg-input');
-  if (input.value === pending.inputText) {
+  if (input.value.trim() === String(pending.inputText || '').trim()) {
     input.value = '';
     input.style.height = 'auto';
     clearComposerDraft();
@@ -2482,6 +2513,10 @@ function acceptPendingReceipt(pending) {
     return !(pending.images || []).some(function (sent) { return sent.key === image.key; });
   });
   if (typeof renderStagedImages === 'function') renderStagedImages();
+  if (!showPendingMessage(pending)) {
+    updateSendBtn();
+    return;
+  }
   if (!pending.turnEnded) state.wsRunning = true;
   updateSendBtn();
   if (state.stickBottom) followBottomAfterLayout();
@@ -2503,6 +2538,7 @@ function schedulePendingTransportRetry(pending) {
     if (pending.delivered || pending.queued || pending.awaitingTakeover
       || pending.transportRetries >= TRANSPORT_RETRY_LIMIT) return;
     pending.transportRetries++;
+    if (!pending.serverReceived) probeSocketForSend();
     if (!_wsSendQueue.includes(pending.sendPayload)) wsSendReliable(pending.sendPayload);
     schedulePendingTransportRetry(pending);
   }, SERVER_RECEIPT_TIMEOUT_MS);
@@ -2791,8 +2827,55 @@ async function reconcilePendingSend(msgId) {
   try { await checkPendingEcho(pending); } catch (e) {}
   pending = findPending(msgId);
   if (!pending || pending.delivered) return;               // ack/dedup fired during the fetch
+  var echoed = messageEchoed(pending);
+  // Never receipted and never shown: the text stays in the composer only.
+  if (!echoed && !pending.serverReceived && document.getElementById(pending.id)?.hidden) {
+    rollbackUnreceiptedSend(pending);
+    return;
+  }
   // Message actually landed (ack/echo just lost) → success; else flag for retry.
-  resolvePending(pending, messageEchoed(pending), null);
+  resolvePending(pending, echoed, null);
+}
+
+// The hidden bubble and pending record stay so a late receipt/echo can still claim the turn.
+function rollbackUnreceiptedSend(pending) {
+  clearTimeout(pending.transportTimer);
+  pending.rolledBack = true;
+  pending.delivered = true;
+  pending.failed = true;
+  _queuedTurnIds.delete(pending.id);
+  rememberLatestSend(pending.id, true);
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
+  updateSendBtn();
+}
+
+function reviveRolledBackSend(pending) {
+  pending.rolledBack = false;
+  pending.delivered = false;
+  pending.failed = false;
+  _queuedTurnIds.add(pending.id);
+  rememberLatestSend(pending.id, false, pending.seq);
+  scheduleSendTimeout(pending.id);
+}
+
+function findRolledBackSend(fullText) {
+  return state.pendingSentMessages.find(function (pending) {
+    return pending.rolledBack && pending.sessionId === state.wsSessionId
+      && pending.fullText === fullText && !!document.getElementById(pending.id);
+  }) || null;
+}
+
+// Sending the same text again reuses its turnId, so a late delivery of the first frame cannot duplicate it.
+function resendRolledBackSend(pending) {
+  var element = document.getElementById(pending.id);
+  var container = document.querySelector('#content .messages');
+  if (element && container) container.appendChild(element);
+  pending.rolledBack = false;
+  pending.sentAt = Date.now();
+  pending.inputText = document.getElementById('msg-input').value;
+  resendPending(pending);
 }
 
 // Manual retry: re-check the server first, then reuse the same durable user
@@ -2806,6 +2889,10 @@ async function retryPendingSend(msgId) {
     promoteEchoedBubble(pending, echoed);
     return;
   }
+  resendPending(pending);
+}
+
+function resendPending(pending) {
   pending.delivered = false;
   pending.failed = false;
   pending.queued = false;
@@ -2818,6 +2905,7 @@ async function retryPendingSend(msgId) {
   applyResolvedLiveActivity('running');
   updateSendBtn();
   wsSendReliable(pending.sendPayload);
+  probeSocketIfStale();
   schedulePendingTransportRetry(pending);
   scheduleSendTimeout(pending.id);
 }
