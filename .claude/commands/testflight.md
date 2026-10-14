@@ -49,7 +49,8 @@ build-number bump before starting Xcode Cloud, so running it on protected `main`
 fails before packaging or upload. Do not bypass branch protection.
 
 The script waits for a valid upload and adds it to the internal **Test** group.
-Wait for that verification before opening the PR. The dry-run and the
+Wait until the upload is `VALID` and the group is `IN_BETA_TESTING` before
+opening the PR. The dry-run and the
 `Prepared <version> (<build>)` message are not completion of `/testflight`.
 
 **After successful publication:** Automatically create or reuse a PR from the
@@ -60,8 +61,11 @@ Wait for all required CI checks and repository review requirements, resolve
 relevant failures within the release scope, and merge using the repository's
 supported method without bypassing branch protection. This repository supports
 squash merge and has GitHub auto-merge disabled, so merge directly when ready.
-Confirm the actual merge, then report the build number, upload status, internal
-**Test** group state, cloud run ID (or local IPA path), PR URL, and merge result.
+Confirm the actual merge. After branch cleanup, report the build number, upload
+status, internal **Test** group state, cloud run ID (or local IPA path), PR URL,
+and merge result.
+Continue monitoring through upload, required CI, merge, and branch cleanup;
+do not stop after starting the upload, creating the PR, or enabling auto-merge.
 Do not merge a PR whose release failed.
 
 After confirming the PR is merged, delete `release/testflight` remotely and

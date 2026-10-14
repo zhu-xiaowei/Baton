@@ -44,16 +44,18 @@ builds to the internal **Test** group; confirm that state before saying testers
 can install the build. If group assignment fails after upload, report the
 existing build instead of starting another release.
 
-After a successful release, confirm the upload and internal **Test** group
-status, then automatically create or reuse a PR from the existing
+Wait until the TestFlight upload finishes, App Store Connect marks the build
+`VALID`, and the internal **Test** group is `IN_BETA_TESTING`. Only then
+automatically create or reuse a PR from the existing
 `release/testflight` branch to `main`, including the build-number bump and
 release changes. Do not create a temporary PR branch or ask for separate approval.
 Wait for its required CI checks and repository review requirements, resolve
 relevant failures within the release scope, and merge automatically when
 allowed. Use the repository's supported merge method and never bypass branch
-protection. Confirm the merge result; do not treat enabling auto-merge as a
-completed merge. Report the build number, upload and group status, PR URL,
-and merge result. Do not merge a PR whose release failed.
+protection. Continue monitoring until the PR is actually merged and branch
+cleanup below is complete; starting an upload, opening a PR, or enabling
+auto-merge is not completion. Report the build number, upload and group status,
+PR URL, and merge result. Do not merge a PR whose release failed.
 
 After confirming the PR is merged, delete `release/testflight` remotely and
 locally. If GitHub already deleted the remote branch, verify that it is gone.
