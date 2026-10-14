@@ -9,23 +9,21 @@ Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex
 Baton provides non-intrusive, real-time streaming and rendering for Claude Code and Codex sessions across your devices. Your session data stays in your own AWS account.
 
 
-### Rich rendering
-
-<p align="center">
-  <img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="24%"><br>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/showcase/rendering-labels-dark.svg">
-    <img src="docs/assets/showcase/rendering-labels.svg" alt="Permission approvals · Mermaid diagrams · Inline HTML preview · File preview" width="100%">
-  </picture>
-</p>
-
 ### Developer tools
 
 <p align="center">
-  <img src="docs/assets/showcase/project-files.avif" alt="Project files" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/git.avif" alt="Git changes" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="24%"><img src="docs/assets/showcase/spacer.svg" alt="" width="1%" height="1"><img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="24%"><br>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/showcase/tools-labels-dark.svg">
-    <img src="docs/assets/showcase/tools-labels.svg" alt="Project files · Git changes · Mobile terminal · Remote preview" width="100%">
+    <source media="(max-width: 600px)" srcset="docs/assets/showcase/tools-mobile.svg">
+    <img src="docs/assets/showcase/tools-desktop.svg" alt="Project files · Git changes · Mobile terminal · Remote preview" width="100%">
+  </picture>
+</p>
+
+### Rich rendering
+
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile.svg">
+    <img src="docs/assets/showcase/rendering-desktop.svg" alt="Permission approvals · Mermaid diagrams · Inline HTML preview · File preview" width="100%">
   </picture>
 </p>
 
