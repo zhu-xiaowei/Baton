@@ -178,7 +178,9 @@ export async function extractForApp(msg) {
   };
   // jsonl uses camelCase toolUseResult; headless stream uses snake_case — accept either.
   const tur = msg.toolUseResult ?? msg.tool_use_result;
-  if (tur) extracted.toolUseResult = tur;
+  if (tur) extracted.toolUseResult = tur.file?.base64
+    ? { ...tur, file: { ...tur.file, base64: '' } }
+    : tur;
   if (msg.message?.stop_reason) extracted.stopReason = msg.message.stop_reason;
   return extracted;
 }

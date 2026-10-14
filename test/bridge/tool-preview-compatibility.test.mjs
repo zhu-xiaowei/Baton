@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { configureToolPreviews, prepareToolMessages } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
-import { uploadMessages } from '../../bridge/extract.mjs';
+import { extractForApp, uploadMessages } from '../../bridge/extract.mjs';
 import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
 import { initHttp } from '../../bridge/http.mjs';
 
@@ -12,6 +12,12 @@ test('existing clients retain complete data unless preview storage is explicitly
     input: { file_path: '/file', old_string: 'old'.repeat(1000), new_string: 'new'.repeat(1000) },
   }] };
   assert.equal(prepareToolMessages([source])[0], source);
+  const metadata = { stdout: 'complete output', file: { base64: 'unused image', name: 'image.png' } };
+  const extracted = await extractForApp({ type: 'user', toolUseResult: metadata });
+  assert.deepEqual(extracted.toolUseResult, {
+    stdout: 'complete output', file: { base64: '', name: 'image.png' },
+  });
+  assert.equal(metadata.file.base64, 'unused image');
   const sent = [];
   const stream = new LiveTurnStream({ sessionId: 's', turnId: 't', send: event => sent.push(event) });
   stream.sendBlockStart({ blockId: 1, kind: 'tool_use', name: 'Edit' });
