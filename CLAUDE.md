@@ -203,10 +203,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   `turn/start.input` carries the matching structured Skill item. The app preserves Bridge order
   and caches by device + runtime + project. Details: `docs/api.md` + `docs/codex.md`.
 - Config: `~/.baton-bridge/config.json`, auto-created from CLI args
-  - `toolPreviews: true` opts into compact tool storage and live previews. It defaults
-    to off so a Bridge auto-update does not remove tool content needed by installed
-    older native clients. Enable only after the clients using that Bridge support
-    `tool_details`. Previously cropped DDB records still need the original JSONL.
+  - Tool previews are always enabled; historical `toolPreviews` settings have no
+    effect. Clients use `tool_details` to load full content from the original JSONL.
 - Always-on: launchd (macOS), systemd user service + `loginctl enable-linger` (Linux), Task Scheduler (Windows)
 - Deployed bridge runs from `~/.baton-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.baton-bridge/` + restart service.
 - Auto-update: startup and WebSocket reconnect check `/api/version` once. Existing four-minute heartbeat replies include `bridgeVersion`; only a different non-dev version triggers another check, so normal heartbeats add no REST requests and there is no dedicated update timer. On change, Bridge resolves the S3 package through `/api/install`, stages and validates it, then restarts even with active terminal sessions. Existing terminal/agent processes may be interrupted; they do not defer updates. Checks never overlap and network requests have timeouts. `install.sh` uploads the Bridge package before exposing its version through CloudFormation; both API and WS Lambdas receive `AppVersion`. Bridge WS connections report `bridgeVersion` for fleet verification.
@@ -232,7 +230,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Lambda broadcasts ordinary watcher messages and writes their final fields to DDB. Runtime-owned
   `messages{noCache:true}` are broadcast only; the later JSONL watcher copy owns persistence.
 - Bridge extracts: uuid, parentUuid, type, content, timestamp, toolUseResult
-  (drops model/usage/cwd/version). With `toolPreviews` enabled, tool IN/OUT keeps
+  (drops model/usage/cwd/version). Tool IN/OUT always keeps
   the first 500 Unicode characters per text field, Edit keeps paths and status,
   thinking signatures are omitted, and `toolUseResult` keeps only numeric Agent
   duration/tool-count statistics. Failed Edit results retain their error preview.
@@ -505,7 +503,7 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 ## Known Issues / TODO
 
 - **Real-time Edit diff hydration lifecycle**: fixed the intermittent mobile state where an expanded `Edited` card showed only its border until session reload. Diff data now survives DOM replacement under a stable content key, initialization is tracked per element, visible tool nodes hydrate after every timeline mutation, and the registry is cleared at session boundaries. Keep regression coverage for replacement during lazy import, streaming adoption, fallback rendering, and session cleanup.
-- **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (exceeding it drops the connection with code 1009). `realtime-delivery.mjs` checks the envelope size and sends a transport-truncated copy over WS (`truncateToBytes()` in `extract.mjs`, byte-aware, with message-level `truncated: true` and `noCache: true`). HTTP persists the prepared authoritative message: full tool content in compatibility mode, compact tool previews when `toolPreviews` is enabled. The server skips DDB writes for `noCache`, so the transport copy cannot overwrite the HTTP version. HTTP also caps each message to `DDB_ITEM_LIMIT` (360KB). These transport limits and `stream_end.recoveryRequired` remain separate from intentional tool previews.
+- **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (exceeding it drops the connection with code 1009). `realtime-delivery.mjs` checks the envelope size and sends a transport-truncated copy over WS (`truncateToBytes()` in `extract.mjs`, byte-aware, with message-level `truncated: true` and `noCache: true`). HTTP persists the prepared authoritative message with compact tool previews. The server skips DDB writes for `noCache`, so the transport copy cannot overwrite the HTTP version. HTTP also caps each message to `DDB_ITEM_LIMIT` (360KB). These transport limits and `stream_end.recoveryRequired` remain separate from intentional tool previews.
 - **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → completed). terminal-launched CC (with `--resume`) unaffected.
 - **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
 - **Concurrent regular-session control**: Claude has no daemon-style stop/lock for a normal terminal or VS Code session. Do not start a Web headless turn while the same regular session is actively generating elsewhere; simultaneous writers can fork the JSONL parent chain. Daemon agents are safe because Web takeover stops the roster worker first.

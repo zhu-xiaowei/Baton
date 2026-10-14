@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactToolFields, configureToolPreviews, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
+import { compactToolFields, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
 import { prepareWsPayload } from '../../bridge/ws.mjs';
 import { uploadMessages } from '../../bridge/extract.mjs';
 import { initHttp } from '../../bridge/http.mjs';
 import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
-
-configureToolPreviews(true);
 
 function message() {
   return {

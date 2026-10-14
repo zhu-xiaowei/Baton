@@ -1,12 +1,5 @@
 export const TOOL_PREVIEW_CHARACTERS = 500;
-let previewsEnabled = false;
-let prepared = new WeakSet();
-
-export function configureToolPreviews(enabled) {
-  if (previewsEnabled !== (enabled === true)) prepared = new WeakSet();
-  previewsEnabled = enabled === true;
-}
-export function toolPreviewsEnabled() { return previewsEnabled; }
+const prepared = new WeakSet();
 
 const IDENTITY_FIELDS = new Set(['id', 'tool_use_id', 'session_id', 'file_path', 'path']);
 
@@ -100,17 +93,13 @@ export function toolPreview(message) {
   if (!message || typeof message !== 'object') return message;
   if (prepared.has(message)) return message;
   let changed = false;
-  const editMetadata = previewsEnabled && message.toolUseResult
+  const editMetadata = message.toolUseResult
     && (Object.hasOwn(message.toolUseResult, 'oldString') || Object.hasOwn(message.toolUseResult, 'newString'));
-  const metadata = previewsEnabled ? toolResultStats(message.toolUseResult) : message.toolUseResult;
-  const metadataChanged = previewsEnabled && Object.hasOwn(message, 'toolUseResult') && metadata !== message.toolUseResult;
+  const metadata = toolResultStats(message.toolUseResult);
+  const metadataChanged = Object.hasOwn(message, 'toolUseResult') && metadata !== message.toolUseResult;
   const content = Array.isArray(message.content) ? message.content.map((original) => {
     if (!original || typeof original !== 'object') return original;
     let block = compactToolFields(original);
-    if (!previewsEnabled) {
-      changed ||= block !== original;
-      return block;
-    }
     if (block.type === 'thinking' && Object.hasOwn(block, 'signature')) {
       block = { ...block };
       delete block.signature;

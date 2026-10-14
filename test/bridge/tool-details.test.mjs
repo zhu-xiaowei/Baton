@@ -6,11 +6,9 @@ import test from 'node:test';
 import { createToolDetailsReader, readToolIndex, readToolDetails, readToolDetailsAsync, handleToolDetails } from '../../bridge/tool-details.mjs';
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
 import { WS_FRAME_LIMIT } from '../../bridge/config.mjs';
-import { configureToolPreviews, toolPreview } from '../../bridge/tool-preview.mjs';
+import { toolPreview } from '../../bridge/tool-preview.mjs';
 import { findClaudeSubagentFile } from '../../bridge/claude-subagent.mjs';
 import { parseStorageSessionId } from '../../bridge/session-identity.mjs';
-
-configureToolPreviews(true);
 
 test('Claude details preserve full input/output and use existing bounded text frames', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-details-'));

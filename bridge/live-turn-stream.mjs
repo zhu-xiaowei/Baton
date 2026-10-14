@@ -1,4 +1,4 @@
-import { textPreview, toolPreview, toolPreviews, toolPreviewsEnabled, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
+import { textPreview, toolPreview, toolPreviews, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
 
 export const STREAM_EVENT_ACTIONS = new Set([
   'stream_turn_start',
@@ -157,9 +157,6 @@ export class LiveTurnStream {
   }
 
   sendToolInput(frame) {
-    if (!toolPreviewsEnabled()) return this.sendCurrentBlockEvent('stream_tool_input', frame, {
-      chunk: frame?.chunk || '',
-    });
     const preview = this.activeToolName === 'Edit'
       ? { text: '', truncated: true }
       : textPreview(frame?.chunk || '', TOOL_PREVIEW_CHARACTERS - this.inputPreviewLength);

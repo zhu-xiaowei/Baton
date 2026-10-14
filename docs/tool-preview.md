@@ -1,17 +1,12 @@
 # Tool previews and on-demand details
 
-Preview storage is opt-in: set `"toolPreviews": true` in
-`~/.baton-bridge/config.json` and restart the Bridge only after its clients have
-upgraded to a build supporting `tool_details`. The default preserves full tool
-data for existing native clients. Tauri bundles `dist`, so updating the server
-alone does not update an installed app's renderer. This flag cannot restore
-already cropped historical data.
-
-When enabled, newly synchronized tool data keeps the first 500 Unicode characters of each
+Newly synchronized tool data always keeps the first 500 Unicode characters of each
 large text field in IN/OUT. Object structure, tool IDs, paths and status metadata
 are preserved. Truncated `tool_use` or `tool_result` blocks carry
 `truncated: true` inside `content`; `thinking.signature` is omitted.
-The original JSONL is never changed.
+The original JSONL is never changed. There is no opt-in or compatibility switch;
+any historical `toolPreviews` configuration value is ignored. Clients must support
+`tool_details` to load complete content.
 
 `toolUseResult` is omitted unless it contains the numeric Agent statistics
 `totalDurationMs` or `totalToolUseCount`. Only those two fields are retained.
@@ -33,7 +28,7 @@ Its live input deltas carry no code, while preserving event sequence.
 
 Messages are prepared once and reused for HTTP persistence, watcher delivery and
 live authoritative messages. A module-local WeakSet recognizes already prepared
-message objects; changing the preview setting clears it. Streaming input keeps its first 500 characters;
+message objects. Streaming input keeps its first 500 characters;
 later events retain their sequence numbers with empty text and
 `previewTruncated: true`. At block stop, a `replaceInput` event supplies valid JSON
 containing the structured preview (including Edit paths), replacing the partial
