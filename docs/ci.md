@@ -34,6 +34,8 @@ After a merge, the same five CI jobs run on `main`. Each native job builds its P
 configuration and then warms the production configuration without production
 signing credentials. New PRs and Package runs can restore matching caches from
 `main`; a PR cache alone is not shared with other PRs.
+New PR commits cancel superseded PR checks, while a running `main` warm-up is
+allowed to finish even if another PR merges.
 
 Consequently, the first run after a toolchain, runner image, or dependency change
 can still be slow. `main` cache warming takes longer than the PR checks because
