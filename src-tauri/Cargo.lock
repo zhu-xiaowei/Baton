@@ -4146,6 +4146,11 @@ dependencies = [
 name = "tauri-plugin-preview-webview"
 version = "0.1.0"
 dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "serde",
  "tauri",
  "tauri-plugin",
 ]

@@ -9,3 +9,10 @@ tauri-plugin = { version = "2", features = ["build"] }
 
 [dependencies]
 tauri = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+serde = { version = "1", features = ["derive"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSEvent", "NSResponder", "NSWindow", "NSColor"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSURLRequest", "NSError", "NSValue", "NSKeyValueCoding", "NSKeyValueObserving", "NSProcessInfo", "NSThread"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKNavigation", "WKNavigationDelegate", "WKUIDelegate", "WKNavigationAction", "WKWindowFeatures", "WKFrameInfo"] }

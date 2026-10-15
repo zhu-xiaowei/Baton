@@ -1,7 +1,8 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 
 export function supportsNativePreview() {
-  return !!window.__BATON_NATIVE_MOBILE__ && !/Android/i.test(navigator.userAgent);
+  return !!window.__TAURI_INTERNALS__ && !/Android/i.test(navigator.userAgent)
+    && (!!window.__BATON_NATIVE_MOBILE__ || /^Mac/.test(navigator.platform || ''));
 }
 
 export function createNativePreview({ root, area, onState, onError }) {

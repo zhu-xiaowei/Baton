@@ -1,12 +1,13 @@
 # Internal browser
 
-iOS previews use a native `WKWebView` in the existing content rectangle.
+iOS and macOS previews use a native `WKWebView` in the existing content rectangle.
 The HTML toolbar remains in the host WebView; a small Tauri plugin receives
 navigation and layout commands and sends native history/loading state back.
 The preview uses the default persistent website store and a dark initial
 canvas. Closing hides the retained view; destroying the page removes it.
-The host continues to own the preview tunnel. Android, desktop, and ordinary
-browser sessions keep the existing iframe implementation.
+The host continues to own the preview tunnel. The macOS implementation shares
+the same commands and state events, with instances owned by their host window.
+Android, Windows, Linux, and ordinary browser sessions keep the iframe implementation.
 
 `openBrowserPage()` renders a full-page browser surface with one toolbar:
 back and forward on the left, an editable address in the middle, and external

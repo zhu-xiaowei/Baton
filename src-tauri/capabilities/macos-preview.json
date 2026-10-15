@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "macos-preview",
+  "description": "Native preview content controlled by the host macOS webview",
+  "platforms": ["macOS"],
+  "windows": ["main", "peek-*"],
+  "permissions": ["preview-webview:default"]
+}
