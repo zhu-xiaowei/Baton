@@ -96,7 +96,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ### More
 
-- **File, image, and voice input** — attach files, send compressed images, dictate messages on iOS, and keep unsent drafts per session
+- **File, image, and voice input** — attach files, send compressed images, and dictate messages on iOS
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
 
