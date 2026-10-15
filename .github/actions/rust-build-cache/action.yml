@@ -13,9 +13,6 @@ inputs:
   sdk:
     description: SDK version used by this build.
     required: true
-  toolchain:
-    description: Pin the compiler across CI and packaging runners.
-    default: 1.98.1
 runs:
   using: composite
   steps:
@@ -24,8 +21,8 @@ runs:
       shell: bash
       env:
         BUILD_FLAVOR: ${{ inputs.flavor }}
-        RUST_VERSION: ${{ inputs.toolchain }}
       run: |
+        rust_version="$(node -e 'const fs = require("node:fs"); const text = fs.readFileSync("rust-toolchain.toml", "utf8"); const match = text.match(/^\s*channel\s*=\s*"(\d+\.\d+\.\d+)"/m); if (!match) throw new Error("Pin a Rust version in rust-toolchain.toml"); process.stdout.write(match[1]);')"
         case "$BUILD_FLAVOR" in
           pr)
             target_dir=target-ci
@@ -42,16 +39,16 @@ runs:
           *) echo "Unsupported build flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
         esac
         {
-          echo "RUSTUP_TOOLCHAIN=$RUST_VERSION"
+          echo "RUSTUP_TOOLCHAIN=$rust_version"
           echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/src-tauri/$target_dir"
           echo "CARGO_PROFILE_RELEASE_LTO=$lto"
           echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$codegen_units"
           echo "CARGO_PROFILE_RELEASE_OPT_LEVEL=$opt_level"
+          echo "CARGO_INCREMENTAL=0"
           # Keep the restore key identical before each profile's offline probe.
           echo "CARGO_NET_OFFLINE=false"
         } >> "$GITHUB_ENV"
         echo "target-dir=$target_dir" >> "$GITHUB_OUTPUT"
-        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
     - name: Install pinned Rust toolchain
       shell: bash
       env:
@@ -64,15 +61,48 @@ runs:
         for target in $RUST_TARGETS; do
           rustup target add --toolchain "$RUSTUP_TOOLCHAIN" "$target"
         done
+    - name: Fingerprint the selected compiler and native SDK
+      id: fingerprint
+      shell: bash
+      env:
+        BUILD_PLATFORM: ${{ inputs.platform }}
+        BUILD_SDK: ${{ inputs.sdk }}
+      run: |
+        fingerprint="$RUNNER_TEMP/baton-rust-toolchain.txt"
+        {
+          rustc -vV
+          cargo -vV
+          printf '%s\n' "$BUILD_PLATFORM" "$BUILD_SDK"
+          case "$BUILD_PLATFORM" in
+            android)
+              cat "$NDK_HOME/source.properties"
+              "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+              ;;
+            ios|macos)
+              xcodebuild -version
+              sdk=macosx
+              [[ "$BUILD_PLATFORM" != ios ]] || sdk=iphoneos
+              xcrun --sdk "$sdk" --show-sdk-build-version
+              xcrun clang --version
+              ;;
+            windows)
+              powershell.exe -NoProfile -Command '$ErrorActionPreference = "Stop"; $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"; $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if (!$vs) { throw "MSVC installation missing" }; $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim(); "MSVC=$tools"; (Get-Item "$vs\VC\Tools\MSVC\$tools\bin\Hostx64\x64\cl.exe").VersionInfo.FileVersion; Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" -Directory | Where-Object Name -Match "^\d+\.\d+\.\d+\.\d+$" | Sort-Object { [version]$_.Name } | Select-Object -Last 1 -ExpandProperty Name'
+              ;;
+            *) echo "Unknown native platform: $BUILD_PLATFORM" >&2; exit 1 ;;
+          esac
+          node -e 'for (const key of Object.keys(process.env).sort()) if (/^(CARGO|RUST|CC|CFLAGS|CXX|CMAKE)/.test(key)) console.log(`${key}=${process.env[key]}`);'
+        } > "$fingerprint"
+        hash="$(node -e 'const fs = require("node:fs"), crypto = require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1], "utf8").replace(/\r\n/g, "\n")).digest("hex"));' "$fingerprint")"
+        echo "key=$hash" >> "$GITHUB_OUTPUT"
     - uses: Swatinem/rust-cache@v2
       with:
-        # Image changes can also change the native compiler, linker and SDK.
-        shared-key: ${{ inputs.platform }}-${{ inputs.flavor }}-${{ inputs.sdk }}-${{ steps.config.outputs.image }}
+        # Do not hash unrelated preinstalled Rust versions or the whole runner image.
+        shared-key: native-v2-${{ inputs.platform }}-${{ inputs.flavor }}-${{ steps.fingerprint.outputs.key }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/plugins/**/Cargo.toml', '.cargo/config.toml', 'src-tauri/.cargo/config.toml') }}
+        add-rust-environment-hash-key: false
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
         cache-on-failure: true
-        # main prewarms both profiles; same-repository PRs can also warm reruns.
-        save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:

@@ -1,8 +1,8 @@
 name: Android build setup
-description: Reuse the hosted Android SDK and configure the Gradle build cache.
+description: Use the pinned Android NDK and configure the Gradle build cache.
 outputs:
   ndk-version:
-    description: NDK selected by the installed Tauri CLI.
+    description: Pinned NDK exposed to the installed Tauri CLI.
     value: ${{ steps.ndk.outputs.version }}
 runs:
   using: composite
@@ -13,39 +13,55 @@ runs:
       run: |
         sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
         if [[ -n "$sdk_root" ]]; then echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"; fi
+        ndk_version="$(cat .github/android-ndk-version)"
+        [[ "$ndk_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid NDK version" >&2; exit 1; }
         packages=()
         [[ -f "$sdk_root/platforms/android-36/android.jar" ]] || packages+=("platforms;android-36")
         [[ -x "$sdk_root/build-tools/36.0.0/aapt2" ]] || packages+=("build-tools;36.0.0")
-        has_ndk=false
-        for ndk in "$sdk_root"/ndk/*; do
-          if [[ -f "$ndk/source.properties" && -d "$ndk/toolchains/llvm" ]]; then
-            has_ndk=true
-          fi
-        done
-        if [[ "$has_ndk" == false ]]; then packages+=("ndk;27.2.12479018"); fi
+        if [[ ! -f "$sdk_root/ndk/$ndk_version/source.properties" || ! -d "$sdk_root/ndk/$ndk_version/toolchains/llvm" ]]; then
+          packages+=("ndk;$ndk_version")
+        fi
         echo "packages=${packages[*]}" >> "$GITHUB_OUTPUT"
     - uses: android-actions/setup-android@v4
       if: steps.sdk.outputs.packages != ''
       with:
         packages: ${{ steps.sdk.outputs.packages }}
-    - name: Select installed NDK
+    - name: Expose only the pinned NDK
       id: ndk
       shell: bash
       run: |
-        ndks=()
-        for ndk in "$ANDROID_HOME"/ndk/*; do
-          if [[ -f "$ndk/source.properties" && -d "$ndk/toolchains/llvm" ]]; then
-            ndks+=("$ndk")
-          fi
+        sdk_root="$ANDROID_HOME"
+        ndk_version="$(cat .github/android-ndk-version)"
+        ndk="$sdk_root/ndk/$ndk_version"
+        [[ -f "$ndk/source.properties" && -d "$ndk/toolchains/llvm" ]] || {
+          echo "Required Android NDK $ndk_version is missing" >&2
+          exit 1
+        }
+        revision="$(sed -n 's/^Pkg.Revision[[:space:]]*=[[:space:]]*//p' "$ndk/source.properties" | tr -d '\r')"
+        [[ "$revision" == "$ndk_version" ]] || { echo "Unexpected NDK revision: $revision" >&2; exit 1; }
+        # Tauri 2.11 ignores NDK_HOME and scans ANDROID_HOME/ndk.
+        # A stable, job-local SDK view prevents a newer preinstalled NDK winning.
+        sdk_view="${HOME:?}/.baton-ci/android-sdk"
+        mkdir -p "$sdk_view/ndk"
+        for component in "$sdk_root"/*; do
+          [[ "$(basename "$component")" == ndk ]] && continue
+          ln -sfn "$component" "$sdk_view/$(basename "$component")"
         done
-        (( ${#ndks[@]} > 0 )) || { echo "No Android NDK installed" >&2; exit 1; }
-        # Tauri 2.11 selects the last installed NDK path in lexical order.
-        ndk="$(printf '%s\n' "${ndks[@]}" | LC_ALL=C sort | tail -1)"
-        echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
-        echo "version=$(basename "$ndk")" >> "$GITHUB_OUTPUT"
+        find "$sdk_view/ndk" -mindepth 1 -maxdepth 1 -type l -delete
+        [[ -z "$(ls -A "$sdk_view/ndk")" ]] || { echo "Unexpected NDK in CI SDK view" >&2; exit 1; }
+        ln -s "$ndk" "$sdk_view/ndk/$ndk_version"
+        {
+          echo "ANDROID_HOME=$sdk_view"
+          echo "ANDROID_SDK_ROOT=$sdk_view"
+          echo "NDK_HOME=$sdk_view/ndk/$ndk_version"
+          echo "ANDROID_NDK_HOME=$sdk_view/ndk/$ndk_version"
+          echo "ANDROID_NDK_ROOT=$sdk_view/ndk/$ndk_version"
+        } >> "$GITHUB_ENV"
+        echo "version=$ndk_version" >> "$GITHUB_OUTPUT"
+        echo "Pinned Android NDK: $ndk_version"
         printf '\norg.gradle.caching=true\n' >> src-tauri/gen/android/gradle.properties
     - uses: gradle/actions/setup-gradle@v4
       with:
-        cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        cache-read-only: ${{ github.ref != 'refs/heads/main' }}
         # main and Package still clean caches; PRs avoid starting a second Gradle JVM.
         cache-cleanup: ${{ github.event_name == 'pull_request' && 'never' || 'on-success' }}
