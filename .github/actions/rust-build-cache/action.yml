@@ -53,6 +53,9 @@ runs:
         RUST_TARGETS: ${{ inputs.targets }}
       run: |
         rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+        # Tauri's mobile subprocesses filter RUSTUP_TOOLCHAIN from their environment.
+        # Set the hosted runner's default too, so Gradle/Xcode use the same compiler.
+        rustup default "$RUSTUP_TOOLCHAIN"
         for target in $RUST_TARGETS; do
           rustup target add --toolchain "$RUSTUP_TOOLCHAIN" "$target"
         done
@@ -62,5 +65,6 @@ runs:
         shared-key: ${{ inputs.platform }}-${{ inputs.flavor }}-${{ inputs.sdk }}-${{ steps.config.outputs.image }}
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
+        cache-on-failure: true
         # main prewarms both profiles; same-repository PRs can also warm reruns.
         save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
