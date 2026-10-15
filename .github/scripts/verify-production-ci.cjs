@@ -6,7 +6,10 @@ const productionSteps = new Map([
   ['Windows NSIS', 'Warm production Windows build on main'],
 ]);
 
-module.exports = async function verifyProductionCI({ github, owner, repo, sha }) {
+module.exports = async function verifyProductionCI({ github, owner, repo, sha, ref }) {
+  // The release branch packages candidates before they are merged into main.
+  if (ref === 'refs/heads/release/testflight') return null;
+
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner, repo, workflow_id: 'ci.yml', event: 'push', branch: 'main',
     head_sha: sha, per_page: 100,

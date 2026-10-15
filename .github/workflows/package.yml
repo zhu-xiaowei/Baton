@@ -50,8 +50,11 @@ jobs:
             const verify = require('./.github/scripts/verify-production-ci.cjs');
             const url = await verify({
               github, owner: context.repo.owner, repo: context.repo.repo, sha: context.sha,
+              ref: context.ref,
             });
-            core.info(`Production CI verified: ${url}`);
+            core.info(url
+              ? `Production CI verified: ${url}`
+              : 'release/testflight candidate: packaging without main production CI.');
 
   android:
     name: Android APK

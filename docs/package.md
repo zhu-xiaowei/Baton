@@ -10,6 +10,12 @@ The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight.
 
 The packaging workflow must be present on the GitHub repository's default branch before the first manual dispatch. The command requires a clean checkout on a branch pushed to `zhu-xiaowei/Baton` at the same commit. Set `PACKAGE_GITHUB_REPO=owner/repository` if the connected repository changes. `gh` must be authenticated with permission to run workflows and download artifacts.
 
+Release packages normally require successful production CI on `main` for the
+exact source commit. The `release/testflight` branch is exempt so candidates can
+be packaged before merging; its builds still use the normal release signing
+and notarization checks. Other branches and tags do not receive this exemption.
+Dev packages do not require main production CI.
+
 The Android keystore remains ignored by Git. Configure binary keys and passwords as GitHub Actions **Secrets**, and public identifiers as GitHub Actions **Variables**:
 
 | Name | Type | Purpose |

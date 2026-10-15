@@ -43,12 +43,18 @@ The macOS port fallback test stays in its original job. It opens real TCP
 listeners and verifies fallback from an occupied port; compiling an installer
 does not exercise this behavior.
 
-**A red main CI must be fixed before release.** Production Package checks the
+**A red main CI must be fixed before release from main.** Production Package checks the
 latest main push CI for the exact dispatched SHA and requires every production
 build step to have passed. An older green commit, a PR-only build, skipped jobs,
 or a pending/failed run cannot authorize a release. The check fails promptly
 with the CI link rather than repeating the builds. Dev packages remain
 available for diagnosis and do not pass this production release gate.
+
+The exact branch `release/testflight` is exempt from the main production CI
+check so release candidates can be packaged before merging. Tags and similarly
+named branches are not exempt. The dispatched commit must still match the
+pushed source, and the regular production builds, signing and notarization
+checks still run.
 
 ## Caches
 

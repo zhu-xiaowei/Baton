@@ -24,7 +24,7 @@ const jobs = () => [
 function fixture(runs = [success()], checks = jobs()) {
   const listJobs = () => {};
   return {
-    owner: 'example', repo: 'baton', sha,
+    owner: 'example', repo: 'baton', sha, ref: 'refs/heads/main',
     github: {
       rest: { actions: {
         listWorkflowRuns: async options => {
@@ -47,6 +47,28 @@ function fixture(runs = [success()], checks = jobs()) {
 
 test('release packaging accepts all production checks for the exact commit', async () => {
   assert.equal(await verifyProductionCI(fixture()), success().html_url);
+});
+
+test('release/testflight can package candidates without querying main CI', async () => {
+  assert.equal(await verifyProductionCI({
+    ...fixture([]),
+    ref: 'refs/heads/release/testflight',
+    github: {},
+  }), null);
+});
+
+test('the candidate exemption does not apply to other branches, tags or missing refs', async () => {
+  for (const ref of [
+    'refs/heads/main',
+    'refs/heads/feature',
+    'refs/heads/release/testflight-next',
+    'refs/heads/release-testflight',
+    'refs/tags/release/testflight',
+    'release/testflight',
+    undefined,
+  ]) {
+    await assert.rejects(verifyProductionCI({ ...fixture([]), ref }), /No production CI/);
+  }
 });
 
 test('release packaging rejects green checks from another commit or a PR', async () => {
