@@ -28,6 +28,12 @@ function comparableMarkup(element) {
   var clone = element.cloneNode(true);
   var nodes = [clone].concat(Array.from(clone.querySelectorAll('*')));
   for (var node of nodes) {
+    if (node.classList?.contains('img-placeholder') && (node.hasAttribute('data-key') || node.hasAttribute('data-path'))) {
+      node.classList.remove('loaded');
+      node.removeAttribute('data-loaded');
+      node.removeAttribute('data-failed');
+      node.replaceChildren();
+    }
     node.classList?.remove(
       'tool-details-collapsed',
       'expanded-desc',

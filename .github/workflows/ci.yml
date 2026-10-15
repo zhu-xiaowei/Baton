@@ -3,38 +3,56 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR checks can stop; main must finish warming shared caches.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
     name: Tests and frontend
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            bridge/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: server/src/requirements.txt
       - run: npm ci
       - run: npm ci --prefix bridge
       - run: python3 -m pip install -r server/src/requirements.txt pytest
-      - run: npm run test:bridge && npm run test:codex
-      - run: node --no-experimental-global-navigator --test test/frontend/*.test.mjs
-      - run: npm run test:server && npm run test:packaging
       - run: npm run build
+      - name: Run independent test suites in parallel
+        run: |
+          (npm run test:bridge && npm run test:codex) &
+          bridge_pid=$!
+          node --no-experimental-global-navigator --test test/frontend/*.test.mjs &
+          frontend_pid=$!
+          (npm run test:server && npm run test:packaging) &
+          server_pid=$!
+          status=0
+          for pid in "$bridge_pid" "$frontend_pid" "$server_pid"; do
+            if ! wait "$pid"; then status=1; fi
+          done
+          exit "$status"
 
   android:
     name: Android APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # This job creates a disposable CI keystore with these test passwords.
       ANDROID_KEYSTORE_PASSWORD: baton123
@@ -49,12 +67,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: ./.github/actions/android-build-setup
+        id: android
+      - uses: ./.github/actions/rust-build-cache
         with:
-          packages: ''
-      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
-      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-      - run: rustup target add aarch64-linux-android
+          platform: android
+          targets: aarch64-linux-android
+          flavor: pr
+          sdk: android-36-ndk-${{ steps.android.outputs.ndk-version }}
       - run: npm ci
       - name: Create CI signing key
         run: >-
@@ -62,6 +82,16 @@ jobs:
           -storepass baton123 -keypass baton123 -alias baton -keyalg RSA -keysize 2048
           -validity 1 -dname "CN=Baton CI"
       - run: npm run build:android -- --ci
+      - name: Restore production Rust cache on main
+        if: github.event_name == 'push'
+        uses: ./.github/actions/rust-build-cache
+        with:
+          platform: android
+          targets: aarch64-linux-android
+          sdk: android-36-ndk-${{ steps.android.outputs.ndk-version }}
+      - name: Warm production Android build on main
+        if: github.event_name == 'push'
+        run: npm run build:android -- --ci
 
   ios:
     name: iOS archive
@@ -73,10 +103,25 @@ jobs:
           node-version: '24'
           cache: npm
       - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - run: rustup target add aarch64-apple-ios
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: ios
+          targets: aarch64-apple-ios
+          flavor: pr
+          sdk: xcode-26.6
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
       - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - name: Restore production Rust cache on main
+        if: github.event_name == 'push'
+        uses: ./.github/actions/rust-build-cache
+        with:
+          platform: ios
+          targets: aarch64-apple-ios
+          sdk: xcode-26.6
+      - name: Warm production iOS build on main
+        if: github.event_name == 'push'
+        run: npm run tauri -- ios build --ci --no-sign --archive-only
 
   macos:
     name: macOS DMG
@@ -88,11 +133,26 @@ jobs:
           node-version: '24'
           cache: npm
       - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: macos
+          targets: aarch64-apple-darwin
+          flavor: pr
+          sdk: xcode-26.6
       - run: npm ci
       - run: node --test test/bridge/project-directories.test.mjs
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib preview_proxy::tests::uses_requested_port_then_falls_forward_when_occupied
-      - run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
+      - run: npm run tauri -- build --ci --no-sign --target aarch64-apple-darwin --bundles dmg
+      - name: Restore production Rust cache on main
+        if: github.event_name == 'push'
+        uses: ./.github/actions/rust-build-cache
+        with:
+          platform: macos
+          targets: aarch64-apple-darwin x86_64-apple-darwin
+          sdk: xcode-26.6
+      - name: Warm production universal macOS build on main
+        if: github.event_name == 'push'
+        run: npm run tauri -- build --ci --no-sign --target universal-apple-darwin --bundles dmg
 
   windows:
     name: Windows NSIS
@@ -103,6 +163,22 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: windows
+          targets: x86_64-pc-windows-msvc
+          flavor: pr
+          sdk: msvc-windows-2022
       - run: npm ci
       - run: node --test test/bridge/project-directories.test.mjs
       - run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Restore production Rust cache on main
+        if: github.event_name == 'push'
+        uses: ./.github/actions/rust-build-cache
+        with:
+          platform: windows
+          targets: x86_64-pc-windows-msvc
+          sdk: msvc-windows-2022
+      - name: Warm production Windows build on main
+        if: github.event_name == 'push'
+        run: npm run tauri -- build --ci --no-sign --target x86_64-pc-windows-msvc --bundles nsis
