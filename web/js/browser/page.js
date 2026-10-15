@@ -1,6 +1,7 @@
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { normalizeBrowserAddress } from './address.js';
 import frameBridge from './frame-bridge.js?raw';
+import { createNativePreview, supportsNativePreview } from './native-view.js';
 import '../../css/breadcrumb.css';
 import '../../css/workspace-header.css';
 import './browser.css';
@@ -87,6 +88,30 @@ export function openBrowserPage(options = {}) {
   let completionTimer = null;
   let loading = false;
   let loadStopped = false;
+  let nativeBack = false;
+  let nativeForward = false;
+  const nativeView = supportsNativePreview() ? createNativePreview({
+    root, area: root.querySelector('.browser-content'),
+    onError: error => setError(error.message || String(error)),
+    onState(data) {
+      if (data.closeRequested) { close(); return; }
+      if (data.url) {
+        try { currentUrl = httpUrl(data.url); } catch { return; }
+        options.onLocationChange?.(currentUrl);
+      }
+      nativeBack = !!data.canGoBack;
+      nativeForward = !!data.canGoForward;
+      if (data.error) { setError(data.error); updateControls(); return; }
+      if (!data.url) return;
+      setLoading(!!data.loading);
+      if (data.loading) {
+        progress.style.transition = 'transform 150ms ease-out';
+        progress.style.transform = `scaleX(${Math.max(0, Math.min(1, data.progress || 0))})`;
+      }
+      updateControls();
+    },
+  }) : null;
+  if (nativeView) frame.remove();
   const edgeBack = registerEdgeBackLayer({
     navigateBack: () => position > 0 ? traverse(-1) : close(),
     foregroundSelectors: ['#internalBrowserPage'],
@@ -96,15 +121,15 @@ export function openBrowserPage(options = {}) {
   edgeBack.activate();
 
   function updateControls() {
-    root.querySelector('[data-browser-action="back"]').disabled = position <= 0 || !!pendingDelta;
-    root.querySelector('[data-browser-action="forward"]').disabled = position >= urls.length - 1 || !!pendingDelta;
+    root.querySelector('[data-browser-action="back"]').disabled = nativeView ? !nativeBack : position <= 0 || !!pendingDelta;
+    root.querySelector('[data-browser-action="forward"]').disabled = nativeView ? !nativeForward : position >= urls.length - 1 || !!pendingDelta;
     loadAction.disabled = !loading && !currentUrl && !initialAddress;
     root.querySelector('[data-browser-action="external"]').disabled = !currentUrl;
     if (document.activeElement !== address) address.value = currentUrl || initialAddress;
   }
 
   function setLoading(active, completed = true, restart = false) {
-    if (active && loadStopped) return;
+    if (active && loadStopped && !nativeView) return;
     if (active === loading && !restart) return;
     loading = active;
     const action = active ? 'stop' : 'reload';
@@ -136,6 +161,7 @@ export function openBrowserPage(options = {}) {
 
   function setError(error) {
     if (destroyed) return;
+    nativeView?.hide();
     setLoading(false, false);
     message.textContent = error;
     message.hidden = false;
@@ -150,7 +176,9 @@ export function openBrowserPage(options = {}) {
     loadStopped = true;
     pendingDelta = 0;
     setLoading(false, false);
-    if (bridgeReady || documentId) {
+    if (nativeView) {
+      void nativeView.action('stop');
+    } else if (bridgeReady || documentId) {
       post('stop');
     } else {
       try { frame.contentWindow?.stop(); }
@@ -185,9 +213,13 @@ export function openBrowserPage(options = {}) {
     awaitingLoad = true;
     bridgeReady = false;
     message.hidden = true;
-    frame.hidden = false;
     setLoading(true, true, true);
-    frame.src = url;
+    if (nativeView) {
+      void nativeView.navigate(url);
+    } else {
+      frame.hidden = false;
+      frame.src = url;
+    }
     updateControls();
   }
 
@@ -207,6 +239,10 @@ export function openBrowserPage(options = {}) {
   }
 
   function traverse(delta) {
+    if (nativeView) {
+      void nativeView.action(delta < 0 ? 'back' : 'forward');
+      return;
+    }
     const next = position + delta;
     if (next < 0 || next >= urls.length) return;
     loadStopped = false;
@@ -221,6 +257,7 @@ export function openBrowserPage(options = {}) {
   }
 
   function receive(event) {
+    if (nativeView) return;
     const data = event.data;
     if (event.source !== frame.contentWindow || !data) return;
     let url;
@@ -279,6 +316,7 @@ export function openBrowserPage(options = {}) {
   }
 
   frame.addEventListener('load', () => {
+    if (nativeView) return;
     if (!currentUrl || destroyed) return;
     let installed = false;
     try {
@@ -291,8 +329,14 @@ export function openBrowserPage(options = {}) {
   window.addEventListener('message', receive);
   // Taps on the frame never reach this document, so a shield catches them while editing.
   const shield = root.querySelector('.browser-focus-shield');
-  address.addEventListener('focus', () => { shield.hidden = false; });
-  address.addEventListener('blur', () => { shield.hidden = true; });
+  address.addEventListener('focus', () => {
+    shield.hidden = false;
+    nativeView?.setInteractive(false);
+  });
+  address.addEventListener('blur', () => {
+    shield.hidden = true;
+    nativeView?.setInteractive(true);
+  });
   root.addEventListener('pointerdown', event => {
     if (document.activeElement !== address || event.target.closest('.browser-address-form')) return;
     if (event.target === shield) event.preventDefault();
@@ -323,7 +367,8 @@ export function openBrowserPage(options = {}) {
       loadStopped = false;
       message.hidden = true;
       setLoading(true);
-      if (bridgeReady) post('reload');
+      if (nativeView) void nativeView.action('reload');
+      else if (bridgeReady) post('reload');
       else setUrl(currentUrl, position);
     }
     if (action === 'external' && currentUrl) {
@@ -345,6 +390,7 @@ export function openBrowserPage(options = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    nativeView?.destroy();
     navigationVersion++;
     clearTimeout(loadingTimer);
     clearTimeout(completionTimer);
@@ -358,6 +404,7 @@ export function openBrowserPage(options = {}) {
   function close() {
     if (options.keepAlive) {
       suspended = true;
+      nativeView?.hide();
       root.hidden = true;
       root.inert = true;
       edgeBack.deactivate();
@@ -374,6 +421,7 @@ export function openBrowserPage(options = {}) {
     previousFocus = document.activeElement;
     suspended = false;
     root.hidden = false;
+    nativeView?.show();
     root.inert = false;
     edgeBack.activate();
     document.addEventListener('keydown', onEscape, true);

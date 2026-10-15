@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "ios-preview",
+  "description": "Native preview content controlled by the main iOS webview",
+  "platforms": ["iOS"],
+  "windows": ["main"],
+  "permissions": ["preview-webview:default"]
+}

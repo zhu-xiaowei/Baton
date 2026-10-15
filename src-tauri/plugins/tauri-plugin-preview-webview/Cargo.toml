@@ -1,0 +1,11 @@
+[package]
+name = "tauri-plugin-preview-webview"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-preview-webview"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
