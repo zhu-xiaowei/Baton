@@ -13,12 +13,6 @@ inputs:
   sdk:
     description: SDK version used by this build.
     required: true
-  cache-key-suffix:
-    description: Separate cache namespace when extra build artifacts are included.
-    default: ''
-  cache-directories:
-    description: Additional build cache paths restored and saved with Rust.
-    default: ''
 runs:
   using: composite
   steps:
@@ -106,16 +100,14 @@ runs:
         CARGO_NET_OFFLINE: 'false'
       with:
         # Do not hash unrelated preinstalled Rust versions or the whole runner image.
-        shared-key: native-v3-${{ inputs.platform }}-${{ inputs.flavor }}-${{ steps.fingerprint.outputs.key }}${{ inputs.cache-key-suffix }}
+        shared-key: native-v3-${{ inputs.platform }}-${{ inputs.flavor }}-${{ steps.fingerprint.outputs.key }}
         # Keep the action's normalized manifests and dependency-change fallback.
         # Its metadata commands must remain online even when the build is offline.
         cmd-format: node "${{ steps.config.outputs.cache-command }}" {0}
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
-        cache-directories: ${{ inputs.cache-directories }}
         cache-bin: false
         cache-on-failure: true
-        # Temporary, PR-scoped benchmark seeding; remove before merge.
-        save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.number == 64 && inputs.platform == 'ios' && inputs.cache-key-suffix == '-xcode-v1') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:
