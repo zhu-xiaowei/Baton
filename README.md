@@ -65,7 +65,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
 - **Follow existing sessions** — keep using Claude Code and Codex on your computer as usual; a lightweight local Bridge mirrors live progress and running / needs input / done status
 - **Interact with existing sessions** — send follow-ups, even mid-turn, interrupt running turns, and continue work from any connected device
-- **Create new sessions** — start Claude Code, Codex, or Claude background-agent sessions remotely and keep monitoring them after detaching
+- **Create projects and sessions** — create a new project, start Claude Code, Codex, or Claude background-agent sessions remotely, and keep monitoring them after detaching
 - **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
 - **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
 - **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
