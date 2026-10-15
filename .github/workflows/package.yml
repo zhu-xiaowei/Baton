@@ -55,21 +55,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v4
-        with:
-          packages: ''
-      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
-      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
-      - name: Enable Gradle build cache
-        run: printf '\norg.gradle.caching=true\n' >> src-tauri/gen/android/gradle.properties
+      - uses: ./.github/actions/android-build-setup
+        id: android
       - uses: ./.github/actions/rust-build-cache
         with:
           platform: android
           targets: aarch64-linux-android
-          sdk: android-36-ndk-27.2.12479018
+          sdk: android-36-ndk-${{ steps.android.outputs.ndk-version }}
       - run: npm ci
       - name: Restore Android release keystore
         if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-android' }}

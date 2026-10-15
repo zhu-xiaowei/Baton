@@ -10,8 +10,9 @@ fails the job. The frontend is built first so packaging tests inspect a complete
 
 ## PR and production builds
 
-PR native builds retain release-mode compilation, but disable LTO and use 16
-codegen units. macOS PRs build an Apple Silicon DMG. Production packaging keeps
+PR native builds retain release-mode compilation, but disable LTO, use 16
+codegen units and optimize at level 1. macOS PRs build an Apple Silicon DMG.
+Production packaging keeps
 the existing size-optimized release profile, universal macOS binary, signing,
 notarization, and installer formats.
 
@@ -27,8 +28,16 @@ include the platform, build flavor, SDK, runner image, compiler, Cargo
 configuration, and dependency manifests. Rust dependency build products are
 cached; distributable installers and signing keys are not.
 
-Android also uses the Gradle dependency and task-output caches. The test job
-caches both npm lockfiles and Python package downloads.
+Android reuses preinstalled SDK components and the NDK selected by Tauri instead
+of downloading a second, unused NDK. Missing SDK components are installed as a
+fallback. It also uses the Gradle dependency and task-output caches; PRs skip
+Gradle's end-of-job cache cleanup JVM, while main and Package retain cleanup.
+The test job caches both npm lockfiles and Python package downloads.
+
+After restoring Rust dependencies, an offline `cargo fetch --locked` checks every
+requested target. Builds use Cargo's offline mode only when that check succeeds;
+an incomplete cache retains normal network access. This avoids redundant index
+refreshes without making a cold build depend on a cache hit.
 
 After a merge, the same five CI jobs run on `main`. Each native job builds its PR
 configuration and then warms the production configuration without production

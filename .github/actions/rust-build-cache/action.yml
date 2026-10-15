@@ -31,11 +31,13 @@ runs:
             target_dir=target-ci
             lto=false
             codegen_units=16
+            opt_level=1
             ;;
           release)
             target_dir=target
             lto=true
             codegen_units=1
+            opt_level=s
             ;;
           *) echo "Unsupported build flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
         esac
@@ -44,6 +46,9 @@ runs:
           echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/src-tauri/$target_dir"
           echo "CARGO_PROFILE_RELEASE_LTO=$lto"
           echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$codegen_units"
+          echo "CARGO_PROFILE_RELEASE_OPT_LEVEL=$opt_level"
+          # Keep the restore key identical before each profile's offline probe.
+          echo "CARGO_NET_OFFLINE=false"
         } >> "$GITHUB_ENV"
         echo "target-dir=$target_dir" >> "$GITHUB_OUTPUT"
         echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -68,3 +73,21 @@ runs:
         cache-on-failure: true
         # main prewarms both profiles; same-repository PRs can also warm reruns.
         save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    - name: Check whether Cargo can build offline
+      shell: bash
+      env:
+        RUST_TARGETS: ${{ inputs.targets }}
+      run: |
+        offline=true
+        for target in $RUST_TARGETS; do
+          if ! cargo fetch --manifest-path src-tauri/Cargo.toml --locked --offline --target "$target" > "$RUNNER_TEMP/baton-cargo-fetch.log" 2>&1; then
+            offline=false
+            break
+          fi
+        done
+        echo "CARGO_NET_OFFLINE=$offline" >> "$GITHUB_ENV"
+        if [[ "$offline" == true ]]; then
+          echo "Locked Cargo dependencies are cached; registry networking disabled for this build."
+        else
+          echo "Cargo cache is incomplete; networking remains enabled."
+        fi
