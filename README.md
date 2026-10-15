@@ -77,6 +77,68 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the app
 - **Lightweight apps** — native Tauri apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
 
+### Rich rendering
+
+<p align="center">
+  <picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/permissions.avif" width="48%"><img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/mermaid.avif" width="48%"><img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile.svg" width="100%"><img src="docs/assets/showcase/empty.svg" alt="" width="1%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/inline-html.avif" width="48%"><img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/file-preview.avif" width="48%"><img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile-second.svg"><img src="docs/assets/showcase/rendering-desktop.svg" alt="" width="100%"></picture>
+</p>
+
+---
+
+## Quick Start
+
+### 1. Deploy Server
+
+Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
+```
+
+Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
+
+
+### 2. Install Bridge
+
+Requires [Node.js](https://nodejs.org/) 20.9+.
+
+1. Open the **Start URL** in your browser (this is also the web viewer)
+2. Copy the one-line **Install bridge** command from the Setup page
+3. Run it on the machine where Claude Code or Codex is running
+
+On native Windows, run the install command in PowerShell using **Run as administrator**.
+
+### 3. Download App
+
+| iOS | Android | macOS | Windows |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.apk) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.exe) |
+
+After downloading the app, scan the QR code or input the Start URL to get started.
+
+---
+
+## Features
+
+### Core
+
+- **Claude Code and Codex** — both runtimes in one Device → Project → Session catalog, with recent projects across devices and Codex worktree sessions grouped under their original project
+- **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
+- **Follow existing sessions** — keep using Claude Code and Codex on your computer as usual; a lightweight local Bridge mirrors live progress and running / needs input / done status
+- **Interact with existing sessions** — send follow-ups, even mid-turn, interrupt running turns, and continue work from any connected device
+- **Create projects and sessions** — create a new project, start Claude Code, Codex, or Claude background-agent sessions remotely, and keep monitoring them after detaching
+- **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
+- **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
+- **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
+
+### Fast, stable, lightweight
+
+- **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage, with no white flash
+- **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
+- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the app
+- **Lightweight apps** — native Tauri apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
+
 ### Developer tools
 
 - **Project files** — browse source with line highlighting, preview PDF, Office, image, and video files, and download or share them natively
