@@ -72,6 +72,8 @@ jobs:
       - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
       - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
       - name: Enable Gradle build cache
         run: echo "org.gradle.caching=true" >> src-tauri/gen/android/gradle.properties
       - uses: ./.github/actions/rust-build-cache
