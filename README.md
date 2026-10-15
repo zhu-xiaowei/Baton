@@ -76,14 +76,14 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Project files** — browse source with line highlighting, and download or share files natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
 - **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling (macOS / Linux Bridge)
-- **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native app by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
+- **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native App by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
 
 ### Fast, stable, lightweight
 
 - **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
-- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the app
-- **Lightweight apps** — native Tauri apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
+- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
+- **Lightweight Apps** — native Tauri Apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
 - **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### Rich rendering
@@ -91,8 +91,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Execution timeline** — collapsible tool calls and results, with full output loaded on demand
 - **Diffs, Mermaid, and LaTeX** — rendered inline while streaming
 - **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
-- **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server
-- **Images** — images in messages display inline and open full screen with pinch-to-zoom
+- **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server; images in messages display inline and open full screen with pinch-to-zoom
 
 ### More
 
