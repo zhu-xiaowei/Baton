@@ -31,6 +31,19 @@ private struct ViewState: Encodable {
   let canGoForward: Bool
   let error: String?
   let closeRequested: Bool
+  let event: String?
+}
+
+private weak var activePreviewPlugin: PreviewWebviewPlugin?
+
+private func allowedPreviewURL(_ url: URL?) -> Bool {
+  guard let url = url else { return false }
+  switch url.scheme?.lowercased() {
+  case "http", "https": return url.host != nil && url.user == nil && url.password == nil
+  case "about": return url.absoluteString == "about:blank"
+  case "blob", "data": return true
+  default: return false
+  }
 }
 
 private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate {
@@ -40,6 +53,7 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
   private var observations: [NSKeyValueObservation] = []
   private var backGesture: UIScreenEdgePanGestureRecognizer?
   private var requestedURL = ""
+  private var retryNavigation = false
 
   init(id: String, channel: Channel) {
     self.id = id
@@ -75,18 +89,27 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     backGesture = back
   }
 
-  func emit(error: String? = nil, closeRequested: Bool = false) {
+  func emit(error: String? = nil, closeRequested: Bool = false, event: String? = nil) {
     try? channel.send(ViewState(
       id: id, url: view.url?.absoluteString ?? requestedURL,
       loading: view.isLoading, progress: view.estimatedProgress,
       canGoBack: view.canGoBack, canGoForward: view.canGoForward,
-      error: error, closeRequested: closeRequested
+      error: error, closeRequested: closeRequested, event: event
     ))
   }
 
   func navigate(_ url: URL) {
     requestedURL = url.absoluteString
+    retryNavigation = false
     view.load(URLRequest(url: url))
+  }
+
+  func reload() {
+    if (retryNavigation || view.url == nil), let url = URL(string: requestedURL) {
+      navigate(url)
+    } else {
+      view.reload()
+    }
   }
 
   func destroy() {
@@ -109,21 +132,44 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     }
   }
 
-  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { emit() }
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    emit(event: "started")
+  }
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { emit() }
-  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { emit() }
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    retryNavigation = false
+    emit(event: "finished")
+  }
+  private func failed(_ error: Error) {
+    let error = error as NSError
+    if error.code == NSURLErrorCancelled
+      || (error.domain == "WebKitErrorDomain" && error.code == 102) { return }
+    retryNavigation = true
+    emit(error: error.localizedDescription)
+  }
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-    if (error as NSError).code != NSURLErrorCancelled { emit(error: error.localizedDescription) }
+    failed(error)
   }
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-    if (error as NSError).code != NSURLErrorCancelled { emit(error: error.localizedDescription) }
+    failed(error)
   }
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    retryNavigation = true
     emit(error: "The preview process stopped. Reload to continue.")
+  }
+  func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+               decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    guard allowedPreviewURL(action.request.url) else { decisionHandler(.cancel); return }
+    if action.targetFrame?.isMainFrame == true, let url = action.request.url {
+      requestedURL = url.absoluteString
+    }
+    decisionHandler(.allow)
   }
   func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-    if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }
+    if navigationAction.targetFrame == nil && allowedPreviewURL(navigationAction.request.url) {
+      webView.load(navigationAction.request)
+    }
     return nil
   }
 }
@@ -132,7 +178,16 @@ class PreviewWebviewPlugin: Plugin {
   private weak var host: WKWebView?
   private var entries: [String: PreviewEntry] = [:]
 
-  override public func load(webview: WKWebView) { host = webview }
+  override public func load(webview: WKWebView) {
+    reset()
+    host = webview
+    activePreviewPlugin = self
+  }
+
+  fileprivate func reset() {
+    entries.values.forEach { $0.destroy() }
+    entries.removeAll()
+  }
 
   private func perform(_ invoke: Invoke, _ operation: @escaping () throws -> Void) {
     DispatchQueue.main.async {
@@ -181,7 +236,7 @@ class PreviewWebviewPlugin: Plugin {
       switch args.action {
       case "back": entry.view.goBack()
       case "forward": entry.view.goForward()
-      case "reload": entry.view.reload()
+      case "reload": entry.reload()
       case "stop": entry.view.stopLoading()
       default: invoke.reject("Unknown preview action"); return
       }
@@ -220,3 +275,6 @@ class PreviewWebviewPlugin: Plugin {
 
 @_cdecl("init_plugin_preview_webview")
 func initPlugin() -> Plugin { PreviewWebviewPlugin() }
+
+@_cdecl("clear_preview_webviews")
+func clearPreviewWebviews() { activePreviewPlugin?.reset() }

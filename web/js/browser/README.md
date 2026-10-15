@@ -8,6 +8,9 @@ canvas. Closing hides the retained view; destroying the page removes it.
 The host continues to own the preview tunnel. The macOS implementation shares
 the same commands and state events, with instances owned by their host window.
 Android, Windows, Linux, and ordinary browser sessions keep the iframe implementation.
+Host document navigation also disposes native previews. Native start/finish events
+restore the toolbar after retries or slow loads; policy-interrupted navigations
+do not replace a valid page with an error. Unsupported app/file schemes are blocked.
 
 `openBrowserPage()` renders a full-page browser surface with one toolbar:
 back and forward on the left, an editable address in the middle, and external

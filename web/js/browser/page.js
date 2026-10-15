@@ -96,13 +96,23 @@ export function openBrowserPage(options = {}) {
     onState(data) {
       if (data.closeRequested) { close(); return; }
       if (data.url) {
-        try { currentUrl = httpUrl(data.url); } catch { return; }
-        options.onLocationChange?.(currentUrl);
+        try {
+          const url = new URL(data.url).href;
+          if (url !== currentUrl) {
+            currentUrl = url;
+            options.onLocationChange?.(url);
+          }
+        } catch {}
       }
       nativeBack = !!data.canGoBack;
       nativeForward = !!data.canGoForward;
+      if (data.event === 'started') prepareNavigation();
       if (data.error) { setError(data.error); updateControls(); return; }
-      if (!data.url) return;
+      if (data.event === 'finished') {
+        message.hidden = true;
+        loadStopped = false;
+        if (!suspended) nativeView.show();
+      }
       setLoading(!!data.loading);
       if (data.loading) {
         progress.style.transition = 'transform 150ms ease-out';
@@ -113,7 +123,7 @@ export function openBrowserPage(options = {}) {
   }) : null;
   if (nativeView) frame.remove();
   const edgeBack = registerEdgeBackLayer({
-    navigateBack: () => position > 0 ? traverse(-1) : close(),
+    navigateBack: () => (nativeView ? nativeBack : position > 0) ? traverse(-1) : close(),
     foregroundSelectors: ['#internalBrowserPage'],
     underlaySelectors: ['body > .top-bar', '#breadcrumb', '#content'],
     guardZIndex: 1401,
@@ -124,7 +134,7 @@ export function openBrowserPage(options = {}) {
     root.querySelector('[data-browser-action="back"]').disabled = nativeView ? !nativeBack : position <= 0 || !!pendingDelta;
     root.querySelector('[data-browser-action="forward"]').disabled = nativeView ? !nativeForward : position >= urls.length - 1 || !!pendingDelta;
     loadAction.disabled = !loading && !currentUrl && !initialAddress;
-    root.querySelector('[data-browser-action="external"]').disabled = !currentUrl;
+    root.querySelector('[data-browser-action="external"]').disabled = !/^https?:\/\//i.test(currentUrl);
     if (document.activeElement !== address) address.value = currentUrl || initialAddress;
   }
 
@@ -165,6 +175,13 @@ export function openBrowserPage(options = {}) {
     setLoading(false, false);
     message.textContent = error;
     message.hidden = false;
+  }
+
+  function prepareNavigation() {
+    loadStopped = false;
+    message.hidden = true;
+    if (!suspended) nativeView?.show();
+    setLoading(true);
   }
 
   function post(action) {
@@ -240,6 +257,8 @@ export function openBrowserPage(options = {}) {
 
   function traverse(delta) {
     if (nativeView) {
+      if (delta < 0 ? !nativeBack : !nativeForward) return;
+      prepareNavigation();
       void nativeView.action(delta < 0 ? 'back' : 'forward');
       return;
     }
@@ -364,9 +383,7 @@ export function openBrowserPage(options = {}) {
     if (action === 'stop') stopLoading();
     if (action === 'reload' && !currentUrl && initialAddress) void navigate(initialAddress);
     if (action === 'reload' && currentUrl) {
-      loadStopped = false;
-      message.hidden = true;
-      setLoading(true);
+      prepareNavigation();
       if (nativeView) void nativeView.action('reload');
       else if (bridgeReady) post('reload');
       else setUrl(currentUrl, position);
@@ -395,6 +412,7 @@ export function openBrowserPage(options = {}) {
     clearTimeout(loadingTimer);
     clearTimeout(completionTimer);
     window.removeEventListener('message', receive);
+    window.removeEventListener('pagehide', destroy);
     document.removeEventListener('keydown', onEscape, true);
     edgeBack.unregister();
     root.remove();
@@ -433,6 +451,7 @@ export function openBrowserPage(options = {}) {
     get url() { return currentUrl; },
     get ready() { return !destroyed && !loading && message.hidden; },
   };
+  if (nativeView) window.addEventListener('pagehide', destroy);
   activePage = controller;
   setLoading(true);
   updateControls();

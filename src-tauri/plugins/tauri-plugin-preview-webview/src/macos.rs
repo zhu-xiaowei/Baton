@@ -5,6 +5,7 @@ use std::{
   ptr,
 };
 
+use block2::Block;
 use objc2::{
   define_class, msg_send,
   rc::Retained,
@@ -18,8 +19,8 @@ use objc2_foundation::{
   NSURLRequest, NSURL,
 };
 use objc2_web_kit::{
-  WKNavigation, WKNavigationAction, WKNavigationDelegate, WKUIDelegate, WKWebView, WKWebViewConfiguration,
-  WKWebsiteDataStore, WKWindowFeatures,
+  WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKUIDelegate, WKWebView,
+  WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::Channel, Runtime, Webview};
@@ -35,6 +36,7 @@ pub struct ViewState {
   can_go_forward: bool,
   error: Option<String>,
   close_requested: bool,
+  event: Option<&'static str>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +97,19 @@ struct ObserverIvars {
   channel: Channel<ViewState>,
   requested_url: RefCell<String>,
   observing: Cell<bool>,
+  retry_navigation: Cell<bool>,
+}
+
+fn allowed_preview_url(url: &str) -> bool {
+  let Ok(url) = tauri::Url::parse(url) else {
+    return false;
+  };
+  match url.scheme() {
+    "http" | "https" => url.host_str().is_some() && url.username().is_empty() && url.password().is_none(),
+    "about" => url.as_str() == "about:blank",
+    "blob" | "data" => true,
+    _ => false,
+  }
 }
 
 define_class!(
@@ -118,22 +133,45 @@ define_class!(
 
   unsafe impl WKNavigationDelegate for PreviewObserver {
     #[unsafe(method(webView:didStartProvisionalNavigation:))]
-    fn started(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>) { self.emit(None); }
+    fn started(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>) {
+      self.emit_event(None, Some("started"));
+    }
     #[unsafe(method(webView:didCommitNavigation:))]
     fn committed(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>) { self.emit(None); }
     #[unsafe(method(webView:didFinishNavigation:))]
-    fn finished(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>) { self.emit(None); }
+    fn finished(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>) {
+      self.ivars().retry_navigation.set(false);
+      self.emit_event(None, Some("finished"));
+    }
     #[unsafe(method(webView:didFailNavigation:withError:))]
     fn failed(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
-      if error.code() != -999 { self.emit(Some(error.localizedDescription().to_string())); }
+      self.report_failure(error);
     }
     #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
     fn provisional_failed(&self, _view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
-      if error.code() != -999 { self.emit(Some(error.localizedDescription().to_string())); }
+      self.report_failure(error);
     }
     #[unsafe(method(webViewWebContentProcessDidTerminate:))]
     fn terminated(&self, _view: &WKWebView) {
+      self.ivars().retry_navigation.set(true);
       self.emit(Some("The preview process stopped. Reload to continue.".into()));
+    }
+    #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+    fn navigation_policy(
+      &self, _view: &WKWebView, action: &WKNavigationAction,
+      handler: &Block<dyn Fn(WKNavigationActionPolicy)>,
+    ) {
+      unsafe {
+        let url = action.request().URL().and_then(|url| url.absoluteString()).map(|url| url.to_string());
+        if !url.as_deref().is_some_and(allowed_preview_url) {
+          handler.call((WKNavigationActionPolicy::Cancel,));
+          return;
+        }
+        if action.targetFrame().is_some_and(|frame| frame.isMainFrame()) {
+          *self.ivars().requested_url.borrow_mut() = url.unwrap();
+        }
+        handler.call((WKNavigationActionPolicy::Allow,));
+      }
     }
   }
 
@@ -144,7 +182,10 @@ define_class!(
       action: &WKNavigationAction, _features: &WKWindowFeatures,
     ) -> Option<Retained<WKWebView>> {
       unsafe {
-        if action.targetFrame().is_none() { view.loadRequest(&action.request()); }
+        let request = action.request();
+        let allowed = request.URL().and_then(|url| url.absoluteString())
+          .is_some_and(|url| allowed_preview_url(&url.to_string()));
+        if action.targetFrame().is_none() && allowed { view.loadRequest(&request); }
       }
       None
     }
@@ -174,6 +215,7 @@ impl PreviewObserver {
       channel,
       requested_url: RefCell::new(String::new()),
       observing: Cell::new(false),
+      retry_navigation: Cell::new(false),
     });
     let observer: Retained<Self> = unsafe { msg_send![super(observer), init] };
     unsafe {
@@ -199,6 +241,18 @@ impl PreviewObserver {
   }
 
   fn emit(&self, error: Option<String>) {
+    self.emit_event(error, None);
+  }
+
+  fn report_failure(&self, error: &NSError) {
+    if error.code() == -999 || (error.domain().to_string() == "WebKitErrorDomain" && error.code() == 102) {
+      return;
+    }
+    self.ivars().retry_navigation.set(true);
+    self.emit(Some(error.localizedDescription().to_string()));
+  }
+
+  fn emit_event(&self, error: Option<String>, event: Option<&'static str>) {
     let state = self.ivars();
     unsafe {
       let url = state
@@ -216,6 +270,7 @@ impl PreviewObserver {
         can_go_forward: state.view.canGoForward(),
         error,
         close_requested: false,
+        event,
       });
     }
   }
@@ -363,6 +418,7 @@ pub async fn navigate<R: Runtime>(webview: Webview<R>, id: String, url: String) 
     with_entry(&owner, &id, |entry| {
       let url = NSURL::URLWithString(&NSString::from_str(&url)).ok_or("Invalid preview URL")?;
       *entry.observer.ivars().requested_url.borrow_mut() = parsed.to_string();
+      entry.observer.ivars().retry_navigation.set(false);
       unsafe {
         entry.view.loadRequest(&NSURLRequest::requestWithURL(&url));
       }
@@ -386,7 +442,14 @@ pub async fn action<R: Runtime>(webview: Webview<R>, id: String, action: String)
             entry.view.goForward();
           }
           "reload" => {
-            entry.view.reload();
+            if entry.observer.ivars().retry_navigation.get() || entry.view.URL().is_none() {
+              let url = entry.observer.ivars().requested_url.borrow().clone();
+              let url = NSURL::URLWithString(&NSString::from_str(&url)).ok_or("Invalid preview URL")?;
+              entry.observer.ivars().retry_navigation.set(false);
+              entry.view.loadRequest(&NSURLRequest::requestWithURL(&url));
+            } else {
+              entry.view.reload();
+            }
           }
           "stop" => entry.view.stopLoading(),
           _ => return Err("Unknown preview action".into()),
@@ -472,18 +535,25 @@ pub async fn remove<R: Runtime>(webview: Webview<R>, id: String) -> Result<(), S
   .await
 }
 
+fn remove_entries(matches: impl Fn(&Entry) -> bool) {
+  let removed: Vec<_> = ENTRIES.with(|entries| {
+    let mut entries = entries.borrow_mut();
+    let ids: Vec<_> = entries
+      .iter()
+      .filter(|(_, entry)| matches(entry))
+      .map(|(id, _)| id.clone())
+      .collect();
+    ids.into_iter().filter_map(|id| entries.remove(&id)).collect()
+  });
+  drop(removed);
+}
+
+pub fn clear_host<R: Runtime>(webview: &Webview<R>) {
+  let owner = webview.label().to_string();
+  let _ = webview.with_webview(move |_| remove_entries(|entry| entry.owner == owner));
+}
+
 pub fn close_window<R: Runtime>(app: &tauri::AppHandle<R>, window: &str) {
   let window = window.to_string();
-  let _ = app.run_on_main_thread(move || {
-    let removed: Vec<_> = ENTRIES.with(|entries| {
-      let mut entries = entries.borrow_mut();
-      let ids: Vec<_> = entries
-        .iter()
-        .filter(|(_, entry)| entry.window == window)
-        .map(|(id, _)| id.clone())
-        .collect();
-      ids.into_iter().filter_map(|id| entries.remove(&id)).collect()
-    });
-    drop(removed);
-  });
+  let _ = app.run_on_main_thread(move || remove_entries(|entry| entry.window == window));
 }
