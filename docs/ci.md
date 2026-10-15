@@ -62,6 +62,8 @@ NDK or MSVC toolset, build flags and project Cargo manifests. They exclude the
 whole runner image ID and unrelated preinstalled Rust versions. PR
 (`src-tauri/target-ci`) and production (`src-tauri/target`) products are isolated.
 Installers, archives and signing keys are not stored in this cache.
+The cache action normalizes Cargo manifests and can restore compatible
+dependency artifacts after a lockfile change; Cargo rebuilds changed crates.
 
 Android also restores Gradle dependency and task-output caches. PRs skip
 Gradle's cache-cleanup JVM; main retains cleanup. npm and pip use their normal
@@ -71,6 +73,10 @@ caches to make room for repeated PR snapshots.
 An offline `cargo fetch --locked` checks every requested target after restore.
 Cargo networking is disabled only if the complete dependency set is cached;
 otherwise normal network access remains enabled.
+Cache-management commands always retain network access: their all-target
+metadata query may need dependencies that the selected build target did not
+download. This keeps build-only offline mode from producing an empty dependency
+list during cache cleanup.
 
 Cache hits reduce repeated compilation, but SDK/toolchain/dependency changes
 still require rebuilding. Before this PR is merged, the new main cache keys

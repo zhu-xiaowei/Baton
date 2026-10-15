@@ -49,6 +49,7 @@ runs:
           echo "CARGO_NET_OFFLINE=false"
         } >> "$GITHUB_ENV"
         echo "target-dir=$target_dir" >> "$GITHUB_OUTPUT"
+        node -e 'const fs = require("node:fs"), path = require("node:path"); fs.appendFileSync(process.env.GITHUB_OUTPUT, "cache-command=" + path.resolve(".github/scripts/rust-cache-command.cjs").split(path.sep).join("/") + "\n");'
     - name: Install pinned Rust toolchain
       shell: bash
       env:
@@ -95,10 +96,14 @@ runs:
         hash="$(node -e 'const fs = require("node:fs"), crypto = require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1], "utf8").replace(/\r\n/g, "\n")).digest("hex"));' "$fingerprint")"
         echo "key=$hash" >> "$GITHUB_OUTPUT"
     - uses: Swatinem/rust-cache@v2
+      env:
+        CARGO_NET_OFFLINE: 'false'
       with:
         # Do not hash unrelated preinstalled Rust versions or the whole runner image.
-        shared-key: native-v2-${{ inputs.platform }}-${{ inputs.flavor }}-${{ steps.fingerprint.outputs.key }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/plugins/**/Cargo.toml', '.cargo/config.toml', 'src-tauri/.cargo/config.toml') }}
-        add-rust-environment-hash-key: false
+        shared-key: native-v3-${{ inputs.platform }}-${{ inputs.flavor }}-${{ steps.fingerprint.outputs.key }}
+        # Keep the action's normalized manifests and dependency-change fallback.
+        # Its metadata commands must remain online even when the build is offline.
+        cmd-format: node "${{ steps.config.outputs.cache-command }}" {0}
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
         cache-on-failure: true
