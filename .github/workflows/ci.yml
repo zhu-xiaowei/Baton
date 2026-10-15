@@ -112,6 +112,14 @@ jobs:
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
       - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - name: Inspect Xcode cache size
+        if: always()
+        run: |
+          derived_data="$HOME/Library/Developer/Xcode/DerivedData"
+          if [[ -d "$derived_data" ]]; then
+            du -h -d 5 "$derived_data" | sort -h | tail -35
+            find "$derived_data" -name '*.xcactivitylog' -o -name build.db
+          fi
       - name: Restore production Rust cache on main
         if: github.event_name == 'push'
         uses: ./.github/actions/rust-build-cache
