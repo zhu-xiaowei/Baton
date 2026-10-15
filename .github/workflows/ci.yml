@@ -75,7 +75,7 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
       - name: Enable Gradle build cache
-        run: echo "org.gradle.caching=true" >> src-tauri/gen/android/gradle.properties
+        run: printf '\norg.gradle.caching=true\n' >> src-tauri/gen/android/gradle.properties
       - uses: ./.github/actions/rust-build-cache
         with:
           platform: android
