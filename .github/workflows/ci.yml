@@ -109,6 +109,13 @@ jobs:
           targets: aarch64-apple-ios
           flavor: pr
           sdk: xcode-26.6
+          cache-key-suffix: -xcode-v1
+          cache-directories: |
+            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+            ~/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Developer/Xcode/DerivedData/baton-*/Build/Intermediates.noindex/ArchiveIntermediates/*/IntermediateBuildFilesPath
+            ~/Library/Developer/Xcode/DerivedData/baton-*/Build/Intermediates.noindex/ArchiveIntermediates/*/PrecompiledHeaders
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
       - run: npm run tauri -- ios build --ci --no-sign --archive-only
@@ -127,6 +134,13 @@ jobs:
           platform: ios
           targets: aarch64-apple-ios
           sdk: xcode-26.6
+          cache-key-suffix: -xcode-v1
+          cache-directories: |
+            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+            ~/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Developer/Xcode/DerivedData/baton-*/Build/Intermediates.noindex/ArchiveIntermediates/*/IntermediateBuildFilesPath
+            ~/Library/Developer/Xcode/DerivedData/baton-*/Build/Intermediates.noindex/ArchiveIntermediates/*/PrecompiledHeaders
       - name: Warm production iOS build on main
         if: github.event_name == 'push'
         run: npm run tauri -- ios build --ci --no-sign --archive-only
