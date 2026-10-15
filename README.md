@@ -74,7 +74,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 - **Project files** — browse source with line highlighting, preview Markdown, HTML, PDF, Office, image, and video files, and download or share them natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
-- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with an Esc / Tab / Ctrl / Shift / Alt / Paste / Enter keybar, a directional joystick, and touch scrolling (macOS / Linux Bridge)
+- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with an Esc / Tab / Ctrl / Shift / Alt / Paste / Enter keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling through the scrollback (macOS / Linux Bridge)
 - **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native app by tapping a session link or entering the port; desktop apps also expose a local URL for browser debugging
 
 ### Rich rendering
