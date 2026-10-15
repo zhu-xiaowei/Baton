@@ -72,7 +72,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ### Developer tools
 
-- **Project files** — browse source with line highlighting, preview Markdown, HTML, PDF, Office, image, and video files, and download or share them natively
+- **Project files** — browse source with line highlighting, preview PDF, Office, image, and video files, and download or share them natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
 - **Terminals** — up to five shells per project, shared live across devices and restored when you return, with an Esc / Tab / Ctrl / Shift / Alt / Paste / Enter keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling through the scrollback (macOS / Linux Bridge)
 - **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native app by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure; desktop apps also expose a local URL for browser debugging
@@ -81,6 +81,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 - **Execution timeline** — collapsible tool calls and results with runtime-specific states
 - **Diffs, Mermaid, and LaTeX** — rendered inline while streaming
+- **Markdown and HTML files** — rendered previews of project files, with relative CSS, scripts, and images loaded from the project, so HTML pages render fully without a local server
 - **Inline HTML** — interactive previews in the conversation, expandable to full screen without losing their state
 - **Attachments** — images, files, and videos in messages open in an in-app viewer
 
