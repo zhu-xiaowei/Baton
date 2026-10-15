@@ -61,7 +61,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ### Core
 
-- **Claude Code and Codex** — both runtimes in one Device → Project → Session catalog, with recent projects across devices and Codex worktree sessions grouped under their original project
+- **Claude Code and Codex** — both runtimes in one Device → Project → Session catalog
 - **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
 - **Follow existing sessions** — keep using Claude Code and Codex on your computer as usual; a lightweight local Bridge mirrors live progress and running / needs input / done status
 - **Interact with existing sessions** — send follow-ups, even mid-turn, interrupt running turns, and continue work from any connected device
@@ -69,32 +69,34 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
 - **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
 - **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
+- **Your own infrastructure** — one-command deploy to your AWS account; session data never leaves it
 
 ### Developer tools
 
-- **Project files** — browse source with line highlighting, preview PDF, Office, image, and video files, and download or share them natively
+- **Project files** — browse source with line highlighting, and download or share files natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
-- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with an Esc / Tab / Ctrl / Shift / Alt / Paste / Enter keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling through the scrollback (macOS / Linux Bridge)
-- **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native app by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure; desktop apps also expose a local URL for browser debugging
+- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling (macOS / Linux Bridge)
+- **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native app by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
 
 ### Fast, stable, lightweight
 
-- **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath, just like a native app
+- **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the app
 - **Lightweight apps** — native Tauri apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
+- **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### Rich rendering
 
-- **Execution timeline** — collapsible tool calls and results with runtime-specific states
+- **Execution timeline** — collapsible tool calls and results, with full output loaded on demand
 - **Diffs, Mermaid, and LaTeX** — rendered inline while streaming
-- **Markdown and HTML files** — rendered previews of project files, with relative CSS, scripts, and images loaded from the project, so HTML pages render fully without a local server
-- **Inline HTML** — interactive previews in the conversation, expandable to full screen without losing their state
-- **Images and attachments** — images in messages display inline and open full screen with pinch-to-zoom; files and videos open in an in-app viewer
+- **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
+- **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server
+- **Images** — images in messages display inline and open full screen with pinch-to-zoom
 
 ### More
 
-- **File, image, and voice input** — upload files directly to S3, send compressed images, and dictate messages on iOS
+- **File, image, and voice input** — attach files, send compressed images, dictate messages on iOS, and keep unsent drafts per session
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
 
