@@ -155,6 +155,20 @@ function currentImageContext(override = {}) {
   };
 }
 
+function automaticImagePath(path, context) {
+  var relative = relativeProjectImagePath(path, context.projectHash);
+  if (relative !== null) return relative;
+  if (context.device !== state.appState.device || context.projectHash !== currentProjectHash()) return null;
+  var blocks = (state.wsAllMessages || []).flatMap(message =>
+    Array.isArray(message.content) ? message.content : []);
+  var completed = new Set(blocks.filter(block =>
+    block?.type === 'tool_result' && block.tool_use_id && !block.is_error).map(block => block.tool_use_id));
+  var normalize = value => String(value || '').replaceAll('\\', '/');
+  var viewed = blocks.some(block => block?.type === 'tool_use' && block.name === 'ViewImage'
+    && block.id && completed.has(block.id) && normalize(block.input?.path || block.input?.file_path) === normalize(path));
+  return viewed ? path : null;
+}
+
 function localImageKey(path, context) {
   return JSON.stringify([state.SERVER, state.KEY, context.device, context.projectHash, path]);
 }
@@ -219,7 +233,7 @@ function imageLoadAction(el, label, detail, manual) {
 async function loadOneImage(el, manual = false) {
   var context = imageContexts.get(el) || currentImageContext();
   var path = el.dataset.path;
-  var requestPath = path && (manual ? path : relativeProjectImagePath(path, context.projectHash));
+  var requestPath = path && (manual ? path : automaticImagePath(path, context));
   if (path && requestPath === null) {
     imageLoadAction(el, 'Load image', 'Load image from this device', true);
     return;
@@ -242,7 +256,7 @@ function loadImages(container, contextOverride) {
     if (el.dataset.path) {
       var context = currentImageContext(contextOverride);
       imageContexts.set(el, context);
-      var path = relativeProjectImagePath(el.dataset.path, context.projectHash);
+      var path = automaticImagePath(el.dataset.path, context);
       if (path === null) {
         imageLoadAction(el, 'Load image', 'Load image from this device', true);
         return;

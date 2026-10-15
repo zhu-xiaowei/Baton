@@ -439,8 +439,10 @@ and the existing preview component displays it.
 
 Assistant Markdown images use the same on-demand file transport. Project images load through
 `project_files/read` when they enter the viewport, always using relative paths so the Bridge
-checks the project boundary and symlinks. References outside the project require a click before
-reading. PNG, JPEG, GIF, WebP, AVIF, BMP, SVG, and ICO retain their bytes and MIME type.
+checks the project boundary and symlinks. Images successfully viewed with `ViewImage` in the current
+session also load automatically, including temporary screenshots outside the project. Other
+references outside the project require a click before reading.
+PNG, JPEG, GIF, WebP, AVIF, BMP, SVG, and ICO retain their bytes and MIME type.
 All project images use the existing direct attachment upload; all image downloads use signed
 S3 URLs from `image-url`. The Lambda API returns metadata, never image bytes.
 The first load requires the source Bridge to be online and the file to exist. Concurrent reads
