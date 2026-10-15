@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { recentSessions } from '../../bridge/sync.mjs';
+import { fileURLToPath } from 'node:url';
 
 import {
   clearLiveMessageRegistry,
@@ -12,7 +13,6 @@ import {
 import {
   correlateClaudeInterruptMessage,
   createClaudeFileQueue,
-  exposeKnownClaudeSession,
   pollAgentStates,
   resetAgentPollState,
   shouldPersistClaudeJsonlMessage,
@@ -21,37 +21,68 @@ import {
 
 test.afterEach(clearLiveMessageRegistry);
 
-test('known sessions are exposed after delayed content and same-size rewrites', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-watcher-'));
-  const sessionId = 'delayed-review';
-  const filePath = path.join(dir, `${sessionId}.jsonl`);
-  t.after(() => {
-    recentSessions.delete(sessionId);
-    fs.rmSync(dir, { recursive: true, force: true });
+test('watcher queue exposes delayed content and repairs header-only changes', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-watcher-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 30_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { createServer } from 'node:http';
+      import { CLAUDE_PROJECTS } from './bridge/config.mjs';
+      import { initHttp } from './bridge/http.mjs';
+      import { createClaudeFileQueue } from './bridge/watcher.mjs';
+      import { knownProjects, recentSessions } from './bridge/sync.mjs';
+      const requests = [];
+      const server = createServer(async (request, response) => {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        requests.push(JSON.parse(body));
+        response.end('{}');
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const config = { server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test', deviceName: 'test' };
+        initHttp(config);
+        const id = '12345678-1234-4123-8123-123456789012';
+        const filename = path.join('-review', id + '.jsonl');
+        const file = path.join(CLAUDE_PROJECTS, filename);
+        knownProjects.add('-review');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue' }) + '\\n');
+        const enqueue = createClaudeFileQueue(config);
+        await enqueue(filename, id);
+        assert.equal(recentSessions.has(id), false);
+        assert.equal(requests.length, 0);
+        fs.appendFileSync(file, JSON.stringify({
+          type: 'user', uuid: 'prompt', entrypoint: 'sdk-cli',
+          message: { content: '/code-review PR 64' },
+        }) + '\\n');
+        const original = fs.readFileSync(file, 'utf8');
+        await enqueue(filename, id);
+        const patched = fs.readFileSync(file, 'utf8');
+        assert.equal(JSON.parse(patched.trim().split('\\n')[1]).entrypoint, 'cli');
+        assert.equal(patched.length, original.length);
+        assert.equal(recentSessions.has(id), true);
+        assert.equal(requests.find(body => body.sessions?.[0]?.id === id).statusDelta.from, 'new');
+        const count = requests.length;
+        fs.writeFileSync(file, original);
+        await enqueue(filename, id);
+        await enqueue(filename, id);
+        assert.equal(fs.readFileSync(file, 'utf8'), patched);
+        assert.equal(requests.length, count);
+      } finally {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+    `,
   });
-  const queue = `${JSON.stringify({ type: 'queue-operation', operation: 'enqueue' })}\n`;
-  const user = `${JSON.stringify({
-    type: 'user', entrypoint: 'sdk-cli', message: { content: '/code-review PR 64' },
-  })}\n`;
-  fs.writeFileSync(filePath, user);
-  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
-  assert.equal(fs.readFileSync(filePath, 'utf8'), user);
-
-  fs.writeFileSync(filePath, queue);
-  recentSessions.add(sessionId);
-  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
-
-  fs.appendFileSync(filePath, user);
-  assert.equal(exposeKnownClaudeSession(filePath, sessionId), true);
-  const patched = fs.readFileSync(filePath, 'utf8');
-  assert.equal(JSON.parse(patched.trim().split('\n')[1]).entrypoint, 'cli');
-  assert.equal(Buffer.byteLength(patched), Buffer.byteLength(queue + user));
-  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
-  assert.equal(fs.readFileSync(filePath, 'utf8'), patched);
-
-  fs.writeFileSync(filePath, queue + user);
-  assert.equal(exposeKnownClaudeSession(filePath, sessionId), true);
-  assert.equal(fs.readFileSync(filePath, 'utf8'), patched);
+  assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });
 
 test('parent file updates share one queue while child delivery stays independent', async () => {
