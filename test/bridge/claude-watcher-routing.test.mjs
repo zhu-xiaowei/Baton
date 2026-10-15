@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { recentSessions } from '../../bridge/sync.mjs';
 
 import {
   clearLiveMessageRegistry,
@@ -8,6 +12,7 @@ import {
 import {
   correlateClaudeInterruptMessage,
   createClaudeFileQueue,
+  exposeKnownClaudeSession,
   pollAgentStates,
   resetAgentPollState,
   shouldPersistClaudeJsonlMessage,
@@ -15,6 +20,39 @@ import {
 } from '../../bridge/watcher.mjs';
 
 test.afterEach(clearLiveMessageRegistry);
+
+test('known sessions are exposed after delayed content and same-size rewrites', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-watcher-'));
+  const sessionId = 'delayed-review';
+  const filePath = path.join(dir, `${sessionId}.jsonl`);
+  t.after(() => {
+    recentSessions.delete(sessionId);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const queue = `${JSON.stringify({ type: 'queue-operation', operation: 'enqueue' })}\n`;
+  const user = `${JSON.stringify({
+    type: 'user', entrypoint: 'sdk-cli', message: { content: '/code-review PR 64' },
+  })}\n`;
+  fs.writeFileSync(filePath, user);
+  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), user);
+
+  fs.writeFileSync(filePath, queue);
+  recentSessions.add(sessionId);
+  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
+
+  fs.appendFileSync(filePath, user);
+  assert.equal(exposeKnownClaudeSession(filePath, sessionId), true);
+  const patched = fs.readFileSync(filePath, 'utf8');
+  assert.equal(JSON.parse(patched.trim().split('\n')[1]).entrypoint, 'cli');
+  assert.equal(Buffer.byteLength(patched), Buffer.byteLength(queue + user));
+  assert.equal(exposeKnownClaudeSession(filePath, sessionId), false);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), patched);
+
+  fs.writeFileSync(filePath, queue + user);
+  assert.equal(exposeKnownClaudeSession(filePath, sessionId), true);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), patched);
+});
 
 test('parent file updates share one queue while child delivery stays independent', async () => {
   let release;

@@ -18,6 +18,7 @@ import {
 } from './live-message-registry.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
+import { exposeToResumePicker } from './jsonl.mjs';
 import {
   headlessRoute,
   pendingInteractionDetail,
@@ -71,6 +72,16 @@ export function correlateClaudeInterruptMessage(
 
 export function shouldSkipClaudeSession(preview, daemonMeta) {
   return !preview && !daemonMeta;
+}
+
+export function exposeKnownClaudeSession(filePath, sessionId) {
+  if (!filePath || !recentSessions.has(sessionId)) return false;
+  try {
+    return exposeToResumePicker(filePath);
+  } catch (error) {
+    console.warn(`[watcher] could not expose ${sessionId} to /resume: ${error.message}`);
+    return false;
+  }
 }
 
 export function startWatcher(config) {
@@ -222,6 +233,9 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     return readAndSendSubagent(config, filename, filePath, sessionId, enqueue);
   }
 
+  // File creation may precede its first entrypoint by minutes. Recheck known
+  // sessions on every event, including same-line-count transcript rewrites.
+  exposeKnownClaudeSession(filePath, sessionId);
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
@@ -462,6 +476,7 @@ async function postSessionMeta(
   lastKnownStatus.set(sessionId, newStatus);
   markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
+  exposeKnownClaudeSession(filePath, sessionId);
   // First session of a brand-new project → recount totals so projectCount stays accurate.
   if (!knownProjects.has(projectHash)) {
     knownProjects.add(projectHash);
