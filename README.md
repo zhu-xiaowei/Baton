@@ -70,6 +70,13 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
 - **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
 
+### Fast, stable, lightweight
+
+- **Native-like launch** — the native splash hands off seamlessly to matching skeleton screens at every stage, with no white flash
+- **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
+- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the app
+- **Lightweight apps** — native Tauri apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
+
 ### Developer tools
 
 - **Project files** — browse source with line highlighting, preview PDF, Office, image, and video files, and download or share them natively
@@ -83,12 +90,12 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Diffs, Mermaid, and LaTeX** — rendered inline while streaming
 - **Markdown and HTML files** — rendered previews of project files, with relative CSS, scripts, and images loaded from the project, so HTML pages render fully without a local server
 - **Inline HTML** — interactive previews in the conversation, expandable to full screen without losing their state
-- **Attachments** — images, files, and videos in messages open in an in-app viewer
+- **Images and attachments** — images in messages display inline and open full screen with pinch-to-zoom; files and videos open in an in-app viewer
 
 ### More
 
 - **File, image, and voice input** — upload files directly to S3, send compressed images, and dictate messages on iOS
-- **Session renaming** — rename a session through its native Claude Code or Codex runtime
+- **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
 
 ---
