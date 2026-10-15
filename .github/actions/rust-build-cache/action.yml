@@ -114,8 +114,7 @@ runs:
         cache-directories: ${{ inputs.cache-directories }}
         cache-bin: false
         cache-on-failure: true
-        # Temporary, PR-scoped benchmark seeding; remove before merge.
-        save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.number == 64 && inputs.platform == 'ios' && inputs.cache-key-suffix == '-xcode-v1') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:
