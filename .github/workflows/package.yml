@@ -60,7 +60,14 @@ jobs:
           packages: ''
       - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
       - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-      - run: rustup target add aarch64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Enable Gradle build cache
+        run: echo "org.gradle.caching=true" >> src-tauri/gen/android/gradle.properties
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: android
+          targets: aarch64-linux-android
+          sdk: android-36-ndk-27.2.12479018
       - run: npm ci
       - name: Restore Android release keystore
         if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-android' }}
@@ -109,7 +116,11 @@ jobs:
           node-version: '24'
           cache: npm
       - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - run: rustup target add aarch64-apple-ios
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: ios
+          targets: aarch64-apple-ios
+          sdk: xcode-26.6
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
       - run: npm run tauri -- ios build --ci --no-sign --archive-only
@@ -142,7 +153,11 @@ jobs:
           node-version: '24'
           cache: npm
       - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: macos
+          targets: aarch64-apple-darwin x86_64-apple-darwin
+          sdk: xcode-26.6
       - run: npm ci
       - name: Restore macOS signing and notarization keys
         if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-macos' }}
@@ -212,6 +227,11 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: windows
+          targets: x86_64-pc-windows-msvc
+          sdk: msvc-windows-2022
       - run: npm ci
       - name: Build Windows release installer
         if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-windows' }}

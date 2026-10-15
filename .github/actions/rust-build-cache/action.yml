@@ -1,0 +1,65 @@
+name: Rust build cache
+description: Configure an isolated PR or release build and restore its Rust dependencies.
+inputs:
+  platform:
+    description: Cache namespace for the target platform.
+    required: true
+  targets:
+    description: Rust targets to install.
+    required: true
+  flavor:
+    description: pr or release; release preserves the production Cargo profile.
+    default: release
+  sdk:
+    description: SDK version used by this build.
+    required: true
+  toolchain:
+    description: Pin the compiler across CI and packaging runners.
+    default: 1.98.1
+runs:
+  using: composite
+  steps:
+    - name: Select Rust build configuration
+      id: config
+      shell: bash
+      env:
+        BUILD_FLAVOR: ${{ inputs.flavor }}
+        RUST_VERSION: ${{ inputs.toolchain }}
+      run: |
+        case "$BUILD_FLAVOR" in
+          pr)
+            target_dir=target-ci
+            lto=false
+            codegen_units=16
+            ;;
+          release)
+            target_dir=target
+            lto=true
+            codegen_units=1
+            ;;
+          *) echo "Unsupported build flavor: $BUILD_FLAVOR" >&2; exit 1 ;;
+        esac
+        {
+          echo "RUSTUP_TOOLCHAIN=$RUST_VERSION"
+          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/src-tauri/$target_dir"
+          echo "CARGO_PROFILE_RELEASE_LTO=$lto"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$codegen_units"
+        } >> "$GITHUB_ENV"
+        echo "target-dir=$target_dir" >> "$GITHUB_OUTPUT"
+    - name: Install pinned Rust toolchain
+      shell: bash
+      env:
+        RUST_TARGETS: ${{ inputs.targets }}
+      run: |
+        rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+        for target in $RUST_TARGETS; do
+          rustup target add --toolchain "$RUSTUP_TOOLCHAIN" "$target"
+        done
+    - uses: Swatinem/rust-cache@v2
+      with:
+        # Image changes can also change the native compiler, linker and SDK.
+        shared-key: ${{ inputs.platform }}-${{ inputs.flavor }}-${{ inputs.sdk }}-${{ env.ImageVersion }}
+        workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
+        cache-bin: false
+        # main prewarms both profiles; same-repository PRs can also warm reruns.
+        save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
