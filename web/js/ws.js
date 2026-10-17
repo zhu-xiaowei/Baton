@@ -905,7 +905,7 @@ function dispatchWsMessage(msg) {
       if (msg.status === 'not_found' || msg.count === 0) {
         var hasLocalMessages = state.pendingSentMessages.length > 0
           || state.wsAllMessages.length > 0
-          || !!document.querySelector('.messages .msg-user');
+          || !!document.querySelector('.messages:not(.skeleton-messages) .msg-user');
         if (!hasLocalMessages) showEmptyMessages();
         return;
       }
