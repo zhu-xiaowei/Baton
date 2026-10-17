@@ -1339,6 +1339,7 @@ html.native-mobile .top-title {
   display: inline-flex; align-items: center; height: 21px; line-height: 21px;
 }
 html.native-mobile #top-right { min-height: 44px; gap: 0; line-height: 0; }
+html.native-mobile .ws-reconnect-indicator { width: 44px; }
 html.native-mobile .edge-back-top-right { min-height: 44px; gap: 0; line-height: 0; }
 html.native-mobile .top-gear,
 html.native-mobile .new-session-btn,
