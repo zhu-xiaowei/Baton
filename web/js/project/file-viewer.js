@@ -207,7 +207,10 @@ function isPreviewable(path) { return isHtml(path) || isMarkdown(path); }
 function showPreview(html) {
   setBody('<iframe class="file-preview" sandbox="allow-scripts allow-forms allow-popups allow-modals"></iframe>');
   var f = document.querySelector('#fileOverlayBody .file-preview');
-  if (f) f.srcdoc = html;
+  if (f) {
+    // Data documents work in native previews and keep #anchors inside the sandboxed page.
+    f.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  }
 }
 
 function setFileViewMode(mode) {
