@@ -16,7 +16,7 @@ import {
   statusFromEntry,
 } from '../../bridge/session.mjs';
 import { preferPendingInteraction } from '../../bridge/watcher.mjs';
-import { rebuildAgentCounts } from '../../bridge/agent-counts.mjs';
+import { rebuildAgentCounts, trackAgentSession } from '../../bridge/agent-counts.mjs';
 
 function agent(sessionId, state = 'blocked') {
   return {
@@ -531,6 +531,102 @@ test('stopped polling repairs stale child statuses and the completed root aggreg
     }
     assert.equal(result.statusDelta.from, 'running');
     assert.equal(result.statusDelta.to, 'completed');
+  } finally {
+    rebuildAgentCounts([]);
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+for (const scenario of ['idle-process', 'raw-status', 'deleted-child', 'empty-child', 'deleted-root']) {
+  test(`stopped polling reconciles ${scenario} without reviving stale children`, () => {
+    const parentId = '78787878-1111-4111-8111-787878787878';
+    const fixture = sessionFixture(parentId);
+    const childId = `${parentId}:subagent:agent-child`;
+    try {
+      const dir = path.join(path.dirname(fixture.filePath), parentId, 'subagents');
+      fs.mkdirSync(dir, { recursive: true });
+      const childFile = path.join(dir, 'agent-child.jsonl');
+      writeRows(childFile, [{
+        type: 'assistant',
+        message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] },
+      }]);
+      if (scenario !== 'raw-status') fs.utimesSync(childFile, new Date(0), new Date(0));
+      const parent = { id: parentId, project: fixture.project, status: 'completed' };
+      const child = {
+        id: childId, project: fixture.project, status: 'running',
+        parentSessionId: parentId, threadKind: 'subagent', agentName: 'Original task name',
+      };
+      rebuildAgentCounts([parent, child]);
+      if (scenario === 'deleted-child') fs.rmSync(childFile);
+      if (scenario === 'empty-child') fs.writeFileSync(childFile, '');
+      if (scenario === 'deleted-root') fs.rmSync(fixture.filePath);
+      const result = claudeRuntime.inspectActiveSession({
+        sessionId: parentId, projectHash: fixture.project, status: 'running',
+        lastActive: '2026-08-10T00:00:01.000Z', deviceName: 'test',
+      }, {
+        daemonMeta: new Map(), daemonRunning: new Set(), poolOwns: () => false,
+        runningInfo: {
+          projects: new Set([fixture.project]),
+          sessions: new Set(['idle-process', 'raw-status'].includes(scenario) ? [parentId] : []),
+        },
+        lastKnownStatus: new Map([
+          [parentId, scenario === 'raw-status' ? 'running' : 'completed'], [childId, 'running'],
+        ]),
+        findSessionFile: () => fixture.filePath,
+      });
+      assert.ok(result);
+      assert.equal(result.session.status, 'completed');
+      assert.equal(result.session.activeStatus, scenario === 'raw-status' ? 'running' : 'completed');
+      assert.equal(result.relatedSessions[0].status, scenario === 'raw-status' ? 'running' : 'completed');
+      if (['deleted-child', 'empty-child', 'deleted-root'].includes(scenario)) {
+        assert.equal(result.relatedSessions[0].agentName, 'Original task name');
+      }
+      trackAgentSession(parent);
+      assert.equal(parent.activeStatus, result.session.activeStatus);
+    } finally {
+      rebuildAgentCounts([]);
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('unchanged active children do not require reading their full transcripts on every poll', t => {
+  const parentId = '79797979-1111-4111-8111-797979797979';
+  const fixture = sessionFixture(parentId);
+  try {
+    const dir = path.join(path.dirname(fixture.filePath), parentId, 'subagents');
+    fs.mkdirSync(dir, { recursive: true });
+    const childFile = path.join(dir, 'agent-child.jsonl');
+    writeRows(childFile, [{
+      type: 'assistant',
+      message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'x'.repeat(1024 * 1024) }] },
+    }]);
+    rebuildAgentCounts([]);
+    const active = { sessionId: parentId, projectHash: fixture.project, status: 'running' };
+    const context = {
+      daemonMeta: new Map(), daemonRunning: new Set(), poolOwns: () => false,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
+      lastKnownStatus: new Map([
+        [parentId, 'completed'], [`${parentId}:subagent:agent-child`, 'running'],
+      ]),
+      findSessionFile: () => fixture.filePath,
+    };
+    claudeRuntime.inspectActiveSession(active, context);
+    let bytes = 0;
+    const read = fs.readSync;
+    t.mock.method(fs, 'readSync', function (...args) {
+      const size = read.apply(this, args);
+      bytes += size;
+      return size;
+    });
+    assert.equal(claudeRuntime.inspectActiveSession(active, context), null);
+    assert.ok(bytes < 1024, `Unchanged poll read ${bytes} bytes`);
+    t.mock.restoreAll();
+    fs.appendFileSync(childFile, JSON.stringify({
+      type: 'assistant', message: { stop_reason: 'end_turn', content: [] },
+    }) + '\n');
+    const updated = claudeRuntime.inspectActiveSession(active, context);
+    assert.equal(updated.relatedSessions[0].status, 'completed');
   } finally {
     rebuildAgentCounts([]);
     fs.rmSync(fixture.root, { recursive: true, force: true });

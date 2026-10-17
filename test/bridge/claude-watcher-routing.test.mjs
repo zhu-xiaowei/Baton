@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { claudeSubagentSessionId, readClaudeSubagentMeta } from '../../bridge/claude-subagent.mjs';
 
 import {
   clearLiveMessageRegistry,
@@ -129,7 +131,7 @@ test('metadata-only subagent completion updates its status and root counts witho
       import { initHttp } from './bridge/http.mjs';
       import { synced } from './bridge/extract.mjs';
       import { rebuildAgentCounts } from './bridge/agent-counts.mjs';
-      import { startWatcher } from './bridge/watcher.mjs';
+      import { startWatcher, createClaudeFileQueue } from './bridge/watcher.mjs';
       import { lastKnownStatus, recentSessions } from './bridge/sync.mjs';
       const requests = [];
       const server = createServer(async (request, response) => {
@@ -167,7 +169,8 @@ test('metadata-only subagent completion updates its status and root counts witho
         watcher = startWatcher(config);
         fs.writeFileSync(file.replace('.jsonl', '.meta.json'), '{"finished":true,"description":"Done task"}');
         const deadline = Date.now() + 5000;
-        while (!requests.some(body => body.sessions?.[0]?.status === 'completed') && Date.now() < deadline) {
+        while ((!requests.some(body => body.sessions?.[0]?.status === 'completed')
+          || lastKnownStatus.get(child) !== 'completed') && Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 20));
         }
         const body = requests.find(body => body.sessions?.[0]?.status === 'completed');
@@ -179,6 +182,19 @@ test('metadata-only subagent completion updates its status and root counts witho
         assert.equal(body.agentCountUpdates[0].runningAgentCount, 0);
         assert.equal(body.agentCountUpdates[0].activeStatus, 'running');
         assert.equal(fs.readFileSync(file, 'utf8'), transcript);
+        watcher.close();
+        watcher = null;
+        const count = requests.length;
+        const enqueue = createClaudeFileQueue(config);
+        const relative = path.relative(CLAUDE_PROJECTS, file);
+        await enqueue(relative, child);
+        await enqueue(relative, child);
+        assert.equal(requests.length, count, 'duplicate events must not repeat metadata writes');
+        fs.writeFileSync(file, '');
+        synced.set(child, 0);
+        await enqueue(relative, child);
+        await enqueue(relative, child);
+        assert.equal(requests.length, count, 'empty transcripts must not publish sessions or history');
       } finally {
         watcher?.close();
         server.closeAllConnections();
@@ -187,6 +203,44 @@ test('metadata-only subagent completion updates its status and root counts witho
     `,
   });
   assert.equal(result.status, 0, result.error + '\\n' + result.stdout + '\\n' + result.stderr);
+});
+
+test('polling baselines historical metadata while detecting new and just-finished agents', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-polling-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, '-repo', 'parent', 'subagents');
+  fs.mkdirSync(dir, { recursive: true });
+  const statuses = new Map();
+  const write = name => {
+    fs.writeFileSync(path.join(dir, `${name}.jsonl`), '{}\n');
+    fs.writeFileSync(path.join(dir, `${name}.meta.json`), '{"finished":true}');
+  };
+  for (let i = 0; i < 4; i++) {
+    write(`agent-old-${i}`);
+    statuses.set(claudeSubagentSessionId('parent', `agent-old-${i}`), 'completed');
+  }
+  write('agent-finishing');
+  statuses.set(claudeSubagentSessionId('parent', 'agent-finishing'), 'running');
+  const source = fs.readFileSync(new URL('../../bridge/watcher.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('function pollProjects(');
+  const end = source.indexOf('\nasync function readAndSend(', start);
+  const context = vm.createContext({
+    fs, path, CLAUDE_PROJECTS: root, lastKnownStatus: statuses,
+    claudeSubagentSessionId, readClaudeSubagentMeta,
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const events = [];
+  const enqueue = (_file, id) => events.push(id);
+  const mtimes = new Map();
+  context.pollProjects(enqueue, mtimes);
+  assert.deepEqual(events, [claudeSubagentSessionId('parent', 'agent-finishing')]);
+  statuses.set(events[0], 'completed');
+  events.length = 0;
+  context.pollProjects(enqueue, mtimes);
+  assert.deepEqual(events, []);
+  write('agent-new');
+  context.pollProjects(enqueue, mtimes);
+  assert.deepEqual(events, [claudeSubagentSessionId('parent', 'agent-new')]);
 });
 
 test('failed parent updates retry without waiting for another file event', { timeout: 2000 }, async (t) => {

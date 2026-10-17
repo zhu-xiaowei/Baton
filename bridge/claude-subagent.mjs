@@ -5,6 +5,7 @@ import { countJsonlLines } from './extract.mjs';
 import { getSessionMetadata } from './session.mjs';
 
 const MARKER = ':subagent:';
+const metadataCache = new Map();
 
 export function claudeSubagentSessionId(parentSessionId, agentId) {
   return `${parentSessionId}${MARKER}${agentId}`;
@@ -45,6 +46,20 @@ export function claudeSubagentStatus(meta, contentStatus, options = {}) {
   return options.parentRunning || fresh ? (contentStatus || 'running') : 'completed';
 }
 
+function subagentMetadata(filePath, stat) {
+  const cached = metadataCache.get(filePath);
+  if (cached?.size === stat.size && cached.mtimeMs === stat.mtimeMs
+    && cached.ctimeMs === stat.ctimeMs) return cached.metadata;
+  const metadata = getSessionMetadata(filePath, { includeStatus: true });
+  if (!metadataCache.has(filePath) && metadataCache.size >= 1024) {
+    metadataCache.delete(metadataCache.keys().next().value);
+  }
+  metadataCache.set(filePath, {
+    size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, metadata,
+  });
+  return metadata;
+}
+
 export function discoverClaudeSubagents(projectDir, parentSession, options = {}) {
   const subagentsDir = path.join(
     projectDir,
@@ -69,7 +84,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     }
     const agentId = file.slice(0, -'.jsonl'.length);
     const meta = readClaudeSubagentMeta(filePath);
-    const metadata = getSessionMetadata(filePath, { includeStatus: true });
+    const metadata = subagentMetadata(filePath, stat);
     return [{
       id: claudeSubagentSessionId(parentSession.nativeSessionId, agentId),
       nativeSessionId: claudeSubagentSessionId(
@@ -86,7 +101,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       status: claudeSubagentStatus(meta, metadata.status, {
         now: options.now,
         mtimeMs: stat.mtimeMs,
-        parentRunning: options.parentRunning || parentSession.status === 'running',
+        parentRunning: parentSession.status === 'running',
       }),
       isAgent: true,
       threadKind: 'subagent',
