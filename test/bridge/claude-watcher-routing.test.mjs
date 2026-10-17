@@ -112,6 +112,83 @@ test('parent file updates share one queue while child delivery stays independent
   assert.equal(maxActive, 1);
 });
 
+test('metadata-only subagent completion updates its status and root counts without new transcript lines', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-watcher-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 15_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { createServer } from 'node:http';
+      import { CLAUDE_PROJECTS } from './bridge/config.mjs';
+      import { initHttp } from './bridge/http.mjs';
+      import { synced } from './bridge/extract.mjs';
+      import { rebuildAgentCounts } from './bridge/agent-counts.mjs';
+      import { startWatcher } from './bridge/watcher.mjs';
+      import { lastKnownStatus, recentSessions } from './bridge/sync.mjs';
+      const requests = [];
+      const server = createServer(async (request, response) => {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        requests.push(JSON.parse(body));
+        response.end('{}');
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      let watcher;
+      try {
+        const config = { server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test', deviceName: 'test' };
+        initHttp(config);
+        const parent = '12345678-1234-4123-8123-123456789012';
+        const child = parent + ':subagent:agent-done';
+        const dir = path.join(CLAUDE_PROJECTS, '-review', parent, 'subagents');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, 'agent-done.jsonl');
+        const transcript = JSON.stringify({ type: 'user', message: {
+          content: [{ type: 'tool_result', tool_use_id: 'handback', content: 'Delivered' }],
+        } }) + '\\n';
+        fs.writeFileSync(file, transcript);
+        fs.writeFileSync(file.replace('.jsonl', '.meta.json'), '{"finished":false}');
+        fs.writeFileSync(path.join(CLAUDE_PROJECTS, '-review', parent + '.jsonl'),
+          JSON.stringify({ type: 'user', message: { content: 'Task' } }) + '\\n');
+        synced.set(child, 1);
+        recentSessions.add(parent);
+        recentSessions.add(child);
+        lastKnownStatus.set(parent, 'running');
+        lastKnownStatus.set(child, 'running');
+        rebuildAgentCounts([
+          { id: parent, project: '-review', status: 'running' },
+          { id: child, parentSessionId: parent, threadKind: 'subagent', status: 'running' },
+        ]);
+        watcher = startWatcher(config);
+        fs.writeFileSync(file.replace('.jsonl', '.meta.json'), '{"finished":true,"description":"Done task"}');
+        const deadline = Date.now() + 5000;
+        while (!requests.some(body => body.sessions?.[0]?.status === 'completed') && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const body = requests.find(body => body.sessions?.[0]?.status === 'completed');
+        assert.ok(body, 'completion must be delivered after a metadata-only write');
+        assert.equal(body.sessions[0].id, child);
+        assert.equal(body.sessions[0].parentSessionId, parent);
+        assert.equal(body.sessions[0].agentName, 'Done task');
+        assert.equal(body.agentCountUpdates[0].agentCount, 1);
+        assert.equal(body.agentCountUpdates[0].runningAgentCount, 0);
+        assert.equal(body.agentCountUpdates[0].activeStatus, 'running');
+        assert.equal(fs.readFileSync(file, 'utf8'), transcript);
+      } finally {
+        watcher?.close();
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+    `,
+  });
+  assert.equal(result.status, 0, result.error + '\\n' + result.stdout + '\\n' + result.stderr);
+});
+
 test('failed parent updates retry without waiting for another file event', { timeout: 2000 }, async (t) => {
   t.mock.method(console, 'error', () => {});
   let attempts = 0;

@@ -268,14 +268,11 @@ export const claudeRuntime = defineRuntimeAdapter({
     const newStatus = gone
       ? 'completed'
       : getSessionStatus(nativeSessionId, filePath, context.runningInfo);
-    if (newStatus === active.status) return null;
-
     const projectHash = normalizeProjectHash(active.projectHash || '');
     const projectName = readableProjectName(projectHash);
     const stat = gone ? null : fs.statSync(filePath);
     const metadata = gone ? null : getSessionMetadata(filePath);
     const lastActive = gone ? active.lastActive : stat.mtime.toISOString();
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
     const session = {
       id: nativeSessionId,
       nativeSessionId,
@@ -293,14 +290,39 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
+    // The active endpoint lists roots only. Reconcile their children as well,
+    // otherwise a stale child count can keep a completed root active forever.
+    const children = gone ? [] : discoverClaudeSubagents(path.dirname(filePath), session, {
+      parentRunning: context.runningInfo.sessions.has(nativeSessionId),
+    });
+    trackAgentSession(session);
+    for (const child of children) trackAgentSession(child);
+    trackAgentSession(session);
+    if (gone) Object.assign(session, {
+      agentCount: 0, runningAgentCount: 0, needsInputAgentCount: 0, activeStatus: 'completed',
+    });
+    if (session.activeStatus === active.status
+      && children.every(child => context.lastKnownStatus.get(child.id) === child.status)) return null;
+    const relatedSessions = children.map(child => {
+      const { _filePath, _lineCount, ...metadata } = child;
+      return metadata;
+    });
     return {
       session,
+      relatedSessions,
+      agentCountUpdates: children.length ? [{
+        sessionId: nativeSessionId,
+        project: projectHash,
+        agentCount: session.agentCount,
+        runningAgentCount: session.runningAgentCount,
+        needsInputAgentCount: session.needsInputAgentCount,
+      }] : [],
       statusDelta: {
         deviceName: active.deviceName,
         projectHash,
         projectName,
         from: active.status,
-        to: newStatus,
+        to: session.activeStatus,
         lastActive,
       },
     };

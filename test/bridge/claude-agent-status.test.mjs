@@ -16,6 +16,7 @@ import {
   statusFromEntry,
 } from '../../bridge/session.mjs';
 import { preferPendingInteraction } from '../../bridge/watcher.mjs';
+import { rebuildAgentCounts } from '../../bridge/agent-counts.mjs';
 
 function agent(sessionId, state = 'blocked') {
   return {
@@ -448,6 +449,90 @@ test('forked skills appear before the parent prompt and publish their initial hi
     }) + '\n');
     assert.equal(discover()[0].preview, '/code-review example PR');
   } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('finished subagent metadata wins over hand-back tool rows while its parent is running', () => {
+  const parentId = '67676767-2222-4222-8222-676767676767';
+  const fixture = sessionFixture(parentId, 'running');
+  try {
+    const dir = path.join(path.dirname(fixture.filePath), parentId, 'subagents');
+    fs.mkdirSync(dir, { recursive: true });
+    const childFile = path.join(dir, 'agent-handback.jsonl');
+    writeRows(childFile, [{
+      type: 'assistant',
+      message: {
+        stop_reason: null,
+        content: [{ type: 'tool_use', id: 'handback', name: 'SubagentHandback' }],
+      },
+    }, {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'handback', content: 'Delivered' }] },
+    }]);
+    fs.writeFileSync(childFile.replace('.jsonl', '.meta.json'), JSON.stringify({ finished: true }));
+    const catalog = discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
+      daemonMeta: new Map(),
+    });
+    assert.equal(catalog.sessions.find(s => s.id === parentId).status, 'running');
+    assert.equal(catalog.sessions.find(s => s.agentPath === 'agent-handback').status, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('stopped polling repairs stale child statuses and the completed root aggregate together', () => {
+  const parentId = '67676767-3333-4333-8333-676767676767';
+  const fixture = sessionFixture(parentId);
+  try {
+    const dir = path.join(path.dirname(fixture.filePath), parentId, 'subagents');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of ['finished', 'orphan']) {
+      const file = path.join(dir, `agent-${name}.jsonl`);
+      writeRows(file, [{
+        type: 'assistant',
+        message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] },
+      }]);
+      fs.utimesSync(file, new Date(0), new Date(0));
+      if (name === 'finished') fs.writeFileSync(file.replace('.jsonl', '.meta.json'), '{"finished":true}');
+    }
+    const sessions = discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root, runningInfo: noProcesses(), daemonMeta: new Map(),
+    }).sessions;
+    for (const session of sessions) {
+      if (session.parentSessionId) session.status = 'running';
+    }
+    rebuildAgentCounts(sessions);
+    const statuses = new Map(sessions.map(s => [s.id, s.status]));
+    const result = claudeRuntime.inspectActiveSession({
+      sessionId: parentId, status: 'running', projectHash: fixture.project, deviceName: 'test',
+    }, {
+      daemonMeta: new Map(), daemonRunning: new Set(), poolOwns: () => false,
+      runningInfo: noProcesses(), lastKnownStatus: statuses,
+      findSessionFile: () => fixture.filePath,
+    });
+    assert.equal(result.session.status, 'completed');
+    assert.equal(result.session.activeStatus, 'completed');
+    assert.equal(result.session.agentCount, 2);
+    assert.equal(result.session.runningAgentCount, 0);
+    assert.deepEqual(result.agentCountUpdates, [{
+      sessionId: parentId, project: fixture.project, agentCount: 2,
+      runningAgentCount: 0, needsInputAgentCount: 0,
+    }]);
+    assert.equal(result.relatedSessions.length, 2);
+    for (const child of result.relatedSessions) {
+      assert.equal(child.status, 'completed');
+      assert.equal(child.parentSessionId, parentId);
+      assert.equal(child.threadRootId, parentId);
+      assert.equal(child.threadKind, 'subagent');
+      assert.equal('_filePath' in child, false);
+    }
+    assert.equal(result.statusDelta.from, 'running');
+    assert.equal(result.statusDelta.to, 'completed');
+  } finally {
+    rebuildAgentCounts([]);
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
