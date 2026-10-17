@@ -3,6 +3,7 @@ import { storageSessionId } from './session-identity.mjs';
 const parentChildren = new Map();
 const childParents = new Map();
 const childStatuses = new Map();
+const childSessions = new Map();
 const parentProjects = new Map();
 const rootStatuses = new Map();
 
@@ -78,6 +79,7 @@ export function rebuildAgentCounts(sessions) {
   parentChildren.clear();
   childParents.clear();
   childStatuses.clear();
+  childSessions.clear();
   parentProjects.clear();
   rootStatuses.clear();
 
@@ -94,6 +96,7 @@ export function rebuildAgentCounts(sessions) {
     childrenFor(parentSessionId).add(childSessionId);
     childParents.set(childSessionId, parentSessionId);
     childStatuses.set(childSessionId, normalizedStatus(session.status));
+    childSessions.set(childSessionId, { ...session });
   }
   for (const session of sessions) {
     const sessionId = sessionStorageId(session);
@@ -105,6 +108,11 @@ export function rebuildAgentCounts(sessions) {
     }
   }
   return sessions;
+}
+
+export function trackedAgentSessions(rootSessionId) {
+  return Array.from(childSessions, ([id, session]) =>
+    rootFor(id) === rootSessionId ? { ...session } : null).filter(Boolean);
 }
 
 export function trackAgentSession(session) {
@@ -127,11 +135,13 @@ export function trackAgentSession(session) {
   }
   childParents.delete(sessionId);
   childStatuses.delete(sessionId);
+  childSessions.delete(sessionId);
 
   if (nextParent) {
     childrenFor(nextParent).add(sessionId);
     childParents.set(sessionId, nextParent);
     childStatuses.set(sessionId, normalizedStatus(session.status));
+    childSessions.set(sessionId, { ...session });
   }
 
   const nextRoot = nextParent ? rootFor(sessionId) : '';

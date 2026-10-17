@@ -28,6 +28,7 @@ var _pdfLoadController = null;
 var _officePreview = null;
 var _objectUrl = '';
 var _clearPdfRanges = null;
+var _clearHtmlPreview = null;
 
 function clearAttachmentPreviewCache(key) {
   if (!key) return;
@@ -153,6 +154,8 @@ function overlay() { return document.getElementById('fileOverlay'); }
 function clearFileBody() {
   const body = document.getElementById('fileOverlayBody');
   if (!body) return;
+  _clearHtmlPreview?.();
+  _clearHtmlPreview = null;
   _pdfLoadController?.abort();
   _pdfLoadController = null;
   _pdfPreview?.destroy();
@@ -205,9 +208,29 @@ function isImage(path) { return !!imageMimeType(path); }
 function isPreviewable(path) { return isHtml(path) || isMarkdown(path); }
 
 function showPreview(html) {
-  setBody('<iframe class="file-preview" sandbox="allow-scripts allow-forms allow-popups allow-modals"></iframe>');
-  var f = document.querySelector('#fileOverlayBody .file-preview');
-  if (f) f.srcdoc = html;
+  setBody('');
+  var body = document.getElementById('fileOverlayBody');
+  if (!body) return;
+  var f = document.createElement('iframe');
+  f.className = 'file-preview';
+  f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals');
+  var token = crypto.randomUUID();
+  var sendHtml = function (event) {
+    if (event.source === f.contentWindow && event.data === token) {
+      f.contentWindow.postMessage({ token, html }, '*');
+    }
+  };
+  window.addEventListener('message', sendHtml);
+  _clearHtmlPreview = function () { window.removeEventListener('message', sendHtml); };
+  // Keep the native-compatible URL small, even when the document has large inlined assets.
+  f.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(
+    '<script>(()=>{const token=' + JSON.stringify(token) + ';'
+    + 'addEventListener("message",function load(e){'
+    + 'if(e.source!==parent||e.data?.token!==token)return;'
+    + 'removeEventListener("message",load);document.open();document.write(e.data.html);document.close();'
+    + '});parent.postMessage(token,"*");})();</script>',
+  );
+  body.appendChild(f);
 }
 
 function setFileViewMode(mode) {

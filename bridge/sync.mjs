@@ -270,6 +270,7 @@ export async function checkStopped(config) {
 
   const updates = [];
   const statusDeltas = [];
+  const agentCountUpdates = [];
   const statusContexts = new Map();
 
   for (const s of active.sessions) {
@@ -289,13 +290,20 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
-    updates.push(result.session);
+    updates.push(result.session, ...(result.relatedSessions || []));
     statusDeltas.push(result.statusDelta);
+    agentCountUpdates.push(...(result.agentCountUpdates || []));
   }
 
   if (updates.length > 0) {
-    await post('/api/bridge/sync-sessions', {
+    const response = await post('/api/bridge/sync-sessions', {
       deviceName: config.deviceName, os: process.platform, sessions: updates, statusDeltas,
+      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
     });
+    if (response?.ok) {
+      for (const session of updates) {
+        lastKnownStatus.set(storageSessionId(session.runtime, session.nativeSessionId || session.id), session.status);
+      }
+    }
   }
 }

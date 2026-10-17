@@ -351,6 +351,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
         preserved_session_fields[(s.project, storage_id)] = existing
 
     effective_status_deltas = []
+    written_roots = {}
 
     # 1. Write SESS# items (always).
     with sessions_table.batch_writer() as batch:
@@ -421,6 +422,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                     needs_input_agent_count,
                 )
                 item["activeStatus"] = _active_status_value(effective_status, s.lastActive)
+                written_roots[(s.project, storage_id)] = item
                 if has_status_deltas:
                     old_status = (
                         _effective_status_from_item(existing)
@@ -453,7 +455,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             "accountId": key_hash,
             "sk": f"SESS#{req.deviceName}#{update.project}#{update.sessionId}",
         }
-        root = sessions_table.get_item(Key=root_key, ConsistentRead=True).get("Item")
+        written_root = written_roots.get((update.project, update.sessionId))
+        root = written_root or sessions_table.get_item(Key=root_key, ConsistentRead=True).get("Item")
         if not root:
             continue
         old_effective_status = _effective_status_from_item(root)
@@ -474,22 +477,27 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             running_agent_count,
             needs_input_agent_count,
         )
-        sessions_table.update_item(
-            Key=root_key,
-            UpdateExpression=(
-                "SET agentCount = :count, runningAgentCount = :running, "
-                "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
-            ),
-            ExpressionAttributeValues={
-                ":count": max(0, update.agentCount),
-                ":running": running_agent_count,
-                ":needs": needs_input_agent_count,
-                ":active": _active_status_value(
-                    new_effective_status, root.get("lastActive", "")
+        if written_root is None or (
+            root.get("agentCount") != max(0, update.agentCount)
+            or root.get("runningAgentCount") != running_agent_count
+            or root.get("needsInputAgentCount") != needs_input_agent_count
+        ):
+            sessions_table.update_item(
+                Key=root_key,
+                UpdateExpression=(
+                    "SET agentCount = :count, runningAgentCount = :running, "
+                    "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
                 ),
-                ":now": now,
-            },
-        )
+                ExpressionAttributeValues={
+                    ":count": max(0, update.agentCount),
+                    ":running": running_agent_count,
+                    ":needs": needs_input_agent_count,
+                    ":active": _active_status_value(
+                        new_effective_status, root.get("lastActive", "")
+                    ),
+                    ":now": now,
+                },
+            )
         if old_effective_status != new_effective_status:
             _apply_status_delta(key_hash, StatusDelta(
                 deviceName=req.deviceName,

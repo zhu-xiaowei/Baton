@@ -27,7 +27,7 @@ import {
   findClaudeSubagentFile,
   parseClaudeSubagentSessionId,
 } from './claude-subagent.mjs';
-import { trackAgentSession } from './agent-counts.mjs';
+import { trackAgentSession, trackedAgentSessions } from './agent-counts.mjs';
 
 function findClaudeSessionFile(nativeSessionId) {
   return findClaudeSubagentFile(nativeSessionId) || findSessionFile(nativeSessionId);
@@ -98,8 +98,6 @@ export function discoverClaudeSessions(options = {}) {
       };
       const children = discoverClaudeSubagents(projectDir, session, {
         now: options.now,
-        parentRunning: runningInfo.sessions.has(nativeSessionId)
-          || (runningInfo.projects.has(project) && runningInfo.sessions.size === 0),
       });
       if (!metadata.preview && !children.length) continue;
       if (!metadata.preview) session._provisional = true;
@@ -268,14 +266,10 @@ export const claudeRuntime = defineRuntimeAdapter({
     const newStatus = gone
       ? 'completed'
       : getSessionStatus(nativeSessionId, filePath, context.runningInfo);
-    if (newStatus === active.status) return null;
-
     const projectHash = normalizeProjectHash(active.projectHash || '');
     const projectName = readableProjectName(projectHash);
     const stat = gone ? null : fs.statSync(filePath);
-    const metadata = gone ? null : getSessionMetadata(filePath);
     const lastActive = gone ? active.lastActive : stat.mtime.toISOString();
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
     const session = {
       id: nativeSessionId,
       nativeSessionId,
@@ -284,8 +278,8 @@ export const claudeRuntime = defineRuntimeAdapter({
       projectName,
       lastActive,
       size: stat?.size || 0,
-      preview: metadata?.preview || active.preview || '',
-      model: metadata?.model || '',
+      preview: active.preview || '',
+      model: active.model || '',
       status: newStatus,
     };
     if (daemon) {
@@ -293,14 +287,45 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
+    // The active endpoint lists roots only. Reconcile their children as well,
+    // otherwise a stale child count can keep a completed root active forever.
+    const children = gone ? [] : discoverClaudeSubagents(path.dirname(filePath), session);
+    const present = new Set(children.map(child => child.id));
+    for (const child of trackedAgentSessions(nativeSessionId)) {
+      if (!present.has(child.id) && child.status !== 'completed') {
+        children.push({ ...child, status: 'completed' });
+      }
+    }
+    for (const child of children) trackAgentSession(child);
+    trackAgentSession(session);
+    if (newStatus === context.lastKnownStatus.get(nativeSessionId)
+      && session.activeStatus === active.status
+      && children.every(child => context.lastKnownStatus.get(child.id) === child.status)) return null;
+    const metadata = gone ? null : getSessionMetadata(filePath);
+    session.preview = metadata?.preview || session.preview;
+    session.model = metadata?.model || session.model;
+    const relatedSessions = children.map(child => {
+      const { _filePath, _lineCount, ...metadata } = child;
+      metadata.model ||= session.model;
+      metadata.threadRootId = nativeSessionId;
+      return metadata;
+    });
     return {
       session,
+      relatedSessions,
+      agentCountUpdates: children.length ? [{
+        sessionId: nativeSessionId,
+        project: projectHash,
+        agentCount: session.agentCount,
+        runningAgentCount: session.runningAgentCount,
+        needsInputAgentCount: session.needsInputAgentCount,
+      }] : [],
       statusDelta: {
         deviceName: active.deviceName,
         projectHash,
         projectName,
         from: active.status,
-        to: newStatus,
+        to: session.activeStatus,
         lastActive,
       },
     };

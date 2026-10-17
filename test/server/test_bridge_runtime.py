@@ -718,6 +718,70 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
     )]
 
 
+def test_inline_root_counts_notify_without_reading_and_rewriting_the_same_row(monkeypatch):
+    sessions = FakeTable()
+    reads = []
+    notifications = []
+    original_get = sessions.get_item
+
+    def get_item(**kwargs):
+        reads.append(kwargs["Key"])
+        return original_get(**kwargs)
+
+    monkeypatch.setattr(sessions, "get_item", get_item)
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, FakeTable()))
+    monkeypatch.setattr(
+        bridge_sync, "_broadcast_session_thread_changes",
+        lambda _account, _device, roots: notifications.extend(roots),
+    )
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[bridge_sync.SessionItem(
+                id="parent", project="-repo", status="completed",
+                lastActive="2026-08-21T00:00:00.000Z",
+                agentCount=1, runningAgentCount=0, needsInputAgentCount=0,
+                threadRootId="parent",
+            )],
+            agentCountUpdates=[bridge_sync.AgentCountUpdate(
+                sessionId="parent", project="-repo",
+                agentCount=1, runningAgentCount=0, needsInputAgentCount=0,
+            )],
+        ),
+        FakeRequest(),
+    ))
+    assert reads == []
+    assert sessions.updates == []
+    assert notifications == [{
+        "projectHash": "-repo", "rootSessionId": "parent",
+        "agentCount": 1, "runningAgentCount": 0, "needsInputAgentCount": 0,
+    }]
+    asyncio.run(bridge_sync.sync_sessions(
+        bridge_sync.SyncSessionsRequest(
+            deviceName="Linux",
+            sessions=[bridge_sync.SessionItem(
+                id="parent", project="-repo", status="completed",
+                lastActive="2026-08-21T00:00:00.000Z",
+                agentCount=1, runningAgentCount=0, needsInputAgentCount=0,
+                threadRootId="parent",
+            )],
+            agentCountUpdates=[bridge_sync.AgentCountUpdate(
+                sessionId="parent", project="-repo",
+                agentCount=2, runningAgentCount=1, needsInputAgentCount=0,
+            )],
+        ),
+        FakeRequest(),
+    ))
+    assert reads == []
+    root_updates = [
+        update for update in sessions.updates
+        if update["Key"]["sk"] == "SESS#Linux#-repo#parent"
+    ]
+    assert len(root_updates) == 1
+    assert root_updates[0]["ExpressionAttributeValues"][":count"] == 2
+    assert root_updates[0]["ExpressionAttributeValues"][":running"] == 1
+
+
 def test_session_thread_notification_targets_root_subscribers(monkeypatch):
     delivered = []
 
