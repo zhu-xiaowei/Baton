@@ -285,6 +285,9 @@ async function showDiff(loadDiff, token) {
     var results = await Promise.all([loadDiff(), window.loadDiffViewer?.()]);
     if (token !== _previewToken) return;
     var result = results[0];
+    var diffPath = /^\+\+\+ b\/(.+)$/m.exec(result.content || '') || /^--- a\/(.+)$/m.exec(result.content || '');
+    await window.loadHljsLanguage?.(window.detectLang?.(diffPath?.[1]));
+    if (token !== _previewToken) return;
     setBody(result.truncated ? '<div class="git-diff-warning">Showing the first 5 MB.</div>' : '');
     var host = document.createElement('div');
     host.className = 'git-diff-render';
@@ -341,6 +344,13 @@ function inlineImages(container, dir) {
   return Promise.all(jobs);
 }
 
+// A failed or truncated asset inlines as empty instead of blocking the preview.
+function previewAssetText(m) {
+  if (m.content != null) return Promise.resolve(m.content);
+  if (m.truncated) return Promise.resolve('');
+  return window.apiText('/api/bridge/file/' + m.key).catch(function () { return ''; });
+}
+
 // Inline same-directory relative assets (link/script/img) so the iframe renders complete.
 // Remote (http/https/protocol-relative/data:) refs are left untouched. Top-level refs only.
 function buildPreviewHtml(html, basePath) {
@@ -356,10 +366,7 @@ function buildPreviewHtml(html, basePath) {
     if (!isRelativeUrl(href)) return;
     jobs.push(requestFileAsync(resolve(href)).then(function (m) {
       if (m && m.ok !== false && !m.image) {
-        var cssPromise = m.content != null
-          ? Promise.resolve(m.content)
-          : window.apiText('/api/bridge/file/' + m.key);
-        return cssPromise.then(function (css) {
+        return previewAssetText(m).then(function (css) {
         var style = doc.createElement('style'); style.textContent = css; el.replaceWith(style);
         });
       }
@@ -370,10 +377,7 @@ function buildPreviewHtml(html, basePath) {
     if (!isRelativeUrl(src)) return;
     jobs.push(requestFileAsync(resolve(src)).then(function (m) {
       if (m && m.ok !== false && !m.image) {
-        var scriptPromise = m.content != null
-          ? Promise.resolve(m.content)
-          : window.apiText('/api/bridge/file/' + m.key);
-        return scriptPromise.then(function (js) {
+        return previewAssetText(m).then(function (js) {
         el.removeAttribute('src'); el.textContent = js;
         });
       }
