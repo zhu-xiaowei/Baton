@@ -124,6 +124,8 @@ test('project Markdown keeps GitHub-allowed HTML and strips active content', asy
       '```',
       'one',
       'line :rocket: `:tada:` :not_an_emoji:',
+      '',
+      '[at line](src/app.js:12) [bad](javascript:alert(1))',
     ].join('\n'));
 
     assert.equal(host.querySelector('script, style, [onclick], [onerror], [style]'), null);
@@ -136,6 +138,8 @@ test('project Markdown keeps GitHub-allowed HTML and strips active content', asy
     assert.match(host.querySelector('pre code.hljs').innerHTML, /hljs-/);
     assert.equal(host.querySelector('br'), null);
     assert.match(host.textContent, /line 🚀 :tada: :not_an_emoji:/);
+    assert.equal(host.querySelector('a[href="src/app.js:12"]')?.textContent, 'at line');
+    assert.equal(host.querySelector('a[href^="javascript"]'), null);
     assert.match(window.renderMd('<p align="center">x</p>'), /&lt;p align/);
   } finally {
     delete globalThis.window;

@@ -17,6 +17,8 @@ const ALLOWED_ATTR = [
   'rules', 'scope', 'span', 'start', 'summary', 'title', 'valign', 'value', 'vspace', 'width',
   'checked', 'disabled', 'type', 'data-baton-slot',
 ];
+// DOMPurify's default URI rule, plus `dir/file.ext:12` links, which (as in chat) open a file at a line.
+const ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$)|[^:?#]*[./][^:?#]*:\d+(?:-\d+)?$)/i;
 const ALERTS = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
 
 const purify = DOMPurify(window);
@@ -109,7 +111,7 @@ function addAlerts(root) {
 }
 
 function sanitize(html) {
-  const root = purify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR, ALLOW_DATA_ATTR: false, RETURN_DOM: true });
+  const root = purify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR, ALLOWED_URI_REGEXP, ALLOW_DATA_ATTR: false, RETURN_DOM: true });
   prepareMedia(root);
   addHeadingIds(root);
   addAlerts(root);

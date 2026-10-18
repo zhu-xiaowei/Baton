@@ -283,7 +283,7 @@ function setFileViewMode(mode) {
       window.renderKatexBlocks?.(mdBody);
       window.renderMermaidBlocks?.(mdBody);
       var hasRootPaths = /(?:src|srcset|href)\s*=\s*["']?\/(?!\/)|\]\(\s*<?\/(?!\/)/.test(current.text);
-      var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path, mdDir));
+      var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
       bindDocumentLinks(mdBody, mdDir, mdRoot);
       return mdRoot.then(function (root) {
         if (token !== _previewToken) return;
@@ -338,36 +338,63 @@ function resolvePath(dir, u) {
   return out.join('/');
 }
 
-// Project root of a document path ('' for project-relative paths), else the document's own directory.
-function documentRoot(path, dir) {
+// Project root of a document path ('' for project-relative paths); null outside the project.
+function documentRoot(path) {
   if (!/^(?:\/|[a-z]:[\\/])/i.test(path)) return '';
   var relative = relativeProjectImagePath(path, fileContext().projectHash);
-  return relative == null ? dir : path.slice(0, path.length - relative.length);
+  return relative == null ? null : path.slice(0, path.length - relative.length);
 }
 
 // GitHub's "/" is the repository root: the nearest folder (document folder upward, within the project) holding .git.
+// Only definite answers are cached; a failed probe (timeout, reconnect) is retried on the next open.
 var _repositoryRoots = new Map();
 function repositoryRoot(path, dir) {
-  var projectRoot = documentRoot(path, dir);
+  var projectRoot = documentRoot(path);
+  if (projectRoot == null || !dir.startsWith(projectRoot)) return Promise.resolve(projectRoot);
   var context = fileContext();
   var key = JSON.stringify([context.device, context.projectHash, dir]);
   if (!_repositoryRoots.has(key)) {
+    var failed = false;
     var probe = function (candidate) {
       return requestProjectFiles('read', { ...context, path: candidate + '.git' })
-        .then(function () { return true; }, function (error) { return error.message === 'is a directory'; })
-        .then(function (found) {
-          if (found) return candidate;
-          if (candidate.length <= projectRoot.length) return projectRoot;
+        .then(function () { return 'found'; }, function (error) {
+          if (error.message === 'is a directory') return 'found';
+          return /^(?:ENOENT|ENOTDIR)\b/.test(error.message) ? 'missing' : 'failed';
+        })
+        .then(function (result) {
+          if (result === 'found') return candidate;
+          if (result === 'failed') failed = true;
+          if (failed || candidate.length <= projectRoot.length) return projectRoot;
           return probe(candidate.slice(0, candidate.slice(0, -1).lastIndexOf('/') + 1));
         });
     };
-    _repositoryRoots.set(key, dir.startsWith(projectRoot) ? probe(dir) : Promise.resolve(projectRoot));
+    _repositoryRoots.set(key, probe(dir).then(function (root) {
+      if (failed) _repositoryRoots.delete(key);
+      return root;
+    }));
   }
   return _repositoryRoots.get(key);
 }
 
+// Real absolute paths (common in agent-written documents) stay as they are; other "/x" follow GitHub's
+// repository-root rule.
+var FILESYSTEM_ROOTS = /^\/(?:Users|home|tmp|private|var|opt|Volumes|mnt|usr|root|Applications|Library|System|nix)\//;
 function resolveDocumentPath(dir, root, url) {
-  return root != null && /^\/(?!\/)/.test(url) ? resolvePath(root, url.slice(1)) : resolvePath(dir, url);
+  if (/^[a-z]:[\\/]/i.test(url)) return url;
+  if (!/^\/(?!\/)/.test(url)) return resolvePath(dir, url);
+  if (root == null || FILESYSTEM_ROOTS.test(url) || (root[0] === '/' && url.startsWith(root))) return resolvePath('', url);
+  return resolvePath(root, url.slice(1));
+}
+
+// A link to a file; like chat links, `file.md:12` and `#L12` carry a line. Other schemes (tel:, ftp:) are left to the browser.
+function documentLinkTarget(href) {
+  if (!href || href[0] === '#') return null;
+  var withLine = /^([^:?#]*[./][^:?#]*):(\d+(?:-\d+)?)$/.exec(href);
+  if (!withLine && !/^[a-z]:[\\/]/i.test(href) && /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href)) return null;
+  var path = withLine ? withLine[1] : href;
+  try { path = decodeURIComponent(path); } catch (e) {}
+  var line = withLine ? withLine[2] : ((/#L(\d+(?:-L?\d+)?)/.exec(href) || [])[1] || '').replace(/L/g, '');
+  return { path: path, line: line };
 }
 
 // Like GitHub: #heading scrolls inside the preview, relative links open beside this document.
@@ -382,21 +409,21 @@ function bindDocumentLinks(container, dir, rootPromise) {
   container.addEventListener('click', function (event) {
     var link = event.target.closest('a[href]');
     var href = link?.getAttribute('href') || '';
+    var target = documentLinkTarget(href);
     if (href[0] === '#') {
       event.preventDefault();
       var id = href.slice(1);
       try { id = decodeURIComponent(id); } catch (e) {}
-      container.querySelector('#' + CSS.escape('user-content-' + id))?.scrollIntoView({ block: 'start' });
-    } else if (isRelativeUrl(href)) {
+      container.querySelector('#' + CSS.escape('user-content-' + id.replace(/^user-content-/, '')))
+        ?.scrollIntoView({ block: 'start' });
+    } else if (target) {
       event.preventDefault();
-      var decoded = href;
-      try { decoded = decodeURIComponent(decoded); } catch (e) {}
       var view = _view;
       rootPromise.then(function (root) {
         if (_view !== view) return;
-        var path = resolveDocumentPath(dir, root, decoded);
+        var path = resolveDocumentPath(dir, root, target.path);
         if (/\/(?:[?#].*)?$/.test(href) && openProjectDirectory(path, fileContext().projectHash)) return;
-        openFile(path, path.split('/').pop(), (/#L(\d+)/.exec(href) || [])[1] || '', null,
+        openFile(path, path.split('/').pop(), target.line, null,
           { projectHash: view.options.projectHash, device: view.options.device, fromDocument: true });
       });
     }
