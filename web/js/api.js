@@ -6,6 +6,8 @@ import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
 import { loadingSpinner } from './components/loading.js';
+import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-cache.js';
+import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 
@@ -122,27 +124,67 @@ function imageStorageKey(key, attachment = false) {
 function cachedImageUrl(key) {
   var entry = imageCache.get(key);
   if (entry?.expiresAt > Date.now()) return entry.url;
-  imageCache.delete(key);
+  forgetImageUrl(key, entry);
   return null;
 }
 
+function forgetImageUrl(key, entry) {
+  imageCache.delete(key);
+  // An object URL still shown on the page stays valid; it is released with the page instead.
+  if (entry?.objectUrl && !document.querySelector('img[src="' + CSS.escape(entry.url) + '"]')) {
+    URL.revokeObjectURL(entry.url);
+  }
+}
+
+function rememberImageUrl(key, url, objectUrl) {
+  if (imageCache.size >= IMAGE_CACHE_MAX) {
+    var oldest = imageCache.keys().next().value;
+    forgetImageUrl(oldest, imageCache.get(oldest));
+  }
+  imageCache.set(key, { url, objectUrl, expiresAt: objectUrl ? Infinity : Date.now() + IMAGE_URL_CACHE_MS });
+  return url;
+}
+
+function decodeImage(url) {
+  return new Promise(function (resolve, reject) {
+    var image = new Image();
+    image.onload = resolve;
+    image.onerror = function () { reject(new Error('Failed to load image.')); };
+    image.src = url;
+  });
+}
+
+// An image key never changes content, so downloaded images live in IndexedDB and reopening or
+// restarting reads them locally. The presigned URL itself is only used when caching fails.
 async function getImageUrl(key, attachment = false) {
   var cacheKey = imageStorageKey(key, attachment);
   var cached = cachedImageUrl(cacheKey);
   if (cached) return cached;
   if (pendingImages.has(cacheKey)) return pendingImages.get(cacheKey);
+  var storeKey = (attachment ? '' : 'images/') + key;
   var promise = (async function () {
-    var file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
-      attachment ? { attachment: 'true' } : undefined);
-    await new Promise(function (resolve, reject) {
-      var image = new Image();
-      image.onload = resolve;
-      image.onerror = function () { reject(new Error('Failed to load image.')); };
-      image.src = file.url;
-    });
-    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
-    imageCache.set(cacheKey, { url: file.url, expiresAt: Date.now() + IMAGE_URL_CACHE_MS });
-    return file.url;
+    var blob = await cachedAttachmentBlob(storeKey);
+    var file = null;
+    if (!blob) {
+      file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
+        attachment ? { attachment: 'true' } : undefined);
+      blob = await fetch(file.url).then(function (response) { return response.ok ? response.blob() : null; })
+        .catch(function () { return null; });
+      if (!blob) {
+        await decodeImage(file.url);
+        return rememberImageUrl(cacheKey, file.url, false);
+      }
+    }
+    // Stored Blobs may lack a type, which SVG needs to render.
+    var url = URL.createObjectURL(blob.slice(0, blob.size, imageMimeType(key) || blob.type));
+    try {
+      await decodeImage(url);
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    }
+    if (file) cacheAttachment(storeKey, key, blob);
+    return rememberImageUrl(cacheKey, url, true);
   })().finally(function () { pendingImages.delete(cacheKey); });
   pendingImages.set(cacheKey, promise);
   return promise;
