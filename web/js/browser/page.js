@@ -173,7 +173,7 @@ export function openBrowserPage(options = {}) {
     if (destroyed) return;
     nativeView?.hide();
     setLoading(false, false);
-    message.textContent = error;
+    message.textContent = 'Error: ' + error;
     message.hidden = false;
   }
 
