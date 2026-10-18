@@ -1,13 +1,15 @@
 // Downloaded attachments kept in IndexedDB so reopening one skips the URL request and the download.
-// A key never changes content (uploads mint a new key), so entries never go stale; the oldest-opened
-// files are evicted past the size budget. Every failure just means a cache miss.
+// A key never changes content (uploads mint a new key), so entries never go stale. Images and other
+// files have separate size budgets, so one large PDF cannot evict every image; within each budget the
+// oldest-opened entries go first. Every failure just means a cache miss.
 import { state } from '../state.js';
 import { IMAGE_MIME_TYPES } from './image-type.js';
 
 const DB_NAME = 'agentpeek-attachments-v1';
 const STORE = 'files';
-const MAX_TOTAL_BYTES = 500 * 1024 * 1024;
+const MAX_KIND_BYTES = { image: 500 * 1024 * 1024, file: 500 * 1024 * 1024 };
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const entryKind = key => Object.hasOwn(IMAGE_MIME_TYPES, (key || '').split('.').pop().toLowerCase()) ? 'image' : 'file';
 let dbPromise = null;
 
 function done(request) {
@@ -45,13 +47,26 @@ export function isCachedPreview(key) {
   return ['docx', 'pptx', 'xlsx'].includes(extension) || extension in CACHED_PREVIEW_TYPES;
 }
 
-export async function cachedAttachment(key) {
+async function cachedEntry(key) {
   try {
     const files = await store('readwrite');
     const entry = await done(files.get(scoped(key)));
-    if (!entry) return null;
-    files.put({ ...entry, lastAccessAt: Date.now() });
-    return { name: entry.name, data: await entry.data.arrayBuffer() };
+    if (entry) files.put({ ...entry, lastAccessAt: Date.now() });
+    return entry || null;
+  } catch {
+    return null;
+  }
+}
+
+// The stored Blob itself (disk-backed in browsers), for callers that only need an object URL.
+export async function cachedAttachmentBlob(key) {
+  return (await cachedEntry(key))?.data || null;
+}
+
+export async function cachedAttachment(key) {
+  const entry = await cachedEntry(key);
+  try {
+    return entry ? { name: entry.name, data: await entry.data.arrayBuffer() } : null;
   } catch {
     return null;
   }
@@ -65,16 +80,17 @@ export function cacheAttachment(key, name, data) {
   (async () => {
     const files = await store('readwrite');
     files.put({ key: scoped(key), name, size: blob.size, lastAccessAt: Date.now(), data: blob });
-    // Newest first; everything past the budget goes. The new entry is the newest, so it stays.
-    let total = 0;
+    // Newest first; everything past its kind's budget goes. The new entry is the newest, so it stays.
+    const totals = { image: 0, file: 0 };
     const cursor = files.index('byLastAccess').openCursor(null, 'prev');
     await new Promise((resolve, reject) => {
       cursor.onerror = () => reject(cursor.error);
       cursor.onsuccess = () => {
         const row = cursor.result;
         if (!row) return resolve();
-        total += row.value.size;
-        if (total > MAX_TOTAL_BYTES) row.delete();
+        const kind = entryKind(row.value.key);
+        totals[kind] += row.value.size;
+        if (totals[kind] > MAX_KIND_BYTES[kind]) row.delete();
         row.continue();
       };
     });

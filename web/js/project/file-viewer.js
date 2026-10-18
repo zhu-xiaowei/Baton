@@ -521,13 +521,26 @@ function inlineImages(container, dir, root, svgScheme) {
     if (!isRelativeUrl(src)) return;
     jobs.push(requestFileAsync(resolvePath(dir, src), context).then(function (m) {
       if (m && m.ok !== false && m.image) {
-        return window.getImageUrl(m.key, m.attachment).then(function (url) {
+        return window.getImageUrl(m.key, m.attachment).then(portableImageUrl).then(function (url) {
           el.setAttribute('src', url);
         });
       }
     }));
   });
   return Promise.all(jobs);
+}
+
+// HTML previews run in an opaque-origin iframe, which cannot read this page's blob: URLs.
+function portableImageUrl(url) {
+  if (!url.startsWith('blob:')) return url;
+  return fetch(url).then(function (response) { return response.blob(); }).then(function (blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error); };
+      reader.readAsDataURL(blob);
+    });
+  });
 }
 
 // Inline same-directory relative assets (link/script/img) so the iframe renders complete.
