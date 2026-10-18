@@ -220,7 +220,7 @@ class HeadlessProc {
     const wasBusy = this.busy;
     this.dead = true;
     this._framer.cancel();
-    this.pool._remove(this.key);
+    this.pool._remove(this.key, this);
     if (this.sessionId && wasBusy) this.pool._onExit?.(this.sessionId);
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
@@ -331,7 +331,8 @@ export class ClaudePool {
 
   _touch(proc) { proc.lastActiveAt = Date.now(); }
 
-  _remove(key) { this.procs.delete(key); }
+  // A reaped process can exit long after its key was respawned; it must not drop the live one.
+  _remove(key, proc) { if (this.procs.get(key) === proc) this.procs.delete(key); }
 
   // Send a message to sessionId's process (spawn/reuse/queue). Returns
   // { sessionId, bgLocked }: sessionId resolved from system/init (or upfront for
