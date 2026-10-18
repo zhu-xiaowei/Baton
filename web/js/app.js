@@ -2075,7 +2075,7 @@ async function loadOlderAndPrepend() {
   if (!container) return;
 
   if (state.wsLoadingOlder) return;
-  var msgs = await loadOlderMessages(state.appState.session);
+  var msgs = await loadOlderMessages(state.activeThreadId || state.appState.session);
 
   var viewportTop = content.getBoundingClientRect().top;
   var candidates = Array.from(container.querySelectorAll(
