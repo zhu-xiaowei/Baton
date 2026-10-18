@@ -121,6 +121,13 @@ export function createNativePreview({ root, area, onState, onError }) {
       scheduleLayout();
       return command('navigate', { url });
     },
+    // iOS only: renders `html` under `url`'s origin, so its site storage persists per URL host.
+    loadHTML(url, html) {
+      visible = true;
+      layout();
+      scheduleLayout();
+      return command('navigate', { url, html });
+    },
     action(action) {
       visible = true;
       layout();

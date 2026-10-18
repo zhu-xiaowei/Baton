@@ -209,7 +209,37 @@ function isMarkdown(path) { return /\.(md|markdown)$/i.test(path || ''); }
 function isImage(path) { return !!imageMimeType(path); }
 function isPreviewable(path) { return isHtml(path) || isMarkdown(path); }
 
-function showPreview(html) {
+// Like SwiftChat's generated apps: a virtual https origin per file keeps its site storage across reopening.
+function nativeHtmlPreview() {
+  return !!window.__TAURI_INTERNALS__ && !!window.__BATON_NATIVE_MOBILE__ && !/Android/i.test(navigator.userAgent);
+}
+
+async function htmlPreviewUrl(path) {
+  var context = fileContext();
+  var bytes = new TextEncoder().encode([context.device, context.projectHash, path].join('\n'));
+  var digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  var host = Array.from(digest.slice(0, 16), function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  return 'https://' + host + '.baton.local/' + encodeURIComponent(path.split('/').pop());
+}
+
+function showPreview(html, path, token) {
+  if (!nativeHtmlPreview()) return showFramePreview(html);
+  var fallback = function () { if (token === _previewToken) showFramePreview(html); };
+  Promise.all([import('../browser/native-view.js'), htmlPreviewUrl(path)]).then(function (loaded) {
+    if (token !== _previewToken) return;
+    setBody('');
+    var view = loaded[0].createNativePreview({
+      root: overlay(),
+      area: document.getElementById('fileOverlayBody'),
+      onState: function (data) { if (data.closeRequested) closeFileViewer(); },
+      onError: fallback,
+    });
+    _clearHtmlPreview = view.destroy;
+    view.loadHTML(loaded[1], html);
+  }).catch(fallback);
+}
+
+function showFramePreview(html) {
   setBody('');
   var body = document.getElementById('fileOverlayBody');
   if (!body) return;
@@ -295,7 +325,7 @@ function setFileViewMode(mode) {
     return;
   }
   buildPreviewHtml(_current.text, _current.path).then(function (html) {
-    if (token === _previewToken) showPreview(html);
+    if (token === _previewToken) showPreview(html, _current.path, token);
   });
 }
 
