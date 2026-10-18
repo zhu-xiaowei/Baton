@@ -9,7 +9,7 @@ private struct CreateArgs: Decodable {
 }
 
 private struct IdArgs: Decodable { let id: String }
-private struct NavigateArgs: Decodable { let id: String; let url: String }
+private struct NavigateArgs: Decodable { let id: String; let url: String; let html: String? }
 private struct ActionArgs: Decodable { let id: String; let action: String }
 private struct LayoutArgs: Decodable { let id: String; let bounds: ViewBounds }
 private struct ViewBounds: Decodable {
@@ -54,6 +54,7 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
   private var backGesture: UIScreenEdgePanGestureRecognizer?
   private var requestedURL = ""
   private var retryNavigation = false
+  private var html: String?
 
   init(id: String, channel: Channel) {
     self.id = id
@@ -98,14 +99,18 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     ))
   }
 
-  func navigate(_ url: URL) {
+  func navigate(_ url: URL, html: String? = nil) {
     requestedURL = url.absoluteString
     retryNavigation = false
-    view.load(URLRequest(url: url))
+    self.html = html
+    // A local document keeps `url` as its storage origin without loading it from the network.
+    if let html = html { view.loadHTMLString(html, baseURL: url) } else { view.load(URLRequest(url: url)) }
   }
 
   func reload() {
-    if (retryNavigation || view.url == nil), let url = URL(string: requestedURL) {
+    if let html = html, let url = URL(string: requestedURL) {
+      navigate(url, html: html)
+    } else if (retryNavigation || view.url == nil), let url = URL(string: requestedURL) {
       navigate(url)
     } else {
       view.reload()
@@ -161,6 +166,7 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
                decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     guard allowedPreviewURL(action.request.url) else { decisionHandler(.cancel); return }
     if action.targetFrame?.isMainFrame == true, let url = action.request.url {
+      if url.absoluteString != requestedURL { html = nil }
       requestedURL = url.absoluteString
     }
     decisionHandler(.allow)
@@ -224,7 +230,7 @@ class PreviewWebviewPlugin: Plugin {
             url.host != nil, url.user == nil, url.password == nil else {
         invoke.reject("Preview requires an HTTP or HTTPS URL"); return
       }
-      try self.entry(args.id).navigate(url)
+      try self.entry(args.id).navigate(url, html: args.html)
       invoke.resolve()
     }
   }
