@@ -18,6 +18,7 @@ import {
   dedupeMessages,
   mergeMessages,
   commitMessageState,
+  findInitialAgentEcho,
   reconcilePendingMessages,
 } from './message-state.js';
 import { createMessageDom } from './message-dom.js';
@@ -871,6 +872,9 @@ function dispatchWsMessage(msg) {
       if (msg.sessionId
         && state.appState.session === '__new__'
         && matchesNewSessionResult) {
+        if (msg.ok && pending?.sendPayload?.asAgent) {
+          pending.sessionId = msg.sessionId;
+        }
         state.appState.session = msg.sessionId;
         state.appState.sessionPreview = 'New Session';
         state.rootSessionId = msg.sessionId;
@@ -1832,7 +1836,9 @@ function commitMessages(messages, options = {}) {
     authoritative: !!options.authoritative,
     replaceConflicts: true,
   });
-  var pending = reconcilePendingMessages(state.pendingSentMessages, mergeResult.messages);
+  var pending = reconcilePendingMessages(
+    state.pendingSentMessages, mergeResult.messages, state.wsSessionId,
+  );
   var liveActivity = currentActivity();
   var streamTurnIds = options.streamTurnIds || _streamCoordinator.activeTurnIds();
   var dom = createMessageDom({
@@ -2760,7 +2766,7 @@ function messageEchoed(pending) {
     if (m.type !== 'user' || isInterruptMsg(m) || isToolResultOnly(m)) continue;
     if (messageMatchesPending(m, pending.id)) return m;
   }
-  return null;
+  return findInitialAgentEcho(pending, state.wsAllMessages, state.wsSessionId);
 }
 
 function settlePendingAtTurnEnd(turnId, end) {
