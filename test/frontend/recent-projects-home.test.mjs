@@ -4,7 +4,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
 const html = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-const filename = 's02-\u538b\u529b\u6d4b\u8bd5\u62a5\u544a.md';
+const filename = 's02-压力测试报告.md';
 const prompt = 'Inspect "quoted" <script> & session';
 const preview = prompt + ' [' + encodeURIComponent(filename)
   + '](</Users/demo/.baton-bridge/attachments/' + 'a'.repeat(32) + '.md>)';

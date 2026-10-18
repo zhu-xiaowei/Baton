@@ -122,7 +122,7 @@
   marked.use({
     tokenizer: {
       emStrong: function (src) {
-        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[\uff0c\u3002\uff01\uff1f\uff1a\uff1b\u3001\uff09\u3011\u300b\u300d\u300f])\*\*(?=\p{Script=Han})/u.exec(src);
+        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=\p{Script=Han})/u.exec(src);
         if (!match) return false;
         return {
           type: 'strong', raw: match[0], text: match[1],
@@ -259,7 +259,7 @@
       while ((match = pattern.exec(text))) {
         if (/[\w./:@-]/.test(text[match.index - 1] || '')
           || /[\w:@-]/.test(text[pattern.lastIndex] || '')) continue;
-        var address = match[0].replace(/[.,;!\uff0c\u3002\uff1b\uff01\uff1f\u3001\uff09]+$/, '');
+        var address = match[0].replace(/[.,;!，。；！？、）]+$/, '');
         while (address.endsWith(')')
           && address.split(')').length > address.split('(').length) address = address.slice(0, -1);
         var url;

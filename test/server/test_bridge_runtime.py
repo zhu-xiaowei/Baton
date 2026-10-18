@@ -134,7 +134,7 @@ def test_command_catalog_round_trip_is_account_scoped_and_trims_descriptions(mon
     monkeypatch.setenv("BRIDGE_IMAGES_BUCKET", "catalog-bucket")
     monkeypatch.setattr(bridge_sync, "_s3", s3)
     monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: s3)
-    long_description = "\u754c" * 240
+    long_description = "界" * 240
     request = bridge_sync.CommandCatalogRequest(
         deviceName="Mac",
         runtime="claude",
@@ -159,7 +159,7 @@ def test_command_catalog_round_trip_is_account_scoped_and_trims_descriptions(mon
 
     assert catalog["revision"] == "revision-1"
     assert len(catalog["commands"][0]["description"].encode("utf-8")) == 255
-    assert catalog["commands"][0]["description"] == "\u754c" * 85
+    assert catalog["commands"][0]["description"] == "界" * 85
     assert len(catalog["commands"][0]["options"][0]["description"].encode("utf-8")) == 255
     assert len(catalog["skills"][0]["description"].encode("utf-8")) == 255
     assert response.headers["Cache-Control"] == "no-store"
@@ -248,7 +248,7 @@ def test_device_name_validation():
     assert bridge_read._check_device_name(devices, "dev-01", "identity") == ("dev-01", "")
     assert bridge_read._check_device_name(devices, "bad name", "identity")[1] == bridge_read.INVALID_INTERNAL_NAME
     assert bridge_read._check_device_name(devices, "office-mac", "identity")[1] == bridge_read.DUPLICATE_DEVICE_NAME
-    assert bridge_read._check_device_name(devices, " \u5c0f\u4f1f\u7684 Mac ", "display", "Mac") == ("\u5c0f\u4f1f\u7684 Mac", "")
+    assert bridge_read._check_device_name(devices, " 小伟的 Mac ", "display", "Mac") == ("小伟的 Mac", "")
     assert bridge_read._check_device_name(devices, "Linux", "display", "Mac")[1] == bridge_read.DUPLICATE_DEVICE_NAME
     assert bridge_read._check_device_name(devices, "x" * 33, "display")[1] == bridge_read.INVALID_DISPLAY_NAME
 
@@ -2328,11 +2328,11 @@ def test_post_to_connection_uses_compact_utf8_json(monkeypatch):
     assert bridge_ws._post_to_connection(
         "https://example.test/v1",
         "app-1",
-        {"action": "stream_delta", "chunk": "\u4e2d\u6587"},
+        {"action": "stream_delta", "chunk": "中文"},
     ) is True
     assert sent == [(
         "app-1",
-        '{"action":"stream_delta","chunk":"\u4e2d\u6587"}'.encode(),
+        '{"action":"stream_delta","chunk":"中文"}'.encode(),
     )]
 
 

@@ -141,9 +141,9 @@ try {
   await call('Page.navigate', { url: 'http://127.0.0.1:' + vite.httpServer.address().port + '/__attachment_test' });
   await waitFor(() => evaluate('window.ready'));
   await evaluate(`(()=>{const input=document.getElementById('img-picker');const transfer=new DataTransfer();
-    transfer.items.add(new File([new Uint8Array(8*1024*1024).fill(80)],'\u8def\u7ebf\u56fe [2026].pptx'));
-    transfer.items.add(new File(['word'],'\u9700\u6c42.docx')); transfer.items.add(new File(['sheet'],'\u9884\u7b97.xlsx'));
-    transfer.items.add(new File(['video'],'\u4ea7\u54c1\u6f14\u793a\u89c6\u9891-\u79fb\u52a8\u7aef\u4e0a\u4f20.mp4',{type:'video/mp4'}));
+    transfer.items.add(new File([new Uint8Array(8*1024*1024).fill(80)],'路线图 [2026].pptx'));
+    transfer.items.add(new File(['word'],'需求.docx')); transfer.items.add(new File(['sheet'],'预算.xlsx'));
+    transfer.items.add(new File(['video'],'产品演示视频-移动端上传.mp4',{type:'video/mp4'}));
     input.files=transfer.files; input.dispatchEvent(new Event('change'));})()`);
   assert.equal(await evaluate('document.getElementById("send-btn").disabled'), true);
   await waitFor(() => evaluate('state.stagedImages.length === 4 && state.stagedImages.every(file=>file.uploaded)'));
@@ -173,7 +173,7 @@ try {
       && card.getBoundingClientRect().top===row.firstElementChild.getBoundingClientRect().top);})()`), true);
   await screenshot('mobile-attachments');
   await evaluate(`state.stagedImages.splice(1,0,
-    {kind:'file',key:'',name:'\u4ea7\u54c1\u6f14\u793a\u89c6\u9891-\u79fb\u52a8\u7aef\u4e0a\u4f20.mp4',uploaded:false,progress:0,uploadPhase:'preparing'});renderStagedImages();
+    {kind:'file',key:'',name:'产品演示视频-移动端上传.mp4',uploaded:false,progress:0,uploadPhase:'preparing'});renderStagedImages();
     window.uploadIndicator=document.querySelector('.staged-progress-indicator')`);
   await waitFor(() => evaluate('getComputedStyle(document.querySelector(".staged-upload-visual")).opacity === "1"'));
   assert.equal(await evaluate(`(()=>{const overlay=document.querySelector('.staged-upload-overlay');
@@ -251,11 +251,11 @@ try {
   assert.equal(await evaluate('document.getElementById("send-btn").disabled'), false);
   await evaluate('document.querySelector(".staged-file .attachment-file").click()');
   await waitFor(() => evaluate('!!document.querySelector(".attachment-preview-note")'));
-  assert.equal(await evaluate('document.querySelector("#fileOverlayTitle").textContent'), '\u8def\u7ebf\u56fe [2026].pptx');
+  assert.equal(await evaluate('document.querySelector("#fileOverlayTitle").textContent'), '路线图 [2026].pptx');
   assert.equal(await evaluate('document.getElementById("fileOverlay").scrollWidth <= innerWidth'), true);
   await screenshot('office-preview');
   await evaluate('document.getElementById("file-download-btn").click()');
-  const downloaded = path.join(downloadPath, '\u8def\u7ebf\u56fe [2026].pptx');
+  const downloaded = path.join(downloadPath, '路线图 [2026].pptx');
   await waitFor(async () => { try { return (await readFile(downloaded)).equals(deck.bytes); } catch { return false; } });
   assert.equal(await evaluate('document.getElementById("file-download-status").textContent'), 'Download started.');
   assert.match(await evaluate('location.pathname'), /__attachment_test/);

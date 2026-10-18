@@ -161,7 +161,7 @@ test('command catalog payload reports stale fallback and unavailable first load'
 });
 
 test('command catalog descriptions are capped before revision and delivery', () => {
-  const long = '\u754c'.repeat(COMMAND_DESCRIPTION_MAX_BYTES);
+  const long = '界'.repeat(COMMAND_DESCRIPTION_MAX_BYTES);
   const normalized = normalizeCommandCatalog({
     commands: [{
       name: 'model',
@@ -172,7 +172,7 @@ test('command catalog descriptions are capped before revision and delivery', () 
   });
 
   assert.equal(Buffer.byteLength(normalized.commands[0].description), 255);
-  assert.equal(normalized.commands[0].description, '\u754c'.repeat(85));
+  assert.equal(normalized.commands[0].description, '界'.repeat(85));
   assert.equal(Buffer.byteLength(normalized.commands[0].options[0].description), 255);
   assert.equal(Buffer.byteLength(normalized.skills[0].description), 255);
   assert.equal(

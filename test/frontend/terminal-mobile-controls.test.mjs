@@ -103,7 +103,7 @@ test('one-shot modifiers encode soft and hardware keys without modifying composi
   assert.deepEqual(sent, ['\x1b', '\t', '\x03', '\x1b[Z', '!', '\x1bb']);
   button('ctrl').click();
   terminal.textarea.dispatchEvent(new window.Event('compositionstart', { bubbles: true }));
-  assert.equal(controls.handleData('\u4e2d\u6587'), false);
+  assert.equal(controls.handleData('中文'), false);
   button('ctrl').click();
   terminal.textarea.dispatchEvent(new window.Event('paste', { bubbles: true }));
   assert.equal(controls.handleData('c'), false);

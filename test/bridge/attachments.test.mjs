@@ -37,7 +37,7 @@ test('files over 6 MB stream directly to disk with an unchanged extension', asyn
 
 test('local and remote references retain the original filename in history', async context => {
   const options = await fixture(context, Buffer.from('slides'));
-  const file = { key, name: '\u8ba1\u5212 [v2] (\u6700\u7ec8) "\u6d4b\u8bd5".pptx' };
+  const file = { key, name: '计划 [v2] (最终) "测试".pptx' };
   const text = 'Review ' + attachmentRef(file) + ' ' + attachmentRef(file);
   const resolved = await resolveBridgeAttachments(text, config, options);
   assert.ok(!resolved.includes('baton-file:'));

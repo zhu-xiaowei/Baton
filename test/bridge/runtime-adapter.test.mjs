@@ -263,8 +263,8 @@ test('Claude metadata follows the TUI title priority and preserves slash command
 test('Claude first prompt outranks the latest prompt when no generated title exists', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-first-prompt-'));
   const filePath = path.join(root, 'session.jsonl');
-  const filename = 's02-\u538b\u529b\u6d4b\u8bd5\u62a5\u544a.md';
-  const prompt = '\u8fd9\u4e2a\u6587\u6863\u5199\u7684\u662f\u4ec0\u4e48 [' + encodeURIComponent(filename)
+  const filename = 's02-压力测试报告.md';
+  const prompt = '这个文档写的是什么 [' + encodeURIComponent(filename)
     + '](<' + path.join(root, '.baton-bridge', 'attachments', 'a'.repeat(32) + '.md') + '>)';
   fs.writeFileSync(filePath, [
     JSON.stringify({ type: 'user', message: { content: prompt } }),
@@ -272,7 +272,7 @@ test('Claude first prompt outranks the latest prompt when no generated title exi
     '',
   ].join('\n'));
   try {
-    assert.equal(getSessionMetadata(filePath).preview, '\u8fd9\u4e2a\u6587\u6863\u5199\u7684\u662f\u4ec0\u4e48 ' + filename);
+    assert.equal(getSessionMetadata(filePath).preview, '这个文档写的是什么 ' + filename);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -281,7 +281,7 @@ test('Claude first prompt outranks the latest prompt when no generated title exi
 test('chunked JSONL scan preserves UTF-8, CRLF, and line numbering', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-jsonl-'));
   const filePath = path.join(root, 'sample.jsonl');
-  fs.writeFileSync(filePath, 'alpha\n\u4e2d\u6587\r\nomega\n');
+  fs.writeFileSync(filePath, 'alpha\n中文\r\nomega\n');
   try {
     const lines = [];
     const lineCount = scanJsonlLines(
@@ -290,7 +290,7 @@ test('chunked JSONL scan preserves UTF-8, CRLF, and line numbering', () => {
       { chunkSize: 2 },
     );
     assert.equal(lineCount, 3);
-    assert.deepEqual(lines, [[0, 'alpha'], [1, '\u4e2d\u6587'], [2, 'omega']]);
+    assert.deepEqual(lines, [[0, 'alpha'], [1, '中文'], [2, 'omega']]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

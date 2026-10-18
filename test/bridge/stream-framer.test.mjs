@@ -48,10 +48,10 @@ test('framer flushes pending data before another block starts', () => {
 
 test('framer splits oversized UTF-8 chunks without breaking characters', () => {
   const { value, frames } = framer({ maxChunkBytes: 7 });
-  value.delta(0, '\u4f60\u597d\u4e16\u754c');
+  value.delta(0, '你好世界');
   value.finish();
 
   assert.equal(frames.length, 2);
-  assert.equal(frames.map((frame) => frame.chunk).join(''), '\u4f60\u597d\u4e16\u754c');
+  assert.equal(frames.map((frame) => frame.chunk).join(''), '你好世界');
   assert.ok(frames.every((frame) => Buffer.byteLength(frame.chunk) <= 7));
 });

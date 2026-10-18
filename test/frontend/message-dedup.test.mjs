@@ -5,7 +5,7 @@ import {
   isCodexContextMessage,
 } from '../../web/js/message-dedup.js';
 
-function user(nativeId, timestamp, content = '\u4f60\u662f\u6211\u5417') {
+function user(nativeId, timestamp, content = '你是我吗') {
   return {
     uuid: nativeId,
     nativeId,

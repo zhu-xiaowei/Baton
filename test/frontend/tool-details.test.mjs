@@ -82,11 +82,11 @@ test('header stays local; body and Show more share one request and cache', async
   assert.deepEqual(sent[0].toolUseIds, ['cached']);
   complete(sent[0], [{
     toolUse: { ...tool.toolUse, truncated: false },
-    toolResult: { ...tool.toolResult, content: '\u5b8c\u6574\u7ed3\u679c'.repeat(1000) },
+    toolResult: { ...tool.toolResult, content: '完整结果'.repeat(1000) },
   }]);
   await loading;
   assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
-  assert.ok(tool.node.textContent.includes('\u5b8c\u6574\u7ed3\u679c'.repeat(100)));
+  assert.ok(tool.node.textContent.includes('完整结果'.repeat(100)));
   await window.toggleToolDetails(tool.node.querySelector('.tool-header'));
   await window.toggleToolDetails(tool.node.querySelector('.tool-header'));
   assert.equal(sent.length, 1);

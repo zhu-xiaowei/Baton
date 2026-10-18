@@ -8,7 +8,7 @@ fn names_are_safe_on_mac_and_windows() {
   assert_eq!(filename::safe_filename("CON.txt"), "_CON.txt");
   assert_eq!(filename::safe_filename(".."), "download");
   assert_eq!(filename::safe_filename("bad:name?.txt"), "bad_name_.txt");
-  let long = filename::safe_filename(&("\u{6587}\u{4ef6}".repeat(200) + ".pptx"));
+  let long = filename::safe_filename(&("文件".repeat(200) + ".pptx"));
   assert!(long.len() < 220);
   assert!(long.ends_with(".pptx"));
 }
