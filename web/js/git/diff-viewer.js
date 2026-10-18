@@ -34,7 +34,7 @@ export function openGitDiff(path, group, status, options) {
 
 export function openGitCommitDiff(commitOid, file) {
   var projectHash = state.appState.project?.hash || '';
-  var opened = openFile(file.path, file.path.split('/').pop() + ' @ ' + commitOid.slice(0, 7), '', '', {
+  var opened = openFile(file.path, file.path.split('/').pop(), '', '', {
     projectHash: projectHash,
     canRead: false,
     diffOnly: true,

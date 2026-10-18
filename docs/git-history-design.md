@@ -88,7 +88,7 @@ See current working branch and ↑↓ → expand Graph → see forks/merges → 
 - The left side of the expanded area draws "through lanes" (rail) so the graph is not broken; the right side is the file list directly.
 - File rows directly reuse Changes' `gitFileRowHtml()` (same icon, file name + directory, status letter), with row height matching collapsed commit rows at 34px (Changes stays at 40px),
   just without stage/discard buttons, and file icons left-aligned with the commit title; files at the repository root show no directory, same as Changes; renames show `old → dir`.
-- Tapping a file opens the existing full-screen Diff: title `name @ sha7`, with Code/Preview tabs and download hidden (`diffOnly + canRead:false`).
+- Tapping a file opens the existing full-screen Diff: titled with the file name like Changes, with Code/Preview tabs and download hidden (`diffOnly + canRead:false`).
 
 ### 2.5 Scope Selector
 
