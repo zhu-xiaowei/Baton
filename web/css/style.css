@@ -874,7 +874,7 @@ html.native-mobile .agent-threads-list {
 }
 .messages.has-permission-prompt > .permission-prompt { margin-top: auto; }
 .permission-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
-.permission-title { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.permission-title { font-size: 14px; font-weight: 600; color: #e6edf3; overflow-wrap: anywhere; }
 .permission-close { background: none; border: none; color: #6e7681; font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
 @media (hover: hover) and (pointer: fine) {
   .permission-close:hover { color: #f85149; }
