@@ -241,8 +241,9 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .file-badge {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
   background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-  padding: 0 10px; height: 36px; font-size: 12px; color: #e6edf3; user-select: none;
+  padding: 0 10px; height: 40px; font-size: 12px; color: #e6edf3; user-select: none;
 }
+.file-badge.attachment-file { border-color: transparent; }
 @media (hover: hover) and (pointer: fine) {
   .file-badge:hover { border-color: #58a6ff; }
 }
@@ -540,12 +541,12 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 /* === Image === */
 .img-placeholder {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 6px;
+  width: 40px; height: 40px; border-radius: 6px;
   background: #161b22; border: 1px solid #30363d;
 }
 .img-placeholder .img-spinner { width: 18px; height: 18px; }
 .img-placeholder.loaded { background: none; border: none; }
-.img-placeholder img { width: 36px; height: 36px; border-radius: 6px; cursor: pointer; object-fit: cover; }
+.img-placeholder img { width: 40px; height: 40px; border-radius: 6px; cursor: pointer; object-fit: cover; }
 .img-placeholder.markdown-image { box-sizing: border-box; width: min(100%, 320px); height: 180px; max-width: 100%; vertical-align: middle; }
 .img-placeholder.markdown-image { color: #8b949e; font-size: 12px; }
 .img-placeholder[data-failed] { cursor: pointer; }
