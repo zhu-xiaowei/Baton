@@ -3,7 +3,7 @@ import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
-import { currentProjectHash } from './project-hash.js';
+import { currentProjectHash, relativeProjectImagePath } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
@@ -27,6 +27,8 @@ var _pdfPreview = null;
 var _pdfLoadController = null;
 var _officePreview = null;
 var _objectUrl = '';
+var _documentObjectUrls = [];
+var _documentImages = new Map(); // path → URL promise for the open file; survives Source/Preview toggles
 var _clearPdfRanges = null;
 var _clearHtmlPreview = null;
 
@@ -264,15 +266,34 @@ function setFileViewMode(mode) {
   if (mode !== 'preview') {
     return renderSource(_current.path, _current.text, _current.truncated, _current.line, _current.snippet);
   }
-  if (isMarkdown(_current.path) && window.renderMd) {
-    setBody('<div class="assistant-text md-preview">' + window.renderMd(_current.text) + '</div>');
-    var mdDir = _current.path.slice(0, _current.path.lastIndexOf('/') + 1);
-    var mdBody = document.querySelector('#fileOverlayBody .md-preview');
-    if (mdBody) inlineImages(mdBody, mdDir); // mutates this node; harmless if view later changes
-    return;
-  }
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading preview' }) + '</div>');
+  if (isMarkdown(_current.path)) {
+    var current = _current;
+    var documentModule;
+    import('../components/markdown-document.js').then(function (module) {
+      documentModule = module;
+      return module.renderMarkdownDocument(current.text);
+    }).then(function (html) {
+      if (token !== _previewToken) return;
+      setBody('<div class="assistant-text md-preview">' + html + '</div>');
+      var mdDir = current.path.slice(0, current.path.lastIndexOf('/') + 1);
+      var mdBody = document.querySelector('#fileOverlayBody .md-preview');
+      if (!mdBody) return;
+      window.renderKatexBlocks?.(mdBody);
+      window.renderMermaidBlocks?.(mdBody);
+      var hasRootPaths = /(?:src|srcset|href)\s*=\s*["']?\/(?!\/)|\]\(\s*<?\/(?!\/)/.test(current.text);
+      var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path, mdDir));
+      bindDocumentLinks(mdBody, mdDir, mdRoot);
+      return mdRoot.then(function (root) {
+        if (token !== _previewToken) return;
+        inlineImages(mdBody, mdDir, root, documentModule.darkColorScheme); // mutates this node; harmless if view later changes
+      });
+    }).catch(function (error) {
+      if (token === _previewToken) setBody('<div class="file-error">' + esc(error.message) + '</div>');
+    });
+    return;
+  }
   buildPreviewHtml(_current.text, _current.path).then(function (html) {
     if (token === _previewToken) showPreview(html);
   });
@@ -317,14 +338,155 @@ function resolvePath(dir, u) {
   return out.join('/');
 }
 
+// Project root of a document path ('' for project-relative paths), else the document's own directory.
+function documentRoot(path, dir) {
+  if (!/^(?:\/|[a-z]:[\\/])/i.test(path)) return '';
+  var relative = relativeProjectImagePath(path, fileContext().projectHash);
+  return relative == null ? dir : path.slice(0, path.length - relative.length);
+}
+
+// GitHub's "/" is the repository root: the nearest folder (document folder upward, within the project) holding .git.
+var _repositoryRoots = new Map();
+function repositoryRoot(path, dir) {
+  var projectRoot = documentRoot(path, dir);
+  var context = fileContext();
+  var key = JSON.stringify([context.device, context.projectHash, dir]);
+  if (!_repositoryRoots.has(key)) {
+    var probe = function (candidate) {
+      return requestProjectFiles('read', { ...context, path: candidate + '.git' })
+        .then(function () { return true; }, function (error) { return error.message === 'is a directory'; })
+        .then(function (found) {
+          if (found) return candidate;
+          if (candidate.length <= projectRoot.length) return projectRoot;
+          return probe(candidate.slice(0, candidate.slice(0, -1).lastIndexOf('/') + 1));
+        });
+    };
+    _repositoryRoots.set(key, dir.startsWith(projectRoot) ? probe(dir) : Promise.resolve(projectRoot));
+  }
+  return _repositoryRoots.get(key);
+}
+
+function resolveDocumentPath(dir, root, url) {
+  return root != null && /^\/(?!\/)/.test(url) ? resolvePath(root, url.slice(1)) : resolvePath(dir, url);
+}
+
+// Like GitHub: #heading scrolls inside the preview, relative links open beside this document.
+// `rootPromise` may still be probing for the repository root when a link is clicked.
+function bindDocumentLinks(container, dir, rootPromise) {
+  container.querySelectorAll('a[href]').forEach(function (link) {
+    if (!/^https?:/i.test(link.getAttribute('href'))) return;
+    link.classList.add('ext-link');
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  });
+  container.addEventListener('click', function (event) {
+    var link = event.target.closest('a[href]');
+    var href = link?.getAttribute('href') || '';
+    if (href[0] === '#') {
+      event.preventDefault();
+      var id = href.slice(1);
+      try { id = decodeURIComponent(id); } catch (e) {}
+      container.querySelector('#' + CSS.escape('user-content-' + id))?.scrollIntoView({ block: 'start' });
+    } else if (isRelativeUrl(href)) {
+      event.preventDefault();
+      var decoded = href;
+      try { decoded = decodeURIComponent(decoded); } catch (e) {}
+      var view = _view;
+      rootPromise.then(function (root) {
+        if (_view !== view) return;
+        var path = resolveDocumentPath(dir, root, decoded);
+        if (/\/(?:[?#].*)?$/.test(href) && openProjectDirectory(path, fileContext().projectHash)) return;
+        openFile(path, path.split('/').pop(), (/#L(\d+)/.exec(href) || [])[1] || '', null,
+          { projectHash: view.options.projectHash, device: view.options.device, fromDocument: true });
+      });
+    }
+  });
+}
+
+// A document link to a folder opens the project file browser there, like GitHub's tree view.
+function openProjectDirectory(path, projectHash) {
+  var project = state.appState.project;
+  if (!project || !window.openProjectFilesPath || projectHash !== project.hash) return false;
+  var relative = /^(?:\/|[a-z]:[\\/])/i.test(path)
+    ? relativeProjectImagePath(path.replace(/\/?$/, '/'), project.hash)
+    : path;
+  if (relative == null) return false;
+  closeFileViewer();
+  window.openProjectFilesPath(relative);
+  return true;
+}
+
+function syncedImageUrl(path, context, cache, svgScheme) {
+  if (!cache.has(path)) {
+    cache.set(path, requestFileAsync(path, context).then(function (m) {
+      if (!m || m.ok === false || !m.image) return null;
+      var url = window.getImageUrl(m.key, m.attachment);
+      return svgScheme && /\.svg$/i.test(path) ? url.then(function (src) { return schemedSvgUrl(src, svgScheme); }) : url;
+    }).catch(function () { return null; }));
+  }
+  return cache.get(path);
+}
+
+// An SVG's own prefers-color-scheme rules are rewritten so its text follows Baton's dark theme.
+function schemedSvgUrl(url, svgScheme) {
+  // no-store: the <img> preload cached this URL without CORS headers, which a plain fetch would reuse.
+  return fetch(url, { cache: 'no-store' }).then(function (response) { return response.ok ? response.text() : null; }).then(function (svg) {
+    if (!svg || !/prefers-color-scheme/i.test(svg)) return url;
+    var objectUrl = URL.createObjectURL(new Blob([svgScheme(svg)], { type: 'image/svg+xml' }));
+    _documentObjectUrls.push(objectUrl);
+    return objectUrl;
+  }).catch(function () { return url; });
+}
+
+// Document images use the per-file cache; failures fall back to the chat loader's retry UI.
+function showDocumentImage(el, path, context, cache, svgScheme) {
+  el.dataset.loaded = '1';
+  return syncedImageUrl(path, context, cache, svgScheme).then(function (url) {
+    if (!url) {
+      delete el.dataset.loaded;
+      window.loadImages?.(el.parentNode, context);
+      return;
+    }
+    var image = document.createElement('img');
+    image.src = url;
+    image.alt = el.dataset.alt || '';
+    image.onclick = function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      window.viewImage?.(image.src);
+    };
+    el.classList.add('loaded');
+    el.replaceChildren(image);
+  });
+}
+
 // Replace relative <img src> in a live container with synced data URLs.
-function inlineImages(container, dir) {
+function inlineImages(container, dir, root, svgScheme) {
   var jobs = [];
   var context = fileContext();
+  var cache = svgScheme ? _documentImages : new Map();
+  container.querySelectorAll('img[data-md-src]').forEach(function (el) {
+    jobs.push(syncedImageUrl(resolveDocumentPath(dir, root, el.dataset.mdSrc), context, cache, svgScheme).then(function (url) {
+      if (url) el.setAttribute('src', url);
+    }));
+  });
+  container.querySelectorAll('source[data-md-srcset]').forEach(function (el) {
+    var parts = el.dataset.mdSrcset.split(',').map(function (part) { return part.trim().split(/\s+/); });
+    jobs.push(Promise.all(parts.map(function (part) {
+      return isRelativeUrl(part[0]) ? syncedImageUrl(resolveDocumentPath(dir, root, part[0]), context, cache, svgScheme) : part[0];
+    })).then(function (urls) {
+      if (urls.every(Boolean)) {
+        el.setAttribute('srcset', urls.map(function (url, i) { return [url].concat(parts[i].slice(1)).join(' '); }).join(', '));
+      }
+    }));
+  });
   container.querySelectorAll('.img-placeholder[data-path]').forEach(function (el) {
-    if (!/^(?:\/|[a-z]:[\\/])/i.test(el.dataset.path)) {
+    if (root != null && /^\/(?!\/)/.test(el.dataset.path)) {
+      el.dataset.path = resolveDocumentPath(dir, root, el.dataset.path);
+    } else if (!/^(?:\/|[a-z]:[\\/])/i.test(el.dataset.path)) {
       el.dataset.path = resolvePath(dir, el.dataset.path);
     }
+    if (svgScheme) jobs.push(showDocumentImage(el, el.dataset.path, context, cache, svgScheme));
   });
   window.loadImages?.(container, context);
   container.querySelectorAll('img[src]').forEach(function (el) {
@@ -397,6 +559,9 @@ export function closeFileViewer(options) {
   _fileRequestToken++;
   _previewToken++;
   setBody('');
+  _documentObjectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
+  _documentObjectUrls = [];
+  _documentImages = new Map();
   updateTabs();
   if (wasOpen && onClose) onClose(options);
   else if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
@@ -423,6 +588,8 @@ async function sendFileRequest(absPath, line, snippet, retriesLeft) {
     handleFileResponse(message, line, snippet, token);
   } catch (error) {
     if (token !== _fileRequestToken) return;
+    if (error.message === 'is a directory' && _view?.options.fromDocument
+      && openProjectDirectory(absPath, fileContext().projectHash)) return;
     if (retriesLeft > 0) {
       sendFileRequest(absPath, line, snippet, retriesLeft - 1);
       return;
@@ -463,7 +630,11 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
   var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
-  setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff' : 'source');
+  // Markdown/HTML open rendered, unless the link targets a line or a tool's edit location.
+  var previewDocument = isPreviewable(absPath) && !absPath.startsWith('baton-file:') && !lineHint && !matchId
+    && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
+  setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff'
+    : previewDocument ? 'preview' : 'source');
   return true;
 }
 

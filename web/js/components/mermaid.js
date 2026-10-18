@@ -15,8 +15,8 @@
 
   var _isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   var _maxLiveSvgs = _isMobile ? 6 : 12;
-  var _viewportObserver = null;
-  var _observedBlocks = new Set();
+  var _viewportObservers = Object.create(null); // 'content' (chat) | 'viewport' (file previews etc.)
+  var _observedBlocks = new Map();               // block → its observer
 
   function releaseSvg(block) {
     var box = block && block.querySelector('.mermaid-svg');
@@ -126,20 +126,24 @@
   }
 
   function pruneObservedBlocks() {
-    _observedBlocks.forEach(function (block) {
+    _observedBlocks.forEach(function (observer, block) {
       if (block.isConnected) return;
-      _viewportObserver.unobserve(block);
+      observer.unobserve(block);
       _observedBlocks.delete(block);
     });
   }
 
-  function ensureViewportObserver() {
-    if (_viewportObserver || !window.IntersectionObserver) return _viewportObserver;
-    _viewportObserver = new IntersectionObserver(function (entries) {
+  // A root only reports its own descendants, so blocks outside the chat use the viewport.
+  function ensureViewportObserver(block) {
+    if (!window.IntersectionObserver) return null;
+    var content = document.getElementById('content');
+    var scope = content && content.contains(block) ? 'content' : 'viewport';
+    if (_viewportObservers[scope]) return _viewportObservers[scope];
+    var observer = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         var block = entry.target;
         if (!block.isConnected) {
-          _viewportObserver.unobserve(block);
+          observer.unobserve(block);
           _observedBlocks.delete(block);
           return;
         }
@@ -148,11 +152,12 @@
         else releaseSvg(block);
       });
     }, {
-      root: document.getElementById('content') || null,
+      root: scope === 'content' ? content : null,
       rootMargin: (_isMobile ? 480 : 900) + 'px 0px',
       threshold: 0,
     });
-    return _viewportObserver;
+    _viewportObservers[scope] = observer;
+    return observer;
   }
 
   // (Re)render any .mermaid-block under `container` whose source changed since its current SVG.
@@ -162,12 +167,12 @@
       ? [container] : Array.from(container.querySelectorAll('.mermaid-block'));
     if (!blocks.length) return;
 
-    var observer = ensureViewportObserver();
-    if (observer) {
+    if (window.IntersectionObserver) {
       pruneObservedBlocks();
       blocks = blocks.filter(function (block) {
         if (!_observedBlocks.has(block)) {
-          _observedBlocks.add(block);
+          var observer = ensureViewportObserver(block);
+          _observedBlocks.set(block, observer);
           block._mermaidInRange = false;
           observer.observe(block);
         }
@@ -218,7 +223,7 @@
             var box = t.block.querySelector('.mermaid-svg');
             // replace this block's SVG only if it's still attached + still on this source
             if (!box || !srcEl || !document.body.contains(t.block) || srcEl.textContent.trim() !== t.code) return;
-            if (_viewportObserver && !t.block._mermaidInRange) return;
+            if (window.IntersectionObserver && !t.block._mermaidInRange) return;
             box.innerHTML = res.svg;
             var svg = box.firstElementChild;
             if (svg) svg.setAttribute('data-mcode', t.code); // tag so unchanged frames become a no-op

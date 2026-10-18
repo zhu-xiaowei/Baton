@@ -6,6 +6,15 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // Set only while renderMdDocument parses. Baton's own markup (inline handlers, KaTeX styles)
+  // is parked here so the sanitizer only sees the document's Markdown and raw HTML.
+  var _documentSlots = null;
+  function trusted(html) {
+    if (!_documentSlots) return html;
+    _documentSlots.push(html);
+    return '<span data-baton-slot="' + _documentSlots.nonce + '-' + (_documentSlots.length - 1) + '"></span>';
+  }
+
   function imageHtml(href, title, text) {
     var attr = function (value) { return escHtml(value || '').replace(/"/g, '&quot;'); };
     var label = ' alt="' + (text || '') + '"' + (title ? ' title="' + title + '"' : '');
@@ -131,11 +140,14 @@
       },
     },
     renderer: {
-      image: imageHtml,
+      image: function (href, title, text) {
+        if (_documentSlots && /#gh-light-mode-only$/.test(href || '')) return '';
+        return trusted(imageHtml(href, title, text));
+      },
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
       // being inserted into Baton's document where <style>/<meta> can alter the UI.
       html: function (html) {
-        return escHtml(html);
+        return _documentSlots ? html : escHtml(html);
       },
       // marked v12 dropped the old highlight option, so fenced code is rendered here.
       code: function (code, lang) {
@@ -144,7 +156,11 @@
         // Mermaid: emit a placeholder (mermaid.js fills the SVG async). Marked also
         // recognizes an unclosed fence while content is streaming.
         if (lang.toLowerCase() === 'mermaid') {
-          return '<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>';
+          return trusted('<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>');
+        }
+        // GitHub renders ```math fences as display math.
+        if (_documentSlots && lang.toLowerCase() === 'math' && window.katexHtml) {
+          return trusted(window.katexHtml(code.trim(), true));
         }
         var html;
         if (lang && hljs.getLanguage(lang)) {
@@ -152,7 +168,7 @@
         }
         if (html == null) { try { html = hljs.highlightAuto(code).value; } catch (e) {} }
         if (html == null) html = escHtml(code);
-        return '<pre><code class="hljs">' + html + '</code></pre>';
+        return trusted('<pre><code class="hljs">' + html + '</code></pre>');
       },
     },
   });
@@ -184,7 +200,7 @@
         return index < 0 ? undefined : index + (level === 'block' ? 1 : 0);
       },
       tokenizer: visualizationToken,
-      renderer: function (token) { return window.visualizationHtml(token.text); },
+      renderer: function (token) { return trusted(window.visualizationHtml(token.text)); },
     };
   }) });
 
@@ -200,7 +216,7 @@
            || /^[ \t]*\\\[([\s\S]+?)\\\]/.exec(src);                                      // single-line \[…\]
       if (m) return { type: 'mathBlock', raw: m[0], text: m[1].trim() };
     },
-    renderer: function (t) { return window.katexHtml ? window.katexHtml(t.text, true) : t.raw; },
+    renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, true)) : t.raw; },
   };
   var mathInline = {
     name: 'mathInline', level: 'inline',
@@ -209,7 +225,7 @@
       var m = /^\$([^\$\n]+?)\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
       if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim() };
     },
-    renderer: function (t) { return window.katexHtml ? window.katexHtml(t.text, false) : t.raw; },
+    renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw; },
   };
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
@@ -288,6 +304,24 @@
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
     return linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+  };
+
+  // Project files render like GitHub: raw HTML is kept and soft line breaks are not <br>.
+  // `sanitize(html)` must return an element holding only allowlisted markup.
+  window.renderMdDocument = function (text, sanitize) {
+    if (!text || !text.trim()) return '';
+    var slots = [];
+    slots.nonce = Math.random().toString(36).slice(2);
+    _documentSlots = slots;
+    var html;
+    try { html = marked.parse(text, { breaks: false }); } finally { _documentSlots = null; }
+    var root = sanitize(html);
+    root.querySelectorAll('span[data-baton-slot]').forEach(function (el) {
+      var match = /^(.+)-(\d+)$/.exec(el.dataset.batonSlot);
+      if (match && match[1] === slots.nonce && slots[match[2]] != null) el.outerHTML = slots[match[2]];
+      else el.remove();
+    });
+    return root.innerHTML;
   };
 
   window.renderAssistantText = function (text) {
