@@ -550,14 +550,23 @@ function isUserEcho(message, pending) {
     || aliases.has('native:live:user:' + turnId);
 }
 
-export function reconcilePendingMessages(pendingMessages, messages) {
+export function findInitialAgentEcho(pending, messages, sessionId) {
+  // --bg assigns its own prompt UUID. Only the acknowledged new agent session
+  // may bind its first real user message to the creating send.
+  if (!sessionId || pending.sessionId !== sessionId
+    || !pending.sendPayload?.asAgent || pending.sendPayload.sessionId) return;
+  var firstPrompt = messages.find(isPromptUserMessage);
+  if (!firstPrompt?.turnId) return firstPrompt;
+}
+
+export function reconcilePendingMessages(pendingMessages, messages, sessionId) {
   var promoted = [];
   var remaining = [];
 
   for (var pending of pendingMessages) {
     var echo = messages.find(function (message) {
       return isUserEcho(message, pending);
-    });
+    }) || findInitialAgentEcho(pending, messages, sessionId);
     if (!echo) {
       remaining.push(pending);
       continue;
