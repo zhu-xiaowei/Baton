@@ -43,7 +43,7 @@ class SpeechPlugin: Plugin {
       invoke.reject("invalid args: \(error)"); return
     }
 
-    let locale = Locale(identifier: args.locale ?? "zh-CN")
+    let locale = Locale(identifier: args.locale ?? "en-US")
     guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
       invoke.reject("recognizer unavailable for locale \(locale.identifier)"); return
     }

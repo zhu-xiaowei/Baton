@@ -13,7 +13,7 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-project-files-'));
   const chunkedContent = 'const path = "C:\\\\workspace\\\\file"; // chunked\n'.repeat(3000);
   const escapedContent = '"\\\\\n'.repeat(40_000);
-  const unicodeContent = '中文🙂 source line\n'.repeat(8000);
+  const unicodeContent = '\u4e2d\u6587🙂 source line\n'.repeat(8000);
   const boundaryContent = 'b'.repeat(300 * 1024);
   const oversizedContent = 'x'.repeat((300 * 1024) + 1);
   fs.mkdirSync(path.join(root, 'folder'));

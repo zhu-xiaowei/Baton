@@ -14,7 +14,7 @@ test.after(() => dom.window.close());
 test('browser downloads hand off the signed attachment URL without buffering its contents', async () => {
   let link;
   dom.window.HTMLAnchorElement.prototype.click = function () { link = this; };
-  const file = { url: 'https://bucket.example/file?signed=1', name: '预算.xlsx' };
+  const file = { url: 'https://bucket.example/file?signed=1', name: '\u9884\u7b97.xlsx' };
   assert.deepEqual(await downloadFile(file), { status: 'started' });
   assert.equal(link.href, file.url);
   assert.equal(link.download, file.name);
@@ -28,7 +28,7 @@ test('browser sharing rejects oversized files before allocating a blob', async (
 test('browser sharing uses the media MIME type and rejects incomplete downloads', async () => {
   globalThis.fetch = async () => new Response('image');
   navigator.canShare = ({ files }) => files[0].type === 'image/png';
-  const file = { url: 'https://bucket.example/photo', name: '照片.png', size: 5,
+  const file = { url: 'https://bucket.example/photo', name: '\u7167\u7247.png', size: 5,
     contentType: 'application/octet-stream', previewType: 'image/png' };
   const shared = await prepareSharedFile(file);
   assert.equal(shared.name, file.name);

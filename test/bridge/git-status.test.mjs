@@ -142,11 +142,11 @@ test('snapshot frames stay under the WebSocket limit and reconstruct exactly', (
     groups: {
       conflicts: [],
       staged: Array.from({ length: 500 }, (_, index) => ({
-        path: `staged/${index}-非常长的文件名.js`,
+        path: `staged/${index}-\u975e\u5e38\u957f\u7684\u6587\u4ef6\u540d.js`,
         status: 'modified',
       })),
       changes: Array.from({ length: 700 }, (_, index) => ({
-        path: `changes/${index}-非常长的文件名.js`,
+        path: `changes/${index}-\u975e\u5e38\u957f\u7684\u6587\u4ef6\u540d.js`,
         status: 'untracked',
       })),
     },

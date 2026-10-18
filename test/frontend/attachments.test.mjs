@@ -119,7 +119,7 @@ test('a file whose content is already stored completes without uploading', async
 });
 
 test('file staging retains the escaped name, icon and uppercase extension in one card', async () => {
-  const name = '计划 [v2] "<img onerror=alert(1)>".pptx';
+  const name = '\u8ba1\u5212 [v2] "<img onerror=alert(1)>".pptx';
   await window.stageAttachmentFile(new File(['12345'], name));
   const entry = state.stagedImages[0];
   assert.equal(entry.uploaded, true);
@@ -330,7 +330,7 @@ test('mixed attachments do not appear in the image gallery', () => {
 });
 
 test('live and historical user bubbles show the original filename without markup injection', () => {
-  const file = { key, name: '中文 [v2] "<bad>".pptx' };
+  const file = { key, name: '\u4e2d\u6587 [v2] "<bad>".pptx' };
   const refs = [attachmentRef(file), attachmentRef(file).replace('baton-file:' + key,
     '<C:\\Users\\demo\\.baton-bridge\\attachments\\' + key + '>')];
   for (const ref of refs) {

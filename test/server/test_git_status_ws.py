@@ -200,7 +200,7 @@ def test_git_status_rejects_invalid_history_commit_and_diff_targets(monkeypatch)
         {"operation": "diff", "commitOid": "main", "path": "a.js"},
         {"operation": "commit", "message": "   ", "stagedId": "abc"},
         {"operation": "commit", "message": "x", "stagedId": ""},
-        {"operation": "commit", "message": "字" * 6000, "stagedId": "abc"},
+        {"operation": "commit", "message": "\u5b57" * 6000, "stagedId": "abc"},
     ]
     for fields in invalid:
         response = send({

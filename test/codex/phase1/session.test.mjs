@@ -444,7 +444,7 @@ test('incremental extraction waits for the canonical Codex user event', () => {
       payload: {
         type: 'message',
         role: 'user',
-        content: [{ type: 'input_text', text: '你是我吗' }],
+        content: [{ type: 'input_text', text: '\u4f60\u662f\u6211\u5417' }],
         internal_chat_message_metadata_passthrough: { turn_id: turnId },
       },
     };
@@ -460,14 +460,14 @@ test('incremental extraction waits for the canonical Codex user event', () => {
       payload: {
         type: 'user_message',
         client_id: clientId,
-        message: '你是我吗',
+        message: '\u4f60\u662f\u6211\u5417',
       },
     };
     fs.appendFileSync(target, `${JSON.stringify(userEvent)}\n`);
 
     const second = extractCodexMessages(target, SESSION_ID, { startLine: first.nextLine });
     assert.equal(second.messages.length, 1);
-    assert.equal(second.messages[0].content, '你是我吗');
+    assert.equal(second.messages[0].content, '\u4f60\u662f\u6211\u5417');
     assert.equal(second.messages[0].nativeId, `codex:user:${clientId}`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

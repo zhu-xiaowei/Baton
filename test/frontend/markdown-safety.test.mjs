@@ -59,21 +59,21 @@ test('fenced code highlighting and Mermaid placeholders remain trusted UI', () =
 test('Chinese labels ending in punctuation stay bold during streaming', () => {
   const window = setupMarkdown();
   const host = window.document.createElement('div');
-  const input = '**部署状态：**云端已部署 ,';
+  const input = '**\u90e8\u7f72\u72b6\u6001\uff1a**\u4e91\u7aef\u5df2\u90e8\u7f72 ,';
   const closingEnd = input.indexOf('**', 2) + 2;
 
   host.innerHTML = window.renderAssistantText(input);
-  assert.equal(host.querySelector('strong')?.textContent, '部署状态：');
-  assert.equal(host.textContent.trim(), '部署状态：云端已部署 ,');
+  assert.equal(host.querySelector('strong')?.textContent, '\u90e8\u7f72\u72b6\u6001\uff1a');
+  assert.equal(host.textContent.trim(), '\u90e8\u7f72\u72b6\u6001\uff1a\u4e91\u7aef\u5df2\u90e8\u7f72 ,');
 
   for (let length = 2; length <= input.length; length++) {
     window.renderStreamMd(host, input.slice(0, length));
     assert.equal(host.querySelector('strong')?.textContent,
-      length < closingEnd ? undefined : '部署状态：');
+      length < closingEnd ? undefined : '\u90e8\u7f72\u72b6\u6001\uff1a');
   }
 
-  host.innerHTML = window.renderMd('前文 **注意！**请检查');
-  assert.equal(host.querySelector('strong')?.textContent, '注意！');
+  host.innerHTML = window.renderMd('\u524d\u6587 **\u6ce8\u610f\uff01**\u8bf7\u68c0\u67e5');
+  assert.equal(host.querySelector('strong')?.textContent, '\u6ce8\u610f\uff01');
   window.close();
 });
 
@@ -82,24 +82,24 @@ test('Chinese label compatibility preserves Markdown boundaries and HTML escapin
   const standard = new Marked({ breaks: true, gfm: true });
   const host = window.document.createElement('div');
   for (const input of [
-    '**部署状态：** 云端已部署',
-    '**部署状态**：云端已部署',
+    '**\u90e8\u7f72\u72b6\u6001\uff1a** \u4e91\u7aef\u5df2\u90e8\u7f72',
+    '**\u90e8\u7f72\u72b6\u6001**\uff1a\u4e91\u7aef\u5df2\u90e8\u7f72',
     '**Status:**deployed',
-    String.raw`\*\*部署状态：\*\*云端已部署`,
-    '`**部署状态：**云端已部署`',
-    '***粗体和斜体***',
-    '**外层 *内层* 结束**',
-    '**内含 `：**云` 的代码**',
+    "\\*\\*\u90e8\u7f72\u72b6\u6001\uff1a\\*\\*\u4e91\u7aef\u5df2\u90e8\u7f72",
+    '`**\u90e8\u7f72\u72b6\u6001\uff1a**\u4e91\u7aef\u5df2\u90e8\u7f72`',
+    '***\u7c97\u4f53\u548c\u659c\u4f53***',
+    '**\u5916\u5c42 *\u5185\u5c42* \u7ed3\u675f**',
+    '**\u5185\u542b `\uff1a**\u4e91` \u7684\u4ee3\u7801**',
   ]) {
     assert.equal(window.renderMd(input), standard.parse(input), input);
   }
 
-  host.innerHTML = window.renderMd('```text\n**部署状态：**云端已部署\n```');
+  host.innerHTML = window.renderMd('```text\n**\u90e8\u7f72\u72b6\u6001\uff1a**\u4e91\u7aef\u5df2\u90e8\u7f72\n```');
   assert.equal(host.querySelector('strong'), null);
-  assert.equal(host.querySelector('code').textContent.trim(), '**部署状态：**云端已部署');
+  assert.equal(host.querySelector('code').textContent.trim(), '**\u90e8\u7f72\u72b6\u6001\uff1a**\u4e91\u7aef\u5df2\u90e8\u7f72');
 
-  host.innerHTML = window.renderMd('**部署&lt;img src=x onerror=alert(1)&gt;：**云端已部署');
+  host.innerHTML = window.renderMd('**\u90e8\u7f72&lt;img src=x onerror=alert(1)&gt;\uff1a**\u4e91\u7aef\u5df2\u90e8\u7f72');
   assert.equal(host.querySelector('img'), null);
-  assert.equal(host.querySelector('strong')?.textContent, '部署<img src=x onerror=alert(1)>：');
+  assert.equal(host.querySelector('strong')?.textContent, '\u90e8\u7f72<img src=x onerror=alert(1)>\uff1a');
   window.close();
 });

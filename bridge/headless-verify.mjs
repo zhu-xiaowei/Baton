@@ -1,7 +1,7 @@
 // Step 0 standalone verification for headless.mjs ClaudePool.
 // No ws/server/frontend — drives the pool directly against a temp cwd and
-// prints per-line arrival so you can eyeball delta streaming, result收尾,
-// context持久, multi-turn queue, and interrupt.
+// prints per-line arrival so you can inspect delta streaming, turn completion,
+// persistent context, multi-turn queueing, and interruption.
 //
 // Usage: node headless-verify.mjs [cwd]
 //   cwd defaults to a fresh /tmp dir. Uses a NEW session (no --resume) so it's
@@ -36,7 +36,7 @@ function turn(text, streamId) {
       },
       onControlRequest: (req) => {
         log(`[control_request] tool=${req.request?.tool_name} requires_user_interaction=${req.request?.requires_user_interaction}`);
-        // Auto-allow普通工具 for this smoke test (no interactive tools expected here)
+        // Auto-allow ordinary tools for this smoke test (no interactive tools expected here).
         pool.replyControl(KEY, req.request_id, { behavior: 'allow', updatedInput: req.request?.input });
       },
       onError: (sid, err) => { log(`[ERROR] code=${err.code} detail=${err.detail}`); resolve({ error: err }); },

@@ -40,7 +40,7 @@
 
   function input() { return document.getElementById('msg-input'); }
   // Recognition locale follows the iOS system language (navigator.language in WKWebView).
-  function lang() { return navigator.language || 'zh-CN'; }
+  function lang() { return navigator.language || 'en-US'; }
   function detect() { return !!window.__TAURI_INTERNALS__ && /iPad|iPhone|iPod/.test(navigator.userAgent); }
 
   // Mic shows when: actively recording, dictation already started this draft (sticky),

@@ -50,7 +50,7 @@ def clients(monkeypatch):
 def test_large_file_prepare_signs_direct_upload_with_size_and_metadata(clients):
     response = Response()
     result = asyncio.run(bridge_sync.file_prepare(bridge_sync.FilePrepareRequest(
-        name='计划.PPTX', size=8 * 1024 * 1024), REQUEST, response))
+        name='\u8ba1\u5212.PPTX', size=8 * 1024 * 1024), REQUEST, response))
     assert result['key'].endswith('.pptx')
     assert 's3-accelerate' in result['url']
     assert 's3.amazonaws.com' in result['fallbackUrl']
@@ -101,17 +101,17 @@ def test_content_hash_reuses_only_s3_verified_content_and_signs_new_uploads_with
 
 
 def test_download_name_follows_the_caller_for_shared_content(clients):
-    result = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, Response(), name='v2 计划.pptx'))
-    assert result['name'] == 'v2 计划.pptx'
+    result = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, Response(), name='v2 \u8ba1\u5212.pptx'))
+    assert result['name'] == 'v2 \u8ba1\u5212.pptx'
     assert 'v2%20' in clients[0].signed[0][1]['Params']['ResponseContentDisposition']
     unsafe = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, Response(), name='../x\n'))
-    assert unsafe['name'] == '计划.pptx'
+    assert unsafe['name'] == '\u8ba1\u5212.pptx'
 
 
 def test_download_checks_account_and_returns_private_no_store_links(clients):
     response = Response()
     result = asyncio.run(bridge_sync.attachment_url(KEY, REQUEST, response))
-    assert result['name'] == '计划.pptx'
+    assert result['name'] == '\u8ba1\u5212.pptx'
     assert result['size'] == 8 * 1024 * 1024
     assert result['previewType'] == 'application/octet-stream'
     assert clients[0].heads[0]['Key'] == 'attachments/' + bridge_sync._hash_key('test-key') + '/' + KEY

@@ -6,16 +6,16 @@ import { makeHarness, resetSession } from './harness.mjs';
 const sessionId = 'codex:browser-out-of-order-delta';
 const turnId = 'turn-browser-out-of-order-delta';
 const chunks = [
-  '清',
-  '晨的阳光穿过窗帘照亮房间',
-  '也',
-  '唤醒新的期待\n',
-  '街边的树叶随风轻响\n',
-  '一杯热茶散出清香\n',
-  '认真工作积累力量\n',
-  '真诚交流消除误解\n',
-  '保持好奇发现惊喜\n',
-  '愿我们从容迎接明天',
+  '\u6e05',
+  '\u6668\u7684\u9633\u5149\u7a7f\u8fc7\u7a97\u5e18\u7167\u4eae\u623f\u95f4',
+  '\u4e5f',
+  '\u5524\u9192\u65b0\u7684\u671f\u5f85\n',
+  '\u8857\u8fb9\u7684\u6811\u53f6\u968f\u98ce\u8f7b\u54cd\n',
+  '\u4e00\u676f\u70ed\u8336\u6563\u51fa\u6e05\u9999\n',
+  '\u8ba4\u771f\u5de5\u4f5c\u79ef\u7d2f\u529b\u91cf\n',
+  '\u771f\u8bda\u4ea4\u6d41\u6d88\u9664\u8bef\u89e3\n',
+  '\u4fdd\u6301\u597d\u5947\u53d1\u73b0\u60ca\u559c\n',
+  '\u613f\u6211\u4eec\u4ece\u5bb9\u8fce\u63a5\u660e\u5929',
 ];
 const fullText = chunks.join('');
 

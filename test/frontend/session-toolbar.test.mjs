@@ -58,7 +58,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       state.appState = {
         device: 'Mac', project: { hash: 'project', name: 'Project' },
         session: runtime === 'codex' ? 'codex:root' : 'claude-root',
-        runtime, sessionPreview: '这个文档写的是什么 [' + encodeURIComponent('s02-压力测试报告.md')
+        runtime, sessionPreview: '\u8fd9\u4e2a\u6587\u6863\u5199\u7684\u662f\u4ec0\u4e48 [' + encodeURIComponent('s02-\u538b\u529b\u6d4b\u8bd5\u62a5\u544a.md')
           + '](baton-file:' + 'a'.repeat(32) + '.md)', isAgent: true,
       };
       state.rootSessionId = state.appState.session;
@@ -75,7 +75,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         ]);
         const meta = document.querySelector('.session-title-meta');
         assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));
-        assert.equal(meta.previousElementSibling.textContent, '这个文档写的是什么 s02-压力测试报告.md');
+        assert.equal(meta.previousElementSibling.textContent, '\u8fd9\u4e2a\u6587\u6863\u5199\u7684\u662f\u4ec0\u4e48 s02-\u538b\u529b\u6d4b\u8bd5\u62a5\u544a.md');
         assert.deepEqual([...meta.querySelectorAll('.badge')].map(badge => badge.textContent), [
           runtime === 'codex' ? 'Codex' : 'Claude', 'Agent',
         ]);
@@ -269,7 +269,7 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
           state.appState.session = state.rootSessionId = state.activeThreadId = sessionId;
           state.appState.project.hash = projectHash;
           window.updateBreadcrumb();
-          for (const name of [`${runtime} 原生名称验证`, `${runtime} 再次改名`]) {
+          for (const name of [`${runtime} \u539f\u751f\u540d\u79f0\u9a8c\u8bc1`, `${runtime} \u518d\u6b21\u6539\u540d`]) {
             const nav = document.querySelector('.breadcrumb-nav');
             nav.querySelector('.session-rename-button').click();
             const input = document.getElementById('sessionRenameInput');

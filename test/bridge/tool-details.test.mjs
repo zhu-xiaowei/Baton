@@ -14,7 +14,7 @@ test('Claude details preserve full input/output and use existing bounded text fr
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-details-'));
   const file = path.join(directory, 'session.jsonl');
   const input = '🙂"\\'.repeat(15000);
-  const output = '完整输出\n'.repeat(20000);
+  const output = '\u5b8c\u6574\u8f93\u51fa\n'.repeat(20000);
   fs.writeFileSync(file, [
     JSON.stringify({ message: { content: [{ type: 'tool_use', id: 'one', name: 'Bash', input: { command: input, cmd: input } }] } }),
     JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 'one', content: output, codexCommandActions: [{ type: 'unknown', cmd: input }] }] }, toolUseResult: { totalDurationMs: 12, totalToolUseCount: 2, stdout: output, file: { base64: 'unused image' } } }),

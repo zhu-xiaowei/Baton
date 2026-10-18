@@ -28,7 +28,7 @@ Larger files follow the existing file viewer's upload/download path. No
 Before requesting a file, the frontend accepts an absolute HTML path either in
 the current project or in a dated `visualizations/YYYY/MM/DD/THREAD_ID/`
 directory matching the active thread, without traversal components. Project
-artifacts such as `output/design-preview/command-line-capsule.html` are supported
+artifacts such as `output/design-preview/preview.html` are supported
 without moving or rewriting the original file or conversation. An ancestor's
 encoded project hash identifies the relative suffix; project-local requests
 send only that suffix to the Bridge, whose existing relative-file reader checks
