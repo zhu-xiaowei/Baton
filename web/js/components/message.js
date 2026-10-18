@@ -139,9 +139,12 @@ import { systemEventId } from '../timeline.js';
       ? msg.content.filter(b => b.type === 'image' && b.key)
       : [];
 
-    // Parse ![](path) markdown image refs in text (from baton-bridge image sends)
+    // Parse ![](path) image refs from Baton image sends only: the app's
+    // baton-bridge:<key>, or the ~/.baton-bridge/tmp path Bridge rewrites it to.
+    // Any other markdown image is user-typed text and stays in the bubble.
     const mdImages = [];
-    text = text.replace(/!\[.*?\]\(([^)]+)\)\n?/g, (_, imgPath) => {
+    text = text.replace(/!\[.*?\]\(([^)]+)\)\n?/g, (match, imgPath) => {
+      if (!/^baton-bridge:|[\\/]\.baton-bridge[\\/]tmp[\\/]/.test(imgPath)) return match;
       mdImages.push(imgPath);
       return '';
     });
@@ -164,7 +167,7 @@ import { systemEventId } from '../timeline.js';
     mdImages.forEach(imgPath => {
       // Extract image key: from "baton-bridge:key" or filename from absolute path
       const cbMatch = imgPath.match(/baton-bridge:(.+)/);
-      const key = cbMatch ? cbMatch[1] : imgPath.split('/').pop();
+      const key = cbMatch ? cbMatch[1] : imgPath.split(/[\\/]/).pop();
       if (key && key.match(/\.(jpg|png|jpeg)$/i)) {
         badges.push(`<div class="img-placeholder" data-key="${esc(key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="#8b949e" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
       }

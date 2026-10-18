@@ -104,3 +104,46 @@ test('Chinese label compatibility preserves Markdown boundaries and HTML escapin
   assert.equal(host.querySelector('strong')?.textContent, '部署<img src=x onerror=alert(1)>：');
   window.close();
 });
+
+test('project Markdown keeps GitHub-allowed HTML and strips active content', async () => {
+  const window = setupMarkdown();
+  globalThis.window = window;
+  try {
+    const { renderMarkdownDocument } = await import('../../web/js/components/markdown-document.js');
+    const host = window.document.createElement('div');
+    host.innerHTML = await renderMarkdownDocument([
+      '# <sub><picture><source media="(prefers-color-scheme: dark)" srcset="logo.svg"><img src="logo-dark.svg" width="36" alt=""></picture></sub>Baton',
+      '',
+      '<p align="center" onclick="alert(1)"><img src="docs/a.avif" onerror="alert(1)" style="width:9px"></p>',
+      '<script>alert(1)</script><style>body{color:red}</style>',
+      '',
+      '> [!WARNING]',
+      '> Careful',
+      '',
+      '```js',
+      'const x = 1;',
+      '```',
+      'one',
+      'line :rocket: `:tada:` :not_an_emoji:',
+      '',
+      '[at line](src/app.js:12) [bad](javascript:alert(1))',
+    ].join('\n'));
+
+    assert.equal(host.querySelector('script, style, [onclick], [onerror], [style]'), null);
+    assert.equal(host.querySelector('h1').id, 'user-content-baton');
+    assert.equal(host.querySelector('source').dataset.mdSrcset, 'logo.svg');
+    assert.equal(host.querySelector('source').getAttribute('media'), '(min-width: 0px)');
+    assert.equal(host.querySelector('p[align="center"] img').dataset.mdSrc, 'docs/a.avif');
+    assert.equal(host.querySelector('img[src]'), null);
+    assert.equal(host.querySelector('.markdown-alert-warning .markdown-alert-title').textContent, 'Warning');
+    assert.match(host.querySelector('pre code.hljs').innerHTML, /hljs-/);
+    assert.equal(host.querySelector('br'), null);
+    assert.match(host.textContent, /line 🚀 :tada: :not_an_emoji:/);
+    assert.equal(host.querySelector('a[href="src/app.js:12"]')?.textContent, 'at line');
+    assert.equal(host.querySelector('a[href^="javascript"]'), null);
+    assert.match(window.renderMd('<p align="center">x</p>'), /&lt;p align/);
+  } finally {
+    delete globalThis.window;
+    window.close();
+  }
+});

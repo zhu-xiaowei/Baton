@@ -38,6 +38,20 @@ test('REST user identity restores the live turn anchor', () => {
   );
 });
 
+test('only Baton image sends become image attachments', () => {
+  const typed = '例如 ![](/Users/me/proj/shot.png) 会被拼错';
+  document.body.innerHTML = window.renderUserBubble({
+    type: 'user',
+    content: typed + '\n![](baton-bridge:a1.jpg)\n![](/home/me/.baton-bridge/tmp/b2.png)',
+  });
+
+  assert.equal(document.querySelector('.msg-text').textContent, typed);
+  assert.deepEqual(
+    [...document.querySelectorAll('.img-placeholder')].map(el => el.dataset.key),
+    ['a1.jpg', 'b2.png'],
+  );
+});
+
 test('Codex subagent notifications stay hidden from the user timeline', () => {
   const message = {
     type: 'user',

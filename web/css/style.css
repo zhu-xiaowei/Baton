@@ -822,7 +822,37 @@ html.native-mobile .agent-threads-list {
 .file-preview { width: 100%; height: 100%; border: none; background: #fff; display: block; }
 .file-video { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
 .md-preview { padding: 16px 18px; font-size: 14px; line-height: 1.7; max-width: 820px; margin: 0 auto; }
-.md-preview img { max-width: 100%; height: auto; }
+.md-preview img { max-width: 100%; height: auto; box-sizing: content-box; }
+/* Like GitHub: nothing is drawn until an image has loaded, then it keeps its own size. */
+.md-preview img[data-md-src]:not([src]) { visibility: hidden; }
+.md-preview .img-placeholder.markdown-image { width: auto; height: auto; background: none; border: none; }
+.md-preview .img-placeholder.markdown-image:not(.loaded):not([data-failed]) > :not(.image-load-action) { display: none; }
+.md-preview .img-placeholder.markdown-image img { width: auto; height: auto; max-width: 100%; }
+/* GitHub's markdown-body spacing for documents; chat keeps the compact .assistant-text scale. */
+.md-preview > :first-child { margin-top: 0; }
+.md-preview p, .md-preview blockquote, .md-preview ul, .md-preview ol, .md-preview table, .md-preview pre, .md-preview details, .md-preview .markdown-alert { margin: 0 0 16px; }
+.md-preview h1, .md-preview h2, .md-preview h3, .md-preview h4, .md-preview h5, .md-preview h6 { margin: 24px 0 16px; font-weight: 600; line-height: 1.25; }
+.md-preview h1, .md-preview h2 { padding-bottom: .3em; border-bottom: 1px solid #30363db3; }
+.md-preview h1 { font-size: 2em; }
+.md-preview h2 { font-size: 1.5em; }
+.md-preview h3 { font-size: 1.25em; }
+.md-preview h4 { font-size: 1em; }
+.md-preview h5 { font-size: .875em; }
+.md-preview h6 { font-size: .85em; color: #8b949e; }
+.md-preview hr { height: .25em; margin: 24px 0; padding: 0; border: 0; background: #30363d; }
+.md-preview th, .md-preview td { padding: 6px 13px; font-size: inherit; }
+.md-preview tr:nth-child(2n) { background: #151b23; }
+.md-preview blockquote { padding: 0 1em; border-left: .25em solid #30363d; }
+.md-preview sub, .md-preview sup { line-height: 0; }
+.md-preview kbd { padding: 3px 5px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #e6edf3; background: #151b23; border: 1px solid #3d444d; border-bottom-color: #3d444db3; border-radius: 6px; box-shadow: inset 0 -1px 0 #3d444db3; }
+.md-preview .markdown-alert { padding: .5em 1em; border-left: .25em solid var(--alert); }
+.md-preview .markdown-alert > :last-child { margin-bottom: 0; }
+.md-preview .markdown-alert-title { margin-bottom: 4px; font-weight: 500; color: var(--alert); }
+.md-preview .markdown-alert-note { --alert: #4493f8; }
+.md-preview .markdown-alert-tip { --alert: #3fb950; }
+.md-preview .markdown-alert-important { --alert: #ab7df8; }
+.md-preview .markdown-alert-warning { --alert: #d29922; }
+.md-preview .markdown-alert-caution { --alert: #f85149; }
 .file-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: #8b949e; font-size: 13px; }
 .file-loading-content { display: flex; align-items: center; gap: 10px; }
 .file-loading-delayed { background: #0d1117; }
