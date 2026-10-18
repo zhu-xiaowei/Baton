@@ -54,6 +54,5 @@ export const state = {
   stagedImages: [],
 
   // ---- File viewer (project/file-viewer.js) ----
-  fileCache: new Map(),       // key → { text, path, truncated }
   videoUrlCache: new Map(),   // key → { url, exp } — presigned GET URL + expiry (ms epoch)
 };

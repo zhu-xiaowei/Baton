@@ -111,6 +111,10 @@ export function assembleLastFrame(frames) {
 }
 
 export function assembleTextFrames(frames) {
+  // Large files arrive as an uploaded key without content frames.
+  if (!frames.some(function (frame) { return typeof frame.content === 'string'; })) {
+    return frames[frames.length - 1];
+  }
   return {
     ...frames[frames.length - 1],
     content: frames.map(function (frame) { return frame.content || ''; }).join(''),

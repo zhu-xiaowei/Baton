@@ -44,11 +44,10 @@ export function resolveSourceRange(fileText, lineHint, snippet) {
 
 function highlightedSource(path, text) {
   var language = window.detectLang ? window.detectLang(path) : null;
-  if (text.length > HIGHLIGHT_MAX || typeof window.hljs === 'undefined') return esc(text);
+  // Unknown extensions stay plain text: detection is slow and wrong for logs.
+  if (!language || text.length > HIGHLIGHT_MAX || !window.hljs?.getLanguage(language)) return esc(text);
   try {
-    return language
-      ? window.hljs.highlight(text, { language: language, ignoreIllegals: true }).value
-      : window.hljs.highlightAuto(text).value;
+    return window.hljs.highlight(text, { language: language, ignoreIllegals: true }).value;
   } catch (error) {
     return esc(text);
   }
@@ -65,6 +64,9 @@ export function renderSourceView(container, options) {
   options = options || {};
   var text = String(options.text == null ? '' : options.text);
   var code = highlightedSource(options.path || '', text);
+  var language = window.detectLang ? window.detectLang(options.path || '') : null;
+  var pendingLanguage = language && text.length <= HIGHLIGHT_MAX && window.hljs
+    && !window.hljs.getLanguage(language) && window.loadHljsLanguage ? language : '';
   var lineCount = code.split('\n').length;
   var range = Array.isArray(options.ranges) ? null : resolveSourceRange(text, options.lineHint, options.snippet);
   var ranges = Array.isArray(options.ranges) ? options.ranges : (range ? [range] : []);
@@ -80,10 +82,12 @@ export function renderSourceView(container, options) {
       + '>' + line + '</span>' : String(line);
   }).join('\n');
   var warning = options.truncated
-    ? '<div class="file-truncated">⚠ Truncated — showing first 5 MB</div>'
+    ? '<div class="file-truncated">⚠ Download to view full content</div>'
     : '';
   container.innerHTML = '<div class="file-code"><pre class="file-lineno">'
-    + lineNumbers + '</pre><pre class="file-content"><code>' + code
+    + lineNumbers + '</pre><pre class="file-content"><code'
+    + (pendingLanguage ? ' data-hljs-language="' + pendingLanguage + '"' : '') + '>' + code
     + '</code></pre></div>' + warning;
+  if (pendingLanguage) window.loadHljsLanguage(pendingLanguage);
   if (ranges.length) scrollToSourceLine(container, ranges[0].from, lineCount);
 }

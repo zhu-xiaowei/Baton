@@ -52,6 +52,7 @@ test('fenced code highlighting and Mermaid placeholders remain trusted UI', () =
 
   assert.match(code, /^<pre><code class="hljs">/);
   assert.match(code, /hljs-/);
+  assert.doesNotMatch(window.renderMd('```\nERROR: retry 3 -> ok\n```'), /hljs-/);
   assert.match(mermaid, /class="mermaid-block"/);
   assert.match(mermaid, /class="mermaid-src"/);
 });

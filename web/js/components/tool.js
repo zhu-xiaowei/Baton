@@ -358,10 +358,13 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
   function highlightReadCode(text, filePath) {
     const lang = detectLang(filePath);
     const className = lang ? `read-code hljs language-${lang}` : 'read-code';
-    if (!lang
-      || text.length > READ_HIGHLIGHT_MAX_CHARS
-      || !window.hljs?.getLanguage?.(lang)) {
+    if (!lang || text.length > READ_HIGHLIGHT_MAX_CHARS) {
       return `<code class="${className}">${esc(text)}</code>`;
+    }
+    if (!window.hljs?.getLanguage?.(lang)) {
+      // Highlighted in place once the language loads.
+      window.loadHljsLanguage?.(lang);
+      return `<code class="${className}" data-hljs-language="${lang}">${esc(text)}</code>`;
     }
 
     const cacheKey = `${lang}\0${text}`;
@@ -442,7 +445,10 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       let staging = null;
       element.dataset.diffState = 'loading';
       try {
-        await window.loadDiffViewer?.();
+        await Promise.all([
+          window.loadDiffViewer?.(),
+          window.loadHljsLanguage?.(detectLang(spec.fullPath)),
+        ]);
         element = adoptCurrentDiffInstance(element, host, instance, key);
         if (!element) return;
         if (!window.Diff || !window.Diff2HtmlUI) throw new Error('Diff viewer unavailable');

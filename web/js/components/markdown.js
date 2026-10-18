@@ -150,7 +150,12 @@
         if (lang && hljs.getLanguage(lang)) {
           try { html = hljs.highlight(code, { language: lang }).value; } catch (e) {}
         }
-        if (html == null) { try { html = hljs.highlightAuto(code).value; } catch (e) {} }
+        // Unlabeled code stays plain; an unloaded language is highlighted once it loads.
+        if (html == null && lang && !hljs.getLanguage(lang) && window.loadHljsLanguage) {
+          window.loadHljsLanguage(lang);
+          return '<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
+            + escHtml(code) + '</code></pre>';
+        }
         if (html == null) html = escHtml(code);
         return '<pre><code class="hljs">' + html + '</code></pre>';
       },

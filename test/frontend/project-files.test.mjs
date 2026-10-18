@@ -27,6 +27,13 @@ test('preview file reads use the existing protocol and assemble out-of-order tex
       });
     }
     assert.equal((await pending).content, '<p>Preview</p>');
+
+    const uploaded = requestProjectFiles('read', { projectHash: 'project', path: '/large.log' });
+    handleProjectFilesMessage({
+      action: 'project_files', operation: 'read', requestId: payload.requestId,
+      ok: true, key: 'large.log', size: 400 * 1024,
+    });
+    assert.equal('content' in await uploaded, false);
   } finally {
     delete globalThis.window;
   }

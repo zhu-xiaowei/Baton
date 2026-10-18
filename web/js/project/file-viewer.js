@@ -666,18 +666,19 @@ function handleFileResponse(msg, line, snippet, token) {
     });
   }
 
-  var cached = state.fileCache.get(msg.key);
-  if (cached && (!msg.contentVersion || cached.contentVersion === msg.contentVersion)) {
-    return render(cached.path, cached.text, msg.truncated, line, snippet, cached.contentVersion);
-  }
-
+  // Inline text already arrived over WS. Uploaded text has a content-derived key, so the shared
+  // attachment cache never goes stale and keeps it out of memory.
   var contentPromise = msg.content != null
     ? Promise.resolve(msg.content)
-    : window.apiText('/api/bridge/file/' + msg.key);
+    : cachedAttachment(msg.key).then(function (cached) {
+      if (cached) return new TextDecoder().decode(cached.data);
+      return window.apiText('/api/bridge/file/' + msg.key).then(function (text) {
+        cacheAttachment(msg.key, (msg.path || '').split('/').pop() || msg.key, new Blob([text]));
+        return text;
+      });
+    });
   contentPromise.then(function (text) {
     if (token !== _fileRequestToken) return;
-    if (state.fileCache.size > 50) state.fileCache.delete(state.fileCache.keys().next().value);
-    state.fileCache.set(msg.key, { text: text, path: msg.path, truncated: msg.truncated, contentVersion: msg.contentVersion });
     render(msg.path, text, msg.truncated, line, snippet, msg.contentVersion);
   }).catch(function () {
     if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download file.</div>');

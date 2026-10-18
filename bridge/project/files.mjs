@@ -9,7 +9,8 @@ import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
 
-const FILE_MAX_BYTES = 5 * 1024 * 1024;
+// Larger text previews stall phones; Download fetches the full file.
+const FILE_MAX_BYTES = 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 const INLINE_FRAME_LIMIT = Math.min(28_000, WS_FRAME_LIMIT - 3_000);

@@ -354,6 +354,22 @@ test('text files above 300 KB use the existing S3 upload path', async () => {
   }
 });
 
+test('text previews above 1 MB upload only the first complete lines', async () => {
+  const { root } = fixture();
+  fs.writeFileSync(path.join(root, 'large.log'), 'log line 0123456789\n'.repeat(80_000));
+  try {
+    let uploaded;
+    const [response] = await request(root, { operation: 'read', path: 'large.log' }, {
+      postFn: async (_endpoint, body) => { uploaded = Buffer.from(body.data, 'base64'); return { ok: true }; },
+    });
+    assert.equal(response.truncated, true);
+    assert.ok(uploaded.length <= 1024 * 1024);
+    assert.equal((uploaded.length + 1) % 'log line 0123456789\n'.length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('text file versions detect same-size changes even when modification time is preserved', async () => {
   const { root } = fixture();
   const file = path.join(root, 'small.md');

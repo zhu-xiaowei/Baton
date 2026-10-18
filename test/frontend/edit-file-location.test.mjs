@@ -28,7 +28,6 @@ test.beforeEach(() => {
   state.wsSessionId = crypto.randomUUID();
   state.appState = { device: 'Mac', session: state.wsSessionId, project: { hash: 'project' } };
   state.wsAllMessages = [];
-  state.fileCache.clear();
   sent = [];
   window.wsSendReliable = payload => {
     sent.push(payload);
