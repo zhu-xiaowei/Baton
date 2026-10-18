@@ -83,7 +83,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
-- **Lightweight Apps** — native Tauri Apps under 8 MB (Windows 1.9 MB, macOS 4.7 MB, Android 7.7 MB)
+- **Lightweight Apps** — native Tauri Apps under 8 MB
 - **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### Rich rendering
