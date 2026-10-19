@@ -1686,6 +1686,8 @@ async function submitDelete() {
   // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
   if (deleteFiles && result.files && result.files.timeout) {
     showStats('Removed from list; device did not confirm file deletion (bridge offline?)');
+  } else if (deleteFiles && result.files && !result.files.ok) {
+    showStats(result.files.error || 'Some original files could not be deleted.');
   }
 }
 

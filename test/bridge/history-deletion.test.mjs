@@ -8,7 +8,7 @@ import {
   discoverClaudeSessions,
 } from '../../bridge/claude-runtime.mjs';
 import { codexRuntime } from '../../bridge/codex-runtime.mjs';
-import { discoverCodexSessions } from '../../bridge/codex-session.mjs';
+import { discoverCodexHistory, discoverCodexSessions } from '../../bridge/codex-session.mjs';
 import { handleDeleteFiles } from '../../bridge/ws.mjs';
 import { projectHashFromCwd } from '../../bridge/session-identity.mjs';
 
@@ -18,9 +18,15 @@ const nestedId = '33333333-3333-4333-8333-333333333333';
 const otherId = '44444444-4444-4444-8444-444444444444';
 const runningInfo = { projects: new Set(), sessions: new Set() };
 
-function deleteHistoryFiles(request, context, adapters) {
+async function deleteHistoryFiles(request, context = {}, adapters) {
   let sent;
-  handleDeleteFiles(request, { context, adapters, send: (result) => { sent = result; } });
+  await handleDeleteFiles(request, {
+    context: {
+      createCodexClient: () => ({ request: async () => { throw new Error('unavailable'); }, stop: async () => {} }),
+      ...context,
+    },
+    adapters, send: (result) => { sent = result; },
+  });
   return sent;
 }
 
@@ -85,7 +91,7 @@ test('Claude session deletion removes all copies and nested agents, and is retry
   assert.equal(claudeRuntime.deleteSessionHistory('../bad', context), false);
 });
 
-test('batch project deletion removes both runtimes, duplicate files, and child trees with different cwd', (t) => {
+test('batch project deletion removes both runtimes, duplicate files, and child trees with different cwd', async (t) => {
   const root = fixture(t);
   const homes = [path.join(root, 'codex-one'), path.join(root, 'codex-two')];
   const cwd = path.join(root, 'repo');
@@ -110,7 +116,7 @@ test('batch project deletion removes both runtimes, duplicate files, and child t
   const keep = writeCodex(homes[0], otherCwd, otherId);
   const watermarks = new Map([[`codex:${rootId}`, 1], [`codex:${childId}`, 1], [`codex:${otherId}`, 1]]);
   const context = { projectsRoot, claudeProjectsRoot: projectsRoot, codexHomes: homes, watermarks, runningInfo };
-  const result = deleteHistoryFiles({ projectHashes: [projectHash, secondHash] }, context);
+  const result = await deleteHistoryFiles({ projectHashes: [projectHash, secondHash] }, context);
   assert.equal(result.ok, true);
   assert.equal(result.deletedProjects, 2);
   for (const file of removed) assert.equal(fs.existsSync(file), false);
@@ -120,13 +126,13 @@ test('batch project deletion removes both runtimes, duplicate files, and child t
   assert.deepEqual([...watermarks.keys()].filter((id) => id.startsWith('codex:')), [`codex:${otherId}`]);
 });
 
-test('Codex session deletion supports repeated requests without deleting sibling sessions', (t) => {
+test('Codex session deletion supports repeated requests without deleting sibling sessions', async (t) => {
   const root = fixture(t);
   const context = { codexHomes: [root], runningInfo };
   const file = writeCodex(root, '/repo', rootId);
   const keep = writeCodex(root, '/repo', otherId);
   for (let i = 0; i < 2; i++) {
-    const result = deleteHistoryFiles({ sessionIds: [`codex:${rootId}`] }, { ...context });
+    const result = await deleteHistoryFiles({ sessionIds: [`codex:${rootId}`] }, { ...context });
     assert.equal(result.ok, true);
   }
   assert.equal(codexRuntime.features.deleteHistory, true);
@@ -134,12 +140,12 @@ test('Codex session deletion supports repeated requests without deleting sibling
   assert.equal(fs.existsSync(keep), true);
 });
 
-test('file deletion reports unsupported runtimes, false returns, and exceptions', () => {
+test('file deletion reports unsupported runtimes, false returns, and exceptions', async () => {
   const adapters = [
     { ...claudeRuntime, deleteProjectHistory: () => false, deleteSessionHistory: () => { throw new Error('permission denied'); } },
     { ...codexRuntime, features: { deleteHistory: false } },
   ];
-  const result = deleteHistoryFiles({ projectHashes: ['-repo'], sessionIds: [rootId] }, {}, adapters);
+  const result = await deleteHistoryFiles({ projectHashes: ['-repo'], sessionIds: [rootId] }, {}, adapters);
   assert.equal(result.ok, false);
   assert.equal(result.deletedProjects, 0);
   assert.equal(result.deletedSessions, 0);
@@ -147,4 +153,144 @@ test('file deletion reports unsupported runtimes, false returns, and exceptions'
   assert.equal(result.skippedReadOnly, 1);
   assert.match(result.error, /permission denied/);
   assert.match(result.error, /could not be deleted/);
+});
+
+test('Codex discovery reads only metadata even for huge bodies and tolerates bad files', async (t) => {
+  const root = fixture(t);
+  const large = writeCodex(root, '/repo', rootId);
+  fs.truncateSync(large, 128 * 1024 * 1024);
+  const bad = writeCodex(root, '/other', otherId);
+  fs.writeFileSync(bad, 'not JSON\n');
+  const archived = writeCodex(root, '/archive', childId);
+  const archivePath = archived.replace(`${path.sep}sessions${path.sep}`, `${path.sep}archived_sessions${path.sep}`);
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  fs.renameSync(archived, archivePath);
+  const originalRead = fs.read;
+  let bytes = 0;
+  fs.read = function (fd, buffer, offset, length, position, callback) {
+    return originalRead.call(this, fd, buffer, offset, length, position, (error, size, ...rest) => {
+      bytes += size || 0;
+      callback(error, size, ...rest);
+    });
+  };
+  let history;
+  try { history = await discoverCodexHistory({ codexHomes: [root] }); }
+  finally { fs.read = originalRead; }
+  assert.ok(bytes < 32 * 1024, `Read ${bytes} bytes instead of just the headers`);
+  assert.equal(history.find((file) => file.id === rootId).cwd, '/repo');
+  assert.equal(history.find((file) => file.id === otherId).cwd, undefined);
+  assert.equal(history.find((file) => file.id === childId).filePath, archivePath);
+  const result = await deleteHistoryFiles({ projectHashes: ['-repo'] }, { codexHomes: [root] });
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(large), false);
+  assert.equal(fs.existsSync(bad), true);
+});
+
+test('Codex deletes through one official client per home, includes archives, and preserves forks', async (t) => {
+  const home = fixture(t);
+  const parent = writeCodex(home, '/repo', rootId);
+  const child = writeCodex(home, '/other', childId, rootId);
+  const fork = writeCodex(home, '/fork', otherId);
+  const forkRows = fs.readFileSync(fork, 'utf8').replace('"cwd":"/fork"', `"cwd":"/fork","forked_from_id":"${rootId}"`);
+  fs.writeFileSync(fork, forkRows);
+  const archived = parent.replace(`${path.sep}sessions${path.sep}`, `${path.sep}archived_sessions${path.sep}`);
+  fs.mkdirSync(path.dirname(archived), { recursive: true });
+  fs.copyFileSync(parent, archived);
+  const requests = [];
+  let created = 0;
+  let stopped = 0;
+  const result = await deleteHistoryFiles({ projectHashes: ['-repo'] }, {
+    codexHomes: [home],
+    createCodexClient(options) {
+      created++;
+      assert.equal(options.env.CODEX_HOME, home);
+      return {
+        request: async (method, params) => { requests.push([method, params]); },
+        stop: async () => { stopped++; },
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(created, 1);
+  assert.equal(stopped, 1);
+  assert.deepEqual(requests.map(([method, params]) => [method, params.threadId]).sort(), [
+    ['thread/delete', rootId], ['thread/delete', childId],
+  ].sort());
+  for (const file of [parent, archived, child]) assert.equal(fs.existsSync(file), false);
+  assert.equal(fs.existsSync(fork), true);
+});
+
+test('Codex cleans state-only threads through the official API and falls back when startup fails', async (t) => {
+  const home = fixture(t);
+  const requests = [];
+  const result = await deleteHistoryFiles({ sessionIds: [`codex:${rootId}`] }, {
+    codexHomes: [home],
+    createCodexClient: () => ({
+      request: async (...args) => { requests.push(args); },
+      stop: async () => {},
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [['thread/delete', { threadId: rootId }]]);
+  const file = writeCodex(home, '/repo', rootId);
+  const fallback = await deleteHistoryFiles({ sessionIds: [`codex:${rootId}`] }, {
+    codexHomes: [home],
+    createCodexClient: () => ({
+      start: async () => { throw new Error('app-server unavailable'); },
+      request: async () => assert.fail('Failed startup must not issue requests'),
+      stop: async () => {},
+    }),
+  });
+  assert.equal(fallback.ok, true);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('Codex reports actual removal failures but continues deleting other files', async (t) => {
+  const home = fixture(t);
+  const blocked = writeCodex(home, '/repo', rootId);
+  const removable = writeCodex(home, '/repo', otherId);
+  const result = await deleteHistoryFiles({ projectHashes: ['-repo'] }, {
+    codexHomes: [home],
+    createCodexClient: () => ({
+      request: async (_method, { threadId }) => {
+        if (threadId === rootId) {
+          fs.unlinkSync(blocked);
+          fs.mkdirSync(blocked);
+        }
+      },
+      stop: async () => {},
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.error);
+  assert.equal(fs.existsSync(removable), false);
+});
+
+test('Codex matches both Windows project hashes without relying on Claude directories', async (t) => {
+  const home = fixture(t);
+  for (const projectHash of ['C-repo', 'C--repo']) {
+    const file = writeCodex(home, 'C:\\repo', rootId);
+    const result = await deleteHistoryFiles({ projectHashes: [projectHash] }, { codexHomes: [home] });
+    assert.equal(result.ok, true);
+    assert.equal(fs.existsSync(file), false);
+  }
+});
+
+test('a disconnected Codex client does not incur a timeout for each remaining batch', async (t) => {
+  const home = fixture(t);
+  const files = [];
+  for (let i = 0; i < 20; i++) {
+    files.push(writeCodex(home, '/repo', `55555555-5555-4555-8555-${String(i).padStart(12, '0')}`));
+  }
+  let requests = 0;
+  const result = await deleteHistoryFiles({ projectHashes: ['-repo'] }, {
+    codexHomes: [home],
+    createCodexClient: () => ({
+      request: async () => { requests++; throw new Error('thread/delete timed out'); },
+      stop: async () => {},
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.ok(requests <= 8);
+  assert.ok(files.every((file) => !fs.existsSync(file)));
 });

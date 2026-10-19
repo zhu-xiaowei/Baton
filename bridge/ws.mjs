@@ -955,7 +955,7 @@ async function handleMessage(msg) {
       await (await gitStatusModule()).handleGitStatusMessage(msg, { send: wsSend });
       break;
     case 'delete_files':
-      handleDeleteFiles(msg);
+      await handleDeleteFiles(msg);
       break;
     case 'list_commands':
       await handleListCommands(msg);
@@ -1890,7 +1890,7 @@ async function handleCreateProject(rawPath, asAgent) {
 }
 
 // Delete original runtime history when requested by the app.
-export function handleDeleteFiles(msg, {
+export async function handleDeleteFiles(msg, {
   context = { watermarks: synced },
   adapters = runtimeAdapters,
   send = wsSend,
@@ -1899,13 +1899,14 @@ export function handleDeleteFiles(msg, {
   let deletedSessions = 0;
   let deletedProjects = 0;
   const errors = [];
-  function remove(adapter, method, id) {
+  context.codexDeleteClients = new Map();
+  async function remove(adapter, method, id) {
     if (!adapter.features.deleteHistory) {
       skippedReadOnly++;
       return false;
     }
     try {
-      if (!adapter[method](id, context)) throw new Error('History files could not be deleted');
+      if (!await adapter[method](id, context)) throw new Error('History files could not be deleted');
       return true;
     } catch (error) {
       errors.push(`${adapter.runtime}: ${error.message}`);
@@ -1915,15 +1916,16 @@ export function handleDeleteFiles(msg, {
   for (const sid of msg.sessionIds || []) {
     const identity = parseStorageSessionId(sid);
     const adapter = adapters.find((item) => item.runtime === identity.runtime);
-    if (remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
+    if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
   }
   for (const ph of msg.projectHashes || []) {
     let ok = true;
     for (const adapter of adapters) {
-      if (!remove(adapter, 'deleteProjectHistory', ph)) ok = false;
+      if (!await remove(adapter, 'deleteProjectHistory', ph)) ok = false;
     }
     if (ok) deletedProjects++;
   }
+  await Promise.all([...context.codexDeleteClients.values()].map(({ client }) => client.stop().catch(() => {})));
   const result = {
     action: 'delete_files_result', requestId: msg.requestId,
     ok: errors.length === 0 && skippedReadOnly === 0,

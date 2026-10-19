@@ -4,13 +4,11 @@ import { countJsonlLines } from './extract.mjs';
 import { syncCodexMessages } from './codex-extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
-  codexSessionIdFromPath,
+  discoverCodexHistory,
   discoverCodexSessions,
   findCodexSessionFile,
   getCodexRunningInfo,
   inspectCodexSession,
-  listCodexHistoryFiles,
-  scanCodexRollout,
 } from './codex-session.mjs';
 import { readableProjectName } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
@@ -20,7 +18,9 @@ import {
   resolveCodexBin,
   resolveCodexHomes,
 } from './runtime-capabilities.mjs';
-import { storageSessionId } from './session-identity.mjs';
+import { projectHashCandidatesFromCwd, storageSessionId } from './session-identity.mjs';
+import { projectCwdFromCwd } from './repository-identity.mjs';
+import { CodexAppServerClient } from './codex-app-server.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
 
 function publicSession(session) {
@@ -28,38 +28,76 @@ function publicSession(session) {
   return item;
 }
 
-function deleteCodexHistory(sessionId, projectHash, context) {
-  // Scan once per delete request, keeping duplicate files across Codex homes.
-  if (!context.codexHistoryFiles) {
-    context.codexHistoryFiles = listCodexHistoryFiles(context).map((filePath) => {
-      const result = scanCodexRollout(filePath, { ...context, includeUntitled: true });
-      if (result.error) throw result.error;
-      if (result.reason === 'missing_metadata') {
-        throw new Error(`Cannot identify the project for Codex history: ${filePath}`);
-      }
-      return { filePath, id: codexSessionIdFromPath(filePath), session: result.session };
-    });
-  }
-  const files = context.codexHistoryFiles;
+async function deleteCodexHistory(sessionId, projectHash, context) {
+  // Metadata only, cached for this batch; never replay rollout message bodies.
+  const files = await (context.codexHistoryFiles ||= discoverCodexHistory(context));
+  const projects = new Map();
   const ids = new Set(sessionId ? [sessionId] : files
-    .filter((file) => file.session?.project === projectHash).map((file) => file.id));
-  // Child rollouts can have a different cwd from their parent.
+    .filter(({ cwd }) => {
+      if (typeof cwd !== 'string' || !cwd) return false;
+      if (!projects.has(cwd)) projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(cwd)));
+      return projects.get(cwd).includes(projectHash);
+    }).map((file) => file.id));
+  // Only spawned children cascade. User-created forks remain independent.
   let changed;
   do {
     changed = false;
     for (const file of files) {
-      const parent = file.session?.parentSessionId;
-      if (parent && ids.has(parent.replace(/^codex:/, '')) && !ids.has(file.id)) {
+      if (file.parentId && ids.has(file.parentId) && !ids.has(file.id)) {
         ids.add(file.id);
         changed = true;
       }
     }
   } while (changed);
-  for (const file of files) {
-    if (!ids.has(file.id)) continue;
-    fs.rmSync(file.filePath, { force: true });
-    context.watermarks?.delete(storageSessionId('codex', file.id));
+  const ownedClients = !context.codexDeleteClients;
+  const clients = context.codexDeleteClients ||= new Map();
+  const tasks = new Map();
+  for (const file of files.filter((file) => ids.has(file.id))) {
+    const key = `${file.home}\0${file.id}`;
+    if (!tasks.has(key)) tasks.set(key, { ...file, copies: [] });
+    tasks.get(key).copies.push(file.filePath);
   }
+  // A prior file-only deletion may have left this thread solely in Codex's DB.
+  if (sessionId) {
+    for (const home of context.codexHomes || resolveCodexHomes()) {
+      const key = `${home}\0${sessionId}`;
+      if (fs.existsSync(home) && !tasks.has(key)) tasks.set(key, { home, id: sessionId, copies: [] });
+    }
+  }
+  const errors = [];
+  async function remove(task) {
+    try {
+      if (!clients.has(task.home)) {
+        const client = (context.createCodexClient || ((options) => new CodexAppServerClient(options)))({
+          codexHomes: [task.home], env: { ...process.env, CODEX_HOME: task.home }, requestTimeout: 1500,
+        });
+        clients.set(task.home, { client, ready: Promise.resolve().then(() => client.start?.()).catch(() => false) });
+      }
+      const entry = clients.get(task.home);
+      if (await entry.ready !== false) await entry.client.request('thread/delete', { threadId: task.id });
+    } catch (error) {
+      // Do not spend another timeout on every batch after the server disconnects.
+      const entry = clients.get(task.home);
+      if (entry && /timed out|not writable|closed|exited|unavailable/i.test(error.message)) {
+        entry.ready = Promise.resolve(false);
+      }
+    }
+    for (const filePath of task.copies) {
+      try { await fs.promises.rm(filePath, { force: true }); }
+      catch (error) { errors.push(error.message); }
+    }
+    context.watermarks?.delete(storageSessionId('codex', task.id));
+  }
+  try {
+    const pending = [...tasks.values()];
+    for (let i = 0; i < pending.length; i += 8) await Promise.all(pending.slice(i, i + 8).map(remove));
+  } finally {
+    if (ownedClients) {
+      await Promise.all([...clients.values()].map(({ client }) => client.stop().catch(() => {})));
+      delete context.codexDeleteClients;
+    }
+  }
+  if (errors.length) throw new Error(errors.join('; '));
   return true;
 }
 

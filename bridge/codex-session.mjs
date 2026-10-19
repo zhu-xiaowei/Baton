@@ -31,14 +31,43 @@ function walkJsonl(dir, files, errors) {
   }
 }
 
-export function listCodexHistoryFiles(options = {}) {
+export async function discoverCodexHistory(options = {}) {
   const files = [];
-  const errors = [];
-  for (const home of options.codexHomes || resolveCodexHomes()) {
-    walkJsonl(path.join(home, 'sessions'), files, errors);
+  async function walk(dir, home) {
+    try {
+      for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+        const filePath = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(filePath, home);
+        else if (entry.isFile() && codexSessionIdFromPath(filePath)) files.push({ filePath, home });
+      }
+    } catch {} // An unreadable directory must not prevent deleting other history.
   }
-  if (errors.length) throw new Error(`Cannot read Codex history: ${errors[0].error}`);
-  return files;
+  await Promise.all((options.codexHomes || resolveCodexHomes()).flatMap((home) =>
+    ['sessions', 'archived_sessions'].map((name) => walk(path.join(home, name), home)),
+  ));
+  async function readHead(file) {
+    const result = { ...file, id: codexSessionIdFromPath(file.filePath) };
+    try {
+      let head = Buffer.alloc(0);
+      for await (const chunk of fs.createReadStream(file.filePath, { highWaterMark: 4096 })) {
+        head = Buffer.concat([head, chunk]);
+        const newline = head.indexOf(10);
+        if (newline >= 0) { head = head.subarray(0, newline); break; }
+        if (head.length >= 64 * 1024) return result;
+      }
+      const row = JSON.parse(head.toString('utf8'));
+      if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
+        result.cwd = row.payload?.cwd;
+        result.parentId = row.payload?.parent_thread_id;
+      }
+    } catch {} // Still allow an explicit session deletion by its filename ID.
+    return result;
+  }
+  const history = [];
+  for (let i = 0; i < files.length; i += 16) {
+    history.push(...await Promise.all(files.slice(i, i + 16).map(readHead)));
+  }
+  return history;
 }
 
 function previewText(value) {
@@ -320,9 +349,7 @@ export function scanCodexRollout(filePath, options = {}) {
   const preview = threadName || (visibleSubagent
     ? (prompts[1] || pathTitle || prompts[0] || '')
     : (prompts[0] || ''));
-  if (!preview && !options.includeUntitled) {
-    return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
-  }
+  if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
 
   const processInfoKnown = options.runningInfo !== undefined;
   const runningInfo = options.runningInfo || { projects: new Set(), sessions: new Set() };
