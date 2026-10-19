@@ -48,14 +48,13 @@ export async function discoverCodexHistory(options = {}) {
   async function readHead(file) {
     const result = { ...file, id: codexSessionIdFromPath(file.filePath) };
     try {
-      let head = Buffer.alloc(0);
+      const chunks = [];
       for await (const chunk of fs.createReadStream(file.filePath, { highWaterMark: 4096 })) {
-        head = Buffer.concat([head, chunk]);
-        const newline = head.indexOf(10);
-        if (newline >= 0) { head = head.subarray(0, newline); break; }
-        if (head.length >= 64 * 1024) return result;
+        const newline = chunk.indexOf(10);
+        chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+        if (newline >= 0) break;
       }
-      const row = JSON.parse(head.toString('utf8'));
+      const row = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
         result.cwd = row.payload?.cwd;
         result.parentId = row.payload?.parent_thread_id;

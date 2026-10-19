@@ -1891,7 +1891,7 @@ async function handleCreateProject(rawPath, asAgent) {
 
 // Delete original runtime history when requested by the app.
 export async function handleDeleteFiles(msg, {
-  context = { watermarks: synced },
+  context = { watermarks: synced, pool: _pool },
   adapters = runtimeAdapters,
   send = wsSend,
 } = {}) {
@@ -1900,32 +1900,44 @@ export async function handleDeleteFiles(msg, {
   let deletedProjects = 0;
   const errors = [];
   context.codexDeleteClients = new Map();
+  const progress = msg.progress ? setInterval(() => {
+    try { send({ action: 'delete_files_result', requestId: msg.requestId, pending: true }); } catch {}
+  }, 2000) : null;
   async function remove(adapter, method, id) {
-    if (!adapter.features.deleteHistory) {
-      skippedReadOnly++;
-      return false;
-    }
     try {
+      if (!adapter) throw new Error('Unknown session runtime');
+      if (!adapter.features.deleteHistory) {
+        skippedReadOnly++;
+        return false;
+      }
       if (!await adapter[method](id, context)) throw new Error('History files could not be deleted');
       return true;
     } catch (error) {
-      errors.push(`${adapter.runtime}: ${error.message}`);
+      errors.push(`${adapter?.runtime || 'unknown'}: ${error.message}`);
       return false;
     }
   }
-  for (const sid of msg.sessionIds || []) {
-    const identity = parseStorageSessionId(sid);
-    const adapter = adapters.find((item) => item.runtime === identity.runtime);
-    if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
-  }
-  for (const ph of msg.projectHashes || []) {
-    let ok = true;
-    for (const adapter of adapters) {
-      if (!await remove(adapter, 'deleteProjectHistory', ph)) ok = false;
+  try {
+    for (const sid of msg.sessionIds || []) {
+      const identity = parseStorageSessionId(sid);
+      const adapter = adapters.find((item) => item.runtime === identity.runtime);
+      if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
     }
-    if (ok) deletedProjects++;
+    for (const ph of msg.projectHashes || []) {
+      let ok = true;
+      for (const adapter of adapters) {
+        if (!await remove(adapter, 'deleteProjectHistory', ph)) ok = false;
+      }
+      if (ok) deletedProjects++;
+    }
+  } catch (error) {
+    errors.push(error.message);
+  } finally {
+    if (progress) clearInterval(progress);
+    await Promise.allSettled([...context.codexDeleteClients.values()].map(({ client }) =>
+      Promise.resolve().then(() => client.stop()),
+    ));
   }
-  await Promise.all([...context.codexDeleteClients.values()].map(({ client }) => client.stop().catch(() => {})));
   const result = {
     action: 'delete_files_result', requestId: msg.requestId,
     ok: errors.length === 0 && skippedReadOnly === 0,

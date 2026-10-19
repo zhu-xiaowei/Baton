@@ -963,7 +963,10 @@ function dispatchWsMessage(msg) {
       if (isStrictTurnEvent(msg)) handleStrictTurnEnd(msg);
     } else if (msg.action === 'delete_files_result') {
       var r = window._deleteFilesResolvers && window._deleteFilesResolvers[msg.requestId];
-      if (r) { delete window._deleteFilesResolvers[msg.requestId]; r(msg); }
+      if (r) {
+        if (!msg.pending) delete window._deleteFilesResolvers[msg.requestId];
+        r(msg);
+      }
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;

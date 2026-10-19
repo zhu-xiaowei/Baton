@@ -28,7 +28,7 @@ function publicSession(session) {
   return item;
 }
 
-async function deleteCodexHistory(sessionId, projectHash, context) {
+async function deleteCodexHistory(sessionId, projectHash, context, ownsLiveSession) {
   // Metadata only, cached for this batch; never replay rollout message bodies.
   const files = await (context.codexHistoryFiles ||= discoverCodexHistory(context));
   const projects = new Map();
@@ -49,6 +49,7 @@ async function deleteCodexHistory(sessionId, projectHash, context) {
       }
     }
   } while (changed);
+  if ([...ids].some(ownsLiveSession)) throw new Error('Close the active Codex sessions before deleting their history.');
   const ownedClients = !context.codexDeleteClients;
   const clients = context.codexDeleteClients ||= new Map();
   const tasks = new Map();
@@ -69,13 +70,17 @@ async function deleteCodexHistory(sessionId, projectHash, context) {
     try {
       if (!clients.has(task.home)) {
         const client = (context.createCodexClient || ((options) => new CodexAppServerClient(options)))({
-          codexHomes: [task.home], env: { ...process.env, CODEX_HOME: task.home }, requestTimeout: 1500,
+          codexHomes: [task.home], env: { ...process.env, CODEX_HOME: task.home }, requestTimeout: 10000,
         });
         clients.set(task.home, { client, ready: Promise.resolve().then(() => client.start?.()).catch(() => false) });
       }
       const entry = clients.get(task.home);
-      if (await entry.ready !== false) await entry.client.request('thread/delete', { threadId: task.id });
+      if (await entry.ready === false) throw new Error('Codex app-server unavailable');
+      await entry.client.request('thread/delete', { threadId: task.id });
     } catch (error) {
+      errors.push(`Codex database deletion was not confirmed for ${task.id}: ${error.message}`);
+      // A native refusal (for example, an active turn) must not be bypassed by unlinking.
+      if (error.code != null && error.code !== -32601) return;
       // Do not spend another timeout on every batch after the server disconnects.
       const entry = clients.get(task.home);
       if (entry && /timed out|not writable|closed|exited|unavailable/i.test(error.message)) {
@@ -129,10 +134,10 @@ export const codexRuntime = defineRuntimeAdapter({
   },
   findSessionFile: findCodexSessionFile,
   deleteSessionHistory(nativeSessionId, context = {}) {
-    return !!nativeSessionId && deleteCodexHistory(nativeSessionId, '', context);
+    return !!nativeSessionId && deleteCodexHistory(nativeSessionId, '', context, (id) => this.ownsLiveSession(id, context));
   },
   deleteProjectHistory(projectHash, context = {}) {
-    return !!projectHash && deleteCodexHistory('', projectHash, context);
+    return !!projectHash && deleteCodexHistory('', projectHash, context, (id) => this.ownsLiveSession(id, context));
   },
   ownsLiveSession(nativeSessionId) {
     return codexInteraction.owns(nativeSessionId);

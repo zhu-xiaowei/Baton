@@ -555,11 +555,11 @@ def test_delete_session_deletes_all_nested_children_only(monkeypatch):
         "sk": "SESS#Linux#-repo#root",
         "sessionId": "root",
     }, {
-        "sk": "SESS#Linux#-repo#child-a",
+        "sk": "SESS#Linux#-child-project#child-a",
         "sessionId": "child-a",
         "parentSessionId": "root",
     }, {
-        "sk": "SESS#Linux#-repo#grandchild",
+        "sk": "SESS#Linux#-grandchild-project#grandchild",
         "sessionId": "grandchild",
         "parentSessionId": "child-a",
     }, {
@@ -581,8 +581,8 @@ def test_delete_session_deletes_all_nested_children_only(monkeypatch):
 
     assert {item["sk"] for item in sessions.deleted} == {
         "SESS#Linux#-repo#root",
-        "SESS#Linux#-repo#child-a",
-        "SESS#Linux#-repo#grandchild",
+        "SESS#Linux#-child-project#child-a",
+        "SESS#Linux#-grandchild-project#grandchild",
     }
     assert result["deletedSessions"] == 3
 

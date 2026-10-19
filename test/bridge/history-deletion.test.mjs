@@ -22,7 +22,7 @@ async function deleteHistoryFiles(request, context = {}, adapters) {
   let sent;
   await handleDeleteFiles(request, {
     context: {
-      createCodexClient: () => ({ request: async () => { throw new Error('unavailable'); }, stop: async () => {} }),
+      createCodexClient: () => ({ request: async () => {}, stop: async () => {} }),
       ...context,
     },
     adapters, send: (result) => { sent = result; },
@@ -241,7 +241,8 @@ test('Codex cleans state-only threads through the official API and falls back wh
       stop: async () => {},
     }),
   });
-  assert.equal(fallback.ok, true);
+  assert.equal(fallback.ok, false);
+  assert.match(fallback.error, /database deletion was not confirmed/);
   assert.equal(fs.existsSync(file), false);
 });
 
@@ -290,7 +291,101 @@ test('a disconnected Codex client does not incur a timeout for each remaining ba
       stop: async () => {},
     }),
   });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /database deletion was not confirmed/);
   assert.ok(requests <= 8);
   assert.ok(files.every((file) => !fs.existsSync(file)));
+});
+
+test('Codex metadata larger than 64 KiB still identifies the project and parent', async (t) => {
+  const home = fixture(t);
+  const file = writeCodex(home, '/repo', rootId, childId);
+  fs.writeFileSync(file, JSON.stringify({
+    type: 'session_meta',
+    payload: { id: rootId, base_instructions: 'x'.repeat(200_000), cwd: '/repo', parent_thread_id: childId },
+  }) + '\n');
+  const [entry] = await discoverCodexHistory({ codexHomes: [home] });
+  assert.equal(entry.cwd, '/repo');
+  assert.equal(entry.parentId, childId);
+  assert.equal((await deleteHistoryFiles({ projectHashes: ['-repo'] }, { codexHomes: [home] })).ok, true);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('a removed Claude worktree still matches its original project hash', async (t) => {
+  const home = fixture(t);
+  const main = path.join(home, 'repo');
+  const removedWorktree = path.join(main, '.claude', 'worktrees', 'removed');
+  const file = writeCodex(home, removedWorktree, rootId);
+  assert.equal(fs.existsSync(removedWorktree), false);
+  const result = await deleteHistoryFiles({ projectHashes: [projectHashFromCwd(main)] }, { codexHomes: [home] });
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('owned sessions block both session and project deletion before removing files', async (t) => {
+  for (const runtime of [claudeRuntime, codexRuntime]) {
+    const root = fixture(t);
+    const file = runtime.runtime === 'claude'
+      ? writeClaude(root, '-repo', rootId)
+      : writeCodex(root, '/repo', rootId);
+    const adapter = { ...runtime, ownsLiveSession: (id) => id === rootId };
+    for (const request of [{ sessionIds: [runtime.runtime === 'codex' ? `codex:${rootId}` : rootId] }, { projectHashes: ['-repo'] }]) {
+      const result = await deleteHistoryFiles(request, { projectsRoot: root, codexHomes: [root] }, [adapter]);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /active/);
+      assert.equal(fs.existsSync(file), true);
+    }
+  }
+});
+
+test('Claude scans its project directory once when deleting a session batch', async (t) => {
+  const root = fixture(t);
+  writeClaude(root, '-repo', rootId);
+  writeClaude(root, '-repo', childId);
+  const original = fs.readdirSync;
+  let reads = 0;
+  fs.readdirSync = function (dir, ...args) {
+    if (dir === root) reads++;
+    return original.call(this, dir, ...args);
+  };
+  try {
+    assert.equal((await deleteHistoryFiles({ sessionIds: [rootId, childId] }, { projectsRoot: root }, [claudeRuntime])).ok, true);
+  } finally { fs.readdirSync = original; }
+  assert.equal(reads, 1);
+});
+
+test('unexpected dispatch failures still stop native clients and send a final response', async () => {
+  const context = {};
+  const sent = [];
+  let stopped = false;
+  const adapter = {
+    runtime: 'codex', features: { deleteHistory: true },
+    async deleteSessionHistory() {
+      context.codexDeleteClients.set('home', { client: { stop: async () => { stopped = true; } } });
+      return true;
+    },
+  };
+  await handleDeleteFiles({
+    sessionIds: [`codex:${rootId}`, { toString() { throw new Error('invalid ID'); } }],
+  }, { context, adapters: [adapter], send: (result) => sent.push(result) });
+  assert.equal(stopped, true);
+  assert.equal(sent.at(-1).ok, false);
+  assert.match(sent.at(-1).error, /invalid ID/);
+  const unknown = await deleteHistoryFiles({ sessionIds: [rootId] }, {}, []);
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /Unknown session runtime/);
+});
+
+test('a native refusal does not fall back to unlinking a potentially active thread', async (t) => {
+  const home = fixture(t);
+  const file = writeCodex(home, '/repo', rootId);
+  const result = await deleteHistoryFiles({ sessionIds: [`codex:${rootId}`] }, {
+    codexHomes: [home],
+    createCodexClient: () => ({
+      request: async () => { throw Object.assign(new Error('Thread has an active turn'), { code: -32600 }); },
+      stop: async () => {},
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(fs.existsSync(file), true);
 });
