@@ -704,9 +704,9 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
   var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
-  // Markdown/HTML open rendered, unless the link targets a line or a tool's edit location.
-  var previewDocument = isPreviewable(absPath) && !absPath.startsWith('baton-file:') && !lineHint && !matchId
-    && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
+  // HTML opens rendered even from edit/line links; Markdown keeps source positioning for those links.
+  var previewDocument = isPreviewable(absPath) && (isHtml(absPath) || (!lineHint && !matchId))
+    && !absPath.startsWith('baton-file:') && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
   setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff'
     : previewDocument ? 'preview' : 'source');
   return true;
