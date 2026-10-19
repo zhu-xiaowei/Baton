@@ -1,7 +1,7 @@
 // Downloaded attachments kept in IndexedDB so reopening one skips the URL request and the download.
 // A key never changes content (uploads mint a new key), so entries never go stale. Images and other
 // files have separate size budgets, so one large PDF cannot evict every image; within each budget the
-// oldest-opened entries go first. Every failure just means a cache miss.
+// oldest-written entries go first. Every failure just means a cache miss.
 import { state } from '../state.js';
 import { IMAGE_MIME_TYPES } from './image-type.js';
 
@@ -49,9 +49,10 @@ export function isCachedPreview(key) {
 
 async function cachedEntry(key) {
   try {
-    const files = await store('readwrite');
+    // Rewriting an entry to update its access time can invalidate the returned Blob in WebKit.
+    // Keep cached payloads immutable; the existing timestamp orders eviction by insertion.
+    const files = await store('readonly');
     const entry = await done(files.get(scoped(key)));
-    if (entry) files.put({ ...entry, lastAccessAt: Date.now() });
     return entry || null;
   } catch {
     return null;
