@@ -4,10 +4,13 @@ import { countJsonlLines } from './extract.mjs';
 import { syncCodexMessages } from './codex-extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
+  codexSessionIdFromPath,
   discoverCodexSessions,
   findCodexSessionFile,
   getCodexRunningInfo,
   inspectCodexSession,
+  listCodexHistoryFiles,
+  scanCodexRollout,
 } from './codex-session.mjs';
 import { readableProjectName } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
@@ -25,6 +28,41 @@ function publicSession(session) {
   return item;
 }
 
+function deleteCodexHistory(sessionId, projectHash, context) {
+  // Scan once per delete request, keeping duplicate files across Codex homes.
+  if (!context.codexHistoryFiles) {
+    context.codexHistoryFiles = listCodexHistoryFiles(context).map((filePath) => {
+      const result = scanCodexRollout(filePath, { ...context, includeUntitled: true });
+      if (result.error) throw result.error;
+      if (result.reason === 'missing_metadata') {
+        throw new Error(`Cannot identify the project for Codex history: ${filePath}`);
+      }
+      return { filePath, id: codexSessionIdFromPath(filePath), session: result.session };
+    });
+  }
+  const files = context.codexHistoryFiles;
+  const ids = new Set(sessionId ? [sessionId] : files
+    .filter((file) => file.session?.project === projectHash).map((file) => file.id));
+  // Child rollouts can have a different cwd from their parent.
+  let changed;
+  do {
+    changed = false;
+    for (const file of files) {
+      const parent = file.session?.parentSessionId;
+      if (parent && ids.has(parent.replace(/^codex:/, '')) && !ids.has(file.id)) {
+        ids.add(file.id);
+        changed = true;
+      }
+    }
+  } while (changed);
+  for (const file of files) {
+    if (!ids.has(file.id)) continue;
+    fs.rmSync(file.filePath, { force: true });
+    context.watermarks?.delete(storageSessionId('codex', file.id));
+  }
+  return true;
+}
+
 export const codexRuntime = defineRuntimeAdapter({
   runtime: 'codex',
   displayName: 'Codex',
@@ -32,6 +70,7 @@ export const codexRuntime = defineRuntimeAdapter({
     create: true,
     send: true,
     interrupt: true,
+    deleteHistory: true,
     statusPolling: true,
   },
   interaction: codexInteraction,
@@ -51,6 +90,12 @@ export const codexRuntime = defineRuntimeAdapter({
     };
   },
   findSessionFile: findCodexSessionFile,
+  deleteSessionHistory(nativeSessionId, context = {}) {
+    return !!nativeSessionId && deleteCodexHistory(nativeSessionId, '', context);
+  },
+  deleteProjectHistory(projectHash, context = {}) {
+    return !!projectHash && deleteCodexHistory('', projectHash, context);
+  },
   ownsLiveSession(nativeSessionId) {
     return codexInteraction.owns(nativeSessionId);
   },

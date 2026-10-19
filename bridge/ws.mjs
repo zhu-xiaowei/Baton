@@ -1889,29 +1889,50 @@ async function handleCreateProject(rawPath, asAgent) {
   }
 }
 
-// Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
-// Only touches paths inside CLAUDE_PROJECTS — never the user's real project/code dir.
-function handleDeleteFiles(msg) {
+// Delete original runtime history when requested by the app.
+export function handleDeleteFiles(msg, {
+  context = { watermarks: synced },
+  adapters = runtimeAdapters,
+  send = wsSend,
+} = {}) {
   let skippedReadOnly = 0;
   let deletedSessions = 0;
-  for (const sid of msg.sessionIds || []) {
-    const identity = parseStorageSessionId(sid);
-    const adapter = getRuntimeAdapter(identity.runtime);
+  let deletedProjects = 0;
+  const errors = [];
+  function remove(adapter, method, id) {
     if (!adapter.features.deleteHistory) {
       skippedReadOnly++;
-      continue;
+      return false;
     }
-    if (adapter.deleteSessionHistory(identity.nativeSessionId, { watermarks: synced })) {
-      deletedSessions++;
+    try {
+      if (!adapter[method](id, context)) throw new Error('History files could not be deleted');
+      return true;
+    } catch (error) {
+      errors.push(`${adapter.runtime}: ${error.message}`);
+      return false;
     }
+  }
+  for (const sid of msg.sessionIds || []) {
+    const identity = parseStorageSessionId(sid);
+    const adapter = adapters.find((item) => item.runtime === identity.runtime);
+    if (remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
   }
   for (const ph of msg.projectHashes || []) {
-    for (const adapter of runtimeAdapters) {
-      if (adapter.features.deleteHistory) adapter.deleteProjectHistory(ph);
+    let ok = true;
+    for (const adapter of adapters) {
+      if (!remove(adapter, 'deleteProjectHistory', ph)) ok = false;
     }
+    if (ok) deletedProjects++;
   }
-  console.log(`[ws] deleted files: ${deletedSessions} sessions, ${(msg.projectHashes || []).length} projects`);
-  wsSend({ action: 'delete_files_result', requestId: msg.requestId, ok: true, skippedReadOnly });
+  const result = {
+    action: 'delete_files_result', requestId: msg.requestId,
+    ok: errors.length === 0 && skippedReadOnly === 0,
+    skippedReadOnly, deletedSessions, deletedProjects, errors,
+    ...(errors.length ? { error: errors.join('; ') } : {}),
+  };
+  console.log(`[ws] deleted files: ${result.deletedSessions} sessions, ${result.deletedProjects} projects, ${result.errors.length} errors`);
+  send(result);
+  return result;
 }
 
 async function handleListCommands(msg) {

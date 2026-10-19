@@ -184,6 +184,19 @@ export function removeClaudeSessionHistoryFiles(
   return fileDeleted && childrenDeleted;
 }
 
+function claudeHistoryDirectories(projectsRoot, projectHash) {
+  if (!fs.existsSync(projectsRoot)) return [];
+  return fs.readdirSync(projectsRoot).filter((name) =>
+    (!projectHash || normalizeProjectHash(name) === normalizeProjectHash(projectHash))
+    && fs.lstatSync(path.join(projectsRoot, name)).isDirectory(),
+  ).map((name) => path.join(projectsRoot, name));
+}
+
+function validHistoryKey(value) {
+  return typeof value === 'string' && !!value
+    && value !== '.' && !value.includes('..') && !/[\\/\0]/.test(value);
+}
+
 export const claudeRuntime = defineRuntimeAdapter({
   runtime: 'claude',
   displayName: 'Claude',
@@ -231,15 +244,26 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   deleteSessionHistory(nativeSessionId, context = {}) {
-    if (parseClaudeSubagentSessionId(nativeSessionId)) return false;
-    const filePath = findClaudeSessionFile(nativeSessionId);
-    if (!filePath) return false;
-    return removeClaudeSessionHistoryFiles(filePath, nativeSessionId, context);
+    if (!validHistoryKey(nativeSessionId) || parseClaudeSubagentSessionId(nativeSessionId)) return false;
+    const projectsRoot = context.projectsRoot || CLAUDE_PROJECTS;
+    let ok = true;
+    // The same session can have copies in the main project and its worktrees.
+    for (const dir of claudeHistoryDirectories(projectsRoot)) {
+      if (!removeClaudeSessionHistoryFiles(
+        path.join(dir, `${nativeSessionId}.jsonl`), nativeSessionId, { ...context, projectsRoot },
+      )) ok = false;
+    }
+    return ok;
   },
 
-  deleteProjectHistory(projectHash) {
-    if (!projectHash || projectHash.includes('/') || projectHash.includes('..')) return false;
-    return removeInsideRoot(path.join(CLAUDE_PROJECTS, projectHash), CLAUDE_PROJECTS);
+  deleteProjectHistory(projectHash, context = {}) {
+    if (!validHistoryKey(projectHash)) return false;
+    const projectsRoot = context.projectsRoot || CLAUDE_PROJECTS;
+    let ok = true;
+    for (const dir of claudeHistoryDirectories(projectsRoot, projectHash)) {
+      if (!removeInsideRoot(dir, projectsRoot)) ok = false;
+    }
+    return ok;
   },
 
   ownsLiveSession(nativeSessionId, context = {}) {

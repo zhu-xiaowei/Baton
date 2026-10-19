@@ -31,6 +31,16 @@ function walkJsonl(dir, files, errors) {
   }
 }
 
+export function listCodexHistoryFiles(options = {}) {
+  const files = [];
+  const errors = [];
+  for (const home of options.codexHomes || resolveCodexHomes()) {
+    walkJsonl(path.join(home, 'sessions'), files, errors);
+  }
+  if (errors.length) throw new Error(`Cannot read Codex history: ${errors[0].error}`);
+  return files;
+}
+
 function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
@@ -310,7 +320,9 @@ export function scanCodexRollout(filePath, options = {}) {
   const preview = threadName || (visibleSubagent
     ? (prompts[1] || pathTitle || prompts[0] || '')
     : (prompts[0] || ''));
-  if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
+  if (!preview && !options.includeUntitled) {
+    return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
+  }
 
   const processInfoKnown = options.runningInfo !== undefined;
   const runningInfo = options.runningInfo || { projects: new Set(), sessions: new Set() };
