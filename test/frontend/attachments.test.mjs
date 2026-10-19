@@ -407,13 +407,25 @@ test('an Office preview closed while loading is destroyed, and over-limit files 
   window.closeFileViewer();
 });
 
-test('legacy Office formats are not decoded and offer the download instead', async () => {
+ooxml.loadLegacy = async format => {
+  const name = format[0].toUpperCase() + format.slice(1);
+  return { ['createLegacy' + name]: urls => ({ format, urls }) };
+};
+
+test('legacy Office formats open in the matching viewer through the companion reader', async () => {
   const viewers = fakeOoxml(async () => {});
-  window.openFile('baton-file:' + 'c'.repeat(32) + '.ppt', 'old.ppt');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.match(document.getElementById('fileOverlayBody').textContent, /No inline preview/);
-  assert.equal(viewers.length, 0);
-  window.closeFileViewer();
+  globalThis.fetch = async () => new Response('CFB');
+  for (const [ext, kind, option] of [['doc', 'docx', 'legacyDoc'], ['ppt', 'pptx', 'legacyPpt'], ['xls', 'xlsx', 'legacyXls']]) {
+    window.openFile('baton-file:' + 'c'.repeat(32) + '.' + ext, 'old.' + ext);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const viewer = viewers.at(-1);
+    assert.equal(viewer.kind, kind);
+    assert.equal(viewer.options[option].format, ext);
+    assert.match(viewer.options[option].urls.wasmUrl, new RegExp(`ooxml-legacy-office@0\\.89\\.0/dist/legacy_${ext}_direct_bg\\.wasm$`));
+    assert.match(viewer.options[option].urls.moduleUrl, new RegExp(`/dist/legacy-${ext}-source-module\\.mjs$`));
+    assert.equal(viewer.options.progressiveLayout, kind === 'docx' ? true : undefined);
+    window.closeFileViewer();
+  }
 });
 
 test('a project PDF is uploaded through the download operation, then previewed as an attachment', async () => {

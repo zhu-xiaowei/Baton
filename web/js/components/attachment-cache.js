@@ -44,7 +44,7 @@ export const CACHED_PREVIEW_TYPES = {
 
 export function isCachedPreview(key) {
   const extension = (key || '').split('.').pop();
-  return ['docx', 'pptx', 'xlsx'].includes(extension) || extension in CACHED_PREVIEW_TYPES;
+  return ['docx', 'pptx', 'xlsx', 'doc', 'ppt', 'xls'].includes(extension) || extension in CACHED_PREVIEW_TYPES;
 }
 
 async function cachedEntry(key) {
