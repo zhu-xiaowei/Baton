@@ -509,6 +509,7 @@ async function handleRevealPermission(sessionId) {
     sessionId: identity.sessionId,
     nativeSessionId: identity.nativeSessionId,
     callbacks: permissionObservationCallbacks(identity.sessionId, identity),
+    goalCallbacks: goalContinuationCallbacks(identity),
   });
 }
 
@@ -1267,6 +1268,7 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const liveTurn = new Stream({
     sessionId,
     turnId,
+    goalContinuation: options.goalContinuation,
     replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
     onSegment: (id, segment) => {
@@ -1389,6 +1391,15 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   return callbacks;
 }
 
+// Codex Goal continuations start without a user prompt; each gets its own live turn.
+function goalContinuationCallbacks(identity, cwd = '') {
+  return (turnId) => createStreamCallbacks(identity.sessionId, turnId, cwd, () => {}, {
+    runtime: 'codex',
+    nativeSessionId: identity.nativeSessionId,
+    goalContinuation: true,
+  });
+}
+
 async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = {}) {
   const filePath = adapter.findSessionFile(identity.nativeSessionId);
   if (!synced.has(identity.sessionId) && filePath) {
@@ -1494,6 +1505,7 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
       args: command.args,
       cwd: options.cwd || '',
       callbacks,
+      goalCallbacks: goalContinuationCallbacks(identity, options.cwd || ''),
       takeover: options.takeover,
       expectedWriterPid: options.expectedWriterPid,
     });
