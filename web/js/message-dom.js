@@ -21,7 +21,14 @@ function domKey(element) {
   if (firstIdentity) return 'group:' + domKey(firstIdentity);
   return 'fallback:' + (element.className || '')
     + ':' + (element.dataset?.ts || '')
-    + ':' + (element.textContent || '').trim();
+    + ':' + contentText(element).trim();
+}
+
+function contentText(element) {
+  if (!element.querySelector('.message-action')) return element.textContent || '';
+  var clone = element.cloneNode(true);
+  for (var action of clone.querySelectorAll('.message-action')) action.remove();
+  return clone.textContent || '';
 }
 
 function comparableMarkup(element) {
@@ -48,7 +55,7 @@ function comparableMarkup(element) {
       node.removeAttribute('id');
     }
   }
-  for (var button of clone.querySelectorAll('.clamp-btn')) button.remove();
+  for (var button of clone.querySelectorAll('.clamp-btn, .message-action')) button.remove();
   return clone.outerHTML;
 }
 

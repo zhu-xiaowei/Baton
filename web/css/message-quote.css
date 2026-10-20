@@ -1,0 +1,15 @@
+.message-quote, .remove-message-quote {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #8b949e);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.message-quote { display: inline-block; vertical-align: middle; margin: 8px 8px 0 0; }
+.msg-meta .message-quote { margin: 0 0 0 8px; }
+.remove-message-quote { align-self: flex-start; margin: 0 12px 6px; }
+.message-quote:hover, .remove-message-quote:hover { color: var(--text, #e6edf3); }
+.message-quote:focus-visible, .remove-message-quote:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }

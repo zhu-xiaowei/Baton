@@ -18,6 +18,10 @@ import './app.js';
 import './preview-prewarm.js';
 import './project/browser.js';
 import './scroll-indicator.js';
+import '../css/message-quote.css';
+import { initMessageQuotes } from './message-quote.js';
+
+initMessageQuotes();
 
 // Replay any clicks queued by the inline shell before app.js was ready.
 if (Array.isArray(window.__navQueue)) {

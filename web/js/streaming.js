@@ -1284,6 +1284,7 @@ export class StreamingDomRenderer {
       this.refreshThinking();
       return;
     }
+    view.element.dataset.messageText = text;
     this.renderMarkdown(view.element, text);
   }
 
