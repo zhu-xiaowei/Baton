@@ -1,6 +1,7 @@
 // Multi-window is macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
 mod preview_proxy;
+mod macos_zoom;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,6 +71,7 @@ pub fn run() {
     .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
+      macos_zoom::macos_set_zoom,
       preview_proxy::preview_start,
       preview_proxy::preview_credit,
       preview_proxy::preview_write,

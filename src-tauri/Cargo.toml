@@ -41,3 +41,6 @@ tauri-plugin-speech = { path = "plugins/tauri-plugin-speech" }
 
 [target."cfg(target_os = \"ios\")".dependencies]
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString"] }
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo"] }

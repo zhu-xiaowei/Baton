@@ -509,6 +509,7 @@ async function handleRevealPermission(sessionId) {
     sessionId: identity.sessionId,
     nativeSessionId: identity.nativeSessionId,
     callbacks: permissionObservationCallbacks(identity.sessionId, identity),
+    goalCallbacks: goalContinuationCallbacks(identity),
   });
 }
 
@@ -1255,7 +1256,7 @@ function resolveTurnId(sessionId, requestedTurnId = '') {
 }
 
 // Create one strictly identified live turn before the runtime can emit frames.
-function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
+export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const steer = options.userInitiated && options.steer !== false;
   const existing = steer && _liveExecutions.get(sessionId);
   if (existing && !existing.liveTurn.isEnded()) {
@@ -1263,10 +1264,14 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     return existing;
   }
   const segmentIds = new Set([turnId]);
-  const Stream = steer ? LiveExecutionStream : LiveTurnStream;
+  // A Goal continuation has no input of its own, but a message sent during it
+  // is steered into the same Codex turn, so it must join this execution.
+  const execution = steer || options.goalContinuation === true;
+  const Stream = execution ? LiveExecutionStream : LiveTurnStream;
   const liveTurn = new Stream({
     sessionId,
     turnId,
+    goalContinuation: options.goalContinuation,
     replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
     onSegment: (id, segment) => {
@@ -1385,8 +1390,17 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     if (liveTurn.isEnded()) discardTurn();
   });
   callbacks.discardTurn = discardTurn;
-  if (steer) _liveExecutions.set(sessionId, callbacks);
+  if (execution) _liveExecutions.set(sessionId, callbacks);
   return callbacks;
+}
+
+// Codex Goal continuations start without a user prompt; each gets its own live turn.
+function goalContinuationCallbacks(identity, cwd = '') {
+  return (turnId) => createStreamCallbacks(identity.sessionId, turnId, cwd, () => {}, {
+    runtime: 'codex',
+    nativeSessionId: identity.nativeSessionId,
+    goalContinuation: true,
+  });
 }
 
 async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = {}) {
@@ -1494,6 +1508,7 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
       args: command.args,
       cwd: options.cwd || '',
       callbacks,
+      goalCallbacks: goalContinuationCallbacks(identity, options.cwd || ''),
       takeover: options.takeover,
       expectedWriterPid: options.expectedWriterPid,
     });

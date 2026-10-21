@@ -541,7 +541,9 @@ function updateBreadcrumbTruncation(nav) {
   if (!nav) return;
   nav.classList.remove('is-truncated');
   if (nav.classList.contains('expanded')) return;
-  nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth);
+  // Zoom can round the two integer measurements in opposite directions.
+  var tolerance = document.documentElement.classList.contains('macos-page-zoom') ? 1 : 0;
+  nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth + tolerance);
 }
 
 function toggleBreadcrumbExpand(nav) {

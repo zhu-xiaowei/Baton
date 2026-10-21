@@ -1010,8 +1010,9 @@ export class StreamingDomRenderer {
 
   insertTurn(container, turn, turnId) {
     var anchor = this.findAnchor(turnId);
-    if (!anchor && !this.canAppendWithoutAnchor(container, turnId)) return false;
-    return attachTimelineTurn(container, turn);
+    var allowUnanchored = !anchor && this.canAppendWithoutAnchor(container, turnId);
+    if (!anchor && !allowUnanchored) return false;
+    return attachTimelineTurn(container, turn, allowUnanchored);
   }
 
   attachTurnToAnchor(turnId) {

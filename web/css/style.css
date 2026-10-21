@@ -1204,6 +1204,7 @@ html.native-mobile .slash-description {
 }
 .img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 #msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 96px; overflow-y: auto; line-height: 1.4; font-family: inherit; }
+.macos-page-zoom #msg-input { overflow-x: hidden; }
 .mic-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #8b949e; cursor: pointer; flex-shrink: 0; border-radius: 50%; }
 @media (hover: hover) and (pointer: fine) { .mic-btn:hover { color: #c9d1d9; } }
 .mic-btn.recording { background: #da3633; color: #fff; animation: mic-pulse 1.4s ease-in-out infinite; }

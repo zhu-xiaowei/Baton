@@ -2282,6 +2282,100 @@ test('permission observation presents a resumable goal through the control chann
   )));
 });
 
+function goalTurns() {
+  const turns = [];
+  return {
+    turns,
+    factory: (turnId) => {
+      const cb = callbacks();
+      turns.push({ turnId, cb });
+      return cb.value;
+    },
+  };
+}
+
+function runGoalTurn(client, threadId, turnId) {
+  notify(client, 'turn/started', { threadId, turn: { id: turnId, status: 'inProgress' } });
+  notify(client, 'turn/completed', { threadId, turn: { id: turnId, status: 'completed', items: [] } });
+}
+
+test('/goal keeps the connection and streams autonomous continuations until the goal ends', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    // Codex replaces a goal by clearing it first; that must not release the connection.
+    if (method === 'thread/goal/set') notify(client, 'thread/goal/cleared', { threadId: params.threadId });
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const goal = goalTurns();
+
+  const result = await interaction.runCommand({
+    sessionId: 'codex:thread-run',
+    nativeSessionId: 'thread-run',
+    name: 'goal',
+    args: 'Finish every step.',
+    streamId: 'goal-command',
+    callbacks: callbacks().value,
+    goalCallbacks: goal.factory,
+  });
+  assert.equal(result.output, 'Thread goal set to: Finish every step.');
+  assert.equal(client.stopCalls, 0);
+
+  runGoalTurn(client, 'thread-run', 'goal-turn-1');
+  runGoalTurn(client, 'thread-run', 'goal-turn-2');
+  assert.deepEqual(goal.turns.map((turn) => turn.turnId), ['goal-turn-1', 'goal-turn-2']);
+  for (const turn of goal.turns) {
+    assert.deepEqual(turn.cb.accepted, [turn.turnId]);
+    assert.equal(turn.cb.results.length, 1);
+  }
+  assert.equal(client.stopCalls, 0);
+
+  notify(client, 'thread/goal/updated', {
+    threadId: 'thread-run',
+    goal: { threadId: 'thread-run', objective: 'Finish every step.', status: 'complete' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(client.stopCalls, 1);
+});
+
+test('resuming a stopped goal streams its continuations', async () => {
+  const client = new FakeClient();
+  client.goal = {
+    threadId: 'thread-resume',
+    objective: 'Continue the task.',
+    status: 'paused',
+    updatedAt: 3,
+  };
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') return { data: ['thread-resume'] };
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const observer = callbacks();
+  const goal = goalTurns();
+
+  await interaction.observePermissions({
+    sessionId: 'codex:thread-resume',
+    nativeSessionId: 'thread-resume',
+    callbacks: observer.value,
+    goalCallbacks: goal.factory,
+  });
+  interaction.replyControl(
+    'thread-resume',
+    observer.controls[0].request_id,
+    { approvalResponse: { action: 'resume' } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  runGoalTurn(client, 'thread-resume', 'resumed-1');
+  runGoalTurn(client, 'thread-resume', 'resumed-2');
+  assert.deepEqual(goal.turns.map((turn) => turn.turnId), ['resumed-1', 'resumed-2']);
+  assert.equal(observer.results.length, 0);
+  assert.equal(client.stopCalls, 0);
+});
+
 test('leaving a resumable goal paused sends no goal update', async () => {
   const client = new FakeClient();
   client.goal = {
