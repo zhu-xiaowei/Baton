@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeHarness, resetSession } from './harness.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
+import { LiveExecutionStream } from '../../bridge/live-execution-stream.mjs';
 
 const h = await makeHarness();
 test.after(() => h.window.close());
@@ -12,7 +13,7 @@ test('Goal continuations render after existing conversation without fabricating 
   const container = h.document.querySelector('.messages');
   container.innerHTML = '<div class="msg-user" data-anchor="original"><div class="msg-text">Original task</div></div>';
   const frames = [];
-  const turn = new LiveTurnStream({
+  const turn = new LiveExecutionStream({
     sessionId, turnId: 'autonomous', goalContinuation: true,
     send: frame => { frames.push(frame); h.hooks.handleWsMessage(frame); },
   });

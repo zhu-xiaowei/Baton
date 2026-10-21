@@ -1256,7 +1256,7 @@ function resolveTurnId(sessionId, requestedTurnId = '') {
 }
 
 // Create one strictly identified live turn before the runtime can emit frames.
-function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
+export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const steer = options.userInitiated && options.steer !== false;
   const existing = steer && _liveExecutions.get(sessionId);
   if (existing && !existing.liveTurn.isEnded()) {
@@ -1264,7 +1264,10 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     return existing;
   }
   const segmentIds = new Set([turnId]);
-  const Stream = steer ? LiveExecutionStream : LiveTurnStream;
+  // A Goal continuation has no input of its own, but a message sent during it
+  // is steered into the same Codex turn, so it must join this execution.
+  const execution = steer || options.goalContinuation === true;
+  const Stream = execution ? LiveExecutionStream : LiveTurnStream;
   const liveTurn = new Stream({
     sessionId,
     turnId,
@@ -1387,7 +1390,7 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     if (liveTurn.isEnded()) discardTurn();
   });
   callbacks.discardTurn = discardTurn;
-  if (steer) _liveExecutions.set(sessionId, callbacks);
+  if (execution) _liveExecutions.set(sessionId, callbacks);
   return callbacks;
 }
 

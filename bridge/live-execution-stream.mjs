@@ -59,6 +59,7 @@ export class LiveExecutionStream {
     if (!this.segments.has(id)) {
       const segment = new LiveTurnStream({
         ...this.options,
+        goalContinuation: this.options.goalContinuation && id === this.executionId,
         turnId: id,
         send: (event) => this.publish(event),
       });
