@@ -349,6 +349,21 @@ function elementOrder(element, order) {
     ?? Infinity;
 }
 
+function rowOrder(element, order) {
+  return Math.min(elementOrder(element, order),
+    ...Array.from(element.children, child => elementOrder(child, order)));
+}
+
+// A Goal continuation has no user row to follow, so it keeps its message order.
+function insertByMessageOrder(container, row, order) {
+  var position = rowOrder(row, order);
+  var before = Array.from(container.children).find(element => element !== row
+    && (element.classList.contains('msg-user') || element.classList.contains('assistant-turn'))
+    && rowOrder(element, order) > position);
+  container.insertBefore(row, before || null);
+  return true;
+}
+
 function splitStreamRows(rows, segments, expected) {
   var groups = new Map(rows.map(row => [
     JSON.stringify([row.dataset.turnId, row.dataset.timelineSegment || '']), row,
@@ -552,7 +567,9 @@ export function createMessageDom(options) {
         }
         recoveredTurn.remove();
       }
-      var restored = attachTimelineTurn(container, streamRow);
+      var restored = streamRow.dataset.unanchoredTurn === 'true'
+        ? insertByMessageOrder(container, streamRow, order)
+        : attachTimelineTurn(container, streamRow);
       var streamPlacement = streamPlacements.get(streamRow);
       if (streamPlacement?.isConnected) {
         if (restored) streamPlacement.remove();
