@@ -40,8 +40,10 @@ const isFileDrag = event => Array.from(event.dataTransfer?.types || []).includes
 function canDropFiles() {
   const bar = document.getElementById('input-bar');
   const input = document.getElementById('msg-input');
-  return !!(state.appState.session && bar && input && !bar.hidden && !bar.inert
-    && window.getComputedStyle(bar).display !== 'none' && !input.disabled && !input.readOnly
+  const modalOpen = Array.from(document.querySelectorAll('.modal-overlay, .file-overlay, .img-overlay, dialog[open]'))
+    .some(modal => modal.getClientRects().length > 0);
+  return !!(state.appState.session && bar && input && !bar.hidden && !bar.inert && !modalOpen
+    && window.getComputedStyle(bar).display !== 'none' && !input.disabled
     && state.activeThreadCanSend !== false);
 }
 function clearFileDrag() {
@@ -59,8 +61,9 @@ document.addEventListener('dragover', event => {
   event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
   document.getElementById('input-bar')?.classList.toggle('file-drop-active', allowed);
 });
-document.addEventListener('dragleave', () => {
-  if (--fileDragDepth <= 0) clearFileDrag();
+document.addEventListener('dragleave', event => {
+  if (!isFileDrag(event)) return;
+  if (event.relatedTarget === null || --fileDragDepth <= 0) clearFileDrag();
 });
 document.addEventListener('drop', event => {
   if (!isFileDrag(event)) return;
