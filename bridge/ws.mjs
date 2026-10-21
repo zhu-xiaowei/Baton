@@ -2070,8 +2070,8 @@ async function downloadBridgeImage(key) {
   } catch { return null; }
 }
 
-// App answered permission_request. Claude uses allow/deny; Codex preserves its native
-// approval decision; ask/plan use deny with answerText (CC's only answer channel).
+// App answered permission_request. Claude plans use native approval; questions
+// and plan feedback use deny+answerText. Codex preserves its native decision.
 function handlePermissionReply(msg) {
   const {
     sessionId, requestId, decision, answerText, approvalResponse,
@@ -2100,8 +2100,12 @@ function handlePermissionReply(msg) {
           : 'The user denied this tool call through Baton.',
       });
     }
+  } else if (decision === 'allow'
+    && (pending.toolName === 'ExitPlanMode' || pending.toolName === 'exit_plan_mode')) {
+    // Execute ExitPlanMode so Claude restores the pre-plan permission mode.
+    replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input });
   } else if (pending.requiresInteraction) {
-    // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
+    // ask/plan feedback → deny+message; cancel → deny+interrupt.
     if (decision === 'answer' && answerText) {
       replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });
     } else {

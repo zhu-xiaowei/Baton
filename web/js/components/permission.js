@@ -251,10 +251,8 @@ function chooseOption(act, label, isTyped) {
   if (_req.kind === 'plan') {
     reply({
       requestId: _req.requestId,
-      decision: 'answer',
-      answerText: act === 'plan-accept'
-        ? 'Approved, proceed with the plan.'
-        : label,
+      decision: act === 'plan-accept' ? 'allow' : 'answer',
+      ...(act === 'plan-accept' ? {} : { answerText: label }),
     });
     dismissPermissionPrompt();
     return;

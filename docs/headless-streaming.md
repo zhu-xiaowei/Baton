@@ -303,21 +303,25 @@ The bridge replies with an **outbound `control_response`** (wire quirk: `request
                      | { behavior:"deny", message?, interrupt? } } }
 ```
 
-**Two kinds of tools, two handling paths (both measured)**:
+**Tool approval and interaction handling**:
 
 1. **Ordinary tools (Bash/Write/Edit…)**: `can_use_tool` → bridge to the existing permission popup → allow/deny.
    On allow, `updatedInput` returns the **original input unchanged** (confirmed by litter `approval.rs:303`).
 
-2. **Tools with `requires_user_interaction:true` (AskUserQuestion / ExitPlanMode)**:
-   - **control_response cannot carry the answer** (measured: all three variants allow/answers/selectedOptions returned
-     `"The user did not answer the questions."`); and the official docs state explicitly: v2.1.199+ **force-converts allow to deny** for
-     `requires_user_interaction` tools; the `updatedInput.answers` answer
-     return format is **supported only by the Agent SDK `canUseTool`, not by the CLI `--permission-prompt-tool`**.
+2. **AskUserQuestion and plan revision feedback**:
    - **✅ Current approach (measured, works)**: `control_response{behavior:"deny", message:answerText}`.
      CC uses message as the OUT of that interactive tool and continues the current turn; cancel uses
      `{behavior:"deny", interrupt:true}`.
    - `control_request` proactively pushes the complete `questions[]` (header/options/multiSelect) to us;
      under headless, capture-pane / two-pass sampling / Escape rescue are no longer needed.
+
+3. **ExitPlanMode approval**: send `behavior:"allow"` with the original `updatedInput`.
+   Do not group this with question answers: `deny + "Approved, proceed with the plan."`
+   lets the model continue while leaving the runtime in Plan mode, so subsequent writes still prompt.
+   Verified with Claude Code 2.1.302: the old response prompted for both writes; native approval
+   emitted `permissionMode:"default"` after `"plan"` and completed both writes without another prompt,
+   including a target under `.claude/worktrees/`. The approval used the actual frontend button and
+   Bridge permission handler in isolated CLI sessions.
 
 > litter's current state: it classifies AskUserQuestion as `RequestUserInput` but goes through the unified allow/deny approval branch
 > (`approval.rs:275-299`), and **does not actually return the answer**; it defines `request_user_input` (→ synthesized tool_result
@@ -330,7 +334,7 @@ The bridge replies with an **outbound `control_response`** (wire quirk: `request
 | `system/status` | Occasional in stream | **Ignore** (litter ignores it too) |
 | `system/thinking_tokens` | While thinking | Ignore (optionally a "thinking" indicator) |
 | `result` | One per turn | **Detect turn end + success/failure**; busy→false |
-| `control_request{can_use_tool}` | Per tool call | Ordinary tool → popup allow/deny; requires_user_interaction → deny+answerText |
+| `control_request{can_use_tool}` | Per tool call | Ordinary tool / plan approval → allow/deny; questions / plan feedback → deny+answerText |
 | `control_response` | Bridge reply | allow (original input) / deny |
 | Web `send_message` | Once per turn | Bridge immediately generates a user `messages{noCache}` with seq, synced to the sending window and observing windows |
 | `assistant`/tool_result `user` complete line | Per message | **Real-time authoritative message** (uuid+ts+content): `onMessage` → `messages{noCache}` with seq → app renders; JSONL only persists |
