@@ -930,7 +930,21 @@ html.native-mobile .agent-threads-list {
 .permission-submit { padding: 6px 12px; background: #238636; border: none; border-radius: 6px; color: #fff; font-size: 12px; cursor: pointer; }
 
 /* === Input bar === */
-#input-bar { background: #0d1117; padding: 8px 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); flex-shrink: 0; display: flex; flex-direction: column; }
+#input-bar { position: relative; background: #0d1117; padding: 8px 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); flex-shrink: 0; display: flex; flex-direction: column; }
+#file-drop-hint {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #58a6ff;
+  border-radius: 12px;
+  background: #0d1117ee;
+  color: #c9d1d9;
+  pointer-events: none;
+}
+#input-bar.file-drop-active #file-drop-hint { display: flex; }
 #input-bar.kb-up { padding-bottom: 8px; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
 #input-bar[inert] { cursor: not-allowed; }

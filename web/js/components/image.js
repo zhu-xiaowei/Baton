@@ -33,6 +33,51 @@ function onInputPaste(e) {
   if (hasImage) e.preventDefault();
 }
 
+// Let the browser deliver Files, exactly like the picker and clipboard do.
+// Each window owns its document, so no native window routing is needed.
+let fileDragDepth = 0;
+const isFileDrag = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+function canDropFiles() {
+  const bar = document.getElementById('input-bar');
+  const input = document.getElementById('msg-input');
+  return !!(state.appState.session && bar && input && !bar.hidden && !bar.inert
+    && window.getComputedStyle(bar).display !== 'none' && !input.disabled && !input.readOnly
+    && state.activeThreadCanSend !== false);
+}
+function clearFileDrag() {
+  fileDragDepth = 0;
+  document.getElementById('input-bar')?.classList.remove('file-drop-active');
+}
+document.addEventListener('dragenter', event => {
+  if (isFileDrag(event)) fileDragDepth++;
+});
+document.addEventListener('dragover', event => {
+  if (!isFileDrag(event)) return;
+  // Also suppress browser navigation when the current page cannot accept files.
+  event.preventDefault();
+  const allowed = canDropFiles();
+  event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+  document.getElementById('input-bar')?.classList.toggle('file-drop-active', allowed);
+});
+document.addEventListener('dragleave', () => {
+  if (--fileDragDepth <= 0) clearFileDrag();
+});
+document.addEventListener('drop', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  clearFileDrag();
+  if (!canDropFiles()) return;
+  const items = Array.from(event.dataTransfer.items || []);
+  const files = items.length
+    ? items.filter(item => item.kind === 'file' && !item.webkitGetAsEntry?.()?.isDirectory)
+      .map(item => item.getAsFile())
+    : Array.from(event.dataTransfer.files || []);
+  // Stage synchronously in this conversation before hashing/reading starts.
+  for (const file of files) stagePickedFile(file);
+});
+document.addEventListener('dragend', clearFileDrag);
+window.addEventListener('blur', clearFileDrag);
+
 function stageAttachmentFile(file) {
   const entry = { kind: 'file', name: file.name, size: file.size, file, key: '', uploaded: false, progress: 0 };
   state.stagedImages.push(entry);

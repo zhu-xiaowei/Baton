@@ -45,6 +45,7 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
     .inner_size(1024.0, 768.0)
     .min_inner_size(480.0, 400.0)
     .resizable(true)
+    .disable_drag_drop_handler()
     .background_color(tauri::webview::Color(0x16, 0x1b, 0x22, 0xff))
     .title_bar_style(tauri::TitleBarStyle::Transparent)
     .hidden_title(true)
