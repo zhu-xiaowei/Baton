@@ -1,0 +1,16 @@
+.message-copy {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 8px 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #8b949e);
+  font: 12px/1.4 system-ui, sans-serif;
+  cursor: pointer;
+}
+.msg-meta .message-copy { margin: 0 0 0 8px; }
+.message-copy:hover { color: var(--text, #e6edf3); }
+.message-copy:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.message-copy[aria-busy="true"] { cursor: progress; }

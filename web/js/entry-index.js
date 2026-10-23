@@ -13,6 +13,8 @@ import '../css/loading.css';
 import '../css/project-files.css';
 import '../css/git-status.css';
 import '../css/workspace-header.css';
+import '../css/message-copy.css';
+import { initMessageCopy } from './message-copy.js';
 import './globals.js';   // defines window.loadViewerLibs (does NOT download libs yet)
 import './app.js';
 import './preview-prewarm.js';
@@ -27,6 +29,8 @@ initMacosTabs();
 initSystemBack();
 
 // Replay any clicks queued by the inline shell before app.js was ready.
+initMessageCopy();
+
 if (Array.isArray(window.__navQueue)) {
   var q = window.__navQueue;
   window.__navQueue = null;
