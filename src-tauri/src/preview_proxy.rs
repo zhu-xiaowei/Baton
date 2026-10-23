@@ -8,7 +8,7 @@ use std::{
   thread,
   time::Duration,
 };
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, State, Webview};
 use uuid::Uuid;
 
 const CHUNK_BYTES: usize = 16 * 1024;
@@ -295,7 +295,7 @@ impl PreviewProxy {
 }
 
 #[tauri::command]
-pub fn preview_start(app: AppHandle, window: WebviewWindow,
+pub fn preview_start(app: AppHandle, window: Webview,
     manager: State<'_, Arc<PreviewProxy>>, tunnel_id: String,
     preferred_port: u16) -> Result<String, String> {
   Uuid::parse_str(&tunnel_id).map_err(|_| "Invalid preview tunnel ID".to_string())?;
@@ -383,14 +383,17 @@ pub async fn preview_stop(manager: State<'_, Arc<PreviewProxy>>,
   Ok(())
 }
 
-// A reloaded webview loses its tunnel IDs, so it releases everything its window still owns.
+// A reloaded webview loses its tunnel IDs, so it releases everything it still owns.
 #[tauri::command]
-pub async fn preview_reset(window: WebviewWindow,
+pub async fn preview_reset(window: Webview,
     manager: State<'_, Arc<PreviewProxy>>) -> Result<(), String> {
-  let manager = Arc::clone(manager.inner());
-  let owner = window.label().to_string();
+  release_owner(Arc::clone(manager.inner()), window.label().to_string())
+    .await.map_err(|error| error.to_string())
+}
+
+// Owners are webview labels: a macOS tab owns its tunnels, not the window hosting it.
+pub fn release_owner(manager: Arc<PreviewProxy>, owner: String) -> tauri::async_runtime::JoinHandle<()> {
   tauri::async_runtime::spawn_blocking(move || {
     for session in manager.remove_owned(&owner) { manager.stop_session(&session); }
-  }).await.map_err(|error| error.to_string())?;
-  Ok(())
+  })
 }

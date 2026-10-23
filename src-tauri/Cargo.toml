@@ -43,4 +43,8 @@ tauri-plugin-speech = { path = "plugins/tauri-plugin-speech" }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString"] }
 
 [target."cfg(target_os = \"macos\")".dependencies]
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo"] }
+# Multiple webviews per window (tab strip + one webview per tab) are macOS-only.
+tauri = { version = "2.11.1", features = ["unstable"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSGeometry"] }
+objc2 = "0.6"

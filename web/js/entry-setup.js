@@ -6,6 +6,10 @@ import { attachPageEdgeBackGesture } from './edge-back.js';
 import '../css/back-button.css';
 import qrcode from 'qrcode-generator';
 import { initSystemBack } from './system-back.js';
+import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+
+initMacosTabs();
+setNativeTabTitle('Settings');
 
 (function () {
   // Auth guard: handle ?key= URL param, redirect if missing key

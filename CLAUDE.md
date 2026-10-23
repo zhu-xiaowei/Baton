@@ -438,6 +438,15 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
 - Built-in dev server (no http-server needed), hot-reload
 - Android system Back: each page registers Tauri's `onBackButtonPress` (listeners survive page
   loads); at the root `MainActivity`'s `BatonAndroid.moveTaskToBack()` backgrounds the app.
+- macOS tabs (`src-tauri/src/macos_tabs.rs`, Tauri `unstable` multi-webview, macOS target only):
+  each Overlay-titlebar window has a 41pt `tabs.html` strip webview in the traffic-light row and
+  one content webview per tab below it (own page, draft, WS), hidden when inactive. The frame
+  view's `setCustomTitlebarHeight:` makes AppKit itself centre the traffic lights on the strip —
+  never move the buttons afterwards; AppKit re-lays them out on every move/resize. A window's own
+  webview needs `set_auto_resize(false)`, or Tauri stretches it under the strip on resize. Commands
+  must take `Webview`, not `WebviewWindow` (that extractor fails once a window has children).
+  Rust owns tab order/selection/titles and pushes `macos-tabs` to the strip; pages report titles
+  from `updateBreadcrumb`. Preview tunnels and native preview views are owned per webview label.
 
 ### Targets
 - Android: primary

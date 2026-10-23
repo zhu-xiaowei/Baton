@@ -28,6 +28,7 @@ export default defineConfig({
         index:   resolve(__dirname, 'web/index.html'),
         landing: resolve(__dirname, 'web/landing.html'),
         setup:   resolve(__dirname, 'web/setup.html'),
+        tabs:    resolve(__dirname, 'web/tabs.html'),
       },
     },
   },
