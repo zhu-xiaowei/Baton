@@ -1,0 +1,33 @@
+name: macOS screenshots
+on:
+  push:
+    branches: [ci/macos-screenshots]
+permissions:
+  contents: read
+jobs:
+  screenshots:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: macos
+          targets: aarch64-apple-darwin
+          sdk: xcode-26.6
+      - run: npm ci
+      - name: Build app
+        run: npm run tauri -- build --ci --no-sign --debug --target aarch64-apple-darwin --bundles app
+      - name: Drive app and capture
+        run: bash scripts/ci/macos-screenshots.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: macos-screenshots
+          path: shots/
+          retention-days: 3
