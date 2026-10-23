@@ -1203,7 +1203,7 @@ html.native-mobile .slash-description {
   .img-btn:hover { background: #6e7681; }
 }
 .img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-#msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 96px; overflow-y: auto; line-height: 1.4; font-family: inherit; }
+#msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 172px; overflow-y: auto; line-height: 20px; font-family: inherit; }
 .macos-page-zoom #msg-input { overflow-x: hidden; }
 .mic-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #8b949e; cursor: pointer; flex-shrink: 0; border-radius: 50%; }
 @media (hover: hover) and (pointer: fine) { .mic-btn:hover { color: #c9d1d9; } }
@@ -1488,7 +1488,7 @@ html.native-mobile .permission-input { font-size: 14px; }
 html.native-mobile .permission-desc-inline,
 html.native-mobile .permission-submit { font-size: 13px; }
 
-html.native-mobile #msg-input { padding: 7px 5px; font-size: 16px; line-height: 1.4; }
+html.native-mobile #msg-input { padding: 7px 5px; font-size: 16px; line-height: 22px; }
 html.native-mobile .input-row { border-radius: 24px; }
 html.native-mobile .img-btn,
 html.native-mobile .mic-btn,
