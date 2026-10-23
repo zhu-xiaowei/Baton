@@ -19,9 +19,11 @@ import './preview-prewarm.js';
 import './project/browser.js';
 import './scroll-indicator.js';
 import { initMacosZoom } from './macos-zoom.js';
+import { initMacosTabs } from './macos-tabs.js';
 import { initSystemBack } from './system-back.js';
 
 initMacosZoom();
+initMacosTabs();
 initSystemBack();
 
 // Replay any clicks queued by the inline shell before app.js was ready.

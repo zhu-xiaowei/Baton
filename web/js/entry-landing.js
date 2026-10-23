@@ -4,6 +4,10 @@
 //   https://<server>/?key=<apiKey>         (issued by setup page, permanent)
 import { state } from './state.js';
 import './api.js';
+import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+
+initMacosTabs();
+setNativeTabTitle('Baton');
 
 (function () {
   function releaseNativeSkeleton() {

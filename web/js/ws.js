@@ -2368,10 +2368,8 @@ var restoreScrollFrame = null;
     );
 
     el.style.height = 'auto';
-    var measuredHeight = el.scrollHeight;
-    // scrollHeight is rounded; leave room for a fractional line at page zoom.
-    var padding = document.documentElement.classList.contains('macos-page-zoom') ? 1 : 0;
-    if (measuredHeight > 0) el.style.height = (measuredHeight + padding) + 'px';
+    // Integer line heights keep scrollHeight exact at page zoom; extra height would push the text above the buttons' centre.
+    if (el.scrollHeight > 0) el.style.height = el.scrollHeight + 'px';
 
     if (!preserveScroll) return;
     var restoreScroll = function () {

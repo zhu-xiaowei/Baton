@@ -1,5 +1,5 @@
 #[tauri::command]
-pub fn macos_set_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> {
+pub fn macos_set_zoom(window: tauri::Webview, scale: f64) -> Result<(), String> {
   if !scale.is_finite() || !(0.75..=2.0).contains(&scale) {
     return Err("Zoom must be between 75% and 200%".into());
   }

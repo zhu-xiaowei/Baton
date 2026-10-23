@@ -1,7 +1,8 @@
-// Multi-window is macOS-only. Windows/Linux are intentionally left single-window
+// Multi-window and tabs are macOS-only. Windows/Linux are intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
 mod preview_proxy;
 mod macos_zoom;
+mod macos_tabs;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,12 +30,11 @@ fn ios_build_number() -> Option<String> {
   }
 }
 
-// Open a fresh viewer window. Each window is its own WebView (isolated DOM/JS,
-// own WS connection + sessionStorage nav), so different windows can browse
-// different projects/sessions without interfering. Cascade-offset so it
+// Open a fresh viewer window. Each window has its own tab strip; every tab is its own
+// WebView (isolated DOM/JS, WS connection + sessionStorage nav). Cascade-offset so it
 // doesn't land exactly on top of the window that spawned it.
 #[cfg(target_os = "macos")]
-fn spawn_peek_window(app: &tauri::AppHandle) {
+pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
 
   let n = WINDOW_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
@@ -48,10 +48,11 @@ fn spawn_peek_window(app: &tauri::AppHandle) {
     .resizable(true)
     .disable_drag_drop_handler()
     .background_color(tauri::webview::Color(0x16, 0x1b, 0x22, 0xff))
-    .title_bar_style(tauri::TitleBarStyle::Transparent)
+    .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
     .position(120.0 + offset, 120.0 + offset)
-    .build();
+    .build()
+    .and_then(|window| macos_tabs::attach(&window.as_ref().window(), window.as_ref()));
 
   if let Err(e) = res {
     log::error!("failed to create window {}: {}", label, e);
@@ -72,6 +73,14 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
       macos_zoom::macos_set_zoom,
+      macos_tabs::macos_tabs_state,
+      macos_tabs::macos_tabs_new,
+      macos_tabs::macos_tabs_select,
+      macos_tabs::macos_tabs_select_index,
+      macos_tabs::macos_tabs_step,
+      macos_tabs::macos_tabs_move,
+      macos_tabs::macos_tabs_close,
+      macos_tabs::macos_tabs_set_title,
       preview_proxy::preview_start,
       preview_proxy::preview_credit,
       preview_proxy::preview_write,
@@ -102,6 +111,7 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       {
         use tauri::menu::{Menu, MenuItemBuilder};
+        use tauri::Manager;
 
         let menu = Menu::default(app.handle())?;
 
@@ -118,6 +128,7 @@ pub fn run() {
           .find(|s| s.text().map(|t| t == "File").unwrap_or(false))
         {
           file.prepend(&new_window)?;
+          macos_tabs::setup_menu(app, &menu, file)?;
         }
 
         app.set_menu(menu)?;
@@ -125,7 +136,12 @@ pub fn run() {
           if event.id() == "new_window" {
             spawn_peek_window(app);
           }
+          macos_tabs::handle_menu(app, event.id().as_ref());
         });
+
+        if let Some(main) = app.get_webview_window("main") {
+          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
+        }
       }
 
       Ok(())

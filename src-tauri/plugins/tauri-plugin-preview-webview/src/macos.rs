@@ -1,6 +1,6 @@
 use std::{
   cell::{Cell, RefCell},
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   ffi::c_void,
   ptr,
 };
@@ -292,6 +292,7 @@ struct Entry {
   host: Retained<WKWebView>,
   view: Retained<PreviewView>,
   observer: Retained<PreviewObserver>,
+  wanted: Cell<bool>,
 }
 
 impl Drop for Entry {
@@ -308,6 +309,9 @@ impl Drop for Entry {
 
 thread_local! {
   static ENTRIES: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
+  // Hosts in a background tab: their previews are siblings of the tab webview, so hiding
+  // the tab alone would leave them drawn over the selected tab.
+  static HIDDEN_OWNERS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 async fn on_view<R: Runtime>(
@@ -394,6 +398,7 @@ pub async fn create<R: Runtime>(
             host,
             view,
             observer,
+            wanted: Cell::new(false),
           },
         )
       });
@@ -508,9 +513,9 @@ pub async fn layout<R: Runtime>(webview: Webview<R>, id: String, bounds: Bounds)
         .view
         .setFrame(entry.host.convertRect_toView(rect, Some(&parent)));
       entry.view.ivars().interactive.set(bounds.interactive);
-      entry
-        .view
-        .setHidden(!bounds.visible || right <= left || height <= 0.0);
+      entry.wanted.set(bounds.visible && right > left && height > 0.0);
+      let hidden = HIDDEN_OWNERS.with(|owners| owners.borrow().contains(&entry.owner));
+      entry.view.setHidden(hidden || !entry.wanted.get());
       Ok(())
     })
   })
@@ -556,4 +561,27 @@ pub fn clear_host<R: Runtime>(webview: &Webview<R>) {
 pub fn close_window<R: Runtime>(app: &tauri::AppHandle<R>, window: &str) {
   let window = window.to_string();
   let _ = app.run_on_main_thread(move || remove_entries(|entry| entry.window == window));
+}
+
+pub fn set_owner_visible<R: Runtime>(app: &tauri::AppHandle<R>, owner: &str, visible: bool) {
+  let owner = owner.to_string();
+  let _ = app.run_on_main_thread(move || {
+    HIDDEN_OWNERS.with(|owners| {
+      let mut owners = owners.borrow_mut();
+      if visible { owners.remove(&owner); } else { owners.insert(owner.clone()); }
+    });
+    ENTRIES.with(|entries| {
+      for entry in entries.borrow().values().filter(|entry| entry.owner == owner) {
+        entry.view.setHidden(!visible || !entry.wanted.get());
+      }
+    });
+  });
+}
+
+pub fn release_owner<R: Runtime>(app: &tauri::AppHandle<R>, owner: &str) {
+  let owner = owner.to_string();
+  let _ = app.run_on_main_thread(move || {
+    HIDDEN_OWNERS.with(|owners| owners.borrow_mut().remove(&owner));
+    remove_entries(|entry| entry.owner == owner);
+  });
 }

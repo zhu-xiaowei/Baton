@@ -1,0 +1,66 @@
+/* macOS titlebar tab strip. Height must match STRIP_HEIGHT in src-tauri/src/macos_tabs.rs. */
+:root { --tab-strip-height: 41px; --tab-height: 35px; --tab-active: #161b22; --tab-radius: 8px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; overflow: hidden; background: #010409; color-scheme: dark;
+  font: 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-user-select: none; user-select: none; cursor: default;
+}
+.tab-strip {
+  display: flex; align-items: flex-end; height: var(--tab-strip-height);
+  /* Room for the traffic lights; they disappear in full screen. */
+  padding: 0 8px 0 84px;
+}
+.tab-strip.fullscreen { padding-left: 8px; }
+.tab-list { position: relative; z-index: 0; display: flex; align-items: flex-end; flex: 1 1 auto; min-width: 0; height: 100%; }
+.tab {
+  position: relative; display: flex; align-items: center; gap: 4px;
+  /* No minimum width: with many tabs they keep shrinking, so the last tab and + stay visible. */
+  flex: 0 1 240px; min-width: 0; height: var(--tab-height);
+  /* Bottom padding centres the content on the strip (and the traffic lights), not the tab. */
+  padding: 0 6px 6px 12px; color: #b1bac4; transition: color .12s; container-type: inline-size;
+}
+.tab-title {
+  flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; line-height: calc(var(--tab-height) - 6px);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
+/* Separators between inactive tabs, hidden next to the active or hovered tab. */
+.tab + .tab::before {
+  content: ''; position: absolute; left: 0; top: 7px; bottom: 13px; width: 1.5px; border-radius: 1px; background: #484f58;
+}
+/* The selected tab's ::before draws its corners, so it is never hidden as a separator. */
+.tab:not(.active):hover::before, .tab.active + .tab::before, .tab:hover + .tab:not(.active)::before { opacity: 0; }
+/* Like Chrome, hover and selection share one shape inset 2px from the separators;
+   selecting only extends it down into the top bar. */
+.tab:hover::after, .tab.active::after {
+  content: ''; position: absolute; inset: 0 2px 6px; border-radius: var(--tab-radius); background: #161b22; z-index: -1;
+}
+.tab:not(.active):hover { color: #c9d1d9; }
+.tab.active { color: #e6edf3; z-index: 1; }
+.tab.active::after { bottom: 0; border-radius: var(--tab-radius) var(--tab-radius) 0 0; background: var(--tab-active); }
+/* Concave bottom corners join the selected tab to the top bar below. */
+.tab.active::before {
+  content: ''; position: absolute; top: auto; bottom: 0; width: auto; height: var(--tab-radius); border-radius: 0;
+  left: calc(2px - var(--tab-radius)); right: calc(2px - var(--tab-radius)); pointer-events: none;
+  background:
+    radial-gradient(circle at 0 0, transparent calc(var(--tab-radius) - .5px), var(--tab-active) var(--tab-radius)) left bottom / var(--tab-radius) var(--tab-radius) no-repeat,
+    radial-gradient(circle at 100% 0, transparent calc(var(--tab-radius) - .5px), var(--tab-active) var(--tab-radius)) right bottom / var(--tab-radius) var(--tab-radius) no-repeat;
+}
+.tab-list.reordering .tab { transition: transform .15s ease; }
+.tab-list.reordering .tab.dragging { transition: none; z-index: 2; }
+.tab-close {
+  display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px;
+  border: 0; border-radius: 50%; background: transparent; color: inherit; opacity: .5;
+}
+.tab.active .tab-close, .tab:hover .tab-close { opacity: .8; }
+/* Like Chrome, narrow background tabs give their × space back to the title. */
+.tab:not(.active) { overflow: hidden; }
+.tab.active { min-width: 36px; }
+@container (max-width: 72px) { .tab:not(.active):not(:hover) .tab-close { display: none; } }
+.tab-close:hover { opacity: 1; background: #30363d; color: #e6edf3; }
+.tab-new {
+  display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px;
+  align-self: center; margin: 0 0 0 6px; border: 0; border-radius: 50%; background: transparent; color: #7d8590;
+}
+.tab-new:hover { background: #161b22; color: #e6edf3; }
+.tab-new:active, .tab-close:active { background: #30363d; }
