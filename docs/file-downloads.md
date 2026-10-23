@@ -6,7 +6,7 @@ The file viewer has one Download action and no separate Share button. It works f
 
 - Browser: a signed S3 GET with `Content-Disposition: attachment` goes to the browser's download manager. The browser controls the download directory and whether to ask for a location; a website cannot override those preferences.
 - macOS / Windows app: the native plugin streams to the OS Downloads directory. Filenames are sanitized; an existing file is never overwritten, and failed downloads are removed.
-- Android app: Android DownloadManager saves to public Downloads, shows a completion notification, and opens the system share chooser when the file finishes downloading. The download control stays busy until completion. If the app is in the background, sharing waits until the user returns; if the activity is destroyed, the system download continues and the file remains accessible from Downloads. Android 7–9 requests legacy storage permission; Android 10+ does not need it. The saved name includes a timestamp to avoid collisions.
+- Android app: Android DownloadManager saves to public Downloads and shows a completion notification. The native plugin returns a saved-file receipt without automatically opening a share chooser. The Downloads queue UI, when included, can open the saved file or system Downloads. If the activity is destroyed, system downloads may continue. Android 7–9 requests legacy storage permission; Android 10+ does not need it. Saved names include a timestamp to avoid collisions.
 - iOS app: URLSession downloads to a temporary file, then the system share sheet offers compatible apps and Save to Files; supported images/videos can offer Save Image/Video. The user chooses the action. Temporary files are removed after the sheet completes or is cancelled.
 - Mobile browsers exposing Web Share file support prepare the file from the Download action and attempt to open the system share sheet automatically. If user activation expires while downloading, the status asks the user to tap the same Download button again; the prepared file is reused. Browser sharing is limited to 50 MiB to avoid buffering large files in mobile memory. Larger files, unsupported types, desktop browsers, and browsers without file sharing use the normal download manager. Available share destinations depend on the OS and file type.
 
@@ -31,3 +31,9 @@ cargo check --manifest-path src-tauri/Cargo.toml -p tauri-plugin-file-download -
 ```
 
 The Chrome check uses a local mock S3 endpoint: it verifies an 8 MiB PPT upload/download, fallback, original bytes, Chinese filename and duplicate-download behavior. Native compile checks and filename tests are not substitutes for device acceptance: verify Android's notification/Downloads entry and iOS Save to Files/Photos and third-party share destinations on devices before release.
+
+## Shared native saving core
+
+Image saving, Mermaid export and the download queue use the same plugin implementation, request IDs, cancellation, progress and receipts. Native image decoding still accepts only supported base64 image types with 1 byte–32 MiB of content. Cancellation during local image writes waits for cleanup; a completed save survives a late cancel. Desktop receipts are scoped to their originating WebView. This shared implementation does not by itself add the separate image, Mermaid or queue UI.
+
+The current image, diagram, queue and Android Back contributions have also been tested together: real browser downloads preserve image bytes and export complete PNG/SVG diagrams, while simulated native IPC exercises the queue and Back closes its panel before navigating. Mac/iOS native compilation and device acceptance remain separate requirements.
