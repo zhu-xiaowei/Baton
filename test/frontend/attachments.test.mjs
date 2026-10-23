@@ -503,12 +503,22 @@ test('text previews use the source viewer while Office is not decoded as text', 
   assert.equal(isTextAttachment({ name: 'deck.pptx' }), false);
   assert.equal(isTextAttachment({ name: 'sheet.xlsx' }), false);
   assert.equal(isTextAttachment({ name: 'data.csv' }), true);
-  window.api = async () => ({ name: 'notes.md', size: 8, url: 'https://bucket.test/text' });
+  window.api = async () => ({ name: 'notes.txt', size: 8, url: 'https://bucket.test/text' });
   globalThis.fetch = async () => new Response('# Notes\n');
-  window.openFile('baton-file:' + 'a'.repeat(32) + '.md', 'notes.md');
+  window.openFile('baton-file:' + 'a'.repeat(32) + '.txt', 'notes.txt');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.match(document.getElementById('fileOverlayBody').textContent, /# Notes/);
-  assert.equal(document.getElementById('fileOverlayTabs').style.display, '');
+});
+
+test('Markdown and HTML attachments open in Preview like project documents', () => {
+  document.getElementById('fileOverlayTabs').innerHTML = ['diff', 'source', 'preview']
+    .map(mode => `<button class="file-tab" data-mode="${mode}"></button>`).join('');
+  window.api = () => new Promise(() => {});
+  for (const extension of ['md', 'html']) {
+    window.openFile('baton-file:' + 'a'.repeat(32) + '.' + extension, 'notes.' + extension);
+    assert.equal(document.querySelector('#fileOverlayTabs .file-tab.active').dataset.mode, 'preview');
+  }
+  window.closeFileViewer();
 });
 
 test('text preview cancels at its limit instead of buffering an entire large file', async () => {
@@ -583,6 +593,9 @@ test('images sent in one message open as one gallery', async () => {
   document.querySelector('.gallery-nav button[data-step="1"]').click();
   assert.equal(document.getElementById('imgOverlayImg').src, 'https://app.test/c.png');
   assert.equal(document.querySelector('.img-overlay-download').hidden, true);
+  document.querySelector('.msg-attachments img').dataset.key = 'c'.repeat(32) + '.jpg';
+  window.viewImage(images[0].src, images[0]);
+  assert.equal(document.querySelector('.img-overlay-download').hidden, false);
   const single = document.getElementById('single');
   window.viewImage(single.src, single);
   assert.equal(document.querySelector('.gallery-nav'), null);

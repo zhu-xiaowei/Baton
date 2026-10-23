@@ -314,13 +314,15 @@ function loadImages(container, contextOverride) {
 }
 
 // Images sent together in one message open as one gallery, like the staged images before sending.
+// A just-sent image still shows its local copy, so its uploaded key comes from data-key.
 function viewImage(src, element) {
   var group = element?.closest('.msg-attachments');
-  var sources = group ? Array.from(group.querySelectorAll('.img-placeholder.loaded img'), image => image.src) : [];
-  if (!sources.includes(src)) sources = [src];
+  var images = group ? Array.from(group.querySelectorAll('.img-placeholder.loaded img')) : [];
+  if (!images.includes(element)) images = [element || { src }];
   var entries = Array.from(imageCache.values());
-  showImageViewer(sources.map(url => ({ src: url, ...entries.find(entry => entry.url === url)?.source })),
-    sources.indexOf(src));
+  showImageViewer(images.map(image => ({ src: image.src, ...(image.dataset?.key
+    ? { key: image.dataset.key } : entries.find(entry => entry.url === image.src)?.source) })),
+  Math.max(0, images.indexOf(element)));
 }
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.

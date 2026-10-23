@@ -1178,6 +1178,8 @@ html.native-mobile .slash-description {
 .staged-upload-overlay { transition: opacity 180ms ease; }
 .staged-upload-visual { position: absolute; inset: 0; animation: staged-upload-appear 120ms ease 150ms both; }
 .staged-progress-indicator { position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%); color: #c9d1d9; }
+/* The ring stays clear of the image thumbnail's top-right remove button. */
+#img-preview-row .img-thumb .staged-progress-indicator { width: 22px; height: 22px; }
 .staged-progress-pie { stroke-dashoffset: 100; opacity: 0; transition: stroke-dashoffset 160ms linear, opacity 180ms ease; }
 .staged-progress-orbit { transform-origin: 18px 18px; animation: staged-upload-spin 1s linear infinite paused; }
 .staged-progress-ring { stroke-dashoffset: 25; transition: stroke-dashoffset 180ms ease; }

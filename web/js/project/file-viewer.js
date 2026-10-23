@@ -285,6 +285,8 @@ function setFileViewMode(mode) {
   }
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading preview' }) + '</div>');
+  // An attachment has no folder beside it, so its relative images, CSS and scripts are not loaded.
+  var attachment = _view.path.startsWith('baton-file:');
   if (isMarkdown(_current.path)) {
     var current = _current;
     var documentModule;
@@ -303,7 +305,7 @@ function setFileViewMode(mode) {
       var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
       bindDocumentLinks(mdBody, mdDir, mdRoot);
       return mdRoot.then(function (root) {
-        if (token !== _previewToken) return;
+        if (token !== _previewToken || attachment) return;
         inlineImages(mdBody, mdDir, root, documentModule.darkColorScheme); // mutates this node; harmless if view later changes
       });
     }).catch(function (error) {
@@ -311,7 +313,7 @@ function setFileViewMode(mode) {
     });
     return;
   }
-  buildPreviewHtml(_current.text, _current.path).then(function (html) {
+  (attachment ? Promise.resolve(_current.text) : buildPreviewHtml(_current.text, _current.path)).then(function (html) {
     if (token === _previewToken) showPreview(html, _current.path, token);
   });
 }
@@ -691,7 +693,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
   // HTML opens rendered even from edit/line links; Markdown keeps source positioning for those links.
   var previewDocument = isPreviewable(absPath) && (isHtml(absPath) || (!lineHint && !matchId))
-    && !absPath.startsWith('baton-file:') && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
+    && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
   setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff'
     : previewDocument ? 'preview' : 'source');
   return true;
