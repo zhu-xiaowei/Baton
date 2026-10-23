@@ -1,0 +1,17 @@
+.assistant-text pre > .code-copy {
+  display: block;
+  position: sticky;
+  left: 0;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  background: var(--bg-secondary, #161b22);
+  color: var(--text-secondary, #8b949e);
+  font: 12px/1.4 system-ui, sans-serif;
+  white-space: normal;
+  cursor: pointer;
+}
+.assistant-text pre > .code-copy:hover { color: var(--text, #e6edf3); }
+.assistant-text pre > .code-copy:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.assistant-text pre > .code-copy[aria-busy="true"] { cursor: progress; }

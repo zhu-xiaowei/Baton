@@ -3,6 +3,8 @@
 // lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders
 // the device list. Diff rendering stays deferred until an Edit is expanded.
 
+import '../css/code-copy.css';
+import { initCodeCopy } from './code-copy.js';
 import './state.js';
 import './api.js';
 import './components/skeleton.js';
@@ -35,3 +37,5 @@ if (Array.isArray(window.__navQueue)) {
 
 // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
 if (window.__preheatViewer) setTimeout(window.loadViewerLibs, 1500);
+
+initCodeCopy();
