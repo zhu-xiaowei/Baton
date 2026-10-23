@@ -1,7 +1,15 @@
 // Shared image preview gestures for chat images, staged images, and project files.
+import { downloadFile, nativeDownloads } from '../project/download.js';
+import { imageMimeType } from './image-type.js';
+import { setDownloadButtonState } from './download-button.js';
+
 const MAX_SCALE = 5;
+const ARROW = points => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="' + points + '"/></svg>';
 let overlay;
 let image;
+let downloadButton;
+let items = [];
+let index = 0;
 let scale = 1;
 let x = 0;
 let y = 0;
@@ -136,8 +144,12 @@ function ensureViewer() {
   if (overlay) return;
   overlay = document.getElementById('imgOverlay');
   image = document.getElementById('imgOverlayImg');
+  downloadButton = overlay.querySelector('.img-overlay-download');
+  downloadButton?.addEventListener('click', downloadCurrentImage);
   overlay.addEventListener('click', event => {
-    if (event.target.closest('.img-overlay-close')) closeImageViewer();
+    const step = event.target.closest('.gallery-nav button');
+    if (step) showAt(index + Number(step.dataset.step));
+    else if (event.target.closest('.img-overlay-close')) closeImageViewer();
     else if (event.target === overlay || (event.target === image && scale === 1 && overlay.dataset.gallery !== '1')) {
       closeImageViewer();
     }
@@ -159,14 +171,61 @@ function ensureViewer() {
   image.addEventListener('dragstart', event => event.preventDefault());
 }
 
-function showImageViewer(src, gallery = false) {
-  ensureViewer();
+function showAt(next) {
+  const item = items[next];
+  if (!item) return;
+  index = next;
   resetZoom();
-  if (!gallery) overlay.querySelector('.gallery-nav')?.remove();
-  overlay.dataset.gallery = gallery ? '1' : '0';
-  image.src = src;
+  image.src = item.src;
+  overlay.dataset.gallery = items.length > 1 ? '1' : '0';
+  overlay.querySelector('.gallery-nav')?.remove();
+  if (items.length > 1) {
+    overlay.insertAdjacentHTML('beforeend', '<div class="gallery-nav">'
+      + '<button data-step="-1"' + (index <= 0 ? ' disabled' : '') + '>' + ARROW('15 18 9 12 15 6') + '</button>'
+      + '<span>' + (index + 1) + ' / ' + items.length + '</span>'
+      + '<button data-step="1"' + (index >= items.length - 1 ? ' disabled' : '') + '>' + ARROW('9 6 15 12 9 18') + '</button>'
+      + '</div>');
+  }
+  if (downloadButton) {
+    downloadButton.hidden = !item.key;
+    setDownloadButtonState(downloadButton);
+  }
+}
+
+// Native saving needs an HTTPS source; the browser saves the Blob already on screen.
+async function downloadCurrentImage() {
+  const item = items[index];
+  if (!item?.key || downloadButton.disabled) return;
+  setDownloadButtonState(downloadButton, 'busy');
+  let result = 'failed';
+  let objectUrl = '';
+  try {
+    let url = item.src;
+    if (nativeDownloads()) {
+      url = (await window.api('/api/bridge/image-url/' + encodeURIComponent(item.key),
+        item.attachment ? { attachment: 'true' } : undefined)).url;
+    } else if (!url.startsWith('blob:')) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Image unavailable');
+      url = objectUrl = URL.createObjectURL(await response.blob());
+    }
+    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) });
+    result = saved?.status === 'cancelled' ? 'idle' : 'done';
+  } catch {}
+  if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  if (items[index] === item) setDownloadButtonState(downloadButton, result);
+}
+
+// items: [{ src, key?, attachment? }]; an item with a storage key can be downloaded.
+function showImageViewer(list, start = 0) {
+  ensureViewer();
+  items = list;
+  showAt(start);
   overlay.style.display = 'flex';
 }
+
+function galleryPrev() { showAt(index - 1); }
+function galleryNext() { showAt(index + 1); }
 
 function closeImageViewer() {
   ensureViewer();
@@ -174,4 +233,11 @@ function closeImageViewer() {
   resetZoom();
 }
 
-export { showImageViewer, closeImageViewer };
+document.addEventListener('keydown', event => {
+  if (!overlay || overlay.style.display !== 'flex') return;
+  if (event.key === 'ArrowLeft') { event.preventDefault(); galleryPrev(); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); galleryNext(); }
+  else if (event.key === 'Escape') closeImageViewer();
+});
+
+export { showImageViewer, closeImageViewer, galleryPrev, galleryNext };
