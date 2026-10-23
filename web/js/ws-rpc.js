@@ -18,14 +18,15 @@ function requestUuid() {
 function armTimeout(requestId, pending) {
   if (pending.timer) clearTimeout(pending.timer);
   pending.timer = setTimeout(function () {
-    pendingRequests.delete(requestId);
-    pending.reject(new Error('Request timed out — device may be offline.'));
+    finish(requestId, pending, null, new Error('Request timed out — device may be offline.'));
   }, pending.timeout);
 }
 
 function finish(requestId, pending, value, error) {
+  if (pendingRequests.get(requestId) !== pending) return;
   pendingRequests.delete(requestId);
   if (pending.timer) clearTimeout(pending.timer);
+  pending.cleanup?.();
   if (error) pending.reject(error);
   else pending.resolve(value);
 }
@@ -55,12 +56,21 @@ export function requestWsRpc(payload, options) {
   options = options || {};
   var requestId = requestUuid();
   return new Promise(function (resolve, reject) {
+    if (options.isCurrent && !options.isCurrent()) {
+      reject(new Error('Request account or server changed'));
+      return;
+    }
+    if (options.signal?.aborted) {
+      reject(options.signal.reason || new DOMException('Request cancelled', 'AbortError'));
+      return;
+    }
     var pending = {
       resolve: resolve,
       reject: reject,
       timer: null,
       timeout: options.timeout || DEFAULT_TIMEOUT,
       onProgress: options.onProgress,
+      isCurrent: options.isCurrent,
       assemble: options.assemble || assembleLastFrame,
       frames: new Map(),
       chunkCount: null,
@@ -68,14 +78,29 @@ export function requestWsRpc(payload, options) {
       frameError: null,
     };
     pendingRequests.set(requestId, pending);
+    if (options.signal) {
+      var abort = function () {
+        finish(requestId, pending, null, options.signal.reason || new DOMException('Request cancelled', 'AbortError'));
+      };
+      options.signal.addEventListener('abort', abort, { once: true });
+      pending.cleanup = () => options.signal.removeEventListener('abort', abort);
+    }
     armTimeout(requestId, pending);
-    window.wsSendReliable({ ...payload, requestId: requestId });
+    try { window.wsSendReliable({ ...payload, requestId: requestId }, {
+      shouldSend: () => pendingRequests.get(requestId) === pending
+        && (!options.isCurrent || options.isCurrent()),
+      onDrop: () => finish(requestId, pending, null, new Error('Request account or server changed')),
+    }); } catch (error) { finish(requestId, pending, null, error); }
   });
 }
 
 export function handleWsRpcMessage(message) {
   var pending = message?.requestId && pendingRequests.get(message.requestId);
   if (!pending) return false;
+  if (pending.isCurrent && !pending.isCurrent()) {
+    finish(message.requestId, pending, null, new Error('Request account or server changed'));
+    return true;
+  }
   if (message.ok === false
     && Number.isInteger(message.sequence)
     && Number.isInteger(message.chunkCount)
@@ -89,7 +114,7 @@ export function handleWsRpcMessage(message) {
   }
   if (message.progress) {
     if (typeof pending.onProgress === 'function') pending.onProgress(message);
-    armTimeout(message.requestId, pending);
+    if (pendingRequests.has(message.requestId)) armTimeout(message.requestId, pending);
     return true;
   }
   if (Number.isInteger(message.sequence) && message.sequence >= 0) {

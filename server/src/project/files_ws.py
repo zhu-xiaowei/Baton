@@ -1,12 +1,27 @@
 import uuid
 
 
-ALLOWED_OPERATIONS = {"list", "read", "download", "browse"}
+ALLOWED_OPERATIONS = {"list", "read", "download", "browse", "cancel_download"}
+
+
+def _valid_uuid(value):
+    try:
+        uuid.UUID(value)
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return True
 
 
 def _valid_request(body):
     if body.get("operation") not in ALLOWED_OPERATIONS:
         return False
+    if body.get("operation") == "cancel_download" or "downloadToken" in body:
+        if body.get("operation") not in {"download", "cancel_download"}:
+            return False
+        if not _valid_uuid(body.get("downloadToken")):
+            return False
+        if not isinstance(body.get("device"), str) or not body["device"]:
+            return False
     if body.get("operation") == "browse":
         if not isinstance(body.get("device"), str) or not body["device"]:
             return False
@@ -16,11 +31,7 @@ def _valid_request(body):
         return False
     if not body.get("requestId"):
         return False
-    try:
-        uuid.UUID(body["requestId"])
-    except (ValueError, TypeError, AttributeError):
-        return False
-    return True
+    return _valid_uuid(body["requestId"])
 
 
 def handle_project_files(
@@ -49,6 +60,10 @@ def handle_project_files(
             payload["projectHash"] = body["projectHash"]
         if body.get("cursor"):
             payload["cursor"] = body["cursor"]
+        if "downloadToken" in body:
+            payload["downloadToken"] = body["downloadToken"]
+            # The authenticated account survives an app reconnect; caller input never owns this field.
+            payload["downloadOwner"] = account_id
         delivered = 0
         for item in query_connections(account_id, "bridge"):
             if device and item.get("deviceName", "") != device:

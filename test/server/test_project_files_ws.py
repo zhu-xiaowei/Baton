@@ -138,3 +138,41 @@ def test_directory_browse_routes_to_selected_device_and_reports_offline(monkeypa
     handle_project_files({**request, "device": "Offline"}, **args)
     assert delivered[0][0] == "app-1"
     assert delivered[0][1]["error"] == "Bridge offline"
+
+
+def test_cancellable_download_requires_a_token_and_explicit_device():
+    from project.files_ws import _valid_request
+    valid = {
+        'operation': 'cancel_download', 'projectHash': 'project',
+        'requestId': REQUEST_ID, 'downloadToken': REQUEST_ID, 'device': 'Mac',
+    }
+    assert _valid_request(valid)
+    assert _valid_request({**valid, 'operation': 'download'})
+    for field, bad in [('device', ''), ('device', None), ('downloadToken', None),
+                       ('downloadToken', 'not-a-uuid'), ('projectHash', '')]:
+        assert not _valid_request({**valid, field: bad})
+    assert not _valid_request({**valid, 'operation': 'list'})
+
+
+def test_download_owner_is_authenticated_account_not_client_input():
+    from project.files_ws import handle_project_files
+    delivered = []
+    for operation in ['download', 'cancel_download']:
+        result = handle_project_files({
+            'operation': operation, 'projectHash': 'project', 'path': 'file.txt',
+            'requestId': REQUEST_ID, 'downloadToken': REQUEST_ID, 'device': 'Mac',
+            'downloadOwner': 'forged-account', 'replyConnectionId': 'forged-app',
+        }, 'app', 'new-app-connection', 'authenticated-account', 'endpoint',
+            query_connections=lambda account, role: [
+                {'connectionId': 'mac-bridge', 'deviceName': 'Mac'},
+                {'connectionId': 'other-bridge', 'deviceName': 'Other'},
+            ] if account == 'authenticated-account' and role == 'bridge' else [],
+            post_to_connection=lambda endpoint, connection, payload:
+                delivered.append((connection, payload)) or True,
+            connections_table=None)
+        assert result == {'statusCode': 200}
+        assert delivered[-1][0] == 'mac-bridge'
+        assert delivered[-1][1]['downloadOwner'] == 'authenticated-account'
+        assert delivered[-1][1]['replyConnectionId'] == 'new-app-connection'
+        assert delivered[-1][1]['downloadToken'] == REQUEST_ID
+    assert len(delivered) == 2

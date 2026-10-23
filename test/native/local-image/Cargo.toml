@@ -1,0 +1,12 @@
+[package]
+name = "baton-local-image-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+base64 = "0.22"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

@@ -1,0 +1,30 @@
+.download-toggle, .download-panel button {
+  background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+  border-radius: 6px; padding: 7px 10px; font: inherit; cursor: pointer;
+}
+.download-toggle {
+  position: relative; margin-left: auto; margin-right: 8px; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 32px; height: 32px; padding: 6px;
+}
+.download-count { position: absolute; top: -5px; right: -5px; font-size: 9px; line-height: 14px; min-width: 14px; padding: 0 2px; border-radius: 7px; background: #1f6feb; color: #fff; }
+.download-count[hidden] { display: none; }
+.download-toggle-floating { position: fixed; right: 8px; top: 8px; z-index: 1010; }
+.download-panel {
+  position: fixed; z-index: 1100; right: 12px;
+  top: calc(max(var(--sat, 0px), env(safe-area-inset-top, 0px)) + 52px);
+  width: min(380px, calc(100vw - 24px)); max-height: min(70dvh, 600px);
+  display: flex; flex-direction: column; background: #161b22; color: #e6edf3;
+  border: 1px solid #30363d; border-radius: 10px; box-shadow: 0 10px 30px #0006;
+}
+.download-panel[hidden], .download-panel [hidden] { display: none; }
+.download-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px; }
+.download-list { overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
+.download-item { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid #30363d; }
+.download-name { overflow-wrap: anywhere; }
+.download-message { color: #8b949e; font-size: 12px; overflow-wrap: anywhere; }
+.download-item progress { width: 100%; height: 6px; accent-color: #58a6ff; }
+.download-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.download-panel button:disabled { opacity: .5; cursor: default; }
+.download-panel button:focus-visible, .download-toggle:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+@media (pointer: coarse) { .download-panel button, .download-toggle { min-height: 44px; } }

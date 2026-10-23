@@ -366,7 +366,10 @@
     var content = document.getElementById('content');
     if (!topBar || !breadcrumb || !content) return false;
 
+    var downloadToggle = topBar.querySelector('.download-toggle');
     topBar.innerHTML = snapshot.topBarHtml || '';
+    topBar.querySelectorAll('.download-toggle').forEach(function (button) { button.remove(); });
+    if (downloadToggle) topBar.insertBefore(downloadToggle, topBar.querySelector('#top-right'));
     breadcrumb.innerHTML = snapshot.breadcrumbHtml || '';
     breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
     var preview = document.createElement('template');

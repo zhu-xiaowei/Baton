@@ -8,6 +8,7 @@ import { post } from '../http.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
+import { createDownloadOperations } from './download-operations.mjs';
 
 // Larger text previews stall phones; Download fetches the full file.
 const FILE_MAX_BYTES = 1024 * 1024;
@@ -24,47 +25,59 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 const uploadedFileKeys = new Set();
 const downloadFileKeys = new Map();
+const downloadOperations = createDownloadOperations();
 
-async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send, home }) {
+async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send, home, signal }) {
+  signal?.throwIfAborted();
   const absPath = resolveReadablePath(projectRoot, message.path);
   const stat = await fs.promises.stat(absPath);
+  signal?.throwIfAborted();
   if (!stat.isFile()) throw new Error('not a regular file');
   if (stat.size > 512 * 1024 * 1024) throw new Error('Download exceeds the 512 MB limit');
-  const identity = `${absPath}\0${stat.mtimeMs}\0${stat.size}`;
+  const identity = JSON.stringify([message.downloadOwner || '', absPath,
+    stat.mtimeMs, stat.ctimeMs, stat.ino, stat.size]);
   let key = downloadFileKeys.get(identity);
   if (!key) {
     sendProgress(message, send, { downloading: true });
-    const hash = await contentHash(absPath, stat, home);
+    const hash = await contentHash(absPath, stat, home, { signal });
+    signal?.throwIfAborted();
     const prepared = await postFn('/api/bridge/file-prepare', {
       name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream', contentHash: hash,
-    });
+    }, { signal });
+    signal?.throwIfAborted();
     if (!prepared?.ok) throw new Error('Could not prepare file download');
     const info = await prepared.json();
+    signal?.throwIfAborted();
     if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
     const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
     let uploaded = !!info.exists;
     let rejected = false;
     for (const url of urls) {
-      const body = fs.createReadStream(absPath);
+      signal?.throwIfAborted();
+      const body = fs.createReadStream(absPath, { signal });
       const closed = finished(body).catch(() => {});
       try {
         const response = await fetchFn(url, {
           method: 'PUT', headers: { ...info.headers, 'Content-Length': String(stat.size) },
-          body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
+          body, duplex: 'half', signal: signal || AbortSignal.timeout(30 * 60_000),
         });
         // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
         if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
         else await response.body?.cancel();
         if (response.ok) { uploaded = true; break; }
         if (rejected) break;
-      } catch {} finally { body.destroy(); await closed; }
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason;
+      } finally { body.destroy(); await closed; }
     }
+    signal?.throwIfAborted();
     if (rejected) {
       await forgetContentHash(absPath, stat, home);
       throw new Error('File changed while preparing the download. Try again.');
     }
     if (!uploaded) throw new Error('File upload failed. Try downloading again.');
     const current = await fs.promises.stat(absPath);
+    signal?.throwIfAborted();
     if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) {
       throw new Error('File changed while preparing the download. Try again.');
     }
@@ -72,6 +85,7 @@ async function prepareFileDownload(message, { projectRoot, postFn = post, fetchF
     if (downloadFileKeys.size >= 100) downloadFileKeys.delete(downloadFileKeys.keys().next().value);
     downloadFileKeys.set(identity, key);
   }
+  signal?.throwIfAborted();
   send(responseBase(message, { ok: true, key, path: absPath, name: path.basename(absPath), size: stat.size }));
 }
 
@@ -368,6 +382,11 @@ export async function handleProjectFilesMessage(message, options = {}) {
   if (typeof send !== 'function') throw new TypeError('send is required');
   const operation = message.operation;
   try {
+    if (operation === 'cancel_download') {
+      const result = await downloadOperations.cancel(message.downloadOwner, message.downloadToken);
+      send(responseBase(message, { ok: true, ...result }));
+      return;
+    }
     if (operation === 'browse') {
       await browseDirectories(message, options);
       return;
@@ -378,7 +397,12 @@ export async function handleProjectFilesMessage(message, options = {}) {
       : '';
     if (!projectRoot) throw new Error('project not found');
     if (operation === 'download') {
-      await prepareFileDownload(message, { ...options, send, projectRoot });
+      const job = message.downloadToken
+        ? downloadOperations.begin(message.downloadOwner, message.downloadToken) : null;
+      try {
+        if (job) sendProgress(message, send, { cancellable: true });
+        await prepareFileDownload(message, { ...options, send, projectRoot, signal: job?.signal });
+      } finally { job?.finish(); }
       return;
     }
     if (operation === 'list') {

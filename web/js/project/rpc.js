@@ -14,10 +14,13 @@ export function requestProjectFiles(operation, fields, options) {
     projectHash: fields.projectHash,
     path: fields.path || '',
     ...(fields.cursor ? { cursor: fields.cursor } : {}),
+    ...(fields.downloadToken ? { downloadToken: fields.downloadToken } : {}),
     device: fields.device ?? state.appState.device ?? '',
   }, {
     timeout: options.timeout,
     onProgress: options.onProgress,
+    signal: options.signal,
+    isCurrent: options.isCurrent,
     assemble: operation === 'read' ? assembleTextFrames : assembleLastFrame,
   });
 }

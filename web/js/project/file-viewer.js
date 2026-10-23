@@ -1,5 +1,6 @@
 // Project file viewer: text up to 300 KB arrives over WS; larger content uses S3.
 import { state } from '../state.js';
+import '../../css/downloads.css';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
@@ -7,7 +8,8 @@ import { currentProjectHash, relativeProjectImagePath } from './project-hash.js'
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
-import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
+import { createDownloadManager, downloadItemMessage } from './download-manager.js';
+import { captureDownloadScope } from './download-request.js';
 import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 import { toolDetailsSource } from '../tool-details.js';
@@ -48,6 +50,7 @@ function updateDownloadButtons() {
     button.disabled = !_downloadTarget || busy;
     button.classList.toggle('is-downloading', busy);
     button.setAttribute('aria-busy', String(busy));
+    if (!busy) button.querySelector('.file-download-spinner')?.remove();
     if (busy && !button.querySelector('.file-download-spinner')) {
       button.insertAdjacentHTML('beforeend', '<span class="file-download-spinner">'
         + loadingSpinner({ size: 'small', label: 'Downloading file' }) + '</span>');
@@ -58,7 +61,7 @@ function updateDownloadButtons() {
 function uploadedKey(target) {
   if (!target.keyPromise) {
     target.keyPromise = target.key ? Promise.resolve(target.key) : requestProjectFiles('download', {
-      projectHash: target.projectHash, path: target.path,
+      device: target.device, projectHash: target.projectHash, path: target.path,
     }, { timeout: 30 * 60_000 }).then(result => (target.key = result.key));
     target.keyPromise.catch(() => { target.keyPromise = null; });
   }
@@ -68,10 +71,6 @@ function uploadedKey(target) {
 // Identical content shares one stored file, so the name it was opened under wins over the stored one.
 function attachmentUrl(key, name) {
   return '/api/bridge/file-url/' + key + (name ? '?name=' + encodeURIComponent(name) : '');
-}
-
-async function prepareViewedDownload(target) {
-  return window.api(attachmentUrl(await uploadedKey(target), target.name));
 }
 
 async function showUploadedProjectFile(target) {
@@ -84,52 +83,28 @@ async function showUploadedProjectFile(target) {
   }
 }
 
+const downloads = createDownloadManager();
+window.addEventListener('beforeunload', event => {
+  if (!downloads.pending) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
 async function downloadViewedFile() {
   const target = _downloadTarget;
   if (!target || target.busy) return;
   target.busy = true;
   updateDownloadButtons();
-  downloadStatus('Preparing download…');
+  downloadStatus('Added to Downloads.');
   try {
-    let result;
-    if (target.sharedFile) {
-      result = await shareDownloadedFile(target);
-    } else {
-      const file = await prepareViewedDownload(target);
-      if (_downloadTarget !== target) return;
-      downloadStatus('Downloading…');
-      if (browserCanShare() && file.size <= BROWSER_SHARE_MAX_BYTES) {
-        try {
-          target.sharedFile = await prepareSharedFile(file);
-        } catch (error) {
-          if (error.name !== 'NotSupportedError') throw error;
-        }
-        if (_downloadTarget !== target) return;
-      }
-      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
-    }
-    if (_downloadTarget === target) downloadStatus({
-      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
-      shared: 'Shared.', cancelled: '', started: 'Download started.',
-      share_opened: 'Download complete. System sharing opened.',
-      ready: 'File ready. Tap Download again to open the system share sheet.',
-    }[result.status] || 'Download started.');
-  } catch (error) {
-    if (_downloadTarget === target) downloadStatus(String(error.message || error));
-  } finally {
+    const item = target.downloadItem?.state === 'ready' ? downloads.retry(target.downloadItem.id) : downloads.enqueue(target);
+    target.downloadItem = item;
+    await item.done;
+    if (_downloadTarget === target) downloadStatus(downloadItemMessage(item));
+  }
+  finally {
     target.busy = false;
     if (_downloadTarget === target) updateDownloadButtons();
-  }
-}
-
-async function shareDownloadedFile(target) {
-  try {
-    await navigator.share({ files: [target.sharedFile] });
-    return { status: 'shared' };
-  } catch (error) {
-    if (error.name === 'AbortError') return { status: 'cancelled' };
-    if (error.name === 'NotAllowedError') return { status: 'ready' };
-    throw error;
   }
 }
 var _previewToken = 0;
@@ -691,6 +666,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   var fileName = absPath.startsWith('baton-file:') ? displayName : absPath.split(/[\\/]/).pop();
   _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', matchId, options: options };
   _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
+    device: options.device ?? state.appState.device ?? '', scope: captureDownloadScope(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
   downloadStatus('');
   updateDownloadButtons();

@@ -11,6 +11,7 @@ import '../css/breadcrumb.css';
 import '../css/file-icons.css';
 import '../css/loading.css';
 import '../css/project-files.css';
+import '../css/downloads.css';
 import '../css/git-status.css';
 import '../css/workspace-header.css';
 import './globals.js';   // defines window.loadViewerLibs (does NOT download libs yet)

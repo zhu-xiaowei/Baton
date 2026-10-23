@@ -49,6 +49,7 @@ var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
 var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
+var _wsSendGuards = new WeakMap();
 var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
@@ -398,7 +399,9 @@ function connectWs(_, projectHash) {
     recoverSubscribedSession();
     var queued = _wsSendQueue;
     _wsSendQueue = [];
-    for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
+    for (var qi = 0; qi < queued.length; qi++) {
+      if (allowedQueuedSend(queued[qi])) wsSend(queued[qi]);
+    }
     resendUnreceiptedSends(queued);
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
@@ -1619,7 +1622,16 @@ function wsSend(data) {
 }
 
 // Non-OPEN → queue + reconnect (onopen flushes); use for user actions that must not drop.
-function wsSendReliable(data) {
+function allowedQueuedSend(data) {
+  var guard = _wsSendGuards.get(data);
+  if (!guard || guard.shouldSend()) return true;
+  guard.onDrop?.();
+  return false;
+}
+
+function wsSendReliable(data, guard) {
+  if (guard) _wsSendGuards.set(data, guard);
+  if (!allowedQueuedSend(data)) return;
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify(data));
     return;
