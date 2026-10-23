@@ -166,6 +166,14 @@
     var blocks = container.matches && container.matches('.mermaid-block')
       ? [container] : Array.from(container.querySelectorAll('.mermaid-block'));
     if (!blocks.length) return;
+    blocks.forEach(function (block) {
+      var head = block.querySelector('.mermaid-head');
+      if (head && window.createDiagramExport && !head.querySelector('.diagram-export')) {
+        head.insertBefore(window.createDiagramExport(function () {
+          return block.querySelector('.mermaid-svg > svg');
+        }), head.querySelector('.mermaid-zoom'));
+      }
+    });
 
     if (window.IntersectionObserver) {
       pruneObservedBlocks();
@@ -518,6 +526,13 @@
     var stage = overlay.querySelector('.mermaid-fs-stage');
     var fullSvg = stage.querySelector('svg');
     var base = fsReadViewBox(fullSvg);
+    if (window.createDiagramExport) {
+      var exportMenu = window.createDiagramExport(function () { return fullSvg; }, function () {
+        return [base.x, base.y, base.w, base.h].join(' ');
+      });
+      exportMenu.classList.add('diagram-export-fullscreen');
+      overlay.appendChild(exportMenu);
+    }
     fullSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     fullSvg.setAttribute('width', '100%');
     fullSvg.setAttribute('height', '100%');

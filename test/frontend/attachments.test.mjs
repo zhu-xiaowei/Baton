@@ -522,7 +522,8 @@ test('text preview cancels at its limit instead of buffering an entire large fil
 
 test('the shared download button invokes the native download plugin with the original name', async () => {
   const calls = [];
-  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.__TAURI_INTERNALS__ = { transformCallback() { return 1; },
+    invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
   window.openFile('baton-file:' + key, 'deck.pptx');
   const downloading = window.downloadViewedFile();
   assert.equal(document.getElementById('file-download-btn').disabled, true);

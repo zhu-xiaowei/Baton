@@ -1759,3 +1759,15 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 .mermaid-fs-stage > svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; overflow: hidden; shape-rendering: geometricPrecision; text-rendering: geometricPrecision; }
 .mermaid-fs-close { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 2001; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(48,54,61,0.75); color: #c9d1d9; cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .mermaid-fs-close:hover { background: rgba(48,54,61,0.95); color: #fff; } }
+
+/* Generated Mermaid images share the existing native/browser download path. */
+.mermaid-head:has(.diagram-export) { flex-wrap:wrap; }
+.diagram-export { margin-left:auto; color:inherit; font-size:12px; }
+.diagram-export summary { cursor:pointer; padding:5px 8px; border-radius:5px; }
+.diagram-export[open] { flex-basis:100%; order:3; }
+.diagram-export-choices { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:4px; }
+.diagram-export-choices button { min-height:32px; padding:4px 10px; color:inherit; background:#21262d; border:1px solid #30363d; border-radius:5px; cursor:pointer; }
+.diagram-export-choices button:disabled { opacity:.5; cursor:wait; }
+.diagram-export-status { flex:1 1 120px; overflow-wrap:anywhere; font-size:11px; }
+.diagram-export + .mermaid-zoom { margin-left:0; }
+.diagram-export-fullscreen { position:absolute; z-index:2001; top:max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right:64px; max-width:calc(100% - 80px); background:#161b22; border:1px solid #30363d; border-radius:6px; }

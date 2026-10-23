@@ -11,6 +11,7 @@ const SKIP_DIRS = new Set([
   '.build',
   '.pytest_cache',
   '.tauri',
+  'build',
   'dist',
   'gen',
   'node_modules',

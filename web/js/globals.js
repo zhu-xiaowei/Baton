@@ -77,6 +77,7 @@ async function loadViewerLibs() {
       import('./components/visualization.js'),
       import('../css/visualization.css'),
       import('./components/mermaid.js'),
+      import('./components/diagram-export.js'),
       import('./components/katex.js'),
       import('./components/tool.js'),
       import('./components/message.js'),
