@@ -21,6 +21,7 @@ from urllib.parse import quote, unquote
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from message_history import message_key, publish_history
+from auth import request_account_id
 
 MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
 
@@ -169,7 +170,7 @@ async def update_session_title(req: SessionTitleRequest, raw: Request):
     name = req.name.strip()
     if not name or re.search(r'[\x00-\x1f\x7f]', name):
         raise HTTPException(status_code=400, detail='Invalid session name')
-    account_id = _hash_key(raw.headers.get('x-api-key', ''))
+    account_id = request_account_id(raw)
     sessions_table, _ = _tables()
     try:
         sessions_table.update_item(
@@ -322,7 +323,7 @@ def _broadcast_session_thread_changes(account_id: str, device_name: str, roots: 
 @bridge_router.post("/sync-sessions")
 async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     sessions_table, _ = _tables()
-    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    key_hash = request_account_id(raw)
     now = datetime.utcnow().isoformat()
 
     incoming_status_deltas = []
@@ -699,7 +700,7 @@ async def reconcile(req: ReconcileRequest, raw: Request):
     """Recount a device's DEV#/PROJ# aggregates so stored counts stay DDB-self-consistent.
     Called by the bridge on first boot, after a version upgrade, and on a new project."""
     sessions_table, _ = _tables()
-    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    key_hash = request_account_id(raw)
     return _reconcile_device(sessions_table, key_hash, req.deviceName, req.os)
 
 
@@ -716,7 +717,7 @@ async def create_project(req: CreateProjectRequest, raw: Request):
     before its first session exists. userCreated=True marks it intentional so reconcile's
     prune never treats it as a stale orphan. Idempotent — never clobbers an existing row."""
     sessions_table, _ = _tables()
-    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    key_hash = request_account_id(raw)
     now = datetime.utcnow().isoformat()
     try:
         sessions_table.put_item(
@@ -777,7 +778,7 @@ async def delete_sessions(req: DeleteRequest, raw: Request):
     they're unreachable once the SESS# row is gone. Disk jsonl is deleted separately by
     the bridge (WS delete_files) only when the user opts in."""
     sessions_table, _ = _tables()
-    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    key_hash = request_account_id(raw)
     dev = req.deviceName
 
     sess_sks = set()   # SESS# sks to delete
@@ -898,7 +899,7 @@ def _attachment_bucket():
 def _attachment_key(key: str, request: Request):
     if not re.fullmatch(r"[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?", key):
         raise HTTPException(status_code=400, detail="Invalid file key")
-    return f"attachments/{_hash_key(request.headers.get('x-api-key', ''))}/{key}"
+    return f"attachments/{request_account_id(request)}/{key}"
 
 
 @lru_cache(maxsize=2)
@@ -1052,7 +1053,7 @@ async def upload_command_catalog(req: CommandCatalogRequest, raw: Request):
     bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
     if not bucket:
         return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
-    account_id = _hash_key(raw.headers.get("x-api-key", ""))
+    account_id = request_account_id(raw)
     catalog_ref = _command_catalog_ref(
         account_id,
         req.deviceName,

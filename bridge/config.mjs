@@ -86,6 +86,32 @@ export function loadConfig() {
   return config;
 }
 
+export const DEVICE_CREDENTIAL_PREFIX = 'bt_';
+
+// Replace a master key in config.json with a revocable credential bound to this device.
+// Older servers without the endpoint keep working with the master key.
+export async function ensureDeviceCredential(config, { fetchImpl = fetch, save = saveConfig } = {}) {
+  if (!config.apiKey || config.apiKey.startsWith(DEVICE_CREDENTIAL_PREFIX)) return false;
+  try {
+    const res = await fetchImpl(`${config.server}/api/auth/bridge-credential`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': config.apiKey },
+      body: JSON.stringify({ device: config.deviceName, name: config.deviceDisplayName || config.deviceName }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return false;
+    const { apiKey } = await res.json();
+    if (typeof apiKey !== 'string' || !apiKey.startsWith(DEVICE_CREDENTIAL_PREFIX)) return false;
+    config.apiKey = apiKey;
+    save(config);
+    console.log('[auth] switched to a device credential');
+    return true;
+  } catch (err) {
+    console.error(`[auth] device credential request failed: ${err.message}`);
+    return false;
+  }
+}
+
 export async function fetchServerConfig(config) {
   try {
     const res = await fetch(`${config.server}/api/bridge/config`, {

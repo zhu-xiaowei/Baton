@@ -64,6 +64,20 @@
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
+  .hint-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .link-btn { flex-shrink: 0; padding: 0; border: 0; background: none; color: #58a6ff; font-size: 12px; cursor: pointer; }
+  .link-btn:disabled { color: #6e7681; cursor: default; }
+  .cred-list { display: flex; flex-direction: column; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  .cred-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: #0d1117; }
+  .cred-row + .cred-row { border-top: 1px solid #30363d; }
+  .cred-info { flex: 1; min-width: 0; }
+  .cred-name { display: flex; align-items: center; min-width: 0; font-size: 13px; }
+  .cred-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cred-tag { flex-shrink: 0; margin-left: 6px; padding: 1px 6px; border-radius: 10px; background: #1f6feb33; color: #58a6ff; font-size: 11px; white-space: nowrap; }
+  .cred-meta { color: #8b949e; font-size: 11px; margin-top: 2px; }
+  .cred-action { flex-shrink: 0; padding: 4px 10px; background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #f85149; font-size: 12px; cursor: pointer; }
+  .cred-action:disabled { color: #6e7681; cursor: default; }
+  .master-key { margin-top: 12px; }
   html.native-mobile .setup-bar {
     min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
     padding: var(--sat, env(safe-area-inset-top, 0px)) 0 0;
@@ -82,6 +96,10 @@
   html.native-mobile .code-btn { min-height: 30px; font-size: 12px; }
   html.native-mobile .hint { font-size: 14px; line-height: 1.55; }
   html.native-mobile .logout-btn { min-height: 40px; font-size: 15px; }
+  html.native-mobile .link-btn { font-size: 14px; }
+  html.native-mobile .cred-name { font-size: 15px; }
+  html.native-mobile .cred-meta { font-size: 12px; }
+  html.native-mobile .cred-action { min-height: 32px; font-size: 13px; }
   html.native-mobile #appVersion { font-size: 12px !important; }
 </style>
 </head>
@@ -103,13 +121,15 @@
   </div>
   <p class="hint" id="installHint" style="margin:0 0 10px">Run this command with Node.js installed.</p>
   <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
+  <div class="hint hint-row"><span id="installExpiry"></span><button class="link-btn" id="newInstallCmd" onclick="newInstallCommand()" hidden>New command</button></div>
 </div>
 
 <!-- Step 2: Start URL — paste into another browser or the Baton app -->
 <div class="section">
   <h2><span class="num">2</span> Start URL</h2>
   <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the Baton app to sign in.</p>
-  <div class="code-block" id="qrUrlBlock"><span id="qrUrl"></span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
+  <div class="code-block" id="qrUrlBlock"><span id="qrUrl">Loading...</span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
+  <div class="hint hint-row"><span id="startUrlExpiry"></span><button class="link-btn" id="newStartUrl" onclick="newStartUrl()" hidden>New URL</button></div>
 </div>
 
 <!-- Step 3: QR Code (scan version of the same Start URL) -->
@@ -118,6 +138,17 @@
   <p class="hint" style="margin-bottom:14px">Scan with the Baton app on your phone to sign in.</p>
   <div class="qr-wrap">
     <div class="qr-frame"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
+  </div>
+</div>
+
+<!-- Step 4: Credentials — each signed-in app and Bridge has its own revocable credential -->
+<div class="section" id="credentialsSection" hidden>
+  <h2><span class="num">4</span> Authorized Devices</h2>
+  <p class="hint" style="margin:0 0 10px">Revoke a lost phone or a retired computer. Rotating the master key disables it everywhere it was shared; signed-in devices keep working.</p>
+  <div class="cred-list" id="credentialList"></div>
+  <div class="master-key" id="masterKeyResult" hidden>
+    <p class="hint" style="margin:0 0 8px; color:#d29922">New master key. It is shown only once; store it somewhere safe.</p>
+    <div class="code-block"><span id="masterKeyText"></span><button class="code-btn" onclick="copyMasterKey(this)">Copy</button></div>
   </div>
 </div>
 

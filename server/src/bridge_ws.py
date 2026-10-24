@@ -19,6 +19,7 @@ from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
 from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
+import auth
 
 _ddb = None
 _connections_table = None
@@ -81,10 +82,6 @@ def _apigw_client(endpoint):
 def _realtime_service(endpoint):
     return RealtimeDirect(_connections_table, _query_connections, _post_to_connection,
         _disconnect_terminal_data, _turn_event_targets, endpoint)
-
-
-def _account_id(api_key):
-    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
 def _runtime_session_fields(session_id):
@@ -334,7 +331,15 @@ def _handle_connect(event, connection_id):
     if role == "realtime_data" and not realtime_enabled():
         return {"statusCode": 403}
 
-    account_id = _account_id(api_key)
+    credential = auth.resolve(api_key)
+    if not credential:
+        return {"statusCode": 401}
+    # A Bridge credential may never act as an app (send_message, terminals, permission replies).
+    if not auth.role_allowed(credential, role):
+        return {"statusCode": 403}
+    if credential.get("kind") == "bridge" and role == "bridge" and not auth.bind_bridge_device(credential, device):
+        return {"statusCode": 403}
+    account_id = credential["accountId"]
     ttl = int(time.time()) + 86400  # 24h
 
     item = {
@@ -343,6 +348,7 @@ def _handle_connect(event, connection_id):
         "role": role,
         "connectedAt": int(time.time()),
         "ttl": ttl,
+        "credId": credential.get("credId", ""),
     }
     if device:
         item["deviceName"] = device

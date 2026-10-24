@@ -1,7 +1,7 @@
 // Entry for landing.html — single Start URL field for sign-in.
 // A Start URL looks like one of:
-//   https://<server>/?t=<one-time-token>   (issued by install.sh, 60 min single-use)
-//   https://<server>/?key=<apiKey>         (issued by setup page, permanent)
+//   https://<server>/?t=<one-time-token>   (install.sh: 12h, Setup page: 10 min; single-use)
+//   https://<server>/?key=<masterKey>      (legacy; exchanged for a device credential)
 import { state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
@@ -38,9 +38,7 @@ setNativeTabTitle('Baton');
   if (!isNativeApp && (urlToken || urlKey)) {
     showLoading('Connecting');
     var browserServer = location.origin + location.pathname.replace(/\/[^/]*$/, '');
-    var prom = urlToken
-      ? exchangeToken(browserServer, urlToken).then(function (k) { return routeAfterLogin(k, browserServer); })
-      : routeAfterLogin(urlKey, browserServer);
+    var prom = urlToken ? loginWithToken(browserServer, urlToken) : loginWithKey(browserServer, urlKey);
     releaseNativeSkeleton();
     prom.catch(function (e) {
       hideLoading();
@@ -111,12 +109,8 @@ setNativeTabTitle('Baton');
     }
     if (!token && !key) throw new Error('Start URL is missing ?t= or ?key=');
 
-    if (token) {
-      var apiKey = await exchangeToken(server, token);
-      await routeAfterLogin(apiKey, server);
-    } else {
-      await routeAfterLogin(key, server);
-    }
+    if (token) await loginWithToken(server, token);
+    else await loginWithKey(server, key);
   }
 
   var scanModule = null;
@@ -187,25 +181,37 @@ setNativeTabTitle('Baton');
     var res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: token }),
+      body: JSON.stringify({ token: token, name: credentialName() }),
     });
     if (!res.ok) {
-      throw new Error(res.status === 401 ? 'Link expired or already used. Re-run deploy to get a new link.' : 'Connection failed');
+      throw new Error(res.status === 401 ? 'Link expired or already used. Get a new one from Setup or re-run deploy.' : 'Connection failed');
     }
     var data = await res.json();
     if (!data || !data.apiKey) throw new Error('Invalid response');
-    return data.apiKey;
+    return data;
+  }
+
+  async function loginWithToken(server, token) {
+    var credential = await exchangeToken(server, token);
+    await routeAfterLogin(credential.apiKey, server, credential.accountId);
+  }
+
+  // A master key is only used once, to obtain this device's own credential.
+  async function loginWithKey(server, key) {
+    var credential = await requestAppCredential(key, server.replace(/\/+$/, ''));
+    if (credential) await routeAfterLogin(credential.apiKey, server, credential.accountId);
+    else await routeAfterLogin(key, server);
   }
 
   // Validate key + cache wsUrl + route to setup if no devices yet, else index.
   // The /devices call doubles as auth check (401 throws); /config gives wsUrl.
-  async function routeAfterLogin(key, server) {
+  async function routeAfterLogin(key, server, accountId) {
     var serverNorm = server ? server.replace(/\/+$/, '') : null;
     var results = await Promise.all([
       api('/api/bridge/devices', null, { key: key, server: serverNorm || undefined }),
       api('/api/bridge/config', null, { key: key, server: serverNorm || undefined }).catch(function () { return null; }),
     ]);
-    setCredentials(key, isNativeApp ? serverNorm : null);
+    setCredentials(key, isNativeApp ? serverNorm : null, accountId);
     var cfg = results[1];
     if (cfg && cfg.wsUrl) localStorage.setItem('_wsurl', cfg.wsUrl);
     var devs = results[0] && results[0].devices;
@@ -215,7 +221,7 @@ setNativeTabTitle('Baton');
 
   function errorMessage(e) {
     var msg = e && e.message ? String(e.message) : '';
-    if (msg.indexOf('401') === 0) return 'Invalid API key';
+    if (msg.indexOf('401') === 0 || msg.indexOf('403') === 0) return 'Invalid API key';
     return msg || 'Connection failed';
   }
 

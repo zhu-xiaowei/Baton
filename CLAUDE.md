@@ -220,8 +220,20 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - WS ack: `wsSendWithAck` waits for server `messages_ack` reply (5s timeout), falls back to HTTP POST to DDB if no ack
 
 ### Server
-- FastAPI in Docker Lambda, API Key auth
-- DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored
+- FastAPI in Docker Lambda. Auth is in the Lambdas, not API Gateway (`ApiKeyRequired: false`):
+  `auth.py` resolves `x-api-key` / WS `?apiKey=` against SystemTable `CRED#sha256(secret)` rows
+  (kinds `master`/`app`/`bridge`, 60s per-instance cache). The middleware is added before CORS so
+  403s keep CORS headers. Stage throttling: REST 50/100, WS 200/400.
+- DDB `accountId` was SHA256(apiKey)[:16]; it is now stored on every credential row, so master-key
+  rotation and device revocation never move data. Raw secrets are never stored.
+- Device credentials (`bt_…`): app logins and Bridges each get their own, listed and revocable on
+  Setup ("Authorized Devices"). A Bridge credential is bound to its `deviceName` and can never
+  connect as `role=app`, so a leaked Bridge `config.json` cannot drive other machines. The master
+  key still works everywhere (old native builds) until rotated; stored master keys in the app
+  (`api.js` `upgradeStoredCredential`) and Bridge `config.json` (`ensureDeviceCredential`) are
+  exchanged automatically. Setup shows only single-use 10-minute Start URLs (`?t=`) and install
+  commands (`bp_…` pairing code consumed by `/api/install`). `install.sh` registers the API Gateway
+  key as master before updating the stack and never re-registers it after a rotation.
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
 - Bridge install script (`/api/install`): exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility (tmux auto-install removed in Phase 2E)
 
@@ -283,6 +295,10 @@ BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
       → homepage Active Sessions = between("needs_input","running"); c<n<r so
         completed/done# are excluded. Completed Sessions = begins_with("done#") desc limit 20.
 
+SystemTable      PK: pk           SK: sk
+  CRED / sha256(secret)  → accountId, kind (master|app|bridge), credId, device?, name, createdAt, lastUsedAt
+  TOKEN / <token>        → accountId, kind (app = Start URL, bridge = install pairing code), ttl
+
 BridgeMessages   PK: sessionId    SK: timestamp#uuid
   Attributes: uuid, type, content (JSON), timestamp, optional stopReason/toolUseResult
   TTL: 90 days
@@ -313,7 +329,11 @@ POST /api/bridge/command-catalog            — bridge stores the full project c
 GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped command catalog
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
-GET  /api/install                           — bridge install script (sets up always-on service)
+POST /auth/exchange-token                   — single-use Start URL token → app credential
+POST /api/auth/{app,bridge}-credential      — master key → device credential (login / Bridge upgrade)
+POST /api/auth/{start-token,bridge-pairing} — single-use Start URL token / install pairing code
+GET  /api/auth/credentials, POST /api/auth/revoke, POST /api/auth/rotate-master — Setup device management
+GET  /api/install                           — bridge install script (sets up always-on service); accepts a bp_ pairing code
 GET  /api/version                           — app and Bridge release versions
 ```
 
@@ -405,15 +425,16 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Favicon: inline data:image/svg+xml (all pages unified)
 
 ### Auth Flow
-- Key stored in localStorage (`_ak` = btoa, `_as` = server URL)
-- No cookies, no server middleware — static files publicly accessible
+- Credential stored in localStorage (`_ak` = btoa, `_as` = server URL, `_aid` = accountId; caches
+  are scoped by accountId so a credential change on the same account keeps them)
+- No cookies — static files publicly accessible; FastAPI middleware authenticates `/api/*`
 - API calls use `x-api-key` header from localStorage
-- API Gateway `ApiKeyRequired: false` — auth handled by FastAPI layer
+- API Gateway `ApiKeyRequired: false` — auth handled by the Lambdas (`server/src/auth.py`)
 
 ### Deployment
 - Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
-- Deploy output: single setup URL with embedded token (12h TTL)
+- Deploy output: single setup URL with embedded single-use token (12h TTL)
 
 ### Three-State Session Status
 - `running` → **Running** (green): a turn is generating (jsonl `stop_reason: tool_use`/`null`,

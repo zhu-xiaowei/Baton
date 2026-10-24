@@ -1,13 +1,33 @@
-import time
 import uvicorn
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 import os
 
+import auth
+
 app = FastAPI()
+
+
+async def authenticate(request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and request.method != "OPTIONS":
+        secret = request.headers.get("x-api-key", "")
+        # get_install consumes Bridge pairing codes itself.
+        if not (path == "/api/install" and secret.startswith(auth.PAIRING_PREFIX)):
+            credential = await run_in_threadpool(auth.resolve, secret)
+            if not credential:
+                return JSONResponse({"message": "Forbidden"}, status_code=403)
+            request.state.baton_auth = credential
+    return await call_next(request)
+
+
+# Added first so CORS stays outermost and 403 responses still carry CORS headers.
+app.add_middleware(BaseHTTPMiddleware, dispatch=authenticate)
 # GZipMiddleware must come before CORS so it sees the final body before CORS adds headers
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 # max_age caches the CORS preflight for cross-origin clients (Tauri webviews).
@@ -16,6 +36,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 from bridge_sync import bridge_router
 from bridge_read import read_router, get_install
+from auth_routes import auth_router
+app.include_router(auth_router)
 app.include_router(bridge_router)
 app.include_router(read_router)
 
@@ -35,42 +57,6 @@ async def version():
         "version": app_version,
         "bridgeVersion": os.environ.get("BRIDGE_VERSION", app_version),
     }
-
-
-# Token exchange — landing page swaps a one-time token for the real API key.
-# Path is OUTSIDE /api/ so API Gateway does not require an api key.
-class ExchangeTokenBody(BaseModel):
-    token: str
-
-
-@app.post("/auth/exchange-token")
-async def exchange_token(body: ExchangeTokenBody, response: Response):
-    import boto3
-    table_name = os.environ.get("SYSTEM_TABLE", "")
-    if not table_name:
-        response.status_code = 500
-        return {"error": "system table not configured"}
-
-    token = (body.token or "").strip()
-    if not token or len(token) > 128:
-        response.status_code = 400
-        return {"error": "invalid token"}
-
-    ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    table = ddb.Table(table_name)
-
-    item = table.get_item(Key={"pk": "TOKEN", "sk": token}).get("Item")
-    if not item:
-        response.status_code = 401
-        return {"error": "invalid or expired"}
-
-    ttl = int(item.get("ttl", 0))
-    if ttl and ttl < int(time.time()):
-        table.delete_item(Key={"pk": "TOKEN", "sk": token})
-        response.status_code = 401
-        return {"error": "invalid or expired"}
-
-    return {"apiKey": item.get("apiKey", "")}
 
 
 # Serve web static files (landing, viewer, setup).

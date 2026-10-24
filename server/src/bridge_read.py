@@ -14,6 +14,7 @@ import json
 import os
 import re
 from message_history import history_partition
+from auth import PAIRING_PREFIX, consume_one_time, issue_device_credential, request_account_id
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -109,9 +110,7 @@ def _tables():
 
 
 def _account_id(request: Request) -> str:
-    import hashlib
-    api_key = request.headers.get("x-api-key", "")
-    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    return request_account_id(request)
 
 
 def _runtime_fields(item):
@@ -1195,6 +1194,13 @@ async def get_install(
     url = s3.generate_presigned_url("get_object",
         Params={"Bucket": bucket, "Key": "install/bridge.tar.gz"}, ExpiresIn=3600)
     api_key = request.headers.get("x-api-key", "")
+    if api_key.startswith(PAIRING_PREFIX):
+        account_id = consume_one_time(api_key, "bridge")
+        if not account_id:
+            message = "Install command expired or already used. Copy a new one from Baton Setup."
+            return Response(content=f"echo {_shell_literal(message)} >&2\nexit 1\n",
+                media_type="text/plain", status_code=403)
+        api_key, _ = issue_device_credential(account_id, "bridge", name=name or "")
     ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
     ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
     # Use x-forwarded headers from API GW if available

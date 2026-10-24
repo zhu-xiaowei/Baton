@@ -35,7 +35,7 @@ async function store(mode) {
   return (await database()).transaction(STORE, mode).objectStore(STORE);
 }
 
-const scoped = key => state.SERVER + '|' + state.KEY + '|' + key;
+const scoped = key => state.SERVER + '|' + (state.ACCOUNT || state.KEY) + '|' + key;
 
 // Previews that open from the cache besides Office files; large PDFs still load by range uncached.
 export const CACHED_PREVIEW_TYPES = {

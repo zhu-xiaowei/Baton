@@ -4,12 +4,21 @@
 
 **Base URL**: `https://{api-id}.execute-api.{region}.amazonaws.com/v1`
 
-**Authentication**: API and WS endpoints require an API Key
-- REST: `x-api-key` header
-- WS: query string `?apiKey=xxx` on connection
-- Exception: `POST /auth/exchange-token` is outside `/api/` and exchanges a short-lived token for the API key
+**Authentication**: API and WS endpoints require a credential, validated by the Lambdas against
+SystemTable (API Gateway no longer checks API keys; the REST stage throttles at 50 rps / burst 100,
+the WS stage at 200 / 400 per route).
+- REST: `x-api-key` header; invalid → `403 {"message": "Forbidden"}`
+- WS: query string `?apiKey=xxx` on connection; invalid → `$connect` 401
+- Credential kinds: `master` (the deployment's API Gateway key, or a rotated `bk_…` key), `app`
+  and `bridge` device credentials (`bt_…`). Each row stores its `accountId`, so rotating or revoking
+  never moves data. Only `SHA256(secret)` is stored.
+- A `bridge` credential is bound to one `deviceName` (at issue time, or on its first `role=bridge`
+  connection) and may only connect as `bridge`/`terminal_data`/`realtime_data`/`preview_data`, so it
+  cannot send messages, answer permissions or open terminals. It cannot call `/api/auth/*`.
+- Exception: `POST /auth/exchange-token` is outside `/api/` and exchanges a single-use token for an
+  app credential; `GET /api/install` also accepts a single-use `bp_…` pairing code.
 
-**accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
+**accountId**: originally `SHA256(masterKey)[:16]`; kept on every credential row afterwards
 
 **Runtime identity**:
 - `runtime`: `claude` or `codex`; omitted values default to `claude`
@@ -264,14 +273,32 @@ Returns independently deployable app and Bridge versions. Bridge auto-update com
 
 ### POST /auth/exchange-token
 
-Exchanges a short-lived setup token for the API key. This route is intentionally outside `/api/`
-and does not require the API key header.
+Exchanges a single-use Start URL token (install.sh: 12h; Setup page: 10 min) for a new app
+credential. The token is deleted atomically, so concurrent or repeated exchanges fail with 401.
+This route is intentionally outside `/api/` and does not require a credential.
 
 ```json
-{ "token": "one-time-token" }
+{ "token": "one-time-token", "name": "Baton app · iOS" }
 ```
 
-Response: `{ "apiKey": "..." }`.
+Response: `{ "apiKey": "bt_…", "accountId": "…", "credentialId": "…" }`.
+
+### Credential management (`/api/auth/*`)
+
+| Route | Caller | Result |
+|---|---|---|
+| `POST /api/auth/app-credential {name}` | master | `{apiKey, accountId, credentialId}` — login with a master key or `?key=` URL; stored app clients upgrade automatically |
+| `POST /api/auth/bridge-credential {device, name}` | master | same shape; Bridges with a master key in `config.json` upgrade on startup |
+| `POST /api/auth/start-token` | master, app | `{token, expiresIn: 600}` for a `?t=` Start URL / QR |
+| `POST /api/auth/bridge-pairing` | master, app | `{code: "bp_…", expiresIn: 600}` for the install command |
+| `GET /api/auth/credentials` | master, app | `{credentials: [{id, kind, name, device, createdAt, lastUsedAt, current}]}` |
+| `POST /api/auth/revoke {id}` | master, app | deletes an app/Bridge credential and closes its WebSockets (master keys are rotated instead) |
+| `POST /api/auth/rotate-master` | master, app | `{masterKey: "bk_…"}`, shown once; previous master keys stop working, device credentials stay valid |
+
+`GET /api/install` with a `bp_…` code consumes it and embeds a new unbound Bridge credential in the
+script; an expired or reused code returns 403 with a script that prints the error and exits.
+Lambda instances cache resolved credentials for 60s, so a revocation reaches every instance within
+that window; live WebSockets are closed immediately.
 
 ---
 
@@ -713,13 +740,14 @@ The app and Bridge send `contentHash`: the SHA-256 of the whole file (64 hex). T
 **Query params**:
 | Param | Required | Description |
 |-------|----------|-------------|
-| `apiKey` | Yes | API Key |
+| `apiKey` | Yes | Credential (see Authentication) |
 | `role` | Yes | `app` (phone/web) or `bridge` |
 | `device` | No | Device name (required for bridge, used for device routing) |
 
 ### Connection Management
 
-**$connect**: Validate apiKey → store connectionId in DDB Connections table
+**$connect**: Resolve the credential (401 if unknown, 403 if a Bridge credential requests another
+role or device) → store connectionId, accountId and credId in DDB Connections table
 ```
 DDB Connections:
   PK: connectionId

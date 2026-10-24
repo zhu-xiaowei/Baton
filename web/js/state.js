@@ -5,6 +5,7 @@
 export const state = {
   // ---- Credentials (api.js) ----
   KEY: '',
+  ACCOUNT: '',
   SERVER: '',
   WS_URL: '',
 

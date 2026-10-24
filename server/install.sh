@@ -404,7 +404,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" auth.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 
@@ -437,6 +437,48 @@ cfn_dump_failure() {
 
 STACK_STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+# The Lambda authenticates against SystemTable credentials, so the deployment's API Gateway
+# key must be registered as the master credential before the new code goes live.
+SYSTEM_TABLE="${STACK_NAME}-system"
+deployment_api_key() {
+  local key_id
+  key_id=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`ApiKeyId`].OutputValue' --output text 2>/dev/null || echo "")
+  if [ -z "$key_id" ] || [ "$key_id" = "None" ]; then
+    key_id=$(aws apigateway get-api-keys --region "$REGION" \
+      --query "items[?name=='${STACK_NAME}-api-key'].id | [0]" --output text)
+  fi
+  aws apigateway get-api-key --api-key "$key_id" --include-value --region "$REGION" \
+    --query 'value' --output text
+}
+master_account_id() {
+  aws dynamodb query --table-name "$SYSTEM_TABLE" --region "$REGION" \
+    --key-condition-expression "pk = :p" --filter-expression "#k = :k" \
+    --expression-attribute-names '{"#k":"kind"}' \
+    --expression-attribute-values '{":p":{"S":"CRED"},":k":{"S":"master"}}' \
+    --query 'Items[0].accountId.S' --output text
+}
+# Prints the accountId. A rotated master key is never replaced by the API Gateway key.
+register_master_key() {
+  local account key digest now
+  account=$(master_account_id) || return 1
+  if [ -n "$account" ] && [ "$account" != "None" ]; then echo "$account"; return 0; fi
+  key=$(deployment_api_key) || return 1
+  if [ -z "$key" ] || [ "$key" = "None" ]; then return 1; fi
+  digest=$(printf '%s' "$key" | openssl dgst -sha256 | awk '{print $NF}')
+  account=${digest:0:16}
+  now=$(date +%s)
+  aws dynamodb put-item --table-name "$SYSTEM_TABLE" --region "$REGION" \
+    --condition-expression "attribute_not_exists(sk)" \
+    --item "{\"pk\":{\"S\":\"CRED\"},\"sk\":{\"S\":\"$digest\"},\"accountId\":{\"S\":\"$account\"},\"kind\":{\"S\":\"master\"},\"credId\":{\"S\":\"$(openssl rand -hex 16)\"},\"name\":{\"S\":\"Master key\"},\"createdAt\":{\"N\":\"$now\"},\"lastUsedAt\":{\"N\":\"$now\"}}" \
+    >/dev/null 2>&1 || true
+  echo "$account"
+}
+if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+  register_master_key >/dev/null 2>&1 || \
+    echo "  ${C_DIM}Master key will be registered after the stack update${C_RESET}"
+fi
 
 if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
   aws cloudformation create-stack \
@@ -478,14 +520,11 @@ API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region
 CF_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text 2>/dev/null || echo "")
 
-KEY_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiKeyId`].OutputValue' --output text 2>/dev/null || echo "")
-if [ -z "$KEY_ID" ] || [ "$KEY_ID" = "None" ]; then
-  KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
-    --query "items[?name=='${STACK_NAME}-api-key'].id | [0]" --output text)
+ACCOUNT_ID=$(register_master_key 2>/dev/null) || true
+if [ -z "$ACCOUNT_ID" ] || [ "$ACCOUNT_ID" = "None" ]; then
+  echo "${C_RED}ERROR: Failed to register the master key in ${SYSTEM_TABLE}${C_RESET}" >&2
+  exit 1
 fi
-API_KEY=$(aws apigateway get-api-key --api-key "$KEY_ID" --include-value --region "$REGION" \
-  --query 'value' --output text)
 
 if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
   BASE_URL="$CF_URL"
@@ -493,14 +532,13 @@ else
   BASE_URL="$API_URL"
 fi
 
-# Generate token (12h TTL) — exchanged on first page load for the real API key.
-# Lets us print a single URL without exposing the key in console / shell history.
-SYSTEM_TABLE="${STACK_NAME}-system"
+# Generate a single-use token (12h TTL) — exchanged on first page load for an app credential.
+# Lets us print a single URL without exposing any key in console / shell history.
 TOKEN=$(openssl rand -hex 16)
 TOKEN_TTL=$(($(date +%s) + 43200))
 aws dynamodb put-item \
   --table-name "$SYSTEM_TABLE" --region "$REGION" \
-  --item "{\"pk\":{\"S\":\"TOKEN\"},\"sk\":{\"S\":\"$TOKEN\"},\"apiKey\":{\"S\":\"$API_KEY\"},\"ttl\":{\"N\":\"$TOKEN_TTL\"}}" \
+  --item "{\"pk\":{\"S\":\"TOKEN\"},\"sk\":{\"S\":\"$TOKEN\"},\"accountId\":{\"S\":\"$ACCOUNT_ID\"},\"kind\":{\"S\":\"app\"},\"ttl\":{\"N\":\"$TOKEN_TTL\"}}" \
   >/dev/null
 
 OPEN_URL="${BASE_URL}/?t=${TOKEN}"

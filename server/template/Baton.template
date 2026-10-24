@@ -153,7 +153,7 @@
         "ResourceId": { "Ref": "ApiProxyResource" },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -290,10 +290,10 @@
         }]
       }
     },
-    "ApiDeploymentV3": {
+    "ApiDeploymentV4": {
       "Type": "AWS::ApiGateway::Deployment",
       "Metadata": {
-        "Note": "Bump this id (V3 -> V4 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
+        "Note": "Bump this id (V4 -> V5 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
       },
       "Properties": {
         "RestApiId": { "Ref": "RestApi" }
@@ -304,8 +304,14 @@
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeploymentV3" },
-        "StageName": "v1"
+        "DeploymentId": { "Ref": "ApiDeploymentV4" },
+        "StageName": "v1",
+        "MethodSettings": [{
+          "ResourcePath": "/*",
+          "HttpMethod": "*",
+          "ThrottlingRateLimit": 50,
+          "ThrottlingBurstLimit": 100
+        }]
       }
     },
     "ApiGatewayRole": {
@@ -530,7 +536,11 @@
       "Properties": {
         "ApiId": { "Ref": "WsApi" },
         "StageName": "v1",
-        "AutoDeploy": true
+        "AutoDeploy": true,
+        "DefaultRouteSettings": {
+          "ThrottlingRateLimit": 200,
+          "ThrottlingBurstLimit": 400
+        }
       }
     },
     "WsHandler": {
@@ -549,6 +559,7 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "SYSTEM_TABLE": { "Ref": "SystemTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
@@ -593,7 +604,8 @@
                   { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
                   { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
                   { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
-                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
+                  { "Fn::GetAtt": ["SystemTable", "Arn"] }
                 ]
               },
               {

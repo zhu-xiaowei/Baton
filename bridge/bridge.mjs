@@ -3,7 +3,8 @@
  * Baton Bridge — syncs supported local agent runtimes to the server.
  *
  * Config: ~/.baton-bridge/config.json
- *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
+ *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "bt_xxx", "deviceName": "MyMac" }
+ *   apiKey holds this device's credential; a master key is exchanged for one on startup.
  */
 
 import { spawn } from 'child_process';
@@ -11,7 +12,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, fetchServerConfig, saveConfig } from './config.mjs';
+import { loadConfig, ensureDeviceCredential, fetchServerConfig, saveConfig } from './config.mjs';
 import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
@@ -49,6 +50,7 @@ process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
 cleanupStagedBridge(BRIDGE_HOME);
+await ensureDeviceCredential(CONFIG);
 initHttp(CONFIG);
 loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
 setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts

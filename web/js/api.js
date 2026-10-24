@@ -28,6 +28,20 @@ state.KEY = (function () {
   }
 })();
 state.WS_URL = localStorage.getItem('_wsurl') || '';
+state.ACCOUNT = localStorage.getItem('_aid') || '';
+
+var DEVICE_CREDENTIAL_PREFIX = 'bt_';
+
+function credentialName() {
+  var ua = navigator.userAgent;
+  var os = /HarmonyOS|OpenHarmony/.test(ua) ? 'HarmonyOS' : /iPhone|iPad|iPod/.test(ua) ? 'iOS'
+    : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows'
+    : /Linux/.test(ua) ? 'Linux' : 'Unknown';
+  // The HarmonyOS shell injects window.harmonyBridge on every page; the per-feature
+  // namespaces exist only after harmony-bridge.js runs, which Setup does not load.
+  var nativeApp = window.isTauri || window.__TAURI_INTERNALS__ || window.harmonyBridge;
+  return (nativeApp ? 'Baton app' : 'Browser') + ' · ' + os;
+}
 
 function clearCachedAccountData() {
   window.closeProjectTerminal?.({ keepAlive: false });
@@ -43,21 +57,56 @@ function clearCachedAccountData() {
   clearProjectDataCache();
 }
 
-function setCredentials(key, server) {
+// Account data is kept when only the credential changes (device upgrade, master-key rotation).
+function setCredentials(key, server, accountId, sameAccount) {
   var prev = ''; try { prev = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
   var nextServer = server ? server.replace(/\/+$/, '') : state.SERVER;
-  if (prev !== key || state.SERVER !== nextServer) clearCachedAccountData();
+  if (accountId && state.ACCOUNT) sameAccount = accountId === state.ACCOUNT;
+  else sameAccount = sameAccount || prev === key;
+  if (!sameAccount || state.SERVER !== nextServer) clearCachedAccountData();
   state.KEY = key;
   state.SERVER = nextServer;
+  state.ACCOUNT = accountId || '';
   localStorage.setItem('_ak', btoa(key));
+  if (accountId) localStorage.setItem('_aid', accountId);
+  else localStorage.removeItem('_aid');
   if (server) localStorage.setItem('_as', state.SERVER);
 }
 
 function clearCredentials() {
   state.KEY = '';
+  state.ACCOUNT = '';
   localStorage.removeItem('_ak');
   localStorage.removeItem('_as');
+  localStorage.removeItem('_aid');
   clearCachedAccountData();
+}
+
+// Exchange a master key for a revocable app credential. Returns null on older servers.
+async function requestAppCredential(key, server) {
+  var res = await fetch((server || state.SERVER) + '/api/auth/app-credential', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+    body: JSON.stringify({ name: credentialName() }),
+  });
+  if (res.status === 401 || res.status === 403) throw new Error(res.status + ' ' + res.statusText);
+  if (!res.ok) return null;
+  var data = await res.json();
+  return data && typeof data.apiKey === 'string' && data.apiKey.indexOf(DEVICE_CREDENTIAL_PREFIX) === 0 ? data : null;
+}
+
+// Signed-in clients from before device credentials still hold the master key.
+function upgradeStoredCredential() {
+  var key = state.KEY;
+  if (!key || key.indexOf(DEVICE_CREDENTIAL_PREFIX) === 0 || /\/landing(\.html)?$/.test(location.pathname)) return;
+  var startedAt = Number(localStorage.getItem('_akm') || 0);
+  if (Date.now() - startedAt < 30000) return;
+  localStorage.setItem('_akm', String(Date.now()));
+  requestAppCredential(key).then(function (credential) {
+    if (credential && state.KEY === key) setCredentials(credential.apiKey, null, credential.accountId, true);
+  }).catch(function () {}).finally(function () {
+    localStorage.removeItem('_akm');
+  });
 }
 
 function logout() {
@@ -318,8 +367,10 @@ function viewImage(src) {
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
 // State (KEY/SERVER/WS_URL) lives in state.js, not on window.
+upgradeStoredCredential();
+
 Object.assign(window, {
-  setCredentials, clearCredentials, logout,
+  setCredentials, clearCredentials, logout, credentialName, requestAppCredential,
   api, apiText, apiPost, loadingSpinner,
   loadOneImage, loadImages, viewImage, getImageUrl,
 });
