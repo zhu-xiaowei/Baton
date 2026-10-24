@@ -48,6 +48,8 @@ var _inputFocusRequestsBottom = false;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
+// HarmonyOS tablets omit "Mobile" from the UA, so match the platform itself.
+var _isHarmony = /OpenHarmony/i.test(navigator.userAgent);
 var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
 var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
@@ -2356,6 +2358,7 @@ function interruptSession() {
 var restoreScrollFrame = null;
 (function () {
   var el = document.getElementById('msg-input');
+  if (_isHarmony) el.setAttribute('enterkeyhint', 'enter');
   function resizeInputPreservingMessages() {
     var content = document.getElementById('content');
     var preserveScroll = content
@@ -2388,7 +2391,7 @@ var restoreScrollFrame = null;
     // clears the input, then compositionend re-fills it → duplicate send + leftover text.
     if (e.isComposing || e.keyCode === 229) return;
     // Mobile return inserts a newline; sending uses the explicit button.
-    if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+    if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || _isHarmony) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
   el.addEventListener('input', function () {

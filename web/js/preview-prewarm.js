@@ -1,9 +1,10 @@
 import { state } from './state.js';
 import { parsePreviewTarget } from './preview-link.js';
+import { previewNativeAvailable } from './preview-native.js';
 
 const content = document.getElementById('content');
 
-if (content && (window.isTauri || window.__TAURI_INTERNALS__) && window.IntersectionObserver) {
+if (content && previewNativeAvailable() && window.IntersectionObserver) {
   const links = new Set();
   const visible = new Set();
   let candidate = null;

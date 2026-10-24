@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Baton shell entry module",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {}
+}

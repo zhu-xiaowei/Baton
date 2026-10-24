@@ -1,5 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+// The native loopback proxy is addressed by the Tauri command/event names on
+// every shell; preview-native.js maps them onto the HarmonyOS bridge.
+import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
 import { PreviewDataChannel } from '../../bridge/preview-protocol.mjs';
 
 const CHUNK_BYTES = 16 * 1024;

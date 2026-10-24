@@ -13,8 +13,13 @@ function detectNativeMobile({
   userAgent = '',
   platform = '',
   maxTouchPoints = 0,
+  protocol = 'https:',
+  harmonyBridge = false,
 } = {}) {
   const classes = new Set();
+  const window = { location: { protocol } };
+  if (tauri) window.__TAURI_INTERNALS__ = {};
+  if (harmonyBridge) window.harmonyBridge = {};
   const context = {
     navigator: { userAgent, platform, maxTouchPoints },
     document: {
@@ -27,15 +32,19 @@ function detectNativeMobile({
         },
       },
     },
-    window: tauri ? { __TAURI_INTERNALS__: {} } : {},
+    window,
   };
 
   vm.runInNewContext(detectorSource, context);
   return {
     classApplied: classes.has('native-mobile'),
     flag: context.window.__BATON_NATIVE_MOBILE__,
+    resync: context.window.__batonSyncNativeMobile,
   };
 }
+
+const HARMONY_UA = 'Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko)'
+  + ' Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1 Mobile';
 
 test('native mobile detection requires Tauri and a mobile operating system', () => {
   const cases = [
@@ -76,6 +85,63 @@ test('native mobile detection requires Tauri and a mobile operating system', () 
     assert.equal(result.classApplied, scenario.expected, scenario.name);
     assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
   }
+});
+
+test('the HarmonyOS shell counts as native mobile even without Tauri internals', () => {
+  const cases = [
+    {
+      name: 'ArkWeb serving the bundled page from app://',
+      input: { userAgent: HARMONY_UA, protocol: 'app:' },
+      expected: true,
+    },
+    {
+      name: 'HarmonyOS system browser visiting the served site',
+      input: { userAgent: HARMONY_UA, protocol: 'https:' },
+      expected: false,
+    },
+    {
+      name: 'shell scheme alone, without a recognizable user agent or facade',
+      input: { userAgent: 'Mozilla/5.0 (Phone)', protocol: 'app:' },
+      expected: true,
+    },
+    {
+      name: 'shell with an unrecognized user agent but the facade injected',
+      input: { userAgent: 'Mozilla/5.0 (Phone)', protocol: 'app:', harmonyBridge: true },
+      expected: true,
+    },
+    {
+      name: 'desktop browser with a file origin',
+      input: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', protocol: 'file:' },
+      expected: false,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const result = detectNativeMobile(scenario.input);
+    assert.equal(result.classApplied, scenario.expected, scenario.name);
+    assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
+  }
+});
+
+test('the HarmonyOS facade re-runs mobile detection once it is installed', () => {
+  // The declarative javaScriptProxy is not guaranteed to exist when the head
+  // script runs, so the detector must stay callable and the facade must call it.
+  assert.equal(typeof detectNativeMobile().resync, 'function');
+
+  const facade = readFileSync(new URL('../../web/js/harmony-bridge.js', import.meta.url), 'utf8');
+  assert.match(facade, /typeof host\.__batonSyncNativeMobile === 'function'/);
+  assert.ok(
+    facade.indexOf('__batonSyncNativeMobile') < facade.indexOf('return true;'),
+    'detection is re-run before the install reports success',
+  );
+});
+
+test('the terminal key bar and joystick only need the native mobile flag', () => {
+  const terminal = readFileSync(new URL('../../web/js/terminal.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../web/css/terminal.css', import.meta.url), 'utf8');
+
+  assert.match(terminal, /if \(window\.__BATON_NATIVE_MOBILE__\) \{\s*current\.mobileControls = attachTerminalKeybar\(/);
+  assert.match(css, /html\.native-mobile \.keyboard-open \.project-terminal-keybar \{/);
 });
 
 test('all entry pages run mobile detection before their first style block', () => {

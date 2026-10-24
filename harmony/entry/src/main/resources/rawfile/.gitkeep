@@ -1,0 +1,2 @@
+# The Baton web frontend (vite build output) is copied here by ../../../../sync-web.sh.
+# Build artifacts are gitignored; run sync-web.sh before building the app.

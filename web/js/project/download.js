@@ -1,5 +1,12 @@
+// HarmonyOS NEXT shell: ArkWeb ignores <a download>, so the native bridge owns
+// the transfer and the system save dialog (harmony/.../bridge/DownloadBridge.ets).
+function harmonyBridge() {
+  const bridge = window.harmonyDownloadBridge;
+  return bridge && typeof bridge.download === 'function' ? bridge : null;
+}
+
 export function nativeDownloads() {
-  return !!window.__TAURI_INTERNALS__;
+  return !!window.__TAURI_INTERNALS__ || !!harmonyBridge();
 }
 
 export function browserCanShare() {
@@ -14,7 +21,37 @@ function contentType(file) {
     ? file.contentType : file.previewType || 'application/octet-stream';
 }
 
-export async function downloadFile(file) {
+let _harmonyId = 0;
+const _harmonyPending = new Map();
+
+function harmonyDownload(bridge, file, onProgress) {
+  if (!window.__onHarmonyDownload) {
+    window.__onHarmonyDownload = (id, result) => {
+      const pending = _harmonyPending.get(id);
+      if (!pending) return;
+      _harmonyPending.delete(id);
+      if (result?.error) pending.reject(new Error(result.error));
+      else pending.resolve({ status: result?.status || 'saved_as' });
+    };
+    window.__onHarmonyDownloadProgress = (id, percent) => {
+      _harmonyPending.get(id)?.onProgress?.(percent);
+    };
+  }
+  const id = ++_harmonyId;
+  return new Promise((resolve, reject) => {
+    _harmonyPending.set(id, { resolve, reject, onProgress });
+    try {
+      bridge.download(JSON.stringify({ id, url: file.url, name: file.name }));
+    } catch (error) {
+      _harmonyPending.delete(id);
+      reject(new Error('Could not start the download'));
+    }
+  });
+}
+
+export async function downloadFile(file, onProgress) {
+  const harmony = harmonyBridge();
+  if (harmony) return harmonyDownload(harmony, file, onProgress);
   if (nativeDownloads()) {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke('plugin:file-download|download', {

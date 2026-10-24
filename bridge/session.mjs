@@ -379,11 +379,15 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   // 2. Read jsonl content to determine status
   const contentStatus = readStatusFromFile(filePath);
 
-  // 3. File stale > 5min → completed regardless of content
-  //    A truly running session always writes to jsonl, keeping mtime fresh
+  // 3. File stale > 5min → completed, even if a --resume process is still alive.
+  //    A truly running turn keeps writing jsonl (fresh mtime); an idle interactive
+  //    /VS Code session leaves its `--resume` process up between turns, so process
+  //    presence alone must not pin a finished turn to "running". needs_input is
+  //    preserved: a session parked at AskUserQuestion/ExitPlanMode stops writing
+  //    while the ball is in the user's court.
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'completed'; }
-  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'completed';
+  if (contentStatus !== 'needs_input' && Date.now() - mtimeMs > 300_000) return 'completed';
 
   return contentStatus;
 }

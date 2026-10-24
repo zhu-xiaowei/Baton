@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Baton HarmonyOS shell"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Baton"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Baton"
+    },
+    {
+      "name": "camera_reason",
+      "value": "Scan the Baton login QR code to connect to your server."
+    },
+    {
+      "name": "load_failed",
+      "value": "Failed to load. Check your network."
+    },
+    {
+      "name": "retry",
+      "value": "Retry"
+    }
+  ]
+}

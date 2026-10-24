@@ -106,10 +106,12 @@ async function downloadViewedFile() {
         }
         if (_downloadTarget !== target) return;
       }
-      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
+      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file, percent => {
+        if (_downloadTarget === target) downloadStatus('Downloading… ' + percent + '%');
+      });
     }
     if (_downloadTarget === target) downloadStatus({
-      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
+      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.', saved_as: 'Saved.',
       shared: 'Shared.', cancelled: '', started: 'Download started.',
       share_opened: 'Download complete. System sharing opened.',
       ready: 'File ready. Tap Download again to open the system share sheet.',

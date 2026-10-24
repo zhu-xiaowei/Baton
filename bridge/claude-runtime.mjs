@@ -98,8 +98,9 @@ export function discoverClaudeSessions(options = {}) {
       };
       const children = discoverClaudeSubagents(projectDir, session, {
         now: options.now,
-        parentRunning: runningInfo.sessions.has(nativeSessionId)
-          || (runningInfo.projects.has(project) && runningInfo.sessions.size === 0),
+        // Only an exactly identified parent process vouches for its children; the
+        // project-level fallback matches every historical session in that folder.
+        parentRunning: runningInfo.sessions.has(nativeSessionId),
       });
       if (!metadata.preview && !children.length) continue;
       if (!metadata.preview) session._provisional = true;
@@ -127,6 +128,25 @@ export function discoverClaudeSessions(options = {}) {
       skipped: {},
     },
   };
+}
+
+/**
+ * Re-derive a root session's subagent summary from disk and assign the counts
+ * onto it. Without this the server preserves whatever counts it already holds
+ * (sync-sessions treats missing counts as "unchanged"), so one child that was
+ * once recorded as running would pin the root to Running forever.
+ * Returns the refreshed child sessions so their own rows settle too.
+ */
+function refreshClaudeSubagents(session, filePath, context) {
+  if (parseClaudeSubagentSessionId(session.nativeSessionId)) return [];
+  const children = filePath
+    ? discoverClaudeSubagents(path.dirname(filePath), session, {
+      parentRunning: !!context.runningInfo?.sessions?.has(session.nativeSessionId),
+    })
+    : [];
+  for (const child of children) trackAgentSession(child);
+  trackAgentSession(session);
+  return children;
 }
 
 async function syncClaudeMessages(session, context, startLine) {
@@ -329,8 +349,10 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
+    const children = refreshClaudeSubagents(session, gone ? '' : filePath, context);
     return {
       session,
+      extraSessions: children,
       statusDelta: {
         deviceName: active.deviceName,
         projectHash,

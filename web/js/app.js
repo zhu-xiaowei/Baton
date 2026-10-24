@@ -30,6 +30,7 @@ import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
 import { parsePreviewTarget } from './preview-link.js';
+import { openExternalLink, previewNativeAvailable } from './preview-native.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
@@ -2216,14 +2217,14 @@ async function loadOlderAndPrepend() {
   if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();
 
-// In Tauri (WKWebView/WebView2) target=_blank can't open a tab, so external links
-// would navigate the webview itself. Intercept and hand off to the system browser
-// via plugin-opener (scoped to http/https in capabilities). Real browsers keep
-// target=_blank and open a tab natively.
+// In a native shell (WKWebView/WebView2/ArkWeb) target=_blank can't open a tab,
+// so external links would navigate the webview itself. Intercept and hand off to
+// the system browser (plugin-opener, scoped to http/https in capabilities, or the
+// HarmonyOS open bridge). Real browsers keep target=_blank and open a tab natively.
 document.addEventListener('click', function (e) {
   var a = e.target.closest && e.target.closest('a.ext-link');
   if (!a || !a.href) return;
-  if (!(window.isTauri || window.__TAURI_INTERNALS__)) return;
+  if (!previewNativeAvailable()) return;
   if (state.appState.device && parsePreviewTarget(a.href)) {
     e.preventDefault();
     void import('./preview.js').then(module => module.openPreviewLink(a.href, state.appState.device))
@@ -2231,7 +2232,7 @@ document.addEventListener('click', function (e) {
     return;
   }
   e.preventDefault();
-  import('@tauri-apps/plugin-opener').then(function (m) { m.openUrl(a.href); }).catch(function () {});
+  openExternalLink(a.href).catch(function () {});
 });
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.

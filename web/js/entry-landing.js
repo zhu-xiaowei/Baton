@@ -2,6 +2,7 @@
 // A Start URL looks like one of:
 //   https://<server>/?t=<one-time-token>   (issued by install.sh, 60 min single-use)
 //   https://<server>/?key=<apiKey>         (issued by setup page, permanent)
+import './harmony-bridge.js';   // must precede the scan-bridge detection below
 import { state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
@@ -23,8 +24,10 @@ setNativeTabTitle('Baton');
   // accept Start URLs from any origin. Browser is bound to its own origin.
   var isNativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
   var isMobileApp = isNativeApp && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  // HarmonyOS NEXT shell injects a native ScanKit bridge (see harmony/).
+  var harmonyScan = !!(window.harmonyScanBridge && typeof window.harmonyScanBridge.scan === 'function');
 
-  if (isMobileApp) {
+  if (isMobileApp || harmonyScan) {
     var scanBtn = document.getElementById('scanBtn');
     if (scanBtn) scanBtn.style.display = 'flex';
     setupScan();
@@ -124,6 +127,7 @@ setNativeTabTitle('Baton');
   function setupScan() {
     var scanBtn = document.getElementById('scanBtn');
     if (!scanBtn) return;
+    if (harmonyScan) { setupHarmonyScan(scanBtn); return; }
     // Android Back cancels a scan, otherwise backgrounds the app. Tauri keeps
     // listeners across page loads, so this page registers its own.
     if (window.BatonAndroid) {
@@ -171,6 +175,39 @@ setNativeTabTitle('Baton');
         errEl.style.display = 'block';
       }
     });
+  }
+
+  // HarmonyOS NEXT: ScanKit's default UI owns the camera, permission prompt and
+  // cancel. We only wire the button to the bridge and route the decoded string
+  // (a Baton Start URL) through the same applyStartUrl flow as paste/Tauri.
+  function setupHarmonyScan(scanBtn) {
+    window.__onHarmonyScan = function (content) { handleScannedContent(content); };
+    window.__onHarmonyScanError = function (_code) {
+      // Cancel and failures both arrive here; stay silent and let the user
+      // retry or paste the Start URL manually.
+      hideLoading();
+    };
+    scanBtn.addEventListener('click', function () {
+      var errEl = document.getElementById('error');
+      errEl.style.display = 'none';
+      try { window.harmonyScanBridge.scan(); } catch (_) {}
+    });
+  }
+
+  // Shared by the HarmonyOS scan path: fill the input and run the login flow.
+  async function handleScannedContent(content) {
+    var c = (content || '').trim();
+    if (!c) return;
+    var errEl = document.getElementById('error');
+    document.getElementById('startUrlInput').value = c;
+    showLoading('Connecting');
+    try {
+      await applyStartUrl(c);
+    } catch (e) {
+      hideLoading();
+      errEl.textContent = errorMessage(e);
+      errEl.style.display = 'block';
+    }
   }
 
   // Called by the native × button on the camera view. Guard against double-tap.

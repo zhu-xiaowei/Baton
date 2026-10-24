@@ -3,6 +3,7 @@
 // lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders
 // the device list. Diff rendering stays deferred until an Edit is expanded.
 
+import './harmony-bridge.js';   // must precede any native-bridge feature detection
 import './state.js';
 import './api.js';
 import './components/skeleton.js';

@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { state } from './state.js';
 import { CLOSE_ICON_SVG } from './components/icons.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
@@ -8,6 +6,7 @@ import { openBrowserPage } from './browser/page.js';
 import { normalizeBrowserAddress } from './browser/address.js';
 import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
+import { previewNativeAvailable, previewOpenExternal } from './preview-native.js';
 import '../css/preview.css';
 import '../css/loading.css';
 
@@ -63,7 +62,7 @@ export async function prewarmPreviewLink(value, device) {
   const target = parsePreviewTarget(value);
   if (!target || !device || device !== state.appState.device || !state.appState.session
     || document.hidden || browserView || overlay || !state.KEY
-    || !(window.isTauri || window.__TAURI_INTERNALS__)) return;
+    || !previewNativeAvailable()) return;
   const key = JSON.stringify([device, target.port]);
   const existing = connections.get(key);
   if (existing && (existing.pending || (existing.origin && !existing.tunnel?.closed))) return;
@@ -88,7 +87,7 @@ function actionButtons() {
     ['browser', 'Open in browser'],
     ['delete', 'Delete connection'],
   ].map(([action, label]) => `<button type="button" data-preview-action="${action}"
-    aria-label="${label}" title="${label}" ${action !== 'delete' && !(window.isTauri || window.__TAURI_INTERNALS__) ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none"
+    aria-label="${label}" title="${label}" ${action !== 'delete' && !previewNativeAvailable() ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none"
     stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
     stroke-linejoin="round" aria-hidden="true">${icons[action]}</svg></button>`).join('');
 }
@@ -364,7 +363,7 @@ function goBack() {
 }
 
 async function wsUrl() {
-  if (!(window.isTauri || window.__TAURI_INTERNALS__)) {
+  if (!previewNativeAvailable()) {
     throw new Error('Port forwarding requires the Baton desktop or mobile app.');
   }
   if (!state.KEY || !state.SERVER) throw new Error('Sign in before opening a preview.');
@@ -558,11 +557,7 @@ async function openBrowser(entry) {
 }
 
 async function launchBrowser(url) {
-  if (/Android/i.test(navigator.userAgent)) {
-    await invoke('plugin:in-app-browser|open_chrome', { payload: { url, toolbarColor: '#161b22' } });
-  } else {
-    await openUrl(url);
-  }
+  await previewOpenExternal(url);
 }
 
 async function disconnect(entry) {
