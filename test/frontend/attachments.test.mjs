@@ -8,9 +8,10 @@ import {
 } from '../../web/js/components/attachment.js';
 
 const dom = new JSDOM('<!doctype html><body><div id="img-preview-row"></div>'
-  + '<div id="imgOverlay"><img id="imgOverlayImg"></div><div id="content"></div>'
+  + '<div id="imgOverlay"><button class="img-overlay-close"></button>'
+  + '<button class="file-download-action img-overlay-download" hidden></button><img id="imgOverlayImg"></div><div id="content"></div>'
   + '<div id="fileOverlay"><span id="fileOverlayTitle"></span><div id="fileOverlayTabs"></div>'
-  + '<button id="file-download-btn" class="file-download-action"></button><div id="file-download-status"></div>'
+  + '<button id="file-download-btn" class="file-download-action"></button>'
   + '<div id="fileOverlayBody"></div></div></body>', { url: 'https://app.test/' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -502,12 +503,22 @@ test('text previews use the source viewer while Office is not decoded as text', 
   assert.equal(isTextAttachment({ name: 'deck.pptx' }), false);
   assert.equal(isTextAttachment({ name: 'sheet.xlsx' }), false);
   assert.equal(isTextAttachment({ name: 'data.csv' }), true);
-  window.api = async () => ({ name: 'notes.md', size: 8, url: 'https://bucket.test/text' });
+  window.api = async () => ({ name: 'notes.txt', size: 8, url: 'https://bucket.test/text' });
   globalThis.fetch = async () => new Response('# Notes\n');
-  window.openFile('baton-file:' + 'a'.repeat(32) + '.md', 'notes.md');
+  window.openFile('baton-file:' + 'a'.repeat(32) + '.txt', 'notes.txt');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.match(document.getElementById('fileOverlayBody').textContent, /# Notes/);
-  assert.equal(document.getElementById('fileOverlayTabs').style.display, '');
+});
+
+test('Markdown and HTML attachments open in Preview like project documents', () => {
+  document.getElementById('fileOverlayTabs').innerHTML = ['diff', 'source', 'preview']
+    .map(mode => `<button class="file-tab" data-mode="${mode}"></button>`).join('');
+  window.api = () => new Promise(() => {});
+  for (const extension of ['md', 'html']) {
+    window.openFile('baton-file:' + 'a'.repeat(32) + '.' + extension, 'notes.' + extension);
+    assert.equal(document.querySelector('#fileOverlayTabs .file-tab.active').dataset.mode, 'preview');
+  }
+  window.closeFileViewer();
 });
 
 test('text preview cancels at its limit instead of buffering an entire large file', async () => {
@@ -532,9 +543,10 @@ test('the shared download button invokes the native download plugin with the ori
   assert.equal(calls[0].command, 'plugin:file-download|download');
   assert.equal(calls[0].args.name, 'deck.pptx');
   assert.equal(calls[0].args.url, 'https://bucket.s3.test/download');
-  assert.equal(document.getElementById('file-download-status').textContent, 'Saved to Downloads.');
-  assert.equal(document.getElementById('file-download-btn').disabled, false);
-  assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
+  const button = document.getElementById('file-download-btn');
+  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  assert.equal(button.disabled, false);
+  assert.equal(button.classList.contains('is-downloading'), false);
 });
 
 test('mobile browser downloads attempt sharing and reuse Download when fresh activation is required', async () => {
@@ -552,7 +564,7 @@ test('mobile browser downloads attempt sharing and reuse Download when fresh act
   assert.equal(shared.length, 0);
   assert.equal(attempts, 1);
   assert.equal(document.getElementById('file-share-btn'), null);
-  assert.match(document.getElementById('file-download-status').textContent, /Tap Download again/);
+  assert.equal(document.querySelector('#file-download-btn path').getAttribute('d'), 'M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5');
   await window.downloadViewedFile();
   assert.equal(shared.length, 1);
   assert.equal(shared[0].files[0].name, 'deck.pptx');
@@ -563,7 +575,50 @@ test('download errors keep the preview and restore its controls', async () => {
   window.openFile('baton-file:' + key, 'deck.pptx');
   window.api = async () => { throw new Error('Bridge offline'); };
   await window.downloadViewedFile();
-  assert.match(document.getElementById('file-download-status').textContent, /Bridge offline/);
+  assert.equal(document.getElementById('file-download-btn').classList.contains('is-failed'), true);
   assert.equal(document.getElementById('file-download-btn').disabled, false);
   assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
+});
+
+test('images sent in one message open as one gallery', async () => {
+  Object.assign(globalThis, { localStorage: window.localStorage, location: window.location,
+    IntersectionObserver: class { observe() {} unobserve() {} } });
+  await import('../../web/js/api.js');
+  document.getElementById('content').innerHTML = '<div class="msg-attachments">'
+    + ['a', 'b', 'c'].map(name => `<div class="img-placeholder loaded"><img src="https://app.test/${name}.png"></div>`).join('')
+    + '</div><div class="img-placeholder loaded"><img id="single" src="https://app.test/d.png"></div>';
+  const images = document.querySelectorAll('.msg-attachments img');
+  window.viewImage(images[1].src, images[1]);
+  assert.equal(document.querySelector('.gallery-nav span').textContent, '2 / 3');
+  document.querySelector('.gallery-nav button[data-step="1"]').click();
+  assert.equal(document.getElementById('imgOverlayImg').src, 'https://app.test/c.png');
+  assert.equal(document.querySelector('.img-overlay-download').hidden, true);
+  document.querySelector('.msg-attachments img').dataset.key = 'c'.repeat(32) + '.jpg';
+  window.viewImage(images[0].src, images[0]);
+  assert.equal(document.querySelector('.img-overlay-download').hidden, false);
+  const single = document.getElementById('single');
+  window.viewImage(single.src, single);
+  assert.equal(document.querySelector('.gallery-nav'), null);
+});
+
+test('the image viewer downloads the current stored image through the native plugin', async () => {
+  const { showImageViewer } = await import('../../web/js/components/image-viewer.js');
+  const calls = [];
+  const requested = [];
+  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.api = async (path, params) => { requested.push({ path, params }); return { url: 'https://bucket.test/photo' }; };
+  showImageViewer([{ src: 'blob:https://app.test/1' }, { src: 'blob:https://app.test/2', key: 'b'.repeat(32) + '.png', attachment: true }], 0);
+  const button = document.querySelector('.img-overlay-download');
+  assert.equal(button.hidden, true);
+  window.galleryNext();
+  assert.equal(button.hidden, false);
+  button.click();
+  assert.equal(button.classList.contains('is-downloading'), true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: { attachment: 'true' } }]);
+  assert.equal(calls[0].command, 'plugin:file-download|download');
+  assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
+    ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
+  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  delete window.__TAURI_INTERNALS__;
 });

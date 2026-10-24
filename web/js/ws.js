@@ -2479,7 +2479,7 @@ function doSend(fullText, displayText, images) {
   if (container) {
     var imgHtml = images.map(function (img) {
       if (img.kind === 'file') return fileAttachmentHtml(img);
-      return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" onclick="viewImage(this.src)" /></div>';
+      return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" data-key="' + esc(img.key) + '" onclick="viewImage(this.src, this)" /></div>';
     }).join('');
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.

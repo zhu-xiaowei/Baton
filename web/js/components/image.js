@@ -2,7 +2,7 @@
 import { state } from '../state.js';
 import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
-import { showImageViewer, closeImageViewer } from './image-viewer.js';
+import { showImageViewer, galleryPrev, galleryNext } from './image-viewer.js';
 import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
 import { contentHash } from './content-hash.js';
 
@@ -185,12 +185,15 @@ function stagedUploadOverlayHtml(entry) {
   return '<div class="staged-upload-overlay" role="progressbar" aria-label="'
     + escapeAttachment('Uploading ' + (entry.name || 'image')) + '" aria-valuemin="0" aria-valuemax="100">'
     + '<div class="staged-upload-visual" aria-hidden="true">'
-    + '<svg class="staged-progress-indicator" viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
+    // The ring spins as its own <svg> box: WebKit offsets a spinning element inside an SVG under page zoom.
+    + '<span class="staged-progress-indicator">'
+    + '<svg viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
     + '<circle class="staged-progress-pie" cx="18" cy="18" r="6.5" fill="none" stroke="currentColor"'
-    + ' stroke-width="13" pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 18 18)"/>'
-    + '<g class="staged-progress-orbit"><circle class="staged-progress-ring" cx="18" cy="18" r="16"'
+    + ' stroke-width="13" pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 18 18)"/></svg>'
+    + '<svg class="staged-progress-orbit" viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
+    + '<circle class="staged-progress-ring" cx="18" cy="18" r="16"'
     + ' fill="none" stroke="currentColor" stroke-width="1.5" pathLength="100"'
-    + ' stroke-dasharray="100 100" stroke-linecap="round"/></g></svg>'
+    + ' stroke-dasharray="100 100" stroke-linecap="round"/></svg></span>'
     + '<span class="staged-progress-text"></span></div></div>';
 }
 
@@ -289,48 +292,17 @@ function removeStagedImage(i) {
   renderStagedImages();
 }
 
-var galleryIndex = 0;
 function viewStagedImage(i) {
   if (!state.stagedImages[i]?.uploaded || state.stagedImages[i].kind === 'file') return;
-  galleryIndex = galleryImages().indexOf(state.stagedImages[i]);
-  showGallery();
+  var images = galleryImages();
+  showImageViewer(images.map(image => ({ src: image.dataUrl })), images.indexOf(state.stagedImages[i]));
 }
 
 function galleryImages() { return state.stagedImages.filter(image => image.kind !== 'file' && image.uploaded); }
 
-function showGallery() {
-  var images = galleryImages();
-  var img = images[galleryIndex];
-  if (!img || !img.dataUrl) return;
-  var overlay = document.getElementById('imgOverlay');
-  showImageViewer(img.dataUrl, true);
-  // Build nav buttons if multiple
-  var nav = overlay.querySelector('.gallery-nav');
-  if (nav) nav.remove();
-  if (images.length > 1) {
-    var navHtml = '<div class="gallery-nav">'
-      + '<button onclick="event.stopPropagation();galleryPrev()"' + (galleryIndex <= 0 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>'
-      + '<span>' + (galleryIndex + 1) + ' / ' + images.length + '</span>'
-      + '<button onclick="event.stopPropagation();galleryNext()"' + (galleryIndex >= images.length - 1 ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg></button>'
-      + '</div>';
-    overlay.insertAdjacentHTML('beforeend', navHtml);
-  }
-}
-
-function galleryPrev() { if (galleryIndex > 0) { galleryIndex--; showGallery(); } }
-function galleryNext() { if (galleryIndex < galleryImages().length - 1) { galleryIndex++; showGallery(); } }
-
-document.addEventListener('keydown', function (e) {
-  var overlay = document.getElementById('imgOverlay');
-  if (!overlay || overlay.style.display !== 'flex') return;
-  if (e.key === 'ArrowLeft') { e.preventDefault(); galleryPrev(); }
-  else if (e.key === 'ArrowRight') { e.preventDefault(); galleryNext(); }
-  else if (e.key === 'Escape') closeImageViewer();
-});
-
 // Function bridges for inline HTML handlers (state.stagedImages lives in state.js).
 Object.assign(window, {
   onImagePicked, onInputPaste, stageImageFile, renderStagedImages, removeStagedImage,
-  viewStagedImage, showGallery, galleryPrev, galleryNext,
+  viewStagedImage, galleryPrev, galleryNext,
   stageAttachmentFile, retryStagedFile,
 });

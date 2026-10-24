@@ -30,8 +30,19 @@ async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: Strin
       .and_then(|size| if size > max_bytes { Err("File exceeds 512 MB".to_string()) } else { Ok(size) });
     drop(file);
     if let Err(error) = result { let _ = std::fs::remove_file(&path); return Err(error); }
+    #[cfg(target_os = "macos")]
+    bounce_downloads_stack(&path);
     Ok(serde_json::json!({ "status": "saved", "path": path }))
   }).await.map_err(|error| error.to_string())?
+}
+
+// The same distributed notification Safari posts: the Dock's Downloads stack bounces for the file.
+#[cfg(target_os = "macos")]
+fn bounce_downloads_stack(path: &std::path::Path) {
+  use objc2_foundation::{NSDistributedNotificationCenter, NSString};
+  let name = NSString::from_str("com.apple.DownloadFileFinished");
+  let file = NSString::from_str(&path.to_string_lossy());
+  unsafe { NSDistributedNotificationCenter::defaultCenter().postNotificationName_object(&name, Some(&file)); }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

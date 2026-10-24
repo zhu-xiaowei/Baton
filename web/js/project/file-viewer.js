@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
+import { setDownloadButtonState } from '../components/download-button.js';
 import { currentProjectHash, relativeProjectImagePath } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
@@ -37,21 +38,14 @@ function clearAttachmentPreviewCache(key) {
   _clearPdfRanges?.(state.SERVER + '|' + state.KEY + '|' + key + '|');
 }
 
-function downloadStatus(text) {
-  const status = document.getElementById('file-download-status');
-  if (status) status.textContent = text;
-}
-
-function updateDownloadButtons() {
+// A finished check/failure icon stays until its own timer, so unrelated body updates keep it.
+function updateDownloadButtons(result) {
   const busy = !!_downloadTarget?.busy;
   document.querySelectorAll('#file-download-btn, #fileOverlay .file-download-action').forEach(button => {
-    button.disabled = !_downloadTarget || busy;
-    button.classList.toggle('is-downloading', busy);
-    button.setAttribute('aria-busy', String(busy));
-    if (busy && !button.querySelector('.file-download-spinner')) {
-      button.insertAdjacentHTML('beforeend', '<span class="file-download-spinner">'
-        + loadingSpinner({ size: 'small', label: 'Downloading file' }) + '</span>');
+    if (result || busy || button.classList.contains('is-downloading')) {
+      setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'));
     }
+    button.disabled = !_downloadTarget || busy;
   });
 }
 
@@ -89,7 +83,7 @@ async function downloadViewedFile() {
   if (!target || target.busy) return;
   target.busy = true;
   updateDownloadButtons();
-  downloadStatus('Preparing download…');
+  let outcome = 'failed';
   try {
     let result;
     if (target.sharedFile) {
@@ -97,7 +91,6 @@ async function downloadViewedFile() {
     } else {
       const file = await prepareViewedDownload(target);
       if (_downloadTarget !== target) return;
-      downloadStatus('Downloading…');
       if (browserCanShare() && file.size <= BROWSER_SHARE_MAX_BYTES) {
         try {
           target.sharedFile = await prepareSharedFile(file);
@@ -108,17 +101,11 @@ async function downloadViewedFile() {
       }
       result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
     }
-    if (_downloadTarget === target) downloadStatus({
-      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
-      shared: 'Shared.', cancelled: '', started: 'Download started.',
-      share_opened: 'Download complete. System sharing opened.',
-      ready: 'File ready. Tap Download again to open the system share sheet.',
-    }[result.status] || 'Download started.');
-  } catch (error) {
-    if (_downloadTarget === target) downloadStatus(String(error.message || error));
-  } finally {
+    // ready: sharing needs a fresh tap, so the button simply returns to Download.
+    outcome = result.status === 'cancelled' || result.status === 'ready' ? 'idle' : 'done';
+  } catch {} finally {
     target.busy = false;
-    if (_downloadTarget === target) updateDownloadButtons();
+    if (_downloadTarget === target) updateDownloadButtons(outcome);
   }
 }
 
@@ -298,6 +285,8 @@ function setFileViewMode(mode) {
   }
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading preview' }) + '</div>');
+  // An attachment has no folder beside it, so its relative images, CSS and scripts are not loaded.
+  var attachment = _view.path.startsWith('baton-file:');
   if (isMarkdown(_current.path)) {
     var current = _current;
     var documentModule;
@@ -316,7 +305,7 @@ function setFileViewMode(mode) {
       var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
       bindDocumentLinks(mdBody, mdDir, mdRoot);
       return mdRoot.then(function (root) {
-        if (token !== _previewToken) return;
+        if (token !== _previewToken || attachment) return;
         inlineImages(mdBody, mdDir, root, documentModule.darkColorScheme); // mutates this node; harmless if view later changes
       });
     }).catch(function (error) {
@@ -324,7 +313,7 @@ function setFileViewMode(mode) {
     });
     return;
   }
-  buildPreviewHtml(_current.text, _current.path).then(function (html) {
+  (attachment ? Promise.resolve(_current.text) : buildPreviewHtml(_current.text, _current.path)).then(function (html) {
     if (token === _previewToken) showPreview(html, _current.path, token);
   });
 }
@@ -629,7 +618,6 @@ export function closeFileViewer(options) {
   _current = null;
   _view = null;
   _downloadTarget = null;
-  downloadStatus('');
   _fileRequestToken++;
   _previewToken++;
   setBody('');
@@ -692,8 +680,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', matchId, options: options };
   _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
-  downloadStatus('');
-  updateDownloadButtons();
+  updateDownloadButtons('idle');
   var titleEl = document.getElementById('fileOverlayTitle');
   titleEl.textContent = displayName || absPath;
   titleEl.title = absPath;
@@ -706,7 +693,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
   // HTML opens rendered even from edit/line links; Markdown keeps source positioning for those links.
   var previewDocument = isPreviewable(absPath) && (isHtml(absPath) || (!lineHint && !matchId))
-    && !absPath.startsWith('baton-file:') && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
+    && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
   setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff'
     : previewDocument ? 'preview' : 'source');
   return true;

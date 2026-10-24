@@ -257,7 +257,7 @@ try {
   await evaluate('document.getElementById("file-download-btn").click()');
   const downloaded = path.join(downloadPath, '路线图 [2026].pptx');
   await waitFor(async () => { try { return (await readFile(downloaded)).equals(deck.bytes); } catch { return false; } });
-  assert.equal(await evaluate('document.getElementById("file-download-status").textContent'), 'Download started.');
+  assert.equal(await evaluate('document.querySelector("#file-download-btn path").getAttribute("d")'), 'M5 12.5l4.5 4.5L19 7.5');
   assert.match(await evaluate('location.pathname'), /__attachment_test/);
   await evaluate('document.getElementById("file-download-btn").click()');
   await waitFor(() => completedDownloads.size === 2);

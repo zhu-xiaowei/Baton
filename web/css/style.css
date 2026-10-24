@@ -819,6 +819,9 @@ html.native-mobile .agent-threads-list {
 .file-modal-body { flex: 1; min-height: 0; overflow: auto; padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px)); overscroll-behavior-x: auto; overscroll-behavior-y: contain; scroll-behavior: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
 /* The HTML document owns scrolling; let its canvas extend to the bottom edge. */
 #fileOverlayBody:has(> .file-preview) { padding-bottom: 0; overflow: hidden; }
+/* PDF, Word and PowerPoint also reach the screen edge and pad their own pages; Excel keeps its bottom tabs clear. */
+#fileOverlayBody:has(> .pdf-preview-host),
+#fileOverlayBody:has(> .office-preview-host:not([data-kind="xlsx"])) { padding-bottom: 0; }
 .file-preview { width: 100%; height: 100%; border: none; background: #fff; display: block; }
 .file-video { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #000; }
 .md-preview { padding: 16px 18px; font-size: 14px; line-height: 1.7; max-width: 820px; margin: 0 auto; }
@@ -870,13 +873,15 @@ html.native-mobile .agent-threads-list {
 .img-overlay img { max-width: 95%; max-height: 85%; object-fit: contain; transform-origin: center; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; will-change: transform; }
 .img-overlay.zoomed img { cursor: grab; }
 .img-overlay-close { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 1; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: rgba(48,54,61,0.75); color: #fff; cursor: pointer; }
+.img-overlay .img-overlay-download { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 60px; z-index: 1; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: rgba(48,54,61,0.75); color: #fff; cursor: pointer; }
+.img-overlay .img-overlay-download[hidden] { display: none; }
 .gallery-nav { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
 .gallery-nav button { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #6e7681; background: rgba(255,255,255,0.1); color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0; }
 @media (hover: hover) and (pointer: fine) {
   .gallery-nav button:hover { background: rgba(255,255,255,0.2); }
 }
 .gallery-nav button:disabled { opacity: 0.3; cursor: default; }
-.gallery-nav span { color: #8b949e; font-size: 13px; }
+.gallery-nav span { color: #8b949e; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: center; }
 
 /* === Real-time tool OUT === */
 .tool-body-out { border-top: 1px solid #21262d; padding: 6px 10px; }
@@ -1160,8 +1165,7 @@ html.native-mobile .slash-description {
 .file-download-action.is-downloading .file-download-spinner { display: flex; }
 .file-download-spinner .loading-spinner { width: 16px; height: 16px; border-width: 1.5px; border-color: currentColor; border-left-color: transparent; animation-duration: 1s; }
 @media (prefers-reduced-motion: reduce) { .file-download-spinner .loading-spinner { animation: none; } }
-.file-download-status { padding: 0 12px; font-size: 12px; color: #8b949e; overflow-wrap: anywhere; }
-.file-download-status:not(:empty) { padding-bottom: 8px; }
+.file-download-action.is-failed { color: #f85149; }
 #img-preview-row .img-thumb { width: 64px; }
 .staged-image-preview img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 #img-preview-row .img-remove { position: absolute; top: 0; right: 0; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; color: #c9d1d9; border: 0; cursor: pointer; z-index: 2; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
@@ -1177,8 +1181,11 @@ html.native-mobile .slash-description {
 .staged-upload-overlay { transition: opacity 180ms ease; }
 .staged-upload-visual { position: absolute; inset: 0; animation: staged-upload-appear 120ms ease 150ms both; }
 .staged-progress-indicator { position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%); color: #c9d1d9; }
+/* The ring stays clear of the image thumbnail's top-right remove button. */
+#img-preview-row .img-thumb .staged-progress-indicator { width: 22px; height: 22px; }
 .staged-progress-pie { stroke-dashoffset: 100; opacity: 0; transition: stroke-dashoffset 160ms linear, opacity 180ms ease; }
-.staged-progress-orbit { transform-origin: 18px 18px; animation: staged-upload-spin 1s linear infinite paused; }
+.staged-progress-indicator svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.staged-progress-orbit { animation: staged-upload-spin 1s linear infinite paused; }
 .staged-progress-ring { stroke-dashoffset: 25; transition: stroke-dashoffset 180ms ease; }
 .staged-progress-text { position: absolute; top: calc(50% + 17px); left: 0; width: 100%; opacity: 0; text-align: center; font-size: 10px; font-weight: 500; line-height: 12px; font-variant-numeric: tabular-nums; transition: opacity 180ms ease; }
 .has-progress .staged-progress-pie, .has-progress .staged-progress-text { opacity: 1; }
