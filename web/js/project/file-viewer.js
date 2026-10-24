@@ -4,6 +4,7 @@ import { registerEdgeBackLayer } from '../edge-back.js';
 import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
 import { setDownloadButtonState } from '../components/download-button.js';
+import { showToast } from '../components/toast.js';
 import { currentProjectHash, relativeProjectImagePath } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
@@ -103,7 +104,9 @@ async function downloadViewedFile() {
     }
     // ready: sharing needs a fresh tap, so the button simply returns to Download.
     outcome = result.status === 'cancelled' || result.status === 'ready' ? 'idle' : 'done';
-  } catch {} finally {
+  } catch (error) {
+    showToast(String(error.message || error));
+  } finally {
     target.busy = false;
     if (_downloadTarget === target) updateDownloadButtons(outcome);
   }
@@ -302,10 +305,16 @@ function setFileViewMode(mode) {
       window.renderKatexBlocks?.(mdBody);
       window.renderMermaidBlocks?.(mdBody);
       var hasRootPaths = /(?:src|srcset|href)\s*=\s*["']?\/(?!\/)|\]\(\s*<?\/(?!\/)/.test(current.text);
-      var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
+      var mdRoot = attachment ? null
+        : hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
       bindDocumentLinks(mdBody, mdDir, mdRoot);
+      if (attachment) {
+        mdBody.querySelectorAll('.img-placeholder[data-path]').forEach(function (el) { el.replaceWith(el.dataset.alt || ''); });
+        window.loadImages?.(mdBody);
+        return;
+      }
       return mdRoot.then(function (root) {
-        if (token !== _previewToken || attachment) return;
+        if (token !== _previewToken) return;
         inlineImages(mdBody, mdDir, root, documentModule.darkColorScheme); // mutates this node; harmless if view later changes
       });
     }).catch(function (error) {
@@ -314,7 +323,8 @@ function setFileViewMode(mode) {
     return;
   }
   (attachment ? Promise.resolve(_current.text) : buildPreviewHtml(_current.text, _current.path)).then(function (html) {
-    if (token === _previewToken) showPreview(html, _current.path, token);
+    // An attachment's content key, not its file name, gives it its own native preview origin.
+    if (token === _previewToken) showPreview(html, attachment ? _view.path : _current.path, token);
   });
 }
 
@@ -440,6 +450,7 @@ function bindDocumentLinks(container, dir, rootPromise) {
         ?.scrollIntoView({ block: 'start' });
     } else if (target) {
       event.preventDefault();
+      if (!rootPromise) return; // attachments have no folder to resolve against
       var view = _view;
       rootPromise.then(function (root) {
         if (_view !== view) return;

@@ -2,6 +2,7 @@
 import { downloadFile, nativeDownloads } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
 import { setDownloadButtonState } from './download-button.js';
+import { showToast } from './toast.js';
 
 const MAX_SCALE = 5;
 const ARROW = points => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="' + points + '"/></svg>';
@@ -211,7 +212,9 @@ async function downloadCurrentImage() {
     }
     const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) });
     result = saved?.status === 'cancelled' ? 'idle' : 'done';
-  } catch {}
+  } catch (error) {
+    showToast(error.message || 'Could not download the image.');
+  }
   if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   if (items[index] === item) setDownloadButtonState(downloadButton, result);
 }
