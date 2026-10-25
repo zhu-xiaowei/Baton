@@ -237,7 +237,9 @@ function loadItem(item) {
     showNeighbours();
   }, () => {
     item.loading = null;
-    if (items[index] === item) spinner.hidden = true;
+    if (items[index] !== item) return;
+    spinner.hidden = true;
+    showToast('Could not load the image.', items.length > 1 ? { bottom: 72 } : undefined);
   });
 }
 
@@ -254,6 +256,7 @@ function showAt(next) {
     loadItem(item);
   }
   spinner.hidden = !!item.src;
+  [items[index - 1], items[index + 1]].forEach(neighbour => neighbour && !neighbour.src && loadItem(neighbour));
   showNeighbours();
   placeStrip(0, '');
   overlay.dataset.gallery = items.length > 1 ? '1' : '0';
@@ -275,9 +278,9 @@ function showAt(next) {
 function placeStrip(dx, transition) {
   image.style.transition = transition;
   image.style.transform = dx ? `translateX(${dx}px)` : '';
-  peeks.forEach(peek => {
-    peek.style.transition = transition;
-    peek.style.transform = dx ? `translate(-50%, -50%) translateX(${dx}px)` : '';
+  peeks.concat(spinner).forEach(el => {
+    el.style.transition = transition;
+    el.style.transform = dx ? `translate(-50%, -50%) translateX(${dx}px)` : '';
   });
 }
 
