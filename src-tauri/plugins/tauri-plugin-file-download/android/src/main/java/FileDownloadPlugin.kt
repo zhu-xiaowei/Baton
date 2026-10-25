@@ -11,6 +11,8 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.util.Base64
+import androidx.core.content.FileProvider
 import app.tauri.PermissionState
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -20,11 +22,19 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.io.File
 
 @InvokeArg
 class DownloadArgs {
   lateinit var url: String
   lateinit var name: String
+  var mime: String = "application/octet-stream"
+}
+
+@InvokeArg
+class SaveArgs {
+  lateinit var name: String
+  lateinit var data: String
   var mime: String = "application/octet-stream"
 }
 
@@ -49,6 +59,30 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
       return
     }
     enqueue(invoke)
+  }
+
+  // A file made on the device (e.g. a diagram image): written to the cache and shared through the
+  // app's FileProvider (cache-path in file_paths.xml), so it needs no network or storage permission.
+  @Command
+  fun save(invoke: Invoke) = activity.runOnUiThread {
+    try {
+      val args = invoke.parseArgs(SaveArgs::class.java)
+      val name = File(args.name).name.ifEmpty { "download" }
+      val folder = File(activity.cacheDir, "baton-save").apply { deleteRecursively(); mkdirs() }
+      val file = File(folder, name)
+      file.writeBytes(Base64.decode(args.data, Base64.DEFAULT))
+      val uri = FileProvider.getUriForFile(activity, activity.packageName + ".fileprovider", file)
+      val share = Intent(Intent.ACTION_SEND).setType(args.mime)
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      share.clipData = ClipData.newRawUri(name, uri)
+      activity.startActivity(Intent.createChooser(share, null))
+      val result = JSObject()
+      result.put("status", "share_opened")
+      invoke.resolve(result)
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Could not save the file")
+    }
   }
 
   @PermissionCallback

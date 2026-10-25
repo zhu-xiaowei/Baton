@@ -36,6 +36,26 @@ async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: Strin
   }).await.map_err(|error| error.to_string())?
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn save<R: Runtime>(app: tauri::AppHandle<R>, name: String, data: String) -> Result<serde_json::Value, String> {
+  use base64::Engine;
+  use std::io::Write;
+  use tauri::Manager;
+  let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|_| "Invalid file data".to_string())?;
+  let directory = app.path().download_dir().map_err(|error| error.to_string())?;
+  tauri::async_runtime::spawn_blocking(move || {
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let (path, mut file) = filename::reserve_file(&directory, &name).map_err(|error| error.to_string())?;
+    let result = file.write_all(&bytes).map_err(|error| error.to_string());
+    drop(file);
+    if let Err(error) = result { let _ = std::fs::remove_file(&path); return Err(error); }
+    #[cfg(target_os = "macos")]
+    bounce_downloads_stack(&path);
+    Ok(serde_json::json!({ "status": "saved", "path": path }))
+  }).await.map_err(|error| error.to_string())?
+}
+
 // The same distributed notification Safari posts: the Dock's Downloads stack bounces for the file.
 #[cfg(target_os = "macos")]
 fn bounce_downloads_stack(path: &std::path::Path) {
@@ -48,7 +68,7 @@ fn bounce_downloads_stack(path: &std::path::Path) {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   let builder = Builder::new("file-download");
   #[cfg(not(any(target_os = "android", target_os = "ios")))]
-  let builder = builder.invoke_handler(tauri::generate_handler![download]);
+  let builder = builder.invoke_handler(tauri::generate_handler![download, save]);
   builder.setup(|_app, api| {
     #[cfg(target_os = "ios")]
     api.register_ios_plugin(init_plugin_file_download)?;

@@ -31,6 +31,23 @@ export async function downloadFile(file) {
   return { status: 'started' };
 }
 
+// Bytes made on this device: native apps write them directly, so saving needs no network.
+export async function saveGeneratedFile(blob, name) {
+  if (nativeDownloads()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    return invoke('plugin:file-download|save', { name, mime: blob.type, data: dataUrl.slice(dataUrl.indexOf(',') + 1) });
+  }
+  const url = URL.createObjectURL(blob);
+  try { return await downloadFile({ url, name }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+}
+
 export async function prepareSharedFile(file) {
   const maxBytes = BROWSER_SHARE_MAX_BYTES;
   if (file.size > maxBytes) throw new Error('Files over 50 MB: use Download instead of browser sharing.');

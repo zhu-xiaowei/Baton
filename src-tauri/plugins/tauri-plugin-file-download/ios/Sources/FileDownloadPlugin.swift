@@ -8,6 +8,11 @@ struct DownloadArgs: Decodable {
   let name: String
 }
 
+struct SaveArgs: Decodable {
+  let name: String
+  let data: String
+}
+
 class FileDownloadPlugin: Plugin {
   private var downloading = false
   private weak var webview: WKWebView?
@@ -41,30 +46,52 @@ class FileDownloadPlugin: Plugin {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(name)
         try FileManager.default.moveItem(at: temporary, to: target)
-        DispatchQueue.main.async {
-          guard var presenter = self.webview?.window?.rootViewController else {
-            self.downloading = false
-            try? FileManager.default.removeItem(at: folder)
-            invoke.reject("No window available for sharing"); return
-          }
-          while let presented = presenter.presentedViewController { presenter = presented }
-          let sheet = UIActivityViewController(activityItems: [target], applicationActivities: nil)
-          sheet.popoverPresentationController?.sourceView = presenter.view
-          sheet.popoverPresentationController?.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.maxY - 1, width: 1, height: 1)
-          sheet.completionWithItemsHandler = { _, completed, _, error in
-            self.downloading = false
-            try? FileManager.default.removeItem(at: folder)
-            if let error = error { invoke.reject(error.localizedDescription) }
-            else { invoke.resolve(["status": completed ? "shared" : "cancelled"]) }
-          }
-          presenter.present(sheet, animated: true)
-        }
+        DispatchQueue.main.async { self.share(target, folder, invoke) }
       } catch {
         if let directory = directory { try? FileManager.default.removeItem(at: directory) }
         DispatchQueue.main.async { self.downloading = false; invoke.reject(error.localizedDescription) }
       }
     }
     task.resume()
+  }
+
+  // A file made on the device (e.g. a diagram image): no network, straight to the share sheet.
+  @objc public func save(_ invoke: Invoke) {
+    guard !downloading else { invoke.reject("A download or share is already in progress"); return }
+    guard let args = try? invoke.parseArgs(SaveArgs.self), let data = Data(base64Encoded: args.data) else {
+      invoke.reject("Invalid save arguments"); return
+    }
+    let name = (args.name as NSString).lastPathComponent
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("baton-download-" + UUID().uuidString)
+    let target = folder.appendingPathComponent(name.isEmpty ? "download" : name)
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try data.write(to: target)
+    } catch {
+      try? FileManager.default.removeItem(at: folder)
+      invoke.reject(error.localizedDescription); return
+    }
+    downloading = true
+    DispatchQueue.main.async { self.share(target, folder, invoke) }
+  }
+
+  private func share(_ target: URL, _ folder: URL, _ invoke: Invoke) {
+    guard var presenter = webview?.window?.rootViewController else {
+      downloading = false
+      try? FileManager.default.removeItem(at: folder)
+      invoke.reject("No window available for sharing"); return
+    }
+    while let presented = presenter.presentedViewController { presenter = presented }
+    let sheet = UIActivityViewController(activityItems: [target], applicationActivities: nil)
+    sheet.popoverPresentationController?.sourceView = presenter.view
+    sheet.popoverPresentationController?.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.maxY - 1, width: 1, height: 1)
+    sheet.completionWithItemsHandler = { _, completed, _, error in
+      self.downloading = false
+      try? FileManager.default.removeItem(at: folder)
+      if let error = error { invoke.reject(error.localizedDescription) }
+      else { invoke.resolve(["status": completed ? "shared" : "cancelled"]) }
+    }
+    presenter.present(sheet, animated: true)
   }
 }
 

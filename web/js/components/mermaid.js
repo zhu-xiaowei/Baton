@@ -247,6 +247,67 @@
     btn.classList.add('active');
   };
 
+  var COPIED_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  window.copyMermaidSource = function (btn) {
+    var src = btn.closest('.mermaid-block') && btn.closest('.mermaid-block').querySelector('.mermaid-src');
+    if (!src || btn.classList.contains('copied') || !navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(src.textContent).then(function () {
+      var icon = btn.innerHTML;
+      btn.innerHTML = COPIED_ICON;
+      btn.classList.add('copied');
+      setTimeout(function () { btn.innerHTML = icon; btn.classList.remove('copied'); }, 1500);
+    }, function () {});
+  };
+
+  // ---- Fullscreen download: the whole diagram (not the current zoom) as a PNG ----
+  var PNG_BACKGROUND = '#0d1117'; // .mermaid-fs-overlay background; the dark theme needs a dark backdrop
+
+  function svgToPng(svg, view) {
+    var clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('viewBox', [view.x, view.y, view.w, view.h].join(' '));
+    clone.setAttribute('width', view.w);
+    clone.setAttribute('height', view.h);
+    clone.removeAttribute('style');
+    // 2x like Swift Chat, capped by the side and area limits of mobile canvases.
+    var scale = Math.min(2, 8192 / view.w, 8192 / view.h, Math.sqrt(16e6 / (view.w * view.h)));
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(view.w * scale));
+        canvas.height = Math.max(1, Math.round(view.h * scale));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = PNG_BACKGROUND;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        try {
+          canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('Could not create the image')); }, 'image/png');
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error('Could not create the image')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+    });
+  }
+
+  function downloadDiagram(btn, svg, view) {
+    Promise.all([
+      import('./download-button.js'), import('./toast.js'), import('../project/download.js'),
+    ]).then(function (mods) {
+      var setState = mods[0].setDownloadButtonState;
+      if (btn.disabled) return;
+      setState(btn, 'busy');
+      return svgToPng(svg, view).then(function (blob) {
+        return mods[2].saveGeneratedFile(blob, 'mermaid-diagram.png');
+      }).then(function (result) {
+        setState(btn, result && result.status === 'cancelled' ? 'idle' : 'done');
+      }, function (error) {
+        setState(btn, 'failed');
+        mods[1].showToast(mods[2].downloadFailure(error));
+      });
+    });
+  }
+
   // ---- Fullscreen viewer: vector viewBox zoom + rubber-band pan ----
   // CSS transforms can promote the whole SVG to a cached WebKit bitmap. Updating viewBox
   // keeps every frame vector-rendered while still supporting anchored pinch/wheel zoom.
@@ -511,6 +572,7 @@
       '<button class="mermaid-fs-close" aria-label="Close">'
       + '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
       + '</button>'
+      + '<button type="button" class="file-download-action mermaid-fs-download" title="Download image" aria-label="Download image"></button>'
       + '<div class="mermaid-fs-stage">' + svgHtml + '</div>';
     document.body.appendChild(overlay);
     _fsEdgeBack.activate();
@@ -542,6 +604,9 @@
     window.addEventListener('resize', _fs.onResize = function () { fsResize(); });
 
     overlay.querySelector('.mermaid-fs-close').addEventListener('click', closeMermaidFullscreen);
+    var downloadBtn = overlay.querySelector('.mermaid-fs-download');
+    import('./download-button.js').then(function (m) { m.setDownloadButtonState(downloadBtn); }, function () {});
+    downloadBtn.addEventListener('click', function () { downloadDiagram(downloadBtn, fullSvg, fsCopyView(base)); });
     overlay.addEventListener('click', function (e) { if (e.target === overlay) closeMermaidFullscreen(); });
 
     // Wheel / trackpad-pinch zoom, anchored at the cursor.
