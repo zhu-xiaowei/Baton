@@ -521,12 +521,12 @@ test('text preview cancels at its limit instead of buffering an entire large fil
 
 test('the shared download button invokes the native download plugin with the original name', async () => {
   const calls = [];
-  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
   window.openFile('baton-file:' + key, 'deck.pptx');
   const downloading = window.downloadViewedFile();
   assert.equal(document.getElementById('file-download-btn').disabled, true);
   assert.equal(document.getElementById('file-download-btn').getAttribute('aria-busy'), 'true');
-  assert.ok(document.querySelector('#file-download-btn .loading-spinner'));
+  assert.ok(document.querySelector('#file-download-btn .staged-progress-indicator'));
   await downloading;
   assert.equal(calls[0].command, 'plugin:file-download|download');
   assert.equal(calls[0].args.name, 'deck.pptx');
@@ -535,25 +535,50 @@ test('the shared download button invokes the native download plugin with the ori
   assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
 });
 
-test('mobile browser downloads attempt sharing and reuse Download when fresh activation is required', async () => {
-  const shared = [];
-  let attempts = 0;
-  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
-  navigator.canShare = () => true;
-  navigator.share = async value => {
-    if (++attempts === 1) throw new DOMException('User activation expired', 'NotAllowedError');
-    shared.push(value);
+test('native download progress fills the ring and survives closing and reopening the viewer', async () => {
+  let report;
+  let finish;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: callback => { report = callback; return 1; },
+    invoke: () => new Promise(resolve => { finish = resolve; }),
   };
-  globalThis.fetch = async () => new Response('12345');
+  const ring = () => document.querySelector('#file-download-btn .file-download-spinner');
   window.openFile('baton-file:' + key, 'deck.pptx');
-  await window.downloadViewedFile();
-  assert.equal(shared.length, 0);
-  assert.equal(attempts, 1);
-  assert.equal(document.getElementById('file-share-btn'), null);
-  await window.downloadViewedFile();
-  assert.equal(shared.length, 1);
-  assert.equal(shared[0].files[0].name, 'deck.pptx');
-  assert.equal(await shared[0].files[0].text(), '12345');
+  const downloading = window.downloadViewedFile();
+  for (let i = 0; i < 20 && !finish; i++) await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(ring().classList.contains('has-progress'), false);
+  report({ index: 0, message: { loaded: 5, total: 10 } });
+  assert.equal(ring().getAttribute('aria-valuenow'), '50');
+  window.closeFileViewer();
+  report({ index: 1, message: { loaded: 8, total: 10 } });
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  assert.equal(ring().getAttribute('aria-valuenow'), '80');
+  finish({ status: 'saved' });
+  await downloading;
+  assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
+  assert.equal(document.getElementById('file-download-btn').disabled, false);
+});
+
+test('closing the viewer cancels an iOS native download', async () => {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  const calls = [];
+  let finish;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: command => {
+      calls.push(command);
+      if (command.endsWith('|cancel')) { finish({ status: 'cancelled' }); return Promise.resolve(); }
+      return new Promise(resolve => { finish = resolve; });
+    },
+  };
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  const downloading = window.downloadViewedFile();
+  for (let i = 0; i < 20 && !finish; i++) await new Promise(resolve => setTimeout(resolve, 0));
+  window.closeFileViewer();
+  await downloading;
+  assert.deepEqual(calls, ['plugin:file-download|download', 'plugin:file-download|cancel']);
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
 });
 
 test('download errors keep the preview and restore its controls', async () => {
@@ -568,7 +593,7 @@ test('the image viewer downloads the current stored image through the native plu
   const { showImageViewer } = await import('../../web/js/components/image-viewer.js');
   const calls = [];
   const requested = [];
-  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
   window.api = async (path, params) => { requested.push({ path, params }); return { url: 'https://bucket.test/photo' }; };
   showImageViewer([{ src: 'blob:https://app.test/2', key: 'b'.repeat(32) + '.png', attachment: true }]);
   document.querySelector('.img-overlay-download').click();
@@ -578,4 +603,37 @@ test('the image viewer downloads the current stored image through the native plu
   assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
   delete window.__TAURI_INTERNALS__;
+});
+
+test('the image viewer tracks each image download: switching back keeps it busy, closing on iOS cancels the rest', async () => {
+  const { showImageViewer, closeImageViewer } = await import('../../web/js/components/image-viewer.js');
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  const calls = [];
+  const pending = [];
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: command => {
+      calls.push(command.split('|')[1]);
+      // Like the iOS plugin: one download at a time, cancelled by a new download or `cancel`.
+      pending.splice(0).forEach(resolve => resolve({ status: 'cancelled' }));
+      return command.endsWith('|cancel') ? Promise.resolve() : new Promise(resolve => pending.push(resolve));
+    },
+  };
+  window.api = async () => ({ url: 'https://bucket.test/photo' });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  const button = document.querySelector('.img-overlay-download');
+  const step = direction => document.querySelector(`.gallery-nav [data-step="${direction}"]`).click();
+  showImageViewer([{ src: 'blob:e', key: 'e'.repeat(32) + '.png' }, { src: 'blob:f', key: 'f'.repeat(32) + '.png' }]);
+  button.click();
+  await settle();
+  step(1);
+  step(-1);
+  assert.equal(button.classList.contains('is-downloading'), true);
+  assert.equal(button.disabled, true);
+  step(1);
+  button.click();
+  await settle();
+  closeImageViewer();
+  await settle();
+  assert.deepEqual(calls, ['download', 'download', 'cancel']);
 });

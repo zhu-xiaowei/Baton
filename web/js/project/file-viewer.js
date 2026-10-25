@@ -9,7 +9,7 @@ import { currentProjectHash, relativeProjectImagePath } from './project-hash.js'
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
-import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFailure, downloadFile, prepareSharedFile } from './download.js';
+import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloadsStopOnClose } from './download.js';
 import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 import { toolDetailsSource } from '../tool-details.js';
@@ -45,15 +45,22 @@ function updateDownloadButtons(result) {
   if (!button) return;
   const busy = !!_downloadTarget?.busy;
   if (result || busy || button.classList.contains('is-downloading')) {
-    setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'));
+    setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'), _downloadTarget?.progress);
   }
   button.disabled = !_downloadTarget || busy;
+}
+
+// Downloads keep running after their viewer closes (except on iOS); reopening the file shows the same progress.
+var _activeDownloads = new Map();
+
+function downloadId(target) {
+  return [target.device, target.projectHash, target.path].join('\0');
 }
 
 function uploadedKey(target) {
   if (!target.keyPromise) {
     target.keyPromise = target.key ? Promise.resolve(target.key) : requestProjectFiles('download', {
-      projectHash: target.projectHash, path: target.path,
+      projectHash: target.projectHash, path: target.path, device: target.device,
     }, { timeout: 30 * 60_000 }).then(result => (target.key = result.key));
     target.keyPromise.catch(() => { target.keyPromise = null; });
   }
@@ -79,48 +86,41 @@ async function showUploadedProjectFile(target) {
   }
 }
 
+// The ring fills while bytes reach this device; Bridge preparation only spins it.
 async function downloadViewedFile() {
   const target = _downloadTarget;
   if (!target || target.busy) return;
+  const id = downloadId(target);
   target.busy = true;
+  _activeDownloads.set(id, target);
+  const onSaveProgress = progress => {
+    target.progress = progress;
+    if (_downloadTarget === target) updateDownloadButtons();
+  };
   updateDownloadButtons();
   let outcome = 'failed';
+  let result;
   try {
-    let result;
-    if (target.sharedFile) {
-      result = await shareDownloadedFile(target);
-    } else {
-      const file = await prepareViewedDownload(target);
-      if (_downloadTarget !== target) return;
-      if (browserCanShare() && file.size <= BROWSER_SHARE_MAX_BYTES) {
-        try {
-          target.sharedFile = await prepareSharedFile(file);
-        } catch (error) {
-          if (error.name !== 'NotSupportedError') throw error;
-        }
-        if (_downloadTarget !== target) return;
-      }
-      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
-    }
-    // ready: sharing needs a fresh tap, so the button simply returns to Download.
-    outcome = result.status === 'cancelled' || result.status === 'ready' ? 'idle' : 'done';
+    const file = await prepareViewedDownload(target);
+    if (target.stopped) return;
+    result = await downloadFile(file, onSaveProgress);
+    outcome = result.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
-    showToast(downloadFailure(error));
+    showToast((_downloadTarget === target ? '' : target.name + ': ') + downloadFailure(error));
   } finally {
     target.busy = false;
+    target.progress = null;
+    if (_activeDownloads.get(id) === target) _activeDownloads.delete(id);
     if (_downloadTarget === target) updateDownloadButtons(outcome);
+    else if (result?.status === 'saved') showToast('Downloaded ' + target.name);
   }
 }
 
-async function shareDownloadedFile(target) {
-  try {
-    await navigator.share({ files: [target.sharedFile] });
-    return { status: 'shared' };
-  } catch (error) {
-    if (error.name === 'AbortError') return { status: 'cancelled' };
-    if (error.name === 'NotAllowedError') return { status: 'ready' };
-    throw error;
-  }
+function stopDownloadOnClose(target) {
+  if (!target?.busy || !nativeDownloadsStopOnClose()) return;
+  target.stopped = true;
+  _activeDownloads.delete(downloadId(target));
+  cancelNativeDownload();
 }
 var _previewToken = 0;
 var _fileRequestToken = 0;
@@ -628,6 +628,7 @@ export function closeFileViewer(options) {
   if (o) o.style.display = 'none';
   _current = null;
   _view = null;
+  stopDownloadOnClose(_downloadTarget);
   _downloadTarget = null;
   _fileRequestToken++;
   _previewToken++;
@@ -689,9 +690,10 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   // Attachment links carry the real file name; project views may label a file differently (e.g. "a.pdf @ 1a2b3c4").
   var fileName = absPath.startsWith('baton-file:') ? displayName : absPath.split(/[\\/]/).pop();
   _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', matchId, options: options };
-  _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
+  var target = options.canRead === false ? null : { path: absPath, ...fileContext(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
-  updateDownloadButtons('idle');
+  _downloadTarget = target && (_activeDownloads.get(downloadId(target)) || target);
+  updateDownloadButtons(_downloadTarget?.busy ? undefined : 'idle');
   var titleEl = document.getElementById('fileOverlayTitle');
   titleEl.textContent = displayName || absPath;
   titleEl.title = absPath;

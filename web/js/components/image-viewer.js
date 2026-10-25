@@ -1,5 +1,5 @@
 // Shared image preview gestures for chat images, staged images, and project files.
-import { downloadFailure, downloadFile, nativeDownloads } from '../project/download.js';
+import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloads, nativeDownloadsStopOnClose } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
 import { setDownloadButtonState } from './download-button.js';
 import { loadingSpinner } from './loading.js';
@@ -14,6 +14,7 @@ let image;
 let peeks = [];
 let spinner;
 let downloadButton;
+const downloads = new Map(); // image key → progress, while that image downloads
 let items = [];
 let index = 0;
 let scale = 1;
@@ -270,7 +271,7 @@ function showAt(next) {
   }
   if (downloadButton) {
     downloadButton.hidden = !item.key || !item.src;
-    setDownloadButtonState(downloadButton);
+    setDownloadButtonState(downloadButton, downloads.has(item.key) ? 'busy' : 'idle', downloads.get(item.key));
   }
 }
 
@@ -303,7 +304,8 @@ function settleSwipe(dx) {
 // Native saving needs an HTTPS source; the browser saves the Blob already on screen.
 async function downloadCurrentImage() {
   const item = items[index];
-  if (!item?.key) return;
+  if (!item?.key || downloads.has(item.key)) return;
+  downloads.set(item.key, null);
   setDownloadButtonState(downloadButton, 'busy');
   let result = 'failed';
   let objectUrl = '';
@@ -317,12 +319,16 @@ async function downloadCurrentImage() {
       if (!response.ok) throw new Error('Image unavailable');
       url = objectUrl = URL.createObjectURL(await response.blob());
     }
-    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) });
+    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) }, progress => {
+      downloads.set(item.key, progress);
+      if (items[index] === item) setDownloadButtonState(downloadButton, 'busy', progress);
+    });
     result = saved?.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
     // Above the gallery navigation, which sits 24-60px over the safe area.
     showToast(downloadFailure(error), items.length > 1 ? { bottom: 72 } : undefined);
   }
+  downloads.delete(item.key);
   if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   if (items[index] === item) setDownloadButtonState(downloadButton, result);
 }
@@ -339,6 +345,7 @@ function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
   resetZoom();
+  if (downloads.size && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
 
 document.addEventListener('keydown', event => {
