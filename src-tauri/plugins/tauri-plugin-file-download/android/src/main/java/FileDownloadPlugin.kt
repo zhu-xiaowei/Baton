@@ -64,7 +64,7 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
   // A file made on the device (e.g. a diagram image): written to the cache and shared through the
   // app's FileProvider (cache-path in file_paths.xml), so it needs no network or storage permission.
   @Command
-  fun save(invoke: Invoke) = activity.runOnUiThread {
+  fun save(invoke: Invoke) = Thread {
     try {
       val args = invoke.parseArgs(SaveArgs::class.java)
       val name = File(args.name).name.ifEmpty { "download" }
@@ -76,14 +76,20 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       share.clipData = ClipData.newRawUri(name, uri)
-      activity.startActivity(Intent.createChooser(share, null))
-      val result = JSObject()
-      result.put("status", "share_opened")
-      invoke.resolve(result)
+      activity.runOnUiThread {
+        try {
+          activity.startActivity(Intent.createChooser(share, null))
+          val result = JSObject()
+          result.put("status", "share_opened")
+          invoke.resolve(result)
+        } catch (error: Exception) {
+          invoke.reject(error.message ?: "Could not share the file")
+        }
+      }
     } catch (error: Exception) {
       invoke.reject(error.message ?: "Could not save the file")
     }
-  }
+  }.start()
 
   @PermissionCallback
   fun storagePermissionCallback(invoke: Invoke) {

@@ -305,6 +305,10 @@
         setState(btn, 'failed');
         mods[1].showToast(mods[2].downloadFailure(error));
       });
+    }, function () {
+      // A chunk could not load (e.g. offline web): flash the failed colour instead of doing nothing.
+      btn.classList.add('is-failed');
+      setTimeout(function () { btn.classList.remove('is-failed'); }, 1500);
     });
   }
 
