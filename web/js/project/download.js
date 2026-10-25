@@ -54,3 +54,9 @@ export async function prepareSharedFile(file) {
   return shared;
 }
 export const BROWSER_SHARE_MAX_BYTES = 50 * 1024 * 1024;
+
+// Native plugins reject with a plain string; anything without readable text keeps just the summary.
+export function downloadFailure(error) {
+  const reason = typeof error === 'string' ? error : error?.message;
+  return reason ? 'Download failed: ' + reason : 'Download failed.';
+}

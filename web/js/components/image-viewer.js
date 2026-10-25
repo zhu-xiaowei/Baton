@@ -1,5 +1,5 @@
 // Shared image preview gestures for chat images, staged images, and project files.
-import { downloadFile, nativeDownloads } from '../project/download.js';
+import { downloadFailure, downloadFile, nativeDownloads } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
 import { setDownloadButtonState } from './download-button.js';
 import { showToast } from './toast.js';
@@ -19,7 +19,7 @@ let x = 0;
 let y = 0;
 let touchMode = null;
 let swipe = null;
-let sliding = false;
+let pendingSlide = null; // a settling swipe: { timer, finish }
 let nativeGesture = null;
 
 function baseCenter() {
@@ -83,10 +83,13 @@ function beginPan(touch) {
 }
 
 function onTouchStart(event) {
-  if (event.touches.length === 1 && event.target.closest('button')) return;
+  pendingSlide?.finish();
   if (swipe?.axis === 'x') placeStrip(0, ''); // a second finger ends the swipe
-  swipe = event.touches.length === 1 && scale === 1 && items.length > 1 && !sliding
-    ? { x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, axis: null } : null;
+  swipe = null;
+  if (event.touches.length === 1 && event.target.closest('button')) return;
+  if (event.touches.length === 1 && scale === 1 && items.length > 1) {
+    swipe = { x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, axis: null };
+  }
   if (event.touches.length >= 2) {
     event.preventDefault();
     if (!nativeGesture) beginPinch(event.touches);
@@ -137,6 +140,7 @@ function gesturePoint(event) {
 
 function onGestureStart(event) {
   event.preventDefault();
+  pendingSlide?.finish();
   const point = gesturePoint(event);
   const center = baseCenter();
   nativeGesture = {
@@ -210,6 +214,8 @@ function ensureViewer() {
 function showAt(next) {
   const item = items[next];
   if (!item) return;
+  clearTimeout(pendingSlide?.timer);
+  pendingSlide = null;
   index = next;
   resetZoom();
   image.src = item.src;
@@ -247,14 +253,17 @@ function placeStrip(dx, transition) {
 // Past 50px the strip settles on the neighbour, which then becomes the current image; otherwise it springs back.
 function settleSwipe(dx) {
   const step = dx < 0 ? 1 : -1;
-  const turn = Math.abs(dx) >= 50 && !!items[index + step];
-  sliding = true;
+  const target = index + step;
+  const turn = Math.abs(dx) >= 50 && !!items[target];
   placeStrip(turn ? -step * (overlay.clientWidth + SWIPE_GAP) : 0, `transform ${SWIPE_MS}ms ease-out`);
-  setTimeout(() => {
-    if (turn) showAt(index + step);
+  // Finishes now when a new touch arrives; any other navigation cancels it in showAt.
+  const finish = () => {
+    clearTimeout(pendingSlide?.timer);
+    pendingSlide = null;
+    if (turn) showAt(target);
     else placeStrip(0, '');
-    sliding = false;
-  }, SWIPE_MS);
+  };
+  pendingSlide = { finish, timer: setTimeout(finish, SWIPE_MS) };
 }
 
 // Native saving needs an HTTPS source; the browser saves the Blob already on screen.
@@ -278,7 +287,7 @@ async function downloadCurrentImage() {
     result = saved?.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
     // Above the gallery navigation, which sits 24-60px over the safe area.
-    showToast('Download failed: ' + (error.message || error), items.length > 1 ? { bottom: 72 } : undefined);
+    showToast(downloadFailure(error), items.length > 1 ? { bottom: 72 } : undefined);
   }
   if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   if (items[index] === item) setDownloadButtonState(downloadButton, result);

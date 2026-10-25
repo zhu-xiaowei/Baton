@@ -9,7 +9,7 @@ import { currentProjectHash, relativeProjectImagePath } from './project-hash.js'
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
-import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
+import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFailure, downloadFile, prepareSharedFile } from './download.js';
 import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 import { toolDetailsSource } from '../tool-details.js';
@@ -105,7 +105,7 @@ async function downloadViewedFile() {
     // ready: sharing needs a fresh tap, so the button simply returns to Download.
     outcome = result.status === 'cancelled' || result.status === 'ready' ? 'idle' : 'done';
   } catch (error) {
-    showToast('Download failed: ' + (error.message || error));
+    showToast(downloadFailure(error));
   } finally {
     target.busy = false;
     if (_downloadTarget === target) updateDownloadButtons(outcome);
