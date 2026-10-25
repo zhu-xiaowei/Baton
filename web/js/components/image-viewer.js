@@ -196,7 +196,7 @@ function showAt(next) {
 // Native saving needs an HTTPS source; the browser saves the Blob already on screen.
 async function downloadCurrentImage() {
   const item = items[index];
-  if (!item?.key || downloadButton.disabled) return;
+  if (!item?.key) return;
   setDownloadButtonState(downloadButton, 'busy');
   let result = 'failed';
   let objectUrl = '';
@@ -227,9 +227,6 @@ function showImageViewer(list, start = 0) {
   overlay.style.display = 'flex';
 }
 
-function galleryPrev() { showAt(index - 1); }
-function galleryNext() { showAt(index + 1); }
-
 function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
@@ -238,9 +235,9 @@ function closeImageViewer() {
 
 document.addEventListener('keydown', event => {
   if (!overlay || overlay.style.display !== 'flex') return;
-  if (event.key === 'ArrowLeft') { event.preventDefault(); galleryPrev(); }
-  else if (event.key === 'ArrowRight') { event.preventDefault(); galleryNext(); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); showAt(index - 1); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); showAt(index + 1); }
   else if (event.key === 'Escape') closeImageViewer();
 });
 
-export { showImageViewer, closeImageViewer, galleryPrev, galleryNext };
+export { showImageViewer, closeImageViewer };

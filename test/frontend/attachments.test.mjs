@@ -10,7 +10,7 @@ import {
 const dom = new JSDOM('<!doctype html><body><div id="img-preview-row"></div>'
   + '<div id="imgOverlay"><button class="img-overlay-download" hidden></button><img id="imgOverlayImg"></div><div id="content"></div>'
   + '<div id="fileOverlay"><span id="fileOverlayTitle"></span><div id="fileOverlayTabs"></div>'
-  + '<button id="file-download-btn" class="file-download-action"></button><div id="file-download-status"></div>'
+  + '<button id="file-download-btn" class="file-download-action"></button>'
   + '<div id="fileOverlayBody"></div></div></body>', { url: 'https://app.test/' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -325,7 +325,7 @@ test('mixed attachments do not appear in the image gallery', () => {
   window.renderStagedImages();
   window.viewStagedImage(1);
   assert.equal(document.querySelector('.gallery-nav span').textContent, '1 / 2');
-  window.galleryNext();
+  document.querySelector('.gallery-nav button[data-step="1"]').click();
   assert.equal(document.querySelector('.gallery-nav span').textContent, '2 / 2');
 });
 

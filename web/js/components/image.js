@@ -2,7 +2,7 @@
 import { state } from '../state.js';
 import { fileIconHtml } from './file-icon.js';
 import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment.js';
-import { showImageViewer, galleryPrev, galleryNext } from './image-viewer.js';
+import { showImageViewer } from './image-viewer.js';
 import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
 import { contentHash } from './content-hash.js';
 
@@ -293,16 +293,14 @@ function removeStagedImage(i) {
 }
 
 function viewStagedImage(i) {
-  if (!state.stagedImages[i]?.uploaded || state.stagedImages[i].kind === 'file') return;
-  var images = galleryImages();
+  var images = state.stagedImages.filter(image => image.kind !== 'file' && image.uploaded);
+  if (!images.includes(state.stagedImages[i])) return;
   showImageViewer(images.map(image => ({ src: image.dataUrl })), images.indexOf(state.stagedImages[i]));
 }
-
-function galleryImages() { return state.stagedImages.filter(image => image.kind !== 'file' && image.uploaded); }
 
 // Function bridges for inline HTML handlers (state.stagedImages lives in state.js).
 Object.assign(window, {
   onImagePicked, onInputPaste, stageImageFile, renderStagedImages, removeStagedImage,
-  viewStagedImage, galleryPrev, galleryNext,
+  viewStagedImage,
   stageAttachmentFile, retryStagedFile,
 });

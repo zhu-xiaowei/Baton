@@ -41,13 +41,13 @@ function clearAttachmentPreviewCache(key) {
 
 // A finished check/failure icon stays until its own timer, so unrelated body updates keep it.
 function updateDownloadButtons(result) {
+  const button = document.getElementById('file-download-btn');
+  if (!button) return;
   const busy = !!_downloadTarget?.busy;
-  document.querySelectorAll('#file-download-btn, #fileOverlay .file-download-action').forEach(button => {
-    if (result || busy || button.classList.contains('is-downloading')) {
-      setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'));
-    }
-    button.disabled = !_downloadTarget || busy;
-  });
+  if (result || busy || button.classList.contains('is-downloading')) {
+    setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'));
+  }
+  button.disabled = !_downloadTarget || busy;
 }
 
 function uploadedKey(target) {
