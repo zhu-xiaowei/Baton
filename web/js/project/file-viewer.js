@@ -105,7 +105,7 @@ async function downloadViewedFile() {
     // ready: sharing needs a fresh tap, so the button simply returns to Download.
     outcome = result.status === 'cancelled' || result.status === 'ready' ? 'idle' : 'done';
   } catch (error) {
-    showToast(String(error.message || error));
+    showToast('Download failed: ' + (error.message || error));
   } finally {
     target.busy = false;
     if (_downloadTarget === target) updateDownloadButtons(outcome);

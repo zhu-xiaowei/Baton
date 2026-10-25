@@ -2,7 +2,8 @@
 let toast;
 let timer;
 
-export function showToast(text) {
+// `bottom` is the gap in px above the bottom safe area.
+export function showToast(text, { bottom = 40 } = {}) {
   if (!toast) {
     toast = document.createElement('div');
     toast.className = 'toast';
@@ -10,6 +11,7 @@ export function showToast(text) {
     document.body.append(toast);
   }
   toast.textContent = text;
+  toast.style.bottom = `calc(${bottom}px + var(--sab, env(safe-area-inset-bottom, 0px)))`;
   toast.classList.add('visible');
   clearTimeout(timer);
   timer = setTimeout(() => toast.classList.remove('visible'), 3000);
