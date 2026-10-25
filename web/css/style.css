@@ -874,6 +874,7 @@ html.native-mobile .agent-threads-list {
 .img-overlay.zoomed img { cursor: grab; }
 .img-overlay .img-overlay-peek { position: absolute; top: 50%; left: calc(150% + 16px); transform: translate(-50%, -50%); pointer-events: none; }
 .img-overlay .img-overlay-peek[data-side="-1"] { left: calc(-50% - 16px); }
+.img-overlay-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
 .img-overlay-close, .img-overlay .img-overlay-download { position: absolute; top: max(16px, calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)); right: 16px; z-index: 1; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: rgba(48,54,61,0.75); color: #fff; cursor: pointer; }
 .img-overlay .img-overlay-download { right: 60px; }
 .img-overlay .img-overlay-download[hidden] { display: none; }

@@ -317,10 +317,13 @@ function loadImages(container, contextOverride) {
 // The key comes from data-key (a just-sent image still shows its local copy) or its placeholder.
 function viewImage(src, element) {
   var group = element?.closest('.msg-attachments');
-  var images = group ? Array.from(group.querySelectorAll('.img-placeholder.loaded img')) : [];
+  // An image still loading in the message joins too and loads when it is shown.
+  var images = group ? Array.from(group.querySelectorAll('.img-placeholder'), node => node.classList.contains('loaded')
+    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key }).filter(Boolean) : [];
   if (!images.includes(element)) images = [element || { src }];
   var entries = Array.from(imageCache.values());
   showImageViewer(images.map(image => {
+    if (image.lazyKey) return { key: image.lazyKey, load: () => getImageUrl(image.lazyKey) };
     var key = image.dataset?.key || image.closest?.('.img-placeholder[data-key]')?.dataset.key;
     return { src: image.src, ...(key ? { key } : entries.find(entry => entry.url === image.src)?.source) };
   }),

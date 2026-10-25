@@ -2,6 +2,7 @@
 import { downloadFailure, downloadFile, nativeDownloads } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
 import { setDownloadButtonState } from './download-button.js';
+import { loadingSpinner } from './loading.js';
 import { showToast } from './toast.js';
 
 const MAX_SCALE = 5;
@@ -11,6 +12,7 @@ const ARROW = points => '<svg width="14" height="14" viewBox="0 0 24 24" fill="n
 let overlay;
 let image;
 let peeks = [];
+let spinner;
 let downloadButton;
 let items = [];
 let index = 0;
@@ -209,6 +211,34 @@ function ensureViewer() {
     overlay.append(peek);
     return peek;
   });
+  spinner = document.createElement('span');
+  spinner.className = 'img-overlay-spinner';
+  spinner.innerHTML = loadingSpinner({ label: 'Loading image' });
+  overlay.append(spinner);
+}
+
+function showNeighbours() {
+  peeks.forEach(peek => {
+    const neighbour = items[index + Number(peek.dataset.side)];
+    peek.hidden = !neighbour?.src;
+    if (neighbour?.src) peek.src = neighbour.src;
+  });
+}
+
+// An image without a URL yet (still loading in the chat) loads here; it fills in only while it is still shown.
+function loadItem(item) {
+  item.loading ||= item.load().then(src => {
+    item.src = src;
+    if (items[index] === item) {
+      image.src = src;
+      spinner.hidden = true;
+      if (downloadButton) downloadButton.hidden = !item.key;
+    }
+    showNeighbours();
+  }, () => {
+    item.loading = null;
+    if (items[index] === item) spinner.hidden = true;
+  });
 }
 
 function showAt(next) {
@@ -218,12 +248,13 @@ function showAt(next) {
   pendingSlide = null;
   index = next;
   resetZoom();
-  image.src = item.src;
-  peeks.forEach(peek => {
-    const neighbour = items[index + Number(peek.dataset.side)];
-    peek.hidden = !neighbour;
-    if (neighbour) peek.src = neighbour.src;
-  });
+  if (item.src) image.src = item.src;
+  else {
+    image.removeAttribute('src');
+    loadItem(item);
+  }
+  spinner.hidden = !!item.src;
+  showNeighbours();
   placeStrip(0, '');
   overlay.dataset.gallery = items.length > 1 ? '1' : '0';
   overlay.querySelector('.gallery-nav')?.remove();
@@ -235,7 +266,7 @@ function showAt(next) {
       + '</div>');
   }
   if (downloadButton) {
-    downloadButton.hidden = !item.key;
+    downloadButton.hidden = !item.key || !item.src;
     setDownloadButtonState(downloadButton);
   }
 }
