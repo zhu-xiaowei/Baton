@@ -5,6 +5,7 @@ import { FILE_MAX_BYTES, escapeAttachment, uploadAttachment } from './attachment
 import { showImageViewer } from './image-viewer.js';
 import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
 import { contentHash } from './content-hash.js';
+import { progressRingHtml, setProgressRingPercent } from './progress-ring.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -184,16 +185,7 @@ function stagedUploadOverlayHtml(entry) {
   }
   return '<div class="staged-upload-overlay" role="progressbar" aria-label="'
     + escapeAttachment('Uploading ' + (entry.name || 'image')) + '" aria-valuemin="0" aria-valuemax="100">'
-    + '<div class="staged-upload-visual" aria-hidden="true">'
-    // The ring spins as its own <svg> box: WebKit offsets a spinning element inside an SVG under page zoom.
-    + '<span class="staged-progress-indicator">'
-    + '<svg viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
-    + '<circle class="staged-progress-pie" cx="18" cy="18" r="6.5" fill="none" stroke="currentColor"'
-    + ' stroke-width="13" pathLength="100" stroke-dasharray="100 100" transform="rotate(-90 18 18)"/></svg>'
-    + '<svg class="staged-progress-orbit" viewBox="0 0 36 36" shape-rendering="geometricPrecision">'
-    + '<circle class="staged-progress-ring" cx="18" cy="18" r="16"'
-    + ' fill="none" stroke="currentColor" stroke-width="1.5" pathLength="100"'
-    + ' stroke-dasharray="100 100" stroke-linecap="round"/></svg></span>'
+    + '<div class="staged-upload-visual" aria-hidden="true">' + progressRingHtml()
     + '<span class="staged-progress-text"></span></div></div>';
 }
 
@@ -206,12 +198,7 @@ function updateStagedUpload(entry) {
   const hasProgress = phase === 'uploading';
   overlay.dataset.state = phase;
   overlay.classList.toggle('has-progress', hasProgress);
-  const pie = overlay.querySelector('.staged-progress-pie');
-  const full = hasProgress && progress === 100;
-  pie.setAttribute('r', full ? '13' : '6.5');
-  pie.setAttribute('fill', full ? 'currentColor' : 'none');
-  pie.setAttribute('stroke', full ? 'none' : 'currentColor');
-  pie.style.strokeDashoffset = String(100 - progress);
+  setProgressRingPercent(overlay, progress);
   overlay.querySelector('.staged-progress-text').textContent = isFile ? progress + '%' : '';
   if (hasProgress) overlay.setAttribute('aria-valuenow', progress);
   else overlay.removeAttribute('aria-valuenow');

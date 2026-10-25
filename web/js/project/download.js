@@ -2,11 +2,17 @@ export function nativeDownloads() {
   return !!window.__TAURI_INTERNALS__;
 }
 
-export function browserCanShare() {
+// iOS saves one file at a time through the share sheet, so its download stops when the viewer closes.
+// iPadOS reports a Mac user agent; touch support tells them apart.
+export function nativeDownloadsStopOnClose() {
   const navigator = window.navigator;
-  const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-    || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-  return !nativeDownloads() && mobile && typeof navigator.share === 'function' && typeof navigator.canShare === 'function';
+  return nativeDownloads() && (/iPhone|iPad|iPod/.test(navigator.userAgent)
+    || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+export async function cancelNativeDownload() {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke('plugin:file-download|cancel').catch(() => {});
 }
 
 function contentType(file) {
@@ -14,11 +20,14 @@ function contentType(file) {
     ? file.contentType : file.previewType || 'application/octet-stream';
 }
 
-export async function downloadFile(file) {
+// onProgress(fraction) only fires for native saves: a browser download reports progress in its own UI.
+export async function downloadFile(file, onProgress) {
   if (nativeDownloads()) {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke, Channel } = await import('@tauri-apps/api/core');
+    const progress = new Channel();
+    progress.onmessage = ({ loaded, total }) => { if (total > 0) onProgress?.(loaded / total); };
     return invoke('plugin:file-download|download', {
-      url: file.url, name: file.name, mime: contentType(file),
+      url: file.url, name: file.name, mime: contentType(file), onProgress: progress,
     });
   }
   const link = document.createElement('a');
@@ -30,30 +39,6 @@ export async function downloadFile(file) {
   link.remove();
   return { status: 'started' };
 }
-
-export async function prepareSharedFile(file) {
-  const maxBytes = BROWSER_SHARE_MAX_BYTES;
-  if (file.size > maxBytes) throw new Error('Files over 50 MB: use Download instead of browser sharing.');
-  const response = await fetch(file.url);
-  if (!response.ok) throw new Error('Could not download the file for sharing.');
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > maxBytes) throw new Error('File is too large for browser sharing. Use Download instead.');
-      chunks.push(value);
-    }
-  } finally { await reader.cancel(); }
-  if (Number.isFinite(file.size) && size !== file.size) throw new Error('The downloaded file is incomplete. Try again.');
-  const shared = new File(chunks, file.name, { type: contentType(file) });
-  if (!navigator.canShare({ files: [shared] })) throw new DOMException('This browser cannot share this file type.', 'NotSupportedError');
-  return shared;
-}
-export const BROWSER_SHARE_MAX_BYTES = 50 * 1024 * 1024;
 
 // Native plugins reject with a plain string; anything without readable text keeps just the summary.
 export function downloadFailure(error) {

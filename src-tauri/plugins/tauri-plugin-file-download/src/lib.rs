@@ -7,8 +7,33 @@ mod filename;
 tauri::ios_plugin_binding!(init_plugin_file_download);
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+struct ProgressReader<R> {
+  inner: R,
+  loaded: u64,
+  total: Option<u64>,
+  channel: tauri::ipc::Channel<serde_json::Value>,
+  reported_at: Option<std::time::Instant>,
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+impl<R: std::io::Read> std::io::Read for ProgressReader<R> {
+  fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let size = self.inner.read(buffer)?;
+    self.loaded += size as u64;
+    if let Some(total) = self.total {
+      if size > 0 && self.reported_at.map_or(true, |at| at.elapsed().as_millis() >= 200) {
+        self.reported_at = Some(std::time::Instant::now());
+        let _ = self.channel.send(serde_json::json!({ "loaded": self.loaded, "total": total }));
+      }
+    }
+    Ok(size)
+  }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
-async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: String) -> Result<serde_json::Value, String> {
+async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: String,
+  on_progress: tauri::ipc::Channel<serde_json::Value>) -> Result<serde_json::Value, String> {
   use std::{io::Read, time::Duration};
   use tauri::Manager;
   let directory = app.path().download_dir().map_err(|error| error.to_string())?;
@@ -25,7 +50,9 @@ async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: Strin
     if response.content_length().is_some_and(|size| size > max_bytes) { return Err("File exceeds 512 MB".to_string()); }
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let (path, mut file) = filename::reserve_file(&directory, &name).map_err(|error| error.to_string())?;
-    let result = std::io::copy(&mut response.take(max_bytes + 1), &mut file)
+    let total = response.content_length();
+    let reader = ProgressReader { inner: response, loaded: 0, total, channel: on_progress, reported_at: None };
+    let result = std::io::copy(&mut reader.take(max_bytes + 1), &mut file)
       .map_err(|error| error.to_string())
       .and_then(|size| if size > max_bytes { Err("File exceeds 512 MB".to_string()) } else { Ok(size) });
     drop(file);

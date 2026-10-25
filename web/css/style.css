@@ -1169,8 +1169,9 @@ html.native-mobile .slash-description {
 .file-download-action.is-downloading { opacity: 1; color: #c9d1d9; }
 .file-download-action.is-downloading > :not(.file-download-spinner) { visibility: hidden; }
 .file-download-action.is-downloading .file-download-spinner { display: flex; }
-.file-download-spinner .loading-spinner { width: 16px; height: 16px; border-width: 1.5px; border-color: currentColor; border-left-color: transparent; animation-duration: 1s; }
-@media (prefers-reduced-motion: reduce) { .file-download-spinner .loading-spinner { animation: none; } }
+.file-download-spinner .staged-progress-indicator { width: 20px; height: 20px; }
+.file-download-spinner .staged-progress-ring { stroke-width: 2.5; }
+.file-download-spinner:not(.has-progress) .staged-progress-orbit { animation-play-state: running; }
 .file-download-action.is-failed { color: #f85149; }
 .toast { position: fixed; left: 50%; z-index: 3000; width: max-content; max-width: calc(100% - 32px); padding: 8px 14px; border: 1px solid #30363d; border-radius: 8px; background: rgba(22,27,34,0.96); color: #e6edf3; font-size: 13px; overflow-wrap: anywhere; transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
 .toast.visible { opacity: 1; }

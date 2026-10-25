@@ -1,5 +1,5 @@
 // Shared image preview gestures for chat images, staged images, and project files.
-import { downloadFailure, downloadFile, nativeDownloads } from '../project/download.js';
+import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloads, nativeDownloadsStopOnClose } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
 import { setDownloadButtonState } from './download-button.js';
 import { loadingSpinner } from './loading.js';
@@ -14,6 +14,7 @@ let image;
 let peeks = [];
 let spinner;
 let downloadButton;
+let downloading = false;
 let items = [];
 let index = 0;
 let scale = 1;
@@ -305,6 +306,7 @@ async function downloadCurrentImage() {
   const item = items[index];
   if (!item?.key) return;
   setDownloadButtonState(downloadButton, 'busy');
+  downloading = true;
   let result = 'failed';
   let objectUrl = '';
   try {
@@ -317,12 +319,15 @@ async function downloadCurrentImage() {
       if (!response.ok) throw new Error('Image unavailable');
       url = objectUrl = URL.createObjectURL(await response.blob());
     }
-    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) });
+    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) }, progress => {
+      if (items[index] === item) setDownloadButtonState(downloadButton, 'busy', progress);
+    });
     result = saved?.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
     // Above the gallery navigation, which sits 24-60px over the safe area.
     showToast(downloadFailure(error), items.length > 1 ? { bottom: 72 } : undefined);
   }
+  downloading = false;
   if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   if (items[index] === item) setDownloadButtonState(downloadButton, result);
 }
@@ -339,6 +344,7 @@ function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
   resetZoom();
+  if (downloading && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
 
 document.addEventListener('keydown', event => {
