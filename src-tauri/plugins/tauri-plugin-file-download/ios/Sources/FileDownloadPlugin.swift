@@ -97,12 +97,15 @@ class FileDownloadPlugin: Plugin {
     }
     self.task = task
     // task.progress rarely notifies during a transfer; the byte counters are current, so poll them.
+    // Common modes keep the timer firing while the user scrolls.
     if let channel = channel, let task = task {
-      progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+      let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
         let total = task.countOfBytesExpectedToReceive
         guard total > 0, task.countOfBytesReceived > 0 else { return }
         try? channel.send(DownloadProgress(loaded: task.countOfBytesReceived, total: total))
       }
+      RunLoop.main.add(timer, forMode: .common)
+      progressTimer = timer
     }
     task?.resume()
   }

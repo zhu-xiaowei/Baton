@@ -106,7 +106,7 @@ async function downloadViewedFile() {
     result = await downloadFile(file, onSaveProgress);
     outcome = result.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
-    showToast(downloadFailure(error));
+    showToast((_downloadTarget === target ? '' : target.name + ': ') + downloadFailure(error));
   } finally {
     target.busy = false;
     target.progress = null;

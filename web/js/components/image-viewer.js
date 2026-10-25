@@ -14,7 +14,7 @@ let image;
 let peeks = [];
 let spinner;
 let downloadButton;
-let downloading = false;
+const downloads = new Map(); // image key → progress, while that image downloads
 let items = [];
 let index = 0;
 let scale = 1;
@@ -271,7 +271,7 @@ function showAt(next) {
   }
   if (downloadButton) {
     downloadButton.hidden = !item.key || !item.src;
-    setDownloadButtonState(downloadButton);
+    setDownloadButtonState(downloadButton, downloads.has(item.key) ? 'busy' : 'idle', downloads.get(item.key));
   }
 }
 
@@ -304,9 +304,9 @@ function settleSwipe(dx) {
 // Native saving needs an HTTPS source; the browser saves the Blob already on screen.
 async function downloadCurrentImage() {
   const item = items[index];
-  if (!item?.key) return;
+  if (!item?.key || downloads.has(item.key)) return;
+  downloads.set(item.key, null);
   setDownloadButtonState(downloadButton, 'busy');
-  downloading = true;
   let result = 'failed';
   let objectUrl = '';
   try {
@@ -320,6 +320,7 @@ async function downloadCurrentImage() {
       url = objectUrl = URL.createObjectURL(await response.blob());
     }
     const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) }, progress => {
+      downloads.set(item.key, progress);
       if (items[index] === item) setDownloadButtonState(downloadButton, 'busy', progress);
     });
     result = saved?.status === 'cancelled' ? 'idle' : 'done';
@@ -327,7 +328,7 @@ async function downloadCurrentImage() {
     // Above the gallery navigation, which sits 24-60px over the safe area.
     showToast(downloadFailure(error), items.length > 1 ? { bottom: 72 } : undefined);
   }
-  downloading = false;
+  downloads.delete(item.key);
   if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   if (items[index] === item) setDownloadButtonState(downloadButton, result);
 }
@@ -344,7 +345,7 @@ function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
   resetZoom();
-  if (downloading && nativeDownloadsStopOnClose()) cancelNativeDownload();
+  if (downloads.size && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
 
 document.addEventListener('keydown', event => {

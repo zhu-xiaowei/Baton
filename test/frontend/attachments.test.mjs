@@ -604,3 +604,36 @@ test('the image viewer downloads the current stored image through the native plu
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
   delete window.__TAURI_INTERNALS__;
 });
+
+test('the image viewer tracks each image download: switching back keeps it busy, closing on iOS cancels the rest', async () => {
+  const { showImageViewer, closeImageViewer } = await import('../../web/js/components/image-viewer.js');
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  const calls = [];
+  const pending = [];
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: command => {
+      calls.push(command.split('|')[1]);
+      // Like the iOS plugin: one download at a time, cancelled by a new download or `cancel`.
+      pending.splice(0).forEach(resolve => resolve({ status: 'cancelled' }));
+      return command.endsWith('|cancel') ? Promise.resolve() : new Promise(resolve => pending.push(resolve));
+    },
+  };
+  window.api = async () => ({ url: 'https://bucket.test/photo' });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  const button = document.querySelector('.img-overlay-download');
+  const step = direction => document.querySelector(`.gallery-nav [data-step="${direction}"]`).click();
+  showImageViewer([{ src: 'blob:e', key: 'e'.repeat(32) + '.png' }, { src: 'blob:f', key: 'f'.repeat(32) + '.png' }]);
+  button.click();
+  await settle();
+  step(1);
+  step(-1);
+  assert.equal(button.classList.contains('is-downloading'), true);
+  assert.equal(button.disabled, true);
+  step(1);
+  button.click();
+  await settle();
+  closeImageViewer();
+  await settle();
+  assert.deepEqual(calls, ['download', 'download', 'cancel']);
+});
