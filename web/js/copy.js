@@ -18,21 +18,23 @@ export function refreshMessageCopy(container, { running = false } = {}) {
     node.matches('.assistant-turn, .msg-user, .msg-system-event') && !node.hidden).at(-1);
   const item = row?.matches('.assistant-turn:not(.stream-preview)')
     ? [...row.children].filter(node => node.classList.contains('tl-item')).at(-1) : null;
-  let paragraph = !running && item?.matches('.assistant-text[data-message-text]')
-    ? item.lastElementChild : null;
-  while (paragraph?.classList.contains('md-seg')) paragraph = paragraph.lastElementChild;
-  if (paragraph?.tagName !== 'P' || !paragraph.textContent.trim()) paragraph = null;
+  let tail = item?.lastElementChild;
+  if (tail?.classList.contains('response-copy')) tail = tail.previousElementSibling;
+  while (tail?.classList.contains('md-seg')) tail = tail.lastElementChild;
+  // Prose can share its last line; other Markdown blocks use a trailing control.
+  const target = !running && item?.matches('.assistant-text[data-message-text]') && item.dataset.messageText.trim()
+    ? (tail?.tagName === 'P' ? tail : item) : null;
   for (const button of container.querySelectorAll('.response-copy')) {
-    if (button.parentElement === paragraph) continue;
+    if (button.parentElement === target) continue;
     const parent = button.parentElement;
     button.remove();
     parent.classList.remove('copy-tail');
     if (!parent.className) parent.removeAttribute('class');
     changed = true;
   }
-  if (paragraph && !paragraph.querySelector(':scope > .response-copy')) {
-    paragraph.classList.add('copy-tail');
-    paragraph.insertAdjacentHTML('beforeend', copyButtonHtml('turn'));
+  if (target && !target.querySelector(':scope > .response-copy')) {
+    target.classList.add('copy-tail');
+    target.insertAdjacentHTML('beforeend', copyButtonHtml('turn'));
     changed = true;
   }
   return changed;

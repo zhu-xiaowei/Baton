@@ -102,9 +102,8 @@
 
   function codeBlock(html, language, chat = _chatCode) {
     if (!chat || _documentSlots || !window.copyButtonHtml) return html;
-    var labels = { js: 'JavaScript', javascript: 'JavaScript', ts: 'TypeScript', python: 'Python', py: 'Python', json: 'JSON', bash: 'Shell', sh: 'Shell' };
     return '<div class="code-block"><div class="code-block-head"><span class="code-language">'
-      + escHtml(labels[language] || language || '') + '</span>'
+      + escHtml(hljs.getLanguage(language)?.name || language || '') + '</span>'
       + window.copyButtonHtml('code') + '</div>' + html + '</div>';
   }
 

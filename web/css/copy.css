@@ -18,6 +18,7 @@
 .copy-action:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .copy-action[aria-busy="true"] { cursor: progress; }
 .copy-action:active { background: transparent; color: #e6edf3; }
+.copy-action.mermaid-copy { width: 26px; height: 24px; }
 
 .assistant-text .code-block {
   margin: 8px 0;
@@ -43,7 +44,7 @@
   border-radius: 0;
   padding-top: 0;
 }
-.assistant-text .copy-tail { display: flow-root; }
+.assistant-text.copy-tail, .assistant-text .copy-tail { display: flow-root; }
 .copy-tail > .response-copy { float: right; width: 28px; height: 24px; margin-left: 8px; }
 .msg-user[data-message-actions] .msg-meta {
   min-height: 26px;
@@ -57,7 +58,7 @@
 
 /* Copy feedback changes only the glyph and color; hover never leaves a background. */
 @media (hover: hover) and (pointer: fine) {
-  .copy-action:hover, .copy-action.mermaid-copy:hover { color: #e6edf3; background: transparent; }
+  .copy-action:hover, .copy-action.mermaid-copy:hover, .mermaid-head .mermaid-zoom:hover { color: #e6edf3; background: transparent; }
   .copy-action.copied:hover { color: #3fb950; }
   .copy-action.copy-failed:hover { color: #ff7b72; }
   .message-copy { opacity: 0; }

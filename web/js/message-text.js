@@ -8,8 +8,9 @@ function textNodes(container) {
 function identity(node) {
   if (node.classList.contains('msg-user')) return node;
   const turn = node.closest('.assistant-turn');
-  if (turn?.dataset.turnId) return 'turn:' + turn.dataset.turnId;
   if (!turn) return node;
+  // History before a checkpoint may lack the live turn ID; the user boundary
+  // still identifies the complete response on both sides of the handoff.
   let first = turn;
   for (let previous = turn.previousElementSibling; previous; previous = previous.previousElementSibling) {
     if (previous.classList.contains('msg-user')) break;
