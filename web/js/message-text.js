@@ -1,4 +1,4 @@
-export const messageTextSelector = '.msg-user, .tl-item.assistant-text';
+const messageTextSelector = '.msg-user, .tl-item.assistant-text';
 
 function textNodes(container) {
   return [...container.querySelectorAll(messageTextSelector)]

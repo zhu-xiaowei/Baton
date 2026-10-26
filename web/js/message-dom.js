@@ -1,5 +1,4 @@
 import { attachTimelineTurn, messageSegments, turnTimeline } from './timeline.js';
-import { refreshMessageCopy } from './copy.js';
 
 function domKey(element) {
   if (!element) return '';
@@ -589,7 +588,6 @@ export function createMessageDom(options) {
     }
     if (olderLoader) container.insertBefore(olderLoader, container.firstChild);
     if (permissionPrompt) container.appendChild(permissionPrompt);
-    refreshMessageCopy(container, { running: state.wsRunning });
     state.wsRenderedCount = state.wsAllMessages.length;
     rendered = true;
     return true;
@@ -601,7 +599,6 @@ export function createMessageDom(options) {
     var container = doc.querySelector('.messages');
     if (!container) return;
     options.markTurnAdjacency?.(container);
-    refreshMessageCopy(container, { running: state.wsRunning });
     options.loadImages?.(container);
     options.clampOverflow?.(container);
     options.renderMermaidBlocks?.(container);

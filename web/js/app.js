@@ -2123,7 +2123,6 @@ async function loadOlderAndPrepend() {
   if (loader) loader.insertAdjacentHTML('afterend', html);
   else container.insertAdjacentHTML('afterbegin', html);
   if (window.markTurnAdjacency) markTurnAdjacency(container); // reconnect the pagination seam
-  window.refreshMessageCopy?.(container, { running: state.wsRunning });
   loadImages(container);
   clampOverflow(container);
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);

@@ -80,7 +80,6 @@ export function installCopyActions(view) {
     }, 1500);
   }
   view.copyButtonHtml = copyButtonHtml;
-  view.refreshMessageCopy = refreshMessageCopy;
   view.copyCodeBlock = button => copyText(button,
     button.closest('.code-block')?.querySelector('pre > code')?.textContent);
   view.copyMermaidSource = button => copyText(button,

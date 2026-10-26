@@ -54,11 +54,10 @@
 .msg-user[data-message-actions] .msg-meta .msg-time { margin-left: auto; }
 .msg-user .message-copy { width: 28px; height: 28px; }
 .msg-user[data-message-actions] .msg-meta .clamp-btn { margin-right: auto; order: -1; }
-.stream-preview .response-copy { display: none; }
 
 /* Copy feedback changes only the glyph and color; hover never leaves a background. */
 @media (hover: hover) and (pointer: fine) {
-  .copy-action:hover, .copy-action.mermaid-copy:hover, .mermaid-head .mermaid-zoom:hover { color: #e6edf3; background: transparent; }
+  .copy-action:hover, .mermaid-head .mermaid-zoom:hover { color: #e6edf3; background: transparent; }
   .copy-action.copied:hover { color: #3fb950; }
   .copy-action.copy-failed:hover { color: #ff7b72; }
   .message-copy { opacity: 0; }
