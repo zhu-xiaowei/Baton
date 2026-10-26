@@ -289,13 +289,16 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
-    updates.push(result.session);
+    updates.push(result.session, ...(result.extraSessions || []));
     statusDeltas.push(result.statusDelta);
   }
 
   if (updates.length > 0) {
     await post('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName, os: process.platform, sessions: updates, statusDeltas,
+      deviceName: config.deviceName,
+      os: process.platform,
+      sessions: updates.map(publicSession),
+      statusDeltas,
     });
   }
 }

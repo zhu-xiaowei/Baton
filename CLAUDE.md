@@ -168,6 +168,18 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - Precedence when a session matches more than one source: **busy pool-owned >
     roster-active daemon agent > external/jsonl**.
     watcher/`checkStopped` skip status writes for busy pool-owned (`poolOwns()`) and daemon-agent sessions.
+  - **subagent threads**: a root row is displayed with the *effective* status
+    (`_effective_status`: own status OR any child `runningAgentCount`/`needsInputAgentCount`),
+    so a stuck child count pins the parent to Running. A subagent transcript never records its
+    closing turn (the summary goes to the parent), so its own tail stays non-terminal forever and
+    only means running while the file is still being written: `claudeSubagentStatus()` takes
+    `.meta.json`'s `finished` as authoritative when that CC version writes it (a long silent
+    Bash/model request must stay running), and otherwise trusts the
+    tail within 15s of the last write, extends that to the same 5min staleness window
+    `getSessionStatus()` uses only for an exactly identified running parent (`runningInfo.sessions`,
+    never the project-level fallback), and reports `completed` beyond it. `inspectActiveSession()`
+    re-derives the counts from disk on every `checkStopped` pass and sends them — `sync-sessions`
+    treats missing counts as "unchanged", so a settling root must always carry them.
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
   - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the

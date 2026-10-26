@@ -16,6 +16,8 @@ import {
   statusFromEntry,
 } from '../../bridge/session.mjs';
 import { preferPendingInteraction } from '../../bridge/watcher.mjs';
+import { rebuildAgentCounts } from '../../bridge/agent-counts.mjs';
+import { claudeSubagentStatus } from '../../bridge/claude-subagent.mjs';
 
 function agent(sessionId, state = 'blocked') {
   return {
@@ -60,6 +62,40 @@ const noProcesses = () => ({ projects: new Set(), sessions: new Set() });
 
 function writeRows(filePath, rows) {
   fs.writeFileSync(filePath, `${rows.map(JSON.stringify).join('\n')}\n`);
+}
+
+function backdate(filePath, minutes) {
+  const when = new Date(Date.now() - minutes * 60_000);
+  fs.utimesSync(filePath, when, when);
+}
+
+// A subagent transcript ends on its last tool_result — the closing turn is written
+// to the parent — so its own tail keeps reading as "running" forever.
+function writeSubagent(subagentsDir, agentId, meta = {}) {
+  fs.mkdirSync(subagentsDir, { recursive: true });
+  const filePath = path.join(subagentsDir, `${agentId}.jsonl`);
+  writeRows(filePath, [{
+    type: 'user',
+    uuid: `${agentId}-user`,
+    message: { content: 'Inspect the tests' },
+  }, {
+    type: 'assistant',
+    uuid: `${agentId}-assistant`,
+    message: {
+      model: 'claude-test',
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: {} }],
+    },
+  }, {
+    type: 'user',
+    uuid: `${agentId}-result`,
+    message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] },
+  }]);
+  fs.writeFileSync(
+    filePath.replace(/\.jsonl$/, '.meta.json'),
+    JSON.stringify({ agentType: 'Explore', description: 'Inspect test coverage', ...meta }),
+  );
+  return filePath;
 }
 
 test('roster-active blocked agent uses daemon status and current question', () => {
@@ -447,6 +483,111 @@ test('forked skills appear before the parent prompt and publish their initial hi
       message: { content: '/code-review example PR' },
     }) + '\n');
     assert.equal(discover()[0].preview, '/code-review example PR');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('subagent status trusts its own transcript only while it is being written', () => {
+  for (const item of [
+    { idleMs: 1_000, parentActive: false, expected: 'running' },
+    { idleMs: 60_000, parentActive: true, expected: 'running' },
+    { idleMs: 60_000, parentActive: false, expected: 'completed' },
+    { idleMs: 3_600_000, parentActive: true, expected: 'completed' },
+    { idleMs: 1_000, parentActive: false, tail: null, expected: 'running' },
+    { idleMs: 3_600_000, parentActive: false, tail: 'needs_input', expected: 'needs_input' },
+    // `finished` wins over both windows in either direction.
+    { idleMs: 3_600_000, parentActive: false, finished: false, expected: 'running' },
+    { idleMs: 1_000, parentActive: true, finished: true, expected: 'completed' },
+  ]) {
+    assert.equal(
+      claudeSubagentStatus(
+        'tail' in item ? item.tail : 'running',
+        item.idleMs,
+        item.parentActive,
+        item.finished,
+      ),
+      item.expected,
+      JSON.stringify(item),
+    );
+  }
+});
+
+test('a stale subagent transcript stops pinning its parent to running', () => {
+  const parentId = '68686868-6868-4686-8686-686868686868';
+  const fixture = sessionFixture(parentId);
+  try {
+    const childFile = writeSubagent(
+      path.join(path.dirname(fixture.filePath), parentId, 'subagents'),
+      'agent-stale',
+    );
+    backdate(fixture.filePath, 60);
+    backdate(childFile, 60);
+    // A CC process in this folder whose session id cannot be resolved must not
+    // vouch for every historical subagent in it.
+    const discover = () => discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set() },
+      daemonMeta: new Map(),
+    }).sessions;
+
+    const sessions = discover();
+    const root = sessions.find((session) => !session.parentSessionId);
+    const child = sessions.find((session) => session.parentSessionId);
+    assert.equal(root.status, 'completed');
+    assert.equal(child.status, 'completed');
+    rebuildAgentCounts(sessions);
+    assert.equal(root.agentCount, 1);
+    assert.equal(root.runningAgentCount, 0);
+    assert.equal(root.activeStatus, 'completed');
+
+    // A transcript that is still being written stays running.
+    backdate(childFile, 0);
+    const refreshed = discover();
+    assert.equal(refreshed.find((session) => session.parentSessionId).status, 'running');
+    rebuildAgentCounts(refreshed);
+    assert.equal(refreshed.find((session) => !session.parentSessionId).activeStatus, 'running');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('stopped polling clears a stale running agent count', () => {
+  const parentId = '69696969-6969-4696-8696-696969696969';
+  const fixture = sessionFixture(parentId);
+  try {
+    const childFile = writeSubagent(
+      path.join(path.dirname(fixture.filePath), parentId, 'subagents'),
+      'agent-finished',
+    );
+    backdate(fixture.filePath, 60);
+    backdate(childFile, 60);
+    const result = claudeRuntime.inspectActiveSession({
+      sessionId: parentId,
+      nativeSessionId: parentId,
+      deviceName: 'test-device',
+      projectHash: fixture.project,
+      preview: 'Parent session',
+      lastActive: '2026-07-17T00:00:00.000Z',
+      // Effective status the server reports while a child count is stale.
+      status: 'running',
+    }, {
+      daemonMeta: new Map(),
+      daemonRunning: new Set(),
+      poolOwns: () => false,
+      runningInfo: noProcesses(),
+      lastKnownStatus: new Map([[parentId, 'running']]),
+      findSessionFile: () => fixture.filePath,
+    });
+
+    assert.equal(result.session.status, 'completed');
+    assert.equal(result.session.agentCount, 1);
+    assert.equal(result.session.runningAgentCount, 0);
+    assert.equal(result.session.needsInputAgentCount, 0);
+    assert.equal(result.session.activeStatus, 'completed');
+    assert.equal(result.extraSessions.length, 1);
+    assert.equal(result.extraSessions[0].status, 'completed');
+    assert.equal(result.extraSessions[0].parentSessionId, parentId);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
