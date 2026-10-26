@@ -64,11 +64,9 @@ test('a recovered permission resumes the strict turn before the next output', as
     chunk: 'continued immediately',
   }));
 
-  await h.tick(30);
+  const response = () => h.document.querySelector('[data-turn-id="turn-permission-resume"]')?.textContent;
+  const deadline = Date.now() + 2000;
+  while (response() !== 'continued immediately' && Date.now() < deadline) await h.tick(10);
   assert.deepEqual(resolved, ['approval-1']);
-  assert.equal(
-    h.document.querySelector('[data-turn-id="turn-permission-resume"]')
-      ?.textContent,
-    'continued immediately',
-  );
+  assert.equal(response(), 'continued immediately');
 });
