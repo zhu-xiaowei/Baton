@@ -559,6 +559,35 @@ test('native download progress fills the ring and survives closing and reopening
   assert.equal(document.getElementById('file-download-btn').disabled, false);
 });
 
+test('iOS download completion shows a check before the share sheet closes', async () => {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  let report;
+  let finishSharing;
+  let calls = 0;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: callback => { report = callback; return 1; },
+    invoke: () => { calls++; return new Promise(resolve => { finishSharing = resolve; }); },
+  };
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  const downloading = window.downloadViewedFile();
+  await until(() => finishSharing);
+  const button = document.getElementById('file-download-btn');
+  report({ index: 0, message: { loaded: 5, total: 10 } });
+  assert.equal(button.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '50');
+  // The completion event must replace the last reported progress immediately,
+  // even though the native invoke stays pending until the user dismisses the share sheet.
+  report({ index: 1, message: { loaded: 10, total: 10 } });
+  assert.equal(button.querySelector('[role="progressbar"]'), null);
+  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  assert.equal(button.getAttribute('aria-busy'), 'false');
+  assert.equal(button.disabled, true);
+  await window.downloadViewedFile();
+  assert.equal(calls, 1);
+  finishSharing({ status: 'shared' });
+  await downloading;
+  assert.equal(button.disabled, false);
+});
+
 test('closing the viewer cancels an iOS native download', async () => {
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
   const calls = [];
@@ -603,6 +632,31 @@ test('the image viewer downloads the current stored image through the native plu
   assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
   delete window.__TAURI_INTERNALS__;
+});
+
+test('the image viewer shows download completion while iOS sharing is still pending', async () => {
+  const { showImageViewer, closeImageViewer } = await import('../../web/js/components/image-viewer.js');
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  let report;
+  let finishSharing;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: callback => { report = callback; return 1; },
+    invoke: () => new Promise(resolve => { finishSharing = resolve; }),
+  };
+  showImageViewer([{ src: 'blob:complete', key: 'c'.repeat(32) + '.png' }]);
+  const button = document.querySelector('.img-overlay-download');
+  button.click();
+  await until(() => finishSharing);
+  report({ index: 0, message: { loaded: 999, total: 1000 } });
+  assert.equal(button.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '99');
+  report({ index: 1, message: { loaded: 1000, total: 1000 } });
+  assert.equal(button.querySelector('[role="progressbar"]'), null);
+  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  assert.equal(button.disabled, true);
+  finishSharing({ status: 'shared' });
+  await until(() => !button.disabled);
+  assert.equal(button.disabled, false);
+  closeImageViewer();
 });
 
 test('the image viewer tracks each image download: switching back keeps it busy, closing on iOS cancels the rest', async () => {

@@ -19,11 +19,47 @@ struct DownloadProgress: Encodable {
   let total: Int64
 }
 
+private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+  private let progress: Channel?
+  private let completion: (URLSessionDownloadTask, URL?, Error?) -> Void
+  private var reportedBytes: Int64 = 0
+
+  init(progress: Channel?, completion: @escaping (URLSessionDownloadTask, URL?, Error?) -> Void) {
+    self.progress = progress
+    self.completion = completion
+    super.init()
+  }
+
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                  didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                  totalBytesExpectedToWrite: Int64) {
+    // Report only when bytes received since the last update exceed 1% of the total.
+    // Division keeps the comparison exact without overflowing a byte count * 100.
+    // Completion is sent separately after the temporary file is validated and moved.
+    guard totalBytesWritten > 0, totalBytesExpectedToWrite > totalBytesWritten else { return }
+    guard totalBytesWritten - reportedBytes > totalBytesExpectedToWrite / 100 else { return }
+    reportedBytes = totalBytesWritten
+    try? progress?.send(DownloadProgress(loaded: totalBytesWritten, total: totalBytesExpectedToWrite))
+  }
+
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                  didFinishDownloadingTo location: URL) {
+    // URLSession removes this file when the callback returns, so move it synchronously.
+    completion(downloadTask, location, nil)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    session.finishTasksAndInvalidate()
+    if let error = error, let downloadTask = task as? URLSessionDownloadTask {
+      completion(downloadTask, nil, error)
+    }
+  }
+}
+
 // One download at a time: a new download or `cancel` stops the current one, which resolves as cancelled.
 class FileDownloadPlugin: Plugin {
   private var task: URLSessionDownloadTask?
   private var sharing = false
-  private var progressTimer: Timer?
   private weak var webview: WKWebView?
 
   override public func load(webview: WKWebView) {
@@ -52,15 +88,11 @@ class FileDownloadPlugin: Plugin {
   private func start(_ invoke: Invoke, url: URL, name: String, progress channel: Channel?) {
     guard !sharing else { invoke.reject("Finish sharing the previous file first"); return }
     task?.cancel()
-    progressTimer?.invalidate()
-    var task: URLSessionDownloadTask?
-    task = URLSession.shared.downloadTask(with: url) { [weak self] temporary, response, error in
+    let delegate = DownloadDelegate(progress: channel) { [weak self] task, temporary, error in
       guard let self = self else { return }
       DispatchQueue.main.async {
         guard self.task === task else { return }
         self.task = nil
-        self.progressTimer?.invalidate()
-        self.progressTimer = nil
       }
       if (error as? URLError)?.code == .cancelled {
         invoke.resolve(["status": "cancelled"]); return
@@ -68,7 +100,7 @@ class FileDownloadPlugin: Plugin {
       var directory: URL?
       do {
         if let error = error { throw error }
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
+        guard let response = task.response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
               let temporary = temporary else { throw NSError(domain: "Download failed", code: 1) }
         let size = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 512 * 1024 * 1024 else { throw NSError(domain: "File exceeds 512 MB", code: 1) }
@@ -77,25 +109,22 @@ class FileDownloadPlugin: Plugin {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(name)
         try FileManager.default.moveItem(at: temporary, to: target)
-        DispatchQueue.main.async { self.share(target, folder, invoke) }
+        DispatchQueue.main.async {
+          // Always send completion before sharing: invoke only resolves after the
+          // share sheet is dismissed. Empty files also need a completed fraction.
+          let total = max(Int64(size), 1)
+          try? channel?.send(DownloadProgress(loaded: total, total: total))
+          self.share(target, folder, invoke)
+        }
       } catch {
         if let directory = directory { try? FileManager.default.removeItem(at: directory) }
         invoke.reject(error.localizedDescription)
       }
     }
+    let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+    let task = session.downloadTask(with: url)
     self.task = task
-    // task.progress rarely notifies during a transfer; the byte counters are current, so poll them.
-    // Common modes keep the timer firing while the user scrolls.
-    if let channel = channel, let task = task {
-      let timer = Timer(timeInterval: 0.2, repeats: true) { _ in
-        let total = task.countOfBytesExpectedToReceive
-        guard total > 0, task.countOfBytesReceived > 0 else { return }
-        try? channel.send(DownloadProgress(loaded: task.countOfBytesReceived, total: total))
-      }
-      RunLoop.main.add(timer, forMode: .common)
-      progressTimer = timer
-    }
-    task?.resume()
+    task.resume()
   }
 
   // A file made on the device (e.g. a diagram image): no network, straight to the share sheet.

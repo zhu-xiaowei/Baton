@@ -12,22 +12,26 @@ const timers = new WeakMap();
 // progress: 0..1 fills the pie; null spins the ring while the size is unknown.
 export function setDownloadButtonState(button, state = 'idle', progress = null) {
   const busy = state === 'busy';
+  // iOS keeps the invoke pending while its share sheet is open. The file is already
+  // downloaded at 100%, so show the check while keeping the action disabled.
+  const complete = busy && Number.isFinite(progress) && progress >= 1;
+  const downloading = busy && !complete;
   // Rebuilding a spinning ring would restart its animation.
-  if (!busy || !button.classList.contains('is-downloading')) {
+  if (!busy || !button.classList.contains('is-downloading') || complete) {
     clearTimeout(timers.get(button));
     button.disabled = busy;
-    button.classList.toggle('is-downloading', busy);
+    button.classList.toggle('is-downloading', downloading);
     button.classList.toggle('is-failed', state === 'failed');
-    button.setAttribute('aria-busy', String(busy));
+    button.setAttribute('aria-busy', String(downloading));
     button.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
-      + (ICONS[state] || ICONS.idle) + '</svg>'
-      + (busy ? '<span class="file-download-spinner" role="progressbar" aria-label="Downloading"'
+      + (ICONS[complete ? 'done' : state] || ICONS.idle) + '</svg>'
+      + (downloading ? '<span class="file-download-spinner" role="progressbar" aria-label="Downloading"'
         + ' aria-valuemin="0" aria-valuemax="100">' + progressRingHtml() + '</span>' : '');
     if (state === 'done' || state === 'failed') {
       timers.set(button, setTimeout(() => setDownloadButtonState(button), RESULT_MS));
     }
   }
-  if (busy) setDownloadButtonProgress(button, progress);
+  if (downloading) setDownloadButtonProgress(button, progress);
 }
 
 function setDownloadButtonProgress(button, progress) {
