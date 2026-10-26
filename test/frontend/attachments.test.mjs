@@ -535,29 +535,40 @@ test('the shared download button invokes the native download plugin with the ori
   assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
 });
 
-test('native download progress fills the ring and survives closing and reopening the viewer', async () => {
-  let report;
-  let finish;
-  window.__TAURI_INTERNALS__ = {
-    transformCallback: callback => { report = callback; return 1; },
-    invoke: () => new Promise(resolve => { finish = resolve; }),
-  };
-  const ring = () => document.querySelector('#file-download-btn .file-download-spinner');
-  window.openFile('baton-file:' + key, 'deck.pptx');
-  const downloading = window.downloadViewedFile();
-  for (let i = 0; i < 20 && !finish; i++) await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(ring().classList.contains('has-progress'), false);
-  report({ index: 0, message: { loaded: 5, total: 10 } });
-  assert.equal(ring().getAttribute('aria-valuenow'), '50');
-  window.closeFileViewer();
-  report({ index: 1, message: { loaded: 8, total: 10 } });
-  window.openFile('baton-file:' + key, 'deck.pptx');
-  assert.equal(ring().getAttribute('aria-valuenow'), '80');
-  finish({ status: 'saved' });
-  await downloading;
-  assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
-  assert.equal(document.getElementById('file-download-btn').disabled, false);
-});
+for (const userAgent of ['Macintosh', 'Android']) {
+  test(`${userAgent} download progress survives reopening and waits for the save result`, async () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
+    let report;
+    let finish;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: callback => { report = callback; return 1; },
+      invoke: () => new Promise(resolve => { finish = resolve; }),
+    };
+    const button = document.getElementById('file-download-btn');
+    const ring = () => button.querySelector('.file-download-spinner');
+    window.openFile('baton-file:' + key, 'deck.pptx');
+    const downloading = window.downloadViewedFile();
+    await until(() => finish);
+    assert.equal(ring().classList.contains('has-progress'), false);
+    report({ index: 0, message: { loaded: 5, total: 10 } });
+    assert.equal(ring().getAttribute('aria-valuenow'), '50');
+    window.closeFileViewer();
+    report({ index: 1, message: { loaded: 8, total: 10 } });
+    window.openFile('baton-file:' + key, 'deck.pptx');
+    assert.equal(ring().getAttribute('aria-valuenow'), '80');
+    for (const [index, loaded] of [10, 12].entries()) {
+      report({ index: index + 2, message: { loaded, total: 10 } });
+      assert.equal(ring()?.getAttribute('aria-valuenow'), '99');
+      assert.equal(button.getAttribute('aria-busy'), 'true');
+      assert.equal(button.disabled, true);
+    }
+    finish({ status: 'saved' });
+    await downloading;
+    assert.equal(button.classList.contains('is-downloading'), false);
+    assert.equal(button.disabled, false);
+    assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  });
+}
 
 test('iOS download completion shows a check before the share sheet closes', async () => {
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
@@ -632,31 +643,6 @@ test('the image viewer downloads the current stored image through the native plu
   assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
   delete window.__TAURI_INTERNALS__;
-});
-
-test('the image viewer shows download completion while iOS sharing is still pending', async () => {
-  const { showImageViewer, closeImageViewer } = await import('../../web/js/components/image-viewer.js');
-  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
-  let report;
-  let finishSharing;
-  window.__TAURI_INTERNALS__ = {
-    transformCallback: callback => { report = callback; return 1; },
-    invoke: () => new Promise(resolve => { finishSharing = resolve; }),
-  };
-  showImageViewer([{ src: 'blob:complete', key: 'c'.repeat(32) + '.png' }]);
-  const button = document.querySelector('.img-overlay-download');
-  button.click();
-  await until(() => finishSharing);
-  report({ index: 0, message: { loaded: 999, total: 1000 } });
-  assert.equal(button.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '99');
-  report({ index: 1, message: { loaded: 1000, total: 1000 } });
-  assert.equal(button.querySelector('[role="progressbar"]'), null);
-  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
-  assert.equal(button.disabled, true);
-  finishSharing({ status: 'shared' });
-  await until(() => !button.disabled);
-  assert.equal(button.disabled, false);
-  closeImageViewer();
 });
 
 test('the image viewer tracks each image download: switching back keeps it busy, closing on iOS cancels the rest', async () => {

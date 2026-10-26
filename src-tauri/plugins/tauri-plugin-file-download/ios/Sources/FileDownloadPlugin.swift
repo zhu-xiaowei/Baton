@@ -33,9 +33,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                   didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                   totalBytesExpectedToWrite: Int64) {
-    // Report only when bytes received since the last update exceed 1% of the total.
-    // Division keeps the comparison exact without overflowing a byte count * 100.
-    // Completion is sent separately after the temporary file is validated and moved.
+    // Report after >1% more bytes; completion follows the file move.
     guard totalBytesWritten > 0, totalBytesExpectedToWrite > totalBytesWritten else { return }
     guard totalBytesWritten - reportedBytes > totalBytesExpectedToWrite / 100 else { return }
     reportedBytes = totalBytesWritten
