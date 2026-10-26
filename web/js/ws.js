@@ -223,6 +223,7 @@ if (_isMobile) {
     if (!input?.matches('#msg-input, #gitStatusPage:not([hidden]) .git-commit-input')
       || !_mobileKeyboardOpen
       || event.target === input
+      || event.target.closest?.('.copy-action')
       || (input.id === 'msg-input' && event.target.closest?.('#input-bar'))) {
       return;
     }
@@ -1054,11 +1055,13 @@ function getStrictStreamRenderer() {
     },
     onMutation: function (element, mutation) {
       var container = document.querySelector('.messages');
+      var completedTurn = element?.closest('.stream-committed');
       if (mutation?.structureChanged
         || element?.classList.contains('assistant-turn')
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }
+      if (completedTurn) window.refreshMessageCopy?.(container, { running: state.wsRunning });
       if (element?.classList.contains('tool-run-group-hidden')
         || element?.classList.contains('tool-run-row-hidden')) return;
       followBottomAfterLayout();
@@ -1938,6 +1941,7 @@ function displayHistorySnapshot(data, pendingNodes) {
   content.replaceChildren(container);
   state.wsRenderedCount = state.wsAllMessages.length;
   markTurnAdjacency(container);
+  window.refreshMessageCopy?.(container, { running: state.wsRunning });
   loadImages(container);
   clampOverflow(container);
   window.renderMermaidBlocks?.(container);
@@ -2268,6 +2272,9 @@ function updateSendBtn(options) {
   var btn = document.getElementById('send-btn');
   var input = document.getElementById('msg-input');
   var waitingReceipt = !!pendingReceipt();
+  if (window.refreshMessageCopy?.(document.querySelector('.messages'), { running: state.wsRunning || waitingReceipt })) {
+    followBottomAfterLayout();
+  }
   var textLen = input.value.trim().length;
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
@@ -2484,9 +2491,10 @@ function doSend(fullText, displayText, images) {
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
+      '<div class="msg-user"' + (displayText ? ' data-message-actions' : '') + ' hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
-      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
+      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span>'
+      + (displayText && window.copyButtonHtml ? window.copyButtonHtml('message') : '') + '</div></div>');
   }
   updateSendBtn();
   wsSendReliable(sendPayload);

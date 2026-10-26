@@ -71,6 +71,9 @@ async function loadViewerLibs() {
     window.hljs = hljsMod.default;
     window.Anser = anserMod.default;
 
+    // Install the shared clipboard controls before the Markdown renderer emits them.
+    await import('./copy.js');
+
     // Phase 2: viewer modules (IIFEs that read window.marked/hljs at top level).
     await Promise.all([
       import('./components/markdown.js'),

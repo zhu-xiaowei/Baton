@@ -247,18 +247,6 @@
     btn.classList.add('active');
   };
 
-  var COPIED_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-  window.copyMermaidSource = function (btn) {
-    var src = btn.closest('.mermaid-block') && btn.closest('.mermaid-block').querySelector('.mermaid-src');
-    if (!src || btn.classList.contains('copied') || !navigator.clipboard || !navigator.clipboard.writeText) return;
-    navigator.clipboard.writeText(src.textContent).then(function () {
-      var icon = btn.innerHTML;
-      btn.innerHTML = COPIED_ICON;
-      btn.classList.add('copied');
-      setTimeout(function () { btn.innerHTML = icon; btn.classList.remove('copied'); }, 1500);
-    }, function () {});
-  };
-
   // ---- Fullscreen download: the whole diagram (not the current zoom) as a PNG ----
   var PNG_BACKGROUND = '#0d1117'; // .mermaid-fs-overlay background; the dark theme needs a dark backdrop
 
