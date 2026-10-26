@@ -1,0 +1,71 @@
+.copy-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.copy-action svg { pointer-events: none; flex-shrink: 0; }
+.copy-action.copied { color: #3fb950; }
+.copy-action.copy-failed { color: #ff7b72; }
+.copy-action:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.copy-action[aria-busy="true"] { cursor: progress; }
+.copy-action:active { background: transparent; color: #e6edf3; }
+.copy-action.mermaid-copy { width: 26px; height: 24px; }
+
+.assistant-text .code-block {
+  margin: 8px 0;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #161b22;
+  overflow: hidden;
+}
+.code-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 1px 5px 0 12px;
+}
+.code-language {
+  color: #8b949e;
+  font: 11px/1.5 'SF Mono', 'Fira Code', monospace;
+}
+.assistant-text .code-block > pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding-top: 0;
+}
+.assistant-text.copy-tail, .assistant-text .copy-tail { display: flow-root; }
+.copy-tail > .response-copy { float: right; width: 28px; height: 24px; margin-left: 8px; }
+.msg-user[data-message-actions] .msg-meta {
+  min-height: 26px;
+  margin: 3px -5px -5px 0;
+  gap: 8px;
+}
+.msg-user[data-message-actions] .msg-meta .msg-time { margin-left: auto; }
+.msg-user .message-copy { width: 28px; height: 28px; }
+.msg-user[data-message-actions] .msg-meta .clamp-btn { margin-right: auto; order: -1; }
+
+/* Copy feedback changes only the glyph and color; hover never leaves a background. */
+@media (hover: hover) and (pointer: fine) {
+  .copy-action:hover, .mermaid-head .mermaid-zoom:hover { color: #e6edf3; background: transparent; }
+  .copy-action.copied:hover { color: #3fb950; }
+  .copy-action.copy-failed:hover { color: #ff7b72; }
+  .message-copy { opacity: 0; }
+  .msg-user:hover .message-copy, .assistant-turn:hover .message-copy, .assistant-text:hover .message-copy,
+  .message-copy:focus-visible, .message-copy.copied, .message-copy.copy-failed { opacity: 1; }
+}
+@media (pointer: coarse) {
+  .copy-action { position: relative; }
+  .code-copy::after, .message-copy::after { content: ''; position: absolute; inset: -6px; }
+  .code-block-head { min-height: 40px; padding-top: 3px; padding-bottom: 3px; }
+}

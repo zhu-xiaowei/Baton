@@ -40,7 +40,9 @@ function comparableMarkup(element) {
       'expanded',
       'clamped',
       'open',
+      'copy-tail',
     );
+    if (node.getAttribute('class') === '') node.removeAttribute('class');
     node.removeAttribute?.('aria-expanded');
     node.removeAttribute?.('data-tool-details-group');
     if (node.classList?.contains('tool-body-content')
@@ -48,7 +50,7 @@ function comparableMarkup(element) {
       node.removeAttribute('id');
     }
   }
-  for (var button of clone.querySelectorAll('.clamp-btn')) button.remove();
+  for (var button of clone.querySelectorAll('.clamp-btn, .message-action')) button.remove();
   return clone.outerHTML;
 }
 

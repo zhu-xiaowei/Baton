@@ -9,6 +9,7 @@
   // Set only while renderMdDocument parses. Baton's own markup (inline handlers, KaTeX styles)
   // is parked here so the sanitizer only sees the document's Markdown and raw HTML.
   var _documentSlots = null;
+  var _chatCode = false;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -93,10 +94,23 @@
   function jsonHtml(value) {
     var code = JSON.stringify(value, null, 2);
     try {
-      return '<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>';
+      return codeBlock('<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>', 'json', true);
     } catch (e) {
-      return '<pre><code>' + escHtml(code) + '</code></pre>';
+      return codeBlock('<pre><code>' + escHtml(code) + '</code></pre>', 'json', true);
     }
+  }
+
+  function codeBlock(html, language, chat = _chatCode) {
+    if (!chat || _documentSlots || !window.copyButtonHtml) return html;
+    return '<div class="code-block"><div class="code-block-head"><span class="code-language">'
+      + escHtml(hljs.getLanguage(language)?.name || language || '') + '</span>'
+      + window.copyButtonHtml('code') + '</div>' + html + '</div>';
+  }
+
+  function chatMarkdown(text) {
+    var previous = _chatCode;
+    _chatCode = true;
+    try { return window.renderMd(text); } finally { _chatCode = previous; }
   }
 
   function mermaidCodeHtml(code) {
@@ -109,9 +123,7 @@
     return '<div class="mermaid-head">'
       + '<button class="mermaid-tab active" onclick="toggleMermaidView(this,\'diagram\')">diagram</button>'
       + '<button class="mermaid-tab" onclick="toggleMermaidView(this,\'code\')">code</button>'
-      + '<button class="mermaid-copy" title="Copy source" onclick="copyMermaidSource(this)" aria-label="Copy source">'
-      + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>'
-      + '</button>'
+      + (window.copyButtonHtml?.('mermaid') || '')
       + '<button class="mermaid-zoom" title="Fullscreen" onclick="openMermaidFullscreen(this)" aria-label="Fullscreen">'
       + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>'
       + '</button>'
@@ -172,11 +184,11 @@
         // Unlabeled code stays plain; an unloaded language is highlighted once it loads.
         if (html == null && lang && !hljs.getLanguage(lang) && window.loadHljsLanguage) {
           window.loadHljsLanguage(lang);
-          return trusted('<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
-            + escHtml(code) + '</code></pre>');
+          return trusted(codeBlock('<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
+            + escHtml(code) + '</code></pre>', lang));
         }
         if (html == null) html = escHtml(code);
-        return trusted('<pre><code class="hljs">' + html + '</code></pre>');
+        return trusted(codeBlock('<pre><code class="hljs">' + html + '</code></pre>', lang));
       },
     },
   });
@@ -334,9 +346,9 @@
 
   window.renderAssistantText = function (text) {
     var json = standaloneJson(text);
-    if (json == null) return window.renderMd(text);
+    if (json == null) return chatMarkdown(text);
     var review = reviewMarkdown(json);
-    return review ? window.renderMd(review) : jsonHtml(json);
+    return review ? chatMarkdown(review) : jsonHtml(json);
   };
 
   // Split streamed text at ```mermaid fences (counts even while unclosed) → [{type:'text'|'mermaid', text}].
@@ -414,14 +426,14 @@
     }
     var hasPersistentBlocks = false;
     for (var i = 0; i < segs.length; i++) if (segs[i].type !== 'text') { hasPersistentBlocks = true; break; }
-    if (!hasPersistentBlocks) { updateMarkdownHtml(host, window.renderMd(text)); return; }
+    if (!hasPersistentBlocks) { updateMarkdownHtml(host, chatMarkdown(text)); return; }
 
     var children = host.childNodes;
     for (var s = 0; s < segs.length; s++) {
       var seg = segs[s];
       var node = children[s];
       if (seg.type === 'text') {
-        var html = window.renderMd(seg.text);
+        var html = chatMarkdown(seg.text);
         if (!node || node.nodeType !== 1 || node.className !== 'md-seg') { // insert/replace a text wrapper
           var w = document.createElement('div');
           w.className = 'md-seg'; w.innerHTML = html; w.dataset.h = html;

@@ -1,5 +1,6 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
+import { copyButtonHtml, refreshMessageCopy } from './copy.js';
 import { attachmentPreviewText, attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
   clearComposerDraft,
@@ -223,6 +224,7 @@ if (_isMobile) {
     if (!input?.matches('#msg-input, #gitStatusPage:not([hidden]) .git-commit-input')
       || !_mobileKeyboardOpen
       || event.target === input
+      || event.target.closest?.('.copy-action')
       || (input.id === 'msg-input' && event.target.closest?.('#input-bar'))) {
       return;
     }
@@ -2268,6 +2270,9 @@ function updateSendBtn(options) {
   var btn = document.getElementById('send-btn');
   var input = document.getElementById('msg-input');
   var waitingReceipt = !!pendingReceipt();
+  if (refreshMessageCopy(document.querySelector('.messages'), { running: state.wsRunning || waitingReceipt })) {
+    followBottomAfterLayout();
+  }
   var textLen = input.value.trim().length;
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
@@ -2484,9 +2489,10 @@ function doSend(fullText, displayText, images) {
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
+      '<div class="msg-user"' + (displayText ? ' data-message-actions' : '') + ' hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
-      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
+      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span>'
+      + (displayText ? copyButtonHtml('message') : '') + '</div></div>');
   }
   updateSendBtn();
   wsSendReliable(sendPayload);
