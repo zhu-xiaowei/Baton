@@ -3,11 +3,13 @@ import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { mountBackButton } from '../components/back-button.js';
 import { loadingSpinner } from '../components/loading.js';
+import { setDownloadButtonState } from '../components/download-button.js';
+import { showToast } from '../components/toast.js';
 import { currentProjectHash, relativeProjectImagePath } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 import { escapeAttachment, isTextAttachment, readAttachmentText } from '../components/attachment.js';
-import { BROWSER_SHARE_MAX_BYTES, browserCanShare, downloadFile, prepareSharedFile } from './download.js';
+import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloadsStopOnClose } from './download.js';
 import { loadOfficeViewer, mountOfficePreview, officeKind } from '../components/office-preview.js';
 import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../components/attachment-cache.js';
 import { toolDetailsSource } from '../tool-details.js';
@@ -37,28 +39,28 @@ function clearAttachmentPreviewCache(key) {
   _clearPdfRanges?.(state.SERVER + '|' + state.KEY + '|' + key + '|');
 }
 
-function downloadStatus(text) {
-  const status = document.getElementById('file-download-status');
-  if (status) status.textContent = text;
+// A finished check/failure icon stays until its own timer, so unrelated body updates keep it.
+function updateDownloadButtons(result) {
+  const button = document.getElementById('file-download-btn');
+  if (!button) return;
+  const busy = !!_downloadTarget?.busy;
+  if (result || busy || button.classList.contains('is-downloading')) {
+    setDownloadButtonState(button, result || (busy ? 'busy' : 'idle'), _downloadTarget?.progress);
+  }
+  button.disabled = !_downloadTarget || busy;
 }
 
-function updateDownloadButtons() {
-  const busy = !!_downloadTarget?.busy;
-  document.querySelectorAll('#file-download-btn, #fileOverlay .file-download-action').forEach(button => {
-    button.disabled = !_downloadTarget || busy;
-    button.classList.toggle('is-downloading', busy);
-    button.setAttribute('aria-busy', String(busy));
-    if (busy && !button.querySelector('.file-download-spinner')) {
-      button.insertAdjacentHTML('beforeend', '<span class="file-download-spinner">'
-        + loadingSpinner({ size: 'small', label: 'Downloading file' }) + '</span>');
-    }
-  });
+// Downloads keep running after their viewer closes (except on iOS); reopening the file shows the same progress.
+var _activeDownloads = new Map();
+
+function downloadId(target) {
+  return [target.device, target.projectHash, target.path].join('\0');
 }
 
 function uploadedKey(target) {
   if (!target.keyPromise) {
     target.keyPromise = target.key ? Promise.resolve(target.key) : requestProjectFiles('download', {
-      projectHash: target.projectHash, path: target.path,
+      projectHash: target.projectHash, path: target.path, device: target.device,
     }, { timeout: 30 * 60_000 }).then(result => (target.key = result.key));
     target.keyPromise.catch(() => { target.keyPromise = null; });
   }
@@ -84,53 +86,41 @@ async function showUploadedProjectFile(target) {
   }
 }
 
+// The ring fills while bytes reach this device; Bridge preparation only spins it.
 async function downloadViewedFile() {
   const target = _downloadTarget;
   if (!target || target.busy) return;
+  const id = downloadId(target);
   target.busy = true;
+  _activeDownloads.set(id, target);
+  const onSaveProgress = progress => {
+    target.progress = progress;
+    if (_downloadTarget === target) updateDownloadButtons();
+  };
   updateDownloadButtons();
-  downloadStatus('Preparing download…');
+  let outcome = 'failed';
+  let result;
   try {
-    let result;
-    if (target.sharedFile) {
-      result = await shareDownloadedFile(target);
-    } else {
-      const file = await prepareViewedDownload(target);
-      if (_downloadTarget !== target) return;
-      downloadStatus('Downloading…');
-      if (browserCanShare() && file.size <= BROWSER_SHARE_MAX_BYTES) {
-        try {
-          target.sharedFile = await prepareSharedFile(file);
-        } catch (error) {
-          if (error.name !== 'NotSupportedError') throw error;
-        }
-        if (_downloadTarget !== target) return;
-      }
-      result = target.sharedFile ? await shareDownloadedFile(target) : await downloadFile(file);
-    }
-    if (_downloadTarget === target) downloadStatus({
-      saved: 'Saved to Downloads.', queued: 'Added to system Downloads.',
-      shared: 'Shared.', cancelled: '', started: 'Download started.',
-      share_opened: 'Download complete. System sharing opened.',
-      ready: 'File ready. Tap Download again to open the system share sheet.',
-    }[result.status] || 'Download started.');
+    const file = await prepareViewedDownload(target);
+    if (target.stopped) return;
+    result = await downloadFile(file, onSaveProgress);
+    outcome = result.status === 'cancelled' ? 'idle' : 'done';
   } catch (error) {
-    if (_downloadTarget === target) downloadStatus(String(error.message || error));
+    showToast((_downloadTarget === target ? '' : target.name + ': ') + downloadFailure(error));
   } finally {
     target.busy = false;
-    if (_downloadTarget === target) updateDownloadButtons();
+    target.progress = null;
+    if (_activeDownloads.get(id) === target) _activeDownloads.delete(id);
+    if (_downloadTarget === target) updateDownloadButtons(outcome);
+    else if (result?.status === 'saved') showToast('Downloaded ' + target.name);
   }
 }
 
-async function shareDownloadedFile(target) {
-  try {
-    await navigator.share({ files: [target.sharedFile] });
-    return { status: 'shared' };
-  } catch (error) {
-    if (error.name === 'AbortError') return { status: 'cancelled' };
-    if (error.name === 'NotAllowedError') return { status: 'ready' };
-    throw error;
-  }
+function stopDownloadOnClose(target) {
+  if (!target?.busy || !nativeDownloadsStopOnClose()) return;
+  target.stopped = true;
+  _activeDownloads.delete(downloadId(target));
+  cancelNativeDownload();
 }
 var _previewToken = 0;
 var _fileRequestToken = 0;
@@ -298,6 +288,8 @@ function setFileViewMode(mode) {
   }
   setBody('<div class="file-loading">'
     + loadingSpinner({ label: 'Loading preview' }) + '</div>');
+  // An attachment has no folder beside it, so its relative images, CSS and scripts are not loaded.
+  var attachment = _view.path.startsWith('baton-file:');
   if (isMarkdown(_current.path)) {
     var current = _current;
     var documentModule;
@@ -313,8 +305,14 @@ function setFileViewMode(mode) {
       window.renderKatexBlocks?.(mdBody);
       window.renderMermaidBlocks?.(mdBody);
       var hasRootPaths = /(?:src|srcset|href)\s*=\s*["']?\/(?!\/)|\]\(\s*<?\/(?!\/)/.test(current.text);
-      var mdRoot = hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
+      var mdRoot = attachment ? null
+        : hasRootPaths ? repositoryRoot(current.path, mdDir) : Promise.resolve(documentRoot(current.path));
       bindDocumentLinks(mdBody, mdDir, mdRoot);
+      if (attachment) {
+        mdBody.querySelectorAll('.img-placeholder[data-path]').forEach(function (el) { el.replaceWith(el.dataset.alt || ''); });
+        window.loadImages?.(mdBody);
+        return;
+      }
       return mdRoot.then(function (root) {
         if (token !== _previewToken) return;
         inlineImages(mdBody, mdDir, root, documentModule.darkColorScheme); // mutates this node; harmless if view later changes
@@ -324,8 +322,9 @@ function setFileViewMode(mode) {
     });
     return;
   }
-  buildPreviewHtml(_current.text, _current.path).then(function (html) {
-    if (token === _previewToken) showPreview(html, _current.path, token);
+  (attachment ? Promise.resolve(_current.text) : buildPreviewHtml(_current.text, _current.path)).then(function (html) {
+    // An attachment's content key, not its file name, gives it its own native preview origin.
+    if (token === _previewToken) showPreview(html, attachment ? _view.path : _current.path, token);
   });
 }
 
@@ -451,6 +450,7 @@ function bindDocumentLinks(container, dir, rootPromise) {
         ?.scrollIntoView({ block: 'start' });
     } else if (target) {
       event.preventDefault();
+      if (!rootPromise) return; // attachments have no folder to resolve against
       var view = _view;
       rootPromise.then(function (root) {
         if (_view !== view) return;
@@ -628,8 +628,8 @@ export function closeFileViewer(options) {
   if (o) o.style.display = 'none';
   _current = null;
   _view = null;
+  stopDownloadOnClose(_downloadTarget);
   _downloadTarget = null;
-  downloadStatus('');
   _fileRequestToken++;
   _previewToken++;
   setBody('');
@@ -690,10 +690,10 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   // Attachment links carry the real file name; project views may label a file differently (e.g. "a.pdf @ 1a2b3c4").
   var fileName = absPath.startsWith('baton-file:') ? displayName : absPath.split(/[\\/]/).pop();
   _view = { path: absPath, name: fileName, line: lineHint || '', snippet: matchId ? snippetForTool(matchId) : '', matchId, options: options };
-  _downloadTarget = options.canRead === false ? null : { path: absPath, projectHash: options.projectHash || currentProjectHash(),
+  var target = options.canRead === false ? null : { path: absPath, ...fileContext(),
     key: absPath.startsWith('baton-file:') ? absPath.slice('baton-file:'.length) : '', name: fileName };
-  downloadStatus('');
-  updateDownloadButtons();
+  _downloadTarget = target && (_activeDownloads.get(downloadId(target)) || target);
+  updateDownloadButtons(_downloadTarget?.busy ? undefined : 'idle');
   var titleEl = document.getElementById('fileOverlayTitle');
   titleEl.textContent = displayName || absPath;
   titleEl.title = absPath;
@@ -706,7 +706,7 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   var previewImage = isImage(absPath) && options.canRead !== false && !options.diffOnly;
   // HTML opens rendered even from edit/line links; Markdown keeps source positioning for those links.
   var previewDocument = isPreviewable(absPath) && (isHtml(absPath) || (!lineHint && !matchId))
-    && !absPath.startsWith('baton-file:') && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
+    && options.mode !== 'source' && options.canRead !== false && !options.diffOnly;
   setFileViewMode(options.loadDiff && options.mode !== 'source' && !previewImage ? 'diff'
     : previewDocument ? 'preview' : 'source');
   return true;

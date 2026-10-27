@@ -60,7 +60,7 @@ runs:
         echo "version=$ndk_version" >> "$GITHUB_OUTPUT"
         echo "Pinned Android NDK: $ndk_version"
         printf '\norg.gradle.caching=true\n' >> src-tauri/gen/android/gradle.properties
-    - uses: gradle/actions/setup-gradle@v4
+    - uses: gradle/actions/setup-gradle@v5
       with:
         cache-read-only: ${{ github.ref != 'refs/heads/main' }}
         # main and Package still clean caches; PRs avoid starting a second Gradle JVM.

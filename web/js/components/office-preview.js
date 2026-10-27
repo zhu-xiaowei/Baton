@@ -51,13 +51,17 @@ export async function mountOfficePreview(body, source, kind) {
   const { mod, options } = await loadOfficeViewer(kind);
   const viewerKind = LEGACY[kind] || kind;
   const loading = body.querySelector('.file-loading');
+  // Documents and decks reach the screen edge (style.css), so their last page clears the home indicator instead.
+  const inset = viewerKind === 'xlsx' ? 0 : parseFloat(window.getComputedStyle(body).paddingBottom) || 0;
   const host = document.createElement('div');
   host.className = 'office-preview-host';
+  host.dataset.kind = viewerKind;
   body.insertBefore(host, loading);
   loading?.classList.add('pdf-overlay-loading');
   body.classList.add('pdf-preview-active');
   const viewer = new mod[VIEWERS[viewerKind]](host, {
     cjkFallback: 'sc', ...options, ...(viewerKind === 'docx' && { progressiveLayout: true }),
+    ...(inset && { paddingBottom: 16 + inset }), // 16: the viewer's default
   });
   let destroyed = false;
   const preview = {

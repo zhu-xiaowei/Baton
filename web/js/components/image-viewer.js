@@ -1,11 +1,28 @@
 // Shared image preview gestures for chat images, staged images, and project files.
+import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloads, nativeDownloadsStopOnClose } from '../project/download.js';
+import { imageMimeType } from './image-type.js';
+import { setDownloadButtonState } from './download-button.js';
+import { loadingSpinner } from './loading.js';
+import { showToast } from './toast.js';
+
 const MAX_SCALE = 5;
+const SWIPE_MS = 200;
+const SWIPE_GAP = 16; // matches .img-overlay-peek
+const ARROW = points => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="' + points + '"/></svg>';
 let overlay;
 let image;
+let peeks = [];
+let spinner;
+let downloadButton;
+const downloads = new Map(); // image key → progress, while that image downloads
+let items = [];
+let index = 0;
 let scale = 1;
 let x = 0;
 let y = 0;
 let touchMode = null;
+let swipe = null;
+let pendingSlide = null; // a settling swipe: { timer, finish }
 let nativeGesture = null;
 
 function baseCenter() {
@@ -69,7 +86,13 @@ function beginPan(touch) {
 }
 
 function onTouchStart(event) {
+  pendingSlide?.finish();
+  if (swipe?.axis === 'x') placeStrip(0, ''); // a second finger ends the swipe
+  swipe = null;
   if (event.touches.length === 1 && event.target.closest('button')) return;
+  if (event.touches.length === 1 && scale === 1 && items.length > 1) {
+    swipe = { x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, axis: null };
+  }
   if (event.touches.length >= 2) {
     event.preventDefault();
     if (!nativeGesture) beginPinch(event.touches);
@@ -94,6 +117,15 @@ function onTouchMove(event) {
     setZoom(nextScale,
       point.x - center.x - touchMode.anchorX * nextScale,
       point.y - center.y - touchMode.anchorY * nextScale);
+  } else if (event.touches.length === 1 && swipe) {
+    event.preventDefault();
+    const dx = event.touches[0].clientX - swipe.x;
+    const dy = event.touches[0].clientY - swipe.y;
+    if (!swipe.axis && Math.hypot(dx, dy) > 8) swipe.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    if (swipe.axis !== 'x') return;
+    // The images follow the finger, with resistance past the first and last image.
+    swipe.dx = items[index + (dx < 0 ? 1 : -1)] ? dx : dx / 3;
+    placeStrip(swipe.dx, 'none');
   } else if (event.touches.length === 1 && scale > 1) {
     event.preventDefault();
     if (touchMode?.type !== 'pan') beginPan(event.touches[0]);
@@ -111,6 +143,7 @@ function gesturePoint(event) {
 
 function onGestureStart(event) {
   event.preventDefault();
+  pendingSlide?.finish();
   const point = gesturePoint(event);
   const center = baseCenter();
   nativeGesture = {
@@ -136,8 +169,12 @@ function ensureViewer() {
   if (overlay) return;
   overlay = document.getElementById('imgOverlay');
   image = document.getElementById('imgOverlayImg');
+  downloadButton = overlay.querySelector('.img-overlay-download');
+  downloadButton?.addEventListener('click', downloadCurrentImage);
   overlay.addEventListener('click', event => {
-    if (event.target.closest('.img-overlay-close')) closeImageViewer();
+    const step = event.target.closest('.gallery-nav button');
+    if (step) showAt(index + Number(step.dataset.step));
+    else if (event.target.closest('.img-overlay-close')) closeImageViewer();
     else if (event.target === overlay || (event.target === image && scale === 1 && overlay.dataset.gallery !== '1')) {
       closeImageViewer();
     }
@@ -145,10 +182,19 @@ function ensureViewer() {
   overlay.addEventListener('touchstart', onTouchStart, { passive: false });
   overlay.addEventListener('touchmove', onTouchMove, { passive: false });
   overlay.addEventListener('touchend', event => {
+    // preventDefault drops the click that would otherwise follow a swipe.
+    if (swipe?.axis === 'x' && !event.touches.length) {
+      event.preventDefault();
+      settleSwipe(swipe.dx);
+    }
+    swipe = null;
     if (!nativeGesture && event.touches.length === 1 && scale > 1) beginPan(event.touches[0]);
     else touchMode = null;
   });
-  overlay.addEventListener('touchcancel', () => { touchMode = null; nativeGesture = null; });
+  overlay.addEventListener('touchcancel', () => {
+    if (swipe?.axis === 'x') placeStrip(0, '');
+    swipe = null; touchMode = null; nativeGesture = null;
+  });
   overlay.addEventListener('gesturestart', onGestureStart, { passive: false });
   overlay.addEventListener('gesturechange', onGestureChange, { passive: false });
   overlay.addEventListener('gestureend', event => {
@@ -157,14 +203,141 @@ function ensureViewer() {
     nativeGesture = null;
   }, { passive: false });
   image.addEventListener('dragstart', event => event.preventDefault());
+  // The neighbouring images wait off screen, so a swipe shows the next one coming in like a photo strip.
+  peeks = [-1, 1].map(side => {
+    const peek = document.createElement('img');
+    peek.className = 'img-overlay-peek';
+    peek.alt = '';
+    peek.dataset.side = side;
+    overlay.append(peek);
+    return peek;
+  });
+  spinner = document.createElement('span');
+  spinner.className = 'img-overlay-spinner';
+  spinner.innerHTML = loadingSpinner({ label: 'Loading image' });
+  overlay.append(spinner);
 }
 
-function showImageViewer(src, gallery = false) {
-  ensureViewer();
+function showNeighbours() {
+  peeks.forEach(peek => {
+    const neighbour = items[index + Number(peek.dataset.side)];
+    peek.hidden = !neighbour?.src;
+    if (neighbour?.src) peek.src = neighbour.src;
+  });
+}
+
+// An image without a URL yet (still loading in the chat) loads here; it fills in only while it is still shown.
+function loadItem(item) {
+  item.loading ||= item.load().then(src => {
+    item.src = src;
+    if (items[index] === item) {
+      image.src = src;
+      spinner.hidden = true;
+      if (downloadButton) downloadButton.hidden = !item.key;
+    }
+    showNeighbours();
+  }, () => {
+    item.loading = null;
+    if (items[index] !== item) return;
+    spinner.hidden = true;
+    showToast('Could not load the image.', items.length > 1 ? { bottom: 72 } : undefined);
+  });
+}
+
+function showAt(next) {
+  const item = items[next];
+  if (!item) return;
+  clearTimeout(pendingSlide?.timer);
+  pendingSlide = null;
+  index = next;
   resetZoom();
-  if (!gallery) overlay.querySelector('.gallery-nav')?.remove();
-  overlay.dataset.gallery = gallery ? '1' : '0';
-  image.src = src;
+  if (item.src) image.src = item.src;
+  else {
+    image.removeAttribute('src');
+    loadItem(item);
+  }
+  spinner.hidden = !!item.src;
+  [items[index - 1], items[index + 1]].forEach(neighbour => neighbour && !neighbour.src && loadItem(neighbour));
+  showNeighbours();
+  placeStrip(0, '');
+  overlay.dataset.gallery = items.length > 1 ? '1' : '0';
+  overlay.querySelector('.gallery-nav')?.remove();
+  if (items.length > 1) {
+    overlay.insertAdjacentHTML('beforeend', '<div class="gallery-nav">'
+      + '<button data-step="-1"' + (index <= 0 ? ' disabled' : '') + '>' + ARROW('15 18 9 12 15 6') + '</button>'
+      + '<span>' + (index + 1) + ' / ' + items.length + '</span>'
+      + '<button data-step="1"' + (index >= items.length - 1 ? ' disabled' : '') + '>' + ARROW('9 6 15 12 9 18') + '</button>'
+      + '</div>');
+  }
+  if (downloadButton) {
+    downloadButton.hidden = !item.key || !item.src;
+    setDownloadButtonState(downloadButton, downloads.has(item.key) ? 'busy' : 'idle', downloads.get(item.key));
+  }
+}
+
+// Moves the current image and its neighbours together by `dx`.
+function placeStrip(dx, transition) {
+  image.style.transition = transition;
+  image.style.transform = dx ? `translateX(${dx}px)` : '';
+  peeks.concat(spinner).forEach(el => {
+    el.style.transition = transition;
+    el.style.transform = dx ? `translate(-50%, -50%) translateX(${dx}px)` : '';
+  });
+}
+
+// Past 50px the strip settles on the neighbour, which then becomes the current image; otherwise it springs back.
+function settleSwipe(dx) {
+  const step = dx < 0 ? 1 : -1;
+  const target = index + step;
+  const turn = Math.abs(dx) >= 50 && !!items[target];
+  placeStrip(turn ? -step * (overlay.clientWidth + SWIPE_GAP) : 0, `transform ${SWIPE_MS}ms ease-out`);
+  // Finishes now when a new touch arrives; any other navigation cancels it in showAt.
+  const finish = () => {
+    clearTimeout(pendingSlide?.timer);
+    pendingSlide = null;
+    if (turn) showAt(target);
+    else placeStrip(0, '');
+  };
+  pendingSlide = { finish, timer: setTimeout(finish, SWIPE_MS) };
+}
+
+// Native saving needs an HTTPS source; the browser saves the Blob already on screen.
+async function downloadCurrentImage() {
+  const item = items[index];
+  if (!item?.key || downloads.has(item.key)) return;
+  downloads.set(item.key, null);
+  setDownloadButtonState(downloadButton, 'busy');
+  let result = 'failed';
+  let objectUrl = '';
+  try {
+    let url = item.src;
+    if (nativeDownloads()) {
+      url = (await window.api('/api/bridge/image-url/' + encodeURIComponent(item.key),
+        item.attachment ? { attachment: 'true' } : undefined)).url;
+    } else if (!url.startsWith('blob:')) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Image unavailable');
+      url = objectUrl = URL.createObjectURL(await response.blob());
+    }
+    const saved = await downloadFile({ url, name: item.key, contentType: imageMimeType(item.key) }, progress => {
+      downloads.set(item.key, progress);
+      if (items[index] === item) setDownloadButtonState(downloadButton, 'busy', progress);
+    });
+    result = saved?.status === 'cancelled' ? 'idle' : 'done';
+  } catch (error) {
+    // Above the gallery navigation, which sits 24-60px over the safe area.
+    showToast(downloadFailure(error), items.length > 1 ? { bottom: 72 } : undefined);
+  }
+  downloads.delete(item.key);
+  if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  if (items[index] === item) setDownloadButtonState(downloadButton, result);
+}
+
+// items: [{ src, key?, attachment? }]; an item with a storage key can be downloaded.
+function showImageViewer(list, start = 0) {
+  ensureViewer();
+  items = list;
+  showAt(start);
   overlay.style.display = 'flex';
 }
 
@@ -172,6 +345,14 @@ function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
   resetZoom();
+  if (downloads.size && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
+
+document.addEventListener('keydown', event => {
+  if (!overlay || overlay.style.display !== 'flex') return;
+  if (event.key === 'ArrowLeft') { event.preventDefault(); showAt(index - 1); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); showAt(index + 1); }
+  else if (event.key === 'Escape') closeImageViewer();
+});
 
 export { showImageViewer, closeImageViewer };

@@ -185,12 +185,12 @@ function forgetImageUrl(key, entry) {
   }
 }
 
-function rememberImageUrl(key, url, objectUrl) {
+function rememberImageUrl(key, url, objectUrl, source) {
   if (imageCache.size >= IMAGE_CACHE_MAX) {
     var oldest = imageCache.keys().next().value;
     forgetImageUrl(oldest, imageCache.get(oldest));
   }
-  imageCache.set(key, { url, objectUrl, expiresAt: objectUrl ? Infinity : Date.now() + IMAGE_URL_CACHE_MS });
+  imageCache.set(key, { url, objectUrl, source, expiresAt: objectUrl ? Infinity : Date.now() + IMAGE_URL_CACHE_MS });
   return url;
 }
 
@@ -211,6 +211,7 @@ async function getImageUrl(key, attachment = false) {
   if (cached) return cached;
   if (pendingImages.has(cacheKey)) return pendingImages.get(cacheKey);
   var storeKey = (attachment ? '' : 'images/') + key;
+  var source = { key, attachment };
   var promise = (async function () {
     var blob = await cachedAttachmentBlob(storeKey);
     var file = null;
@@ -221,7 +222,7 @@ async function getImageUrl(key, attachment = false) {
         .catch(function () { return null; });
       if (!blob) {
         await decodeImage(file.url);
-        return rememberImageUrl(cacheKey, file.url, false);
+        return rememberImageUrl(cacheKey, file.url, false, source);
       }
     }
     // Stored Blobs may lack a type, which SVG needs to render.
@@ -233,7 +234,7 @@ async function getImageUrl(key, attachment = false) {
       throw error;
     }
     if (file) cacheAttachment(storeKey, key, blob);
-    return rememberImageUrl(cacheKey, url, true);
+    return rememberImageUrl(cacheKey, url, true, source);
   })().finally(function () { pendingImages.delete(cacheKey); });
   pendingImages.set(cacheKey, promise);
   return promise;
@@ -296,7 +297,7 @@ function showLoadedImage(el, url) {
   image.onclick = function (event) {
     event.preventDefault();
     event.stopPropagation();
-    viewImage(image.src);
+    viewImage(image.src, image);
   };
   el.classList.add('loaded');
   delete el.dataset.failed;
@@ -361,8 +362,21 @@ function loadImages(container, contextOverride) {
   });
 }
 
-function viewImage(src) {
-  showImageViewer(src);
+// Images sent together in one message open as one gallery, like the staged images before sending.
+// The key comes from data-key (a just-sent image still shows its local copy) or its placeholder.
+function viewImage(src, element) {
+  var group = element?.closest('.msg-attachments');
+  // An image still loading in the message joins too and loads when it is shown.
+  var images = group ? Array.from(group.querySelectorAll('.img-placeholder'), node => node.classList.contains('loaded')
+    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key }).filter(Boolean) : [];
+  if (!images.includes(element)) images = [element || { src }];
+  var entries = Array.from(imageCache.values());
+  showImageViewer(images.map(image => {
+    if (image.lazyKey) return { key: image.lazyKey, load: () => getImageUrl(image.lazyKey) };
+    var key = image.dataset?.key || image.closest?.('.img-placeholder[data-key]')?.dataset.key;
+    return { src: image.src, ...(key ? { key } : entries.find(entry => entry.url === image.src)?.source) };
+  }),
+  Math.max(0, images.indexOf(element)));
 }
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.

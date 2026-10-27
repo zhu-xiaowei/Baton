@@ -8,9 +8,9 @@ import {
 } from '../../web/js/components/attachment.js';
 
 const dom = new JSDOM('<!doctype html><body><div id="img-preview-row"></div>'
-  + '<div id="imgOverlay"><img id="imgOverlayImg"></div><div id="content"></div>'
+  + '<div id="imgOverlay"><button class="img-overlay-download" hidden></button><img id="imgOverlayImg"></div><div id="content"></div>'
   + '<div id="fileOverlay"><span id="fileOverlayTitle"></span><div id="fileOverlayTabs"></div>'
-  + '<button id="file-download-btn" class="file-download-action"></button><div id="file-download-status"></div>'
+  + '<button id="file-download-btn" class="file-download-action"></button>'
   + '<div id="fileOverlayBody"></div></div></body>', { url: 'https://app.test/' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -325,7 +325,7 @@ test('mixed attachments do not appear in the image gallery', () => {
   window.renderStagedImages();
   window.viewStagedImage(1);
   assert.equal(document.querySelector('.gallery-nav span').textContent, '1 / 2');
-  window.galleryNext();
+  document.querySelector('.gallery-nav button[data-step="1"]').click();
   assert.equal(document.querySelector('.gallery-nav span').textContent, '2 / 2');
 });
 
@@ -502,12 +502,11 @@ test('text previews use the source viewer while Office is not decoded as text', 
   assert.equal(isTextAttachment({ name: 'deck.pptx' }), false);
   assert.equal(isTextAttachment({ name: 'sheet.xlsx' }), false);
   assert.equal(isTextAttachment({ name: 'data.csv' }), true);
-  window.api = async () => ({ name: 'notes.md', size: 8, url: 'https://bucket.test/text' });
+  window.api = async () => ({ name: 'notes.txt', size: 8, url: 'https://bucket.test/text' });
   globalThis.fetch = async () => new Response('# Notes\n');
-  window.openFile('baton-file:' + 'a'.repeat(32) + '.md', 'notes.md');
+  window.openFile('baton-file:' + 'a'.repeat(32) + '.txt', 'notes.txt');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.match(document.getElementById('fileOverlayBody').textContent, /# Notes/);
-  assert.equal(document.getElementById('fileOverlayTabs').style.display, '');
 });
 
 test('text preview cancels at its limit instead of buffering an entire large file', async () => {
@@ -522,48 +521,159 @@ test('text preview cancels at its limit instead of buffering an entire large fil
 
 test('the shared download button invokes the native download plugin with the original name', async () => {
   const calls = [];
-  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
   window.openFile('baton-file:' + key, 'deck.pptx');
   const downloading = window.downloadViewedFile();
   assert.equal(document.getElementById('file-download-btn').disabled, true);
   assert.equal(document.getElementById('file-download-btn').getAttribute('aria-busy'), 'true');
-  assert.ok(document.querySelector('#file-download-btn .loading-spinner'));
+  assert.ok(document.querySelector('#file-download-btn .staged-progress-indicator'));
   await downloading;
   assert.equal(calls[0].command, 'plugin:file-download|download');
   assert.equal(calls[0].args.name, 'deck.pptx');
   assert.equal(calls[0].args.url, 'https://bucket.s3.test/download');
-  assert.equal(document.getElementById('file-download-status').textContent, 'Saved to Downloads.');
   assert.equal(document.getElementById('file-download-btn').disabled, false);
   assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
 });
 
-test('mobile browser downloads attempt sharing and reuse Download when fresh activation is required', async () => {
-  const shared = [];
-  let attempts = 0;
+for (const userAgent of ['Macintosh', 'Android']) {
+  test(`${userAgent} download progress survives reopening and waits for the save result`, async () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent });
+    let report;
+    let finish;
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: callback => { report = callback; return 1; },
+      invoke: () => new Promise(resolve => { finish = resolve; }),
+    };
+    const button = document.getElementById('file-download-btn');
+    const ring = () => button.querySelector('.file-download-spinner');
+    window.openFile('baton-file:' + key, 'deck.pptx');
+    const downloading = window.downloadViewedFile();
+    await until(() => finish);
+    assert.equal(ring().classList.contains('has-progress'), false);
+    report({ index: 0, message: { loaded: 5, total: 10 } });
+    assert.equal(ring().getAttribute('aria-valuenow'), '50');
+    window.closeFileViewer();
+    report({ index: 1, message: { loaded: 8, total: 10 } });
+    window.openFile('baton-file:' + key, 'deck.pptx');
+    assert.equal(ring().getAttribute('aria-valuenow'), '80');
+    for (const [index, loaded] of [10, 12].entries()) {
+      report({ index: index + 2, message: { loaded, total: 10 } });
+      assert.equal(ring()?.getAttribute('aria-valuenow'), '99');
+      assert.equal(button.getAttribute('aria-busy'), 'true');
+      assert.equal(button.disabled, true);
+    }
+    finish({ status: 'saved' });
+    await downloading;
+    assert.equal(button.classList.contains('is-downloading'), false);
+    assert.equal(button.disabled, false);
+    assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  });
+}
+
+test('iOS download completion shows a check before the share sheet closes', async () => {
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
-  navigator.canShare = () => true;
-  navigator.share = async value => {
-    if (++attempts === 1) throw new DOMException('User activation expired', 'NotAllowedError');
-    shared.push(value);
+  let report;
+  let finishSharing;
+  let calls = 0;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: callback => { report = callback; return 1; },
+    invoke: () => { calls++; return new Promise(resolve => { finishSharing = resolve; }); },
   };
-  globalThis.fetch = async () => new Response('12345');
   window.openFile('baton-file:' + key, 'deck.pptx');
+  const downloading = window.downloadViewedFile();
+  await until(() => finishSharing);
+  const button = document.getElementById('file-download-btn');
+  report({ index: 0, message: { loaded: 5, total: 10 } });
+  assert.equal(button.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '50');
+  // The completion event must replace the last reported progress immediately,
+  // even though the native invoke stays pending until the user dismisses the share sheet.
+  report({ index: 1, message: { loaded: 10, total: 10 } });
+  assert.equal(button.querySelector('[role="progressbar"]'), null);
+  assert.equal(button.querySelector('path').getAttribute('d'), 'M5 12.5l4.5 4.5L19 7.5');
+  assert.equal(button.getAttribute('aria-busy'), 'false');
+  assert.equal(button.disabled, true);
   await window.downloadViewedFile();
-  assert.equal(shared.length, 0);
-  assert.equal(attempts, 1);
-  assert.equal(document.getElementById('file-share-btn'), null);
-  assert.match(document.getElementById('file-download-status').textContent, /Tap Download again/);
-  await window.downloadViewedFile();
-  assert.equal(shared.length, 1);
-  assert.equal(shared[0].files[0].name, 'deck.pptx');
-  assert.equal(await shared[0].files[0].text(), '12345');
+  assert.equal(calls, 1);
+  finishSharing({ status: 'shared' });
+  await downloading;
+  assert.equal(button.disabled, false);
+});
+
+test('closing the viewer cancels an iOS native download', async () => {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  const calls = [];
+  let finish;
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: command => {
+      calls.push(command);
+      if (command.endsWith('|cancel')) { finish({ status: 'cancelled' }); return Promise.resolve(); }
+      return new Promise(resolve => { finish = resolve; });
+    },
+  };
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  const downloading = window.downloadViewedFile();
+  for (let i = 0; i < 20 && !finish; i++) await new Promise(resolve => setTimeout(resolve, 0));
+  window.closeFileViewer();
+  await downloading;
+  assert.deepEqual(calls, ['plugin:file-download|download', 'plugin:file-download|cancel']);
+  window.openFile('baton-file:' + key, 'deck.pptx');
+  assert.equal(document.getElementById('file-download-btn').classList.contains('is-downloading'), false);
 });
 
 test('download errors keep the preview and restore its controls', async () => {
   window.openFile('baton-file:' + key, 'deck.pptx');
   window.api = async () => { throw new Error('Bridge offline'); };
   await window.downloadViewedFile();
-  assert.match(document.getElementById('file-download-status').textContent, /Bridge offline/);
   assert.equal(document.getElementById('file-download-btn').disabled, false);
   assert.equal(document.getElementById('fileOverlay').style.display, 'flex');
+});
+
+test('the image viewer downloads the current stored image through the native plugin', async () => {
+  const { showImageViewer } = await import('../../web/js/components/image-viewer.js');
+  const calls = [];
+  const requested = [];
+  window.__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command, args) => { calls.push({ command, args }); return { status: 'saved' }; } };
+  window.api = async (path, params) => { requested.push({ path, params }); return { url: 'https://bucket.test/photo' }; };
+  showImageViewer([{ src: 'blob:https://app.test/2', key: 'b'.repeat(32) + '.png', attachment: true }]);
+  document.querySelector('.img-overlay-download').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: { attachment: 'true' } }]);
+  assert.equal(calls[0].command, 'plugin:file-download|download');
+  assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
+    ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);
+  delete window.__TAURI_INTERNALS__;
+});
+
+test('the image viewer tracks each image download: switching back keeps it busy, closing on iOS cancels the rest', async () => {
+  const { showImageViewer, closeImageViewer } = await import('../../web/js/components/image-viewer.js');
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
+  const calls = [];
+  const pending = [];
+  window.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: command => {
+      calls.push(command.split('|')[1]);
+      // Like the iOS plugin: one download at a time, cancelled by a new download or `cancel`.
+      pending.splice(0).forEach(resolve => resolve({ status: 'cancelled' }));
+      return command.endsWith('|cancel') ? Promise.resolve() : new Promise(resolve => pending.push(resolve));
+    },
+  };
+  window.api = async () => ({ url: 'https://bucket.test/photo' });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  const button = document.querySelector('.img-overlay-download');
+  const step = direction => document.querySelector(`.gallery-nav [data-step="${direction}"]`).click();
+  showImageViewer([{ src: 'blob:e', key: 'e'.repeat(32) + '.png' }, { src: 'blob:f', key: 'f'.repeat(32) + '.png' }]);
+  button.click();
+  await settle();
+  step(1);
+  step(-1);
+  assert.equal(button.classList.contains('is-downloading'), true);
+  assert.equal(button.disabled, true);
+  step(1);
+  button.click();
+  await settle();
+  closeImageViewer();
+  await settle();
+  assert.deepEqual(calls, ['download', 'download', 'cancel']);
 });

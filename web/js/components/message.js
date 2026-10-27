@@ -1,5 +1,6 @@
 import { extractAttachments, fileAttachmentHtml } from './attachment.js';
 import { systemEventId } from '../timeline.js';
+import { copyButtonHtml } from '../copy.js';
 
 // Message bubble components
 (function () {
@@ -187,10 +188,10 @@ import { systemEventId } from '../timeline.js';
     const messageAttr = msg.uuid ? ` data-message-id="${esc(msg.uuid)}"` : '';
     const nativeAttr = msg.nativeId ? ` data-native-id="${esc(msg.nativeId)}"` : '';
     const className = `msg-user${extraClass ? ` ${extraClass}` : ''}`;
-    return `<div class="${className}"${anchorAttr}${messageAttr}${nativeAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
+    return `<div class="${className}"${displayText ? ' data-message-actions' : ''}${anchorAttr}${messageAttr}${nativeAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
       ${attachHtml}
       ${displayText ? `<div class="msg-text" onclick="if(!event.target.closest('a'))toggleExpand(this)">${displayHtml}</div>` : ''}
-      <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span></div>
+      <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span>${displayText ? copyButtonHtml('message') : ''}</div>
     </div>`;
   };
 

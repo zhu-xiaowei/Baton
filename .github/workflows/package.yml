@@ -44,7 +44,7 @@ jobs:
         if: ${{ inputs.package == '' || inputs.package == 'release' || startsWith(inputs.package, 'release-') }}
       - name: Require successful production CI for this commit
         if: ${{ inputs.package == '' || inputs.package == 'release' || startsWith(inputs.package, 'release-') }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const verify = require('./.github/scripts/verify-production-ci.cjs');

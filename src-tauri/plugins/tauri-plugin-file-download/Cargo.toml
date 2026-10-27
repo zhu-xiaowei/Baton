@@ -12,4 +12,8 @@ tauri = "2"
 serde_json = "1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDistributedNotificationCenter", "NSNotification", "NSString"] }
