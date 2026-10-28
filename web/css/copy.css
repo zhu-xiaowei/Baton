@@ -44,7 +44,9 @@
   border-radius: 0;
   padding-top: 0;
 }
-.assistant-text.copy-tail, .assistant-text .copy-tail { display: flow-root; }
+.assistant-text.copy-tail, .assistant-text p.copy-tail { display: flow-root; }
+/* flow-root would drop the list marker. */
+.assistant-text li.copy-tail::after { content: ''; display: block; clear: both; }
 .copy-tail > .response-copy { float: right; width: 28px; height: 24px; margin-left: 8px; font: inherit; align-items: baseline; }
 /* The invisible text shares the paragraph baseline; compensate for the SVG's bottom inset. */
 .response-copy::before { content: '\200b'; }
