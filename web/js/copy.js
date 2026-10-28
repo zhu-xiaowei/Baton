@@ -25,7 +25,7 @@ export function refreshMessageCopy(container, { running = false } = {}) {
   }
   // Prose (including a list item's text) can share its last line; other Markdown blocks use a trailing control.
   const inline = tail?.tagName === 'P' || (tail?.tagName === 'LI'
-    && !tail.lastElementChild?.matches('div, pre, table, blockquote, hr, h1, h2, h3, h4, h5, h6, details'));
+    && !tail.lastElementChild?.matches('div, pre, table, blockquote, hr, h1, h2, h3, h4, h5, h6, details, .katex-display, .katex-ph[data-d="1"]'));
   const target = !running && item?.matches('.assistant-text[data-message-text]') && item.dataset.messageText.trim()
     ? (inline ? tail : item) : null;
   for (const button of container.querySelectorAll('.response-copy')) {
