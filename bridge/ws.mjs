@@ -16,7 +16,7 @@ import {
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT } from './config.mjs';
+import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -968,8 +968,12 @@ async function handleMessage(msg) {
       _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
       break;
     }
+    case 'device_removed':
+      uninstallBridge();
+      console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');
+      // falls through: stop exactly like a replaced Bridge
     case 'bridge_replaced':
-      console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
+      if (msg.action === 'bridge_replaced') console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
       _config = null;
       clearTimeout(_reconnectTimer);
       _reconnectTimer = null;

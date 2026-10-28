@@ -11,6 +11,7 @@ import hashlib
 import re
 import boto3
 from botocore.exceptions import ClientError
+import api_key as deployment_key
 from project.files_ws import handle_project_files
 from project.tool_details_ws import handle_tool_details
 from project.git_ws import handle_git_status
@@ -84,7 +85,7 @@ def _realtime_service(endpoint):
 
 
 def _account_id(api_key):
-    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    return deployment_key.account_id(api_key)
 
 
 def _runtime_session_fields(session_id):
@@ -320,8 +321,12 @@ def _handle_connect(event, connection_id):
     device = qs.get("device", "")
     version = qs.get("version", "")
 
-    if not api_key:
-        return {"statusCode": 401}
+    # API Gateway checks the key only on REST, so WebSocket connections are checked here.
+    try:
+        if not deployment_key.is_current(api_key):
+            return {"statusCode": 401}
+    except deployment_key.KeyUnavailable:
+        return {"statusCode": 503}
     bridge_id = qs.get("bridgeId") if role == "bridge" else None
     if bridge_id is not None and not re.fullmatch(r"[a-f0-9]{32}", bridge_id):
         return {"statusCode": 400}
@@ -875,6 +880,27 @@ def _handle_bridge_broadcast(body, account_id, bridge_connection_id, endpoint):
     for item in _query_connections(account_id, "app"):
         _post_to_connection(endpoint, item["connectionId"], body)
     return {"statusCode": 200}
+
+
+def disconnect_removed_bridge(account_id, endpoint, device):
+    """Tell every Bridge socket of a removed device to uninstall itself, then close it."""
+    _init()
+    from boto3.dynamodb.conditions import Key
+    kwargs = {"IndexName": "accountId-role-index",
+        "KeyConditionExpression": Key("accountId").eq(account_id) & Key("role").eq("bridge")}
+    while True:
+        response = _connections_table.query(**kwargs)
+        for item in response.get("Items", []):
+            if item.get("deviceName") != device:
+                continue
+            try:
+                _post_to_connection(endpoint, item["connectionId"], {"action": "device_removed"})
+            except Exception:
+                pass
+            _retire_bridge_connection(item["connectionId"], endpoint, replaced=False)
+        if "LastEvaluatedKey" not in response:
+            return
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
 def notify_session_threads_changed(account_id, endpoint, device_name, roots):
