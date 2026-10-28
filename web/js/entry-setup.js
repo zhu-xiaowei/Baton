@@ -99,10 +99,9 @@ setNativeTabTitle('Settings');
     } catch (e) {
       token = '';
       legacy = /^40[45] /.test(e.message);
-      if (!legacy) expiry = 'Could not create a link.';
+      if (!legacy) expiry = 'Could not create a link. Reopen this page to try again.';
     }
     document.querySelectorAll('.token-expiry').forEach(function (el) { el.textContent = expiry; });
-    document.getElementById('newToken').hidden = legacy;
     renderInstallCommand();
     if (!token && !legacy) {
       cmdEl.textContent = 'Could not create an install command.';
@@ -114,7 +113,6 @@ setNativeTabTitle('Settings');
     document.getElementById('qrUrl').textContent = startUrl;
     drawQr(startUrl);
   }
-  window.refreshToken = refreshToken;
   renderInstallCommand();
   refreshToken();
 
