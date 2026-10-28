@@ -1431,6 +1431,9 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
         "<key>PATH</key><string>$NODE_DIR:/opt/homebrew/bin:"
         "/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
     ) in script
+    # The key lives only in config.json, readable by this user alone.
+    assert "--key" not in script and "ExecStart=$NODE $DIR/bridge.mjs\n" in script
+    assert "fs.chmodSync(p,0o600)" in script
 
 
 def test_bridge_connection_persists_running_version(monkeypatch):

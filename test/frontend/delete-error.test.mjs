@@ -23,6 +23,7 @@ function harness() {
       return id;
     },
     clearTimeout: (id) => timers.delete(id),
+    _deviceToDelete: null,
   };
   vm.runInNewContext(source.slice(start, end), context);
   return {

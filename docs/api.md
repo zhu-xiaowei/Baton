@@ -6,8 +6,9 @@
 
 **Authentication**: API and WS endpoints require an API Key
 - REST: `x-api-key` header
-- WS: query string `?apiKey=xxx` on connection
-- Exception: `POST /auth/exchange-token` is outside `/api/` and exchanges a short-lived token for the API key
+- WS: query string `?apiKey=xxx` on connection; `$connect` returns 401 unless it is the deployment key
+- Exception: `POST /auth/exchange-token` and `GET /auth/install` are outside `/api/` and accept a
+  short-lived token instead of the key
 
 **accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
 
@@ -264,14 +265,29 @@ Returns independently deployable app and Bridge versions. Bridge auto-update com
 
 ### POST /auth/exchange-token
 
-Exchanges a short-lived setup token for the API key. This route is intentionally outside `/api/`
-and does not require the API key header.
+Exchanges a setup token for the API key. This route is intentionally outside `/api/` and does not
+require the API key header. Tokens stay valid until they expire (install.sh: 12h, Setup: 10 min),
+so a Start URL and its QR code can sign in several devices; an expired token, or one issued for a
+key that has since been rotated, returns 401.
 
 ```json
-{ "token": "one-time-token" }
+{ "token": "32-hex-token" }
 ```
 
 Response: `{ "apiKey": "..." }`.
+
+### POST /api/auth/start-token
+
+Returns `{ "token": "…", "expiresIn": 600 }` for Setup's Start URL (`/?t=`), QR code and install
+command. `GET /auth/install?t=<token>[&platform=windows][&name=…]` returns the same script as
+`/api/install` (with `Cache-Control: no-store`), or 403 with a script that prints the error and exits.
+
+### POST /api/bridge/delete-device
+
+`{ "deviceName": "MyMac" }` → `{ "ok": true, "deletedSessions": N }`. Sends
+`{ "action": "device_removed" }` to the device's Bridge sockets and closes them, then deletes its
+`DEV#`/`PROJ#`/`SESS#` rows (message rows expire via TTL). The Bridge removes its autostart entry and
+`config.json` and exits; session files on the device are kept. A new install command adds it back.
 
 ---
 

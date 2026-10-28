@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { randomBytes } from 'crypto';
+import { execFileSync } from 'child_process';
 
 export const BRIDGE_HOME = path.join(os.homedir(), '.baton-bridge');
 export const CONFIG_PATH = path.join(BRIDGE_HOME, 'config.json');
@@ -46,7 +47,8 @@ function parseArgs() {
 
 export function saveConfig(config) {
   fs.mkdirSync(BRIDGE_HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify({ ...config, skipInit: undefined }, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify({ ...config, skipInit: undefined }, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(CONFIG_PATH, 0o600); } catch {}
 }
 
 export function loadConfig() {
@@ -54,6 +56,7 @@ export function loadConfig() {
   let existing = null;
   if (fs.existsSync(CONFIG_PATH)) {
     try { existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {}
+    try { fs.chmodSync(CONFIG_PATH, 0o600); } catch {}
   }
   let config;
   if (cliArgs.server && cliArgs.apiKey) {
@@ -84,6 +87,49 @@ export function loadConfig() {
     saveConfig(config);
   }
   return config;
+}
+
+// Older installs also wrote --server/--key/--name into the service definition, where other local
+// users may read it; config.json is the only source now.
+export function removeServiceKeyArgs({ platform = process.platform, home = os.homedir(), exec = execFileSync } = {}) {
+  try {
+    if (platform === 'darwin') {
+      const file = path.join(home, 'Library', 'LaunchAgents', 'com.baton.bridge.plist');
+      const text = fs.readFileSync(file, 'utf-8');
+      const next = text.replace(/\s*<string>--(?:server|key|name)<\/string>\s*<string>[^<]*<\/string>/g, '');
+      if (next === text) return false;
+      fs.writeFileSync(file, next);
+      return true;
+    }
+    if (platform === 'linux') {
+      const file = path.join(home, '.config', 'systemd', 'user', 'baton-bridge.service');
+      const text = fs.readFileSync(file, 'utf-8');
+      const next = text.replace(/^(ExecStart=.*?bridge\.mjs) --server .*$/m, '$1');
+      if (next === text) return false;
+      fs.writeFileSync(file, next);
+      exec('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore', timeout: 10_000 });
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+// The device was removed in Baton: stop autostart and drop the key. Code and logs stay so a new
+// install command can reuse the folder. Unloading the running job would kill this process first,
+// so the service files are only removed; the caller then exits with code 0, which neither
+// launchd (SuccessfulExit=false) nor systemd (Restart=on-failure) restarts.
+export function uninstallBridge({ platform = process.platform, home = os.homedir(), exec = execFileSync } = {}) {
+  const run = (command, args) => { try { exec(command, args, { stdio: 'ignore', timeout: 10_000 }); } catch {} };
+  if (platform === 'darwin') {
+    fs.rmSync(path.join(home, 'Library', 'LaunchAgents', 'com.baton.bridge.plist'), { force: true });
+  } else if (platform === 'linux') {
+    run('systemctl', ['--user', 'disable', 'baton-bridge']);
+    fs.rmSync(path.join(home, '.config', 'systemd', 'user', 'baton-bridge.service'), { force: true });
+    run('systemctl', ['--user', 'daemon-reload']);
+  } else if (platform === 'win32') {
+    run('schtasks', ['/Delete', '/TN', 'Baton Bridge', '/F']);
+  }
+  fs.rmSync(path.join(home, '.baton-bridge', 'config.json'), { force: true });
 }
 
 export async function fetchServerConfig(config) {

@@ -231,8 +231,22 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - WS ack: `wsSendWithAck` waits for server `messages_ack` reply (5s timeout), falls back to HTTP POST to DDB if no ack
 
 ### Server
-- FastAPI in Docker Lambda, API Key auth
-- DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored
+- FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
+  `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
+  by name (`server/src/api_key.py`, cached 5 min) — the key is never stored in a table.
+- DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
+  `AccountId` stack parameter, so `install.sh --rotate-key` (new `ApiKeyGeneration` → new key name →
+  CloudFormation replaces the key) keeps the data; every device then signs in with the new Start URL.
+- Sign-in / install tokens: Setup's Start URL, QR code and install command
+  (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 10 minutes (deploy
+  output: 12h) and reusable until then. Token rows name the key instead of holding it, so a rotated
+  key retires them; `/auth/exchange-token` returns the current key.
+- The key lives only in the Bridge's `~/.baton-bridge/config.json` (0600); service definitions no
+  longer pass `--key`, and older ones are rewritten at startup.
+- Removing a device (home long-press → `/api/bridge/delete-device`) sends `device_removed` and
+  closes its Bridge sockets, then deletes its DEV#/PROJ#/SESS# rows. The Bridge removes its
+  launchd/systemd/Task Scheduler entry and `config.json`, then exits 0 (no restart). A Bridge that is
+  offline at the time comes back and re-adds the device; remove it again.
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
 - Bridge install script (`/api/install`): exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility (tmux auto-install removed in Phase 2E)
 
@@ -325,6 +339,9 @@ GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped com
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (sets up always-on service)
+POST /api/auth/start-token                  — 10-minute token for Setup's Start URL / QR / install command
+GET  /auth/install?t=…                      — install script for a token (public; the token stands in for the key)
+POST /api/bridge/delete-device              — remove a device and make its Bridge uninstall itself
 GET  /api/version                           — app and Bridge release versions
 ```
 
@@ -424,7 +441,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 ### Deployment
 - Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
-- Deploy output: single setup URL with embedded token (12h TTL)
+- Deploy output: single setup URL with embedded token (12h TTL, reusable until then)
 
 ### Three-State Session Status
 - `running` → **Running** (green): a turn is generating (jsonl `stop_reason: tool_use`/`null`,

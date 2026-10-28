@@ -21,6 +21,7 @@ from urllib.parse import quote, unquote
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from message_history import message_key, publish_history
+import api_key as deployment_key
 
 MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
 
@@ -44,9 +45,9 @@ def _tables():
     return _sessions_table, _messages_table
 
 
-def _hash_key(api_key: str) -> str:
-    """SHA256 hash of API key — never store the raw key in DynamoDB."""
-    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+def _hash_key(key: str) -> str:
+    """Account ID for the API key — the raw key is never stored in DynamoDB."""
+    return deployment_key.account_id(key)
 
 
 class SessionItem(BaseModel):
@@ -807,6 +808,34 @@ async def delete_sessions(req: DeleteRequest, raw: Request):
     # prune=False: keep a project that just lost its last session (user can still open it).
     counts = _reconcile_device(sessions_table, key_hash, dev, "", prune=False)
     return {"deletedSessions": len(sess_sks), "deletedProjects": len(req.projectHashes), **counts}
+
+
+class DeleteDeviceRequest(BaseModel):
+    deviceName: str = Field(min_length=1)
+
+
+@bridge_router.post("/delete-device")
+async def delete_device(req: DeleteDeviceRequest, raw: Request):
+    """Remove a device: its Bridge is told to uninstall itself and disconnected first, then the
+    device's DEV#/PROJ#/SESS# rows are deleted. Message rows expire via TTL as in /delete."""
+    sessions_table, _ = _tables()
+    key_hash = _hash_key(raw.headers.get("x-api-key", ""))
+    dev = req.deviceName
+    endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    if endpoint:
+        try:
+            from bridge_ws import disconnect_removed_bridge
+            disconnect_removed_bridge(key_hash, endpoint, dev)
+        except Exception as e:
+            print(f"removed bridge disconnect failed: {e}")
+    sks = [f"DEV#{dev}"]
+    for prefix in (f"SESS#{dev}#", f"PROJ#{dev}#"):
+        sks.extend(it["sk"] for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+                                                 & Key("sk").begins_with(prefix), ProjectionExpression="sk"))
+    with sessions_table.batch_writer() as batch:
+        for sk in sks:
+            batch.delete_item(Key={"accountId": key_hash, "sk": sk})
+    return {"ok": True, "deletedSessions": sum(sk.startswith("SESS#") for sk in sks)}
 
 
 @bridge_router.post("/sync-messages")

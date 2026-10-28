@@ -14,6 +14,7 @@ import json
 import os
 import re
 from message_history import history_partition
+import api_key as deployment_key
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -109,9 +110,7 @@ def _tables():
 
 
 def _account_id(request: Request) -> str:
-    import hashlib
-    api_key = request.headers.get("x-api-key", "")
-    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    return deployment_key.account_id(request.headers.get("x-api-key", ""))
 
 
 def _runtime_fields(item):
@@ -1187,6 +1186,10 @@ async def get_install(
     platform: str = Query(""),
 ):
     """Return a shell script that downloads and runs bridge."""
+    return install_script(request, request.headers.get("x-api-key", ""), name, platform)
+
+
+def install_script(request: Request, api_key: str, name, platform: str):
     import boto3
     bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
     if not bucket:
@@ -1194,7 +1197,6 @@ async def get_install(
     s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     url = s3.generate_presigned_url("get_object",
         Params={"Bucket": bucket, "Key": "install/bridge.tar.gz"}, ExpiresIn=3600)
-    api_key = request.headers.get("x-api-key", "")
     ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
     ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
     # Use x-forwarded headers from API GW if available
@@ -1242,7 +1244,7 @@ async def get_install(
         'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
         'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
         'if(existing.bridgeId)config.bridgeId=existing.bridgeId;'
-        'fs.writeFileSync(p,JSON.stringify(config,null,2));\' "$DIR/config.json"\n'
+        'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n'
         '\n'
         '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n'
         'if [ -n "$WSL_DISTRO_NAME" ]; then\n'
@@ -1271,9 +1273,6 @@ async def get_install(
         '  <key>ProgramArguments</key><array>\n'
         '    <string>$NODE</string>\n'
         '    <string>$DIR/bridge.mjs</string>\n'
-        f'    <string>--server</string><string>{server}</string>\n'
-        f'    <string>--key</string><string>{api_key}</string>\n'
-        '    <string>--name</string><string>$NAME</string>\n'
         '  </array>\n'
         '  <key>EnvironmentVariables</key>\n'
         '  <dict>\n'
@@ -1306,8 +1305,7 @@ async def get_install(
         'Description=Baton Bridge\n'
         'After=network.target\n'
         '[Service]\n'
-        'ExecStart=$NODE $DIR/bridge.mjs --server '
-        f'{server} --key {api_key} --name $NAME\n'
+        'ExecStart=$NODE $DIR/bridge.mjs\n'
         'Restart=on-failure\n'
         'RestartSec=5\n'
         'KillMode=process\n'

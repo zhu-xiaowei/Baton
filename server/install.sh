@@ -8,6 +8,7 @@
 #   ./install.sh --region us-west-2
 #   ./install.sh --region us-west-2 --stack MyStack
 #   ./install.sh --region us-west-2 --profile myprofile
+#   ./install.sh --rotate-key                    # replace the API key; every device signs in again
 
 main() {
 set -euo pipefail
@@ -132,10 +133,12 @@ STACK_NAME="Baton"
 PROFILE=""
 REPO_NAME="baton-api"
 TAG="latest"
+ROTATE_KEY=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --region)  REGION="$2"; shift 2 ;;
+    --rotate-key) ROTATE_KEY=true; shift ;;
     --stack)   STACK_NAME="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
@@ -404,7 +407,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 
@@ -438,6 +441,42 @@ cfn_dump_failure() {
 STACK_STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
+stack_param() {
+  aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$1'].ParameterValue | [0]" --output text 2>/dev/null || echo ""
+}
+api_key_value() {
+  local key_id
+  key_id=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`ApiKeyId`].OutputValue' --output text 2>/dev/null || echo "")
+  if [ -z "$key_id" ] || [ "$key_id" = "None" ]; then
+    key_id=$(aws apigateway get-api-keys --region "$REGION" \
+      --query "items[?name=='${STACK_NAME}-api-key'].id | [0]" --output text)
+  fi
+  aws apigateway get-api-key --api-key "$key_id" --include-value --region "$REGION" \
+    --query 'value' --output text
+}
+# Data is keyed by an account ID that was originally SHA256(key)[:16]. Pin it before the key can
+# change, so a rotated key keeps the same data. A new stack derives it from its first key.
+ACCOUNT_ID=""
+KEY_GENERATION=""
+if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+  ACCOUNT_ID=$(stack_param AccountId)
+  if [ -z "$ACCOUNT_ID" ] || [ "$ACCOUNT_ID" = "None" ]; then
+    ACCOUNT_ID=$(printf '%s' "$(api_key_value)" | openssl dgst -sha256 | awk '{print substr($NF, 1, 16)}')
+  fi
+  KEY_GENERATION=$(stack_param ApiKeyGeneration)
+  [ "$KEY_GENERATION" = "None" ] && KEY_GENERATION=""
+fi
+if [ "$ROTATE_KEY" = true ]; then
+  if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
+    echo "${C_RED}ERROR: --rotate-key needs an existing stack${C_RESET}" >&2
+    exit 1
+  fi
+  KEY_GENERATION=$(date +%Y%m%d%H%M%S)
+  echo "  ${C_DIM}Rotating the API key: every device must sign in again with the new Start URL${C_RESET}"
+fi
+
 if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
   aws cloudformation create-stack \
     --stack-name "$STACK_NAME" --region "$REGION" \
@@ -448,6 +487,8 @@ if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
       "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
       "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
       "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
+      "ParameterKey=AccountId,ParameterValue=$ACCOUNT_ID" \
+      "ParameterKey=ApiKeyGeneration,ParameterValue=$KEY_GENERATION" \
     --capabilities CAPABILITY_NAMED_IAM >/dev/null
   wait_stack "CREATE_COMPLETE" || cfn_dump_failure
 else
@@ -460,6 +501,8 @@ else
          "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
          "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
          "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
+         "ParameterKey=AccountId,ParameterValue=$ACCOUNT_ID" \
+         "ParameterKey=ApiKeyGeneration,ParameterValue=$KEY_GENERATION" \
        --capabilities CAPABILITY_NAMED_IAM 2>&1); then
     wait_stack "UPDATE_COMPLETE" || cfn_dump_failure
   elif ! printf '%s' "$UPDATE_RESULT" | grep -q 'No updates are to be performed'; then
@@ -478,14 +521,7 @@ API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region
 CF_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text 2>/dev/null || echo "")
 
-KEY_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiKeyId`].OutputValue' --output text 2>/dev/null || echo "")
-if [ -z "$KEY_ID" ] || [ "$KEY_ID" = "None" ]; then
-  KEY_ID=$(aws apigateway get-api-keys --region "$REGION" \
-    --query "items[?name=='${STACK_NAME}-api-key'].id | [0]" --output text)
-fi
-API_KEY=$(aws apigateway get-api-key --api-key "$KEY_ID" --include-value --region "$REGION" \
-  --query 'value' --output text)
+KEY_NAME="${STACK_NAME}-api-key${KEY_GENERATION:+-$KEY_GENERATION}"
 
 if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
   BASE_URL="$CF_URL"
@@ -493,14 +529,15 @@ else
   BASE_URL="$API_URL"
 fi
 
-# Generate token (12h TTL) — exchanged on first page load for the real API key.
-# Lets us print a single URL without exposing the key in console / shell history.
+# Generate token (12h TTL, reusable until then) — exchanged on page load for the API key.
+# Lets us print a single URL without exposing the key in console / shell history. The token
+# names the key instead of holding it, so rotating the key retires it.
 SYSTEM_TABLE="${STACK_NAME}-system"
 TOKEN=$(openssl rand -hex 16)
 TOKEN_TTL=$(($(date +%s) + 43200))
 aws dynamodb put-item \
   --table-name "$SYSTEM_TABLE" --region "$REGION" \
-  --item "{\"pk\":{\"S\":\"TOKEN\"},\"sk\":{\"S\":\"$TOKEN\"},\"apiKey\":{\"S\":\"$API_KEY\"},\"ttl\":{\"N\":\"$TOKEN_TTL\"}}" \
+  --item "{\"pk\":{\"S\":\"TOKEN\"},\"sk\":{\"S\":\"$TOKEN\"},\"keyName\":{\"S\":\"$KEY_NAME\"},\"ttl\":{\"N\":\"$TOKEN_TTL\"}}" \
   >/dev/null
 
 OPEN_URL="${BASE_URL}/?t=${TOKEN}"
