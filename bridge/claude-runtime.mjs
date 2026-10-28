@@ -96,12 +96,7 @@ export function discoverClaudeSessions(options = {}) {
         _filePath: filePath,
         _lineCount: metadata.lineCount,
       };
-      const children = discoverClaudeSubagents(projectDir, session, {
-        now: options.now,
-        // Only an exactly identified parent process vouches for its children; the
-        // project-level fallback matches every historical session in that folder.
-        parentRunning: runningInfo.sessions.has(nativeSessionId),
-      });
+      const children = discoverClaudeSubagents(projectDir, session, { now: options.now });
       if (!metadata.preview && !children.length) continue;
       if (!metadata.preview) session._provisional = true;
       sessions.push(session, ...children);
@@ -130,20 +125,11 @@ export function discoverClaudeSessions(options = {}) {
   };
 }
 
-/**
- * Re-derive a root session's subagent summary from disk and assign the counts
- * onto it. Without this the server preserves whatever counts it already holds
- * (sync-sessions treats missing counts as "unchanged"), so one child that was
- * once recorded as running would pin the root to Running forever.
- * Returns the refreshed child sessions so their own rows settle too.
- */
-function refreshClaudeSubagents(session, filePath, context) {
+// sync-sessions keeps a root's stored child counts when they are omitted, so a
+// settling root re-derives them from disk and carries its children along.
+function refreshClaudeSubagents(session, filePath) {
   if (parseClaudeSubagentSessionId(session.nativeSessionId)) return [];
-  const children = filePath
-    ? discoverClaudeSubagents(path.dirname(filePath), session, {
-      parentRunning: !!context.runningInfo?.sessions?.has(session.nativeSessionId),
-    })
-    : [];
+  const children = filePath ? discoverClaudeSubagents(path.dirname(filePath), session) : [];
   for (const child of children) trackAgentSession(child);
   trackAgentSession(session);
   return children;
@@ -349,7 +335,7 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
-    const children = refreshClaudeSubagents(session, gone ? '' : filePath, context);
+    const children = refreshClaudeSubagents(session, gone ? '' : filePath);
     return {
       session,
       extraSessions: children,

@@ -158,28 +158,27 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
-  - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()`/`statusFromEntry()`
-    read jsonl tail `stop_reason` (`tool_use`/null → running; structured
-    `AskUserQuestion`/`ExitPlanMode` → `needs_input`; `end_turn`/interrupt/no-process →
-    `completed`) and write the derived state immediately.
+  - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()` (startup sync +
+    `checkStopped`) first uses CC's own `~/.claude/sessions/<pid>.json` record
+    (`busy`/`waiting`/`idle`/`shell` → running/needs_input/completed/completed; terminal since
+    2.1.119, SDK/VS Code since 2.1.269), trusted only for a pid listed as a claude process and,
+    on Linux, the same `procStart` (killed processes leave records behind; Windows skips it).
+    Without a record, it and the watcher's `statusFromEntry()` read the jsonl tail `stop_reason`
+    (`tool_use`/null → running; structured `AskUserQuestion`/`ExitPlanMode` → `needs_input`;
+    `end_turn`/interrupt/no-process → `completed`).
   - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
     `--json` working/blocked/done → running/needs_input/completed. Inactive historical
     `--all` entries preserve agent identity only; status falls back to process + jsonl.
   - Precedence when a session matches more than one source: **busy pool-owned >
     roster-active daemon agent > external/jsonl**.
     watcher/`checkStopped` skip status writes for busy pool-owned (`poolOwns()`) and daemon-agent sessions.
-  - **subagent threads**: a root row is displayed with the *effective* status
-    (`_effective_status`: own status OR any child `runningAgentCount`/`needsInputAgentCount`),
-    so a stuck child count pins the parent to Running. A subagent transcript never records its
-    closing turn (the summary goes to the parent), so its own tail stays non-terminal forever and
-    only means running while the file is still being written: `claudeSubagentStatus()` takes
-    `.meta.json`'s `finished` as authoritative when that CC version writes it (a long silent
-    Bash/model request must stay running), and otherwise trusts the
-    tail within 15s of the last write, extends that to the same 5min staleness window
-    `getSessionStatus()` uses only for an exactly identified running parent (`runningInfo.sessions`,
-    never the project-level fallback), and reports `completed` beyond it. `inspectActiveSession()`
-    re-derives the counts from disk on every `checkStopped` pass and sends them — `sync-sessions`
-    treats missing counts as "unchanged", so a settling root must always carry them.
+  - **subagent threads**: a root row shows the *effective* status (own status OR any child
+    `runningAgentCount`/`needsInputAgentCount`). An interrupted subagent's tail stays
+    non-terminal forever, so a child trusts its tail only while `.meta.json` says
+    `finished:false`, its parent's own status is running (CC stays `busy` while foreground or
+    background subagents run), or it was written in the last 15s. `inspectActiveSession()`
+    re-derives the counts on every `checkStopped` pass and sends them, because `sync-sessions`
+    treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
   - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the
@@ -529,6 +528,6 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 
 - **Real-time Edit diff hydration lifecycle**: fixed the intermittent mobile state where an expanded `Edited` card showed only its border until session reload. Diff data now survives DOM replacement under a stable content key, initialization is tracked per element, visible tool nodes hydrate after every timeline mutation, and the registry is cleared at session boundaries. Keep regression coverage for replacement during lazy import, streaming adoption, fallback rendering, and session cleanup.
 - **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (exceeding it drops the connection with code 1009). `realtime-delivery.mjs` checks the envelope size and sends a transport-truncated copy over WS (`truncateToBytes()` in `extract.mjs`, byte-aware, with message-level `truncated: true` and `noCache: true`). HTTP persists the prepared authoritative message with compact tool previews. The server skips DDB writes for `noCache`, so the transport copy cannot overwrite the HTTP version. HTTP also caps each message to `DDB_ITEM_LIMIT` (360KB). These transport limits and `stream_end.recoveryRequired` remain separate from intentional tool previews.
-- **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag, cannot precisely match session. Uses mtime heuristic (5 min timeout → completed). terminal-launched CC (with `--resume`) unaffected.
+- **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag. CC ≥ 2.1.269 is matched exactly through its `~/.claude/sessions/<pid>.json` record; older versions (and Windows) fall back to the mtime heuristic (5 min timeout → completed).
 - **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
 - **Concurrent regular-session control**: Claude has no daemon-style stop/lock for a normal terminal or VS Code session. Do not start a Web headless turn while the same regular session is actively generating elsewhere; simultaneous writers can fork the JSONL parent chain. Daemon agents are safe because Web takeover stops the roster worker first.

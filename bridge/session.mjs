@@ -15,6 +15,7 @@ import { attachmentPreviewText } from './attachments.mjs';
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
 const claudeHistoryCache = new Map();
 const DEFAULT_CLAUDE_HISTORY = path.join(path.dirname(CLAUDE_PROJECTS), 'history.jsonl');
+const CLAUDE_SESSIONS = path.join(path.dirname(CLAUDE_PROJECTS), 'sessions');
 
 function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
@@ -366,6 +367,9 @@ function readStatusFromFile(filePath) {
  * Watcher uses statusFromEntry() directly with already-parsed data.
  */
 export function getSessionStatus(sessionId, filePath, runningInfo) {
+  const live = runningInfo.liveStatuses?.get(sessionId);
+  if (live) return live;
+
   const metadataOnly = process.platform === 'win32'
     || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'));
 
@@ -379,15 +383,11 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   // 2. Read jsonl content to determine status
   const contentStatus = readStatusFromFile(filePath);
 
-  // 3. File stale > 5min → completed, even if a --resume process is still alive.
-  //    A truly running turn keeps writing jsonl (fresh mtime); an idle interactive
-  //    /VS Code session leaves its `--resume` process up between turns, so process
-  //    presence alone must not pin a finished turn to "running". needs_input is
-  //    preserved: a session parked at AskUserQuestion/ExitPlanMode stops writing
-  //    while the ball is in the user's court.
+  // 3. File stale > 5min → completed regardless of content
+  //    A truly running session always writes to jsonl, keeping mtime fresh
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'completed'; }
-  if (contentStatus !== 'needs_input' && Date.now() - mtimeMs > 300_000) return 'completed';
+  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'completed';
 
   return contentStatus;
 }
@@ -408,6 +408,7 @@ export function sessionIdFromProcessArgs(line) {
 export function getRunningInfo() {
   const projects = new Set();
   const sessions = new Set();
+  const pids = new Set();
 
   if (process.platform === 'win32' || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'))) {
     return { projects, sessions };
@@ -420,6 +421,7 @@ export function getRunningInfo() {
       const parts = line.trim().split(/\s+/);
       const pid = parts[1];
       if (!pid || isNaN(pid)) continue;
+      pids.add(pid);
 
       const sid = sessionIdFromProcessArgs(line);
       if (sid) sessions.add(sid);
@@ -437,7 +439,42 @@ export function getRunningInfo() {
     sessions.add(sid);
   }
 
-  return { projects, sessions };
+  const liveStatuses = readLiveSessionStatuses(pids);
+  for (const sid of liveStatuses.keys()) sessions.add(sid);
+
+  return { projects, sessions, liveStatuses };
+}
+
+const LIVE_STATUS = { busy: 'running', waiting: 'needs_input', idle: 'completed', shell: 'completed' };
+
+// CC keeps ~/.claude/sessions/<pid>.json at its own busy/waiting/idle state (terminal
+// since 2.1.119, SDK/VS Code since 2.1.269). A killed process leaves its record behind,
+// so only records of a listed claude pid count, and on Linux only the same process start.
+export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
+  const statuses = new Map();
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return statuses; }
+  for (const file of files) {
+    const pid = /^(\d+)\.json$/.exec(file)?.[1];
+    if (!pid || !claudePids.has(pid)) continue;
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      const status = LIVE_STATUS[record.status];
+      if (!record.sessionId || !status) continue;
+      if (process.platform === 'linux' && record.procStart !== undefined
+        && processStartTime(pid) !== String(record.procStart)) continue;
+      if (status !== 'completed' || !statuses.has(record.sessionId)) {
+        statuses.set(record.sessionId, status);
+      }
+    } catch {}
+  }
+  return statuses;
+}
+
+// Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.
+function processStartTime(pid) {
+  const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
 }
 
 // A session that cd's into a git worktree gets its jsonl moved to a separate
