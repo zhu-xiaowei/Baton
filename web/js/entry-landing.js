@@ -1,7 +1,7 @@
 // Entry for landing.html — single Start URL field for sign-in.
 // A Start URL looks like one of:
-//   https://<server>/?t=<one-time-token>   (issued by install.sh, 60 min single-use)
-//   https://<server>/?key=<apiKey>         (issued by setup page, permanent)
+//   https://<server>/?t=<token>            (install.sh: 12h, Setup: 10 min; reusable until then)
+//   https://<server>/?key=<apiKey>         (older Setup pages)
 import { harmonyBridge, harmonyCall } from './harmony.js';
 import { state } from './state.js';
 import './api.js';
@@ -218,7 +218,7 @@ setNativeTabTitle('Baton');
       body: JSON.stringify({ token: token }),
     });
     if (!res.ok) {
-      throw new Error(res.status === 401 ? 'Link expired or already used. Re-run deploy to get a new link.' : 'Connection failed');
+      throw new Error(res.status === 401 ? 'Link expired. Get a new one from Setup or re-run deploy.' : 'Connection failed');
     }
     var data = await res.json();
     if (!data || !data.apiKey) throw new Error('Invalid response');

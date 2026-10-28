@@ -32,7 +32,7 @@
   .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: #e6edf3; }
   .setup-bar .spacer { width: 28px; flex-shrink: 0; }
   .section {
-    width: 100%; max-width: 600px; background: #161b22; border: 1px solid #30363d;
+    width: 100%; max-width: 610px; background: #161b22; border: 1px solid #30363d;
     border-radius: 10px; padding: 20px; margin-bottom: 20px;
   }
   .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
@@ -103,13 +103,15 @@
   </div>
   <p class="hint" id="installHint" style="margin:0 0 10px">Run this command with Node.js installed.</p>
   <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
+  <p class="hint token-expiry"></p>
 </div>
 
 <!-- Step 2: Start URL — paste into another browser or the Baton app -->
 <div class="section">
   <h2><span class="num">2</span> Start URL</h2>
   <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the Baton app to sign in.</p>
-  <div class="code-block" id="qrUrlBlock"><span id="qrUrl"></span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
+  <div class="code-block" id="qrUrlBlock"><span id="qrUrl">Loading...</span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
+  <p class="hint token-expiry"></p>
 </div>
 
 <!-- Step 3: QR Code (scan version of the same Start URL) -->

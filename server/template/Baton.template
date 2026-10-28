@@ -22,6 +22,15 @@
       "Type": "String",
       "Description": "App version (semantic-githash), drives bridge auto-update",
       "Default": "dev"
+    },
+    "AccountId": {
+      "Type": "String",
+      "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
+      "Default": ""
+    },
+    "ApiKeyName": {
+      "Type": "String",
+      "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
     }
   },
   "Resources": {
@@ -76,6 +85,11 @@
                 },
                 {
                   "Effect": "Allow",
+                  "Action": "apigateway:GET",
+                  "Resource": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}::/apikeys" }
+                },
+                {
+                  "Effect": "Allow",
                   "Action": [
                     "s3:PutObject",
                     "s3:GetObject"
@@ -103,7 +117,9 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
-            "APP_VERSION": { "Ref": "AppVersion" }
+            "APP_VERSION": { "Ref": "AppVersion" },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
+            "ACCOUNT_ID": { "Ref": "AccountId" }
           }
         },
         "MemorySize": 1024,
@@ -341,7 +357,7 @@
     "ApiKey": {
       "Type": "AWS::ApiGateway::ApiKey",
       "Properties": {
-        "Name": { "Fn::Sub": "${AWS::StackName}-api-key" },
+        "Name": { "Ref": "ApiKeyName" },
         "Enabled": true,
         "StageKeys": [
           { "RestApiId": { "Ref": "RestApi" }, "StageName": "v1" }
@@ -550,6 +566,8 @@
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
+            "ACCOUNT_ID": { "Ref": "AccountId" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
             "REALTIME_DIRECT_ENABLED": "1",
@@ -600,6 +618,11 @@
                 "Effect": "Allow",
                 "Action": "execute-api:ManageConnections",
                 "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "apigateway:GET",
+                "Resource": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}::/apikeys" }
               }
             ]
           }
