@@ -1636,19 +1636,25 @@ function resetDeleteBtn() {
   btn.textContent = 'Delete';
 }
 
-// Checking "delete original data" arms a 5s countdown before Delete is clickable (guards misfires).
+// A 5s countdown before the confirm button is clickable (guards misfires).
+function armDeleteCountdown(label) {
+  var btn = document.getElementById('deleteConfirmBtn');
+  var left = 5;
+  btn.disabled = true; btn.textContent = label + ' (' + left + ')';
+  _deleteCountdownTimer = setInterval(function () {
+    left--;
+    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = label; }
+    else btn.textContent = label + ' (' + left + ')';
+  }, 1000);
+}
+
+// Checking "delete original data" arms the countdown.
 function onDeleteFilesToggle() {
   var btn = document.getElementById('deleteConfirmBtn');
   if (btn.getAttribute('aria-busy') === 'true') return;
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
-  var left = 5;
-  btn.disabled = true; btn.textContent = 'Delete (' + left + ')';
-  _deleteCountdownTimer = setInterval(function () {
-    left--;
-    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = 'Delete'; }
-    else btn.textContent = 'Delete (' + left + ')';
-  }, 1000);
+  armDeleteCountdown('Delete');
 }
 
 function closeDeleteModal() {
@@ -1668,7 +1674,7 @@ function openDeviceDeleteModal(device) {
   showDeleteFilesOption(false);
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
-  document.getElementById('deleteConfirmBtn').textContent = 'Remove';
+  armDeleteCountdown('Remove');
   showCenteredModal(document.getElementById('deleteModal'));
 }
 
