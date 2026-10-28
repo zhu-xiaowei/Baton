@@ -83,8 +83,21 @@ var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
 // A send on a socket silent this long probes it, so a dead socket is rebuilt within the send window.
 var WS_SEND_STALE_MS = 15000;
 var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
+// Periodic ping on both channels: keeps API Gateway's 10-minute idle timer away and finds dead sockets.
+var WS_PING_INTERVAL_MS = 25000;
+var WS_PING_TIMEOUT_MS = 15000;
+// A seq gap that survives a ping round-trip on every channel is a lost frame, not reordering.
+var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
+var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
+// A running turn silent this long is checked against REST in case its tail frames were lost.
+var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
 var _wsProbeTimer = null;
+var _wsPingTimer = null;
 var _wsLastInboundAt = 0;
+var _controlPongAt = 0;
+var _turnGapWatch = null;
+var _lastTurnEventAt = 0;
+var _silentTurnCheckAt = 0;
 var _bottomFollowFrame = null;
 var _pendingBottomFollow = null;
 
@@ -405,6 +418,10 @@ function connectWs(_, projectHash) {
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
     _realtimeReceiver.start();
+    if (!_wsPingTimer) {
+      _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
+      _wsPingTimer?.unref?.();
+    }
   };
 
   state.ws.onmessage = function (e) {
@@ -484,6 +501,66 @@ function probeSocketForSend() {
 
 function probeSocketIfStale() {
   if (_wsLastInboundAt && Date.now() - _wsLastInboundAt > WS_SEND_STALE_MS) probeSocketForSend();
+}
+
+function pingWsChannels() {
+  if (document.hidden || !state.wsSessionId || state.ws?.readyState !== WebSocket.OPEN) return;
+  if (!_wsProbeTimer) probeWsLiveness(WS_PING_TIMEOUT_MS);
+  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  checkSilentTurn();
+}
+
+function clearTurnGapWatch() {
+  clearTimeout(_turnGapWatch?.timer);
+  _turnGapWatch = null;
+}
+
+function watchTurnGap(turnId) {
+  var missing = _turnEventQueue.missingSeq(turnId);
+  if (_turnGapWatch?.turnId === turnId && _turnGapWatch.seq !== missing) clearTurnGapWatch();
+  if (missing == null || _turnGapWatch) return;
+  _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
+  // Both pongs are sent after the missing frame, so they arrive behind it unless it was lost.
+  wsSend({ action: 'heartbeat' });
+  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);
+}
+
+function checkTurnGap() {
+  var watch = _turnGapWatch;
+  if (!watch) return;
+  if (_turnEventQueue.missingSeq(watch.turnId) !== watch.seq) return clearTurnGapWatch();
+  var fenced = _controlPongAt > watch.since
+    && (!_realtimeReceiver?.lastPongAt || _realtimeReceiver.lastPongAt > watch.since);
+  if (fenced) {
+    clearTurnGapWatch();
+    refreshSessionMessages();
+  } else if (Date.now() - watch.since < TURN_GAP_GIVE_UP_MS) {
+    // No pong yet: either still in flight (slow network) or a dead socket the ping timeout rebuilds.
+    watch.timer = setTimeout(checkTurnGap, Math.min(1000, TURN_GAP_MIN_MS));
+  } else {
+    clearTurnGapWatch();
+  }
+}
+
+// A lost tail (including stream_end) leaves no gap to see; REST status settles the turn instead.
+function checkSilentTurn() {
+  var turnIds = _streamCoordinator.activeTurnIds();
+  var now = Date.now();
+  if (!turnIds.length || _turnGapWatch || document.getElementById('permission-prompt')
+    || now - Math.max(_lastTurnEventAt, _silentTurnCheckAt) < SILENT_TURN_MS) return false;
+  _silentTurnCheckAt = now;
+  var sessionId = state.wsSessionId;
+  return refreshSessionMessages({ preserveLive: true }).then(function (result) {
+    if (result?.status !== 'completed' || state.wsSessionId !== sessionId
+      || Date.now() - _lastTurnEventAt < SILENT_TURN_MS) return;
+    for (var turnId of turnIds) {
+      _streamCoordinator.settleTurn(turnId);
+      _turnEventQueue.closeTurn(turnId);
+      settlePendingAtTurnEnd(turnId, {});
+    }
+    drainStrictStreamOperations();
+  });
 }
 
 // Sends are idempotent by turnId; a rebuilt socket carries every send the Server has not receipted.
@@ -605,6 +682,7 @@ function routeTurnEvent(message) {
   if (message.goalContinuation === true && message.sessionId === state.wsSessionId) {
     _goalContinuationIds.add(message.turnId);
   }
+  if (isStrictTurnEvent(message)) _lastTurnEventAt = Date.now();
   var barrier = _historyFetchBarriers.current(message.sessionId);
   if (barrier && message.sessionId === barrier.sessionId
     && (isStrictTurnEvent(message) || message.action === 'messages')) {
@@ -651,6 +729,7 @@ function routeTurnEvent(message) {
   } else if (_turnEventQueue.isResumeCandidate(message.turnId)) {
     resumeLateJoinAtCheckpoint(message.turnId);
   }
+  watchTurnGap(message.turnId);
   if (isControlEvent(message)
     && !_handledControlEvents.has(strictEventKey(message))) {
     scheduleControlEventFallback(message);
@@ -811,6 +890,8 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
+    } else if (msg.action === 'heartbeat') {
+      _controlPongAt = Date.now();
     } else if (msg.action === 'send_message_received') {
       var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
       acceptPendingReceipt(receivedPending);
@@ -1548,6 +1629,7 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   _controlEventTimers.clear();
   for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
   _gappedEndTimers.clear();
+  clearTurnGapWatch();
   _suppressTurnEndRecovery = false;
   _handledControlEvents.clear();
   _controlRequestState.clear();
@@ -2988,6 +3070,7 @@ Object.assign(window, {
 if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
   window.__wsTest = {
     handleWsMessage: handleWsMessage,
+    checkSilentTurn: checkSilentTurn,
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
     commitMessages: commitMessages,

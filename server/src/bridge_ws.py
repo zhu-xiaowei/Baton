@@ -489,6 +489,10 @@ def _handle_message(event, connection_id, endpoint):
     if action == "preview_tunnel":
         return handle_preview_tunnel(body, conn, connection_id, endpoint, table=_connections_table,
             query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+    if role == "realtime_data" and action == "heartbeat":
+        # Keeps API Gateway's 10-minute idle timer from closing the receive-only socket.
+        _post_to_connection(endpoint, connection_id, {"action": "heartbeat", "ts": int(time.time())})
+        return {"statusCode": 200}
     if role in ("terminal_data", "realtime_data", "preview_data"):
         return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \

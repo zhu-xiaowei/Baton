@@ -226,3 +226,17 @@ def test_template_direct_route_targets_data_api_without_expanding_iam():
     assert "CredentialsArn" not in integration
     role = resources["TerminalDirectRole"]["Properties"]["Policies"][0]["PolicyDocument"]
     assert "${TerminalDirectApi}" in role["Statement"][0]["Resource"]["Fn::Sub"]
+
+
+def test_data_heartbeat_gets_a_pong_and_other_data_messages_stay_denied(monkeypatch):
+    record = {"connectionId": "data", "role": "realtime_data", "accountId": "account"}
+    monkeypatch.setattr(bridge_ws, "_connections_table", SimpleNamespace(
+        get_item=lambda **kwargs: {"Item": record}))
+    posted = []
+    monkeypatch.setattr(bridge_ws, "_post_to_connection",
+        lambda endpoint, target, message: posted.append((endpoint, target, message)) or True)
+    heartbeat = bridge_ws._handle_message({"body": json.dumps({"action": "heartbeat"})}, "data", "https://data.test/v1")
+    assert heartbeat == {"statusCode": 200}
+    assert [(endpoint, target, message["action"]) for endpoint, target, message in posted] == [
+        ("https://data.test/v1", "data", "heartbeat")]
+    assert bridge_ws._handle_message({"body": json.dumps({"action": "subscribe"})}, "data", "https://data.test/v1") == {"statusCode": 403}

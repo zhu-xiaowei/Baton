@@ -388,6 +388,20 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - **Bridge turn frames must survive reconnect too.** `LiveTurnStream` sends through
   `wsSendWhenConnected`, which queues frames while the Bridge socket is not OPEN and flushes them
   in order after reconnect. A frame may not consume a turn `seq` and then disappear.
+- **Lost app frames are recovered, not waited on.** API Gateway closes a WS after 10 minutes with
+  no client→server traffic, and the realtime data socket never sends; frames posted around such
+  closes, or via a gone Lambda target, vanish silently. While a Session is open and visible the app
+  pings both sockets every 25s (`heartbeat`; the server answers on the data socket too) and rebuilds
+  one with no frame for 15s — the data socket only after its server has answered once, so an
+  older server is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
+  once both pongs (sent after the missing frame) have arrived and ≥3s passed, the frame is lost and
+  `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
+  gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
+  REST; `completed` settles it, covering a lost tail or `stream_end`.
+- **History rows rejoin their stream row by message order.** REST/DDB rows carry no `turnId`, so
+  untagged assistant rows between a turn's prompt and the next prompt belong to that turn's stream
+  row; recovered children are inserted by message order, and class-only matching may reuse only a
+  stream block without identity (`message-dom.js`).
 - **No duplicate/stuck bubbles.** Each optimistic bubble carries a monotonic send `seq`. `reconcileEchoedPending()` (end of `updateLastTurn`) retires a pending when (1) its echo is present (covers echoes that arrived via `bufferAndFetch`, which `tryDedup` skips), or (2) `seq < lastDeliveredSeq` — a later send was already confirmed, so this earlier one was swallowed by a busy-CC send and never reached jsonl (echo never comes). `lastDeliveredSeq` is a persistent watermark bumped in `tryDedup`/`resolvePending(ok)`/echo-match, so orphan detection survives the confirmed pending being removed; reset with `pendingSentMessages` on every session switch. `isImage` bubbles are never auto-orphaned (attachments, no matchable text). Without this an orphan has no `data-ts` and sticks to the bottom forever. New-session banner: `body.new-session #content` is flex-centered, so `.ws-banner` is pinned `position:absolute; top:0` instead of being pulled to the middle.
 
 ### Scroll-to-bottom on session open (no flash / no "stopping short of the bottom")

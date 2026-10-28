@@ -60,7 +60,14 @@ export class RealtimeReceiver {
             controlId: message.controlId, bindingId: this.bindingId, joinToken: message.joinToken }));
         };
         socket.onmessage = event => {
-          if (generation === this.generation) this.accept(event.data);
+          if (generation !== this.generation) return;
+          clearTimeout(this.pingTimer);
+          this.pingTimer = null;
+          if (typeof event.data === 'string' && event.data.startsWith('{"action":"heartbeat"')) {
+            this.lastPongAt = Date.now();
+            return;
+          }
+          this.accept(event.data);
         };
         socket.onerror = () => {};
         socket.onclose = () => {
@@ -87,6 +94,21 @@ export class RealtimeReceiver {
       if (message.type === 'closed') this.retry = setTimeout(() => this.start(), 3000);
       this.setStatus(message.type === 'closed' ? 'reconnecting' : 'fallback');
     }
+    return true;
+  }
+
+  // The data socket only receives, so API Gateway's idle timer needs this. Once the server has
+  // answered a ping (older servers never do), a missing reply means a dead socket.
+  ping(timeoutMs) {
+    if (!this.socket || !this.frameKey || this.pingTimer) return false;
+    const socket = this.socket;
+    if (this.lastPongAt) {
+      this.pingTimer = setTimeout(() => {
+        this.pingTimer = null;
+        if (this.socket === socket) socket.onclose?.();
+      }, timeoutMs);
+    }
+    try { socket.send(JSON.stringify({ action: 'heartbeat' })); } catch {}
     return true;
   }
 
@@ -129,6 +151,9 @@ export class RealtimeReceiver {
     this.generation++;
     clearTimeout(this.timeout);
     clearTimeout(this.retry);
+    clearTimeout(this.pingTimer);
+    this.pingTimer = null;
+    this.lastPongAt = 0;
     if (this.socket) {
       this.socket.onclose = null;
       this.socket.onmessage = null;

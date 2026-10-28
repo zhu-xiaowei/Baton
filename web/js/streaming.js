@@ -143,6 +143,17 @@ export class TurnEventQueue {
       || event?.action === 'permission_request';
   }
 
+  // The first missing seq of a started turn; a held stream_end is left to the gapped-end path.
+  missingSeq(turnId) {
+    var turn = this.turns.get(turnId);
+    if (!turn || turn.nextSeq === 0 || !turn.pending.size
+      || turn.pending.has(turn.nextSeq)) return null;
+    for (var event of turn.pending.values()) {
+      if (event.action === 'stream_end') return null;
+    }
+    return turn.nextSeq;
+  }
+
   isLateJoinCandidate(turnId) {
     var turn = this.turns.get(turnId);
     if (!turn || turn.nextSeq !== 0 || turn.pending.has(0)) return false;
