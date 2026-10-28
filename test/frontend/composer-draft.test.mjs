@@ -108,3 +108,36 @@ test('clearing removes a sent draft and rekey moves an unsent draft', async () =
   await controller.clear();
   assert.equal(await store.get(fields('session-real')), null);
 });
+
+test('uploaded attachments are saved, restored and moved with the draft', async () => {
+  const backend = memoryBackend();
+  const store = createComposerDraftStore(backend);
+  const file = { kind: 'file', name: 'spec.pdf', key: 'a'.repeat(32) + '.pdf' };
+  const image = { name: 'shot.png', key: 'img1.jpg', dataUrl: 'data:image/jpeg;base64,AAAA' };
+  let input = { text: '', attachments: [] };
+  const controller = createComposerDraftController(store, {
+    readInput: () => input,
+    applyInput: (text, attachments) => { input = { text, attachments }; },
+    debounceMs: 5,
+  });
+
+  await controller.activate(fields('__new__'));
+  input = { text: '', attachments: [file] };
+  controller.sync();
+  await tick(10);
+  assert.deepEqual((await store.get(fields('__new__'))).attachments, [file]);
+
+  input = { text: 'look', attachments: [file, image] };
+  await controller.rekey(fields('session-a'));
+  assert.equal(await store.get(fields('__new__')), null);
+
+  await controller.activate(fields('session-b'));
+  assert.deepEqual(input, { text: '', attachments: [] });
+
+  await controller.activate(fields('session-a'));
+  assert.deepEqual(input, { text: 'look', attachments: [file, image] });
+
+  input = { text: '', attachments: [] };
+  await controller.clear();
+  assert.equal(await store.get(fields('session-a')), null);
+});

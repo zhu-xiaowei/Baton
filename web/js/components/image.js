@@ -6,6 +6,7 @@ import { showImageViewer } from './image-viewer.js';
 import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
 import { contentHash } from './content-hash.js';
 import { progressRingHtml, setProgressRingPercent } from './progress-ring.js';
+import { syncComposerDraft } from '../drafts/composer-draft.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -213,6 +214,7 @@ function updateStagedUpload(entry) {
 }
 
 function renderStagedImages() {
+  syncComposerDraft();
   window.updateSendBtn?.({ skipSpinner: true });
   var row = document.getElementById('img-preview-row');
   if (!state.stagedImages.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
