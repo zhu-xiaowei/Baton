@@ -214,6 +214,8 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .messages {
   --runtime-accent: #D7BA7D;
   padding: 8px 12px;
+  /* Keep y overflow visible so x clipping prevents selection from scrolling #content sideways. */
+  overflow-x: clip;
 }
 .messages.runtime-codex {
   --runtime-accent: #13A7CD;
