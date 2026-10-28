@@ -494,9 +494,9 @@ function probeWsLiveness(timeoutMs) {
 }
 
 // A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
-function probeSocketForSend() {
+function probeSocketForSend(timeoutMs) {
   if (_wsProbeTimer || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeWsLiveness(WS_SEND_PROBE_TIMEOUT_MS);
+  probeWsLiveness(timeoutMs || WS_SEND_PROBE_TIMEOUT_MS);
 }
 
 function probeSocketIfStale() {
@@ -505,7 +505,7 @@ function probeSocketIfStale() {
 
 function pingWsChannels() {
   if (document.hidden || !state.wsSessionId || state.ws?.readyState !== WebSocket.OPEN) return;
-  if (!_wsProbeTimer) probeWsLiveness(WS_PING_TIMEOUT_MS);
+  probeSocketForSend(WS_PING_TIMEOUT_MS);
   _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
   checkSilentTurn();
 }
@@ -554,12 +554,16 @@ function checkSilentTurn() {
   return refreshSessionMessages({ preserveLive: true }).then(function (result) {
     if (result?.status !== 'completed' || state.wsSessionId !== sessionId
       || Date.now() - _lastTurnEventAt < SILENT_TURN_MS) return;
+    // A completed Session has no running execution, so its lost stream_end ends that too.
+    _activeExecutionIds.clear();
     for (var turnId of turnIds) {
       _streamCoordinator.settleTurn(turnId);
       _turnEventQueue.closeTurn(turnId);
       settlePendingAtTurnEnd(turnId, {});
     }
     drainStrictStreamOperations();
+    applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
+    updateSendBtn();
   });
 }
 
@@ -1621,9 +1625,12 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   _queuedTurnIds.clear();
   _activeExecutionIds.clear();
   _goalContinuationIds.clear();
-  _executionEvents.reset();
-  for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
-  _executionRecoveryTimers.clear();
+  // A snapshot refresh keeps execution order: frames after it continue the same executionSeq.
+  if (!keepHistoryRequest) {
+    _executionEvents.reset();
+    for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
+    _executionRecoveryTimers.clear();
+  }
   _turnSendOrder.clear();
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();

@@ -10,7 +10,8 @@ const prior = [
   { uuid: 'a0', type: 'assistant', content: [{ type: 'text', text: 'OLD-ANSWER' }], timestamp: TS(1) },
 ];
 
-// One Claude headless turn: text, Bash tool + result, closing text.
+// One Claude headless turn: text, Bash tool + result, closing text. Frames carry the
+// LiveExecutionStream fields a regular Claude send publishes (bridge `userInitiated` → steer).
 function claudeTurn(sessionId, turnId) {
   const user = { uuid: turnId.replace(/^sent-/, ''), nativeId: `live:user:${turnId}`, type: 'user', content: 'NEW-QUESTION', timestamp: TS(10) };
   const first = { uuid: 'first', type: 'assistant', content: [{ type: 'text', text: 'FIRST-TEXT' }], timestamp: TS(11) };
@@ -18,7 +19,10 @@ function claudeTurn(sessionId, turnId) {
   const result = { uuid: 'result', type: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'out' }], timestamp: TS(13) };
   const summary = { uuid: 'summary', type: 'assistant', content: [{ type: 'text', text: 'SUMMARY' }], timestamp: TS(14) };
   let seq = 0;
-  const e = (action, extra = {}) => ({ action, sessionId, turnId, seq: seq++, ...extra });
+  const e = (action, extra = {}) => ({
+    action, sessionId, turnId, seq, ...extra,
+    executionId: turnId, executionSeq: seq, consumedInputIds: seq++ > 1 ? [turnId] : [],
+  });
   const events = [
     e('stream_turn_start'),
     e('messages', { messages: [user], noCache: true }),
@@ -77,12 +81,15 @@ test('a frame lost mid-turn is recovered once a pong proves it is not in flight'
     return { messages: turn.ddb.filter(message => message.uuid !== 'summary'), status: 'running', hasMore: false };
   });
   send(turn.events.filter(event => event.seq !== 7 && event.seq < 11));
-  await h.tick(100);
-  assert.equal(requests, 0, 'a gap without a pong is still treated as reordering');
+  // The execution queue holds the later frames first and releases them after its own REST.
+  await h.tick(650);
+  assert.equal(requests, 1, 'a turn gap without a pong is still treated as reordering');
   send([{ action: 'heartbeat', ts: 1 }]);
   await h.tick(100);
-  assert.equal(requests, 1);
+  assert.equal(requests, 2);
   send(turn.events.filter(event => event.seq >= 11));
+  await h.tick(1000);
+  assert.equal(requests, 2, 'frames after the refresh continue the same execution');
   await h.tick(150);
   assertOrdered();
   send([turn.end]);
