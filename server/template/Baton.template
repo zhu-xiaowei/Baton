@@ -28,14 +28,10 @@
       "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
       "Default": ""
     },
-    "ApiKeyGeneration": {
+    "ApiKeyName": {
       "Type": "String",
-      "Description": "Changed by install.sh --rotate-key to replace the API key",
-      "Default": ""
+      "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
     }
-  },
-  "Conditions": {
-    "HasApiKeyGeneration": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ApiKeyGeneration" }, ""] }] }
   },
   "Resources": {
     "LambdaExecutionRole": {
@@ -122,7 +118,7 @@
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
-            "API_KEY_NAME": { "Fn::If": ["HasApiKeyGeneration", { "Fn::Sub": "${AWS::StackName}-api-key-${ApiKeyGeneration}" }, { "Fn::Sub": "${AWS::StackName}-api-key" }] },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" }
           }
         },
@@ -361,7 +357,7 @@
     "ApiKey": {
       "Type": "AWS::ApiGateway::ApiKey",
       "Properties": {
-        "Name": { "Fn::If": ["HasApiKeyGeneration", { "Fn::Sub": "${AWS::StackName}-api-key-${ApiKeyGeneration}" }, { "Fn::Sub": "${AWS::StackName}-api-key" }] },
+        "Name": { "Ref": "ApiKeyName" },
         "Enabled": true,
         "StageKeys": [
           { "RestApiId": { "Ref": "RestApi" }, "StageName": "v1" }
@@ -570,7 +566,7 @@
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
-            "API_KEY_NAME": { "Fn::If": ["HasApiKeyGeneration", { "Fn::Sub": "${AWS::StackName}-api-key-${ApiKeyGeneration}" }, { "Fn::Sub": "${AWS::StackName}-api-key" }] },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },

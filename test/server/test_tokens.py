@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import sys
 import time
@@ -69,12 +70,10 @@ def test_setup_token_is_reusable_until_it_expires(table):
     assert exchange(token)[0] == 401
 
 
-def test_rotating_the_key_retires_tokens_and_old_tokens_still_work(table, monkeypatch):
+def test_rotating_the_key_retires_tokens(table, monkeypatch):
     token = new_token()
     monkeypatch.setenv('API_KEY_NAME', 'Baton-api-key-20261028')
     assert exchange(token)[0] == 401
-    table.put_item({'pk': 'TOKEN', 'sk': 'legacy', 'apiKey': 'old-key', 'ttl': int(time.time()) + 60})
-    assert exchange('legacy') == (200, {'apiKey': 'old-key'})
 
 
 def test_install_command_carries_a_token_and_the_script_the_key(table):
@@ -102,10 +101,13 @@ def test_websocket_connect_requires_the_deployment_key(monkeypatch):
     assert connect('ok', KEY) == {'statusCode': 200}
 
 
-def test_account_id_is_pinned_across_key_rotation(monkeypatch):
-    original = api_key.account_id(KEY)
+@pytest.mark.real_key
+def test_account_id_is_pinned_only_for_the_current_key(monkeypatch):
+    original = api_key.account_id('original-key')
     monkeypatch.setenv('ACCOUNT_ID', original)
+    monkeypatch.setattr(api_key, 'current_key', lambda: 'rotated-key')
     assert api_key.account_id('rotated-key') == original
+    assert api_key.account_id('guess') == hashlib.sha256(b'guess').hexdigest()[:16]
 
 
 class Sessions:

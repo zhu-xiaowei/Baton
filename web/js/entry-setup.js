@@ -37,17 +37,18 @@ setNativeTabTitle('Settings');
   initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
   // Steps 1-3 share one 10-minute token, so the install command, Start URL and QR code never
-  // carry the API key. Older servers without tokens fall back to the key itself.
+  // carry the API key. Only an older server without tokens (404/405) falls back to the key.
   var cmdEl = document.getElementById('installCmdText');
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
   var token = '';
+  var legacy = false;
 
   function renderInstallCommand() {
     var windows = platform === 'windows';
     if (token) {
       var url = state.SERVER + '/auth/install?t=' + token;
       cmdEl.textContent = windows ? "irm '" + url + "&platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
-    } else {
+    } else if (legacy) {
       cmdEl.textContent = windows
         ? "irm -Headers @{'x-api-key'='" + state.KEY + "'} '" + state.SERVER + "/api/install?platform=windows' | iex"
         : 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
@@ -97,10 +98,18 @@ setNativeTabTitle('Settings');
       expiry = 'Valid for ' + Math.round(result.expiresIn / 60) + ' minutes.';
     } catch (e) {
       token = '';
+      legacy = /^40[45] /.test(e.message);
+      if (!legacy) expiry = 'Could not create a link.';
     }
     document.querySelectorAll('.token-expiry').forEach(function (el) { el.textContent = expiry; });
-    document.getElementById('newToken').hidden = !token;
+    document.getElementById('newToken').hidden = legacy;
     renderInstallCommand();
+    if (!token && !legacy) {
+      cmdEl.textContent = 'Could not create an install command.';
+      document.getElementById('qrUrl').textContent = 'Could not create a Start URL.';
+      document.getElementById('qrCanvas').parentElement.classList.remove('ready');
+      return;
+    }
     var startUrl = token ? state.SERVER + '/?t=' + token : state.SERVER + '/?key=' + encodeURIComponent(state.KEY);
     document.getElementById('qrUrl').textContent = startUrl;
     drawQr(startUrl);

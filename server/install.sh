@@ -458,22 +458,29 @@ api_key_value() {
 }
 # Data is keyed by an account ID that was originally SHA256(key)[:16]. Pin it before the key can
 # change, so a rotated key keeps the same data. A new stack derives it from its first key.
-ACCOUNT_ID=""
-KEY_GENERATION=""
+DATA_ACCOUNT_ID=""
+KEY_NAME="${STACK_NAME}-api-key"
 if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
-  ACCOUNT_ID=$(stack_param AccountId)
-  if [ -z "$ACCOUNT_ID" ] || [ "$ACCOUNT_ID" = "None" ]; then
-    ACCOUNT_ID=$(printf '%s' "$(api_key_value)" | openssl dgst -sha256 | awk '{print substr($NF, 1, 16)}')
+  DATA_ACCOUNT_ID=$(stack_param AccountId)
+  if [ -z "$DATA_ACCOUNT_ID" ] || [ "$DATA_ACCOUNT_ID" = "None" ]; then
+    # A wrong ID would be pinned for good, so a failed key lookup must stop the deploy.
+    CURRENT_KEY=$(api_key_value) || CURRENT_KEY=""
+    if [ -z "$CURRENT_KEY" ] || [ "$CURRENT_KEY" = "None" ]; then
+      echo "${C_RED}ERROR: could not read the current API key to pin the account ID${C_RESET}" >&2
+      exit 1
+    fi
+    DATA_ACCOUNT_ID=$(printf '%s' "$CURRENT_KEY" | openssl dgst -sha256 | awk '{print substr($NF, 1, 16)}')
   fi
-  KEY_GENERATION=$(stack_param ApiKeyGeneration)
-  [ "$KEY_GENERATION" = "None" ] && KEY_GENERATION=""
+  PREVIOUS_KEY_NAME=$(stack_param ApiKeyName)
+  if [ -n "$PREVIOUS_KEY_NAME" ] && [ "$PREVIOUS_KEY_NAME" != "None" ]; then KEY_NAME="$PREVIOUS_KEY_NAME"; fi
 fi
 if [ "$ROTATE_KEY" = true ]; then
   if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
     echo "${C_RED}ERROR: --rotate-key needs an existing stack${C_RESET}" >&2
     exit 1
   fi
-  KEY_GENERATION=$(date +%Y%m%d%H%M%S)
+  # A new name makes CloudFormation replace the key with a newly generated value.
+  KEY_NAME="${STACK_NAME}-api-key-$(date +%Y%m%d%H%M%S)"
   echo "  ${C_DIM}Rotating the API key: every device must sign in again with the new Start URL${C_RESET}"
 fi
 
@@ -487,8 +494,8 @@ if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
       "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
       "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
       "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
-      "ParameterKey=AccountId,ParameterValue=$ACCOUNT_ID" \
-      "ParameterKey=ApiKeyGeneration,ParameterValue=$KEY_GENERATION" \
+      "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID" \
+      "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME" \
     --capabilities CAPABILITY_NAMED_IAM >/dev/null
   wait_stack "CREATE_COMPLETE" || cfn_dump_failure
 else
@@ -501,8 +508,8 @@ else
          "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
          "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
          "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
-         "ParameterKey=AccountId,ParameterValue=$ACCOUNT_ID" \
-         "ParameterKey=ApiKeyGeneration,ParameterValue=$KEY_GENERATION" \
+         "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID" \
+         "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME" \
        --capabilities CAPABILITY_NAMED_IAM 2>&1); then
     wait_stack "UPDATE_COMPLETE" || cfn_dump_failure
   elif ! printf '%s' "$UPDATE_RESULT" | grep -q 'No updates are to be performed'; then
@@ -520,8 +527,6 @@ API_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region
 
 CF_URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text 2>/dev/null || echo "")
-
-KEY_NAME="${STACK_NAME}-api-key${KEY_GENERATION:+-$KEY_GENERATION}"
 
 if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
   BASE_URL="$CF_URL"

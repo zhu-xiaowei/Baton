@@ -41,8 +41,7 @@ async def version():
 
 
 # Sign-in / install tokens. A token stays valid until its ttl and is tied to the key's name, so
-# rotating the key also retires every outstanding token. Tokens written by older install.sh
-# carry the raw key instead.
+# rotating the key also retires every outstanding token.
 TOKEN_SECONDS = 600
 
 
@@ -59,11 +58,9 @@ def _redeem_token(token):
         return None
     item = _system_table().get_item(Key={"pk": "TOKEN", "sk": token}, ConsistentRead=True).get("Item")
     # DynamoDB TTL deletes lazily, so expiry is checked here.
-    if not item or int(item.get("ttl", 0) or 0) < time.time():
+    if not item or int(item.get("ttl", 0) or 0) < time.time() or item.get("keyName") != deployment_key.key_name():
         return None
-    if "keyName" not in item:
-        return item.get("apiKey") or None
-    return deployment_key.current_key() if item["keyName"] == deployment_key.key_name() else None
+    return deployment_key.current_key()
 
 
 @app.post("/api/auth/start-token")

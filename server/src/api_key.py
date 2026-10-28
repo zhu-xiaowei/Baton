@@ -21,8 +21,12 @@ def current_key():
     if _cached[0] > time.time():
         return _cached[1]
     name = key_name()
-    client = boto3.client("apigateway", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    items = client.get_api_keys(nameQuery=name, includeValues=True, limit=500).get("items", [])
+    try:
+        client = boto3.client("apigateway", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        items = client.get_api_keys(nameQuery=name, includeValues=True, limit=500).get("items", [])
+    except Exception as error:
+        print(f"API key lookup failed: {error}")
+        return _cached[1]
     value = next((item["value"] for item in items if item.get("name") == name and item.get("enabled")), None)
     # A missing key is not cached: during rotation the new key may appear after this Lambda updates.
     if value:
@@ -36,5 +40,9 @@ def is_current(key):
 
 
 def account_id(key):
-    # Pinned at deploy (install.sh), so rotating the key keeps the same data.
-    return os.environ.get("ACCOUNT_ID") or hashlib.sha256(key.encode()).hexdigest()[:16]
+    # Pinned at deploy (install.sh) so a rotated key keeps the data; any other key still gets its
+    # own empty account, as before pinning.
+    pinned = os.environ.get("ACCOUNT_ID")
+    if pinned and is_current(key):
+        return pinned
+    return hashlib.sha256(key.encode()).hexdigest()[:16]

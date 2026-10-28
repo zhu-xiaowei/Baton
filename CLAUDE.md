@@ -233,10 +233,15 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 ### Server
 - FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
   `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
-  by name (`server/src/api_key.py`, cached 5 min) — the key is never stored in a table.
+  by name (`server/src/api_key.py`, cached 5 min; a failed lookup keeps the last value) — the key is
+  never stored in a table. Their IAM `apigateway:GET /apikeys` can read every key in the region:
+  the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
 - DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
-  `AccountId` stack parameter, so `install.sh --rotate-key` (new `ApiKeyGeneration` → new key name →
-  CloudFormation replaces the key) keeps the data; every device then signs in with the new Start URL.
+  `AccountId` stack parameter (deploy stops if the key cannot be read), and only the current key
+  maps to it; any other key still gets its own empty account. `install.sh --rotate-key` passes a
+  new `ApiKeyName`, so CloudFormation replaces the key and the data stays; every device then signs
+  in with the new Start URL. WebSockets opened with the old key are not closed (API Gateway ends
+  them within 2h).
 - Sign-in / install tokens: Setup's Start URL, QR code and install command
   (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 10 minutes (deploy
   output: 12h) and reusable until then. Token rows name the key instead of holding it, so a rotated
