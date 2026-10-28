@@ -58,7 +58,12 @@ function draftFields(sessionId) {
 
 const controller = createComposerDraftController(store, {
   readInput: function () {
-    return { text: inputElement()?.value || '', attachments: readAttachments() };
+    var attachments = readAttachments();
+    return {
+      text: inputElement()?.value || '',
+      attachments: attachments,
+      pending: state.stagedImages.length > attachments.length,
+    };
   },
   applyInput: applyInput,
 });

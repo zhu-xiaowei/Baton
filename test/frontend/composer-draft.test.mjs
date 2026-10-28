@@ -141,3 +141,28 @@ test('uploaded attachments are saved, restored and moved with the draft', async 
   await controller.clear();
   assert.equal(await store.get(fields('session-a')), null);
 });
+
+test('a late restore never replaces an attachment still uploading', async () => {
+  let resolveRead;
+  let input = { text: '', attachments: [] };
+  let applied = 0;
+  const store = {
+    get: () => new Promise((resolve) => { resolveRead = resolve; }),
+    put: async () => {},
+    delete: async () => {},
+  };
+  const controller = createComposerDraftController(store, {
+    readInput: () => input,
+    applyInput: (text, attachments) => { applied++; input = { text, attachments }; },
+    debounceMs: 5,
+  });
+
+  const activation = controller.activate(fields('session-a'));
+  await tick();
+  input = { text: '', attachments: [], pending: true };
+  resolveRead({ text: 'older', attachments: [{ kind: 'file', name: 'old.pdf', key: 'k.pdf' }] });
+  await activation;
+
+  assert.equal(applied, 1);
+  assert.equal(input.pending, true);
+});

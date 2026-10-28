@@ -135,7 +135,8 @@ export function createComposerDraftController(store, options) {
     await previousSave.catch(function () {});
     var record = await store.get(nextFields).catch(function () { return null; });
     if (activation !== generation || activeKey !== nextKey) return null;
-    if (lastText || !isEmptyDraft(normalizeDraft(readInput()))) return null;
+    var current = readInput();
+    if (lastText || current?.pending || !isEmptyDraft(normalizeDraft(current))) return null;
     if (!record) return null;
     var draft = normalizeDraft(record);
     if (isEmptyDraft(draft)) return null;
