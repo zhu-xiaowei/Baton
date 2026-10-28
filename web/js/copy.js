@@ -20,10 +20,14 @@ export function refreshMessageCopy(container, { running = false } = {}) {
     ? [...row.children].filter(node => node.classList.contains('tl-item')).at(-1) : null;
   let tail = item?.lastElementChild;
   if (tail?.classList.contains('response-copy')) tail = tail.previousElementSibling;
-  while (tail?.classList.contains('md-seg')) tail = tail.lastElementChild;
-  // Prose can share its last line; other Markdown blocks use a trailing control.
+  while (tail?.matches('.md-seg, ul, ol') || (tail?.tagName === 'LI' && tail.lastElementChild?.matches('p, ul, ol'))) {
+    tail = tail.lastElementChild;
+  }
+  // Prose (including a list item's text) can share its last line; other Markdown blocks use a trailing control.
+  const inline = tail?.tagName === 'P' || (tail?.tagName === 'LI'
+    && !tail.lastElementChild?.matches('div, pre, table, blockquote, hr, h1, h2, h3, h4, h5, h6, details, .katex-display, .katex-ph[data-d="1"]'));
   const target = !running && item?.matches('.assistant-text[data-message-text]') && item.dataset.messageText.trim()
-    ? (tail?.tagName === 'P' ? tail : item) : null;
+    ? (inline ? tail : item) : null;
   for (const button of container.querySelectorAll('.response-copy')) {
     if (button.parentElement === target) continue;
     const parent = button.parentElement;
