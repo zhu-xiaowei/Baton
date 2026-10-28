@@ -214,6 +214,10 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .messages {
   --runtime-accent: #D7BA7D;
   padding: 8px 12px;
+  /* Clip before overflow reaches #content: overflow-x:hidden there still lets
+     text-selection autoscroll move the whole conversation sideways. Keep this
+     non-scrolling wrapper's y overflow visible so clip does not become hidden. */
+  overflow-x: clip;
 }
 .messages.runtime-codex {
   --runtime-accent: #13A7CD;
