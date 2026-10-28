@@ -212,6 +212,8 @@ else
   APP_VERSION="$SEMANTIC"
 fi
 
+# --rotate-key keeps the deployed image, Bridge package and template; it only replaces the key.
+if [ "$ROTATE_KEY" != true ]; then
 # ===== Step 1: Build server Docker image =====
 echo "[1/4] Building server Docker image (version=$APP_VERSION)..."
 
@@ -410,6 +412,7 @@ WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
 (cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
+fi
 
 # ===== Step 3: Deploy CloudFormation =====
 echo "[3/4] Deploying CloudFormation stack..."
@@ -427,7 +430,7 @@ image_uri() {
   fi
   echo "${REPO_URI}@${digest}"
 }
-IMAGE_URI=$(image_uri "$TAG") || exit 1
+[ "$ROTATE_KEY" = true ] || IMAGE_URI=$(image_uri "$TAG") || exit 1
 
 cfn_dump_failure() {
   echo ""
@@ -475,8 +478,8 @@ if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
   if [ -n "$PREVIOUS_KEY_NAME" ] && [ "$PREVIOUS_KEY_NAME" != "None" ]; then KEY_NAME="$PREVIOUS_KEY_NAME"; fi
 fi
 if [ "$ROTATE_KEY" = true ]; then
-  if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
-    echo "${C_RED}ERROR: --rotate-key needs an existing stack${C_RESET}" >&2
+  if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ] || [ -z "${PREVIOUS_KEY_NAME:-}" ] || [ "$PREVIOUS_KEY_NAME" = "None" ]; then
+    echo "${C_RED}ERROR: --rotate-key needs a stack deployed with this version; run install.sh once first${C_RESET}" >&2
     exit 1
   fi
   # A new name makes CloudFormation replace the key with a newly generated value.
@@ -484,32 +487,37 @@ if [ "$ROTATE_KEY" = true ]; then
   echo "  ${C_DIM}Rotating the API key: every device must sign in again with the new Start URL${C_RESET}"
 fi
 
+if [ "$ROTATE_KEY" = true ]; then
+  TEMPLATE_ARGS=(--use-previous-template)
+  STACK_PARAMS=()
+  for key in ContainerImageUri ImagesBucketName FileUploadAcceleration WsCodeS3Key AppVersion; do
+    STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true")
+  done
+else
+  TEMPLATE_ARGS=(--template-body "file://$TEMPLATE")
+  STACK_PARAMS=(
+    "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI"
+    "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET"
+    "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION"
+    "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY"
+    "ParameterKey=AppVersion,ParameterValue=$APP_VERSION"
+  )
+fi
+STACK_PARAMS+=(
+  "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"
+  "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME"
+)
+
 if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
   aws cloudformation create-stack \
     --stack-name "$STACK_NAME" --region "$REGION" \
-    --template-body "file://$TEMPLATE" \
-    --parameters \
-      "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
-      "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
-      "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
-      "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
-      "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
-      "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID" \
-      "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME" \
+    "${TEMPLATE_ARGS[@]}" --parameters "${STACK_PARAMS[@]}" \
     --capabilities CAPABILITY_NAMED_IAM >/dev/null
   wait_stack "CREATE_COMPLETE" || cfn_dump_failure
 else
   if UPDATE_RESULT=$(aws cloudformation update-stack \
        --stack-name "$STACK_NAME" --region "$REGION" \
-       --template-body "file://$TEMPLATE" \
-       --parameters \
-         "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI" \
-         "ParameterKey=ImagesBucketName,ParameterValue=$S3_BUCKET" \
-         "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION" \
-         "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY" \
-         "ParameterKey=AppVersion,ParameterValue=$APP_VERSION" \
-         "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID" \
-         "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME" \
+       "${TEMPLATE_ARGS[@]}" --parameters "${STACK_PARAMS[@]}" \
        --capabilities CAPABILITY_NAMED_IAM 2>&1); then
     wait_stack "UPDATE_COMPLETE" || cfn_dump_failure
   elif ! printf '%s' "$UPDATE_RESULT" | grep -q 'No updates are to be performed'; then

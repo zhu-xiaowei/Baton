@@ -224,4 +224,5 @@ def test_deployment_wires_acceleration_and_browser_cors():
         install = file.read()
     assert 'put-bucket-cors' in install
     assert 'put-bucket-accelerate-configuration' in install
-    assert install.count('ParameterKey=FileUploadAcceleration') == 2
+    # create-stack and update-stack share one parameter list.
+    assert install.count('ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION') == 1

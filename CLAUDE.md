@@ -238,8 +238,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
 - DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
   `AccountId` stack parameter (deploy stops if the key cannot be read), and only the current key
-  maps to it; any other key still gets its own empty account. `install.sh --rotate-key` passes a
-  new `ApiKeyName`, so CloudFormation replaces the key and the data stays; every device then signs
+  maps to it; any other key still gets its own empty account. `install.sh --rotate-key` skips the
+  build and keeps the deployed template and every other parameter, passing only a new
+  `ApiKeyName` (`<stack>-api-key-<timestamp>`), so CloudFormation replaces the key (an API key's
+  value cannot be changed in place) and the data stays; every device then signs
   in with the new Start URL. WebSockets opened with the old key are not closed (API Gateway ends
   them within 2h).
 - Sign-in / install tokens: Setup's Start URL, QR code and install command
