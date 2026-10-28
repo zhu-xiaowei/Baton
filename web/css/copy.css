@@ -54,10 +54,8 @@
   margin: 3px -5px -5px 0;
   gap: 8px;
 }
-.msg-user[data-message-actions] .msg-meta .msg-time { margin-left: auto; }
-.msg-user .message-copy { width: 28px; height: 28px; }
-.msg-user .message-copy svg { transform: translateY(2px); }
-.msg-user[data-message-actions] .msg-meta .clamp-btn { margin-right: auto; order: -1; }
+.msg-user[data-message-actions] .msg-meta .msg-time { margin: 0 auto 0 0; }
+.msg-user .message-copy { width: 28px; height: 28px; order: 1; }
 
 /* Copy feedback changes only the glyph and color; hover never leaves a background. */
 @media (hover: hover) and (pointer: fine) {
