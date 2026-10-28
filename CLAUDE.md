@@ -391,9 +391,12 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - **Lost app frames are recovered, not waited on.** API Gateway closes a WS after 10 minutes with
   no client→server traffic, and the realtime data socket never sends; frames posted around such
   closes, or via a gone Lambda target, vanish silently. While a Session is open and visible the app
-  pings both sockets every 25s (`heartbeat`; the server answers on the data socket too) and rebuilds
-  one with no frame for 15s — the data socket only after its server has answered once, so an
-  older server is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
+  pings both sockets every 25s and rebuilds one with no frame for 15s. The ping is
+  `{action:"realtime_ping"}`, answered `{action:"realtime_pong"}` by a MOCK route on both
+  WebSocket APIs (no Lambda, no DDB); `heartbeat` stays Lambda-routed for the Bridge (TTL,
+  `bridgeVersion`) and `ping` belongs to the preview keepalive. Against a stack without the route,
+  the control socket keeps probing with `heartbeat` and the data socket never times out, so an
+  older stack is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
   once both pongs (sent after the missing frame) have arrived and ≥3s passed, the frame is lost and
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
   gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against

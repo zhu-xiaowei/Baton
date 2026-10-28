@@ -541,6 +541,60 @@
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
     },
+    "WsPingIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "WsPingIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "WsPingIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
+      }
+    },
+    "WsPingRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["WsPingIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${WsPingIntegration}" }
+      }
+    },
+    "WsPingRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "WsApi" }, "RouteId": { "Ref": "WsPingRoute" }, "RouteResponseKey": "$default" }
+    },
+    "TerminalDirectPingIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "TerminalDirectPingIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationId": { "Ref": "TerminalDirectPingIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
+      }
+    },
+    "TerminalDirectPingRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["TerminalDirectPingIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${TerminalDirectPingIntegration}" }
+      }
+    },
+    "TerminalDirectPingRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "TerminalDirectPingRoute" }, "RouteResponseKey": "$default" }
+    },
     "WsStage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {

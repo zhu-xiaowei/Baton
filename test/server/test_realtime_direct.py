@@ -228,15 +228,18 @@ def test_template_direct_route_targets_data_api_without_expanding_iam():
     assert "${TerminalDirectApi}" in role["Statement"][0]["Resource"]["Fn::Sub"]
 
 
-def test_data_heartbeat_gets_a_pong_and_other_data_messages_stay_denied(monkeypatch):
-    record = {"connectionId": "data", "role": "realtime_data", "accountId": "account"}
-    monkeypatch.setattr(bridge_ws, "_connections_table", SimpleNamespace(
-        get_item=lambda **kwargs: {"Item": record}))
-    posted = []
-    monkeypatch.setattr(bridge_ws, "_post_to_connection",
-        lambda endpoint, target, message: posted.append((endpoint, target, message)) or True)
-    heartbeat = bridge_ws._handle_message({"body": json.dumps({"action": "heartbeat"})}, "data", "https://data.test/v1")
-    assert heartbeat == {"statusCode": 200}
-    assert [(endpoint, target, message["action"]) for endpoint, target, message in posted] == [
-        ("https://data.test/v1", "data", "heartbeat")]
-    assert bridge_ws._handle_message({"body": json.dumps({"action": "subscribe"})}, "data", "https://data.test/v1") == {"statusCode": 403}
+def test_template_answers_realtime_ping_in_api_gateway_on_both_sockets():
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "server", "template", "Baton.template")) as source:
+        resources = json.load(source)["Resources"]
+    for prefix, api in (("Ws", "WsApi"), ("TerminalDirect", "TerminalDirectApi")):
+        integration = resources[prefix + "PingIntegration"]["Properties"]
+        assert integration["IntegrationType"] == "MOCK" and integration["ApiId"] == {"Ref": api}
+        response = resources[prefix + "PingIntegrationResponse"]["Properties"]
+        assert json.loads(response["ResponseTemplates"]["$default"]) == {"action": "realtime_pong"}
+        route = resources[prefix + "PingRoute"]["Properties"]
+        assert route["RouteKey"] == "realtime_ping" and route["RouteResponseSelectionExpression"] == "$default"
+        assert resources[prefix + "PingRouteResponse"]["Properties"]["RouteId"] == {"Ref": prefix + "PingRoute"}
+    # Existing keepalives keep their routes: bridge heartbeat needs Lambda, preview uses "ping".
+    keys = {resource["Properties"].get("RouteKey") for resource in resources.values()
+            if resource["Type"] == "AWS::ApiGatewayV2::Route"}
+    assert "heartbeat" not in keys and "ping" not in keys

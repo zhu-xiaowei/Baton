@@ -2,6 +2,9 @@ import { verifyFrame } from './terminal-direct-protocol.mjs';
 import { STREAM_EVENT_ACTIONS, OPTIONAL_TURN_EVENT_ACTIONS } from './live-turn-stream.mjs';
 
 const encoder = new TextEncoder();
+// API Gateway answers this route itself (MOCK integration in the stack template).
+export const REALTIME_PING = JSON.stringify({ action: 'realtime_ping' });
+export const REALTIME_PONG = JSON.stringify({ action: 'realtime_pong' });
 
 export function isRealtimeEvent(event) {
   return !!event?.sessionId && !!event?.turnId && Number.isInteger(event.seq) && event.seq >= 0
@@ -63,7 +66,7 @@ export class RealtimeReceiver {
           if (generation !== this.generation) return;
           clearTimeout(this.pingTimer);
           this.pingTimer = null;
-          if (typeof event.data === 'string' && event.data.startsWith('{"action":"heartbeat"')) {
+          if (event.data === REALTIME_PONG) {
             this.lastPongAt = Date.now();
             return;
           }
@@ -97,8 +100,8 @@ export class RealtimeReceiver {
     return true;
   }
 
-  // The data socket only receives, so API Gateway's idle timer needs this. Once the server has
-  // answered a ping (older servers never do), a missing reply means a dead socket.
+  // The data socket only receives, so API Gateway's idle timer needs this; the gateway answers
+  // without Lambda. Once it has answered (older stacks never do), a missing reply means a dead socket.
   ping(timeoutMs) {
     if (!this.socket || !this.frameKey || this.pingTimer) return false;
     const socket = this.socket;
@@ -108,7 +111,7 @@ export class RealtimeReceiver {
         if (this.socket === socket) socket.onclose?.();
       }, timeoutMs);
     }
-    try { socket.send(JSON.stringify({ action: 'heartbeat' })); } catch {}
+    try { socket.send(REALTIME_PING); } catch {}
     return true;
   }
 

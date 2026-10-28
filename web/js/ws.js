@@ -95,6 +95,8 @@ var _wsProbeTimer = null;
 var _wsPingTimer = null;
 var _wsLastInboundAt = 0;
 var _controlPongAt = 0;
+// Stacks with the realtime_ping route answer it in API Gateway; older ones only answer heartbeat via Lambda.
+var _controlPingRoute = false;
 var _turnGapWatch = null;
 var _lastTurnEventAt = 0;
 var _silentTurnCheckAt = 0;
@@ -398,6 +400,7 @@ function connectWs(_, projectHash) {
   _realtimeReceiver?.dispose();
   _realtimeReceiver = null;
   state.wsRealtimeStatusText = '';
+  _controlPingRoute = false;
   state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
 
   state.ws.onopen = function () {
@@ -418,6 +421,7 @@ function connectWs(_, projectHash) {
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
     _realtimeReceiver.start();
+    wsSend({ action: 'realtime_ping' });
     if (!_wsPingTimer) {
       _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
       _wsPingTimer?.unref?.();
@@ -490,7 +494,11 @@ function probeWsLiveness(timeoutMs) {
     state.ws = null;
     connectWs();
   }, timeoutMs || WS_PROBE_TIMEOUT_MS);
-  wsSend({ action: 'heartbeat' });
+  sendControlPing();
+}
+
+function sendControlPing() {
+  wsSend({ action: _controlPingRoute ? 'realtime_ping' : 'heartbeat' });
 }
 
 // A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
@@ -521,7 +529,7 @@ function watchTurnGap(turnId) {
   if (missing == null || _turnGapWatch) return;
   _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
   // Both pongs are sent after the missing frame, so they arrive behind it unless it was lost.
-  wsSend({ action: 'heartbeat' });
+  sendControlPing();
   _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
   _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);
 }
@@ -894,7 +902,8 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
-    } else if (msg.action === 'heartbeat') {
+    } else if (msg.action === 'heartbeat' || msg.action === 'realtime_pong') {
+      if (msg.action === 'realtime_pong') _controlPingRoute = true;
       _controlPongAt = Date.now();
     } else if (msg.action === 'send_message_received') {
       var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
