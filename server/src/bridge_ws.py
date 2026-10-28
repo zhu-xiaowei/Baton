@@ -322,8 +322,11 @@ def _handle_connect(event, connection_id):
     version = qs.get("version", "")
 
     # API Gateway checks the key only on REST, so WebSocket connections are checked here.
-    if not deployment_key.is_current(api_key):
-        return {"statusCode": 401}
+    try:
+        if not deployment_key.is_current(api_key):
+            return {"statusCode": 401}
+    except deployment_key.KeyUnavailable:
+        return {"statusCode": 503}
     bridge_id = qs.get("bridgeId") if role == "bridge" else None
     if bridge_id is not None and not re.fullmatch(r"[a-f0-9]{32}", bridge_id):
         return {"statusCode": 400}

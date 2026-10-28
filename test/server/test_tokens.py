@@ -74,6 +74,19 @@ def test_websocket_and_pinned_account_accept_only_the_current_key(monkeypatch):
     assert api_key.account_id('guess') == hashlib.sha256(b'guess').hexdigest()[:16]
 
 
+@pytest.mark.real_key
+def test_an_unreadable_key_is_a_503_not_a_guess(monkeypatch):
+    monkeypatch.setattr(api_key, '_cached', (0, None))
+    monkeypatch.setattr(boto3, 'client', lambda *a, **k: SimpleNamespace(get_api_keys=lambda **_: 1 / 0))
+    monkeypatch.setenv('ACCOUNT_ID', 'pinned')
+    with pytest.raises(api_key.KeyUnavailable):
+        api_key.account_id(KEY)
+    response = asyncio.run(main.key_unavailable(None, api_key.KeyUnavailable()))
+    assert response.status_code == 503
+    assert bridge_ws._handle_connect({'queryStringParameters': {'apiKey': KEY, 'role': 'app'},
+        'requestContext': {'domainName': 'control.test', 'stage': 'v1'}}, 'c') == {'statusCode': 503}
+
+
 def test_removing_a_device_notifies_its_bridge_then_deletes_only_its_rows(monkeypatch):
     deleted, notified = [], []
     sessions = SimpleNamespace(

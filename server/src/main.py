@@ -4,6 +4,7 @@ import uvicorn
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
@@ -11,6 +12,13 @@ import os
 import api_key as deployment_key
 
 app = FastAPI()
+
+
+@app.exception_handler(deployment_key.KeyUnavailable)
+async def key_unavailable(_request, _error):
+    return JSONResponse({"error": "temporarily unavailable"}, status_code=503)
+
+
 # GZipMiddleware must come before CORS so it sees the final body before CORS adds headers
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 # max_age caches the CORS preflight for cross-origin clients (Tauri webviews).

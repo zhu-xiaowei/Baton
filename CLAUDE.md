@@ -233,7 +233,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 ### Server
 - FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
   `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
-  by name (`server/src/api_key.py`, cached 5 min; a failed lookup keeps the last value) — the key is
+  by name (`server/src/api_key.py`, cached 5 min; a failed lookup keeps the last value, and with no
+  value REST/WS answer 503 rather than guess an account) — the key is
   never stored in a table. Their IAM `apigateway:GET /apikeys` can read every key in the region:
   the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
 - DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
