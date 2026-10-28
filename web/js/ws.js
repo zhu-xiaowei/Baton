@@ -1630,6 +1630,8 @@ function resetStreamSessionState(keepHistoryRequest = false) {
     _executionEvents.reset();
     for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
     _executionRecoveryTimers.clear();
+    _lastTurnEventAt = 0;
+    _silentTurnCheckAt = 0;
   }
   _turnSendOrder.clear();
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
@@ -1741,6 +1743,8 @@ function disconnectWs() {
   state.wsRealtimeStatusText = '';
   _wsConnectionGeneration++;
   clearWsProbe();
+  clearInterval(_wsPingTimer);
+  _wsPingTimer = null;
   if (window.resetCommandRequest) window.resetCommandRequest();
   if (_wsReconnectTimer) {
     clearTimeout(_wsReconnectTimer);
