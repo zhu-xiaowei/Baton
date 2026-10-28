@@ -79,7 +79,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       preview: meta.description || metadata.preview || agentId,
       model: metadata.model || parentSession.model,
       status: meta.finished === true ? 'completed'
-        : (meta.finished === false || parentSession.status === 'running' || fresh)
+        : (parentSession.status === 'running' || fresh)
         ? (metadata.status || 'running')
         : 'completed',
       isAgent: true,

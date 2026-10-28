@@ -529,7 +529,7 @@ test('an interrupted subagent no longer pins its root to running', () => {
   }
 });
 
-test('finished metadata completes a child without changing live-parent process semantics', () => {
+test('finished metadata completes a child whatever the parent process state', () => {
   const parentId = '67676767-2222-4222-8222-676767676767';
   const fixture = sessionFixture(parentId);
   try {
@@ -543,23 +543,21 @@ test('finished metadata completes a child without changing live-parent process s
       type: 'user',
       message: { content: [{ type: 'tool_result', content: 'Waiting for background work' }] },
     }]);
-    // A long Bash/model request can be silent well past both freshness windows.
     fs.utimesSync(childFile, new Date(0), new Date(0));
     const metaFile = childFile.replace('.jsonl', '.meta.json');
     const processStates = [
       { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
       { projects: new Set([fixture.project]), sessions: new Set() },
     ];
-    for (const finished of [false, true]) {
-      fs.writeFileSync(metaFile, JSON.stringify({ finished }));
-      for (const runningInfo of processStates) {
-        const sessions = discoverClaudeSessions({
-          claudeProjectsRoot: fixture.root, runningInfo, daemonMeta: new Map(),
-        }).sessions;
-        assert.equal(sessions.find(session => session.id === parentId).status, 'completed');
-        const child = sessions.find(session => session.agentPath === 'agent-background');
-        assert.equal(child.status, finished ? 'completed' : 'running');
-      }
+    // CC only ever writes finished:true.
+    fs.writeFileSync(metaFile, JSON.stringify({ finished: true }));
+    for (const runningInfo of processStates) {
+      const sessions = discoverClaudeSessions({
+        claudeProjectsRoot: fixture.root, runningInfo, daemonMeta: new Map(),
+      }).sessions;
+      assert.equal(sessions.find(session => session.id === parentId).status, 'completed');
+      const child = sessions.find(session => session.agentPath === 'agent-background');
+      assert.equal(child.status, 'completed');
     }
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });

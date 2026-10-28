@@ -174,9 +174,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     watcher/`checkStopped` skip status writes for busy pool-owned (`poolOwns()`) and daemon-agent sessions.
   - **subagent threads**: a root row shows the *effective* status (own status OR any child
     `runningAgentCount`/`needsInputAgentCount`). An interrupted subagent's tail stays
-    non-terminal forever, so a child trusts its tail only while `.meta.json` says
-    `finished:false`, its parent's own status is running (CC stays `busy` while foreground or
-    background subagents run), or it was written in the last 15s. `inspectActiveSession()`
+    non-terminal forever, so unless `.meta.json` says `finished:true` (CC never writes `false`) a
+    child trusts its tail only while its parent's own status is running (CC stays `busy` while
+    foreground or background subagents run) or it was written in the last 15s. `inspectActiveSession()`
     re-derives the counts on every `checkStopped` pass and sends them, because `sync-sessions`
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd

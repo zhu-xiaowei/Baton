@@ -439,10 +439,7 @@ export function getRunningInfo() {
     sessions.add(sid);
   }
 
-  const liveStatuses = readLiveSessionStatuses(pids);
-  for (const sid of liveStatuses.keys()) sessions.add(sid);
-
-  return { projects, sessions, liveStatuses };
+  return { projects, sessions, liveStatuses: readLiveSessionStatuses(pids) };
 }
 
 const LIVE_STATUS = { busy: 'running', waiting: 'needs_input', idle: 'completed', shell: 'completed' };
