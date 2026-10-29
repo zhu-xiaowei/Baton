@@ -16,6 +16,21 @@ prompts. Before publishing, inspect `git status
 requested release scope and preserve unrelated work, using an isolated checkout
 when needed. Continue with the release in the same invocation.
 
+**When Xcode Cloud cannot create a build:** If `POST /v1/ciBuildRuns` returns an
+unexplained HTTP 500 or `UNEXPECTED_ERROR`, first remind the user to check their
+Apple Developer account and App Store Connect for an updated **Apple Developer
+Program License Agreement** awaiting acceptance. An unaccepted agreement can
+surface as this generic server error, even when other API calls work and
+Apple's status page is normal. The user/account holder must review and accept
+the agreement themselves.
+
+Capture the response and its request correlation ID when available. After the
+user confirms that pending agreements are accepted, check whether a cloud run
+was already created. Monitor an existing run instead of starting another;
+otherwise, rerun the dry-run and resume the existing release. Reuse an unused
+prepared build number; avoid duplicate runs or unnecessary bumps.
+This resolved the build 55 start failure on 2026-10-29.
+
 **On macOS:**
 
 Ship a new TestFlight build. Run the release script — it auto-bumps
