@@ -131,8 +131,9 @@ Done:
 
 ### Mobile Notifications: COMPLETE
 - Finished runs and `needs_input` alert as **project · session** + summary; tapping opens the session.
-  One Settings switch (default on). iOS: direct APNs via local `tauri-plugin-apns` (background);
-  Android: official `tauri-plugin-notification`, foreground-only 5s feed poll.
+  One Settings switch (default on). Local `tauri-plugin-push`: iOS registers for direct APNs;
+  Android runs a foreground service ("Baton is running in the background") polling the event
+  feed natively (5s foreground / 15s background; WebView timers are throttled in background).
 - Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
   `agentDetail`) → `NotificationWorker` → `ApnsSender` (Node, HTTP/2). Devices are one
   `PUSH_DEVICE` row per `<environment>:<token>`. The APNs key is the SSM SecureString named by

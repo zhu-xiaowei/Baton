@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="push_running">Baton 正在后台运行</string>
+  <string name="push_status_channel">后台运行</string>
+  <string name="push_alert_channel">会话更新</string>
+</resources>

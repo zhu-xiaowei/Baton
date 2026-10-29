@@ -124,7 +124,7 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
   }
 }
 
-class ApnsPlugin: Plugin {
+class PushPlugin: Plugin {
   override init() {
     super.init()
     PushCoordinator.shared.install()
@@ -148,9 +148,9 @@ class ApnsPlugin: Plugin {
   }
 
   @objc public func takePending(_ invoke: Invoke) {
-    DispatchQueue.main.async { invoke.resolve(PushCoordinator.shared.takePending()) }
+    DispatchQueue.main.async { invoke.resolve(["events": PushCoordinator.shared.takePending()]) }
   }
 }
 
-@_cdecl("init_plugin_apns")
-func initPlugin() -> Plugin { ApnsPlugin() }
+@_cdecl("init_plugin_push")
+func initPlugin() -> Plugin { PushPlugin() }

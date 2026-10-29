@@ -4,13 +4,22 @@ Baton notifies when a session goes from running to done, and whenever it needs
 input (a tool approval, a question or a plan). Settings has one **Push
 notifications** switch; it is on by default.
 
-- **iOS** uses Apple's APNs directly, so alerts arrive in the background. The
-  local `tauri-plugin-apns` requests permission, registers the device token and
-  keeps notification taps across cold starts. No Firebase, SNS or community
-  push plugin is used.
-- **Android** uses the official `tauri-plugin-notification` only while Baton is
-  in the foreground: it polls the account's event feed every five seconds.
-  Resuming starts a fresh baseline instead of replaying background events.
+Both platforms deliver while Baton is in the background, through the local
+`tauri-plugin-push` (no Firebase, SNS or community push plugin):
+
+- **iOS** uses Apple's APNs directly, so alerts also arrive after the app is
+  closed. The plugin requests permission, registers the device token and keeps
+  notification taps across cold starts.
+- **Android** runs a foreground service with a minimal ongoing notification,
+  "Baton is running in the background". It polls the account's event feed
+  natively every 5 seconds in the foreground and 15 seconds in the background
+  (WebView timers are throttled there), and posts the alerts itself. Its first
+  request only sets a baseline, so nothing is replayed. It stops when the
+  switch is turned off, on logout, or when the server rejects the key; opening
+  Baton restarts it. Force-stopping Baton ends it; some vendor ROMs also kill
+  it when Baton is swiped away unless it is exempted from battery
+  optimisation, and Doze can delay polls after the screen has been off for a
+  long time.
 
 Alerts read **project · session**, then the event and a short summary: the last
 assistant reply for a finished run, or the command, file, question or plan
@@ -28,7 +37,7 @@ stream. The stream's event filter forwards only session rows entering
   queued approval).
 
 It writes the event to the Android feed (`NOTIFICATIONS#<account>` in the
-system table, 24h TTL) and sends it to each of the account's iOS devices
+system table, 24h TTL, read by `/api/notifications/events`) and sends it to each of the account's iOS devices
 through `ApnsSender`, a small Node Lambda using the built-in HTTP/2 client
 (Python Lambdas have none). Devices are stored as one row per token
 (`PUSH_DEVICE`, `<environment>:<token>`), so a reinstall or another account
@@ -54,8 +63,8 @@ repeated alert replace the earlier one on the device.
    deploys (including `--rotate-key`) keep it.
 
 Only `ApnsSender`'s role can read the parameter. Never put the key in the app,
-Git or a Lambda environment variable. Without it, Android still works and the
-iOS switch reports that push is not configured.
+Git or a Lambda environment variable. Without it, Android still works (it needs
+no key) and the iOS switch reports that push is not configured.
 
 The key belongs to the team that publishes the app, so only a stack holding it
 can push to the published iOS app.
@@ -63,7 +72,7 @@ can push to the published iOS app.
 ## Verification
 
 ```sh
-node --test test/frontend/notifications.test.mjs test/server/apns-sender.test.mjs
+node --test test/server/apns-sender.test.mjs
 python3 -m pytest test/server/test_notifications.py
 ```
 

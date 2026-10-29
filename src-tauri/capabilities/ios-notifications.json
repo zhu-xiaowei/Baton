@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/mobile-schema.json",
-  "identifier": "ios-notifications",
-  "platforms": ["iOS"],
-  "windows": ["main"],
-  "permissions": ["apns:default"]
-}

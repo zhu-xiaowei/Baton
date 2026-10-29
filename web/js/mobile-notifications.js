@@ -1,11 +1,11 @@
 import { state } from './state.js';
-import { createForegroundNotifications, validNotificationTarget } from './notification-runtime.js';
 
-// iOS: APNs, including in the background. Android: foreground-only local alerts.
+// iOS: APNs. Android: a foreground service polling the event feed. Both work while
+// Baton is in the background; the local push plugin owns notification taps.
 const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
 const TARGET = 'baton-notification-target';
-let platform, config, android, poller, initialization, pendingTarget;
+let platform, config, initialization, pendingTarget;
 let status = '';
 
 function mobilePlatform() {
@@ -29,8 +29,13 @@ function setStatus(value) {
   if (label) label.textContent = value;
 }
 
+function validTarget(event) {
+  return !!event && ['device', 'projectHash', 'sessionId'].every(key =>
+    typeof event[key] === 'string' && event[key].length > 0 && event[key].length < 1024);
+}
+
 async function openNotification(event) {
-  if (!validNotificationTarget(event)) return;
+  if (!validTarget(event)) return;
   if (!config) {
     pendingTarget = event;
     return;
@@ -48,7 +53,7 @@ async function openNotification(event) {
 
 async function enableIos() {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
-  const result = await invoke('plugin:apns|register');
+  const result = await invoke('plugin:push|register');
   if (!result.granted) return setStatus('Allow notifications for Baton in iOS Settings.');
   if (!enabled() || !state.KEY) return;
   const device = { token: result.token, environment: result.environment };
@@ -59,29 +64,8 @@ async function enableIos() {
 }
 
 async function enableAndroid() {
-  android ||= await import('@tauri-apps/plugin-notification');
-  if (!poller) {
-    await android.onAction(event => {
-      if (event.actionId === 'tap') void openNotification(event.notification?.extra);
-    });
-    await android.createChannel({
-      id: 'session-updates', name: 'Session updates',
-      importance: android.Importance.High, visibility: android.Visibility.Private, vibration: true,
-    });
-    poller = createForegroundNotifications({
-      fetchEvents: cursor => window.api('/api/notifications/events', cursor ? { cursor } : undefined),
-      isVisible: () => document.visibilityState === 'visible' && !!state.KEY && enabled(),
-      show: event => event.accountId === config.accountId && android.sendNotification({
-        id: parseInt(event.eventId.slice(0, 7), 16),
-        title: event.title, body: event.body, extra: event, channelId: 'session-updates',
-      }),
-    });
-  }
-  let granted = await android.isPermissionGranted();
-  if (!granted) granted = await android.requestPermission() === 'granted';
-  if (!granted) return setStatus('Allow notifications for Baton in system settings.');
-  poller.start();
-  setStatus('');
+  const result = await invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY });
+  setStatus(result.granted ? '' : 'Allow notifications for Baton in system settings.');
 }
 
 function apply() {
@@ -90,7 +74,7 @@ function apply() {
 }
 
 export async function unregisterMobileNotifications() {
-  poller?.stop();
+  if (mobilePlatform() === 'android') return invoke('plugin:push|stop');
   const device = localStorage.getItem(PUSH_DEVICE);
   if (!device || !state.KEY) return;
   // A raw request: an expired key must not recursively trigger logout.
@@ -109,17 +93,15 @@ export async function unregisterMobileNotifications() {
 async function initialize() {
   platform = mobilePlatform();
   if (!platform || !state.KEY) return;
-  if (platform === 'ios') {
-    const { Channel } = await import('@tauri-apps/api/core');
-    const drain = async () => {
-      const pending = await invoke('plugin:apns|take_pending');
-      if (pending.length) await openNotification(pending[pending.length - 1]);
-    };
-    const onClick = new Channel();
-    onClick.onmessage = () => { void drain().catch(error => setStatus(error.message)); };
-    await invoke('plugin:apns|listen', { onClick });
-    await drain();
-  }
+  const { Channel } = await import('@tauri-apps/api/core');
+  const drain = async () => {
+    const { events } = await invoke('plugin:push|take_pending');
+    if (events.length) await openNotification(events[events.length - 1]);
+  };
+  const onClick = new Channel();
+  onClick.onmessage = () => { void drain().catch(error => setStatus(error.message)); };
+  await invoke('plugin:push|listen', { onClick });
+  await drain();
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
   // Servers deployed before notifications existed answer 404.
@@ -129,13 +111,7 @@ async function initialize() {
   });
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
-  if (platform === 'android') {
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible') poller?.stop();
-      else void apply()?.catch(error => setStatus(error.message));
-    });
-  }
-  await apply();  // iOS re-registers once per launch, refreshing the server-side TTL.
+  await apply();  // Once per launch: refreshes the iOS token TTL, restarts the Android service.
 }
 
 export function initMobileNotifications() {

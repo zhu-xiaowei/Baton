@@ -103,10 +103,8 @@ pub fn run() {
       app.handle().plugin(tauri_plugin_clipboard_manager::init())?;
       #[cfg(target_os = "ios")]
       app.handle().plugin(tauri_plugin_speech::init())?;
-      #[cfg(target_os = "android")]
-      app.handle().plugin(tauri_plugin_notification::init())?;
-      #[cfg(target_os = "ios")]
-      app.handle().plugin(tauri_plugin_apns::init())?;
+      #[cfg(any(target_os = "android", target_os = "ios"))]
+      app.handle().plugin(tauri_plugin_push::init())?;
 
       // macOS menu: start from the standard system menu (Menu::default wires up
       // the Edit submenu, so ⌘X/⌘C/⌘V reach the WebView), then inject ⌘N

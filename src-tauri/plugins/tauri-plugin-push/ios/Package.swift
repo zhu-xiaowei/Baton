@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-  name: "tauri-plugin-apns",
+  name: "tauri-plugin-push",
   platforms: [.iOS(.v13)],
   products: [
-    .library(name: "tauri-plugin-apns", type: .static, targets: ["tauri-plugin-apns"])
+    .library(name: "tauri-plugin-push", type: .static, targets: ["tauri-plugin-push"])
   ],
   dependencies: [.package(name: "Tauri", path: "../.tauri/tauri-api")],
   targets: [
-    .target(name: "tauri-plugin-apns", dependencies: [.byName(name: "Tauri")], path: "Sources")
+    .target(name: "tauri-plugin-push", dependencies: [.byName(name: "Tauri")], path: "Sources")
   ]
 )
