@@ -553,9 +553,10 @@ fn remove_entries(matches: impl Fn(&Entry) -> bool) {
   drop(removed);
 }
 
+// Not with_webview: it holds the host's lock, and dropping a Channel evals into the host.
 pub fn clear_host<R: Runtime>(webview: &Webview<R>) {
   let owner = webview.label().to_string();
-  let _ = webview.with_webview(move |_| remove_entries(|entry| entry.owner == owner));
+  let _ = webview.run_on_main_thread(move || remove_entries(|entry| entry.owner == owner));
 }
 
 pub fn close_window<R: Runtime>(app: &tauri::AppHandle<R>, window: &str) {
