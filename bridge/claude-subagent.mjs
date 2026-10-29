@@ -5,6 +5,12 @@ import { countJsonlLines } from './extract.mjs';
 import { getSessionMetadata } from './session.mjs';
 
 const MARKER = ':subagent:';
+// CC reports every background agent's end to its spawner as a <task-notification>
+// (completed/failed/killed/stopped), and a later SendMessage resume as resumedAgentId.
+// A stopped agent never gets `finished:true`, and its tail can end on an unrun tool_use.
+const TASK_EVENT = /<task-id>([0-9a-z]+)<\/task-id>|resumedAgentId\\*"\s*:\s*\\*"([0-9a-z]+)/g;
+export const TASK_ID = /<task-id>([0-9a-z]+)<\/task-id>/g;
+const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
 
 export function claudeSubagentSessionId(parentSessionId, agentId) {
   return `${parentSessionId}${MARKER}${agentId}`;
@@ -38,6 +44,44 @@ export function readClaudeSubagentMeta(filePath) {
   }
 }
 
+function spawnerFile(filePath, meta) {
+  const dir = path.dirname(filePath);
+  const parentAgentId = String(meta.parentAgentId || '').trim();
+  if (!parentAgentId) return `${path.dirname(dir)}.jsonl`;
+  return path.join(dir, `${parentAgentId.startsWith('agent-') ? '' : 'agent-'}${parentAgentId}.jsonl`);
+}
+
+// Scans only bytes appended since the last call, up to the last complete line.
+export function claudeSubagentEnded(filePath, meta = {}) {
+  const file = spawnerFile(filePath, meta);
+  const taskId = path.basename(filePath, '.jsonl').replace(/^agent-/, '');
+  let stat;
+  try { stat = fs.statSync(file); } catch { return false; }
+  let scan = taskScans.get(file);
+  if (!scan || scan.ino !== stat.ino || stat.size < scan.offset) {
+    scan = { ino: stat.ino, offset: 0, ended: new Map() };
+    taskScans.set(file, scan);
+  }
+  if (stat.size > scan.offset) {
+    const buffer = Buffer.alloc(stat.size - scan.offset);
+    let fd;
+    let read = 0;
+    try {
+      fd = fs.openSync(file, 'r');
+      read = fs.readSync(fd, buffer, 0, buffer.length, scan.offset);
+    } catch {
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+    const end = buffer.subarray(0, read).lastIndexOf(0x0a) + 1;
+    for (const match of buffer.toString('utf8', 0, end).matchAll(TASK_EVENT)) {
+      scan.ended.set(match[1] || match[2], !!match[1]);
+    }
+    scan.offset += end;
+  }
+  return scan.ended.get(taskId) === true;
+}
+
 export function discoverClaudeSubagents(projectDir, parentSession, options = {}) {
   const subagentsDir = path.join(
     projectDir,
@@ -65,6 +109,10 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     const meta = readClaudeSubagentMeta(filePath);
     const metadata = getSessionMetadata(filePath, { includeStatus: true });
     const fresh = now - stat.mtimeMs < 15_000;
+    const status = meta.finished === true ? 'completed'
+      : (parentSession.status === 'running' || fresh)
+      ? (metadata.status || 'running')
+      : 'completed';
     return [{
       id: claudeSubagentSessionId(parentSession.nativeSessionId, agentId),
       nativeSessionId: claudeSubagentSessionId(
@@ -78,10 +126,9 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       size: stat.size,
       preview: meta.description || metadata.preview || agentId,
       model: metadata.model || parentSession.model,
-      status: meta.finished === true ? 'completed'
-        : (parentSession.status === 'running' || fresh)
-        ? (metadata.status || 'running')
-        : 'completed',
+      status: status !== 'completed' && claudeSubagentEnded(filePath, meta)
+        ? 'completed'
+        : status,
       isAgent: true,
       threadKind: 'subagent',
       parentSessionId: claudeSubagentParentSessionId(
