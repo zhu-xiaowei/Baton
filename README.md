@@ -1,6 +1,6 @@
 # <sub><picture><source media="(prefers-color-scheme: dark)" srcset="web/public/assets/baton-logo.svg"><img src="web/public/assets/baton-logo-dark.svg" width="36" height="36" alt=""></picture></sub>Baton
 
-**English** | [中文](README.zh-CN.md)
+**English** | [中文](README.zh-CN.md) | [Español](README.es-ES.md)
 
 Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex](https://openai.com/codex) tasks on your phone, right where you left off on your computer.
 
