@@ -44,20 +44,58 @@ def text_summary(content):
     return re.sub(r"\s+", " ", content).strip()[:240]
 
 
-def completion_summary(session):
+def completion_summary(session, attempts=3):
+    """The finished turn's last reply, or None when the user interrupted it."""
     messages = _ddb.Table(os.environ["BRIDGE_MESSAGES_TABLE"])
-    result = messages.query(
-        KeyConditionExpression=Key("sessionId").eq(history_partition(messages, session["sessionId"])),
-        ScanIndexForward=False, Limit=20, ConsistentRead=True,
-    )
-    for message in result.get("Items", []):
-        if message.get("type") == "user":
-            break  # Never show a previous turn's answer.
-        if message.get("type") == "assistant":
-            summary = text_summary(message.get("content", ""))
-            if summary:
-                return summary
-    return ""
+    partition = history_partition(messages, session["sessionId"])
+    summary = ""
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(1)  # The final reply is persisted separately from the status.
+        summary = ""
+        result = messages.query(
+            KeyConditionExpression=Key("sessionId").eq(partition),
+            ScanIndexForward=False, Limit=20, ConsistentRead=True,
+        )
+        for message in result.get("Items", []):
+            if message.get("type") == "user":
+                if text_summary(message.get("content", "")).startswith("[Request interrupted"):
+                    return None
+                break  # Never show a previous turn's answer.
+            if message.get("type") == "assistant":
+                text = text_summary(message.get("content", ""))
+                if text and message.get("stopReason") == "end_turn":
+                    return text
+                summary = summary or text
+    return summary
+
+
+def being_viewed(event, timeout=2.0):
+    """Ask apps subscribed to the session; any visible, focused viewer suppresses the alert.
+
+    Subscriptions outlive suspended iOS sockets, so only an explicit reply counts.
+    """
+    subscriptions = _ddb.Table(os.environ["SUBSCRIPTIONS_TABLE"])
+    key = Key("sessionId").eq("ROOT#" + event["rootSessionId"])
+    rows = [row for row in subscriptions.query(KeyConditionExpression=key)["Items"]
+            if row.get("accountId") == event["accountId"]]
+    if not rows:
+        return False
+    api = boto3.client("apigatewaymanagementapi", endpoint_url=os.environ["WS_API_ENDPOINT"])
+    probe = json.dumps({"action": "notify_check", "rootSessionId": event["rootSessionId"],
+                        "eventId": event["eventId"]}).encode()
+    for row in rows:
+        try:
+            api.post_to_connection(ConnectionId=row["connectionId"], Data=probe)
+        except Exception:
+            pass  # A gone connection is not viewing.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.25)
+        rows = subscriptions.query(KeyConditionExpression=key, ConsistentRead=True)["Items"]
+        if any(row.get("seenEvent") == event["eventId"] for row in rows):
+            return True
+    return False
 
 
 def notification(old, new, event_id):
@@ -71,6 +109,8 @@ def notification(old, new, event_id):
         kind, action, detail = "needs_input", "Needs input", text_summary(new.get("agentDetail", ""))
     elif after == "completed" and before == "running":
         kind, action, detail = "completed", "Finished", completion_summary(new)
+        if detail is None:
+            return None  # The user stopped it, so they already know.
     else:
         return None
     session_id = new["sessionId"]
@@ -95,6 +135,8 @@ def notification(old, new, event_id):
 
 
 def deliver(event):
+    if being_viewed(event):
+        return
     table = _ddb.Table(os.environ["SYSTEM_TABLE"])
     now = time.time()
     table.put_item(Item={

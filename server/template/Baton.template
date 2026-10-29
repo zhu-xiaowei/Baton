@@ -852,6 +852,16 @@
                 "Effect": "Allow",
                 "Action": "lambda:InvokeFunction",
                 "Resource": { "Fn::GetAtt": ["ApnsSender", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "dynamodb:Query",
+                "Resource": { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "execute-api:ManageConnections",
+                "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
               }
             ]
           }
@@ -871,6 +881,8 @@
         "Environment": { "Variables": {
           "SYSTEM_TABLE": { "Ref": "SystemTable" },
           "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+          "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+          "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
           "APNS_SENDER_FUNCTION": { "Ref": "ApnsSender" }
         } }
       }

@@ -30,6 +30,7 @@ class AlertService : Service() {
     private const val STATUS_ID = 1
 
     @Volatile var foreground = false
+    @Volatile var openSession = ""
 
     fun start(context: Context, server: String, apiKey: String) {
       prefs(context).edit().putString("server", server).putString("apiKey", apiKey).apply()
@@ -132,6 +133,8 @@ class AlertService : Service() {
   }
 
   private fun show(event: JSONObject) {
+    // The session already on screen needs no alert.
+    if (foreground && openSession.isNotEmpty() && event.optString("rootSessionId") == openSession) return
     val id = event.optString("eventId").hashCode()
     val activity = packageManager.getLaunchIntentForPackage(packageName)?.component ?: return
     // Not the launcher intent: that one only brings a running task to front and drops extras.

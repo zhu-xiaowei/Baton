@@ -521,6 +521,19 @@ def _handle_message(event, connection_id, endpoint):
             )
     elif action == "unsubscribe":
         return _handle_unsubscribe(body, connection_id, account_id, endpoint)
+    elif action == "notify_seen":
+        # Marks only the caller's own subscription, which the notification worker polls.
+        try:
+            _subscriptions_table.update_item(
+                Key={"sessionId": _root_subscription_id(body.get("rootSessionId", "")),
+                     "connectionId": connection_id},
+                UpdateExpression="SET seenEvent = :event",
+                ConditionExpression="attribute_exists(connectionId)",
+                ExpressionAttributeValues={":event": str(body.get("eventId", ""))[:64]},
+            )
+        except ClientError:
+            pass
+        return {"statusCode": 200}
     elif action == "messages":
         if role == "bridge":
             return _handle_bridge_messages(body, connection_id, account_id, endpoint)

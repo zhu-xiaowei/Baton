@@ -9,6 +9,10 @@ private struct ListenArgs: Decodable {
   let onClick: Channel
 }
 
+private struct OpenArgs: Decodable {
+  let sessionId: String
+}
+
 // Outlives webview navigation. Taps are persisted before JS is signaled, so a cold
 // launch or a sign-in redirect cannot lose the destination.
 private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate {
@@ -18,6 +22,7 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
   private var registrations: [Invoke] = []
   private var registrationTimeout: DispatchWorkItem?
   var onClick: Channel?
+  var openSession = ""
 
   func install() {
     UNUserNotificationCenter.current().delegate = self
@@ -96,7 +101,11 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     willPresent notification: UNNotification,
     withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    if #available(iOS 14.0, *) {
+    // Only called in the foreground: the session already on screen needs no alert.
+    let session = notification.request.content.userInfo["rootSessionId"] as? String
+    if !openSession.isEmpty && session == openSession {
+      completion([])
+    } else if #available(iOS 14.0, *) {
       completion([.banner, .list, .sound])
     } else {
       completion([.alert, .sound])
@@ -143,6 +152,14 @@ class PushPlugin: Plugin {
     let args = try invoke.parseArgs(ListenArgs.self)
     DispatchQueue.main.async {
       PushCoordinator.shared.onClick = args.onClick
+      invoke.resolve()
+    }
+  }
+
+  @objc public func setOpen(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(OpenArgs.self)
+    DispatchQueue.main.async {
+      PushCoordinator.shared.openSession = args.sessionId
       invoke.resolve()
     }
   }

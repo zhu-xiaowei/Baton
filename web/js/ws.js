@@ -907,6 +907,12 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'heartbeat' || msg.action === 'realtime_pong') {
       if (msg.action === 'realtime_pong') _controlPingRoute = true;
       _controlPongAt = Date.now();
+    } else if (msg.action === 'notify_check') {
+      // Someone looking at this session right now: no push to any device.
+      if (document.visibilityState === 'visible' && document.hasFocus()
+        && msg.rootSessionId === state.wsRootSessionId) {
+        wsSend({ action: 'notify_seen', rootSessionId: msg.rootSessionId, eventId: msg.eventId });
+      }
     } else if (msg.action === 'send_message_received') {
       var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
       acceptPendingReceipt(receivedPending);
@@ -1676,6 +1682,7 @@ function selectWsSession(sessionId) {
   resetStreamSessionState();
   state.wsSessionId = sessionId;
   state.wsRootSessionId = rootSessionId;
+  window.setOpenNotificationSession?.(rootSessionId);
 }
 
 function subscribeSession(sessionId) {
@@ -1704,6 +1711,7 @@ function adoptNewSession(sessionId) {
   }
   state.wsSessionId = sessionId;
   state.wsRootSessionId = state.rootSessionId || sessionId;
+  window.setOpenNotificationSession?.(state.wsRootSessionId);
   wsSend({
     action: 'subscribe',
     sessionId: sessionId,
@@ -1768,6 +1776,7 @@ function disconnectWs() {
   }
   state.wsSessionId = null;
   state.wsRootSessionId = null;
+  window.setOpenNotificationSession?.('');
   state.wsRunning = false;
   window.resetToolDetails?.();
   resetStreamSessionState();

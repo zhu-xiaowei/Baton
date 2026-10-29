@@ -77,6 +77,7 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
 
     monkeypatch.setattr(worker, "_lambda", SimpleNamespace(invoke=invoke))
     monkeypatch.setattr(worker, "completion_summary", lambda session: "")
+    monkeypatch.setattr(worker, "being_viewed", lambda event: False)
     worker.deliver(worker.notification(SESSION, DONE, "finished"))
     assert sorted(request["environment"] for request in sent) == ["development", "production"]
     assert sent[0]["payload"]["aps"]["alert"]["title"] == "Baton · Fix login"
@@ -116,3 +117,59 @@ def test_registration_and_feed_validation(monkeypatch):
     with pytest.raises(HTTPException) as error:
         notifications.events(SimpleNamespace(headers={}), "invalid")
     assert error.value.status_code == 400
+
+
+class Pages:
+    """A table whose successive queries return successive pages."""
+
+    def __init__(self, *pages):
+        self.pages = list(pages)
+        self.queries = 0
+
+    def get_item(self, **_):
+        return {}
+
+    def query(self, **_):
+        self.queries += 1
+        return {"Items": self.pages[min(self.queries, len(self.pages)) - 1]}
+
+
+def assistant(text, stop="end_turn"):
+    return {"type": "assistant", "stopReason": stop, "content": json.dumps([{"type": "text", "text": text}])}
+
+
+def test_summary_waits_for_the_final_reply_and_skips_interrupts(monkeypatch):
+    monkeypatch.setenv("BRIDGE_MESSAGES_TABLE", "messages")
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    user = {"type": "user", "content": "go"}
+    thinking = {"type": "assistant", "stopReason": "end_turn", "content": json.dumps([{"type": "thinking"}])}
+    table = Pages([thinking, user], [assistant("Done."), thinking, user])
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: table)
+    assert worker.completion_summary(SESSION) == "Done."
+    assert table.queries == 2
+    table = Pages([assistant("Checking", "tool_use"), user])
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: table)
+    assert worker.completion_summary(SESSION) == "Checking"  # Best effort after the retries.
+    assert table.queries == 3
+    stopped = Pages([{"type": "user", "content": json.dumps([{"type": "text", "text": "[Request interrupted by user]"}])}])
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: stopped)
+    assert worker.notification(SESSION, DONE, "stopped") is None
+
+
+def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
+    monkeypatch.setenv("SUBSCRIPTIONS_TABLE", "subscriptions")
+    monkeypatch.setenv("WS_API_ENDPOINT", "https://ws.example/v1")
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    event = {"eventId": "e" * 64, "accountId": "account", "rootSessionId": "codex:session"}
+    row = {"connectionId": "phone", "accountId": "account"}
+    posted = []
+    api = SimpleNamespace(post_to_connection=lambda **kwargs: posted.append(kwargs["ConnectionId"]))
+    monkeypatch.setattr(worker.boto3, "client", lambda *args, **kwargs: api)
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([row], [{**row, "seenEvent": "e" * 64}]))
+    assert worker.being_viewed(event) is True
+    assert posted == ["phone"]
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([row]))
+    assert worker.being_viewed(event, timeout=0.01) is False  # A suspended socket never answers.
+    posted.clear()
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([]))
+    assert worker.being_viewed(event) is False and posted == []

@@ -29,6 +29,11 @@ class ListenArgs {
   lateinit var onClick: Channel
 }
 
+@InvokeArg
+class OpenArgs {
+  var sessionId: String = ""
+}
+
 @TauriPlugin(permissions = [Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications")])
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
   // Taps are kept until JS drains them, so a cold launch cannot lose the destination.
@@ -85,6 +90,12 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun listen(invoke: Invoke) {
     onClick = invoke.parseArgs(ListenArgs::class.java).onClick
+    invoke.resolve()
+  }
+
+  @Command
+  fun setOpen(invoke: Invoke) {
+    AlertService.openSession = invoke.parseArgs(OpenArgs::class.java).sessionId
     invoke.resolve()
   }
 

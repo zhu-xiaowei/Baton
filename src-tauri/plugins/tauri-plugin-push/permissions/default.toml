@@ -1,3 +1,3 @@
 [default]
 description = "Session alert registration and notification navigation"
-permissions = ["allow-register", "allow-start", "allow-stop", "allow-listen", "allow-take-pending"]
+permissions = ["allow-register", "allow-start", "allow-stop", "allow-listen", "allow-take-pending", "allow-set-open"]

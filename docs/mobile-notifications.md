@@ -36,6 +36,22 @@ stream. The stream's event filter forwards only session rows entering
 - entering `needs_input`, or a new `agentDetail` while staying there (the next
   queued approval).
 
+Before alerting, the worker skips what the user already knows:
+
+- **Interrupted turns**: the user stopped it (`[Request interrupted by user…]`).
+- **Sessions someone is looking at**: apps subscribed to the session
+  (`ROOT#<root>` in the subscriptions table) are asked `notify_check`; one that
+  is visible, focused and showing that session answers `notify_seen`, recorded
+  on its own subscription row. Any answer within 2 seconds suppresses the alert
+  on every device. Leaving a session closes the socket, so there is nothing to
+  ask; a suspended iOS socket keeps its row but never answers, so it still gets
+  the push. As a fallback, each app also hides an alert for the session it has
+  open in the foreground.
+
+A finished turn's summary is its last `end_turn` assistant text. The reply is
+persisted separately from the status, so the worker re-reads up to twice, one
+second apart, before falling back to the latest text of the turn.
+
 It writes the event to the Android feed (`NOTIFICATIONS#<account>` in the
 system table, 24h TTL, read by `/api/notifications/events`) and sends it to each of the account's iOS devices
 through `ApnsSender`, a small Node Lambda using the built-in HTTP/2 client

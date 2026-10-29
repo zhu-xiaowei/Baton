@@ -141,4 +141,8 @@ export function mountNotificationSettings() {
   setStatus(status);
 }
 
+// The device itself never shows an alert for the session it has open in the foreground.
+window.setOpenNotificationSession = sessionId => {
+  if (mobilePlatform()) void invoke('plugin:push|set_open', { sessionId: sessionId || '' }).catch(() => {});
+};
 window.unregisterMobileNotifications = unregisterMobileNotifications;
