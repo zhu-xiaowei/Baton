@@ -1,6 +1,6 @@
 # <sub><picture><source media="(prefers-color-scheme: dark)" srcset="web/public/assets/baton-logo.svg"><img src="web/public/assets/baton-logo-dark.svg" width="36" height="36" alt=""></picture></sub>Baton
 
-[English](README.md) | **中文**
+[English](README.md) | **中文** | [Español](README.es-ES.md)
 
 在手机上接着处理电脑上的 [Claude Code](https://github.com/anthropics/claude-code) 和 [Codex](https://openai.com/codex) 任务，无缝延续工作进度。
 
