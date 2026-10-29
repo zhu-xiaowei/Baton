@@ -23,6 +23,7 @@ import java.net.URLEncoder
 class AlertService : Service() {
   companion object {
     const val EXTRA_EVENT = "com.batonai.push.EVENT"
+    private const val ACTION_OPEN = "com.batonai.push.OPEN"
     private const val PREFS = "baton-push"
     private const val STATUS_CHANNEL = "background"
     private const val ALERT_CHANNEL = "session-updates"
@@ -132,9 +133,11 @@ class AlertService : Service() {
 
   private fun show(event: JSONObject) {
     val id = event.optString("eventId").hashCode()
-    val tap = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-      putExtra(EXTRA_EVENT, event.toString())
-    } ?: return
+    val activity = packageManager.getLaunchIntentForPackage(packageName)?.component ?: return
+    // Not the launcher intent: that one only brings a running task to front and drops extras.
+    val tap = Intent(ACTION_OPEN).setComponent(activity)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      .putExtra(EXTRA_EVENT, event.toString())
     val notification = NotificationCompat.Builder(this, ALERT_CHANNEL)
       .setSmallIcon(R.drawable.ic_push)
       .setContentTitle(event.optString("title"))
