@@ -478,8 +478,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 }
 .tool-value.clamp { max-height: 5.2em; overflow: hidden; cursor: pointer; }
 .tool-value.clamp.expanded { max-height: none; }
-.tool-value.read-value { white-space: pre; word-break: normal; }
-.tool-value.read-value.expanded { overflow-x: auto; }
+.tool-value.read-value { white-space: pre; word-break: normal; overflow-x: auto; overflow-y: hidden; }
 .read-code-grid { display: flex; min-width: max-content; align-items: stretch; }
 .read-line-numbers {
   flex: none; margin: 0 10px 0 0; padding: 0 10px 0 0;
