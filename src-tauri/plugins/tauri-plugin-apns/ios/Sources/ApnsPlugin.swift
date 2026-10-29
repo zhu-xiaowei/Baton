@@ -9,36 +9,30 @@ private struct ListenArgs: Decodable {
   let onClick: Channel
 }
 
-// This object outlives webview navigation. Persist taps before signaling JS, so
-// a cold launch or a sign-in redirect cannot lose the destination.
+// Outlives webview navigation. Taps are persisted before JS is signaled, so a cold
+// launch or a sign-in redirect cannot lose the destination.
 private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate {
   static let shared = PushCoordinator()
   private let pendingKey = "baton.pendingPushNavigation"
-  private var localDelegate: UNUserNotificationCenterDelegate?
-  private var installedApplicationDelegate: ObjectIdentifier?
+  private var hookedDelegate: ObjectIdentifier?
   private var registrations: [Invoke] = []
   private var registrationTimeout: DispatchWorkItem?
   var onClick: Channel?
 
   func install() {
-    let center = UNUserNotificationCenter.current()
-    if center.delegate !== self {
-      localDelegate = center.delegate
-      center.delegate = self
-    }
+    UNUserNotificationCenter.current().delegate = self
     guard let delegate = UIApplication.shared.delegate else { return }
     let delegateClass: AnyClass = type(of: delegate)
-    let identifier = ObjectIdentifier(delegateClass)
-    guard installedApplicationDelegate != identifier else { return }
-    installedApplicationDelegate = identifier
+    guard hookedDelegate != ObjectIdentifier(delegateClass) else { return }
+    hookedDelegate = ObjectIdentifier(delegateClass)
 
-    // Tao owns UIApplicationDelegate. Add APNs callbacks to its actual class,
-    // preserving any existing implementation instead of replacing its delegate.
+    // Tao owns the UIApplicationDelegate: add the APNs callbacks to its class,
+    // keeping any existing implementation.
     let success = #selector(UIApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:))
     let originalSuccess = class_getInstanceMethod(delegateClass, success).map(method_getImplementation)
     typealias Success = @convention(c) (AnyObject, Selector, UIApplication, NSData) -> Void
     let successBlock: @convention(block) (AnyObject, UIApplication, NSData) -> Void = { receiver, app, token in
-      PushCoordinator.shared.registered(token as Data)
+      PushCoordinator.shared.finish(token: (token as Data).map { String(format: "%02x", $0) }.joined())
       if let original = originalSuccess {
         unsafeBitCast(original, to: Success.self)(receiver, success, app, token)
       }
@@ -49,7 +43,7 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     let originalFailure = class_getInstanceMethod(delegateClass, failure).map(method_getImplementation)
     typealias Failure = @convention(c) (AnyObject, Selector, UIApplication, NSError) -> Void
     let failureBlock: @convention(block) (AnyObject, UIApplication, NSError) -> Void = { receiver, app, error in
-      PushCoordinator.shared.failed(error.localizedDescription)
+      PushCoordinator.shared.finish(error: error.localizedDescription)
       if let original = originalFailure {
         unsafeBitCast(original, to: Failure.self)(receiver, failure, app, error)
       }
@@ -59,31 +53,36 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
   func register(_ invoke: Invoke) {
     install()
-    registrations.append(invoke)
-    guard registrations.count == 1 else { return }
-    let timeout = DispatchWorkItem { [weak self] in
-      self?.failed("APNs registration timed out. Check network access and push signing.")
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+      DispatchQueue.main.async {
+        if let error = error { return invoke.reject(error.localizedDescription) }
+        guard granted else { return invoke.resolve(["granted": false]) }
+        self.registrations.append(invoke)
+        guard self.registrations.count == 1 else { return }
+        let timeout = DispatchWorkItem { [weak self] in
+          self?.finish(error: "APNs registration timed out. Check network access and push signing.")
+        }
+        self.registrationTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
+        UIApplication.shared.registerForRemoteNotifications()
+      }
     }
-    registrationTimeout = timeout
-    DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
-    UIApplication.shared.registerForRemoteNotifications()
   }
 
-  private func registered(_ data: Data) {
-    registrationTimeout?.cancel()
-    registrationTimeout = nil
-    let token = data.map { String(format: "%02x", $0) }.joined()
-    let waiting = registrations
-    registrations.removeAll()
-    waiting.forEach { $0.resolve(["token": token]) }
-  }
-
-  private func failed(_ message: String) {
+  private func finish(token: String? = nil, error: String? = nil) {
     registrationTimeout?.cancel()
     registrationTimeout = nil
     let waiting = registrations
     registrations.removeAll()
-    waiting.forEach { $0.reject(message) }
+    // Debug builds use the APNs sandbox, release/TestFlight production (Info.plist).
+    let environment = Bundle.main.object(forInfoDictionaryKey: "BatonPushEnvironment") as? String ?? ""
+    for invoke in waiting {
+      if let token = token {
+        invoke.resolve(["granted": true, "token": token, "environment": environment])
+      } else {
+        invoke.reject(error ?? "APNs registration failed.")
+      }
+    }
   }
 
   func takePending() -> [[String: String]] {
@@ -97,17 +96,10 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     willPresent notification: UNNotification,
     withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    if notification.request.trigger is UNPushNotificationTrigger {
-      if #available(iOS 14.0, *) {
-        completion([.banner, .list, .sound])
-      } else {
-        completion([.alert, .sound])
-      }
-    } else if let handler = localDelegate,
-              handler.responds(to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:willPresent:withCompletionHandler:))) {
-      handler.userNotificationCenter?(center, willPresent: notification, withCompletionHandler: completion)
+    if #available(iOS 14.0, *) {
+      completion([.banner, .list, .sound])
     } else {
-      completion([])
+      completion([.alert, .sound])
     }
   }
 
@@ -116,27 +108,17 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     didReceive response: UNNotificationResponse,
     withCompletionHandler completion: @escaping () -> Void
   ) {
-    if response.notification.request.trigger is UNPushNotificationTrigger {
-      if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-        let data = response.notification.request.content.userInfo.reduce(into: [String: String]()) { result, entry in
-          if let key = entry.key as? String, let value = entry.value as? String {
-            result[key] = value
-          }
-        }
-        DispatchQueue.main.async {
-          var pending = UserDefaults.standard.array(forKey: self.pendingKey) as? [[String: String]] ?? []
-          pending.append(data)
-          UserDefaults.standard.set(Array(pending.suffix(10)), forKey: self.pendingKey)
-          try? self.onClick?.send(["pending": true])
-          completion()
-        }
-      } else {
-        completion()
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return completion() }
+    let data = response.notification.request.content.userInfo.reduce(into: [String: String]()) { result, entry in
+      if let key = entry.key as? String, let value = entry.value as? String {
+        result[key] = value
       }
-    } else if let handler = localDelegate,
-              handler.responds(to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:didReceive:withCompletionHandler:))) {
-      handler.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completion)
-    } else {
+    }
+    DispatchQueue.main.async {
+      var pending = UserDefaults.standard.array(forKey: self.pendingKey) as? [[String: String]] ?? []
+      pending.append(data)
+      UserDefaults.standard.set(Array(pending.suffix(10)), forKey: self.pendingKey)
+      try? self.onClick?.send(["pending": true])
       completion()
     }
   }
@@ -154,7 +136,7 @@ class ApnsPlugin: Plugin {
   }
 
   @objc public func register(_ invoke: Invoke) {
-    DispatchQueue.main.async { PushCoordinator.shared.register(invoke) }
+    PushCoordinator.shared.register(invoke)
   }
 
   @objc public func listen(_ invoke: Invoke) throws {

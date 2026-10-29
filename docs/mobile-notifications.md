@@ -1,55 +1,64 @@
 # Mobile notifications
 
-Android uses the official `tauri-plugin-notification` while Baton is in the
-foreground. It checks the account's notification feed every five seconds.
-Backgrounding stops delivery, and resuming establishes a new baseline rather
-than replaying background events.
+Baton notifies when a session goes from running to done, and whenever it needs
+input (a tool approval, a question or a plan). Settings has one **Push
+notifications** switch; it is on by default.
 
-iOS uses Apple's APNs. The small local `tauri-plugin-apns` registers the device
-token and preserves notification taps across cold starts. It forwards local
-notifications to the official plugin's delegate. No community push plugin,
-Firebase or SNS is used.
+- **iOS** uses Apple's APNs directly, so alerts arrive in the background. The
+  local `tauri-plugin-apns` requests permission, registers the device token and
+  keeps notification taps across cold starts. No Firebase, SNS or community
+  push plugin is used.
+- **Android** uses the official `tauri-plugin-notification` only while Baton is
+  in the foreground: it polls the account's event feed every five seconds.
+  Resuming starts a fresh baseline instead of replaying background events.
 
-Both platforms show **project name · session name**, followed by the event and
-a short summary. Finished runs use the last available assistant response;
-approval requests use the command, file path, plan or question. Tapping opens
-the existing session view, which reloads the current approval state.
+Alerts read **project · session**, then the event and a short summary: the last
+assistant reply for a finished run, or the command, file, question or plan
+that needs input. Tapping opens the session, which reloads the current state.
+
+## How it works
+
+Bridge already writes every approval as `needs_input` + `agentDetail` on the
+session row, so notifications come only from the `BridgeSessions` DynamoDB
+stream. The stream's event filter forwards only session rows entering
+`needs_input` or `done#…`; `NotificationWorker` (Python) then keeps:
+
+- `running → completed` (first-time imports are inserts and never alert), and
+- entering `needs_input`, or a new `agentDetail` while staying there (the next
+  queued approval).
+
+It writes the event to the Android feed (`NOTIFICATIONS#<account>` in the
+system table, 24h TTL) and sends it to each of the account's iOS devices
+through `ApnsSender`, a small Node Lambda using the built-in HTTP/2 client
+(Python Lambdas have none). Devices are stored as one row per token
+(`PUSH_DEVICE`, `<environment>:<token>`), so a reinstall or another account
+reusing a token replaces the old binding; APNs `BadDeviceToken`/`Unregistered`
+deletes it. A failed record is retried by the stream; `apns-collapse-id` makes a
+repeated alert replace the earlier one on the device.
 
 ## APNs configuration
 
-The app identifier is `com.batonai.app`. Enable Push Notifications for this
-identifier in the Apple Developer account and regenerate signing profiles.
-Debug builds use the development APNs environment; release/TestFlight builds
-use production.
+1. In Apple Developer, enable **Push Notifications** for `com.batonai.app`.
+   Debug builds use the APNs sandbox; release/TestFlight builds production.
+2. Create an APNs key (Keys → + → Apple Push Notifications service) and note
+   its Key ID and your Team ID. This is not the App Store Connect API key.
+3. Store it as a free SSM SecureString in the stack's region:
 
-Create an APNs signing key in Apple Developer and store the following JSON in
-AWS Secrets Manager in the server's region:
+   ```sh
+   aws ssm put-parameter --region <region> --name /baton/apns-key --type SecureString \
+     --value "$(jq -n --arg k <KEY_ID> --arg t <TEAM_ID> --rawfile p AuthKey_<KEY_ID>.p8 \
+       '{keyId: $k, teamId: $t, privateKey: $p}')"
+   ```
 
-```json
-{
-  "keyId": "APPLE_APNS_KEY_ID",
-  "teamId": "APPLE_TEAM_ID",
-  "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-}
-```
+4. Deploy once with `APNS_KEY_PARAMETER=/baton/apns-key ./install.sh ...`. Later
+   deploys (including `--rotate-key`) keep it.
 
-Use an **APNs signing key**, not the App Store Connect API key used for releases.
-Never put the private key in the app, Git repository or notification payload.
+Only `ApnsSender`'s role can read the parameter. Never put the key in the app,
+Git or a Lambda environment variable. Without it, Android still works and the
+iOS switch reports that push is not configured.
 
-Deploy the server with `APNS_KEY_SECRET_ARN` set to the secret's ARN. The installer
-preserves this setting on subsequent deployments. Without it, Android local
-notifications still work and iOS Settings reports that push is not configured.
-
-The existing session table's stream detects `running → completed` and entry
-into `needs_input`. New approval requests also trigger notifications, including
-consecutive requests while the session remains in `needs_input`. First-time
-history imports do not send completion alerts. Repeated delivery is deduplicated
-per event/device, and related status/request events are coalesced.
-
-The Python worker delegates only the HTTP/2 transport to a small Node Lambda
-using built-in crypto/http2 and the runtime's Secrets Manager SDK. It sends
-directly to `api.push.apple.com` or `api.sandbox.push.apple.com`. Failed events
-are retried and retained in the `NotificationFailures` queue.
+The key belongs to the team that publishes the app, so only a stack holding it
+can push to the published iOS app.
 
 ## Verification
 
@@ -58,16 +67,9 @@ node --test test/frontend/notifications.test.mjs test/server/apns-sender.test.mj
 python3 -m pytest test/server/test_notifications.py
 ```
 
-Real-device checks:
-
-- Allow notifications, finish a run, and check project/session names and summary.
-- Issue two distinct approval requests and check that each can notify.
-- Tap a notification while foregrounded, backgrounded and after an iOS cold start.
-- Resolve a request on another device before tapping; show the current state.
-- Disable notifications or log out and verify the old registration stops receiving.
-- On Android, background the app; do not show or replay foreground-only alerts.
-
-AWS Device Farm's public iOS devices re-sign applications and remove the Push
-Notifications entitlement. They can verify local notifications and navigation,
-but cannot prove APNs delivery. That check requires a correctly signed physical
-iPhone, or a private Device Farm device with signing preserved.
+AWS Device Farm's public iOS devices re-sign apps and remove the Push
+Notifications entitlement: they can show the switch, the permission prompt and
+a failed registration, but cannot receive APNs. Check delivery on a TestFlight
+build: finish a run, trigger two approvals in a row, tap alerts while in the
+foreground, in the background and after a cold start, then turn the switch off
+and confirm alerts stop.

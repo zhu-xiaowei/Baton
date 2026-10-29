@@ -10,7 +10,7 @@ const event = {
   sessionId: 'codex:session', kind: 'completed',
 };
 
-test('foreground notifications establish a baseline, deduplicate, and honor preferences', async () => {
+test('foreground notifications establish a baseline and deduplicate', async () => {
   const shown = [], scheduled = [], cursors = [];
   const controller = createForegroundNotifications({
     fetchEvents: async cursor => {
@@ -20,7 +20,6 @@ test('foreground notifications establish a baseline, deduplicate, and honor pref
       ] };
     },
     show: async notification => shown.push(notification),
-    enabled: notification => notification.kind === 'completed',
     isVisible: () => true,
     schedule: callback => scheduled.push(callback),
     cancel: () => {},
@@ -30,10 +29,10 @@ test('foreground notifications establish a baseline, deduplicate, and honor pref
   assert.deepEqual(shown, []);
   scheduled.shift()();
   await flush();
-  assert.deepEqual(shown, [event]);
+  assert.equal(shown.length, 2);
   scheduled.shift()();
   await flush();
-  assert.deepEqual(shown, [event]);
+  assert.equal(shown.length, 2);
   assert.deepEqual(cursors, ['', 'next', 'next']);
   controller.stop();
 });

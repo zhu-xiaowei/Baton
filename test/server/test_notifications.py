@@ -1,77 +1,57 @@
 import io
 import json
+import os
 import time
 from types import SimpleNamespace
 
 import pytest
 from boto3.dynamodb.types import TypeSerializer
-from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
+os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
 import notifications
 import notification_worker as worker
-from notification_store import permission_detail
 
 
 SESSION = {
     "entityType": "session", "accountId": "account", "deviceName": "Mac",
     "projectHash": "project", "projectName": "Baton", "sessionId": "codex:session",
-    "status": "running", "preview": "Fix login",
+    "activeStatus": "running", "preview": "Fix login",
 }
+DONE = {**SESSION, "activeStatus": "done#2026-10-29"}
+WAITING = {**SESSION, "activeStatus": "needs_input", "agentDetail": "npm test"}
 
 
 class MemoryTable:
-    def __init__(self):
-        self.rows = {}
+    def __init__(self, *rows):
+        self.rows = {(row["pk"], row["sk"]): row for row in rows}
 
-    def get_item(self, Key, **_):
-        return {"Item": self.rows.get((Key["pk"], Key["sk"]), {}).copy()}
-
-    def put_item(self, Item, ConditionExpression="", ExpressionAttributeValues=None, **_):
-        key = (Item["pk"], Item["sk"])
-        if ConditionExpression and key in self.rows:
-            previous = self.rows[key]
-            if ConditionExpression == "eventId = :previous" and previous["eventId"] == ExpressionAttributeValues[":previous"]:
-                self.rows[key] = Item.copy()
-                return
-            if previous.get("ttl", float("inf")) < (ExpressionAttributeValues or {}).get(":now", 0):
-                self.rows[key] = Item.copy()
-                return
-            lease_expired = previous.get("leaseUntil", float("inf")) < (
-                ExpressionAttributeValues or {}
-            ).get(":now", 0)
-            if not lease_expired:
-                raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem")
-        self.rows[key] = Item.copy()
-
-    def update_item(self, Key, ExpressionAttributeValues, **_):
-        self.rows[(Key["pk"], Key["sk"])]["requestId"] = ExpressionAttributeValues[":request"]
+    def put_item(self, Item, **_):
+        self.rows[(Item["pk"], Item["sk"])] = Item
 
     def delete_item(self, Key, **_):
         self.rows.pop((Key["pk"], Key["sk"]), None)
 
-
-def test_transitions_use_effective_status_and_do_not_alert_for_imported_history():
-    done = {**SESSION, "status": "completed"}
-    assert worker.session_event({}, done, "first-import") is None
-    assert worker.session_event(SESSION, done, "finished")["kind"] == "completed"
-    assert worker.session_event(done, done, "title-edit") is None
-    child_running = {**done, "activeStatus": "running", "runningAgentCount": 1}
-    assert worker.session_event(SESSION, child_running, "child-still-running") is None
-    assert worker.session_event(child_running, {**done, "activeStatus": "done#now"}, "all-finished")
-    assert worker.session_event(SESSION, {**done, "parentSessionId": "root"}, "child-finished") is None
-    assert worker.session_event(SESSION, {**SESSION, "activeStatus": "needs_input"}, "input")["kind"] == "needs_input"
+    def query(self, **_):
+        return {"Items": [row for (pk, _), row in self.rows.items() if pk == "PUSH_DEVICE"]}
 
 
-def test_readable_titles_details_and_fallbacks():
-    event = worker.make_event(SESSION, "completed", "finish", detail="Tests passed.")
-    assert event["title"] == "Baton · Fix login"
-    assert event["body"] == "Run finished: Tests passed. · Mac"
-    assert "Session session" in worker.make_event({**SESSION, "preview": ""}, "completed", "finish")["title"]
-    approval = worker.make_event(SESSION, "needs_input", "approval", "request", "tool", "npm test")
-    assert approval["body"] == "Approval needed: npm test · Mac"
-    assert permission_detail({"input": {"command": "npm test\n--run"}, "toolName": "Bash"}) == "npm test --run"
-    assert permission_detail({"questions": [{"question": "Use SQLite?"}]}) == "Use SQLite?"
+def test_status_transitions(monkeypatch):
+    monkeypatch.setattr(worker, "completion_summary", lambda session: "Fixed it.")
+    finished = worker.notification(SESSION, DONE, "finished")
+    assert finished["title"] == "Baton · Fix login"
+    assert finished["body"] == "Run finished: Fixed it. · Mac"
+    assert worker.notification(SESSION, WAITING, "ask")["body"] == "Needs input: npm test · Mac"
+    # A queued next approval stays needs_input but changes the detail.
+    assert worker.notification(WAITING, {**WAITING, "agentDetail": "rm -rf build"}, "next")
+    assert worker.notification(WAITING, WAITING, "re-sync") is None
+    assert worker.notification({}, DONE, "imported") is None
+    assert worker.notification(DONE, DONE, "renamed") is None
+    assert worker.notification(SESSION, {**DONE, "parentSessionId": "root"}, "child") is None
+    assert "Session session" in worker.notification(SESSION, {**DONE, "preview": ""}, "x")["title"]
+
+
+def test_text_summary_keeps_only_reply_text():
     assert worker.text_summary(json.dumps([
         {"type": "thinking", "thinking": "private reasoning"},
         {"type": "tool_use", "name": "Bash"},
@@ -79,114 +59,60 @@ def test_readable_titles_details_and_fallbacks():
     ])) == "Fixed the login. Tests passed."
 
 
-def test_fresh_permission_can_precede_status_persistence_but_retries_skip_resolved_requests(monkeypatch):
-    event = {
-        "accountId": "account", "device": "Mac", "sessionId": "codex:session",
-        "requestId": "first", "createdAt": time.time(),
-    }
-    monkeypatch.setattr(worker, "find_session", lambda *args: SESSION)
-    assert worker.permission_event(event)["requestId"] == "first"
-    assert worker.permission_event({**event, "createdAt": 0}) is None
-    monkeypatch.setattr(worker, "find_session", lambda *args: {**SESSION, "status": "needs_input"})
-    first = worker.permission_event(event)
-    second = worker.permission_event({**event, "requestId": "second"})
-    assert first["eventId"] != second["eventId"]
-
-
-def test_status_and_request_coalesce_but_new_requests_alert(monkeypatch):
-    storage = MemoryTable()
-    monkeypatch.setattr(worker, "table", lambda: storage)
-    status = worker.make_event(SESSION, "needs_input", "transition")
-    first = worker.make_event(SESSION, "needs_input", "first", "request-one")
-    second = worker.make_event(SESSION, "needs_input", "second", "request-two")
-    assert worker.claim_attention(status)
-    assert not worker.claim_attention(first)
-    assert not worker.claim_attention(first)
-    assert worker.claim_attention(second)
-    assert worker.claim_attention(second)  # Retry uses the same delivery ID.
-
-
-def test_delivery_retries_do_not_resend_to_already_notified_devices(monkeypatch):
-    storage = MemoryTable()
-    device = {
-        "pk": "PUSH_DEVICE", "sk": "installation", "accountId": "account",
-        "token": "a" * 64, "environment": "production",
-        "ttl": int(time.time()) + 100,
-    }
-    storage.put_item(Item=device)
-    storage.put_item(Item={
-        "pk": "PUSH_ENDPOINT", "sk": worker.digest("production:" + "a" * 64),
-        "accountId": "account", "installationId": "installation",
-    })
-    monkeypatch.setattr(worker, "table", lambda: storage)
-    monkeypatch.setattr(worker, "devices", lambda account: [device])
-    sent = []
+def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
+    live = {"pk": "PUSH_DEVICE", "sk": "production:" + "a" * 64, "accountId": "account", "ttl": time.time() + 99}
+    dead = {**live, "sk": "development:" + "b" * 64}
+    other = {**live, "sk": "production:" + "c" * 64, "accountId": "other"}
+    table = MemoryTable(live, dead, other)
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: table)
+    monkeypatch.setenv("SYSTEM_TABLE", "system")
     monkeypatch.setenv("APNS_SENDER_FUNCTION", "apns-sender")
+    sent = []
+
     def invoke(**kwargs):
-        sent.append(kwargs)
-        return {"Payload": io.BytesIO(b'{"status":200}')}
-    monkeypatch.setattr(worker.boto3, "client", lambda service: SimpleNamespace(invoke=invoke))
-    event = worker.make_event(SESSION, "completed", "finished")
-    worker.deliver(event)
-    worker.deliver(event)
-    assert len(sent) == 1
-    payload = json.loads(sent[0]["Payload"])["payload"]
-    assert payload["aps"]["alert"]["title"] == "Baton · Fix login"
-    assert payload["sessionId"] == "codex:session"
-    assert len([key for key in storage.rows if key[1].startswith("EVENT#")]) == 1
+        request = json.loads(kwargs["Payload"])
+        sent.append(request)
+        result = {"status": 200} if request["token"] == "a" * 64 else {"status": 410, "reason": "Unregistered"}
+        return {"Payload": io.BytesIO(json.dumps(result).encode())}
+
+    monkeypatch.setattr(worker, "_lambda", SimpleNamespace(invoke=invoke))
+    monkeypatch.setattr(worker, "completion_summary", lambda session: "")
+    worker.deliver(worker.notification(SESSION, DONE, "finished"))
+    assert sorted(request["environment"] for request in sent) == ["development", "production"]
+    assert sent[0]["payload"]["aps"]["alert"]["title"] == "Baton · Fix login"
+    assert sent[0]["payload"]["sessionId"] == "codex:session"
+    assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
+    assert len([key for key in table.rows if key[1].startswith("EVENT#")]) == 1
 
 
-def test_delivery_rechecks_account_binding_after_logout(monkeypatch):
-    storage = MemoryTable()
-    monkeypatch.setattr(worker, "table", lambda: storage)
-    calls = []
-    monkeypatch.setattr(worker.boto3, "client", lambda service: calls.append(service))
-    worker.send_apns(worker.make_event(SESSION, "completed", "finish"), {
-        "sk": "installation", "token": "a" * 64, "environment": "production",
-    })
-    assert not calls
+def test_worker_reports_only_failed_records(monkeypatch):
+    encode = TypeSerializer().serialize
 
+    def record(identifier):
+        return {"eventID": identifier, "dynamodb": {
+            "SequenceNumber": identifier,
+            "OldImage": {k: encode(v) for k, v in SESSION.items()},
+            "NewImage": {k: encode(v) for k, v in WAITING.items()},
+        }}
 
-def test_worker_reports_only_failed_stream_records(monkeypatch):
-    encoder = TypeSerializer()
-    def record(identifier, status):
-        return {
-            "eventName": "MODIFY", "eventID": identifier,
-            "dynamodb": {
-                "SequenceNumber": identifier,
-                "OldImage": {k: encoder.serialize(v) for k, v in SESSION.items()},
-                "NewImage": {k: encoder.serialize(v) for k, v in {**SESSION, "status": status}.items()},
-            },
-        }
-    monkeypatch.setattr(worker, "table", lambda: MemoryTable())
-    monkeypatch.setattr(worker, "completion_summary", lambda session: "Completed the change.")
-    delivered = []
     def deliver(event):
-        delivered.append(event)
-        if event["eventId"] == worker.digest("session:failed"):
-            raise RuntimeError("APNs temporarily unavailable")
+        if event["eventId"] == worker.hashlib.sha256(b"failed").hexdigest():
+            raise RuntimeError("APNs unavailable")
+
     monkeypatch.setattr(worker, "deliver", deliver)
-    result = worker.handler({"Records": [record("ok", "completed"), record("failed", "completed")]}, None)
+    result = worker.handler({"Records": [record("ok"), record("failed")]}, None)
     assert result == {"batchItemFailures": [{"itemIdentifier": "failed"}]}
-    assert delivered[0]["body"] == "Run finished: Completed the change. · Mac"
 
 
-def test_android_feed_baseline_does_not_replay_history_and_validates_cursor(monkeypatch):
-    monkeypatch.setattr(notifications, "table", lambda: pytest.fail("Baseline must not read historical notifications"))
-    result = notifications.events(SimpleNamespace(headers={}))
-    assert result["events"] == []
-    assert result["cursor"].startswith("EVENT#")
-    with pytest.raises(HTTPException) as error:
-        notifications.events(SimpleNamespace(headers={}), "invalid")
-    assert error.value.status_code == 400
-
-
-def test_ios_registration_requires_matching_apns_environment(monkeypatch):
-    monkeypatch.delenv("APNS_KEY_SECRET_ARN", raising=False)
-    body = notifications.DeviceRegistration(
-        installationId="12345678-1234-1234-1234-123456789012",
-        token="a" * 64, environment="production",
-    )
+def test_registration_and_feed_validation(monkeypatch):
+    monkeypatch.delenv("APNS_KEY_PARAMETER", raising=False)
+    body = notifications.PushDevice(token="A" * 64, environment="production")
+    assert body.key() == {"pk": "PUSH_DEVICE", "sk": "production:" + "a" * 64}
     with pytest.raises(HTTPException) as error:
         notifications.register_device(body, SimpleNamespace(headers={}))
     assert error.value.status_code == 503
+    monkeypatch.setattr(notifications, "_table", lambda: pytest.fail("baseline must not read history"))
+    assert notifications.events(SimpleNamespace(headers={}))["events"] == []
+    with pytest.raises(HTTPException) as error:
+        notifications.events(SimpleNamespace(headers={}), "invalid")
+    assert error.value.status_code == 400

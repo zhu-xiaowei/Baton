@@ -1,5 +1,5 @@
-// Direct APNs HTTP/2 transport. Uses Node's built-in crypto/http2 and the AWS
-// Secrets Manager SDK already included in Lambda; no mobile SDK or SNS.
+// Direct APNs HTTP/2 transport (Python Lambdas have no HTTP/2 client). The key is a
+// free SSM SecureString read with the SDK bundled in the Lambda runtime.
 import { connect, constants } from 'node:http2';
 import { createPrivateKey, sign } from 'node:crypto';
 
@@ -23,13 +23,13 @@ export function providerToken(credentials, now = Math.floor(Date.now() / 1000)) 
 
 async function credentials() {
   if (!cachedCredentials) {
-    const { SecretsManagerClient, GetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager');
-    const response = await new SecretsManagerClient({}).send(new GetSecretValueCommand({
-      SecretId: process.env.APNS_KEY_SECRET_ARN,
+    const { SSMClient, GetParameterCommand } = await import('@aws-sdk/client-ssm');
+    const { Parameter } = await new SSMClient({}).send(new GetParameterCommand({
+      Name: process.env.APNS_KEY_PARAMETER, WithDecryption: true,
     }));
-    cachedCredentials = JSON.parse(response.SecretString);
+    cachedCredentials = JSON.parse(Parameter.Value);
     if (!cachedCredentials.keyId || !cachedCredentials.teamId || !cachedCredentials.privateKey) {
-      throw new Error('APNs secret must contain keyId, teamId and privateKey.');
+      throw new Error('APNs key parameter must contain keyId, teamId and privateKey.');
     }
   }
   return cachedCredentials;

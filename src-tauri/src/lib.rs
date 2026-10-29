@@ -30,21 +30,6 @@ fn ios_build_number() -> Option<String> {
   }
 }
 
-#[tauri::command]
-fn ios_push_environment() -> Option<String> {
-  #[cfg(target_os = "ios")]
-  {
-    use objc2_foundation::{ns_string, NSBundle, NSString};
-    let value = NSBundle::mainBundle()
-      .objectForInfoDictionaryKey(ns_string!("BatonPushEnvironment"))?
-      .downcast::<NSString>()
-      .ok()?;
-    Some(value.to_string())
-  }
-  #[cfg(not(target_os = "ios"))]
-  { None }
-}
-
 // Open a fresh viewer window. Each window has its own tab strip; every tab is its own
 // WebView (isolated DOM/JS, WS connection + sessionStorage nav). Cascade-offset so it
 // doesn't land exactly on top of the window that spawned it.
@@ -87,7 +72,6 @@ pub fn run() {
     .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
-      ios_push_environment,
       macos_zoom::macos_set_zoom,
       macos_tabs::macos_tabs_state,
       macos_tabs::macos_tabs_new,
@@ -119,10 +103,8 @@ pub fn run() {
       app.handle().plugin(tauri_plugin_clipboard_manager::init())?;
       #[cfg(target_os = "ios")]
       app.handle().plugin(tauri_plugin_speech::init())?;
-      #[cfg(any(target_os = "android", target_os = "ios"))]
+      #[cfg(target_os = "android")]
       app.handle().plugin(tauri_plugin_notification::init())?;
-      // Register after notification: the APNs delegate forwards local
-      // notifications to the official plugin's delegate.
       #[cfg(target_os = "ios")]
       app.handle().plugin(tauri_plugin_apns::init())?;
 

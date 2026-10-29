@@ -129,6 +129,16 @@ Done:
 - Graph view state, the first page per scope and the branch list reuse the Changes IndexedDB cache
   (stale-while-revalidate). Checkout / Stash & Switch / Pull are deferred. Details: `docs/git-history-design.md`.
 
+### Mobile Notifications: COMPLETE
+- Finished runs and `needs_input` alert as **project · session** + summary; tapping opens the session.
+  One Settings switch (default on). iOS: direct APNs via local `tauri-plugin-apns` (background);
+  Android: official `tauri-plugin-notification`, foreground-only 5s feed poll.
+- Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
+  `agentDetail`) → `NotificationWorker` → `ApnsSender` (Node, HTTP/2). Devices are one
+  `PUSH_DEVICE` row per `<environment>:<token>`. The APNs key is the SSM SecureString named by
+  the `ApnsKeyParameter` stack parameter (`APNS_KEY_PARAMETER` for install.sh; kept across deploys).
+  Device Farm public iOS devices strip the push entitlement. Details: `docs/mobile-notifications.md`.
+
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 
@@ -547,7 +557,6 @@ before installing toolchains or archiving.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`
-- Local notifications: `tauri-plugin-notification`
 - Biometric auth: `tauri-plugin-biometric`
 
 ## Live State (headless native — was "tmux capture-pane Live State")

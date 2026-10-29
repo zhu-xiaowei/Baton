@@ -3,5 +3,5 @@
   "identifier": "ios-notifications",
   "platforms": ["iOS"],
   "windows": ["main"],
-  "permissions": ["notification:default", "apns:default"]
+  "permissions": ["apns:default"]
 }
