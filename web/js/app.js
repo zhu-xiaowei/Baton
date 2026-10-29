@@ -1275,6 +1275,20 @@ function openSession(el) {
   loadMessages(el.dataset.sid, el.dataset.preview);
 }
 
+async function openNotificationSession(target) {
+  window.closeProjectTerminal?.({ keepAlive: false });
+  state.appState = {
+    device: target.device,
+    project: { hash: target.projectHash, name: target.projectName || target.projectHash },
+    session: null,
+    sessionPreview: '',
+    runtime: sessionRuntime(target.sessionId),
+  };
+  return loadMessages(target.sessionId, target.sessionTitle || '', {
+    rootSessionId: target.rootSessionId || target.sessionId,
+  });
+}
+
 function shortModel(m) {
   return (m || 'unknown').replace(/^claude-/, '');
 }
@@ -2303,7 +2317,7 @@ Object.assign(window, {
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   openSessionRename, applySessionTitle,
   openPreviewPortPrompt,
-  showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
+  showInputBar, saveNav, navigateUp, openActiveSession, openSession, openNotificationSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,

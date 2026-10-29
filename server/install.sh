@@ -409,7 +409,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_store.py notification_worker.py apns_sender.mjs message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
@@ -502,6 +502,16 @@ else
     "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY"
     "ParameterKey=AppVersion,ParameterValue=$APP_VERSION"
   )
+fi
+if [ "$ROTATE_KEY" != true ]; then
+  for param in ApnsKeySecretArn; do
+    apns_value="${APNS_KEY_SECRET_ARN:-}"
+    if [ -z "$apns_value" ] && [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+      apns_value=$(stack_param "$param")
+      [ "$apns_value" != "None" ] || apns_value=""
+    fi
+    STACK_PARAMS+=("ParameterKey=$param,ParameterValue=$apns_value")
+  done
 fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"

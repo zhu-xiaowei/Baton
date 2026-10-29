@@ -1,5 +1,10 @@
 {
   "Parameters": {
+    "ApnsKeySecretArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Secrets Manager ARN with the APNs keyId, teamId and privateKey"
+    },
     "FileUploadAcceleration": {
       "Type": "String",
       "Default": "false",
@@ -32,6 +37,9 @@
       "Type": "String",
       "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
     }
+  },
+  "Conditions": {
+    "HasApnsKey": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ApnsKeySecretArn" }, ""] }] }
   },
   "Resources": {
     "LambdaExecutionRole": {
@@ -117,6 +125,7 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
+            "APNS_KEY_SECRET_ARN": { "Ref": "ApnsKeySecretArn" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" }
@@ -619,6 +628,7 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "NOTIFICATION_FUNCTION": { "Ref": "NotificationWorker" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
@@ -667,6 +677,11 @@
                   { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
                   { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
                 ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": { "Fn::GetAtt": ["NotificationWorker", "Arn"] }
               },
               {
                 "Effect": "Allow",
@@ -750,6 +765,7 @@
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
         "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-sessions" },
+        "StreamSpecification": { "StreamViewType": "NEW_AND_OLD_IMAGES" },
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
           { "AttributeName": "accountId", "AttributeType": "S" },
@@ -807,6 +823,130 @@
           { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "NotificationFailures": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": { "MessageRetentionPeriod": 1209600 }
+    },
+    "NotificationRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }],
+        "Policies": [{
+          "PolicyName": "NotificationDelivery",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query"],
+                "Resource": [{ "Fn::GetAtt": ["SystemTable", "Arn"] }, { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] }, { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }]
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
+                "Resource": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": { "Fn::GetAtt": ["ApnsSender", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "sqs:SendMessage",
+                "Resource": { "Fn::GetAtt": ["NotificationFailures", "Arn"] }
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "NotificationWorker": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Architectures": ["arm64"],
+        "Runtime": "python3.12",
+        "Handler": "notification_worker.handler",
+        "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
+        "Role": { "Fn::GetAtt": ["NotificationRole", "Arn"] },
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Environment": { "Variables": {
+          "SYSTEM_TABLE": { "Ref": "SystemTable" },
+          "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
+          "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+          "APNS_SENDER_FUNCTION": { "Ref": "ApnsSender" }
+        } }
+      }
+    },
+    "SessionNotificationEvents": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] },
+        "FunctionName": { "Ref": "NotificationWorker" },
+        "StartingPosition": "LATEST",
+        "BatchSize": 20,
+        "MaximumRetryAttempts": 5,
+        "MaximumRecordAgeInSeconds": 900,
+        "BisectBatchOnFunctionError": true,
+        "FunctionResponseTypes": ["ReportBatchItemFailures"],
+        "FilterCriteria": { "Filters": [{ "Pattern": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"entityType\":{\"S\":[\"session\"]}}}}" }] },
+        "DestinationConfig": { "OnFailure": { "Destination": { "Fn::GetAtt": ["NotificationFailures", "Arn"] } } }
+      }
+    },
+    "ApprovalNotificationRetries": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": { "Ref": "NotificationWorker" },
+        "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 2,
+        "MaximumEventAgeInSeconds": 300,
+        "DestinationConfig": { "OnFailure": { "Destination": { "Fn::GetAtt": ["NotificationFailures", "Arn"] } } }
+      }
+    },
+    "ApnsSenderRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }],
+        "Policies": {
+          "Fn::If": ["HasApnsKey", [{
+            "PolicyName": "ReadApnsKey",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": { "Ref": "ApnsKeySecretArn" }
+              }]
+            }
+          }], { "Ref": "AWS::NoValue" }]
+        }
+      }
+    },
+    "ApnsSender": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Architectures": ["arm64"],
+        "Runtime": "nodejs22.x",
+        "Handler": "apns_sender.handler",
+        "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
+        "Role": { "Fn::GetAtt": ["ApnsSenderRole", "Arn"] },
+        "MemorySize": 128,
+        "Timeout": 15,
+        "Environment": { "Variables": {
+          "APNS_KEY_SECRET_ARN": { "Ref": "ApnsKeySecretArn" },
+          "APNS_TOPIC": "com.batonai.app"
+        } }
       }
     },
     "SystemTable": {

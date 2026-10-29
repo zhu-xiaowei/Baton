@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-apns"
+version = "0.1.0"
+description = "Baton iOS APNs registration and notification navigation"
+edition = "2021"
+links = "tauri-plugin-apns"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri = { version = "2", features = ["wry"] }
