@@ -21,9 +21,9 @@ Both platforms deliver while Baton is in the background, through the local
   optimisation, and Doze can delay polls after the screen has been off for a
   long time.
 
-Alerts read **project · session**, then the event and a short summary: the last
-assistant reply for a finished run, or the command, file, question or plan
-that needs input. Tapping opens the session, which reloads the current state.
+Alerts read **project · session** (the project's folder name, not its path),
+then "Finished" or "Needs input" and a short summary: the last assistant reply
+for a finished run, or the command, file, question or plan that needs input. Tapping opens the session, which reloads the current state.
 
 ## How it works
 

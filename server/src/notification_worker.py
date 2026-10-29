@@ -70,11 +70,13 @@ def notification(old, new, event_id):
             return None
         kind, action, detail = "needs_input", "Needs input", text_summary(new.get("agentDetail", ""))
     elif after == "completed" and before == "running":
-        kind, action, detail = "completed", "Run finished", completion_summary(new)
+        kind, action, detail = "completed", "Finished", completion_summary(new)
     else:
         return None
     session_id = new["sessionId"]
-    project = (new.get("projectName") or new["projectHash"])[:80]
+    # Alerts are narrow: the folder name, not the whole path.
+    folder = (new.get("projectName") or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    project = (folder or new["projectHash"])[:80]
     title = " ".join(str(new.get("preview") or new.get("agentName") or "").split())[:120]
     title = title or f'Session {session_id.removeprefix("codex:")[:8]}'
     return {
@@ -88,7 +90,7 @@ def notification(old, new, event_id):
         "sessionTitle": title,
         "rootSessionId": new.get("threadRootId") or session_id,
         "title": f"{project} · {title}",
-        "body": action + (f": {detail}" if detail else "") + f' · {new["deviceName"]}',
+        "body": action + (f": {detail}" if detail else ""),
     }
 
 
