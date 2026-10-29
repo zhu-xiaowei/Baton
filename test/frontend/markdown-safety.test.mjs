@@ -78,6 +78,16 @@ test('Chinese labels ending in punctuation stay bold during streaming', () => {
   window.close();
 });
 
+test('autolinks end at CJK punctuation like VS Code', () => {
+  const window = setupMarkdown();
+  const host = window.document.createElement('div');
+  host.innerHTML = window.renderMd('预览：http://localhost:8767/（隧道命令不变）。首页"线上现状"和"2.0 最终配置"');
+  assert.equal(host.querySelector('a').textContent, 'http://localhost:8767/');
+  host.innerHTML = window.renderMd('打开 localhost:3000/app（本地）');
+  assert.equal(host.querySelector('a').textContent, 'localhost:3000/app');
+  window.close();
+});
+
 test('Chinese label compatibility preserves Markdown boundaries and HTML escaping', () => {
   const window = setupMarkdown();
   const standard = new Marked({ breaks: true, gfm: true });
