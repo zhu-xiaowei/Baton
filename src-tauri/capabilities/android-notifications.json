@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android-notifications",
+  "platforms": ["android"],
+  "windows": ["main"],
+  "permissions": ["notification:default"]
+}

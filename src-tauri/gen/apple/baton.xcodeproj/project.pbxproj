@@ -185,6 +185,11 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					A2503540127E866A260709EA = {
+						SystemCapabilities = {
+							com.apple.Push = { enabled = 1; };
+						};
+					};
 				};
 			};
 			buildConfigurationList = 81EDDDAB297776E9727C08D5 /* Build configuration list for PBXProject "baton" */;
@@ -259,6 +264,7 @@
 		08DC7902440A702BD4FADF12 /* debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BATON_APNS_ENVIRONMENT = development;
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ARCHS = (
 					arm64,
@@ -293,6 +299,7 @@
 		26C46BB22F28CE030C506C4A /* release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BATON_APNS_ENVIRONMENT = production;
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ARCHS = (
 					arm64,

@@ -22,10 +22,12 @@ import './scroll-indicator.js';
 import { initMacosZoom } from './macos-zoom.js';
 import { initMacosTabs } from './macos-tabs.js';
 import { initSystemBack } from './system-back.js';
+import { initMobileNotifications } from './mobile-notifications.js';
 
 initMacosZoom();
 initMacosTabs();
 initSystemBack();
+void initMobileNotifications();
 
 // Replay any clicks queued by the inline shell before app.js was ready.
 if (Array.isArray(window.__navQueue)) {

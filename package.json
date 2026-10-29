@@ -12,7 +12,7 @@
     "test:codex:e2e": "node test/codex/phase2/e2e.mjs --run",
     "test:codex:stress": "node test/codex/phase2/parcel-stress.mjs --run",
     "test:frontend": "node --test test/frontend/*.test.mjs",
-    "test:server": "python3 -m pytest test/server",
+    "test:server": "python3 -m pytest test/server && node --test test/server/*.test.mjs",
     "test:packaging": "node --test test/packaging/*.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -37,6 +37,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
+    "@tauri-apps/plugin-notification": "2.4.0",
     "@tauri-apps/plugin-opener": "^2.2.6",
     "@xterm/addon-fit": "0.12.0-beta.301",
     "@xterm/xterm": "6.1.0-beta.304",

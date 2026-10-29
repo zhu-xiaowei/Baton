@@ -1,0 +1,3 @@
+[default]
+description = "APNs registration and notification navigation"
+permissions = ["allow-register", "allow-listen", "allow-take-pending"]

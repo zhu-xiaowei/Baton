@@ -20,6 +20,7 @@ from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
 from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
+from notification_store import enqueue_permission
 
 _ddb = None
 _connections_table = None
@@ -532,6 +533,12 @@ def _handle_message(event, connection_id, endpoint):
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action in ("permission_request", "permission_resolved"):
         if role == "bridge":
+            if action == "permission_request":
+                # Notification failures must not delay or break approvals.
+                try:
+                    enqueue_permission(body, account_id, conn.get("deviceName", ""))
+                except Exception:
+                    print("Failed to enqueue approval notification")
             return _handle_bridge_relay(
                 body,
                 account_id,

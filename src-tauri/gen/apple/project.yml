@@ -40,6 +40,7 @@ targets:
     info:
       path: baton_iOS/Info.plist
       properties:
+        BatonPushEnvironment: $(BATON_APNS_ENVIRONMENT)
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         # Dark app: force light (white) status bar text from the first launch frame, else iOS
@@ -65,11 +66,22 @@ targets:
           NSAllowsLocalNetworking: true
     entitlements:
       path: baton_iOS/baton_iOS.entitlements
+      properties:
+        aps-environment: $(BATON_APNS_ENVIRONMENT)
+    attributes:
+      SystemCapabilities:
+        com.apple.Push:
+          enabled: 1
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
         RUST_LOG: info
     settings:
+      configs:
+        debug:
+          BATON_APNS_ENVIRONMENT: development
+        release:
+          BATON_APNS_ENVIRONMENT: production
       base:
         ENABLE_BITCODE: false
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: false

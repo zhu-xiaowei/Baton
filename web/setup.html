@@ -123,6 +123,14 @@
   </div>
 </div>
 
+<div id="notificationSettings" class="section" hidden>
+  <h2>Notifications</h2>
+  <p><label><input id="notifyCompleted" type="checkbox"> Session finished</label></p>
+  <p><label><input id="notifyNeedsInput" type="checkbox"> Approval or input needed</label></p>
+  <p class="hint" id="notificationStatus" role="status"></p>
+  <button id="retryNotifications" class="platform-option" type="button">Check notification permission</button>
+</div>
+
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">
   <button onclick="logout()"
