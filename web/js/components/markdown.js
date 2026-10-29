@@ -145,6 +145,12 @@
 
   marked.use({
     tokenizer: {
+      // GFM autolinks run to the next space. Like VS Code, CJK punctuation also ends the link.
+      url: function (src) {
+        if (!/^(?:https?:\/\/|www\.)/i.test(src)) return false;
+        var stop = src.search(/[、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]/);
+        return stop < 0 ? false : Object.getPrototypeOf(this).url.call(this, src.slice(0, stop));
+      },
       emStrong: function (src) {
         var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=\p{Script=Han})/u.exec(src);
         if (!match) return false;
@@ -288,7 +294,7 @@
     }
     nodes.forEach(function (node) {
       var text = node.textContent;
-      var pattern = /(?:http:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?!\d)(?:[/?#][^\s<>"`\\]*)?/gi;
+      var pattern = /(?:http:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?!\d)(?:[/?#][^\s<>"`\\、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]*)?/gi;
       var fragment = document.createDocumentFragment();
       var offset = 0;
       var match;
