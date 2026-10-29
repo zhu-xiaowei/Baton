@@ -86,7 +86,8 @@ var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
 // Periodic ping on both channels: keeps API Gateway's 10-minute idle timer away and finds dead sockets.
 var WS_PING_INTERVAL_MS = 25000;
 var WS_PING_TIMEOUT_MS = 15000;
-// A seq gap that survives a ping round-trip on every channel is a lost frame, not reordering.
+// A seq gap that outlives a ping round-trip on every channel and this floor is treated as a lost frame;
+// the floor covers server-side reordering, a misjudgment costs one REST refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
 // A running turn silent this long is checked against REST in case its tail frames were lost.
@@ -528,7 +529,8 @@ function watchTurnGap(turnId) {
   if (_turnGapWatch?.turnId === turnId && _turnGapWatch.seq !== missing) clearTurnGapWatch();
   if (missing == null || _turnGapWatch) return;
   _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
-  // Both pongs are sent after the missing frame, so they arrive behind it unless it was lost.
+  // A pong proves its socket is alive and has delivered what was already posted to it, over the
+  // same client link; it does not bound when the server posts the missing frame.
   sendControlPing();
   _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
   _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);

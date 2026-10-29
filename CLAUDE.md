@@ -397,7 +397,8 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   `bridgeVersion`) and `ping` belongs to the preview keepalive. Against a stack without the route,
   the control socket keeps probing with `heartbeat` and the data socket never times out, so an
   older stack is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
-  once both pongs (sent after the missing frame) have arrived and ≥3s passed, the frame is lost and
+  once both pongs have arrived (each socket alive and drained over the client link) and ≥3s
+  passed, the frame is treated as lost and
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
   gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
   REST; `completed` settles it, covering a lost tail or `stream_end`.
