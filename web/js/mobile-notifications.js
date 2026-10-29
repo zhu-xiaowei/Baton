@@ -55,7 +55,7 @@ async function enableIos() {
   await window.apiPost('/api/notifications/devices', device);
   localStorage.setItem(PUSH_DEVICE, JSON.stringify(device));
   if (!enabled()) return unregisterMobileNotifications();  // Switched off mid-request.
-  setStatus('On, including while Baton is in the background.');
+  setStatus('');
 }
 
 async function enableAndroid() {
@@ -75,18 +75,17 @@ async function enableAndroid() {
         id: parseInt(event.eventId.slice(0, 7), 16),
         title: event.title, body: event.body, extra: event, channelId: 'session-updates',
       }),
-      onError: () => setStatus('Notifications will resume when the connection is restored.'),
     });
   }
   let granted = await android.isPermissionGranted();
   if (!granted) granted = await android.requestPermission() === 'granted';
   if (!granted) return setStatus('Allow notifications for Baton in system settings.');
   poller.start();
-  setStatus('On while Baton is open.');
+  setStatus('');
 }
 
 function apply() {
-  if (!enabled()) return setStatus('Off');
+  if (!enabled()) return setStatus('');
   return platform === 'ios' ? enableIos() : enableAndroid();
 }
 
@@ -123,7 +122,12 @@ async function initialize() {
   }
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
-  config = await window.api('/api/notifications/config');
+  // Servers deployed before notifications existed answer 404.
+  config = await window.api('/api/notifications/config').catch(error => {
+    if (String(error.message).startsWith('404')) return null;
+    throw error;
+  });
+  if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
   if (platform === 'android') {
     document.addEventListener('visibilitychange', () => {
@@ -153,12 +157,12 @@ export function mountNotificationSettings() {
     localStorage.setItem(ENABLED, input.checked ? '1' : '0');
     try {
       if (input.checked) await (config ? apply() : initMobileNotifications());
-      else await unregisterMobileNotifications().then(() => setStatus('Off'));
+      else await unregisterMobileNotifications().then(() => setStatus(''));
     } catch (error) {
       setStatus(error.message);
     }
   });
-  setStatus(status || (enabled() ? 'Checking notification permission…' : 'Off'));
+  setStatus(status);
 }
 
 window.unregisterMobileNotifications = unregisterMobileNotifications;
