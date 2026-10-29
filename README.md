@@ -1,5 +1,7 @@
 # <sub><picture><source media="(prefers-color-scheme: dark)" srcset="web/public/assets/baton-logo.svg"><img src="web/public/assets/baton-logo-dark.svg" width="36" height="36" alt=""></picture></sub>Baton
 
+**English** | [中文](README.zh-CN.md)
+
 Pick up your [Claude Code](https://github.com/anthropics/claude-code) and [Codex](https://openai.com/codex) tasks on your phone, right where you left off on your computer.
 
 <p align="center">
@@ -68,6 +70,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Create projects and sessions** — create a new project, start Claude Code, Codex, or Claude background-agent sessions remotely, and keep monitoring them after detaching
 - **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
 - **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
+- **Codex Goals** — set, pause, resume, or clear thread goals with `/goal`, and follow autonomous continuation turns in real time
 - **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
 - **Your own infrastructure** — one-command deploy to your AWS account; session data never leaves it
 
@@ -83,7 +86,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
-- **Lightweight Apps** — native Tauri Apps under 8 MB
+- **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
 - **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### Rich rendering
@@ -96,7 +99,11 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 ### More
 
 - **File, image, and voice input** — attach files, send compressed images, and dictate messages on iOS
+- **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
+- **Device management** — remove devices from Baton and stop their online Bridges while keeping local session files
+- **API key rotation** — rotate the API key with `--rotate-key` while preserving existing data
+- **macOS tabs** — work on multiple sessions in independent tabs
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
 
 ---
