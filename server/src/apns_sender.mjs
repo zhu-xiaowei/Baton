@@ -7,6 +7,12 @@ let cachedCredentials;
 let cachedJwt;
 let cachedJwtAt = 0;
 
+// Console pastes often turn the .p8 line breaks into spaces; rebuild the PEM.
+export function normalizePem(pem) {
+  const body = pem.replace(/-----[A-Z ]+-----|\s/g, '');
+  return `-----BEGIN PRIVATE KEY-----\n${body.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----\n`;
+}
+
 export function providerToken(credentials, now = Math.floor(Date.now() / 1000)) {
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const message = `${encode({ alg: 'ES256', kid: credentials.keyId })}.${encode({
@@ -31,6 +37,7 @@ async function credentials() {
     if (!cachedCredentials.keyId || !cachedCredentials.teamId || !cachedCredentials.privateKey) {
       throw new Error('APNs key parameter must contain keyId, teamId and privateKey.');
     }
+    cachedCredentials.privateKey = normalizePem(cachedCredentials.privateKey);
   }
   return cachedCredentials;
 }

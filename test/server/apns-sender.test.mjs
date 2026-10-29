@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { providerToken, sendNotification } from '../../server/src/apns_sender.mjs';
+import { normalizePem, providerToken, sendNotification } from '../../server/src/apns_sender.mjs';
 
 test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -62,4 +62,10 @@ test('oversize payloads and malformed destinations fail before opening a connect
   const options = { connectSession: () => assert.fail('must not open a connection') };
   assert.throws(() => sendNotification({ ...event, payload: { text: 'x'.repeat(4097) } }, 'jwt', options), /4096/);
   assert.throws(() => sendNotification({ ...event, token: 'invalid', payload: {} }, 'jwt', options), /destination/);
+});
+
+test('a PEM whose line breaks were pasted as spaces still signs', () => {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const pasted = privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, ' ');
+  assert.ok(providerToken({ keyId: 'K', teamId: 'T', privateKey: normalizePem(pasted) }, 1));
 });
