@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { showToast } from './components/toast.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed. Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -42,9 +43,16 @@ async function openNotification(event) {
   }
   pendingTarget = null;
   // The extension could not fetch it before display: the push carried only its ID.
-  if (!validTarget(event)) event = await window.api('/api/notifications/event', { id: event.id });
-  if (event.accountId !== config.accountId) {
-    window.showStats?.('This notification belongs to another account.');
+  if (!validTarget(event)) {
+    event = await window.api('/api/notifications/event', { id: event.id }).catch(error => {
+      if (String(error.message).startsWith('404')) return null;  // Events live 24 hours.
+      throw error;
+    });
+  }
+  if (!event) {
+    showToast('This notification has expired.');
+  } else if (event.accountId !== config.accountId) {
+    showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
     await window.openNotificationSession(event);
   } else {

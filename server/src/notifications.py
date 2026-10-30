@@ -48,7 +48,7 @@ def register_device(body: PushDevice, request: Request):
     if not _relay_configured():
         raise HTTPException(503, "iOS push is not configured on this server.")
     _table().put_item(Item={
-        **body.key(), "accountId": _account(request), "ttl": int(time.time()) + 90 * 86400,
+        **body.key(), "accountId": _account(request), "ttl": int(time.time()) + 30 * 86400,
     })
     return {"ok": True}
 
