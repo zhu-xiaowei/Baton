@@ -97,7 +97,8 @@ function sendOnce(session, headers, body) {
         resolve(result);
       }
     };
-    const timeout = setTimeout(() => finish(new Error('APNs request timed out.')), 10000);
+    // Two attempts (a stale connection, then a fresh one) fit the 12 s function timeout.
+    const timeout = setTimeout(() => finish(new Error('APNs request timed out.')), 5000);
     const request = session.request(headers);
     let status, responseBody = '';
     request.setEncoding('utf8');

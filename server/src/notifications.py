@@ -25,7 +25,7 @@ def _account(request):
     return api_key.account_id(request.headers.get("x-api-key", ""))
 
 
-def _apns_configured():
+def _relay_configured():
     return bool(os.environ.get("PUSH_RELAY_URL"))
 
 
@@ -40,12 +40,12 @@ class PushDevice(BaseModel):
 
 @router.get("/config")
 def config(request: Request):
-    return {"accountId": _account(request), "ios": _apns_configured()}
+    return {"accountId": _account(request), "ios": _relay_configured()}
 
 
 @router.post("/devices")
 def register_device(body: PushDevice, request: Request):
-    if not _apns_configured():
+    if not _relay_configured():
         raise HTTPException(503, "iOS push is not configured on this server.")
     _table().put_item(Item={
         **body.key(), "accountId": _account(request), "ttl": int(time.time()) + 90 * 86400,

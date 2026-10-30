@@ -131,7 +131,7 @@ Done:
 
 ### Mobile Notifications: COMPLETE
 - Finished runs and `needs_input` alert as **project · session** + summary; tapping opens the session.
-  One Settings switch (default on). Local `tauri-plugin-push`: iOS registers for direct APNs;
+  One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
 - Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
@@ -141,7 +141,7 @@ Done:
 - iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
   extension fetches the text from the user's own server (`/api/notifications/event`, credentials
   in the shared `$(AppIdentifierPrefix)com.batonai.shared` keychain group). They go through the shared, stateless APNs relay
-  (`relay/`, own AWS account, IAM-auth Function URL, holds the APNs key); stacks only know its
+  (`push-relay/`, own AWS account, IAM-auth Function URL, holds the APNs key); stacks only know its
   URL (`PushRelayUrl`, `PUSH_RELAY_URL` for install.sh). The release script keeps the extension's
   CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:
   `docs/mobile-notifications.md`.

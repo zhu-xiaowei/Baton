@@ -3,7 +3,7 @@
     "PushRelayUrl": {
       "Type": "String",
       "Default": "https://ufjcq2zgxykwk3thi3n7yf3hea0ifpzn.lambda-url.ap-northeast-1.on.aws/",
-      "Description": "Shared APNs relay (relay/) that sends iOS alerts; empty disables iOS push"
+      "Description": "Shared APNs relay (push-relay/) that sends iOS alerts; empty disables iOS push"
     },
     "FileUploadAcceleration": {
       "Type": "String",
@@ -880,7 +880,7 @@
         "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
         "Role": { "Fn::GetAtt": ["NotificationRole", "Arn"] },
         "MemorySize": 128,
-        "Timeout": 30,
+        "Timeout": 120,
         "LoggingConfig": {
           "LogFormat": "JSON",
           "LogGroup": { "Ref": "NotificationLogs" },
@@ -902,7 +902,7 @@
         "EventSourceArn": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] },
         "FunctionName": { "Ref": "NotificationWorker" },
         "StartingPosition": "LATEST",
-        "BatchSize": 20,
+        "BatchSize": 10,
         "MaximumRetryAttempts": 3,
         "MaximumRecordAgeInSeconds": 900,
         "FunctionResponseTypes": ["ReportBatchItemFailures"],

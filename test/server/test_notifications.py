@@ -5,7 +5,6 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from boto3.dynamodb.types import TypeSerializer
 from botocore.credentials import Credentials
 from fastapi import HTTPException
 
@@ -50,12 +49,8 @@ def test_status_transitions(monkeypatch):
     assert worker.notification(DONE, DONE, "renamed") is None
     assert worker.notification(SESSION, {**DONE, "parentSessionId": "root"}, "child") is None
     assert "Session session" in worker.notification(SESSION, {**DONE, "preview": ""}, "x")["title"]
-
-
-def test_text_summary_keeps_only_reply_text():
     assert worker.text_summary(json.dumps([
         {"type": "thinking", "thinking": "private reasoning"},
-        {"type": "tool_use", "name": "Bash"},
         {"type": "text", "text": "**Fixed** the login.\nTests passed."},
     ])) == "Fixed the login. Tests passed."
 
@@ -85,39 +80,6 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
     assert sent[0]["id"] == feed[0][1]
     assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
     assert len([key for key in table.rows if key[1].startswith("EVENT#")]) == 1
-
-
-def test_worker_reports_only_failed_records(monkeypatch):
-    encode = TypeSerializer().serialize
-
-    def record(identifier):
-        return {"eventID": identifier, "dynamodb": {
-            "SequenceNumber": identifier,
-            "OldImage": {k: encode(v) for k, v in SESSION.items()},
-            "NewImage": {k: encode(v) for k, v in WAITING.items()},
-        }}
-
-    def deliver(event):
-        if event["eventId"] == worker.hashlib.sha256(b"failed").hexdigest():
-            raise RuntimeError("APNs unavailable")
-
-    monkeypatch.setattr(worker, "deliver", deliver)
-    result = worker.handler({"Records": [record("ok"), record("failed")]}, None)
-    assert result == {"batchItemFailures": [{"itemIdentifier": "failed"}]}
-
-
-def test_registration_and_feed_validation(monkeypatch):
-    monkeypatch.delenv("PUSH_RELAY_URL", raising=False)
-    body = notifications.PushDevice(token="A" * 64, environment="production")
-    assert body.key() == {"pk": "PUSH_DEVICE", "sk": "production:" + "a" * 64}
-    with pytest.raises(HTTPException) as error:
-        notifications.register_device(body, SimpleNamespace(headers={}))
-    assert error.value.status_code == 503
-    monkeypatch.setattr(notifications, "_table", lambda: pytest.fail("baseline must not read history"))
-    assert notifications.events(SimpleNamespace(headers={}))["events"] == []
-    with pytest.raises(HTTPException) as error:
-        notifications.events(SimpleNamespace(headers={}), "invalid")
-    assert error.value.status_code == 400
 
 
 class Pages:

@@ -494,6 +494,7 @@ if [ "$ROTATE_KEY" = true ]; then
   for key in ContainerImageUri ImagesBucketName FileUploadAcceleration WsCodeS3Key AppVersion; do
     STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true")
   done
+  [ "$(stack_param PushRelayUrl)" = "None" ] || STACK_PARAMS+=("ParameterKey=PushRelayUrl,UsePreviousValue=true")
 else
   TEMPLATE_ARGS=(--template-body "file://$TEMPLATE")
   STACK_PARAMS=(
@@ -505,7 +506,7 @@ else
   )
 fi
 # Without PUSH_RELAY_URL the template default (the shared relay) applies, so it can move.
-if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL:-}" ]; then
+if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL+x}" ]; then
   STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
 fi
 STACK_PARAMS+=(

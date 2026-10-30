@@ -115,9 +115,9 @@ def notification(old, new, event_id):
         # A queued next approval changes the detail without leaving needs_input.
         if before == after and old.get("agentDetail", "") == new.get("agentDetail", ""):
             return None
-        kind, action, detail = "needs_input", "Needs input", text_summary(new.get("agentDetail", ""))
+        action, detail = "Needs input", text_summary(new.get("agentDetail", ""))
     elif after == "completed" and before == "running":
-        kind, action, detail = "completed", "Finished", completion_summary(new)
+        action, detail = "Finished", completion_summary(new)
         if detail is None:
             return None  # The user stopped it, so they already know.
     else:
@@ -130,7 +130,6 @@ def notification(old, new, event_id):
     title = title or f'Session {session_id.removeprefix("codex:")[:8]}'
     return {
         "eventId": hashlib.sha256(event_id.encode()).hexdigest(),
-        "kind": kind,
         "accountId": new["accountId"],
         "device": new["deviceName"],
         "projectHash": new["projectHash"],
@@ -202,7 +201,7 @@ def _post(url, body):
 
 
 def relay(request, attempts=4):
-    """POST one alert to the shared APNs relay (relay/); it returns APNs' status and reason."""
+    """POST one alert to the shared APNs relay (push-relay/); it returns APNs' status and reason."""
     url = os.environ["PUSH_RELAY_URL"]
     body = json.dumps(request).encode()
     for attempt in range(attempts):

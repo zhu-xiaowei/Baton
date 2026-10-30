@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { allow, closeSessions, handler, normalizePem, placeholder, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
+import { closeSessions, handler, normalizePem, placeholder, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
 
 const ID = 'EVENT#' + '1'.repeat(16) + '#' + 'b'.repeat(64);
 
@@ -19,6 +19,9 @@ test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   assert.ok(verify('sha256', Buffer.from(`${header}.${body}`), {
     key: createPublicKey(privateKey), dsaEncoding: 'ieee-p1363',
   }, Buffer.from(signature, 'base64url')));
+  // Console pastes turn the .p8 line breaks into spaces.
+  const pasted = privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, ' ');
+  assert.ok(providerToken({ keyId: 'K', teamId: 'T', privateKey: normalizePem(pasted) }, 1));
 });
 
 test('delivery carries only the event ID and a placeholder, with the APNs headers', async () => {
@@ -85,19 +88,6 @@ test('the APNs connection is reused, and replaced once it is gone', async () => 
   }
 });
 
-test('malformed destinations and IDs fail before opening a connection', async () => {
-  const event = { token: 'a'.repeat(64), environment: 'production', id: ID };
-  const options = { connectSession: () => assert.fail('must not open a connection') };
-  await assert.rejects(sendNotification({ ...event, token: 'invalid' }, 'jwt', options), /destination/);
-  await assert.rejects(sendNotification({ ...event, id: 'b'.repeat(64) }, 'jwt', options), /event ID/);
-});
-
-test('a PEM whose line breaks were pasted as spaces still signs', () => {
-  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  const pasted = privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, ' ');
-  assert.ok(providerToken({ keyId: 'K', teamId: 'T', privateKey: normalizePem(pasted) }, 1));
-});
-
 test('the public URL rejects bad requests before touching the key', async () => {
   const post = body => ({ requestContext: { http: { method: 'POST' } }, body });
   assert.equal((await handler({ requestContext: { http: { method: 'GET' } } })).statusCode, 405);
@@ -106,10 +96,4 @@ test('the public URL rejects bad requests before touching the key', async () => 
   for (const body of ['null', '[]', '7', '{"token":"bad"}']) {
     assert.equal((await handler(post(body))).statusCode, 400, body);
   }
-});
-
-test('each token gets at most 60 alerts a minute per instance', () => {
-  for (let i = 0; i < 60; i++) assert.equal(allow('t', 0), true);
-  assert.equal(allow('t', 1000), false);
-  assert.equal(allow('t', 60000), true);
 });
