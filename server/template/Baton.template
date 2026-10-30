@@ -864,6 +864,13 @@
         }]
       }
     },
+    "NotificationLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/aws/lambda/${AWS::StackName}-notifications" },
+        "RetentionInDays": 7
+      }
+    },
     "NotificationWorker": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
@@ -874,6 +881,12 @@
         "Role": { "Fn::GetAtt": ["NotificationRole", "Arn"] },
         "MemorySize": 128,
         "Timeout": 30,
+        "LoggingConfig": {
+          "LogFormat": "JSON",
+          "LogGroup": { "Ref": "NotificationLogs" },
+          "ApplicationLogLevel": "WARN",
+          "SystemLogLevel": "WARN"
+        },
         "Environment": { "Variables": {
           "SYSTEM_TABLE": { "Ref": "SystemTable" },
           "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },

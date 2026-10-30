@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { allow, handler, normalizePem, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
+import { allow, closeSessions, handler, normalizePem, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
 
 test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -53,15 +53,41 @@ test('direct HTTP/2 delivery selects sandbox and preserves the payload and APNs 
     assert.deepEqual(JSON.parse(content), payload);
     assert.deepEqual(result, { status: 410, reason: 'Unregistered' });
   } finally {
+    closeSessions();
     await new Promise(resolve => server.close(resolve));
   }
 });
 
-test('oversize payloads and malformed destinations fail before opening a connection', () => {
+test('the APNs connection is reused, and replaced once it is gone', async () => {
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const live = [];
+  server.on('session', session => live.push(session));
+  server.on('stream', stream => {
+    stream.on('data', () => {});
+    stream.on('end', () => { stream.respond({ ':status': 200 }); stream.end(); });
+  });
+  let connects = 0;
+  const options = { connectSession: () => { connects++; return connect(`http://127.0.0.1:${server.address().port}`); } };
+  const event = { token: 'a'.repeat(64), environment: 'production', eventId: 'b'.repeat(64), payload: {} };
+  try {
+    assert.equal((await sendNotification(event, 'jwt', options)).status, 200);
+    assert.equal((await sendNotification(event, 'jwt', options)).status, 200);
+    assert.equal(connects, 1);
+    live.forEach(session => session.destroy());  // Like a socket dropped while Lambda was frozen.
+    assert.equal((await sendNotification(event, 'jwt', options)).status, 200);
+    assert.equal(connects, 2);
+  } finally {
+    closeSessions();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('oversize payloads and malformed destinations fail before opening a connection', async () => {
   const event = { token: 'a'.repeat(64), environment: 'production', eventId: 'b'.repeat(64) };
   const options = { connectSession: () => assert.fail('must not open a connection') };
-  assert.throws(() => sendNotification({ ...event, payload: { text: 'x'.repeat(4097) } }, 'jwt', options), /4096/);
-  assert.throws(() => sendNotification({ ...event, token: 'invalid', payload: {} }, 'jwt', options), /destination/);
+  await assert.rejects(sendNotification({ ...event, payload: { text: 'x'.repeat(4097) } }, 'jwt', options), /4096/);
+  await assert.rejects(sendNotification({ ...event, token: 'invalid', payload: {} }, 'jwt', options), /destination/);
 });
 
 test('a PEM whose line breaks were pasted as spaces still signs', () => {

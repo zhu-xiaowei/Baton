@@ -4,15 +4,14 @@ Bridge writes every approval as `needs_input` + `agentDetail` on the session row
 status transitions alone cover finished runs, approvals and questions.
 """
 import hashlib
+import http.client
 import json
 import logging
 import os
 import random
 import re
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -25,6 +24,10 @@ from message_history import history_partition
 logger = logging.getLogger(__name__)
 _decoder = TypeDeserializer()
 _ddb = boto3.resource("dynamodb")
+# Reused while this instance is warm: a new client or TLS handshake costs tens to hundreds of ms.
+_session = boto3.Session()
+_ws_api = None
+_relay = None
 
 
 def status(item):
@@ -86,12 +89,13 @@ def being_viewed(event, timeout=2.0):
             if row.get("accountId") == event["accountId"]]
     if not rows:
         return False
-    api = boto3.client("apigatewaymanagementapi", endpoint_url=os.environ["WS_API_ENDPOINT"])
+    global _ws_api
+    _ws_api = _ws_api or boto3.client("apigatewaymanagementapi", endpoint_url=os.environ["WS_API_ENDPOINT"])
     probe = json.dumps({"action": "notify_check", "rootSessionId": event["rootSessionId"],
                         "eventId": event["eventId"]}).encode()
     for row in rows:
         try:
-            api.post_to_connection(ConnectionId=row["connectionId"], Data=probe)
+            _ws_api.post_to_connection(ConnectionId=row["connectionId"], Data=probe)
         except Exception:
             pass  # A gone connection is not viewing.
     deadline = time.time() + timeout
@@ -180,8 +184,26 @@ def _signed_headers(url, body):
     host = urllib.parse.urlparse(url).hostname.split(".")
     region = host[2] if len(host) > 2 and host[1] == "lambda-url" else os.environ["AWS_REGION"]
     request = AWSRequest("POST", url, data=body, headers={"content-type": "application/json"})
-    SigV4Auth(boto3.Session().get_credentials(), "lambda", region).add_auth(request)
+    SigV4Auth(_session.get_credentials(), "lambda", region).add_auth(request)
     return dict(request.headers)
+
+
+def _post(url, body):
+    """POST on the kept-alive relay connection; one fresh retry if it was dropped while frozen."""
+    global _relay
+    target = urllib.parse.urlparse(url)
+    for fresh in (False, True):
+        if _relay is None:
+            _relay = http.client.HTTPSConnection(target.hostname, timeout=15)
+        try:
+            _relay.request("POST", target.path or "/", body=body, headers=_signed_headers(url, body))
+            response = _relay.getresponse()
+            return response.status, response.read()
+        except (OSError, http.client.HTTPException):
+            _relay.close()
+            _relay = None
+            if fresh:
+                raise
 
 
 def relay(request, attempts=4):
@@ -194,15 +216,13 @@ def relay(request, attempts=4):
             # (0-2, 0-4, 0-8 s) spreads stacks retrying at the same moment.
             time.sleep(random.uniform(0, 2 ** attempt))
         try:
-            with urllib.request.urlopen(urllib.request.Request(
-                url, data=body, method="POST", headers=_signed_headers(url, body),
-            ), timeout=15) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            if error.code != 429 and error.code < 500:
-                raise RuntimeError(f"Push relay rejected the alert ({error.code})") from error
-        except urllib.error.URLError:
-            pass
+            status, data = _post(url, body)
+        except (OSError, http.client.HTTPException):
+            continue
+        if status == 200:
+            return json.loads(data)
+        if status != 429 and status < 500:
+            raise RuntimeError(f"Push relay rejected the alert ({status})")
     raise RuntimeError("Push relay unavailable")
 
 

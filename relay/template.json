@@ -58,7 +58,7 @@
         "Description": "Code is uploaded by relay/deploy.sh",
         "Runtime": "nodejs22.x",
         "Architectures": ["arm64"],
-        "MemorySize": 128,
+        "MemorySize": 512,
         "Timeout": 10,
         "Handler": "apns_relay.handler",
         "Code": { "ZipFile": "exports.handler = async () => ({ statusCode: 503 });" },

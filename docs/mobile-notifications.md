@@ -78,8 +78,13 @@ is unguessable, so a stack can only reach devices that registered with it.
   warm instance; the account's Lambda concurrency limit caps the total. Above
   it the URL answers 429 instead of queueing, so the worker retries 429 and 5xx
   three times with full jitter (0–2, 0–4, 0–8 s), then the stream retries the record.
-- arm64, 128 MB, 7-day error-only logs; an optional email at every 1 USD of
-  actual monthly cost, up to 5 USD.
+- arm64, 512 MB: memory only shortens the cold start (≈6 s at 128 MB, ≈2 s at
+  512 MB); warm calls wait on the network and take the same time at any size, so
+  drop to 128 MB once the free tier no longer covers it (about 900k alerts a month).
+- 7-day error-only logs; an optional email at every 1 USD of actual monthly cost,
+  up to 5 USD.
+- One kept-alive HTTP/2 connection per APNs origin; the worker also keeps its
+  relay connection alive and reuses its AWS clients.
 
 Stacks use the template's `PushRelayUrl` default. Set `PUSH_RELAY_URL` on every
 `install.sh` run to use another relay; an empty value disables iOS push (Android

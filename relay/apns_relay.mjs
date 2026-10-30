@@ -55,49 +55,51 @@ export function invalidRequest(request) {
   return '';
 }
 
-export function sendNotification(request, jwt, {
-  connectSession = connect,
-  now = Math.floor(Date.now() / 1000),
-  topic = process.env.APNS_TOPIC || 'com.batonai.app',
-} = {}) {
-  const invalid = invalidRequest(request);
-  if (invalid) throw new Error(invalid);
-  const { token, environment, eventId, payload } = request;
-  const body = JSON.stringify(payload);
-  const origin = environment === 'development'
-    ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+// One HTTP/2 connection per APNs origin, kept across warm invocations (Apple asks
+// providers to reuse connections): later alerts skip the TLS handshake.
+const sessions = new Map();
+
+function apnsSession(origin, connectSession) {
+  let session = sessions.get(origin);
+  if (!session || session.closed || session.destroyed) {
+    session = connectSession(origin);
+    const forget = () => { if (sessions.get(origin) === session) sessions.delete(origin); };
+    session.on('error', forget);
+    session.on('goaway', forget);
+    session.on('close', forget);
+    sessions.set(origin, session);
+  }
+  return session;
+}
+
+export function closeSessions() {
+  for (const session of sessions.values()) session.destroy();
+  sessions.clear();
+}
+
+function sendOnce(session, headers, body) {
   return new Promise((resolve, reject) => {
-    const session = connectSession(origin);
-    let request;
     let settled = false;
     const finish = (error, result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      request?.close(constants.NGHTTP2_CANCEL);
-      session.destroy();
-      if (error) reject(error);
-      else resolve(result);
+      if (error) {
+        request.close(constants.NGHTTP2_CANCEL);
+        session.destroy();
+        reject(error);
+      } else {
+        resolve(result);
+      }
     };
     const timeout = setTimeout(() => finish(new Error('APNs request timed out.')), 10000);
-    session.once('error', error => finish(error));
-    session.once('goaway', () => finish(new Error('APNs closed the HTTP/2 connection.')));
-    request = session.request({
-      ':method': 'POST',
-      ':path': `/3/device/${token}`,
-      authorization: `bearer ${jwt}`,
-      'apns-topic': topic,
-      'apns-push-type': 'alert',
-      'apns-priority': '10',
-      'apns-expiration': String(now + 300),
-      'apns-collapse-id': eventId,
-      'content-type': 'application/json',
-    });
+    const request = session.request(headers);
     let status, responseBody = '';
     request.setEncoding('utf8');
-    request.on('response', headers => { status = Number(headers[':status']); });
+    request.on('response', response => { status = Number(response[':status']); });
     request.on('data', chunk => { responseBody += chunk; });
     request.once('error', error => finish(error));
+    request.once('close', () => { if (status === undefined) finish(new Error('APNs closed the stream.')); });
     request.once('end', () => {
       let response = {};
       try { response = JSON.parse(responseBody || '{}'); } catch {}
@@ -105,6 +107,37 @@ export function sendNotification(request, jwt, {
     });
     request.end(body);
   });
+}
+
+export async function sendNotification(request, jwt, {
+  connectSession = connect,
+  now = Math.floor(Date.now() / 1000),
+  topic = process.env.APNS_TOPIC || 'com.batonai.app',
+} = {}) {
+  const invalid = invalidRequest(request);
+  if (invalid) throw new Error(invalid);
+  const { token, environment, eventId, payload } = request;
+  const origin = environment === 'development'
+    ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+  const headers = {
+    ':method': 'POST',
+    ':path': `/3/device/${token}`,
+    authorization: `bearer ${jwt}`,
+    'apns-topic': topic,
+    'apns-push-type': 'alert',
+    'apns-priority': '10',
+    'apns-expiration': String(now + 300),
+    'apns-collapse-id': eventId,
+    'content-type': 'application/json',
+  };
+  const body = JSON.stringify(payload);
+  try {
+    return await sendOnce(apnsSession(origin, connectSession), headers, body);
+  } catch {
+    // A connection left idle while Lambda was frozen may be gone: reconnect once.
+    // A duplicate is harmless, apns-collapse-id replaces the earlier alert.
+    return sendOnce(apnsSession(origin, connectSession), headers, body);
+  }
 }
 
 const recent = new Map();

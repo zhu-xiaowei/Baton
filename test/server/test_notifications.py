@@ -164,6 +164,7 @@ def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
     posted = []
     api = SimpleNamespace(post_to_connection=lambda **kwargs: posted.append(kwargs["ConnectionId"]))
     monkeypatch.setattr(worker.boto3, "client", lambda *args, **kwargs: api)
+    monkeypatch.setattr(worker, "_ws_api", None)
     monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([row], [{**row, "seenEvent": "e" * 64}]))
     assert worker.being_viewed(event) is True
     assert posted == ["phone"]
@@ -174,27 +175,44 @@ def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
     assert worker.being_viewed(event) is False and posted == []
 
 
-def test_relay_signs_requests_and_retries_throttling_with_jitter(monkeypatch):
+def test_relay_signs_reuses_its_connection_and_retries_throttling_with_jitter(monkeypatch):
     monkeypatch.setenv("PUSH_RELAY_URL", "https://abc.lambda-url.us-west-2.on.aws/")
-    waits, answers, seen = [], [], []
+    waits, answers, sent, opened = [], [], [], []
     monkeypatch.setattr(worker.random, "uniform", lambda low, high: waits.append(high) or 0)
     monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(worker.boto3, "Session", lambda: SimpleNamespace(
+    monkeypatch.setattr(worker, "_session", SimpleNamespace(
         get_credentials=lambda: Credentials("AKIDEXAMPLE", "secret", "token")))
 
-    def urlopen(request, timeout):
-        seen.append(request.headers)
-        answer = answers.pop(0)
-        if isinstance(answer, int):
-            raise worker.urllib.error.HTTPError(request.full_url, answer, "", {}, None)
-        return io.BytesIO(json.dumps(answer).encode())
+    class Connection:
+        def __init__(self, host, timeout):
+            opened.append(host)
 
-    monkeypatch.setattr(worker.urllib.request, "urlopen", urlopen)
-    answers[:] = [429, 503, 502, {"status": 200}]
+        def request(self, method, path, body, headers):
+            sent.append(headers)
+            self.answer = answers.pop(0)
+            if self.answer == "dropped":
+                raise ConnectionResetError()
+
+        def getresponse(self):
+            status, body = self.answer if isinstance(self.answer, tuple) else (self.answer, b"")
+            return SimpleNamespace(status=status, read=lambda: body)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(worker.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(worker, "_relay", None)
+    ok = (200, b'{"status": 200}')
+    answers[:] = [429, 503, 502, ok, ok]
+    assert worker.relay({"token": "a"}) == {"status": 200}
     assert worker.relay({"token": "a"}) == {"status": 200}
     assert waits == [2, 4, 8]
-    assert "us-west-2/lambda/aws4_request" in seen[0]["Authorization"]
-    assert seen[0]["X-amz-security-token"] == "token"
+    assert opened == ["abc.lambda-url.us-west-2.on.aws"]  # One connection for all five requests.
+    assert "us-west-2/lambda/aws4_request" in sent[0]["Authorization"]
+    assert sent[0]["X-Amz-Security-Token"] == "token"
+    answers[:] = ["dropped", ok]  # Dropped while frozen: reconnect at once, no backoff.
+    assert worker.relay({"token": "a"}) == {"status": 200}
+    assert len(opened) == 2 and waits == [2, 4, 8]
     answers[:] = [400]
     with pytest.raises(RuntimeError, match="rejected"):
         worker.relay({"token": "a"})
