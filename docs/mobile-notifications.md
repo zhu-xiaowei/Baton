@@ -16,9 +16,7 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
 1. **Trigger.** Bridge writes every approval as `needs_input` + `agentDetail`, so
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
-   `needs_input`, and on a new `agentDetail` while waiting. Bridge keeps a Claude
-   session `running` while background work it started is still out, so progress
-   turns in between do not alert; only the last one does.
+   `needs_input`, and on a new `agentDetail` while waiting.
 2. **Skip what the user already knows.** Interrupted turns. Sessions someone is
    looking at on any device: the worker sends `notify_check` to apps subscribed to
    the session (`ROOT#<root>`), and a visible, focused one showing it answers

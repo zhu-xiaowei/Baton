@@ -13,7 +13,6 @@ import {
   normalizeProjectHash,
   requireClaudeBin,
   resolveClaudeBin,
-  withBackgroundWork,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
@@ -342,7 +341,6 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
       });
     }
     if (!filePath || !_config) return;
-    if (identity.runtime === 'claude') status = withBackgroundWork(status, identity.nativeSessionId, filePath);
     const projectHash = path.basename(path.dirname(filePath));
     const normalizedProjectHash = normalizeProjectHash(projectHash);
     const isNew = !!options.registerNew && !recentSessions.has(key);
