@@ -12,13 +12,13 @@ private struct RegisterArgs: Decodable {
 }
 
 // The notification extension resolves each ID-only push against the user's own server.
-// It reads these through the shared app group, also while the device is locked.
+// It reads these through a shared keychain group (Info.plist), also while locked.
 enum SharedServer {
   private static let item: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
     kSecAttrService as String: "com.batonai.push",
     kSecAttrAccount as String: "server",
-    kSecAttrAccessGroup as String: "group.com.batonai.app",
+    kSecAttrAccessGroup as String: Bundle.main.object(forInfoDictionaryKey: "BatonKeychainGroup") as? String ?? "",
   ]
 
   static func save(server: String, apiKey: String) {

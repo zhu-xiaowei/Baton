@@ -11,7 +11,8 @@ Both platforms deliver while Baton is in the background, through the local
   carries only an event ID and a placeholder ("Baton · Session update"): the
   `NotificationService` extension fetches the real text from the user's own
   server (`GET /api/notifications/event?id=`) before it is shown, using the server
-  URL and API key the app shares through the `group.com.batonai.app` keychain.
+  URL and API key the app shares through the `com.batonai.shared` keychain group
+  (no App Group or developer-portal setup; readable while the device is locked).
   Neither the relay nor Apple sees project, session or reply text. If the fetch
   fails in time the placeholder is shown, and a tap still opens the session.
 - **Android** runs a foreground service with a minimal ongoing notification,

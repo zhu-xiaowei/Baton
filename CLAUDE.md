@@ -140,7 +140,7 @@ Done:
   focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
 - iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
   extension fetches the text from the user's own server (`/api/notifications/event`, credentials
-  in the `group.com.batonai.app` keychain). They go through the shared, stateless APNs relay
+  in the shared `$(AppIdentifierPrefix)com.batonai.shared` keychain group). They go through the shared, stateless APNs relay
   (`relay/`, own AWS account, IAM-auth Function URL, holds the APNs key); stacks only know its
   URL (`PushRelayUrl`, `PUSH_RELAY_URL` for install.sh). The release script keeps the extension's
   CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:

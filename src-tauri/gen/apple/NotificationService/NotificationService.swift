@@ -3,7 +3,7 @@ import Security
 import UserNotifications
 
 // A push carries only an event ID: the relay and Apple never see the text. Resolve it
-// against the user's own server (credentials shared by the app through the app group);
+// against the user's own server (credentials shared by the app through a keychain group);
 // if that fails in time, the placeholder from the push is shown and the tap still works.
 final class NotificationService: UNNotificationServiceExtension {
   private var deliver: ((UNNotificationContent) -> Void)?
@@ -56,7 +56,7 @@ final class NotificationService: UNNotificationServiceExtension {
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "com.batonai.push",
       kSecAttrAccount as String: "server",
-      kSecAttrAccessGroup as String: "group.com.batonai.app",
+      kSecAttrAccessGroup as String: Bundle.main.object(forInfoDictionaryKey: "BatonKeychainGroup") as? String ?? "",
       kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitOne,
     ]

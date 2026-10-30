@@ -40,6 +40,7 @@ targets:
     info:
       path: baton_iOS/Info.plist
       properties:
+        BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
         BatonPushEnvironment: $(BATON_APNS_ENVIRONMENT)
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
@@ -68,11 +69,9 @@ targets:
       path: baton_iOS/baton_iOS.entitlements
       properties:
         aps-environment: $(BATON_APNS_ENVIRONMENT)
-        com.apple.security.application-groups: [group.com.batonai.app]
+        keychain-access-groups: [$(AppIdentifierPrefix)com.batonai.shared]
     attributes:
       SystemCapabilities:
-        com.apple.ApplicationGroups.iOS:
-          enabled: 1
         com.apple.Push:
           enabled: 1
     scheme:
@@ -123,6 +122,7 @@ targets:
     info:
       path: NotificationService/Info.plist
       properties:
+        BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
         CFBundleDisplayName: Baton
         CFBundleShortVersionString: 1.0.0
         CFBundleVersion: "58"
@@ -132,11 +132,7 @@ targets:
     entitlements:
       path: NotificationService/NotificationService.entitlements
       properties:
-        com.apple.security.application-groups: [group.com.batonai.app]
-    attributes:
-      SystemCapabilities:
-        com.apple.ApplicationGroups.iOS:
-          enabled: 1
+        keychain-access-groups: [$(AppIdentifierPrefix)com.batonai.shared]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.batonai.app.NotificationService

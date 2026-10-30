@@ -256,13 +256,7 @@
 				TargetAttributes = {
 					A2503540127E866A260709EA = {
 						SystemCapabilities = {
-							com.apple.ApplicationGroups.iOS = { enabled = 1; };
 							com.apple.Push = { enabled = 1; };
-						};
-					};
-					AD9602CE9698736732E0AE58 = {
-						SystemCapabilities = {
-							com.apple.ApplicationGroups.iOS = { enabled = 1; };
 						};
 					};
 				};
