@@ -1,7 +1,8 @@
 // Stateless APNs relay shared by every Baton deployment, behind a Lambda Function URL.
-// Only it holds the app's signing key (a free SSM SecureString); it stores nothing and
-// logs no payloads. Device tokens are unguessable, so a caller can only reach devices
-// that registered with its own server.
+// Only it holds the app's signing key (a free SSM SecureString). It never sees alert
+// content: each push carries just an event ID, and the app's notification extension
+// fetches the text from the user's own server. Device tokens are unguessable, so a
+// caller can only reach devices that registered with its own server.
 import { connect, constants } from 'node:http2';
 import { createPrivateKey, sign } from 'node:crypto';
 
@@ -46,13 +47,17 @@ async function credentials() {
 
 export function invalidRequest(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) return 'Expected a JSON object.';
-  const { token, environment, eventId, payload } = request;
+  const { token, environment, id } = request;
   if (!/^[a-f0-9]{64,200}$/i.test(token || '') || !['development', 'production'].includes(environment)) {
     return 'Invalid APNs device destination.';
   }
-  if (!/^[a-f0-9]{64}$/.test(eventId || '')) return 'Invalid notification event ID.';
-  if (Buffer.byteLength(JSON.stringify(payload) || '') > 4096) return 'APNs payload exceeds 4096 bytes.';
+  if (!/^EVENT#\d{16}#[a-f0-9]{64}$/.test(id || '')) return 'Invalid notification event ID.';
   return '';
+}
+
+// Shown as is only if the extension cannot reach the user's server in time.
+export function placeholder(id) {
+  return { aps: { alert: { title: 'Baton', body: 'Session update' }, sound: 'default', 'mutable-content': 1 }, id };
 }
 
 // One HTTP/2 connection per APNs origin, kept across warm invocations (Apple asks
@@ -116,7 +121,7 @@ export async function sendNotification(request, jwt, {
 } = {}) {
   const invalid = invalidRequest(request);
   if (invalid) throw new Error(invalid);
-  const { token, environment, eventId, payload } = request;
+  const { token, environment, id } = request;
   const origin = environment === 'development'
     ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
   const headers = {
@@ -127,10 +132,10 @@ export async function sendNotification(request, jwt, {
     'apns-push-type': 'alert',
     'apns-priority': '10',
     'apns-expiration': String(now + 300),
-    'apns-collapse-id': eventId,
+    'apns-collapse-id': id.slice(-64),
     'content-type': 'application/json',
   };
-  const body = JSON.stringify(payload);
+  const body = JSON.stringify(placeholder(id));
   try {
     return await sendOnce(apnsSession(origin, connectSession), headers, body);
   } catch {
@@ -162,7 +167,7 @@ const reply = (statusCode, body) => ({
 export async function handler(event) {
   if (event.requestContext?.http?.method !== 'POST') return reply(405, { error: 'POST only' });
   const raw = event.isBase64Encoded ? Buffer.from(event.body || '', 'base64').toString() : event.body || '';
-  if (Buffer.byteLength(raw) > 6144) return reply(413, { error: 'Request too large' });
+  if (Buffer.byteLength(raw) > 1024) return reply(413, { error: 'Request too large' });
   let request;
   try {
     request = JSON.parse(raw);

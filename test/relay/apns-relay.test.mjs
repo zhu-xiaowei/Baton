@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { allow, closeSessions, handler, normalizePem, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
+import { allow, closeSessions, handler, normalizePem, placeholder, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
+
+const ID = 'EVENT#' + '1'.repeat(16) + '#' + 'b'.repeat(64);
 
 test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -19,10 +21,9 @@ test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   }, Buffer.from(signature, 'base64url')));
 });
 
-test('direct HTTP/2 delivery selects sandbox and preserves the payload and APNs headers', async () => {
+test('delivery carries only the event ID and a placeholder, with the APNs headers', async () => {
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const payload = { aps: { alert: { title: 'Project · Session', body: 'Approval needed: npm test' } } };
   let headers, content = '', destination;
   server.on('stream', (stream, incoming) => {
     headers = incoming;
@@ -35,7 +36,7 @@ test('direct HTTP/2 delivery selects sandbox and preserves the payload and APNs 
   });
   try {
     const result = await sendNotification({
-      token: 'a'.repeat(64), environment: 'development', eventId: 'b'.repeat(64), payload,
+      token: 'a'.repeat(64), environment: 'development', id: ID,
     }, 'signed-provider-token', {
       now: 100,
       connectSession: origin => {
@@ -50,7 +51,8 @@ test('direct HTTP/2 delivery selects sandbox and preserves the payload and APNs 
     assert.equal(headers['apns-push-type'], 'alert');
     assert.equal(headers['apns-expiration'], '400');
     assert.equal(headers['apns-collapse-id'], 'b'.repeat(64));
-    assert.deepEqual(JSON.parse(content), payload);
+    assert.deepEqual(JSON.parse(content), placeholder(ID));
+    assert.equal(JSON.parse(content).aps['mutable-content'], 1);
     assert.deepEqual(result, { status: 410, reason: 'Unregistered' });
   } finally {
     closeSessions();
@@ -69,7 +71,7 @@ test('the APNs connection is reused, and replaced once it is gone', async () => 
   });
   let connects = 0;
   const options = { connectSession: () => { connects++; return connect(`http://127.0.0.1:${server.address().port}`); } };
-  const event = { token: 'a'.repeat(64), environment: 'production', eventId: 'b'.repeat(64), payload: {} };
+  const event = { token: 'a'.repeat(64), environment: 'production', id: ID };
   try {
     assert.equal((await sendNotification(event, 'jwt', options)).status, 200);
     assert.equal((await sendNotification(event, 'jwt', options)).status, 200);
@@ -83,11 +85,11 @@ test('the APNs connection is reused, and replaced once it is gone', async () => 
   }
 });
 
-test('oversize payloads and malformed destinations fail before opening a connection', async () => {
-  const event = { token: 'a'.repeat(64), environment: 'production', eventId: 'b'.repeat(64) };
+test('malformed destinations and IDs fail before opening a connection', async () => {
+  const event = { token: 'a'.repeat(64), environment: 'production', id: ID };
   const options = { connectSession: () => assert.fail('must not open a connection') };
-  await assert.rejects(sendNotification({ ...event, payload: { text: 'x'.repeat(4097) } }, 'jwt', options), /4096/);
-  await assert.rejects(sendNotification({ ...event, token: 'invalid', payload: {} }, 'jwt', options), /destination/);
+  await assert.rejects(sendNotification({ ...event, token: 'invalid' }, 'jwt', options), /destination/);
+  await assert.rejects(sendNotification({ ...event, id: 'b'.repeat(64) }, 'jwt', options), /event ID/);
 });
 
 test('a PEM whose line breaks were pasted as spaces still signs', () => {
@@ -99,7 +101,7 @@ test('a PEM whose line breaks were pasted as spaces still signs', () => {
 test('the public URL rejects bad requests before touching the key', async () => {
   const post = body => ({ requestContext: { http: { method: 'POST' } }, body });
   assert.equal((await handler({ requestContext: { http: { method: 'GET' } } })).statusCode, 405);
-  assert.equal((await handler(post('x'.repeat(7000)))).statusCode, 413);
+  assert.equal((await handler(post('x'.repeat(2000)))).statusCode, 413);
   assert.equal((await handler(post('{'))).statusCode, 400);
   for (const body of ['null', '[]', '7', '{"token":"bad"}']) {
     assert.equal((await handler(post(body))).statusCode, 400, body);

@@ -79,8 +79,10 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
     monkeypatch.setattr(worker, "being_viewed", lambda event: False)
     worker.deliver(worker.notification(SESSION, DONE, "finished"))
     assert sorted(request["environment"] for request in sent) == ["development", "production"]
-    assert sent[0]["payload"]["aps"]["alert"]["title"] == "Baton · Fix login"
-    assert sent[0]["payload"]["sessionId"] == "codex:session"
+    # The push carries only the feed row's key; no title, summary or session leaves the stack.
+    assert set(sent[0]) == {"token", "environment", "id"}
+    feed = [key for key in table.rows if key[1].startswith("EVENT#")]
+    assert sent[0]["id"] == feed[0][1]
     assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
     assert len([key for key in table.rows if key[1].startswith("EVENT#")]) == 1
 
@@ -216,3 +218,19 @@ def test_relay_signs_reuses_its_connection_and_retries_throttling_with_jitter(mo
     answers[:] = [400]
     with pytest.raises(RuntimeError, match="rejected"):
         worker.relay({"token": "a"})
+
+
+def test_the_extension_resolves_only_its_own_live_events(monkeypatch):
+    event_id = "EVENT#" + "1" * 16 + "#" + "e" * 64
+    rows = {("NOTIFICATIONS#account", event_id): {"event": {"title": "Baton · Fix login"}, "ttl": time.time() + 99}}
+    store = SimpleNamespace(get_item=lambda Key: {"Item": rows.get((Key["pk"], Key["sk"]))} if (Key["pk"], Key["sk"]) in rows else {})
+    monkeypatch.setattr(notifications, "_table", lambda: store)
+    monkeypatch.setattr(notifications, "_account", lambda request: "account")
+    assert notifications.event(event_id, None) == {"title": "Baton · Fix login"}
+    monkeypatch.setattr(notifications, "_account", lambda request: "other")
+    with pytest.raises(HTTPException) as error:
+        notifications.event(event_id, None)
+    assert error.value.status_code == 404
+    with pytest.raises(HTTPException) as error:
+        notifications.event("e" * 64, None)
+    assert error.value.status_code == 400

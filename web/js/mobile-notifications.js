@@ -35,12 +35,14 @@ function validTarget(event) {
 }
 
 async function openNotification(event) {
-  if (!validTarget(event)) return;
+  if (!validTarget(event) && !event?.id) return;
   if (!config) {
     pendingTarget = event;
     return;
   }
   pendingTarget = null;
+  // The extension could not fetch it before display: the push carried only its ID.
+  if (!validTarget(event)) event = await window.api('/api/notifications/event', { id: event.id });
   if (event.accountId !== config.accountId) {
     window.showStats?.('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
@@ -53,7 +55,8 @@ async function openNotification(event) {
 
 async function enableIos() {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
-  const result = await invoke('plugin:push|register');
+  // The notification extension reads these to fetch each alert's text.
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY });
   if (!result.granted) return setStatus('Allow notifications for Baton in iOS Settings.');
   if (!enabled() || !state.KEY) return;
   const device = { token: result.token, environment: result.environment };
@@ -74,7 +77,9 @@ function apply() {
 }
 
 export async function unregisterMobileNotifications() {
-  if (mobilePlatform() === 'android') return invoke('plugin:push|stop');
+  if (!mobilePlatform()) return;
+  await invoke('plugin:push|stop');
+  if (mobilePlatform() === 'android') return;
   const device = localStorage.getItem(PUSH_DEVICE);
   if (!device || !state.KEY) return;
   // A raw request: an expired key must not recursively trigger logout.

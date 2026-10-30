@@ -1,4 +1,4 @@
-"""BridgeSessions stream -> the Android feed and, through the push relay, APNs.
+"""BridgeSessions stream -> the event feed, and an ID-only iOS push through the relay.
 
 Bridge writes every approval as `needs_input` + `agentDetail` on the session row, so
 status transitions alone cover finished runs, approvals and questions.
@@ -148,9 +148,11 @@ def deliver(event):
         return
     table = _ddb.Table(os.environ["SYSTEM_TABLE"])
     now = time.time()
+    # The row's key is also the iOS push ID: the push carries nothing else, and the
+    # app's notification extension reads the text here, from the user's own server.
+    event_id = f'EVENT#{int(now * 1000):016d}#{event["eventId"]}'
     table.put_item(Item={
-        "pk": f'NOTIFICATIONS#{event["accountId"]}',
-        "sk": f'EVENT#{int(now * 1000):016d}#{event["eventId"]}',
+        "pk": f'NOTIFICATIONS#{event["accountId"]}', "sk": event_id,
         "event": event, "ttl": int(now) + 86400,
     })
     if not os.environ.get("PUSH_RELAY_URL"):
@@ -158,19 +160,12 @@ def deliver(event):
     devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
     for device in devices.get("Items", []):
         if device.get("accountId") == event["accountId"] and int(device.get("ttl", 0)) > now:
-            send_apns(table, event, device)
+            send_apns(table, event_id, device)
 
 
-def send_apns(table, event, device):
+def send_apns(table, event_id, device):
     environment, token = device["sk"].split(":", 1)
-    payload = {key: str(value) for key, value in event.items() if key not in ("title", "body")}
-    payload["aps"] = {
-        "alert": {"title": event["title"], "body": event["body"]},
-        "sound": "default",
-        "thread-id": event["rootSessionId"],
-    }
-    result = relay({"token": token, "environment": environment,
-                    "eventId": event["eventId"], "payload": payload})
+    result = relay({"token": token, "environment": environment, "id": event_id})
     if result.get("status") == 200:
         return
     if result.get("reason") in ("BadDeviceToken", "Unregistered"):

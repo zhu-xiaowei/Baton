@@ -1,6 +1,7 @@
-"""Mobile notification registration and the Android event feed.
+"""Mobile notification registration and the event feed.
 
-APNs delivery runs in notification_worker. Alerts carry no transcript or credential.
+Android polls the feed; an iOS push carries only an event ID, which the notification
+extension resolves here. Alerts carry no transcript or credential.
 """
 import os
 import re
@@ -64,6 +65,17 @@ def remove_device(body: PushDevice, request: Request):
         if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
             raise
     return {"ok": True}
+
+
+@router.get("/event")
+def event(id: str, request: Request):
+    """One alert's text for the iOS notification extension; the push carried only this ID."""
+    if not re.fullmatch(r"EVENT#\d{16}#[a-f0-9]{64}", id):
+        raise HTTPException(400, "Invalid notification ID.")
+    row = _table().get_item(Key={"pk": f"NOTIFICATIONS#{_account(request)}", "sk": id}).get("Item")
+    if not row or int(row["ttl"]) <= time.time():
+        raise HTTPException(404, "Notification expired.")
+    return row["event"]
 
 
 @router.get("/events")

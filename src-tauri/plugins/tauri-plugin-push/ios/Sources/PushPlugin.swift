@@ -1,9 +1,38 @@
 import Foundation
 import ObjectiveC.runtime
+import Security
 import Tauri
 import UIKit
 import UserNotifications
 import WebKit
+
+private struct RegisterArgs: Decodable {
+  let server: String
+  let apiKey: String
+}
+
+// The notification extension resolves each ID-only push against the user's own server.
+// It reads these through the shared app group, also while the device is locked.
+enum SharedServer {
+  private static let item: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrService as String: "com.batonai.push",
+    kSecAttrAccount as String: "server",
+    kSecAttrAccessGroup as String: "group.com.batonai.app",
+  ]
+
+  static func save(server: String, apiKey: String) {
+    clear()
+    var add = item
+    add[kSecValueData as String] = try? JSONSerialization.data(withJSONObject: ["server": server, "apiKey": apiKey])
+    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+    SecItemAdd(add as CFDictionary, nil)
+  }
+
+  static func clear() {
+    SecItemDelete(item as CFDictionary)
+  }
+}
 
 private struct ListenArgs: Decodable {
   let onClick: Channel
@@ -144,8 +173,15 @@ class PushPlugin: Plugin {
     PushCoordinator.shared.install()
   }
 
-  @objc public func register(_ invoke: Invoke) {
+  @objc public func register(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(RegisterArgs.self)
+    SharedServer.save(server: args.server, apiKey: args.apiKey)
     PushCoordinator.shared.register(invoke)
+  }
+
+  @objc public func stop(_ invoke: Invoke) {
+    SharedServer.clear()
+    invoke.resolve()
   }
 
   @objc public func listen(_ invoke: Invoke) throws {
