@@ -40,6 +40,8 @@ targets:
     info:
       path: baton_iOS/Info.plist
       properties:
+        BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
+        BatonPushEnvironment: $(BATON_APNS_ENVIRONMENT)
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         # Dark app: force light (white) status bar text from the first launch frame, else iOS
@@ -57,7 +59,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 1.0.0
-        CFBundleVersion: "55"
+        CFBundleVersion: "59"
         NSMicrophoneUsageDescription: Baton uses the microphone for voice input.
         NSSpeechRecognitionUsageDescription: Baton uses speech recognition to convert your voice to text.
         NSPhotoLibraryAddUsageDescription: Baton can save downloaded images or videos when you choose Save in the share sheet.
@@ -65,11 +67,23 @@ targets:
           NSAllowsLocalNetworking: true
     entitlements:
       path: baton_iOS/baton_iOS.entitlements
+      properties:
+        aps-environment: $(BATON_APNS_ENVIRONMENT)
+        keychain-access-groups: [$(AppIdentifierPrefix)com.batonai.shared]
+    attributes:
+      SystemCapabilities:
+        com.apple.Push:
+          enabled: 1
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
         RUST_LOG: info
     settings:
+      configs:
+        debug:
+          BATON_APNS_ENVIRONMENT: development
+        release:
+          BATON_APNS_ENVIRONMENT: production
       base:
         ENABLE_BITCODE: false
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: false
@@ -91,6 +105,7 @@ targets:
       - sdk: Security.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
+      - target: NotificationService
     preBuildScripts:
       - script: npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
@@ -98,3 +113,27 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  # Resolves each ID-only push against the user's own server before it is shown.
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
+        CFBundleDisplayName: Baton
+        CFBundleShortVersionString: 1.0.0
+        CFBundleVersion: "59"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    entitlements:
+      path: NotificationService/NotificationService.entitlements
+      properties:
+        keychain-access-groups: [$(AppIdentifierPrefix)com.batonai.shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.batonai.app.NotificationService
+        DEVELOPMENT_TEAM: BUA6W9H7T3

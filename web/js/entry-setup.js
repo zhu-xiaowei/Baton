@@ -7,6 +7,7 @@ import '../css/back-button.css';
 import qrcode from 'qrcode-generator';
 import { initSystemBack } from './system-back.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 
 initMacosTabs();
 setNativeTabTitle('Settings');
@@ -19,6 +20,8 @@ setNativeTabTitle('Settings');
     history.replaceState(null, '', location.pathname);
   }
   if (!state.KEY) { location.replace('landing.html'); return; }
+  mountNotificationSettings();
+  void initMobileNotifications();
 
   function leaveSetup() {
     if (!(window.isTauri || window.__TAURI_INTERNALS__)) {

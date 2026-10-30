@@ -20,7 +20,7 @@ function dryRun(t, { configured = 40, uploaded = 40, cloud = 40, prepared = fals
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-ios-release-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const apple = path.join(root, 'src-tauri/gen/apple');
-  for (const dir of ['scripts', 'bin', 'src-tauri/gen/apple/baton_iOS', '.appstoreconnect/private_keys']) {
+  for (const dir of ['scripts', 'bin', 'src-tauri/gen/apple/baton_iOS', 'src-tauri/gen/apple/NotificationService', '.appstoreconnect/private_keys']) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
   fs.copyFileSync(source, path.join(root, 'scripts/release-ios-cloud.mjs'));
@@ -31,6 +31,7 @@ function dryRun(t, { configured = 40, uploaded = 40, cloud = 40, prepared = fals
 <key>CFBundleVersion</key><string>${configured}</string>`;
   fs.writeFileSync(path.join(apple, 'project.yml'), project);
   fs.writeFileSync(path.join(apple, 'baton_iOS/Info.plist'), plist);
+  fs.writeFileSync(path.join(apple, 'NotificationService/Info.plist'), plist);
   fs.writeFileSync(path.join(root, 'bin/git'), `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === 'rev-parse') process.stdout.write(args.includes('--abbrev-ref') ? 'release/testflight-next' : '${sha}');

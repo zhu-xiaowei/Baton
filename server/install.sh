@@ -9,6 +9,7 @@
 #   ./install.sh --region us-west-2 --stack MyStack
 #   ./install.sh --region us-west-2 --profile myprofile
 #   ./install.sh --rotate-key                    # replace the API key; every device signs in again
+#   PUSH_RELAY_URL=https://… ./install.sh         # another iOS push relay, every deploy (docs/mobile-notifications.md)
 
 main() {
 set -euo pipefail
@@ -409,7 +410,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_worker.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
@@ -493,6 +494,7 @@ if [ "$ROTATE_KEY" = true ]; then
   for key in ContainerImageUri ImagesBucketName FileUploadAcceleration WsCodeS3Key AppVersion; do
     STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true")
   done
+  [ "$(stack_param PushRelayUrl)" = "None" ] || STACK_PARAMS+=("ParameterKey=PushRelayUrl,UsePreviousValue=true")
 else
   TEMPLATE_ARGS=(--template-body "file://$TEMPLATE")
   STACK_PARAMS=(
@@ -502,6 +504,10 @@ else
     "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY"
     "ParameterKey=AppVersion,ParameterValue=$APP_VERSION"
   )
+fi
+# Without PUSH_RELAY_URL the template default (the shared relay) applies, so it can move.
+if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL+x}" ]; then
+  STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
 fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"

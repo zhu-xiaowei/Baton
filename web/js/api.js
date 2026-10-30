@@ -60,7 +60,8 @@ function clearCredentials() {
   clearCachedAccountData();
 }
 
-function logout() {
+async function logout() {
+  try { await window.unregisterMobileNotifications?.(); } catch {}
   clearCredentials();
   location.replace('landing.html');
 }

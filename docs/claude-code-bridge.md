@@ -546,7 +546,6 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 
 **Native plugins:**
 - QR code login: `tauri-plugin-barcode-scanner`
-- Local notifications: `tauri-plugin-notification` (planned)
 - Biometric auth: `tauri-plugin-biometric` (planned)
 
 ### Phase 2D: Claude Agents ✅ Complete

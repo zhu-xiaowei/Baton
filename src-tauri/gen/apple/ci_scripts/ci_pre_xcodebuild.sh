@@ -4,7 +4,7 @@
 set -eu
 
 PROJECT_YML="${CI_PRIMARY_REPOSITORY_PATH:?}/src-tauri/gen/apple/project.yml"
-EXPECTED="$(sed -nE 's/^[[:space:]]*CFBundleVersion: "([0-9]+)"[[:space:]]*$/\1/p' "${PROJECT_YML}")"
+EXPECTED="$(sed -nE 's/^[[:space:]]*CFBundleVersion: "([0-9]+)"[[:space:]]*$/\1/p' "${PROJECT_YML}" | head -n 1)"
 if [ -z "${EXPECTED}" ] || [ "${CI_BUILD_NUMBER:-}" != "${EXPECTED}" ]; then
     echo "ERROR: Xcode Cloud build number ${CI_BUILD_NUMBER:-unset} differs from configured CFBundleVersion ${EXPECTED:-unset}." >&2
     echo "Set Xcode Cloud > Settings > Build Number > Next Build Number to ${EXPECTED:-the configured version} in App Store Connect, then retry." >&2
