@@ -22,8 +22,9 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    the session (`ROOT#<root>`), and a visible, focused one showing it answers
    `notify_seen` within 2 s. A suspended iOS socket never answers, so it still gets
    the push; each app also hides alerts for the session open in the foreground.
-3. **Summary.** The turn's last `end_turn` reply; it is persisted separately from
-   the status, so the worker re-reads up to twice, 1 s apart.
+3. **Summary.** The turn's last reply (Claude marks it `end_turn`; Codex appends an
+   empty `end_turn` row), or a slash command's `<local-command-stdout>`. The reply is
+   persisted separately from the status, so the worker re-reads up to twice, 1 s apart.
 4. **Deliver.**
    - **iOS**: the worker posts `{token, environment, id}` to the push relay. The
      push carries only the event ID and a placeholder ("Baton · Session update").
@@ -37,9 +38,11 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
      15 s in the background. Force-stop ends it; some vendor ROMs need Baton
      exempted from battery optimisation.
 
-Devices are one `PUSH_DEVICE` row per `<environment>:<token>`; APNs
-`BadDeviceToken`/`Unregistered` deletes it. A retried record may alert again, and
-`apns-collapse-id` replaces the earlier alert.
+Devices are one `PUSH_DEVICE` row per `<environment>:<token>`; a permanent APNs
+rejection (`BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`,
+`TopicDisallowed`) deletes it. A failed iOS push never fails the stream record, so
+Android is not alerted twice; if the relay is unreachable the event's remaining iOS
+devices are skipped.
 
 ## Push relay (`push-relay/`)
 
@@ -54,6 +57,10 @@ it runs. It holds the APNs key, never sees alert text and stores nothing.
   (0–2, 0–4, 0–8 s).
 - 512 MB (memory only shortens the ≈2 s cold start); kept-alive HTTP/2 to APNs;
   error-only logs for 7 days; an email at every 1 USD of monthly cost, up to 5 USD.
+- Trade-offs: any SigV4-signed AWS account can call it, so someone could use up
+  its concurrency and delay every stack's iOS pushes; the cost cap is that
+  concurrency limit (set reserved concurrency if the account quota is raised). The
+  relay operator sees device tokens and when alerts happen, never their text.
 - Stacks use the template's `PushRelayUrl`. `PUSH_RELAY_URL` on `install.sh`
   points at another relay; set it empty to disable iOS push.
 

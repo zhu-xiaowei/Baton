@@ -817,6 +817,13 @@ test('terminal interaction tools are needs_input while ordinary tools keep runni
   }
 });
 
+test('a background task notification starts a turn instead of reading as the last end_turn', () => {
+  assert.equal(statusFromEntry({
+    type: 'user',
+    message: { content: '<task-notification>\n<task-id>a7f37595419</task-id>\n<status>completed</status>' },
+  }), 'running');
+});
+
 test('idle pooled process no longer owns session status', () => {
   const sessionId = '88888888-8888-4888-8888-888888888888';
   const pool = new ClaudePool();

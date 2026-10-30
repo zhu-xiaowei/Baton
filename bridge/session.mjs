@@ -308,7 +308,8 @@ export function statusFromEntry(entry) {
       // Command finished → completed; noise & /clear (no reply) → skip; other
       // <command-name> falls through to 'running' (awaiting a reply).
       if (/^<local-command-stdout>/.test(cs)) return 'completed';
-      if (/^<(?:local-command-caveat|task-notification|system-reminder)/.test(cs)) return null;
+      // A background task's <task-notification> starts a new turn when CC is idle.
+      if (/^<(?:local-command-caveat|system-reminder)/.test(cs)) return null;
       if (/^<command-name>\/?clear<\/command-name>/.test(cs)) return null;
     }
     return 'running';

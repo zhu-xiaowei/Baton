@@ -116,7 +116,7 @@ async function initialize() {
   });
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
-  await apply();  // Once per launch: refreshes the iOS token TTL, restarts the Android service.
+  await apply();  // On each page load: refreshes the iOS token TTL, restarts the Android service.
 }
 
 export function initMobileNotifications() {

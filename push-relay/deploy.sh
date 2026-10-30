@@ -2,7 +2,7 @@
 # Deploy the shared APNs relay into its own AWS account (see docs/mobile-notifications.md).
 #
 # Usage:
-#   AWS_PROFILE=<relay-account> relay/deploy.sh [--region ap-northeast-1] [--alert-email you@example.com]
+#   AWS_PROFILE=<relay-account> push-relay/deploy.sh [--region ap-northeast-1] [--alert-email you@example.com]
 set -euo pipefail
 cd "$(dirname "$0")"
 

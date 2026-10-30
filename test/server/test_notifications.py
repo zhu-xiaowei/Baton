@@ -80,6 +80,9 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
     assert sent[0]["id"] == feed[0][1]
     assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
     assert len([key for key in table.rows if key[1].startswith("EVENT#")]) == 1
+    # The relay being down must not fail the record: a stream retry would alert Android again.
+    monkeypatch.setattr(worker, "relay", lambda request: 1 / 0)
+    worker.deliver(worker.notification(SESSION, DONE, "relay down"))
 
 
 class Pages:
@@ -117,6 +120,12 @@ def test_summary_waits_for_the_final_reply_and_skips_interrupts(monkeypatch):
     stopped = Pages([{"type": "user", "content": json.dumps([{"type": "text", "text": "[Request interrupted by user]"}])}])
     monkeypatch.setattr(worker._ddb, "Table", lambda name: stopped)
     assert worker.notification(SESSION, DONE, "stopped") is None
+    codex = Pages([{"type": "assistant", "stopReason": "end_turn", "content": "[]"}, assistant("Done.", None), user])
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: codex)
+    assert worker.completion_summary(SESSION) == "Done." and codex.queries == 1  # Codex's empty end marker.
+    skill = Pages([{"type": "user", "content": "<local-command-stdout>Review result</local-command-stdout>"}])
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: skill)
+    assert worker.completion_summary(SESSION) == "Review result"
 
 
 def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
@@ -137,6 +146,10 @@ def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
     posted.clear()
     monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([]))
     assert worker.being_viewed(event) is False and posted == []
+    gone = Pages([row])  # Only a closed socket left: no wait at all.
+    monkeypatch.setattr(worker, "_ws_api", SimpleNamespace(post_to_connection=lambda **kwargs: 1 / 0))
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: gone)
+    assert worker.being_viewed(event) is False and gone.queries == 1
 
 
 def test_relay_signs_reuses_its_connection_and_retries_throttling_with_jitter(monkeypatch):

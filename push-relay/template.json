@@ -55,7 +55,7 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": { "Fn::Sub": "${AWS::StackName}-apns" },
-        "Description": "Code is uploaded by relay/deploy.sh",
+        "Description": "Code is uploaded by push-relay/deploy.sh",
         "Runtime": "nodejs22.x",
         "Architectures": ["arm64"],
         "MemorySize": 512,

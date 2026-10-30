@@ -65,17 +65,32 @@ def completion_summary(session, attempts=3):
             KeyConditionExpression=Key("sessionId").eq(partition),
             ScanIndexForward=False, Limit=20, ConsistentRead=True,
         )
+        done = False
         for message in result.get("Items", []):
+            text = text_summary(message.get("content", ""))
             if message.get("type") == "user":
-                if text_summary(message.get("content", "")).startswith("[Request interrupted"):
+                if text.startswith("[Request interrupted"):
                     return None
+                if text.startswith("<local-command-stdout>"):
+                    # A slash command or Skill answers with its output, not an assistant row.
+                    return re.sub(r"</?local-command-stdout>", "", text).strip()
                 break  # Never show a previous turn's answer.
             if message.get("type") == "assistant":
-                text = text_summary(message.get("content", ""))
-                if text and message.get("stopReason") == "end_turn":
-                    return text
                 summary = summary or text
+                # Claude marks its final reply end_turn; Codex appends an empty end_turn row.
+                if message.get("stopReason") == "end_turn" and (text or not _blocks(message)):
+                    done = True
+        if done and summary:
+            return summary
     return summary
+
+
+def _blocks(message):
+    content = message.get("content", "")
+    try:
+        return json.loads(content) if isinstance(content, str) else content
+    except ValueError:
+        return content
 
 
 def being_viewed(event, timeout=2.0):
@@ -93,16 +108,20 @@ def being_viewed(event, timeout=2.0):
     _ws_api = _ws_api or boto3.client("apigatewaymanagementapi", endpoint_url=os.environ["WS_API_ENDPOINT"])
     probe = json.dumps({"action": "notify_check", "rootSessionId": event["rootSessionId"],
                         "eventId": event["eventId"]}).encode()
+    asked = set()
     for row in rows:
         try:
             _ws_api.post_to_connection(ConnectionId=row["connectionId"], Data=probe)
+            asked.add(row["connectionId"])
         except Exception:
             pass  # A gone connection is not viewing.
+    if not asked:
+        return False
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(0.25)
         rows = subscriptions.query(KeyConditionExpression=key, ConsistentRead=True)["Items"]
-        if any(row.get("seenEvent") == event["eventId"] for row in rows):
+        if any(row.get("seenEvent") == event["eventId"] and row["connectionId"] in asked for row in rows):
             return True
     return False
 
@@ -156,10 +175,17 @@ def deliver(event):
     })
     if not os.environ.get("PUSH_RELAY_URL"):
         return
+    # One partition for every account: a token re-registered by another account overwrites its row.
     devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
     for device in devices.get("Items", []):
         if device.get("accountId") == event["accountId"] and int(device.get("ttl", 0)) > now:
-            send_apns(table, event_id, device)
+            try:
+                send_apns(table, event_id, device)
+            except Exception:
+                # Never fail the record for iOS: a stream retry would alert Android and the
+                # devices already pushed again. The relay is down, so skip the rest.
+                logger.exception("Push relay unavailable; iOS alert dropped")
+                break
 
 
 def send_apns(table, event_id, device):
@@ -167,10 +193,10 @@ def send_apns(table, event_id, device):
     result = relay({"token": token, "environment": environment, "id": event_id})
     if result.get("status") == 200:
         return
-    if result.get("reason") in ("BadDeviceToken", "Unregistered"):
+    if result.get("reason") in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "TopicDisallowed"):
         table.delete_item(Key={"pk": "PUSH_DEVICE", "sk": device["sk"]})
         return
-    raise RuntimeError(f'APNs rejected notification: {result.get("reason", "unknown")}')
+    logger.warning("APNs rejected an alert: %s", result.get("reason", "unknown"))
 
 
 def _signed_headers(url, body):
