@@ -302,7 +302,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         + highlighted
         + '</div>'
       : highlighted;
-    return `<div class="tool-value clamp read-value" onclick="toggleExpand(this)">${code}</div>`;
+    return `<div class="tool-value clamp read-value">${code}</div>`;
   }
 
   function parseReadSource(text) {
@@ -617,7 +617,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       name: 'Write',
       desc: file,
       fileLink: input.file_path || '',
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(resultText(result))}</div>` : '',
+      body: result != null ? `<div class="tool-value clamp">${esc(resultText(result))}</div>` : '',
     };
   }
 
@@ -639,7 +639,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     return {
       name,
       desc,
-      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(resultText(result))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp">${ansiHtml(resultText(result))}</div>` : '',
     };
   }
 
@@ -936,10 +936,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       const body = node.querySelector('.tool-body-content');
       const more = body?.querySelector('.clamp-btn');
       if (more) window.toggleExpand?.(more.parentElement);
-      else if (body) {
-        body.classList.add('open');
-        body.querySelectorAll('.read-value').forEach((value) => value.classList.add('expanded'));
-      }
+      else body?.classList.add('open');
     } catch (error) {
       if (node?.isConnected && requestedSession === state.wsSessionId
         && requestedDevice === state.appState.device) {
@@ -949,7 +946,6 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         else {
           const body = button.closest('.tool-body-content');
           body?.classList.add('open');
-          body?.querySelectorAll('.read-value').forEach(value => value.classList.add('expanded'));
           button.insertAdjacentHTML('beforebegin', errorHtml);
         }
       }

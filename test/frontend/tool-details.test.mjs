@@ -220,3 +220,26 @@ test('Edit retries failures, caches its loaded diff and invalidates changed prev
     assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
   } finally { window.initializeToolDetails = initialize; }
 });
+
+test('button and blank-area clicks toggle one tool-body height state', () => {
+  setup('read-toggle');
+  const row = document.createElement('div');
+  row.innerHTML = window.renderToolNode(
+    { type: 'tool_use', id: 'read', name: 'Read', input: { file_path: '/a.js' } },
+    { type: 'tool_result', tool_use_id: 'read', content: '1\tconst a = 1;' },
+    'claude',
+  );
+  document.querySelector('.messages').append(row);
+  const body = row.querySelector('.tool-body-content');
+  const value = body.querySelector('.read-value');
+  assert.equal(value.hasAttribute('onclick'), false);
+  body.insertAdjacentHTML('beforeend', '<span class="clamp-btn">Show more</span>');
+  const button = body.querySelector('.clamp-btn');
+  window.toggleExpand(button.parentElement);
+  assert.equal(body.classList.contains('open'), true);
+  assert.equal(button.textContent, 'Show less');
+  window.toggleExpand(value);
+  assert.equal(body.classList.contains('open'), false);
+  assert.equal(value.classList.contains('expanded'), false);
+  assert.equal(button.textContent, 'Show more');
+});

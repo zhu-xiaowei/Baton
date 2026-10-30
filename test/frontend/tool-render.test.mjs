@@ -369,7 +369,7 @@ test('Read highlights code by file extension without changing its text', () => {
       new URL('../../web/css/style.css', import.meta.url),
       'utf8',
     );
-    assert.match(css, /\.tool-value\.read-value \{ white-space: pre; word-break: normal; \}/);
+    assert.match(css, /\.tool-value\.read-value \{ white-space: pre; word-break: normal; overflow-x: auto; overflow-y: hidden; \}/);
     assert.match(css, /\.read-line-numbers \{[\s\S]*text-align: right;/);
     assert.match(css, /\.tool-value \.read-code \{[\s\S]*background: transparent;/);
   } finally {

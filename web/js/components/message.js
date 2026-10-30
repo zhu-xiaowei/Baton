@@ -269,13 +269,13 @@ import { copyButtonHtml } from '../copy.js';
     if (sel && sel.toString().length > 0) return;
     var preview = el.closest('.tool-body-content[data-tool-preview]');
     if (preview) return window.loadToolDetailsMore?.(preview.querySelector('.tool-preview-more'));
+    // A tool body owns one expand state for all of its values.
+    el = el.closest('.tool-body-content') || el;
     if (el.classList.contains('msg-text')) {
       el.classList.toggle('clamped');
       el.classList.toggle('expanded');
     } else if (el.classList.contains('tool-body-content')) {
       el.classList.toggle('open');
-    } else if (el.classList.contains('tool-value')) {
-      el.classList.toggle('expanded');
     }
     var btn = el.classList.contains('msg-text')
       ? (el.closest('.msg-user') || {}).querySelector && el.closest('.msg-user').querySelector('.msg-meta .clamp-btn')
@@ -291,10 +291,6 @@ import { copyButtonHtml } from '../copy.js';
         var meta = el.parentElement.querySelector('.msg-meta');
         if (meta && !meta.querySelector('.clamp-btn')) meta.insertAdjacentHTML('beforeend', BTN_MSG);
       }
-    });
-    container.querySelectorAll('.tool-value.clamp:not(.expanded)').forEach(function (el) {
-      if (el.closest('[data-tool-preview]')) return;
-      if (el.scrollHeight > el.clientHeight + 2 && !el.querySelector('.clamp-btn')) el.insertAdjacentHTML('beforeend', BTN);
     });
     container.querySelectorAll('.tool-body-content.collapsible:not(.open)').forEach(function (el) {
       if (el.hasAttribute('data-tool-preview')) return;
