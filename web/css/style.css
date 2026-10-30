@@ -477,7 +477,6 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
   line-height: 1.5;
 }
 .tool-value.clamp { max-height: 5.2em; overflow: hidden; cursor: pointer; }
-.tool-value.clamp.expanded { max-height: none; }
 .tool-value.read-value { white-space: pre; word-break: normal; overflow-x: auto; overflow-y: hidden; }
 .read-code-grid { display: flex; min-width: max-content; align-items: stretch; }
 .read-line-numbers {
@@ -1689,12 +1688,10 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 /* User msg: button in meta row (static, not absolute) */
 .msg-meta .clamp-btn { position: static; }
 /* Inside tool body/value: positioned at bottom-right */
-.tool-body-content,
-.tool-value.clamp {
+.tool-body-content {
   position: relative;
 }
-.tool-body .clamp-btn,
-.tool-value .clamp-btn {
+.tool-body .clamp-btn {
   position: absolute; bottom: 4px; right: 4px;
 }
 /* === Scroll-to-bottom button === */
