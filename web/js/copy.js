@@ -10,6 +10,23 @@ export function copyButtonHtml(kind) {
   return `<button type="button" class="copy-action message-action ${kind === 'turn' ? 'message-copy response-copy' : kind + '-copy'}" title="${label}" aria-label="${label}" aria-live="polite" onclick="event.stopPropagation();${handler}(this)">${COPY_ICON}</button>`;
 }
 
+let tailObserver;
+// A prose tail's floated copy button that dropped below the last line starts that line instead.
+function placeTailCopy(entries) {
+  for (const { target } of entries) {
+    const button = target.querySelector(':scope > .response-copy');
+    if (!button || !target.isConnected) { tailObserver.unobserve(target); continue; }
+    target.classList.remove('copy-wrapped');
+    const range = target.ownerDocument.createRange();
+    range.setStart(target, 0);
+    range.setEndBefore(button);
+    const rects = [...range.getClientRects()];
+    if (!rects.length) continue;
+    const bottom = Math.max(...rects.map(rect => rect.bottom));
+    target.classList.toggle('copy-wrapped', button.getBoundingClientRect().top >= bottom - 1);
+  }
+}
+
 export function refreshMessageCopy(container, { running = false } = {}) {
   if (!container) return false;
   let changed = false;
@@ -32,13 +49,15 @@ export function refreshMessageCopy(container, { running = false } = {}) {
     if (button.parentElement === target) continue;
     const parent = button.parentElement;
     button.remove();
-    parent.classList.remove('copy-tail');
+    parent.classList.remove('copy-tail', 'copy-wrapped');
     if (!parent.className) parent.removeAttribute('class');
+    tailObserver?.unobserve(parent);
     changed = true;
   }
   if (target && !target.querySelector(':scope > .response-copy')) {
     target.classList.add('copy-tail');
     target.insertAdjacentHTML('beforeend', copyButtonHtml('turn'));
+    if (inline && typeof ResizeObserver === 'function') (tailObserver ??= new ResizeObserver(placeTailCopy)).observe(target);
     changed = true;
   }
   return changed;

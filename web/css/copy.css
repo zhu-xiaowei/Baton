@@ -48,6 +48,9 @@
 /* flow-root would drop the list marker. */
 .assistant-text li.copy-tail::after { content: ''; display: block; clear: both; }
 .copy-tail > .response-copy { float: right; width: 28px; height: 24px; margin-left: 8px; font: inherit; align-items: baseline; }
+/* A block, not a left float, so it cannot slide back into the last line. */
+.copy-tail.copy-wrapped > .response-copy { float: none; display: flex; justify-content: flex-start; height: 26px; margin-left: 0; align-items: flex-end; }
+.copy-tail.copy-wrapped > .response-copy svg { transform: none; }
 /* The invisible text shares the paragraph baseline; compensate for the SVG's bottom inset. */
 .response-copy::before { content: '\200b'; }
 .response-copy svg { transform: translateY(1.5px); }
