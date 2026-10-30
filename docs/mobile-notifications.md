@@ -53,21 +53,41 @@ persisted separately from the status, so the worker re-reads up to twice, one
 second apart, before falling back to the latest text of the turn.
 
 It writes the event to the Android feed (`NOTIFICATIONS#<account>` in the
-system table, 24h TTL, read by `/api/notifications/events`) and sends it to each of the account's iOS devices
-through `ApnsSender`, a small Node Lambda using the built-in HTTP/2 client
-(Python Lambdas have none). Devices are stored as one row per token
-(`PUSH_DEVICE`, `<environment>:<token>`), so a reinstall or another account
-reusing a token replaces the old binding; APNs `BadDeviceToken`/`Unregistered`
-deletes it. A failed record is retried by the stream; `apns-collapse-id` makes a
-repeated alert replace the earlier one on the device.
+system table, 24h TTL, read by `/api/notifications/events`) and posts it, for
+each of the account's iOS devices, to the shared push relay. Devices are stored
+as one row per token (`PUSH_DEVICE`, `<environment>:<token>`), so a reinstall
+or another account reusing a token replaces the old binding; APNs
+`BadDeviceToken`/`Unregistered` deletes it. A failed record is retried by the
+stream; `apns-collapse-id` makes a repeated alert replace the earlier one on
+the device.
 
-## APNs configuration
+## Push relay
+
+Only the team that publishes the app can push to it, so every Baton stack sends
+iOS alerts through one relay in a separate AWS account (`relay/`). The relay is
+a single stateless Lambda behind a public Function URL: it holds the APNs key,
+signs the request and returns APNs' status and reason. It stores nothing and
+logs no payloads, but alert titles and summaries pass through it. A device token
+is unguessable, so a stack can only reach devices that registered with it.
+
+- `POST {token, environment, eventId, payload}` → `{status, reason}`.
+- Requests over 6 KB are refused; each token gets at most 30 alerts a minute per
+  warm instance; the account's Lambda concurrency limit caps the total. Above
+  it the URL answers 429 instead of queueing, and the worker retries twice, one
+  second apart.
+- arm64, 128 MB, 7-day error-only logs; an optional monthly cost alarm.
+
+Stacks use the template's `PushRelayUrl` default. Set `PUSH_RELAY_URL` on every
+`install.sh` run to use another relay; an empty value disables iOS push (Android
+needs no relay).
+
+To deploy the relay (once, in its own account):
 
 1. In Apple Developer, enable **Push Notifications** for `com.batonai.app`.
    Debug builds use the APNs sandbox; release/TestFlight builds production.
 2. Create an APNs key (Keys → + → Apple Push Notifications service) and note
    its Key ID and your Team ID. This is not the App Store Connect API key.
-3. Store it as a free SSM SecureString in the stack's region:
+3. Store it as a free SSM SecureString in the relay's region:
 
    ```sh
    aws ssm put-parameter --region <region> --name /baton/apns-key --type SecureString \
@@ -75,20 +95,15 @@ repeated alert replace the earlier one on the device.
        '{keyId: $k, teamId: $t, privateKey: $p}')"
    ```
 
-4. Deploy once with `APNS_KEY_PARAMETER=/baton/apns-key ./install.sh ...`. Later
-   deploys (including `--rotate-key`) keep it.
+4. Run `relay/deploy.sh --region <region> [--alert-email you@example.com]` and
+   set the printed URL as the `PushRelayUrl` default in `server/template/Baton.template`.
 
-Only `ApnsSender`'s role can read the parameter. Never put the key in the app,
-Git or a Lambda environment variable. Without it, Android still works (it needs
-no key) and the iOS switch reports that push is not configured.
-
-The key belongs to the team that publishes the app, so only a stack holding it
-can push to the published iOS app.
+Never put the key in the app, Git, a Baton stack or a Lambda environment variable.
 
 ## Verification
 
 ```sh
-node --test test/server/apns-sender.test.mjs
+node --test test/relay/apns-relay.test.mjs
 python3 -m pytest test/server/test_notifications.py
 ```
 

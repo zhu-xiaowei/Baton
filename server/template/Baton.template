@@ -1,10 +1,9 @@
 {
   "Parameters": {
-    "ApnsKeyParameter": {
+    "PushRelayUrl": {
       "Type": "String",
       "Default": "",
-      "AllowedPattern": "^(/[a-zA-Z0-9_.\\-/]+)?$",
-      "Description": "SSM SecureString name (e.g. /baton/apns-key) holding the APNs keyId, teamId and privateKey"
+      "Description": "Shared APNs relay (relay/) that sends iOS alerts; empty disables iOS push"
     },
     "FileUploadAcceleration": {
       "Type": "String",
@@ -38,9 +37,6 @@
       "Type": "String",
       "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
     }
-  },
-  "Conditions": {
-    "HasApnsKey": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ApnsKeyParameter" }, ""] }] }
   },
   "Resources": {
     "LambdaExecutionRole": {
@@ -126,7 +122,7 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
-            "APNS_KEY_PARAMETER": { "Ref": "ApnsKeyParameter" },
+            "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" }
@@ -850,11 +846,6 @@
               },
               {
                 "Effect": "Allow",
-                "Action": "lambda:InvokeFunction",
-                "Resource": { "Fn::GetAtt": ["ApnsSender", "Arn"] }
-              },
-              {
-                "Effect": "Allow",
                 "Action": "dynamodb:Query",
                 "Resource": { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
               },
@@ -883,7 +874,7 @@
           "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
           "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
           "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
-          "APNS_SENDER_FUNCTION": { "Ref": "ApnsSender" }
+          "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" }
         } }
       }
     },
@@ -898,45 +889,6 @@
         "MaximumRecordAgeInSeconds": 900,
         "FunctionResponseTypes": ["ReportBatchItemFailures"],
         "FilterCriteria": { "Filters": [{ "Pattern": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"entityType\":{\"S\":[\"session\"]},\"activeStatus\":{\"S\":[\"needs_input\",{\"prefix\":\"done#\"}]}}}}" }] }
-      }
-    },
-    "ApnsSenderRole": {
-      "Type": "AWS::IAM::Role",
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Version": "2012-10-17",
-          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
-        },
-        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }],
-        "Policies": {
-          "Fn::If": ["HasApnsKey", [{
-            "PolicyName": "ReadApnsKey",
-            "PolicyDocument": {
-              "Version": "2012-10-17",
-              "Statement": [{
-                "Effect": "Allow",
-                "Action": "ssm:GetParameter",
-                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApnsKeyParameter}" }
-              }]
-            }
-          }], { "Ref": "AWS::NoValue" }]
-        }
-      }
-    },
-    "ApnsSender": {
-      "Type": "AWS::Lambda::Function",
-      "Properties": {
-        "Architectures": ["arm64"],
-        "Runtime": "nodejs22.x",
-        "Handler": "apns_sender.handler",
-        "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
-        "Role": { "Fn::GetAtt": ["ApnsSenderRole", "Arn"] },
-        "MemorySize": 128,
-        "Timeout": 15,
-        "Environment": { "Variables": {
-          "APNS_KEY_PARAMETER": { "Ref": "ApnsKeyParameter" },
-          "APNS_TOPIC": "com.batonai.app"
-        } }
       }
     },
     "SystemTable": {

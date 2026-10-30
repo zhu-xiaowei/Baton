@@ -1,5 +1,7 @@
-// Direct APNs HTTP/2 transport (Python Lambdas have no HTTP/2 client). The key is a
-// free SSM SecureString read with the SDK bundled in the Lambda runtime.
+// Stateless APNs relay shared by every Baton deployment, behind a Lambda Function URL.
+// Only it holds the app's signing key (a free SSM SecureString); it stores nothing and
+// logs no payloads. Device tokens are unguessable, so a caller can only reach devices
+// that registered with its own server.
 import { connect, constants } from 'node:http2';
 import { createPrivateKey, sign } from 'node:crypto';
 
@@ -96,18 +98,58 @@ export function sendNotification({ token, environment, eventId, payload }, jwt, 
   });
 }
 
+const recent = new Map();
+
+// Best-effort per-token limit inside one warm instance; the function's concurrency
+// cap bounds the total.
+export function allow(token, now = Date.now()) {
+  if (recent.size > 10000) recent.clear();
+  const [start, count] = recent.get(token) || [now, 0];
+  if (now - start >= 60000) {
+    recent.set(token, [now, 1]);
+    return true;
+  }
+  recent.set(token, [start, count + 1]);
+  return count < 30;
+}
+
+const reply = (statusCode, body) => ({
+  statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+});
+
 export async function handler(event) {
+  if (event.requestContext?.http?.method !== 'POST') return reply(405, { error: 'POST only' });
+  const raw = event.isBase64Encoded ? Buffer.from(event.body || '', 'base64').toString() : event.body || '';
+  if (Buffer.byteLength(raw) > 6144) return reply(413, { error: 'Request too large' });
+  let request;
+  try {
+    request = JSON.parse(raw);
+  } catch {
+    return reply(400, { error: 'Invalid JSON' });
+  }
+  if (!allow(String(request.token))) return reply(429, { error: 'Too many notifications for this device' });
   const config = await credentials();
   const now = Math.floor(Date.now() / 1000);
   if (!cachedJwt || now - cachedJwtAt >= 45 * 60) {
     cachedJwt = providerToken(config, now);
     cachedJwtAt = now;
   }
-  const result = await sendNotification(event, cachedJwt);
-  // Pick up key rotation on the next retry without exposing key material.
+  let pending;
+  try {
+    pending = sendNotification(request, cachedJwt);
+  } catch (error) {
+    return reply(400, { error: error.message });
+  }
+  let result;
+  try {
+    result = await pending;
+  } catch {
+    return reply(502, { error: 'APNs unreachable' });
+  }
+  // Pick up key rotation on the next request without exposing key material.
   if (['ExpiredProviderToken', 'InvalidProviderToken'].includes(result.reason)) {
     cachedJwt = null;
     cachedCredentials = null;
   }
-  return result;
+  return reply(200, result);
 }

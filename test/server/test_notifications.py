@@ -66,16 +66,14 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
     table = MemoryTable(live, dead, other)
     monkeypatch.setattr(worker._ddb, "Table", lambda name: table)
     monkeypatch.setenv("SYSTEM_TABLE", "system")
-    monkeypatch.setenv("APNS_SENDER_FUNCTION", "apns-sender")
+    monkeypatch.setenv("PUSH_RELAY_URL", "https://relay.example")
     sent = []
 
-    def invoke(**kwargs):
-        request = json.loads(kwargs["Payload"])
+    def relay(request):
         sent.append(request)
-        result = {"status": 200} if request["token"] == "a" * 64 else {"status": 410, "reason": "Unregistered"}
-        return {"Payload": io.BytesIO(json.dumps(result).encode())}
+        return {"status": 200} if request["token"] == "a" * 64 else {"status": 410, "reason": "Unregistered"}
 
-    monkeypatch.setattr(worker, "_lambda", SimpleNamespace(invoke=invoke))
+    monkeypatch.setattr(worker, "relay", relay)
     monkeypatch.setattr(worker, "completion_summary", lambda session: "")
     monkeypatch.setattr(worker, "being_viewed", lambda event: False)
     worker.deliver(worker.notification(SESSION, DONE, "finished"))
@@ -106,7 +104,7 @@ def test_worker_reports_only_failed_records(monkeypatch):
 
 
 def test_registration_and_feed_validation(monkeypatch):
-    monkeypatch.delenv("APNS_KEY_PARAMETER", raising=False)
+    monkeypatch.delenv("PUSH_RELAY_URL", raising=False)
     body = notifications.PushDevice(token="A" * 64, environment="production")
     assert body.key() == {"pk": "PUSH_DEVICE", "sk": "production:" + "a" * 64}
     with pytest.raises(HTTPException) as error:
@@ -173,3 +171,22 @@ def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
     posted.clear()
     monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([]))
     assert worker.being_viewed(event) is False and posted == []
+
+
+def test_relay_retries_throttling_but_not_rejections(monkeypatch):
+    monkeypatch.setenv("PUSH_RELAY_URL", "https://relay.example")
+    monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
+    answers = []
+
+    def urlopen(request, timeout):
+        answer = answers.pop(0)
+        if isinstance(answer, int):
+            raise worker.urllib.error.HTTPError(request.full_url, answer, "", {}, None)
+        return io.BytesIO(json.dumps(answer).encode())
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", urlopen)
+    answers[:] = [429, 503, {"status": 200}]
+    assert worker.relay({"token": "a"}) == {"status": 200}
+    answers[:] = [400]
+    with pytest.raises(RuntimeError, match="rejected"):
+        worker.relay({"token": "a"})

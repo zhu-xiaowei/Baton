@@ -1,4 +1,4 @@
-"""BridgeSessions stream -> APNs and the foreground Android feed.
+"""BridgeSessions stream -> the Android feed and, through the push relay, APNs.
 
 Bridge writes every approval as `needs_input` + `agentDetail` on the session row, so
 status transitions alone cover finished runs, approvals and questions.
@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -19,7 +21,6 @@ from message_history import history_partition
 logger = logging.getLogger(__name__)
 _decoder = TypeDeserializer()
 _ddb = boto3.resource("dynamodb")
-_lambda = boto3.client("lambda")
 
 
 def status(item):
@@ -144,6 +145,8 @@ def deliver(event):
         "sk": f'EVENT#{int(now * 1000):016d}#{event["eventId"]}',
         "event": event, "ttl": int(now) + 86400,
     })
+    if not os.environ.get("PUSH_RELAY_URL"):
+        return
     devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
     for device in devices.get("Items", []):
         if device.get("accountId") == event["accountId"] and int(device.get("ttl", 0)) > now:
@@ -158,22 +161,34 @@ def send_apns(table, event, device):
         "sound": "default",
         "thread-id": event["rootSessionId"],
     }
-    response = _lambda.invoke(
-        FunctionName=os.environ["APNS_SENDER_FUNCTION"],
-        Payload=json.dumps({
-            "token": token, "environment": environment,
-            "eventId": event["eventId"], "payload": payload,
-        }).encode(),
-    )
-    if response.get("FunctionError"):
-        raise RuntimeError("APNs transport failed")
-    result = json.loads(response["Payload"].read())
+    result = relay({"token": token, "environment": environment,
+                    "eventId": event["eventId"], "payload": payload})
     if result.get("status") == 200:
         return
     if result.get("reason") in ("BadDeviceToken", "Unregistered"):
         table.delete_item(Key={"pk": "PUSH_DEVICE", "sk": device["sk"]})
         return
     raise RuntimeError(f'APNs rejected notification: {result.get("reason", "unknown")}')
+
+
+def relay(request, attempts=3):
+    """POST one alert to the shared APNs relay (relay/); it returns APNs' status and reason."""
+    body = json.dumps(request).encode()
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(1)  # The relay rejects (429) rather than queues past its concurrency.
+        try:
+            with urllib.request.urlopen(urllib.request.Request(
+                os.environ["PUSH_RELAY_URL"], data=body, method="POST",
+                headers={"content-type": "application/json"},
+            ), timeout=15) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            if error.code != 429 and error.code < 500:
+                raise RuntimeError(f"Push relay rejected the alert ({error.code})") from error
+        except urllib.error.URLError:
+            pass
+    raise RuntimeError("Push relay unavailable")
 
 
 def _image(record, name):

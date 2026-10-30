@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { normalizePem, providerToken, sendNotification } from '../../server/src/apns_sender.mjs';
+import { allow, handler, normalizePem, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
 
 test('APNs provider JWT has Apple claims and a valid ES256 signature', () => {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -68,4 +68,17 @@ test('a PEM whose line breaks were pasted as spaces still signs', () => {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const pasted = privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, ' ');
   assert.ok(providerToken({ keyId: 'K', teamId: 'T', privateKey: normalizePem(pasted) }, 1));
+});
+
+test('the public URL rejects bad requests before touching the key', async () => {
+  const post = body => ({ requestContext: { http: { method: 'POST' } }, body });
+  assert.equal((await handler({ requestContext: { http: { method: 'GET' } } })).statusCode, 405);
+  assert.equal((await handler(post('x'.repeat(7000)))).statusCode, 413);
+  assert.equal((await handler(post('{'))).statusCode, 400);
+});
+
+test('each token gets at most 30 alerts a minute per instance', () => {
+  for (let i = 0; i < 30; i++) assert.equal(allow('t', 0), true);
+  assert.equal(allow('t', 1000), false);
+  assert.equal(allow('t', 60000), true);
 });

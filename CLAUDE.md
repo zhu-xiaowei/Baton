@@ -135,10 +135,13 @@ Done:
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
 - Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
-  `agentDetail`) → `NotificationWorker` → `ApnsSender` (Node, HTTP/2). Devices are one
-  `PUSH_DEVICE` row per `<environment>:<token>`. The APNs key is the SSM SecureString named by
-  the `ApnsKeyParameter` stack parameter (`APNS_KEY_PARAMETER` for install.sh; kept across deploys).
-  Device Farm public iOS devices strip the push entitlement. Details: `docs/mobile-notifications.md`.
+  `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
+  `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
+  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
+- iOS alerts go through the shared, stateless APNs relay (`relay/`, own AWS account, Function
+  URL, holds the APNs key); stacks only know its URL (`PushRelayUrl`, `PUSH_RELAY_URL` for
+  install.sh). Device Farm public iOS devices strip the push entitlement. Details:
+  `docs/mobile-notifications.md`.
 
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path

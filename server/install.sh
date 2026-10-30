@@ -9,7 +9,7 @@
 #   ./install.sh --region us-west-2 --stack MyStack
 #   ./install.sh --region us-west-2 --profile myprofile
 #   ./install.sh --rotate-key                    # replace the API key; every device signs in again
-#   APNS_KEY_PARAMETER=/baton/apns-key ./install.sh   # enable iOS push (docs/mobile-notifications.md)
+#   PUSH_RELAY_URL=https://… ./install.sh         # another iOS push relay, every deploy (docs/mobile-notifications.md)
 
 main() {
 set -euo pipefail
@@ -410,7 +410,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_worker.py apns_sender.mjs message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_worker.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
@@ -488,20 +488,13 @@ if [ "$ROTATE_KEY" = true ]; then
   echo "  ${C_DIM}Rotating the API key: every device must sign in again with the new Start URL${C_RESET}"
 fi
 
-# The SSM parameter holding the APNs key is kept across deploys unless APNS_KEY_PARAMETER is set.
-PREVIOUS_APNS_PARAMETER=None
-[ "$STACK_STATUS" = "DOES_NOT_EXIST" ] || PREVIOUS_APNS_PARAMETER=$(stack_param ApnsKeyParameter)
 if [ "$ROTATE_KEY" = true ]; then
   TEMPLATE_ARGS=(--use-previous-template)
   STACK_PARAMS=()
   for key in ContainerImageUri ImagesBucketName FileUploadAcceleration WsCodeS3Key AppVersion; do
     STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true")
   done
-  if [ -n "$PREVIOUS_APNS_PARAMETER" ] && [ "$PREVIOUS_APNS_PARAMETER" != "None" ]; then
-    STACK_PARAMS+=("ParameterKey=ApnsKeyParameter,UsePreviousValue=true")
-  fi
 else
-  [ "$PREVIOUS_APNS_PARAMETER" != "None" ] || PREVIOUS_APNS_PARAMETER=""
   TEMPLATE_ARGS=(--template-body "file://$TEMPLATE")
   STACK_PARAMS=(
     "ParameterKey=ContainerImageUri,ParameterValue=$IMAGE_URI"
@@ -509,8 +502,11 @@ else
     "ParameterKey=FileUploadAcceleration,ParameterValue=$UPLOAD_ACCELERATION"
     "ParameterKey=WsCodeS3Key,ParameterValue=$WS_CODE_KEY"
     "ParameterKey=AppVersion,ParameterValue=$APP_VERSION"
-    "ParameterKey=ApnsKeyParameter,ParameterValue=${APNS_KEY_PARAMETER:-$PREVIOUS_APNS_PARAMETER}"
   )
+fi
+# Without PUSH_RELAY_URL the template default (the shared relay) applies, so it can move.
+if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL:-}" ]; then
+  STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
 fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"

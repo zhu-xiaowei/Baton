@@ -1,4 +1,4 @@
-"""Mobile notification registration and the foreground Android event feed.
+"""Mobile notification registration and the Android event feed.
 
 APNs delivery runs in notification_worker. Alerts carry no transcript or credential.
 """
@@ -25,7 +25,7 @@ def _account(request):
 
 
 def _apns_configured():
-    return bool(os.environ.get("APNS_KEY_PARAMETER"))
+    return bool(os.environ.get("PUSH_RELAY_URL"))
 
 
 class PushDevice(BaseModel):
