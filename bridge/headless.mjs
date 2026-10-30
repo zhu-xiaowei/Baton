@@ -35,6 +35,8 @@ class HeadlessProc {
     this.ready = false;         // system/init seen
     this.busy = false;          // a turn is generating
     this.dead = false;
+    this.backgroundTasks = 0;   // background agents/Bash; CC keeps running them after a turn
+    this.reportsInputIds = false;
     this.inputs = new Map();
     this._heldReplies = [];     // synthetic replies waiting for their prompt replay
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
@@ -90,6 +92,13 @@ class HeadlessProc {
     let o;
     try { o = JSON.parse(line); } catch { return; }
     const t = o.type;
+
+    if (t === 'system' && o.subtype === 'background_tasks_changed') {
+      this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
+      // The turn CC starts when a task ends counts from here, not from the last pool turn.
+      this.pool._touch(this);
+      return;
+    }
 
     if (t === 'system' && o.subtype === 'init') {
       if (o.session_id) this.sessionId = o.session_id;
@@ -170,8 +179,11 @@ class HeadlessProc {
     if (t === 'result') {
       this._framer.finish();
       this._flushHeldReplies();
+      // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
+      if (Array.isArray(o.user_message_uuids)) this.reportsInputIds = true;
       const consumed = Array.isArray(o.user_message_uuids)
         ? o.user_message_uuids
+        : this.reportsInputIds ? []
         : [...this.inputs.keys()].filter((uuid) => !this.inputs.get(uuid).consumed).slice(0, 1);
       const consumedInputIds = [];
       for (const uuid of consumed) {
@@ -495,7 +507,7 @@ export class ClaudePool {
   reapIdle() {
     const now = Date.now();
     for (const [key, proc] of this.procs) {
-      if (proc.busy || proc.dead) continue;
+      if (proc.busy || proc.dead || proc.backgroundTasks) continue;
       if (proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) {
         proc.shutdown();
         this.procs.delete(key);
@@ -506,7 +518,7 @@ export class ClaudePool {
   _evictLru() {
     let victim = null;
     for (const proc of this.procs.values()) {
-      if (proc.busy || proc.dead) continue;
+      if (proc.busy || proc.dead || proc.backgroundTasks) continue;
       if (!victim || proc.lastActiveAt < victim.lastActiveAt) victim = proc;
     }
     if (victim) { victim.shutdown(); this.procs.delete(victim.key); }
