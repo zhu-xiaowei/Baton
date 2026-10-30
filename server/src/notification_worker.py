@@ -7,14 +7,18 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
 from message_history import history_partition
 
@@ -171,16 +175,27 @@ def send_apns(table, event, device):
     raise RuntimeError(f'APNs rejected notification: {result.get("reason", "unknown")}')
 
 
-def relay(request, attempts=3):
+def _signed_headers(url, body):
+    # The relay URL uses AWS_IAM auth: this function's own role signs, nothing to configure.
+    host = urllib.parse.urlparse(url).hostname.split(".")
+    region = host[2] if len(host) > 2 and host[1] == "lambda-url" else os.environ["AWS_REGION"]
+    request = AWSRequest("POST", url, data=body, headers={"content-type": "application/json"})
+    SigV4Auth(boto3.Session().get_credentials(), "lambda", region).add_auth(request)
+    return dict(request.headers)
+
+
+def relay(request, attempts=4):
     """POST one alert to the shared APNs relay (relay/); it returns APNs' status and reason."""
+    url = os.environ["PUSH_RELAY_URL"]
     body = json.dumps(request).encode()
     for attempt in range(attempts):
         if attempt:
-            time.sleep(1)  # The relay rejects (429) rather than queues past its concurrency.
+            # The relay rejects (429) rather than queues past its concurrency; full jitter
+            # (0-2, 0-4, 0-8 s) spreads stacks retrying at the same moment.
+            time.sleep(random.uniform(0, 2 ** attempt))
         try:
             with urllib.request.urlopen(urllib.request.Request(
-                os.environ["PUSH_RELAY_URL"], data=body, method="POST",
-                headers={"content-type": "application/json"},
+                url, data=body, method="POST", headers=_signed_headers(url, body),
             ), timeout=15) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:

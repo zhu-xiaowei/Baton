@@ -110,7 +110,7 @@ export function allow(token, now = Date.now()) {
     return true;
   }
   recent.set(token, [start, count + 1]);
-  return count < 30;
+  return count < 60;
 }
 
 const reply = (statusCode, body) => ({

@@ -1,5 +1,5 @@
 {
-  "Description": "Baton push relay: one stateless Lambda that signs and forwards APNs alerts for every Baton deployment",
+  "Description": "Baton push relay: one stateless Lambda that signs and forwards APNs alerts for every Baton deployment. Any SigV4-signed AWS principal may call it; unsigned requests are refused before the function runs.",
   "Parameters": {
     "ApnsKeyParameter": {
       "Type": "String",
@@ -77,7 +77,7 @@
     },
     "RelayUrl": {
       "Type": "AWS::Lambda::Url",
-      "Properties": { "AuthType": "NONE", "TargetFunctionArn": { "Fn::GetAtt": ["RelayFunction", "Arn"] } }
+      "Properties": { "AuthType": "AWS_IAM", "TargetFunctionArn": { "Fn::GetAtt": ["RelayFunction", "Arn"] } }
     },
     "RelayUrlPermission": {
       "Type": "AWS::Lambda::Permission",
@@ -85,7 +85,7 @@
         "FunctionName": { "Ref": "RelayFunction" },
         "Action": "lambda:InvokeFunctionUrl",
         "Principal": "*",
-        "FunctionUrlAuthType": "NONE"
+        "FunctionUrlAuthType": "AWS_IAM"
       }
     },
     "RelayInvokePermission": {

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from boto3.dynamodb.types import TypeSerializer
+from botocore.credentials import Credentials
 from fastapi import HTTPException
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
@@ -173,20 +174,27 @@ def test_an_open_focused_viewer_suppresses_the_push(monkeypatch):
     assert worker.being_viewed(event) is False and posted == []
 
 
-def test_relay_retries_throttling_but_not_rejections(monkeypatch):
-    monkeypatch.setenv("PUSH_RELAY_URL", "https://relay.example")
+def test_relay_signs_requests_and_retries_throttling_with_jitter(monkeypatch):
+    monkeypatch.setenv("PUSH_RELAY_URL", "https://abc.lambda-url.us-west-2.on.aws/")
+    waits, answers, seen = [], [], []
+    monkeypatch.setattr(worker.random, "uniform", lambda low, high: waits.append(high) or 0)
     monkeypatch.setattr(worker.time, "sleep", lambda seconds: None)
-    answers = []
+    monkeypatch.setattr(worker.boto3, "Session", lambda: SimpleNamespace(
+        get_credentials=lambda: Credentials("AKIDEXAMPLE", "secret", "token")))
 
     def urlopen(request, timeout):
+        seen.append(request.headers)
         answer = answers.pop(0)
         if isinstance(answer, int):
             raise worker.urllib.error.HTTPError(request.full_url, answer, "", {}, None)
         return io.BytesIO(json.dumps(answer).encode())
 
     monkeypatch.setattr(worker.urllib.request, "urlopen", urlopen)
-    answers[:] = [429, 503, {"status": 200}]
+    answers[:] = [429, 503, 502, {"status": 200}]
     assert worker.relay({"token": "a"}) == {"status": 200}
+    assert waits == [2, 4, 8]
+    assert "us-west-2/lambda/aws4_request" in seen[0]["Authorization"]
+    assert seen[0]["X-amz-security-token"] == "token"
     answers[:] = [400]
     with pytest.raises(RuntimeError, match="rejected"):
         worker.relay({"token": "a"})

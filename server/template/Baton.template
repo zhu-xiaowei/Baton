@@ -851,6 +851,11 @@
               },
               {
                 "Effect": "Allow",
+                "Action": ["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
+                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:lambda:*:*:function:*-apns" }
+              },
+              {
+                "Effect": "Allow",
                 "Action": "execute-api:ManageConnections",
                 "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
               }

@@ -65,16 +65,19 @@ the device.
 
 Only the team that publishes the app can push to it, so every Baton stack sends
 iOS alerts through one relay in a separate AWS account (`relay/`). The relay is
-a single stateless Lambda behind a public Function URL: it holds the APNs key,
+a single stateless Lambda behind a Function URL with `AWS_IAM` auth: any
+SigV4-signed AWS principal may call it (each worker signs with its own role, so
+there is nothing to configure) and unsigned requests are refused before the
+function runs or is billed. It holds the APNs key,
 signs the request and returns APNs' status and reason. It stores nothing and
 logs no payloads, but alert titles and summaries pass through it. A device token
 is unguessable, so a stack can only reach devices that registered with it.
 
 - `POST {token, environment, eventId, payload}` → `{status, reason}`.
-- Requests over 6 KB are refused; each token gets at most 30 alerts a minute per
+- Requests over 6 KB are refused; each token gets at most 60 alerts a minute per
   warm instance; the account's Lambda concurrency limit caps the total. Above
-  it the URL answers 429 instead of queueing, and the worker retries twice, one
-  second apart.
+  it the URL answers 429 instead of queueing, so the worker retries 429 and 5xx
+  three times with full jitter (0–2, 0–4, 0–8 s), then the stream retries the record.
 - arm64, 128 MB, 7-day error-only logs; an optional monthly cost alarm.
 
 Stacks use the template's `PushRelayUrl` default. Set `PUSH_RELAY_URL` on every

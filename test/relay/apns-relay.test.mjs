@@ -77,8 +77,8 @@ test('the public URL rejects bad requests before touching the key', async () => 
   assert.equal((await handler(post('{'))).statusCode, 400);
 });
 
-test('each token gets at most 30 alerts a minute per instance', () => {
-  for (let i = 0; i < 30; i++) assert.equal(allow('t', 0), true);
+test('each token gets at most 60 alerts a minute per instance', () => {
+  for (let i = 0; i < 60; i++) assert.equal(allow('t', 0), true);
   assert.equal(allow('t', 1000), false);
   assert.equal(allow('t', 60000), true);
 });
