@@ -64,6 +64,14 @@
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
+  .setting-row strong { font-size: 15px; font-weight: 600; }
+  #notificationStatus:empty { display: none; }
+  .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: #30363d; position: relative; cursor: pointer; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #e6edf3; transition: transform .15s; }
+  .switch:checked { background: #238636; }
+  .switch:checked::after { transform: translateX(18px); }
+  .switch:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
   html.native-mobile .setup-bar {
     min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
     padding: var(--sat, env(safe-area-inset-top, 0px)) 0 0;
@@ -121,6 +129,14 @@
   <div class="qr-wrap">
     <div class="qr-frame"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
   </div>
+</div>
+
+<div id="notificationSettings" class="section" hidden>
+  <label class="setting-row">
+    <strong>Push notifications</strong>
+    <input id="notificationsEnabled" class="switch" type="checkbox" role="switch">
+  </label>
+  <p class="hint" id="notificationStatus" role="status"></p>
 </div>
 
 <!-- Logout -->

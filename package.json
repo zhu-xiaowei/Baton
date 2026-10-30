@@ -12,7 +12,7 @@
     "test:codex:e2e": "node test/codex/phase2/e2e.mjs --run",
     "test:codex:stress": "node test/codex/phase2/parcel-stress.mjs --run",
     "test:frontend": "node --test test/frontend/*.test.mjs",
-    "test:server": "python3 -m pytest test/server",
+    "test:server": "python3 -m pytest test/server && node --test test/push-relay/*.test.mjs",
     "test:packaging": "node --test test/packaging/*.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",

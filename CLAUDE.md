@@ -129,6 +129,23 @@ Done:
 - Graph view state, the first page per scope and the branch list reuse the Changes IndexedDB cache
   (stale-while-revalidate). Checkout / Stash & Switch / Pull are deferred. Details: `docs/git-history-design.md`.
 
+### Mobile Notifications: COMPLETE
+- Finished runs and `needs_input` alert as **project · session** + summary; tapping opens the session.
+  One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
+  Android runs a foreground service ("Baton is running in the background") polling the event
+  feed natively (5s foreground / 15s background; WebView timers are throttled in background).
+- Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
+  `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
+  `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
+  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
+- iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
+  extension fetches the text from the user's own server (`/api/notifications/event`, credentials
+  in the shared `$(AppIdentifierPrefix)com.batonai.shared` keychain group). They go through the shared, stateless APNs relay
+  (`push-relay/`, own AWS account, IAM-auth Function URL, holds the APNs key); stacks only know its
+  URL (`PushRelayUrl`, `PUSH_RELAY_URL` for install.sh). The release script keeps the extension's
+  CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:
+  `docs/mobile-notifications.md`.
+
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 
@@ -547,7 +564,6 @@ before installing toolchains or archiving.
 
 ### Native Features (planned)
 - QR scan login: `tauri-plugin-barcode-scanner`
-- Local notifications: `tauri-plugin-notification`
 - Biometric auth: `tauri-plugin-biometric`
 
 ## Live State (headless native — was "tmux capture-pane Live State")

@@ -38,6 +38,7 @@ tauri-plugin-preview-webview = { path = "plugins/tauri-plugin-preview-webview" }
 tauri-plugin-barcode-scanner = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-speech = { path = "plugins/tauri-plugin-speech" }
+tauri-plugin-push = { path = "plugins/tauri-plugin-push" }
 
 [target."cfg(target_os = \"ios\")".dependencies]
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString"] }

@@ -1,0 +1,138 @@
+{
+  "Description": "Baton push relay: one stateless Lambda that signs and forwards APNs alerts for every Baton deployment. Any SigV4-signed AWS principal may call it; unsigned requests are refused before the function runs.",
+  "Parameters": {
+    "ApnsKeyParameter": {
+      "Type": "String",
+      "Default": "/baton/apns-key",
+      "AllowedPattern": "^/[a-zA-Z0-9_.\\-/]+$",
+      "Description": "SSM SecureString holding the APNs keyId, teamId and privateKey"
+    },
+    "AlertEmail": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional email alerted as actual monthly cost passes 1, 2, 3, 4 and 5 USD"
+    }
+  },
+  "Conditions": {
+    "HasAlertEmail": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "AlertEmail" }, ""] }] }
+  },
+  "Resources": {
+    "RelayLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/aws/lambda/${AWS::StackName}-apns" },
+        "RetentionInDays": 7
+      }
+    },
+    "RelayRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [{
+          "PolicyName": "RelayKeyAndLogs",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "ssm:GetParameter",
+                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApnsKeyParameter}" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                "Resource": { "Fn::GetAtt": ["RelayLogs", "Arn"] }
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "RelayFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${AWS::StackName}-apns" },
+        "Description": "Code is uploaded by push-relay/deploy.sh",
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "MemorySize": 512,
+        "Timeout": 12,
+        "Handler": "apns_relay.handler",
+        "Code": { "ZipFile": "exports.handler = async () => ({ statusCode: 503 });" },
+        "Role": { "Fn::GetAtt": ["RelayRole", "Arn"] },
+        "LoggingConfig": {
+          "LogFormat": "JSON",
+          "LogGroup": { "Ref": "RelayLogs" },
+          "ApplicationLogLevel": "ERROR",
+          "SystemLogLevel": "WARN"
+        },
+        "Environment": { "Variables": {
+          "APNS_KEY_PARAMETER": { "Ref": "ApnsKeyParameter" },
+          "APNS_TOPIC": "com.batonai.app"
+        } }
+      }
+    },
+    "RelayUrl": {
+      "Type": "AWS::Lambda::Url",
+      "Properties": { "AuthType": "AWS_IAM", "TargetFunctionArn": { "Fn::GetAtt": ["RelayFunction", "Arn"] } }
+    },
+    "RelayUrlPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": { "Ref": "RelayFunction" },
+        "Action": "lambda:InvokeFunctionUrl",
+        "Principal": "*",
+        "FunctionUrlAuthType": "AWS_IAM"
+      }
+    },
+    "RelayInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": { "Ref": "RelayFunction" },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "*",
+        "InvokedViaFunctionUrl": true
+      }
+    },
+    "CostAlarm": {
+      "Type": "AWS::Budgets::Budget",
+      "Condition": "HasAlertEmail",
+      "Properties": {
+        "Budget": {
+          "BudgetType": "COST",
+          "TimeUnit": "MONTHLY",
+          "BudgetLimit": { "Amount": 5, "Unit": "USD" }
+        },
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 20 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 40 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 60 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 80 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 100 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionName": { "Value": { "Ref": "RelayFunction" } },
+    "RelayUrl": { "Value": { "Fn::GetAtt": ["RelayUrl", "FunctionUrl"] } }
+  }
+}

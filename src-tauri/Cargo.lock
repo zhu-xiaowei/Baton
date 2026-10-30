@@ -300,6 +300,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "tauri-plugin-preview-webview",
+ "tauri-plugin-push",
  "tauri-plugin-speech",
  "uuid",
 ]
@@ -4156,6 +4157,14 @@ dependencies = [
  "objc2-foundation",
  "objc2-web-kit",
  "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-push"
+version = "0.1.0"
+dependencies = [
  "tauri",
  "tauri-plugin",
 ]
