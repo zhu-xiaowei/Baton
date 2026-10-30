@@ -10,7 +10,7 @@
     "AlertEmail": {
       "Type": "String",
       "Default": "",
-      "Description": "Optional email for a monthly cost alarm above 5 USD"
+      "Description": "Optional email alerted as actual monthly cost passes 1, 2, 3, 4 and 5 USD"
     }
   },
   "Conditions": {
@@ -106,10 +106,28 @@
           "TimeUnit": "MONTHLY",
           "BudgetLimit": { "Amount": 5, "Unit": "USD" }
         },
-        "NotificationsWithSubscribers": [{
-          "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 100 },
-          "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
-        }]
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 20 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 40 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 60 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 80 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          },
+          {
+            "Notification": { "NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 100 },
+            "Subscribers": [{ "SubscriptionType": "EMAIL", "Address": { "Ref": "AlertEmail" } }]
+          }
+        ]
       }
     }
   },

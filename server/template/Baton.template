@@ -2,7 +2,7 @@
   "Parameters": {
     "PushRelayUrl": {
       "Type": "String",
-      "Default": "",
+      "Default": "https://ufjcq2zgxykwk3thi3n7yf3hea0ifpzn.lambda-url.ap-northeast-1.on.aws/",
       "Description": "Shared APNs relay (relay/) that sends iOS alerts; empty disables iOS push"
     },
     "FileUploadAcceleration": {

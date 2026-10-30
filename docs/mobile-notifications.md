@@ -78,7 +78,8 @@ is unguessable, so a stack can only reach devices that registered with it.
   warm instance; the account's Lambda concurrency limit caps the total. Above
   it the URL answers 429 instead of queueing, so the worker retries 429 and 5xx
   three times with full jitter (0–2, 0–4, 0–8 s), then the stream retries the record.
-- arm64, 128 MB, 7-day error-only logs; an optional monthly cost alarm.
+- arm64, 128 MB, 7-day error-only logs; an optional email at every 1 USD of
+  actual monthly cost, up to 5 USD.
 
 Stacks use the template's `PushRelayUrl` default. Set `PUSH_RELAY_URL` on every
 `install.sh` run to use another relay; an empty value disables iOS push (Android
