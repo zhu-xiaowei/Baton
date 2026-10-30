@@ -41,6 +41,7 @@ function comparableMarkup(element) {
       'clamped',
       'open',
       'copy-tail',
+      'copy-wrapped',
     );
     if (node.getAttribute('class') === '') node.removeAttribute('class');
     node.removeAttribute?.('aria-expanded');
