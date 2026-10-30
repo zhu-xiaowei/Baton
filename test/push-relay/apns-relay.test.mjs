@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { connect, createServer } from 'node:http2';
 import test from 'node:test';
-import { closeSessions, handler, normalizePem, placeholder, providerToken, sendNotification } from '../../relay/apns_relay.mjs';
+import { closeSessions, handler, normalizePem, placeholder, providerToken, sendNotification } from '../../push-relay/apns_relay.mjs';
 
 const ID = 'EVENT#' + '1'.repeat(16) + '#' + 'b'.repeat(64);
 
