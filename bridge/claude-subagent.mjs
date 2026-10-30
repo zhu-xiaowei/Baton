@@ -5,6 +5,35 @@ import { countJsonlLines } from './extract.mjs';
 import { getSessionMetadata } from './session.mjs';
 
 const MARKER = ':subagent:';
+const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
+
+// CC reports every background agent's end to its spawner as a <task-notification>
+// (completed/failed/killed/stopped), and a later SendMessage resume as resumedAgentId.
+// A stopped agent never gets `finished:true`, and its tail can end on an unrun tool_use.
+// Only CC's own rows count: tool output quoting these markers must not.
+export function claudeTaskEvent(row) {
+  const content = row?.type === 'queue-operation'
+    ? (row.operation === 'enqueue' ? row.content : null)
+    : row?.type === 'user' ? row.message?.content : null;
+  if (typeof content === 'string') {
+    if (!content.startsWith('<task-notification>')) return null;
+    const taskId = /<task-id>([0-9a-z]+)<\/task-id>/.exec(content)?.[1];
+    return taskId ? { taskId, ended: true } : null;
+  }
+  for (const block of Array.isArray(content) ? content : []) {
+    if (block?.type !== 'tool_result') continue;
+    const parts = typeof block.content === 'string' ? [block.content]
+      : Array.isArray(block.content) ? block.content.map((part) => part?.text) : [];
+    for (const text of parts) {
+      if (typeof text !== 'string' || !text.startsWith('{') || !text.includes('resumedAgentId')) continue;
+      try {
+        const taskId = JSON.parse(text).resumedAgentId;
+        if (typeof taskId === 'string') return { taskId, ended: false };
+      } catch {}
+    }
+  }
+  return null;
+}
 
 export function claudeSubagentSessionId(parentSessionId, agentId) {
   return `${parentSessionId}${MARKER}${agentId}`;
@@ -38,6 +67,49 @@ export function readClaudeSubagentMeta(filePath) {
   }
 }
 
+function spawnerFile(filePath, meta) {
+  const dir = path.dirname(filePath);
+  const parentAgentId = String(meta.parentAgentId || '').trim();
+  if (!parentAgentId) return `${path.dirname(dir)}.jsonl`;
+  return path.join(dir, `${parentAgentId.startsWith('agent-') ? '' : 'agent-'}${parentAgentId}.jsonl`);
+}
+
+// Scans only bytes appended since the last call, up to the last complete line.
+export function claudeSubagentEnded(filePath, meta = {}) {
+  const file = spawnerFile(filePath, meta);
+  const taskId = path.basename(filePath, '.jsonl').replace(/^agent-/, '');
+  let stat;
+  try { stat = fs.statSync(file); } catch { return false; }
+  let scan = taskScans.get(file);
+  if (!scan || scan.ino !== stat.ino || stat.size < scan.offset) {
+    scan = { ino: stat.ino, offset: 0, ended: new Map() };
+    taskScans.set(file, scan);
+  }
+  if (stat.size > scan.offset) {
+    const buffer = Buffer.alloc(stat.size - scan.offset);
+    let fd;
+    let read = 0;
+    try {
+      fd = fs.openSync(file, 'r');
+      read = fs.readSync(fd, buffer, 0, buffer.length, scan.offset);
+    } catch {
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+    const end = buffer.subarray(0, read).lastIndexOf(0x0a) + 1;
+    for (const line of buffer.toString('utf8', 0, end).split('\n')) {
+      // Parse only candidate rows; api-request-blob rows are request copies.
+      if ((!line.includes('<task-notification>') && !line.includes('resumedAgentId'))
+        || line.startsWith('{"type":"api-request-blob"')) continue;
+      let event = null;
+      try { event = claudeTaskEvent(JSON.parse(line)); } catch {}
+      if (event) scan.ended.set(event.taskId, event.ended);
+    }
+    scan.offset += end;
+  }
+  return scan.ended.get(taskId) === true;
+}
+
 export function discoverClaudeSubagents(projectDir, parentSession, options = {}) {
   const subagentsDir = path.join(
     projectDir,
@@ -65,6 +137,10 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     const meta = readClaudeSubagentMeta(filePath);
     const metadata = getSessionMetadata(filePath, { includeStatus: true });
     const fresh = now - stat.mtimeMs < 15_000;
+    const status = meta.finished === true ? 'completed'
+      : (parentSession.status === 'running' || fresh)
+      ? (metadata.status || 'running')
+      : 'completed';
     return [{
       id: claudeSubagentSessionId(parentSession.nativeSessionId, agentId),
       nativeSessionId: claudeSubagentSessionId(
@@ -78,10 +154,9 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       size: stat.size,
       preview: meta.description || metadata.preview || agentId,
       model: metadata.model || parentSession.model,
-      status: meta.finished === true ? 'completed'
-        : (parentSession.status === 'running' || fresh)
-        ? (metadata.status || 'running')
-        : 'completed',
+      status: status !== 'completed' && claudeSubagentEnded(filePath, meta)
+        ? 'completed'
+        : status,
       isAgent: true,
       threadKind: 'subagent',
       parentSessionId: claudeSubagentParentSessionId(

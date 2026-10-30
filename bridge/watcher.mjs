@@ -28,8 +28,11 @@ import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
 import {
   claudeSubagentParentSessionId,
+  claudeSubagentEnded,
   claudeSubagentSessionId,
+  parseClaudeSubagentSessionId,
   readClaudeSubagentMeta,
+  claudeTaskEvent,
 } from './claude-subagent.mjs';
 import {
   activitySyncDue,
@@ -44,6 +47,17 @@ const CLAUDE_INTERRUPT_TEXTS = new Set([
   '[Request interrupted by user]',
   '[Request interrupted by user for tool use]',
 ]);
+
+// A stop reaches the spawner's transcript after the child's last write, so the
+// child file may never change again; recheck children still shown as active.
+function enqueueEndedSubagent(row, rootSessionId, subagentsDir, enqueue) {
+  const event = claudeTaskEvent(row);
+  if (!event?.ended) return;
+  const agentId = `agent-${event.taskId}`;
+  const childId = claudeSubagentSessionId(rootSessionId, agentId);
+  const status = lastKnownStatus.get(childId);
+  if (status && status !== 'completed') enqueue(path.join(subagentsDir, `${agentId}.jsonl`), childId);
+}
 
 export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
   return !!runtimeOwned || !!route?.pushed || !!route?.runtimeOwned;
@@ -264,6 +278,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
+    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), enqueue);
 
     // Track status from every parsed entry (statusFromEntry returns null for non-status types).
     const s = statusFromEntry(raw);
@@ -349,8 +364,9 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
   if (lines.at(-1) === '') lines.pop();
   const lastLine = synced.get(sessionId) ?? 0;
   const meta = readClaudeSubagentMeta(filePath);
-  if (!lines.length || (lines.length <= lastLine
-    && (meta.finished !== true || lastKnownStatus.get(sessionId) === 'completed'))) return;
+  if (!lines.length || (lines.length <= lastLine && (lastKnownStatus.get(sessionId) === 'completed'
+    || (meta.finished !== true && !claudeSubagentEnded(filePath, meta))))) return;
+  const rootId = parseClaudeSubagentSessionId(sessionId)?.parentSessionId;
   let lastParsedLine = lastLine;
   let lastStatus = null;
   for (let i = lastLine; i < lines.length; i++) {
@@ -361,6 +377,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
+    if (rootId) enqueueEndedSubagent(raw, rootId, path.dirname(filename), enqueue);
     const status = statusFromEntry(raw);
     if (status) lastStatus = status;
     raw = normalizeClaudeQueuedInput(raw);
@@ -383,8 +400,9 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
   const parentFile = path.join(CLAUDE_PROJECTS, parentFilename);
   const parentMetadata = fs.existsSync(parentFile) ? getSessionMetadata(parentFile) : {};
   const stat = fs.statSync(filePath);
-  const status = meta.finished === true ? 'completed'
+  let status = meta.finished === true ? 'completed'
     : lastStatus || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
+  if (status !== 'completed' && claudeSubagentEnded(filePath, meta)) status = 'completed';
   const sessionMeta = {
     id: sessionId,
     nativeSessionId: sessionId,

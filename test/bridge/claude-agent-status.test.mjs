@@ -529,6 +529,49 @@ test('an interrupted subagent no longer pins its root to running', () => {
   }
 });
 
+test('the spawner transcript settles a stopped child until it is resumed', () => {
+  const parentId = '69696969-6969-4696-8696-696969696969';
+  const fixture = sessionFixture(parentId, 'running');
+  try {
+    const childFile = path.join(path.dirname(fixture.filePath), parentId, 'subagents', 'agent-a455389ab6231e651.jsonl');
+    fs.mkdirSync(path.dirname(childFile), { recursive: true });
+    // TaskStop flushes one more tool_use that never runs.
+    writeRows(childFile, [{
+      type: 'assistant',
+      message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] },
+    }]);
+    fs.utimesSync(childFile, new Date(0), new Date(0));
+    const child = () => discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
+      daemonMeta: new Map(),
+    }).sessions.find(session => session.parentSessionId);
+    const append = row => fs.appendFileSync(fixture.filePath, `${JSON.stringify(row)}\n`);
+    const notification = {
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>\n<status>stopped</status>',
+    };
+    // Tool output quoting a notification is not one.
+    append({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>' }] },
+    });
+    assert.equal(child().status, 'running');
+    append(notification);
+    assert.equal(child().status, 'completed');
+    append({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: '{"success":true,"resumedAgentId":"a455389ab6231e651"}' }] },
+    });
+    assert.equal(child().status, 'running');
+    append(notification);
+    assert.equal(child().status, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('finished metadata completes a child whatever the parent process state', () => {
   const parentId = '67676767-2222-4222-8222-676767676767';
   const fixture = sessionFixture(parentId);
