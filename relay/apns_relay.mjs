@@ -44,17 +44,26 @@ async function credentials() {
   return cachedCredentials;
 }
 
-export function sendNotification({ token, environment, eventId, payload }, jwt, {
+export function invalidRequest(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return 'Expected a JSON object.';
+  const { token, environment, eventId, payload } = request;
+  if (!/^[a-f0-9]{64,200}$/i.test(token || '') || !['development', 'production'].includes(environment)) {
+    return 'Invalid APNs device destination.';
+  }
+  if (!/^[a-f0-9]{64}$/.test(eventId || '')) return 'Invalid notification event ID.';
+  if (Buffer.byteLength(JSON.stringify(payload) || '') > 4096) return 'APNs payload exceeds 4096 bytes.';
+  return '';
+}
+
+export function sendNotification(request, jwt, {
   connectSession = connect,
   now = Math.floor(Date.now() / 1000),
   topic = process.env.APNS_TOPIC || 'com.batonai.app',
 } = {}) {
-  if (!/^[a-f0-9]{64,200}$/i.test(token || '') || !['development', 'production'].includes(environment)) {
-    throw new Error('Invalid APNs device destination.');
-  }
-  if (!/^[a-f0-9]{64}$/.test(eventId || '')) throw new Error('Invalid notification event ID.');
+  const invalid = invalidRequest(request);
+  if (invalid) throw new Error(invalid);
+  const { token, environment, eventId, payload } = request;
   const body = JSON.stringify(payload);
-  if (Buffer.byteLength(body) > 4096) throw new Error('APNs payload exceeds 4096 bytes.');
   const origin = environment === 'development'
     ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
   return new Promise((resolve, reject) => {
@@ -127,22 +136,19 @@ export async function handler(event) {
   } catch {
     return reply(400, { error: 'Invalid JSON' });
   }
-  if (!allow(String(request.token))) return reply(429, { error: 'Too many notifications for this device' });
+  // Validate first, so malformed requests never count against a device.
+  const invalid = invalidRequest(request);
+  if (invalid) return reply(400, { error: invalid });
+  if (!allow(request.token)) return reply(429, { error: 'Too many notifications for this device' });
   const config = await credentials();
   const now = Math.floor(Date.now() / 1000);
   if (!cachedJwt || now - cachedJwtAt >= 45 * 60) {
     cachedJwt = providerToken(config, now);
     cachedJwtAt = now;
   }
-  let pending;
-  try {
-    pending = sendNotification(request, cachedJwt);
-  } catch (error) {
-    return reply(400, { error: error.message });
-  }
   let result;
   try {
-    result = await pending;
+    result = await sendNotification(request, cachedJwt);
   } catch {
     return reply(502, { error: 'APNs unreachable' });
   }

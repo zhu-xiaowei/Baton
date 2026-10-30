@@ -75,6 +75,9 @@ test('the public URL rejects bad requests before touching the key', async () => 
   assert.equal((await handler({ requestContext: { http: { method: 'GET' } } })).statusCode, 405);
   assert.equal((await handler(post('x'.repeat(7000)))).statusCode, 413);
   assert.equal((await handler(post('{'))).statusCode, 400);
+  for (const body of ['null', '[]', '7', '{"token":"bad"}']) {
+    assert.equal((await handler(post(body))).statusCode, 400, body);
+  }
 });
 
 test('each token gets at most 60 alerts a minute per instance', () => {
