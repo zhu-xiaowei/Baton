@@ -15,6 +15,7 @@ import {
   resolveAgentMetadata,
   sessionIdFromProcessArgs,
   statusFromEntry,
+  withBackgroundWork,
 } from '../../bridge/session.mjs';
 import { preferPendingInteraction } from '../../bridge/watcher.mjs';
 
@@ -822,6 +823,50 @@ test('a background task notification starts a turn instead of reading as the las
     type: 'user',
     message: { content: '<task-notification>\n<task-id>a7f37595419</task-id>\n<status>completed</status>' },
   }), 'running');
+});
+
+test('a turn that ends with background work in flight stays running until it reports back', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-background-work-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  const sessionId = '49494949-4949-4494-8494-494949494949';
+  const filePath = path.join(root, `${sessionId}.jsonl`);
+  const at = (seconds) => new Date(Date.UTC(2026, 9, 30, 10, 0, seconds)).toISOString();
+  const launch = (id, toolId, seconds) => [
+    { type: 'assistant', timestamp: at(seconds), message: { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: toolId, name: 'Bash', input: { command: 'run', run_in_background: true } }] } },
+    { type: 'user', timestamp: at(seconds), message: { content: [
+      { type: 'tool_result', tool_use_id: toolId, content: `Command running in background with ID: ${id}.` }] } },
+  ];
+  const write = (rows) => fs.appendFileSync(filePath, rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
+  // The live process started at second 10.
+  fs.writeFileSync(path.join(sessions, `${process.pid}.json`),
+    JSON.stringify({ pid: process.pid, sessionId, startedAt: Date.parse(at(10)), status: 'idle' }));
+  try {
+    write([
+      ...launch('bold', 't0', 5), // Killed by the restart: never reports back.
+      ...launch('b1', 't1', 20),
+      ...launch('b2', 't2', 21),
+      // Output that merely quotes a launch is not one.
+      { type: 'user', timestamp: at(22), message: { content: [
+        { type: 'tool_result', tool_use_id: 't3', content: 'Command running in background with ID: quoted' }] } },
+      { type: 'assistant', timestamp: at(23), message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Waiting.' }] } },
+    ]);
+    const status = () => withBackgroundWork('completed', sessionId, filePath, sessions);
+    assert.equal(status(), 'running');
+    assert.equal(withBackgroundWork('needs_input', sessionId, filePath, sessions), 'needs_input');
+    write([
+      { type: 'queue-operation', timestamp: at(30), operation: 'enqueue',
+        content: '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>' },
+      { type: 'assistant', timestamp: at(31), message: { content: [
+        { type: 'tool_use', id: 't4', name: 'TaskStop', input: { task_id: 'b2' } }] } },
+    ]);
+    assert.equal(status(), 'completed');
+    // Without a live process record nothing changes.
+    assert.equal(withBackgroundWork('completed', 'other', filePath, sessions), 'completed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('idle pooled process no longer owns session status', () => {

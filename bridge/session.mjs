@@ -369,7 +369,7 @@ function readStatusFromFile(filePath) {
  */
 export function getSessionStatus(sessionId, filePath, runningInfo) {
   const live = runningInfo.liveStatuses?.get(sessionId);
-  if (live) return live;
+  if (live) return withBackgroundWork(live, sessionId, filePath);
 
   const metadataOnly = process.platform === 'win32'
     || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'));
@@ -388,9 +388,11 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   //    A truly running session always writes to jsonl, keeping mtime fresh
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'completed'; }
-  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'completed';
+  if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) {
+    return withBackgroundWork('completed', sessionId, filePath);
+  }
 
-  return contentStatus;
+  return withBackgroundWork(contentStatus, sessionId, filePath);
 }
 
 // Existing sessions run with --resume; Bridge-created ones with --session-id.
@@ -467,6 +469,91 @@ export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
     } catch {}
   }
   return statuses;
+}
+
+// A turn that ends with background work in flight (a run_in_background command or
+// agent) is not done: CC starts a new turn when that work reports back. Only work the
+// live process started counts, since a restart kills it without a notification; without
+// a live process record (older CC, Windows) the status is left unchanged.
+export function withBackgroundWork(status, sessionId, filePath, dir = CLAUDE_SESSIONS) {
+  if (status !== 'completed' || !filePath) return status;
+  let since = 0;
+  let files = [];
+  try { files = fs.readdirSync(dir); } catch {}
+  for (const file of files) {
+    const pid = /^(\d+)\.json$/.exec(file)?.[1];
+    if (!pid) continue;
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      if (record.sessionId !== sessionId || !record.startedAt) continue;
+      if (process.platform === 'linux' && record.procStart !== undefined
+        && processStartTime(pid) !== String(record.procStart)) continue;
+      since = Math.max(since, record.startedAt);
+    } catch {} // A record left by a dead process.
+  }
+  if (!since) return status;
+  try {
+    return backgroundWork(filePath, since).running.size ? 'running' : status;
+  } catch {
+    return status;
+  }
+}
+
+// Scanned incrementally per file: transcripts reach tens of MB.
+const _backgroundWork = new Map();
+
+export function backgroundWork(filePath, since) {
+  let state = _backgroundWork.get(filePath);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    // A new process, or a rewritten file: start over.
+    if (!state || state.since !== since || size < state.offset) {
+      state = { since, offset: 0, rest: '', launches: new Set(), running: new Set() };
+      _backgroundWork.set(filePath, state);
+    }
+    if (size > state.offset) {
+      const chunk = Buffer.alloc(size - state.offset);
+      fs.readSync(fd, chunk, 0, chunk.length, state.offset);
+      state.offset = size;
+      const lines = (state.rest + chunk.toString('utf8')).split('\n');
+      state.rest = lines.pop();
+      for (const line of lines) trackBackgroundWork(state, line);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return state;
+}
+
+function trackBackgroundWork(state, line) {
+  if (!line.includes('"run_in_background":true') && !line.includes('"tool_result"')
+    && !line.includes('<task-id>') && !line.includes('"TaskStop"')) return;
+  let entry;
+  try { entry = JSON.parse(line); } catch { return; }
+  if (!(Date.parse(entry.timestamp || '') >= state.since)) return;
+  const content = entry.message?.content;
+  if (entry.type === 'assistant' && Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type !== 'tool_use') continue;
+      if (block.input?.run_in_background === true) state.launches.add(block.id);
+      if (block.name === 'TaskStop') state.running.delete(block.input?.task_id);
+    }
+  }
+  if (entry.type === 'user' && Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type !== 'tool_result' || !state.launches.delete(block.tool_use_id)) continue;
+      const text = Array.isArray(block.content)
+        ? block.content.map((part) => part.text || '').join('') : String(block.content || '');
+      const id = /background with ID: (\w+)/.exec(text)?.[1] || /agentId: (\w+)/.exec(text)?.[1];
+      if (id) state.running.add(id);
+    }
+  }
+  // The notification ends the work whatever its status (completed, failed, killed).
+  const notice = entry.type === 'queue-operation' ? entry.content
+    : entry.type === 'user' && typeof content === 'string' ? content : '';
+  const ended = /^\s*<task-notification>[\s\S]*?<task-id>(\w+)<\/task-id>/.exec(notice || '')?.[1];
+  if (ended) state.running.delete(ended);
 }
 
 // Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.

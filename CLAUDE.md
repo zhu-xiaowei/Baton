@@ -186,6 +186,11 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
     `--json` working/blocked/done → running/needs_input/completed. Inactive historical
     `--all` entries preserve agent identity only; status falls back to process + jsonl.
+  - **background work**: a Claude turn that ends while its `run_in_background` commands or
+    agents are still out stays `running` (`withBackgroundWork`): CC starts a new turn when each
+    reports back (`<task-notification>`, also read as `running`). Only work started by the live
+    process (its `~/.claude/sessions` record) counts, scanned incrementally; `TaskStop` or a
+    notification of any status ends it. Applies to the watcher, `getSessionStatus` and pool turn ends.
   - Precedence when a session matches more than one source: **busy pool-owned >
     roster-active daemon agent > external/jsonl**.
     watcher/`checkStopped` skip status writes for busy pool-owned (`poolOwns()`) and daemon-agent sessions.

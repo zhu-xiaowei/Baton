@@ -16,7 +16,7 @@ import {
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, withBackgroundWork, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
 import {
@@ -336,7 +336,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
-      : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
+      : (withBackgroundWork(lastStatus, sessionId, filePath) || getSessionStatus(sessionId, filePath, getRunningInfo()));
     const effective = preferPendingInteraction(
       resolvedStatus,
       pendingInteractionDetail(sessionId),
