@@ -32,7 +32,7 @@ import {
   claudeSubagentSessionId,
   parseClaudeSubagentSessionId,
   readClaudeSubagentMeta,
-  TASK_ID,
+  claudeTaskEvent,
 } from './claude-subagent.mjs';
 import {
   activitySyncDue,
@@ -50,14 +50,13 @@ const CLAUDE_INTERRUPT_TEXTS = new Set([
 
 // A stop reaches the spawner's transcript after the child's last write, so the
 // child file may never change again; recheck children still shown as active.
-function enqueueEndedSubagents(line, rootSessionId, subagentsDir, enqueue) {
-  if (!line.includes('<task-id>')) return;
-  for (const [, taskId] of line.matchAll(TASK_ID)) {
-    const agentId = `agent-${taskId}`;
-    const childId = claudeSubagentSessionId(rootSessionId, agentId);
-    const status = lastKnownStatus.get(childId);
-    if (status && status !== 'completed') enqueue(path.join(subagentsDir, `${agentId}.jsonl`), childId);
-  }
+function enqueueEndedSubagent(row, rootSessionId, subagentsDir, enqueue) {
+  const event = claudeTaskEvent(row);
+  if (!event?.ended) return;
+  const agentId = `agent-${event.taskId}`;
+  const childId = claudeSubagentSessionId(rootSessionId, agentId);
+  const status = lastKnownStatus.get(childId);
+  if (status && status !== 'completed') enqueue(path.join(subagentsDir, `${agentId}.jsonl`), childId);
 }
 
 export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
@@ -279,7 +278,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
-    enqueueEndedSubagents(lines[i], sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), enqueue);
+    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), enqueue);
 
     // Track status from every parsed entry (statusFromEntry returns null for non-status types).
     const s = statusFromEntry(raw);
@@ -378,7 +377,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
-    if (rootId) enqueueEndedSubagents(lines[i], rootId, path.dirname(filename), enqueue);
+    if (rootId) enqueueEndedSubagent(raw, rootId, path.dirname(filename), enqueue);
     const status = statusFromEntry(raw);
     if (status) lastStatus = status;
     raw = normalizeClaudeQueuedInput(raw);

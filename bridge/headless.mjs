@@ -19,7 +19,6 @@ export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this lon
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
-export const HEADLESS_EXIT_GRACE_MS = 10_000;    // SIGTERM a process still alive after EOF
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
@@ -36,12 +35,8 @@ class HeadlessProc {
     this.ready = false;         // system/init seen
     this.busy = false;          // a turn is generating
     this.dead = false;
-    this.closing = false;       // stdin closed, waiting for exit
-    this.closed = new Promise((resolve) => { this._resolveClosed = resolve; });
-    // A pool turn sets busy; background tasks and the turns CC starts itself when
-    // they finish do not. CC waits for background tasks after EOF.
-    this.backgroundTasks = 0;
-    this.selfTurn = false;
+    this.backgroundTasks = 0;   // background agents/Bash; CC keeps running them after a turn
+    this.reportsInputIds = false;
     this.inputs = new Map();
     this._heldReplies = [];     // synthetic replies waiting for their prompt replay
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
@@ -100,11 +95,12 @@ class HeadlessProc {
 
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
+      // The turn CC starts when a task ends counts from here, not from the last pool turn.
+      this.pool._touch(this);
       return;
     }
 
     if (t === 'system' && o.subtype === 'init') {
-      if (!this.busy && this.ready) this.selfTurn = true;
       if (o.session_id) this.sessionId = o.session_id;
       if (o.cwd) this.cwd = o.cwd;
       this.ready = true;
@@ -181,7 +177,6 @@ class HeadlessProc {
 
     // Turn finished
     if (t === 'result') {
-      this.selfTurn = false;
       this._framer.finish();
       this._flushHeldReplies();
       // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
@@ -236,8 +231,6 @@ class HeadlessProc {
     if (this.dead) return;
     const wasBusy = this.busy;
     this.dead = true;
-    clearTimeout(this._exitTimer);
-    this._resolveClosed();
     this._framer.cancel();
     this.pool._remove(this.key, this);
     if (this.sessionId && wasBusy) this.pool._onExit?.(this.sessionId);
@@ -328,15 +321,8 @@ class HeadlessProc {
   }
 
   shutdown() {
-    if (this.dead || this.closing) return;
-    this.closing = true;
+    if (this.dead) return;
     try { this.stdin?.end(); } catch {}   // EOF → CC exits cleanly, jsonl persists
-    this._exitTimer = setTimeout(() => { try { this.proc?.kill(); } catch {} }, this.pool.exitGrace);
-    this._exitTimer.unref?.();
-  }
-
-  idle() {
-    return !this.dead && !this.closing && !this.busy && !this.selfTurn && !this.backgroundTasks;
   }
 }
 
@@ -346,7 +332,6 @@ export class ClaudePool {
     this.idleTtl = opts.idleTtl ?? HEADLESS_IDLE_TTL_MS;
     this.maxProcs = opts.maxProcs ?? HEADLESS_MAX_PROCS;
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
-    this.exitGrace = opts.exitGrace ?? HEADLESS_EXIT_GRACE_MS;
     this.bin = opts.bin || '';
     this.env = opts.env || null;
     this._inspectPending = new Map();
@@ -381,12 +366,7 @@ export class ClaudePool {
       onInputConsumed: opts.onInputConsumed,
     };
 
-    // One writer per session: a process that is shutting down exits before its replacement starts.
     let proc = this.procs.get(key);
-    if (proc?.closing && !proc.dead) {
-      await proc.closed;
-      proc = this.procs.get(key);
-    }
     if (!proc || proc.dead) {
       // Fresh process. NOTE: `system/init` is emitted only AFTER the first stdin
       // message is written — not on spawn. So write the turn immediately, then
@@ -526,18 +506,22 @@ export class ClaudePool {
 
   reapIdle() {
     const now = Date.now();
-    for (const proc of this.procs.values()) {
-      if (proc.idle() && proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) proc.shutdown();
+    for (const [key, proc] of this.procs) {
+      if (proc.busy || proc.dead || proc.backgroundTasks) continue;
+      if (proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) {
+        proc.shutdown();
+        this.procs.delete(key);
+      }
     }
   }
 
   _evictLru() {
     let victim = null;
     for (const proc of this.procs.values()) {
-      if (!proc.idle()) continue;
+      if (proc.busy || proc.dead || proc.backgroundTasks) continue;
       if (!victim || proc.lastActiveAt < victim.lastActiveAt) victim = proc;
     }
-    victim?.shutdown();
+    if (victim) { victim.shutdown(); this.procs.delete(victim.key); }
   }
 
   shutdownAll() {

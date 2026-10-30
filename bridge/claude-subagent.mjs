@@ -5,12 +5,35 @@ import { countJsonlLines } from './extract.mjs';
 import { getSessionMetadata } from './session.mjs';
 
 const MARKER = ':subagent:';
+const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
+
 // CC reports every background agent's end to its spawner as a <task-notification>
 // (completed/failed/killed/stopped), and a later SendMessage resume as resumedAgentId.
 // A stopped agent never gets `finished:true`, and its tail can end on an unrun tool_use.
-const TASK_EVENT = /<task-id>([0-9a-z]+)<\/task-id>|resumedAgentId\\*"\s*:\s*\\*"([0-9a-z]+)/g;
-export const TASK_ID = /<task-id>([0-9a-z]+)<\/task-id>/g;
-const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
+// Only CC's own rows count: tool output quoting these markers must not.
+export function claudeTaskEvent(row) {
+  const content = row?.type === 'queue-operation'
+    ? (row.operation === 'enqueue' ? row.content : null)
+    : row?.type === 'user' ? row.message?.content : null;
+  if (typeof content === 'string') {
+    if (!content.startsWith('<task-notification>')) return null;
+    const taskId = /<task-id>([0-9a-z]+)<\/task-id>/.exec(content)?.[1];
+    return taskId ? { taskId, ended: true } : null;
+  }
+  for (const block of Array.isArray(content) ? content : []) {
+    if (block?.type !== 'tool_result') continue;
+    const parts = typeof block.content === 'string' ? [block.content]
+      : Array.isArray(block.content) ? block.content.map((part) => part?.text) : [];
+    for (const text of parts) {
+      if (typeof text !== 'string' || !text.startsWith('{') || !text.includes('resumedAgentId')) continue;
+      try {
+        const taskId = JSON.parse(text).resumedAgentId;
+        if (typeof taskId === 'string') return { taskId, ended: false };
+      } catch {}
+    }
+  }
+  return null;
+}
 
 export function claudeSubagentSessionId(parentSessionId, agentId) {
   return `${parentSessionId}${MARKER}${agentId}`;
@@ -74,8 +97,13 @@ export function claudeSubagentEnded(filePath, meta = {}) {
       if (fd !== undefined) fs.closeSync(fd);
     }
     const end = buffer.subarray(0, read).lastIndexOf(0x0a) + 1;
-    for (const match of buffer.toString('utf8', 0, end).matchAll(TASK_EVENT)) {
-      scan.ended.set(match[1] || match[2], !!match[1]);
+    for (const line of buffer.toString('utf8', 0, end).split('\n')) {
+      // Parse only candidate rows; api-request-blob rows are request copies.
+      if ((!line.includes('<task-notification>') && !line.includes('resumedAgentId'))
+        || line.startsWith('{"type":"api-request-blob"')) continue;
+      let event = null;
+      try { event = claudeTaskEvent(JSON.parse(line)); } catch {}
+      if (event) scan.ended.set(event.taskId, event.ended);
     }
     scan.offset += end;
   }

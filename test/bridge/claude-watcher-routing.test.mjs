@@ -219,7 +219,7 @@ test('a stop recorded in the parent settles a child whose file no longer changes
         recentSessions.add(parent); recentSessions.add(child); knownProjects.add('-repo');
         lastKnownStatus.set(parent, 'running'); lastKnownStatus.set(child, 'running');
         fs.appendFileSync(parentFile, JSON.stringify({
-          type: 'queue-operation',
+          type: 'queue-operation', operation: 'enqueue',
           content: '<task-notification><task-id>a1b2c3</task-id><status>stopped</status>',
         }) + '\\n');
         await createClaudeFileQueue(config)(parentRelative, parent);

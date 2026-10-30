@@ -178,8 +178,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     child trusts its tail only while its parent's own status is running (CC stays `busy` while
     foreground or background subagents run) or it was written in the last 15s. A stopped agent never
     gets `finished:true`, so a child is also completed when its spawner's transcript last reports
-    it in a `<task-notification>` rather than a later `resumedAgentId` (`claudeSubagentEnded()`,
-    incremental scan); the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
+    it in a `<task-notification>` rather than a later `resumedAgentId`. Only CC's own rows count
+    (`claudeTaskEvent()`: enqueued notifications, notification prompts, `SendMessage` results), not
+    tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
     re-derives the counts on every `checkStopped` pass and sends them, because `sync-sessions`
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
@@ -439,7 +440,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ### Session Launch (headless)
 - Existing session with no live CC process → `_pool.send` spawns a headless `claude -p --resume <id>`; the persistent process becomes the single writer. No tmux, no wait-for-ready, no trust-dialog handling (headless inherits the folder's trust state).
-- Idle reap (10min) + LRU cap (16) manage the pool; a reaped session re-spawns with `--resume` on the next message, context intact and configuration reloaded. A process counts as idle only with no pool turn, no background task (`background_tasks_changed`) and no turn CC started itself; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC waits for that work after EOF. A reaped process stays in the pool until it exits (SIGTERM after 10s), and a new message for it waits, so a session never has two processes. Once CC reports `user_message_uuids`, a `result` without them (a self-started turn) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
+- Idle reap (10min) + LRU cap (16) manage the pool; a reaped session re-spawns with `--resume` on the next message, context intact and configuration reloaded. A process with background tasks (`background_tasks_changed`, CC ≥ 2.1.203) is neither reaped nor evicted, and the task ending restarts its idle clock; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the

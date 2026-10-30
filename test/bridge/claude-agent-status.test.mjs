@@ -549,8 +549,14 @@ test('the spawner transcript settles a stopped child until it is resumed', () =>
     const append = row => fs.appendFileSync(fixture.filePath, `${JSON.stringify(row)}\n`);
     const notification = {
       type: 'queue-operation',
+      operation: 'enqueue',
       content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>\n<status>stopped</status>',
     };
+    // Tool output quoting a notification is not one.
+    append({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>' }] },
+    });
     assert.equal(child().status, 'running');
     append(notification);
     assert.equal(child().status, 'completed');
