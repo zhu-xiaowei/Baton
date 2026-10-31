@@ -95,7 +95,9 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun setOpen(invoke: Invoke) {
-    AlertService.openSession = invoke.parseArgs(OpenArgs::class.java).sessionId
+    val session = invoke.parseArgs(OpenArgs::class.java).sessionId
+    AlertService.openSession = session
+    if (session.isNotEmpty()) AlertService.clear(activity, session)
     invoke.resolve()
   }
 

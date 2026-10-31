@@ -18,7 +18,11 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
 1. **Trigger.** Bridge writes every approval as `needs_input` + `agentDetail`, so
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
-   `needs_input`, and on a new `agentDetail` while waiting.
+   `needs_input`, and on a new `agentDetail` while waiting. Every turn end counts,
+   including the turns CC starts to report a finished background task. Every
+   alert is kept and stacked per session (iOS thread, Android group + summary).
+   Android clears a session's stack when the app opens it: a tap cancels only the
+   tapped alert, and the summary would otherwise stay on its own.
 2. **Skip what the user already knows.** Interrupted turns. Sessions someone is
    looking at on any device: the worker sends `notify_check` to apps subscribed to
    the session (`ROOT#<root>`), and a visible, focused one showing it answers
