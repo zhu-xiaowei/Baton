@@ -11,7 +11,13 @@ const CHUNK_BYTES = 16384;
 const PROJECT_LIMIT = 5;
 const TOTAL_LIMIT = 20;
 const MANAGEMENT_TYPES = new Set(['create_session', 'select_session', 'close_session']);
-const INPUT_TYPES = new Set(['input', 'resize', 'heartbeat', 'detach', 'render_ack']);
+const INPUT_TYPES = new Set(['input', 'resize', 'heartbeat', 'detach', 'render_ack', 'theme']);
+// OSC 10/11/12 replies (foreground, background, cursor) for the theme the latest client reported;
+// TUIs such as Codex read them once at startup to pick their own surface colors.
+const OSC_COLORS = {
+  dark: { 10: 'e6e6/eded/f3f3', 11: '0d0d/1111/1717', 12: 'e6e6/eded/f3f3' },
+  light: { 10: '1f1f/2323/2828', 11: 'ffff/ffff/ffff', 12: '1f1f/2323/2828' },
+};
 const { Terminal } = headless;
 const { SerializeAddon } = serialize;
 
@@ -19,6 +25,7 @@ export function createSharedTerminals(options) {
   const peers = new Map();
   const sessions = new Map();
   let disposed = false;
+  let theme = 'dark';
 
   function rawSend(peer, message, bytes = 0) {
     if (peer.closed) return false;
@@ -123,10 +130,10 @@ export function createSharedTerminals(options) {
     const process = spawnTerminal({ shell: options.shell || shell.shell,
       shellArgs: options.shellArgs || shell.shellArgs, cwd: session.cwd, ...size });
     session.process = process;
-    for (const [code, color] of [[10, 'e6e6/eded/f3f3'], [11, '0d0d/1111/1717'], [12, 'e6e6/eded/f3f3']]) {
+    for (const code of [10, 11, 12]) {
       mirror.parser.registerOscHandler(code, data => {
         if (data !== '?') return false;
-        if (session.process === process) process.write(Buffer.from(`\x1b]${code};rgb:${color}\x1b\\`));
+        if (session.process === process) process.write(Buffer.from(`\x1b]${code};rgb:${OSC_COLORS[theme][code]}\x1b\\`));
         return true;
       });
     }
@@ -202,7 +209,7 @@ export function createSharedTerminals(options) {
     peer.inflightBytes = 0;
     peer.snapshot = { id: randomUUID(), epoch: session.epoch, bytes, sent: 0, acked: 0,
       chunks: Math.ceil(bytes.length / CHUNK_BYTES) };
-    rawSend(peer, { type: 'ready', epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
+    rawSend(peer, { type: 'ready', themeUpdates: true, epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
       cols: session.cols, rows: session.rows, peers: session.peers.size, exited: session.exited,
       exitCode: session.exitCode, snapshotId: peer.snapshot.id, snapshotBytes: bytes.length,
       snapshotChunks: peer.snapshot.chunks, historyTruncated });
@@ -311,6 +318,8 @@ export function createSharedTerminals(options) {
         peer.snapshot.acked++;
         pumpSnapshot(peer);
       }
+    } else if (message.type === 'theme') {
+      if (OSC_COLORS[message.theme]) theme = message.theme;
     } else if (message.type !== 'heartbeat') {
       if (!session || session.closed || message.epoch !== session.epoch || message.sessionId !== session.id) {
         rawSend(peer, { type: 'error', message: 'Terminal switched or closed. Previous input was ignored.', fatal: false });
@@ -335,6 +344,7 @@ export function createSharedTerminals(options) {
       const message = JSON.parse(payload);
       if (message.type === 'open') {
         if (message.clientSeq !== 0) throw new Error('Invalid open sequence');
+        if (OSC_COLORS[message.theme]) theme = message.theme;
         peer.work = peer.work.then(() => attach(peer, message)).catch(error => drop(peer, error.message || 'Terminal initialization failed.'));
         return;
       }

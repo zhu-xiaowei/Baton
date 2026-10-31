@@ -248,7 +248,11 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     target.addEventListener(name, callback, options);
     current.listeners.push(() => target.removeEventListener(name, callback, options));
   };
-  listen(window, 'themechange', () => { terminal.options.theme = terminalTheme(); });
+  listen(window, 'themechange', () => {
+    terminal.options.theme = terminalTheme();
+    // Older Bridges reject unknown frame types; they only learn the theme from `open`.
+    if (current.themeUpdates) send({ type: 'theme', theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' });
+  });
   // Bottom-anchor only once content fills the screen so the fit remainder moves above row one.
   const syncFill = () => {
     const buffer = terminal.buffer.active;
@@ -568,6 +572,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (message.error) { current.focusAfterSync = false; status(message.error, 'error'); }
       else settledStatus();
     } else if (message.type === 'ready') {
+      current.themeUpdates = message.themeUpdates === true;
       if (!current.sessions.some(session => session.id === message.sessionId)) throw new Error('Terminal list out of sync. Update Bridge and reconnect.');
       clearTimeout(current.ackTimer);
       current.ackTimer = null;
@@ -665,7 +670,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.retry.hidden = true;
     current.socket?.close();
     status('Connecting…', 'connecting');
-    const initialOpen = { sessionId: current.sessionId, ...proposedSize() };
+    const initialOpen = { sessionId: current.sessionId, ...proposedSize(), theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' };
     const socket = current.socket = new RemoteTerminalSocket(device, { direct: true, projectHash, initialOpen });
     socket.addEventListener('open', () => {
       if (view === current && generation === current.generation && !socket.initialOpenAccepted) socket.send(JSON.stringify({ type: 'open', ...initialOpen }));
