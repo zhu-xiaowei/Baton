@@ -8,7 +8,7 @@
 // Lifecycle (litter ClaudePool model): on-demand spawn, idle reap, LRU cap.
 // Reap = close stdin (CC exits cleanly, jsonl persists), never kill.
 
-import { spawn, execFileSync } from 'child_process';
+import { spawn, spawnSync, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
@@ -19,6 +19,13 @@ export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this lon
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
+// Background tasks the session waits on; a server (its process, writing to tasks/<id>.output, listens on TCP) is not one.
+function awaitedTasks(tasks = []) {
+  const lsof = (args) => spawnSync('lsof', args, { encoding: 'utf8' }).stdout || '';
+  const pids = tasks.length ? lsof(['-nP', '-iTCP', '-sTCP:LISTEN', '-t']).trim().split('\n').join(',') : '';
+  const servers = pids ? lsof(['-a', '-p', pids, '-d', '1', '-Fn']).match(/(?<=tasks\/)\w+(?=\.output)/g) || [] : [];
+  return tasks.filter((task) => !servers.includes(task.task_id)).length;
+}
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
@@ -95,6 +102,7 @@ class HeadlessProc {
 
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
+      this.awaitedTasks = awaitedTasks(this.tasks = Array.isArray(o.tasks) ? o.tasks : []);
       // The turn CC starts when a task ends counts from here, not from the last pool turn.
       this.pool._touch(this);
       return;
@@ -177,6 +185,7 @@ class HeadlessProc {
 
     // Turn finished
     if (t === 'result') {
+      this.awaitedTasks = awaitedTasks(this.tasks);  // a server listens only some time after it starts
       this._framer.finish();
       this._flushHeldReplies();
       // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
@@ -503,6 +512,7 @@ export class ClaudePool {
 
   // Busy turns own status; idle processes may be resumed from a terminal.
   isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && p.busy; }
+  awaitsTasks(key) { const p = this.procs.get(key); return !!p && !p.dead && p.awaitedTasks > 0; }
 
   reapIdle() {
     const now = Date.now();

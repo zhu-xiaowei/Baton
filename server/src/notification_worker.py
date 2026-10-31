@@ -156,8 +156,10 @@ def notification(old, new, event_id):
         "sessionId": session_id,
         "sessionTitle": title,
         "rootSessionId": new.get("threadRootId") or session_id,
+        "status": after,
+        # Apps lay out projectName / sessionTitle themselves; title is for builds that predate it.
         "title": f"{project} · {title}",
-        "body": action + (f": {detail}" if detail else ""),
+        "body": ("✅ " if after == "completed" else "🟡 ") + action + (f" · {detail}" if detail else ""),
     }
 
 
@@ -171,7 +173,7 @@ def deliver(event):
     event_id = f'EVENT#{int(now * 1000):016d}#{event["eventId"]}'
     table.put_item(Item={
         "pk": f'NOTIFICATIONS#{event["accountId"]}', "sk": event_id,
-        "event": event, "ttl": int(now) + 86400,
+        "event": event, "ttl": int(now) + 7 * 86400,
     })
     if not os.environ.get("PUSH_RELAY_URL"):
         return

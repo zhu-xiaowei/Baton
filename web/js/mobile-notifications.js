@@ -45,13 +45,12 @@ async function openNotification(event) {
   // The extension could not fetch it before display: the push carried only its ID.
   if (!validTarget(event)) {
     event = await window.api('/api/notifications/event', { id: event.id }).catch(error => {
-      if (String(error.message).startsWith('404')) return null;  // Events live 24 hours.
+      if (String(error.message).startsWith('404')) return null;  // Events live 7 days.
       throw error;
     });
   }
-  if (!event) {
-    showToast('This notification has expired.');
-  } else if (event.accountId !== config.accountId) {
+  if (!event) return;
+  if (event.accountId !== config.accountId) {
     showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
     await window.openNotificationSession(event);

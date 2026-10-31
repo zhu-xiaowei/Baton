@@ -212,6 +212,8 @@ export async function closeTerminalsForUpdate() {
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
+// Background tasks it waits on keep a pooled session running after its turn ends.
+export function poolOwnsStatus(sessionId) { return poolOwns(sessionId) || _pool.awaitsTasks(sessionId); }
 
 export async function shutdownInteractions() {
   _config = null;
@@ -1359,7 +1361,8 @@ export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {})
         if (options.syncStatus !== false) {
           syncInteractionStatus(
             sessionId,
-            _pendingControl.has(sessionId) ? 'needs_input' : liveTurn.isEnded() ? 'completed' : 'running',
+            _pendingControl.has(sessionId) ? 'needs_input'
+              : liveTurn.isEnded() && !_pool.awaitsTasks(sessionId) ? 'completed' : 'running',
             controlDetail(_pendingControl.current(sessionId)),
             options.runtime,
           );

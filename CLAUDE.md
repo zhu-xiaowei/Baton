@@ -175,6 +175,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
+    While `background_tasks_changed` lists tasks other than servers (a task whose process,
+    writing `tasks/<id>.output`, listens on TCP, found with `lsof`), a turn end stays `running`
+    and watcher/`checkStopped` leave the status alone (`poolOwnsStatus`); the turn CC starts
+    when the last one reports back ends it `completed`, so only that alerts.
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()` (startup sync +
     `checkStopped`) first uses CC's own `~/.claude/sessions/<pid>.json` record
     (`busy`/`waiting`/`idle`/`shell` → running/needs_input/completed/completed; terminal since
