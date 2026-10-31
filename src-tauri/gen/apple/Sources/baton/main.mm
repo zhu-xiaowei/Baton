@@ -37,7 +37,7 @@ static void baton_apply_appearance(UIWindow *window) {
 // over the other one keeps the launch skeleton in the app's theme whatever the system appearance.
 // Returns @"dark"/@"light" from the snapshot's first ASTC void-extent block, or nil if unrecognised.
 static NSString *baton_snapshot_style(NSData *file, uint32_t *width, uint32_t *height) {
-    const uint8_t *bytes = file.bytes;
+    const uint8_t *bytes = (const uint8_t *)file.bytes;
     if (file.length < 16 || memcmp(bytes, "AAPL\r\n\x1a\n", 8) != 0) return nil;
     NSData *blocks = nil;
     for (NSUInteger p = 8; p + 8 <= file.length;) {
