@@ -42,6 +42,15 @@ class AlertService : Service() {
       context.stopService(Intent(context, AlertService::class.java))
     }
 
+    // Opening a session clears its stack. A tap cancels only the tapped alert, and a
+    // summary left without children would stay in the shade on its own.
+    fun clear(context: Context, session: String) {
+      val manager = context.getSystemService(NotificationManager::class.java)
+      for (sbn in manager.activeNotifications) {
+        if (sbn.notification.group == session) manager.cancel(sbn.id)
+      }
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
   }
 
@@ -136,24 +145,37 @@ class AlertService : Service() {
     // The session already on screen needs no alert.
     if (foreground && openSession.isNotEmpty() && event.optString("rootSessionId") == openSession) return
     val id = event.optString("eventId").hashCode()
+    // Every alert stays, stacked per session like the iOS thread.
+    val group = event.optString("rootSessionId")
+    val summaryId = "group:$group".hashCode()
     val activity = packageManager.getLaunchIntentForPackage(packageName)?.component ?: return
     // Not the launcher intent: that one only brings a running task to front and drops extras.
     val tap = Intent(ACTION_OPEN).setComponent(activity)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
       .putExtra(EXTRA_EVENT, event.toString())
-    val notification = NotificationCompat.Builder(this, ALERT_CHANNEL)
-      .setSmallIcon(R.drawable.ic_push)
-      .setSubText(event.optString("projectName"))
-      .setContentTitle(event.optString("sessionTitle").ifEmpty { event.optString("title") })
+    val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    val builder = { requestCode: Int ->
+      NotificationCompat.Builder(this, ALERT_CHANNEL)
+        .setSmallIcon(R.drawable.ic_push)
+        .setSubText(event.optString("projectName"))
+        .setContentTitle(event.optString("sessionTitle").ifEmpty { event.optString("title") })
+        .setGroup(group)
+        .setAutoCancel(true)
+        .setContentIntent(PendingIntent.getActivity(this, requestCode, tap, flags))
+    }
+    val notification = builder(id)
       .setContentText(event.optString("body"))
       .setStyle(NotificationCompat.BigTextStyle().bigText(event.optString("body")))
       .setPriority(NotificationCompat.PRIORITY_HIGH)
-      .setAutoCancel(true)
-      .setContentIntent(PendingIntent.getActivity(this, id, tap,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+      .build()
+    // The summary only holds the stack; the alert comes from the new child.
+    val summary = builder(summaryId)
+      .setGroupSummary(true)
+      .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
       .build()
     try {
       NotificationManagerCompat.from(this).notify(id, notification)
+      NotificationManagerCompat.from(this).notify(summaryId, summary)
     } catch (_: SecurityException) {
       // Notification permission was revoked in system settings.
     }

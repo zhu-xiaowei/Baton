@@ -302,7 +302,7 @@ import { systemEventId } from './timeline.js';
         if (summary) {
           turnItems.push({
             type: 'text',
-            html: summary,
+            ...summary,
             messageId: msg.uuid || '',
             nativeId: msg.nativeId || '',
             turnId: msg.turnId || '',
