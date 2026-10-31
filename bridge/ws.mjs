@@ -97,7 +97,10 @@ const RECONNECT_DELAY = 5_000;
 const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn.
-const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
+const _pool = new ClaudePool({
+  onExit: (sessionId) => syncPoolStatus(sessionId, 'completed'),
+  onSettled: (sessionId) => !_pendingControl.has(sessionId) && syncPoolStatus(sessionId, 'completed'),
+});
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
