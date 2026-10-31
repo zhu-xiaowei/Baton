@@ -176,7 +176,7 @@ mod imp {
     let strip = window.add_child(
       WebviewBuilder::new(strip_label(window.label()), WebviewUrl::App("tabs.html".into()))
         .disable_drag_drop_handler()
-        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).mode))
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).preference))
         .background_color(crate::appearance::current(window.app_handle()).color(true)),
       LogicalPosition::new(0.0, 0.0),
       LogicalSize::new(size.width, STRIP_HEIGHT),
@@ -217,7 +217,7 @@ mod imp {
     let webview = window.add_child(
       WebviewBuilder::new(&label, WebviewUrl::App("index.html".into()))
         .disable_drag_drop_handler()
-        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).mode))
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).preference))
         .background_color(crate::appearance::current(window.app_handle()).color(false)),
       LogicalPosition::new(0.0, STRIP_HEIGHT),
       LogicalSize::new(size.width, (size.height - STRIP_HEIGHT).max(1.0)),

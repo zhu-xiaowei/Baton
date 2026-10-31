@@ -4,6 +4,10 @@ export function getTheme() {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 }
 
+export function getThemePreference() {
+  return window.batonTheme?.preference?.() || 'dark';
+}
+
 export function themeColor(token) {
   return getComputedStyle(document.documentElement).getPropertyValue('--' + token).trim();
 }
@@ -22,10 +26,9 @@ function updateThemeControls() {
     const match = image.getAttribute('src')?.match(/^(.*\/file-icons\/)(?:light\/)?([^/]+)\.svg$/);
     if (match) image.src = match[1] + (light && LIGHT_FILE_ICONS.has(match[2]) ? 'light/' : '') + match[2] + '.svg';
   });
-  const input = document.getElementById('lightModeEnabled');
-  if (input) input.checked = light;
-  const status = document.getElementById('themeMode');
-  if (status) status.textContent = getTheme() === 'light' ? 'Light' : 'Dark';
+  document.querySelectorAll('[data-theme-option]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.themeOption === getThemePreference()));
+  });
   let meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) {
     meta = document.createElement('meta');
@@ -45,8 +48,8 @@ if (window.__TAURI_INTERNALS__) {
 }
 
 export function mountThemeSettings() {
-  const input = document.getElementById('lightModeEnabled');
-  if (!input) return;
+  document.querySelectorAll('[data-theme-option]').forEach(button => {
+    button.addEventListener('click', () => setTheme(button.dataset.themeOption));
+  });
   updateThemeControls();
-  input.addEventListener('change', () => setTheme(input.checked ? 'light' : 'dark'));
 }
