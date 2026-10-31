@@ -60,10 +60,10 @@ async function openNotification(event) {
   }
 }
 
-async function enableIos() {
+async function enableIos(prompt) {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
   // The notification extension reads these to fetch each alert's text.
-  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY });
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, prompt });
   if (!result.granted || !enabled() || !state.KEY) return result;
   const device = { token: result.token, environment: result.environment };
   await window.apiPost('/api/notifications/devices', device);
@@ -81,13 +81,13 @@ function showSwitch() {
 
 async function apply(prompt = true) {
   if (enabled()) {
-    permission = await (platform === 'ios' ? enableIos()
+    permission = await (platform === 'ios' ? enableIos(prompt)
       : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
   } else {
     setStatus('');
   }
-  // Just declined in the system prompt: stay off rather than ask again on every launch.
-  if (permission?.granted === false && !permission.blocked) localStorage.setItem(ENABLED, '0');
+  // Just declined in the system prompt: stay off until the switch is turned on again.
+  if (prompt && permission?.granted === false && !permission.blocked) localStorage.setItem(ENABLED, '0');
   showSwitch();
 }
 
@@ -131,7 +131,9 @@ async function initialize() {
   });
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
-  await apply();  // On each page load: refreshes the iOS token TTL, restarts the Android service.
+  // On each page load: refreshes the iOS token TTL, restarts the Android service. Only the
+  // switch asks for the permission.
+  await apply(false);
 }
 
 export function initMobileNotifications() {
@@ -153,7 +155,7 @@ export function mountNotificationSettings() {
     const wanted = input.checked;
     localStorage.setItem(ENABLED, wanted ? '1' : '0');
     try {
-      if (wanted) await (config ? apply() : initMobileNotifications());
+      if (wanted) await (config ? apply() : initMobileNotifications().then(() => config && apply()));
       else await unregisterMobileNotifications().then(() => setStatus(''));
       // The system no longer asks: only its Settings can allow Baton, which is checked on return.
       if (wanted && permission?.blocked) {

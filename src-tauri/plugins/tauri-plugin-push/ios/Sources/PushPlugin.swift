@@ -9,6 +9,7 @@ import WebKit
 private struct RegisterArgs: Decodable {
   let server: String
   let apiKey: String
+  let prompt: Bool?
 }
 
 // The notification extension resolves each ID-only push against the user's own server.
@@ -89,11 +90,12 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     class_replaceMethod(delegateClass, failure, imp_implementationWithBlock(failureBlock), "v@:@@")
   }
 
-  func register(_ invoke: Invoke) {
+  func register(_ invoke: Invoke, prompt: Bool) {
     install()
     UNUserNotificationCenter.current().getNotificationSettings { settings in
       // iOS asks only once; after a denial only Settings can allow it.
       if settings.authorizationStatus == .denied { return invoke.resolve(["granted": false, "blocked": true]) }
+      if settings.authorizationStatus == .notDetermined && !prompt { return invoke.resolve(["granted": false]) }
       self.authorize(invoke)
     }
   }
@@ -188,7 +190,7 @@ class PushPlugin: Plugin {
   @objc public func register(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RegisterArgs.self)
     SharedServer.save(server: args.server, apiKey: args.apiKey)
-    PushCoordinator.shared.register(invoke)
+    PushCoordinator.shared.register(invoke, prompt: args.prompt ?? true)
   }
 
   @objc public func stop(_ invoke: Invoke) {
