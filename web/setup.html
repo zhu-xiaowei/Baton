@@ -46,7 +46,7 @@
   }
   .platform-switch { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; }
   .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-  .platform-option.active { background: var(--border); color: var(--text-primary); }
+  .platform-option.active, .platform-option[aria-pressed="true"] { background: var(--border); color: var(--text-primary); }
   .code-block {
     width: 100%; background: var(--canvas); border: 1px solid var(--border); border-radius: 8px;
     padding: 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
@@ -70,8 +70,7 @@
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
   #notificationStatus:empty { display: none; }
-  .theme-setting-control { display: flex; align-items: center; gap: 12px; }
-  .theme-setting-control .hint { margin: 0; }
+  .setting-row .platform-switch { margin: 0; }
   .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: var(--switch-track); position: relative; cursor: pointer; transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--switch-knob); transition: transform .15s; }
   .switch:checked { background: var(--success-solid); }
@@ -145,10 +144,14 @@
 </div>
 
 <div id="themeSettings" class="section">
-  <label class="setting-row">
-    <strong>Light mode</strong>
-    <span class="theme-setting-control"><span id="themeMode" class="hint">Dark</span><input id="lightModeEnabled" class="switch" type="checkbox" role="switch"></span>
-  </label>
+  <div class="setting-row">
+    <strong>Appearance</strong>
+    <div class="platform-switch" role="group" aria-label="Appearance">
+      <button class="platform-option" data-theme-option="system">System</button>
+      <button class="platform-option" data-theme-option="light">Light</button>
+      <button class="platform-option" data-theme-option="dark">Dark</button>
+    </div>
+  </div>
 </div>
 
 <!-- Logout -->

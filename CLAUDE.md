@@ -515,10 +515,13 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Light layering mirrors Dark: white page, `#f6f8fa` top bar/cards/inputs, `#eaeef2` raised headers. Secondary
   text is lighter than a straight mapping (`#6e7781`) and bold tool names lighter still (`--tool-label`),
   because mid-grey on white reads close to black.
-- `web/public/theme-init.js` runs before first paint on every page: `localStorage['baton-theme']`, else the
-  native preference (`window.__BATON_NATIVE_THEME__` / `BatonAndroid.getTheme()`), else dark. `theme.js`
+- Settings → Appearance offers System / Light / Dark (default Dark). `web/public/theme-init.js` runs before
+  first paint on every page: the preference is `localStorage['baton-theme']`, else the native copy
+  (`window.__BATON_NATIVE_THEME__` / `BatonAndroid.getTheme()`), else dark; `system` resolves through
+  `prefers-color-scheme` and follows its changes. `data-theme` is the resolved palette, `data-theme-preference`
+  the choice. `theme.js`
   dispatches `themechange`; xterm, Mermaid, diff2html, Markdown theme images and file icons re-render on it.
-  Settings has the Light mode switch; switching never reloads the page.
+  Switching never reloads the page.
 - Native sync (`theme-native.js`): Android `BatonAndroid.setTheme` (system bar icons, app night mode,
   splash; `uiMode` is in `configChanges`, so no Activity restart), iOS `batonAppearance` message
   (window style, status bar, preview webviews), desktop `appearance_set` (`src-tauri/src/appearance.rs`:
@@ -527,8 +530,8 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
   (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
   LZFSE-compressed on iOS 18). `main.mm` keeps the system's originals in `Application Support/BatonLaunchSnapshots`,
-  classifies each by its first ASTC void-extent block, and copies the chosen appearance's snapshot over the
-  other one on launch and on every switch. Unrecognised files leave the snapshots untouched; the first cold
+  classifies each by its first ASTC void-extent block, and on launch and every switch copies the chosen
+  appearance's snapshot over the other one (System restores the originals). Unrecognised files leave the snapshots untouched; the first cold
   start after an app update still uses the freshly rendered system pair.
 - The image viewer keeps a backdrop of its own (`--media-backdrop`); videos and QR codes stay black/white.
 

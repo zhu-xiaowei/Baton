@@ -1,4 +1,4 @@
-import { getTheme, themeColor } from './theme.js';
+import { getTheme, getThemePreference, themeColor } from './theme.js';
 
 export async function initNativeTheme() {
   let receiving = false;
@@ -9,6 +9,7 @@ export async function initNativeTheme() {
     if (receiving) return;
     const appearance = {
       mode: getTheme(),
+      preference: getThemePreference(),
       canvas: themeColor('canvas'),
       surface: themeColor('surface-elevated'),
       strip: themeColor('tab-strip'),

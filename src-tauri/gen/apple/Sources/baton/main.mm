@@ -15,9 +15,13 @@ static NSDictionary *baton_saved_appearance(void) {
     return [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"baton-appearance"] ?: @{};
 }
 
-static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
-    NSString *hex = baton_saved_appearance()[name] ?: fallback;
-    if (![hex isKindOfClass:[NSString class]] || hex.length != 7) hex = fallback;
+// `preference` is system/light/dark; `mode` is the light/dark palette the page last applied.
+static NSString *baton_preference(void) {
+    NSString *value = baton_saved_appearance()[@"preference"] ?: baton_saved_appearance()[@"mode"];
+    return [@[@"system", @"light"] containsObject:value] ? value : @"dark";
+}
+
+static UIColor *baton_hex_color(NSString *hex) {
     unsigned int rgb = 0;
     [[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&rgb];
     return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0
@@ -25,9 +29,24 @@ static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
                             blue:(rgb & 255) / 255.0 alpha:1];
 }
 
+// Following the system resolves canvas/surface from the trait, so they flip with the system appearance.
+static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
+    if ([baton_preference() isEqual:@"system"]) {
+        BOOL canvas = [name isEqual:@"canvas"];
+        return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            BOOL dark = traits.userInterfaceStyle == UIUserInterfaceStyleDark;
+            return baton_hex_color(canvas ? (dark ? @"#0d1117" : @"#ffffff") : (dark ? @"#161b22" : @"#f6f8fa"));
+        }];
+    }
+    NSString *hex = baton_saved_appearance()[name] ?: fallback;
+    if (![hex isKindOfClass:[NSString class]] || hex.length != 7) hex = fallback;
+    return baton_hex_color(hex);
+}
+
 static void baton_apply_appearance(UIWindow *window) {
-    BOOL light = [baton_saved_appearance()[@"mode"] isEqual:@"light"];
-    window.overrideUserInterfaceStyle = light ? UIUserInterfaceStyleLight : UIUserInterfaceStyleDark;
+    NSString *preference = baton_preference();
+    window.overrideUserInterfaceStyle = [preference isEqual:@"system"] ? UIUserInterfaceStyleUnspecified
+        : [preference isEqual:@"light"] ? UIUserInterfaceStyleLight : UIUserInterfaceStyleDark;
     window.backgroundColor = baton_appearance_color(@"canvas", @"#0d1117");
     [window.rootViewController setNeedsStatusBarAppearanceUpdate];
 }
@@ -97,13 +116,14 @@ static void baton_sync_launch_snapshots(void) {
             if (![next writeToFile:manifestPath atomically:YES]) return;
             manifest = next;
         }
-        NSString *target = [baton_saved_appearance()[@"mode"] isEqual:@"light"] ? @"light" : @"dark";
+        // Following the system restores each snapshot to the one the system rendered.
+        NSString *target = baton_preference();
         for (NSString *name in names) {
             NSArray *info = manifest[name];
-            NSString *source = nil;
+            NSString *source = [target isEqual:@"system"] ? name : nil;
             for (NSString *other in manifest) {
                 NSArray *candidate = manifest[other];
-                if ([candidate[0] isEqual:target] && [candidate[1] isEqual:info[1]] && [candidate[2] isEqual:info[2]]) source = other;
+                if (!source && [candidate[0] isEqual:target] && [candidate[1] isEqual:info[1]] && [candidate[2] isEqual:info[2]]) source = other;
             }
             if (!source) continue;
             NSData *wanted = [NSData dataWithContentsOfFile:[saved stringByAppendingPathComponent:source]];
@@ -121,6 +141,7 @@ static void baton_sync_launch_snapshots(void) {
     if (!message.frameInfo.isMainFrame || ![message.body isKindOfClass:[NSDictionary class]]) return;
     NSDictionary *value = message.body;
     if (![value[@"mode"] isEqual:@"light"] && ![value[@"mode"] isEqual:@"dark"]) return;
+    if (value[@"preference"] && ![@[@"system", @"light", @"dark"] containsObject:value[@"preference"]]) return;
     NSRegularExpression *colorPattern = [NSRegularExpression regularExpressionWithPattern:@"^#[0-9a-fA-F]{6}$" options:0 error:nil];
     for (NSString *name in @[@"canvas", @"surface", @"strip"]) {
         NSString *color = value[name];
@@ -134,8 +155,8 @@ static void baton_sync_launch_snapshots(void) {
     UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
     message.webView.backgroundColor = background;
     message.webView.scrollView.backgroundColor = background;
-    message.webView.scrollView.indicatorStyle = [value[@"mode"] isEqual:@"light"]
-        ? UIScrollViewIndicatorStyleBlack : UIScrollViewIndicatorStyleWhite;
+    message.webView.scrollView.indicatorStyle = [baton_preference() isEqual:@"system"] ? UIScrollViewIndicatorStyleDefault
+        : [value[@"mode"] isEqual:@"light"] ? UIScrollViewIndicatorStyleBlack : UIScrollViewIndicatorStyleWhite;
     if (@available(iOS 15.0, *)) message.webView.underPageBackgroundColor = background;
     [[NSNotificationCenter defaultCenter] postNotificationName:@"BatonAppearanceChanged" object:nil];
 }
@@ -146,8 +167,7 @@ static void baton_install_appearance_bridge(WKWebView *webview) {
     BatonAppearanceHandler *handler = [BatonAppearanceHandler new];
     [webview.configuration.userContentController addScriptMessageHandler:handler name:@"batonAppearance"];
     objc_setAssociatedObject(webview, &_baton_appearance_installed_key, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    NSString *mode = [baton_saved_appearance()[@"mode"] isEqual:@"light"] ? @"light" : @"dark";
-    NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", mode];
+    NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", baton_preference()];
     [webview.configuration.userContentController addUserScript:[[WKUserScript alloc]
         initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");

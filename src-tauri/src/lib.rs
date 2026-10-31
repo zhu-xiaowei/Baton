@@ -49,7 +49,7 @@ pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
     .resizable(true)
     .disable_drag_drop_handler()
     .background_color(appearance::current(app).color(false))
-    .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", appearance::current(app).mode))
+    .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", appearance::current(app).preference))
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
     .position(120.0 + offset, 120.0 + offset)
