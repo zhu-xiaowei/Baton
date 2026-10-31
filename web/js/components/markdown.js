@@ -94,17 +94,15 @@
   function jsonHtml(value) {
     var code = JSON.stringify(value, null, 2);
     try {
-      return codeBlock('<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>', 'json', true);
+      return codeBlock('<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>', true);
     } catch (e) {
-      return codeBlock('<pre><code>' + escHtml(code) + '</code></pre>', 'json', true);
+      return codeBlock('<pre><code>' + escHtml(code) + '</code></pre>', true);
     }
   }
 
-  function codeBlock(html, language, chat = _chatCode) {
+  function codeBlock(html, chat = _chatCode) {
     if (!chat || _documentSlots || !window.copyButtonHtml) return html;
-    return '<div class="code-block"><div class="code-block-head"><span class="code-language">'
-      + escHtml(hljs.getLanguage(language)?.name || language || '') + '</span>'
-      + window.copyButtonHtml('code') + '</div>' + html + '</div>';
+    return '<div class="code-block">' + window.copyButtonHtml('code') + html + '</div>';
   }
 
   function chatMarkdown(text) {
@@ -191,10 +189,10 @@
         if (html == null && lang && !hljs.getLanguage(lang) && window.loadHljsLanguage) {
           window.loadHljsLanguage(lang);
           return trusted(codeBlock('<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
-            + escHtml(code) + '</code></pre>', lang));
+            + escHtml(code) + '</code></pre>'));
         }
         if (html == null) html = escHtml(code);
-        return trusted(codeBlock('<pre><code class="hljs">' + html + '</code></pre>', lang));
+        return trusted(codeBlock('<pre><code class="hljs">' + html + '</code></pre>'));
       },
     },
   });

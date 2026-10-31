@@ -21,28 +21,29 @@
 .copy-action.mermaid-copy { width: 26px; height: 24px; }
 
 .assistant-text .code-block {
+  position: relative;
   margin: 8px 0;
   border: 1px solid #30363d;
   border-radius: 8px;
   background: #161b22;
   overflow: hidden;
 }
-.code-block-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 34px;
-  padding: 1px 5px 0 12px;
-}
-.code-language {
-  color: #8b949e;
-  font: 11px/1.5 'SF Mono', 'Fira Code', monospace;
+.assistant-text .code-block > .code-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  background: #161b22;
 }
 .assistant-text .code-block > pre {
   margin: 0;
   border: 0;
   border-radius: 0;
-  padding-top: 0;
+  padding: 12px 44px 12px 12px;
+}
+.assistant-text .code-block > pre > code {
+  padding: 0;
+  overflow: visible;
 }
 .assistant-text.copy-tail, .assistant-text p.copy-tail { display: flow-root; }
 /* flow-root would drop the list marker. */
@@ -71,5 +72,4 @@
 @media (pointer: coarse) {
   .copy-action { position: relative; }
   .code-copy::after, .message-copy::after { content: ''; position: absolute; inset: -6px; }
-  .code-block-head { min-height: 40px; padding-top: 3px; padding-bottom: 3px; }
 }

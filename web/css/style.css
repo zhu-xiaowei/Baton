@@ -552,6 +552,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .img-placeholder[data-failed] { cursor: pointer; }
 .img-placeholder.markdown-image img { width: 100%; height: 100%; }
 .markdown-image-external { max-width: 100%; height: auto; }
+.assistant-text .markdown-image, .assistant-text .markdown-image-external { margin: 4px 0; }
 .image-load-action { width: 100%; height: 100%; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .img-placeholder.markdown-image img, .markdown-image-external { object-fit: contain; object-position: left center; border-radius: 6px; cursor: zoom-in; vertical-align: middle; }
 /* New Project modal */
