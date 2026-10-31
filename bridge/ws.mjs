@@ -96,9 +96,12 @@ const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
 const CONNECT_TIMEOUT = 5_000;
 
-// onExit only fires when a process exits during an active turn.
+// onExit only fires when a process exits during an active turn or with prompts unanswered.
 const _pool = new ClaudePool({
-  onExit: (sessionId) => syncPoolStatus(sessionId, 'completed'),
+  onExit: (sessionId, hadPrompts) => {
+    if (hadPrompts) clearPendingControls(sessionId);
+    syncPoolStatus(sessionId, 'completed');
+  },
   onControlRequest: (sessionId, req) => queuePermissionRequest(sessionId, req),
 });
 const _claudeRuntime = getRuntimeAdapter('claude');
