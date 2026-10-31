@@ -21,6 +21,7 @@
 .copy-action.mermaid-copy { width: 26px; height: 24px; }
 
 .assistant-text .code-block {
+  position: relative;
   margin: 8px 0;
   border: 1px solid #30363d;
   border-radius: 8px;
@@ -28,13 +29,19 @@
   overflow: hidden;
 }
 .code-block-head {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 34px;
   padding: 1px 5px 0 12px;
 }
+.code-block-head .code-copy { background: #161b22; }
 .code-language {
+  display: none;
   color: #8b949e;
   font: 11px/1.5 'SF Mono', 'Fira Code', monospace;
 }
@@ -42,7 +49,9 @@
   margin: 0;
   border: 0;
   border-radius: 0;
-  padding-top: 0;
+}
+.assistant-text .code-block > pre > code {
+  padding: 0;
 }
 .assistant-text.copy-tail, .assistant-text p.copy-tail { display: flow-root; }
 /* flow-root would drop the list marker. */

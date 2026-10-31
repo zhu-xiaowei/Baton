@@ -200,17 +200,9 @@ function currentImageContext(override = {}) {
 }
 
 function automaticImagePath(path, context) {
-  var relative = relativeProjectImagePath(path, context.projectHash);
-  if (relative !== null) return relative;
-  if (context.device !== state.appState.device || context.projectHash !== currentProjectHash()) return null;
-  var blocks = (state.wsAllMessages || []).flatMap(message =>
-    Array.isArray(message.content) ? message.content : []);
-  var completed = new Set(blocks.filter(block =>
-    block?.type === 'tool_result' && block.tool_use_id && !block.is_error).map(block => block.tool_use_id));
-  var normalize = value => String(value || '').replaceAll('\\', '/');
-  var viewed = blocks.some(block => block?.type === 'tool_use' && block.name === 'ViewImage'
-    && block.id && completed.has(block.id) && normalize(block.input?.path || block.input?.file_path) === normalize(path));
-  return viewed ? path : null;
+  // Generated previews can live beside the project (for example in a worktree or /tmp).
+  // Read them on the captured device/project just like an explicitly opened image.
+  return relativeProjectImagePath(path, context.projectHash) ?? path;
 }
 
 function localImageKey(path, context) {
