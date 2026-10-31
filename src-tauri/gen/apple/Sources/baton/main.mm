@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
+#import <libkern/OSByteOrder.h>
 
 static int _baton_swizzle_attempts = 0;
 static int _baton_cancel_swizzle_attempts = 0;
@@ -31,6 +32,87 @@ static void baton_apply_appearance(UIWindow *window) {
     [window.rootViewController setNeedsStatusBarAppearanceUpdate];
 }
 
+// iOS draws the cold-start LaunchScreen from snapshots it renders for the light and dark system
+// appearance (Library/SplashBoard, one per orientation). Copying the chosen appearance's snapshot
+// over the other one keeps the launch skeleton in the app's theme whatever the system appearance.
+// Returns @"dark"/@"light" from the snapshot's first ASTC void-extent block, or nil if unrecognised.
+static NSString *baton_snapshot_style(NSData *file, uint32_t *width, uint32_t *height) {
+    const uint8_t *bytes = file.bytes;
+    if (file.length < 16 || memcmp(bytes, "AAPL\r\n\x1a\n", 8) != 0) return nil;
+    NSData *blocks = nil;
+    for (NSUInteger p = 8; p + 8 <= file.length;) {
+        uint32_t length = OSReadLittleInt32(bytes, p);
+        if (p + 8 + length > file.length) return nil;
+        NSData *body = [file subdataWithRange:NSMakeRange(p + 8, length)];
+        if (memcmp(bytes + p + 4, "HEAD", 4) == 0 && length >= 32) {
+            *width = OSReadLittleInt32(body.bytes, 24);
+            *height = OSReadLittleInt32(body.bytes, 28);
+        } else if (memcmp(bytes + p + 4, "astc", 4) == 0) {
+            blocks = body;
+        } else if (memcmp(bytes + p + 4, "LZFS", 4) == 0 && length > 4) {
+            blocks = [[body subdataWithRange:NSMakeRange(4, length - 4)]
+                decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmLZFSE error:nil];
+        }
+        p += 8 + length;
+    }
+    const uint8_t marker[2] = {0xfc, 0xfd};
+    NSRange found = blocks ? [blocks rangeOfData:[NSData dataWithBytes:marker length:2]
+                                         options:0 range:NSMakeRange(0, blocks.length)] : NSMakeRange(NSNotFound, 0);
+    if (found.location == NSNotFound || found.location + 14 > blocks.length || !*width) return nil;
+    const uint8_t *rgba = (const uint8_t *)blocks.bytes + found.location;
+    return rgba[9] + rgba[11] + rgba[13] < 300 ? @"dark" : @"light";
+}
+
+static void baton_sync_launch_snapshots(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("baton.launch-snapshots", DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(queue, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *library = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *group = [NSString stringWithFormat:@"%@ - {DEFAULT GROUP}", NSBundle.mainBundle.bundleIdentifier];
+        NSString *live = [[library stringByAppendingPathComponent:@"SplashBoard/Snapshots"] stringByAppendingPathComponent:group];
+        NSString *saved = [library stringByAppendingPathComponent:@"Application Support/BatonLaunchSnapshots"];
+        NSArray<NSString *> *names = [[fm contentsOfDirectoryAtPath:live error:nil]
+            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self ENDSWITH '.ktx'"]];
+        if (!names.count) return;
+        // Snapshots are kept as the system rendered them; a new set (app update) replaces the copy.
+        NSString *manifestPath = [saved stringByAppendingPathComponent:@"manifest.plist"];
+        NSDictionary<NSString *, NSArray *> *manifest = [NSDictionary dictionaryWithContentsOfFile:manifestPath];
+        if (![[NSSet setWithArray:manifest.allKeys] isEqualToSet:[NSSet setWithArray:names]]) {
+            NSMutableDictionary *next = [NSMutableDictionary dictionary];
+            for (NSString *name in names) {
+                NSData *data = [NSData dataWithContentsOfFile:[live stringByAppendingPathComponent:name]];
+                uint32_t w = 0, h = 0;
+                NSString *style = data ? baton_snapshot_style(data, &w, &h) : nil;
+                if (!style) return;
+                next[name] = @[style, @(w), @(h)];
+            }
+            [fm removeItemAtPath:saved error:nil];
+            [fm createDirectoryAtPath:saved withIntermediateDirectories:YES attributes:nil error:nil];
+            for (NSString *name in names) {
+                if (![fm copyItemAtPath:[live stringByAppendingPathComponent:name]
+                                 toPath:[saved stringByAppendingPathComponent:name] error:nil]) return;
+            }
+            if (![next writeToFile:manifestPath atomically:YES]) return;
+            manifest = next;
+        }
+        NSString *target = [baton_saved_appearance()[@"mode"] isEqual:@"light"] ? @"light" : @"dark";
+        for (NSString *name in names) {
+            NSArray *info = manifest[name];
+            NSString *source = nil;
+            for (NSString *other in manifest) {
+                NSArray *candidate = manifest[other];
+                if ([candidate[0] isEqual:target] && [candidate[1] isEqual:info[1]] && [candidate[2] isEqual:info[2]]) source = other;
+            }
+            if (!source) continue;
+            NSData *wanted = [NSData dataWithContentsOfFile:[saved stringByAppendingPathComponent:source]];
+            NSString *path = [live stringByAppendingPathComponent:name];
+            if (wanted && ![[NSData dataWithContentsOfFile:path] isEqualToData:wanted]) [wanted writeToFile:path atomically:YES];
+        }
+    });
+}
+
 @interface BatonAppearanceHandler : NSObject <WKScriptMessageHandler>
 @end
 
@@ -46,6 +128,7 @@ static void baton_apply_appearance(UIWindow *window) {
             [colorPattern numberOfMatchesInString:color options:0 range:NSMakeRange(0, color.length)] != 1) return;
     }
     [[NSUserDefaults standardUserDefaults] setObject:value forKey:@"baton-appearance"];
+    baton_sync_launch_snapshots();
     UIWindow *window = message.webView.window;
     baton_apply_appearance(window);
     UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
@@ -676,6 +759,8 @@ int main(int argc, char * argv[]) {
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_scanner_cancel_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_viewport_refresh_observers(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
+	// The system writes or refreshes the launch snapshots during the first seconds after launch.
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ baton_sync_launch_snapshots(); });
 	ffi::start_app();
 	return 0;
 }

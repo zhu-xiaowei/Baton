@@ -523,8 +523,13 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   splash; `uiMode` is in `configChanges`, so no Activity restart), iOS `batonAppearance` message
   (window style, status bar, preview webviews), desktop `appearance_set` (`src-tauri/src/appearance.rs`:
   Tauri theme, window/webview backgrounds, macOS tab strip, saved to `appearance.json` for the next launch).
-- The iOS LaunchScreen and the Android 12+ system splash follow the device appearance before the app runs;
-  Android then uses the app's night mode, the iOS launch image cannot read it.
+- Cold-start launch screens follow the app's choice, not the system's: Android 12+ uses the app night mode;
+  iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
+  (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
+  LZFSE-compressed on iOS 18). `main.mm` keeps the system's originals in `Application Support/BatonLaunchSnapshots`,
+  classifies each by its first ASTC void-extent block, and copies the chosen appearance's snapshot over the
+  other one on launch and on every switch. Unrecognised files leave the snapshots untouched; the first cold
+  start after an app update still uses the freshly rendered system pair.
 - The image viewer keeps a backdrop of its own (`--media-backdrop`); videos and QR codes stay black/white.
 
 ## Native App (Tauri v2)
