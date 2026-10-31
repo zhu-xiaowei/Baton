@@ -9,6 +9,7 @@ import WebKit
 private struct RegisterArgs: Decodable {
   let server: String
   let apiKey: String
+  let prompt: Bool?
 }
 
 // The notification extension resolves each ID-only push against the user's own server.
@@ -40,6 +41,10 @@ private struct ListenArgs: Decodable {
 
 private struct OpenArgs: Decodable {
   let sessionId: String
+}
+
+private struct SettingsArgs: Decodable {
+  let message: String
 }
 
 // Outlives webview navigation. Taps are persisted before JS is signaled, so a cold
@@ -85,8 +90,17 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
     class_replaceMethod(delegateClass, failure, imp_implementationWithBlock(failureBlock), "v@:@@")
   }
 
-  func register(_ invoke: Invoke) {
+  func register(_ invoke: Invoke, prompt: Bool) {
     install()
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      // iOS asks only once; after a denial only Settings can allow it.
+      if settings.authorizationStatus == .denied { return invoke.resolve(["granted": false, "blocked": true]) }
+      if settings.authorizationStatus == .notDetermined && !prompt { return invoke.resolve(["granted": false]) }
+      self.authorize(invoke)
+    }
+  }
+
+  private func authorize(_ invoke: Invoke) {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
       DispatchQueue.main.async {
         if let error = error { return invoke.reject(error.localizedDescription) }
@@ -176,7 +190,7 @@ class PushPlugin: Plugin {
   @objc public func register(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RegisterArgs.self)
     SharedServer.save(server: args.server, apiKey: args.apiKey)
-    PushCoordinator.shared.register(invoke)
+    PushCoordinator.shared.register(invoke, prompt: args.prompt ?? true)
   }
 
   @objc public func stop(_ invoke: Invoke) {
@@ -189,6 +203,22 @@ class PushPlugin: Plugin {
     DispatchQueue.main.async {
       PushCoordinator.shared.onClick = args.onClick
       invoke.resolve()
+    }
+  }
+
+  // A native alert: this WKWebView has no window.confirm.
+  @objc public func openSettings(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SettingsArgs.self)
+    DispatchQueue.main.async {
+      let alert = UIAlertController(title: nil, message: args.message, preferredStyle: .alert)
+      alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in invoke.resolve(["opened": false]) })
+      alert.addAction(UIAlertAction(title: "Settings", style: .default) { _ in
+        var url = UIApplication.openSettingsURLString
+        if #available(iOS 16.0, *) { url = UIApplication.openNotificationSettingsURLString }
+        UIApplication.shared.open(URL(string: url)!)
+        invoke.resolve(["opened": true])
+      })
+      self.manager.viewController?.present(alert, animated: true)
     }
   }
 

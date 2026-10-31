@@ -2,9 +2,13 @@ package com.batonai.push
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.webkit.WebView
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import app.tauri.PermissionState
 import app.tauri.annotation.Command
@@ -22,11 +26,17 @@ import org.json.JSONArray
 class StartArgs {
   lateinit var server: String
   lateinit var apiKey: String
+  var prompt: Boolean = true
 }
 
 @InvokeArg
 class ListenArgs {
   lateinit var onClick: Channel
+}
+
+@InvokeArg
+class SettingsArgs {
+  lateinit var message: String
 }
 
 @InvokeArg
@@ -61,7 +71,8 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun start(invoke: Invoke) {
-    if (Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) {
+    val prompt = invoke.parseArgs(StartArgs::class.java).prompt
+    if (prompt && Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) {
       requestPermissionForAlias("notifications", invoke, "startAfterPermission")
     } else {
       startService(invoke)
@@ -73,12 +84,35 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   private fun startService(invoke: Invoke) {
     if (!NotificationManagerCompat.from(activity).areNotificationsEnabled()) {
-      invoke.resolve(JSObject().put("granted", false))
+      // Blocked: the system will not ask again (or never asks before Android 13); only Settings can allow it.
+      val blocked = Build.VERSION.SDK_INT < 33
+        || !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.POST_NOTIFICATIONS)
+      invoke.resolve(JSObject().put("granted", false).put("blocked", blocked))
       return
     }
     val args = invoke.parseArgs(StartArgs::class.java)
     AlertService.start(activity, args.server.trimEnd('/'), args.apiKey)
     invoke.resolve(JSObject().put("granted", true))
+  }
+
+  // The same native alert as iOS, whose WebView has no window.confirm.
+  @Command
+  fun openSettings(invoke: Invoke) {
+    val message = invoke.parseArgs(SettingsArgs::class.java).message
+    activity.runOnUiThread {
+      AlertDialog.Builder(activity).setMessage(message)
+        .setNegativeButton(android.R.string.cancel) { _, _ -> invoke.resolve(JSObject().put("opened", false)) }
+        .setOnCancelListener { invoke.resolve(JSObject().put("opened", false)) }
+        .setPositiveButton("Settings") { _, _ ->
+          activity.startActivity(if (Build.VERSION.SDK_INT >= 26) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+          } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null))
+          })
+          invoke.resolve(JSObject().put("opened", true))
+        }
+        .show()
+    }
   }
 
   @Command

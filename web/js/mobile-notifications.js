@@ -5,8 +5,9 @@ import { showToast } from './components/toast.js';
 // Baton is in the background; the local push plugin owns notification taps.
 const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
+const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
-let platform, config, initialization, pendingTarget;
+let platform, config, initialization, pendingTarget, permission;
 let status = '';
 
 function mobilePlatform() {
@@ -60,27 +61,35 @@ async function openNotification(event) {
   }
 }
 
-async function enableIos() {
+async function enableIos(prompt) {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
   // The notification extension reads these to fetch each alert's text.
-  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY });
-  if (!result.granted) return setStatus('Allow notifications for Baton in iOS Settings.');
-  if (!enabled() || !state.KEY) return;
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, prompt });
+  if (!result.granted || !enabled() || !state.KEY) return result;
   const device = { token: result.token, environment: result.environment };
   await window.apiPost('/api/notifications/devices', device);
   localStorage.setItem(PUSH_DEVICE, JSON.stringify(device));
   if (!enabled()) return unregisterMobileNotifications();  // Switched off mid-request.
   setStatus('');
+  return result;
 }
 
-async function enableAndroid() {
-  const result = await invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY });
-  setStatus(result.granted ? '' : 'Allow notifications for Baton in system settings.');
+// The switch shows what the device gets: on only if wanted and allowed by the system.
+function showSwitch() {
+  const input = document.getElementById('notificationsEnabled');
+  if (input) input.checked = enabled() && permission?.granted !== false;
 }
 
-function apply() {
-  if (!enabled()) return setStatus('');
-  return platform === 'ios' ? enableIos() : enableAndroid();
+async function apply(prompt = true) {
+  if (enabled()) {
+    permission = await (platform === 'ios' ? enableIos(prompt)
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
+  } else {
+    setStatus('');
+  }
+  // Just declined in the system prompt: stay off until the switch is turned on again.
+  if (prompt && permission?.granted === false && !permission.blocked) localStorage.setItem(ENABLED, '0');
+  showSwitch();
 }
 
 export async function unregisterMobileNotifications() {
@@ -123,7 +132,11 @@ async function initialize() {
   });
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
-  await apply();  // On each page load: refreshes the iOS token TTL, restarts the Android service.
+  // On each page load: refreshes the iOS token TTL, restarts the Android service. The first
+  // load (also after updating) asks once; later only the switch asks.
+  const prompt = !localStorage.getItem(ASKED);
+  localStorage.setItem(ASKED, '1');
+  await apply(prompt);
 }
 
 export function initMobileNotifications() {
@@ -140,15 +153,28 @@ export function mountNotificationSettings() {
   if (!section) return;
   section.hidden = false;
   const input = document.getElementById('notificationsEnabled');
-  input.checked = enabled();
+  showSwitch();
   input.addEventListener('change', async () => {
-    localStorage.setItem(ENABLED, input.checked ? '1' : '0');
+    const wanted = input.checked;
+    localStorage.setItem(ENABLED, wanted ? '1' : '0');
     try {
-      if (input.checked) await (config ? apply() : initMobileNotifications());
+      if (wanted) await (config ? apply() : initMobileNotifications().then(() => config && apply()));
       else await unregisterMobileNotifications().then(() => setStatus(''));
+      // The system no longer asks: only its Settings can allow Baton, which is checked on return.
+      if (wanted && permission?.blocked) {
+        const { opened } = await invoke('plugin:push|open_settings', {
+          message: 'Notifications are off for Baton. Open Settings to allow them?',
+        });
+        if (!opened) localStorage.setItem(ENABLED, '0');
+      }
     } catch (error) {
       setStatus(error.message);
     }
+    showSwitch();
+  });
+  // Re-check only: an Android request the system denies at once still pauses and resumes the page.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && config) void apply(false).catch(error => setStatus(error.message));
   });
   setStatus(status);
 }
