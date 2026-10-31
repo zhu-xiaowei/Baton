@@ -87,6 +87,14 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
   func register(_ invoke: Invoke) {
     install()
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      // iOS asks only once; after a denial only Settings can allow it.
+      if settings.authorizationStatus == .denied { return invoke.resolve(["granted": false, "blocked": true]) }
+      self.authorize(invoke)
+    }
+  }
+
+  private func authorize(_ invoke: Invoke) {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
       DispatchQueue.main.async {
         if let error = error { return invoke.reject(error.localizedDescription) }
@@ -188,6 +196,15 @@ class PushPlugin: Plugin {
     let args = try invoke.parseArgs(ListenArgs.self)
     DispatchQueue.main.async {
       PushCoordinator.shared.onClick = args.onClick
+      invoke.resolve()
+    }
+  }
+
+  @objc public func openSettings(_ invoke: Invoke) {
+    DispatchQueue.main.async {
+      var url = UIApplication.openSettingsURLString
+      if #available(iOS 16.0, *) { url = UIApplication.openNotificationSettingsURLString }
+      UIApplication.shared.open(URL(string: url)!)
       invoke.resolve()
     }
   }

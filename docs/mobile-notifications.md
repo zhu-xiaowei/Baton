@@ -7,6 +7,12 @@ title + subtitle; Android sub-text + title), then `✅ Finished · <last reply>`
 `🟡 Needs input · <command, file or question>`; tapping opens the session. Builds
 before this layout show `title` (**folder · session**).
 
+The switch is on only when it is wanted and the system allows Baton's notifications. Turning
+it on shows the system prompt while the system still asks; declining it leaves the switch off.
+Once the system no longer asks (iOS after one denial, Android 13+ after two, or notifications
+turned off in system settings), a dialog offers the system's Baton notification settings; the
+permission is re-checked whenever the app returns to the foreground.
+
 ## Flow
 
 ```
@@ -89,4 +95,5 @@ node --test test/push-relay/apns-relay.test.mjs
 
 AWS Device Farm's public iOS devices strip the push entitlement, so check APNs on
 a TestFlight build: finish a run, trigger approvals, tap alerts in the foreground,
-the background and after a cold start, and turn the switch off.
+the background and after a cold start, and turn the switch off. Deny the permission, turn the
+switch on, allow it in Settings and return: the switch turns on.
