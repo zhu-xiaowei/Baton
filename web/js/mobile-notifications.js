@@ -73,10 +73,6 @@ async function enableIos() {
   return result;
 }
 
-function enableAndroid() {
-  return invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY });
-}
-
 // The switch shows what the device gets: on only if wanted and allowed by the system.
 function showSwitch() {
   const input = document.getElementById('notificationsEnabled');
@@ -84,8 +80,12 @@ function showSwitch() {
 }
 
 async function apply() {
-  if (enabled()) permission = await (platform === 'ios' ? enableIos() : enableAndroid()) || permission;
-  else setStatus('');
+  if (enabled()) {
+    permission = await (platform === 'ios' ? enableIos()
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY })) || permission;
+  } else {
+    setStatus('');
+  }
   // Just declined in the system prompt: stay off rather than ask again on every launch.
   if (permission?.granted === false && !permission.blocked) localStorage.setItem(ENABLED, '0');
   showSwitch();
@@ -156,7 +156,7 @@ export function mountNotificationSettings() {
       if (wanted) await (config ? apply() : initMobileNotifications());
       else await unregisterMobileNotifications().then(() => setStatus(''));
       // The system no longer asks: only its Settings can allow Baton, which is checked on return.
-      if (wanted && permission?.blocked && !permission.granted) {
+      if (wanted && permission?.blocked) {
         if (window.confirm('Notifications are off for Baton. Open Settings to allow them?')) {
           await invoke('plugin:push|open_settings');
         } else {
