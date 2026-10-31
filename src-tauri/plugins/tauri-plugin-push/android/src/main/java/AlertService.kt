@@ -8,12 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.Typeface
 import android.os.Build
 import android.os.IBinder
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -145,18 +141,12 @@ class AlertService : Service() {
     val tap = Intent(ACTION_OPEN).setComponent(activity)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
       .putExtra(EXTRA_EVENT, event.toString())
-    // The status before " · " in bold: green when finished, amber when it needs input.
-    val body = SpannableString(event.optString("body"))
-    val status = body.indexOf(" · ").takeIf { it > 0 } ?: body.length
-    val color = if (event.optString("status") == "completed") 0xFF2E9E44 else 0xFFC58A00
-    body.setSpan(StyleSpan(Typeface.BOLD), 0, status, 0)
-    body.setSpan(ForegroundColorSpan(color.toInt()), 0, status, 0)
     val notification = NotificationCompat.Builder(this, ALERT_CHANNEL)
       .setSmallIcon(R.drawable.ic_push)
       .setSubText(event.optString("projectName"))
       .setContentTitle(event.optString("sessionTitle").ifEmpty { event.optString("title") })
-      .setContentText(body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setContentText(event.optString("body"))
+      .setStyle(NotificationCompat.BigTextStyle().bigText(event.optString("body")))
       .setPriority(NotificationCompat.PRIORITY_HIGH)
       .setAutoCancel(true)
       .setContentIntent(PendingIntent.getActivity(this, id, tap,

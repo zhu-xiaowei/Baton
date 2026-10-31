@@ -156,7 +156,6 @@ def notification(old, new, event_id):
         "sessionId": session_id,
         "sessionTitle": title,
         "rootSessionId": new.get("threadRootId") or session_id,
-        "status": after,
         # Apps lay out projectName / sessionTitle themselves; title is for builds that predate it.
         "title": f"{project} · {title}",
         "body": ("✅ " if after == "completed" else "🟡 ") + action + (f" · {detail}" if detail else ""),

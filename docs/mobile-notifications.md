@@ -4,8 +4,8 @@ Baton alerts when a session goes from running to done, or needs input (an
 approval, a question or a plan). Settings has one **Push notifications** switch,
 on by default. Alerts show the project folder and the session on their own lines (iOS
 title + subtitle; Android sub-text + title), then `✅ Finished · <last reply>` or
-`🟡 Needs input · <command, file or question>`, the status bold and coloured on Android;
-tapping opens the session. Builds before this layout show `title` (**folder · session**).
+`🟡 Needs input · <command, file or question>`; tapping opens the session. Builds
+before this layout show `title` (**folder · session**).
 
 ## Flow
 
