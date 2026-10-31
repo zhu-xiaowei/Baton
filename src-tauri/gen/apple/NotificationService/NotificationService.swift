@@ -29,7 +29,9 @@ final class NotificationService: UNNotificationServiceExtension {
       if (response as? HTTPURLResponse)?.statusCode == 200,
          let data = data,
          let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-        content.title = event["title"] as? String ?? content.title
+        // Two bold lines, each truncated on its own: a long project name no longer hides the session.
+        content.title = event["projectName"] as? String ?? event["title"] as? String ?? content.title
+        content.subtitle = event["sessionTitle"] as? String ?? ""
         content.body = event["body"] as? String ?? content.body
         content.threadIdentifier = event["rootSessionId"] as? String ?? ""
         // The app opens the session from these on tap.

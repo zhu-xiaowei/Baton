@@ -40,8 +40,8 @@ def test_status_transitions(monkeypatch):
     monkeypatch.setattr(worker, "completion_summary", lambda session: "Fixed it.")
     finished = worker.notification(SESSION, DONE, "finished")
     assert finished["title"] == "Baton · Fix login"
-    assert finished["body"] == "Finished: Fixed it."
-    assert worker.notification(SESSION, WAITING, "ask")["body"] == "Needs input: npm test"
+    assert finished["body"] == "✅ Finished · Fixed it."
+    assert worker.notification(SESSION, WAITING, "ask")["body"] == "🟡 Needs input · npm test"
     # A queued next approval stays needs_input but changes the detail.
     assert worker.notification(WAITING, {**WAITING, "agentDetail": "rm -rf build"}, "next")
     assert worker.notification(WAITING, WAITING, "re-sync") is None

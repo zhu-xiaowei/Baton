@@ -2,13 +2,15 @@
 
 Baton alerts when a session goes from running to done, or needs input (an
 approval, a question or a plan). Settings has one **Push notifications** switch,
-on by default. Alerts read **project folder · session**, then `Finished: <last
-reply>` or `Needs input: <command, file or question>`; tapping opens the session.
+on by default. Alerts show the project folder and the session on their own lines (iOS
+title + subtitle; Android sub-text + title), then `✅ Finished · <last reply>` or
+`🟡 Needs input · <command, file or question>`; tapping opens the session. Builds
+before this layout show `title` (**folder · session**).
 
 ## Flow
 
 ```
-Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ event feed (24h, own account)
+Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ event feed (7d, own account)
                                                                     └→ push-relay → APNs → iPhone
                                                                          (token + event ID only)
 ```
