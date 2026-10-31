@@ -51,14 +51,21 @@ fn apply(app: &tauri::AppHandle, appearance: &Appearance) {
   #[cfg(desktop)]
   {
     app.set_theme(Some(appearance.theme()));
+    // Per-window and per-webview access needs Tauri's `unstable` feature, enabled only on macOS.
+    #[cfg(not(target_os = "macos"))]
+    for window in app.webview_windows().values() {
+      let _ = window.set_theme(Some(appearance.theme()));
+      let _ = window.set_background_color(Some(appearance.color(false)));
+    }
+    #[cfg(target_os = "macos")]
     for window in app.windows().values() {
       let _ = window.set_theme(Some(appearance.theme()));
       let _ = window.set_background_color(Some(appearance.color(false)));
     }
+    // WKWebView does not implement Tauri's set_background_color.
+    #[cfg(target_os = "macos")]
     for webview in app.webviews().values() {
       let color = appearance.color(webview.label().starts_with("tab-strip-"));
-      // WKWebView does not implement Tauri's set_background_color.
-      #[cfg(target_os = "macos")]
       let _ = webview.with_webview(move |platform| unsafe {
         use objc2::{msg_send, sel};
         use objc2_app_kit::NSColor;
@@ -72,8 +79,6 @@ fn apply(app: &tauri::AppHandle, appearance: &Appearance) {
           let _: () = msg_send![view, setUnderPageBackgroundColor: &*native];
         }
       });
-      #[cfg(not(target_os = "macos"))]
-      let _ = webview.set_background_color(Some(color));
     }
     #[cfg(target_os = "macos")]
     tauri_plugin_preview_webview::set_appearance(app, appearance.mode == "light", &appearance.canvas);
