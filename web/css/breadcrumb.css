@@ -80,10 +80,10 @@
     from var(--path-breadcrumb-loading-angle),
     transparent 0deg,
     transparent 210deg,
-    rgba(var(--border-strong-rgb), 0.12) 235deg,
-    rgba(var(--text-muted-rgb), 0.48) 280deg,
-    rgba(var(--text-secondary-rgb), 0.85) 315deg,
-    rgba(var(--text-muted-rgb), 0.24) 345deg,
+    var(--loader-faint) 235deg,
+    var(--loader-mid) 280deg,
+    var(--loader-head) 315deg,
+    var(--loader-tail) 345deg,
     transparent 360deg
   );
   opacity: 0;

@@ -139,6 +139,14 @@
   --shadow-edge: -8px 0 20px rgba(0, 0, 0, 0.45);
   --switch-track: #30363d;
   --switch-knob: #e6edf3;
+  --tool-node: #74c991;
+  --chip-border: #30363d;
+  --loader-faint: rgba(72, 79, 88, 0.12);
+  --loader-mid: rgba(110, 118, 129, 0.48);
+  --loader-head: rgba(139, 148, 158, 0.85);
+  --loader-tail: rgba(110, 118, 129, 0.24);
+  --fill-neutral: #30363d;
+  --badge-ring: transparent;
 }
 
 img[src$="baton-logo.svg"], img[src$="baton-logo-dark.svg"] { content: var(--logo-image); }

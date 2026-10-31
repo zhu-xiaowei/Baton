@@ -20,7 +20,7 @@
 .git-section-toggle svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;pointer-events:none;transition:transform .15s ease}
 .git-section.collapsed .git-section-toggle svg{transform:rotate(-90deg)}
 .git-section.collapsed .git-section-files{display:none}
-.git-count{min-width:23px;height:23px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;background:var(--border);color:var(--text-normal);font-size:12px;font-weight:400}
+.git-count{min-width:23px;height:23px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;background:var(--fill-neutral);color:var(--text-normal);font-size:12px;font-weight:400}
 .git-section-actions,.git-row-actions{display:flex;align-items:center;flex:0 0 auto}
 .git-action{width:36px;height:44px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:var(--text-secondary)}
 .git-row-actions .git-action{height:40px}
