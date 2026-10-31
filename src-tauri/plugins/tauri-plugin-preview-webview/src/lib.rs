@@ -6,7 +6,7 @@ use tauri::{
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{release_owner, set_owner_visible};
+pub use macos::{release_owner, set_owner_visible, set_appearance};
 
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_preview_webview);

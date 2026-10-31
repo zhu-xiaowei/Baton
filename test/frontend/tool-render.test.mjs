@@ -1,3 +1,4 @@
+import { readDarkStyles } from './helpers/theme-css.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -207,7 +208,7 @@ test('Update Plan renders aligned status icons for completed, active, and pendin
   assert.equal(document.querySelector('.plan-item-in_progress .plan-status-dot') !== null, true);
   assert.doesNotMatch(html, /&#42;|\*<\/span>/);
 
-  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const css = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
   assert.match(css, /\.plan-status-icon \{[\s\S]*height: 18px;/);
   assert.match(css, /html\.native-mobile \.plan-status-icon \{ width: 18px; height: 21px; \}/);
   assert.match(css, /html\.native-mobile \.plan-item-text \{ font-size: 14px; line-height: 21px; \}/);
@@ -757,7 +758,7 @@ test('Codex exploration calls share one visible group label and empty waits stay
     '×3',
   );
   assert.doesNotMatch(html, /wait-04/);
-  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const css = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
   assert.doesNotMatch(css, /\.tool-desc\.shell-command/);
   assert.match(css, /\.assistant-text code \{ background: #161b22; color: var\(--runtime-accent\);/);
   assert.match(css, /\.codex-explore-continuation \.tool-name \{ display: none; \}/);
@@ -1502,7 +1503,7 @@ test('resetting tool details clears session-scoped diff specifications', async (
 });
 
 test('collapsed tool spacing keeps the original title baseline', () => {
-  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const css = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
   assert.match(
     css,
     /\.tool-node\.tool-details-collapsed \{ padding-top: 6px; padding-bottom: 4px; \}/,
@@ -1556,7 +1557,7 @@ test('Codex Waited command expands from its truncated header', () => {
   assert.equal(header.classList.contains('expanded-desc'), false);
   assert.equal(header.getAttribute('aria-expanded'), 'false');
 
-  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const css = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
   assert.match(css, /\.codex-terminal-wait \{ padding-bottom: 4px; \}/);
 });
 

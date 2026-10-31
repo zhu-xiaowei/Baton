@@ -91,8 +91,6 @@ mod imp {
   // Must match --tab-strip-height in web/css/tab-strip.css.
   pub const STRIP_HEIGHT: f64 = 41.0;
   const DEFAULT_TITLE: &str = "Baton";
-  const STRIP_COLOR: tauri::webview::Color = tauri::webview::Color(0x01, 0x04, 0x09, 0xff);
-  const CONTENT_COLOR: tauri::webview::Color = tauri::webview::Color(0x16, 0x1b, 0x22, 0xff);
 
   static TAB_SEQ: AtomicUsize = AtomicUsize::new(0);
   static WINDOWS: OnceLock<Mutex<HashMap<String, WindowTabs>>> = OnceLock::new();
@@ -178,7 +176,8 @@ mod imp {
     let strip = window.add_child(
       WebviewBuilder::new(strip_label(window.label()), WebviewUrl::App("tabs.html".into()))
         .disable_drag_drop_handler()
-        .background_color(STRIP_COLOR),
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).mode))
+        .background_color(crate::appearance::current(window.app_handle()).color(true)),
       LogicalPosition::new(0.0, 0.0),
       LogicalSize::new(size.width, STRIP_HEIGHT),
     )?;
@@ -218,7 +217,8 @@ mod imp {
     let webview = window.add_child(
       WebviewBuilder::new(&label, WebviewUrl::App("index.html".into()))
         .disable_drag_drop_handler()
-        .background_color(CONTENT_COLOR),
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).mode))
+        .background_color(crate::appearance::current(window.app_handle()).color(false)),
       LogicalPosition::new(0.0, STRIP_HEIGHT),
       LogicalSize::new(size.width, (size.height - STRIP_HEIGHT).max(1.0)),
     ).map_err(|e| e.to_string())?;

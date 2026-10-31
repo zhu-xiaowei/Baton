@@ -505,6 +505,28 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
   (`needsInputCount`). `completed` is not shown on the device rows.
 
+## Light / Dark Theme
+
+- Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default, values match the
+  original dark UI) and `light.css` (`:root[data-theme="light"]`). Components reference semantic tokens
+  (`--canvas`, `--surface`, `--surface-elevated`, `--text-secondary`, `--spinner`, ...), never raw colors; a
+  value that only one theme needs still gets a token whose dark value is the old literal, so Dark stays
+  pixel-identical.
+- Light layering mirrors Dark: white page, `#f6f8fa` top bar/cards/inputs, `#eaeef2` raised headers. Secondary
+  text is lighter than a straight mapping (`#6e7781`) and bold tool names lighter still (`--tool-label`),
+  because mid-grey on white reads close to black.
+- `web/public/theme-init.js` runs before first paint on every page: `localStorage['baton-theme']`, else the
+  native preference (`window.__BATON_NATIVE_THEME__` / `BatonAndroid.getTheme()`), else dark. `theme.js`
+  dispatches `themechange`; xterm, Mermaid, diff2html, Markdown theme images and file icons re-render on it.
+  Settings has the Light mode switch; switching never reloads the page.
+- Native sync (`theme-native.js`): Android `BatonAndroid.setTheme` (system bar icons, app night mode,
+  splash; `uiMode` is in `configChanges`, so no Activity restart), iOS `batonAppearance` message
+  (window style, status bar, preview webviews), desktop `appearance_set` (`src-tauri/src/appearance.rs`:
+  Tauri theme, window/webview backgrounds, macOS tab strip, saved to `appearance.json` for the next launch).
+- The iOS LaunchScreen and the Android 12+ system splash follow the device appearance before the app runs;
+  Android then uses the app's night mode, the iOS launch image cannot read it.
+- The image viewer keeps a backdrop of its own (`--media-backdrop`); videos and QR codes stay black/white.
+
 ## Native App (Tauri v2)
 
 Tauri v2 wraps web/ static frontend as native app, zero web code changes.
