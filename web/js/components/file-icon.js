@@ -1,6 +1,10 @@
 import { FILE_ICON_SVG } from './icons.js';
 
 const ICON_ROOT = './assets/file-icons/';
+export const LIGHT_FILE_ICONS = new Set([
+  'audio', 'console', 'document', 'image', 'javascript', 'json', 'markdown',
+  'pdf', 'python', 'react', 'rust', 'svg', 'swift', 'table', 'toml', 'video', 'xml', 'yaml', 'zip',
+]);
 
 const CATEGORY_EXTENSIONS = Object.freeze({
   word: new Set(['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'rtf', 'odt']),
@@ -122,7 +126,8 @@ export function fileIconName(fileName) {
 
 export function fileIconSource(fileName) {
   const icon = fileIconName(fileName);
-  return icon ? `${ICON_ROOT}${icon}.svg` : '';
+  const light = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light';
+  return icon ? `${ICON_ROOT}${light && LIGHT_FILE_ICONS.has(icon) ? 'light/' : ''}${icon}.svg` : '';
 }
 
 export function fileIconHtml(fileName) {

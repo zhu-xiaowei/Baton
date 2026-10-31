@@ -1,5 +1,5 @@
 .codex-visualization { display: block; margin: 12px 0; }
-.visualization-status { display: block; padding: 12px 0; color: light-dark(#656d76, #8b949e); font-size: 13px; }
+.visualization-status { display: block; padding: 12px 0; color: var(--text-secondary); font-size: 13px; }
 .visualization-surface {
   position: relative;
   box-sizing: border-box;
@@ -12,8 +12,8 @@
   border: 0;
   border-radius: 10px;
   color-scheme: inherit;
-  background: light-dark(#fff, #0d1117);
-  color: light-dark(#24292f, #e6edf3);
+  background: var(--canvas);
+  color: var(--text-primary);
 }
 .visualization-surface[open] { display: block; }
 .visualization-frame { display: block; width: 100%; height: 420px; border: 0; color-scheme: inherit; }
@@ -28,14 +28,14 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid light-dark(#d0d7de, #30363d);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: light-dark(#57606a, #c9d1d9);
-  background: light-dark(rgba(255, 255, 255, .92), rgba(13, 17, 23, .88));
+  color: var(--text-normal);
+  background: rgba(var(--canvas-rgb), .92);
   cursor: pointer;
 }
 .visualization-expand:focus-visible,
-.visualization-close:focus-visible { outline: 2px solid light-dark(#0969da, #58a6ff); outline-offset: 2px; }
+.visualization-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) {
   .visualization-expand { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
   .visualization-surface:hover .visualization-expand,
@@ -63,5 +63,5 @@
 .visualization-surface.is-fullscreen .visualization-frame { height: 100% !important; }
 .visualization-surface.is-fullscreen .visualization-expand { display: none; }
 .visualization-surface.is-fullscreen .visualization-close { display: flex; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px); right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 8px); }
-.visualization-surface::backdrop { background: light-dark(#fff, #0d1117); }
+.visualization-surface::backdrop { background: var(--canvas); }
 .codex-visualization [hidden] { display: none !important; }

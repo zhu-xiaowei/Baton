@@ -1,4 +1,4 @@
-export const LANE_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f778ba', '#a371f7', '#39c5cf', '#ff7b72', '#e3b341'];
+export const LANE_COLORS = ['var(--accent)', 'var(--success)', 'var(--warning)', 'var(--pink)', 'var(--graph-purple)', 'var(--cyan)', 'var(--syntax-red)', 'var(--yellow)'];
 
 export function createGraphLayout() {
   return { lanes: [], nextColor: 0 };

@@ -218,7 +218,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (str.indexOf('\x1b') === -1) return esc(str);
     if (!window.Anser) return esc(str);
     // use_classes: emit `ansi-*` class names instead of inline RGB, so our dark
-    // theme controls the palette (CC's default colours/dim are invisible on #0d1117).
+    // theme controls the palette (CC's default colours/dim are invisible on var(--canvas)).
     return window.Anser.ansiToHtml(window.Anser.escapeForHtml(str), { use_classes: true });
   }
   window.ansiHtml = ansiHtml;
@@ -474,7 +474,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
           stickyFileHeaders: false,
           outputFormat: 'line-by-line',
           matching: 'lines',
-          colorScheme: 'dark',
+          colorScheme: document.documentElement.dataset.theme || 'dark',
           highlight: true,
         });
         ui.draw();

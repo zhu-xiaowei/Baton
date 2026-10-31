@@ -309,9 +309,29 @@ impl Drop for Entry {
 
 thread_local! {
   static ENTRIES: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
+  static BACKGROUND: Cell<u32> = const { Cell::new(0x0d1117) };
   // Hosts in a background tab: their previews are siblings of the tab webview, so hiding
   // the tab alone would leave them drawn over the selected tab.
   static HIDDEN_OWNERS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+pub fn set_appearance<R: Runtime>(app: &tauri::AppHandle<R>, _light: bool, canvas: &str) {
+  let Ok(rgb) = u32::from_str_radix(canvas.trim_start_matches('#'), 16) else { return };
+  let _ = app.run_on_main_thread(move || {
+    BACKGROUND.set(rgb);
+    ENTRIES.with(|entries| {
+      for entry in entries.borrow().values() {
+        unsafe {
+          if !entry.view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) { continue; }
+          entry.view.setUnderPageBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(
+            f64::from((rgb >> 16) & 255) / 255.0,
+            f64::from((rgb >> 8) & 255) / 255.0,
+            f64::from(rgb & 255) / 255.0, 1.0,
+          )));
+        }
+      }
+    });
+  });
 }
 
 async fn on_view<R: Runtime>(
@@ -379,10 +399,11 @@ pub async fn create<R: Runtime>(
       view.setHidden(true);
       view.setAllowsBackForwardNavigationGestures(true);
       if view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) {
+        let rgb = BACKGROUND.get();
         view.setUnderPageBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(
-          13.0 / 255.0,
-          17.0 / 255.0,
-          23.0 / 255.0,
+          f64::from((rgb >> 16) & 255) / 255.0,
+          f64::from((rgb >> 8) & 255) / 255.0,
+          f64::from(rgb & 255) / 255.0,
           1.0,
         )));
       }

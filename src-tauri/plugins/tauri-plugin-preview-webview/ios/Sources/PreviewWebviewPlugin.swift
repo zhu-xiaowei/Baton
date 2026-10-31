@@ -55,6 +55,7 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
   private var requestedURL = ""
   private var retryNavigation = false
   private var html: String?
+  private var appearanceObserver: NSObjectProtocol?
 
   init(id: String, channel: Channel) {
     self.id = id
@@ -63,15 +64,13 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     configuration.websiteDataStore = .default()
     view = WKWebView(frame: .zero, configuration: configuration)
     super.init()
-    let background = UIColor(red: 13.0 / 255.0, green: 17.0 / 255.0, blue: 23.0 / 255.0, alpha: 1)
     view.isOpaque = false
-    view.backgroundColor = background
-    view.scrollView.backgroundColor = background
+    applyAppearance()
+    appearanceObserver = NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("BatonAppearanceChanged"), object: nil, queue: .main
+    ) { [weak self] _ in self?.applyAppearance() }
     view.scrollView.contentInsetAdjustmentBehavior = .never
     view.scrollView.keyboardDismissMode = .interactive
-    view.scrollView.indicatorStyle = .white
-    view.overrideUserInterfaceStyle = .dark
-    if #available(iOS 15.0, *) { view.underPageBackgroundColor = background }
     view.isHidden = true
     view.allowsBackForwardNavigationGestures = true
     view.navigationDelegate = self
@@ -88,6 +87,24 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     back.delegate = self
     view.addGestureRecognizer(back)
     backGesture = back
+  }
+
+  deinit {
+    if let observer = appearanceObserver { NotificationCenter.default.removeObserver(observer) }
+  }
+
+  private func applyAppearance() {
+    let appearance = UserDefaults.standard.dictionary(forKey: "baton-appearance") ?? [:]
+    let light = appearance["mode"] as? String == "light"
+    let hex = appearance["canvas"] as? String ?? "#0d1117"
+    let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0x0d1117
+    let background = UIColor(red: CGFloat((rgb >> 16) & 255) / 255,
+      green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+    view.backgroundColor = background
+    view.scrollView.backgroundColor = background
+    view.scrollView.indicatorStyle = light ? .black : .white
+    view.overrideUserInterfaceStyle = light ? .light : .dark
+    if #available(iOS 15.0, *) { view.underPageBackgroundColor = background }
   }
 
   func emit(error: String? = nil, closeRequested: Bool = false, event: String? = nil) {

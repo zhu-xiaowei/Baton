@@ -1,12 +1,13 @@
+import { readDarkStyles } from './helpers/theme-css.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
-const terminalCss = readFileSync(new URL('../../web/css/terminal.css', import.meta.url), 'utf8');
+const terminalCss = readDarkStyles(new URL('../../web/css/terminal.css', import.meta.url));
 const xtermCss = readFileSync(new URL('../../node_modules/@xterm/xterm/css/xterm.css', import.meta.url), 'utf8');
-const appCss = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
-const breadcrumbCss = readFileSync(new URL('../../web/css/breadcrumb.css', import.meta.url), 'utf8');
+const appCss = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
+const breadcrumbCss = readDarkStyles(new URL('../../web/css/breadcrumb.css', import.meta.url));
 
 test('the terminal selector matches the project label height on web and mobile', () => {
   const dom = new JSDOM('<!doctype html><head><style>' + appCss + breadcrumbCss + terminalCss + '</style></head>'

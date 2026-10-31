@@ -93,7 +93,16 @@ function visualizationThemeDefaults(parsed) {
   const hostScheme = getComputedStyle(document.documentElement).colorScheme;
   const scheme = adaptive && !parsed.querySelector('meta[name="color-scheme" i]')
     ? 'color-scheme:' + (/^(?:only )?(?:dark|light)$/.test(hostScheme) ? hostScheme : 'dark') + ';' : '';
-  return scheme + missing.map(([name, value]) => name + ':' + value + ';').join('');
+  const tokens = {
+    '--color-text-primary': 'text-primary', '--color-text-secondary': 'text-secondary',
+    '--color-background-primary': 'canvas', '--color-background-secondary': 'surface',
+    '--color-border-primary': 'border',
+  };
+  const host = getComputedStyle(document.documentElement);
+  return scheme + missing.map(([name, value]) => {
+    const resolved = tokens[name] && host.getPropertyValue('--' + tokens[name]).trim();
+    return name + ':' + (resolved || value) + ';';
+  }).join('');
 }
 
 export function createVisualizationDocument(content, channel, iconRuntime = '') {
@@ -109,6 +118,7 @@ export function createVisualizationDocument(content, channel, iconRuntime = '') 
     return element;
   };
   const defaults = parsed.createElement('style');
+  defaults.id = 'baton-visualization-theme';
   defaults.textContent = '@layer baton-visualization-defaults{:where(html){'
     + visualizationThemeDefaults(parsed) + 'font:14px/1.5 var(--font-sans,system-ui,sans-serif)}'
     + ':where(html,body){margin:0;padding:0}:where(body){overflow-wrap:anywhere}'
@@ -116,6 +126,10 @@ export function createVisualizationDocument(content, channel, iconRuntime = '') 
   const bootstrap = parsed.createElement('script');
   bootstrap.textContent = 'addEventListener("DOMContentLoaded",function(){'
     + 'var snapshot=' + captureVisualizationSnapshot.toString() + ';'
+    + 'addEventListener("message",function(event){'
+    + 'if(event.source!==parent||event.data?.type!=="baton-visualization-theme"'
+    + '||event.data.channel!==' + channelLiteral + ')return;'
+    + 'document.getElementById("baton-visualization-theme").textContent=event.data.css});'
     + 'addEventListener("message",function(event){'
     + 'if(event.source!==parent||event.data?.type!=="baton-visualization-snapshot-request"'
     + '||event.data.channel!==' + channelLiteral + ')return;'
@@ -150,6 +164,20 @@ export function createVisualizationDocument(content, channel, iconRuntime = '') 
   parsed.head.prepend(...additions);
   return '<!doctype html>' + parsed.documentElement.outerHTML;
 }
+
+window.addEventListener('themechange', function () {
+  document.querySelectorAll(selector).forEach(block => {
+    const preview = previews.get(block);
+    if (!preview?.frame || !preview.content) return;
+    const updated = new DOMParser().parseFromString(
+      createVisualizationDocument(preview.content, preview.channel), 'text/html'
+    );
+    preview.frame.contentWindow.postMessage({
+      type: 'baton-visualization-theme', channel: preview.channel,
+      css: updated.getElementById('baton-visualization-theme').textContent,
+    }, '*');
+  });
+});
 
 function createVisualizationSnapshot(content, channel) {
   const parsed = new DOMParser().parseFromString(createVisualizationDocument(content, channel), 'text/html');

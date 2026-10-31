@@ -8,24 +8,24 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #8b949e;
+  color: var(--text-secondary);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .copy-action svg { pointer-events: none; flex-shrink: 0; }
-.copy-action.copied { color: #3fb950; }
-.copy-action.copy-failed { color: #ff7b72; }
-.copy-action:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.copy-action.copied { color: var(--success); }
+.copy-action.copy-failed { color: var(--syntax-red); }
+.copy-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .copy-action[aria-busy="true"] { cursor: progress; }
-.copy-action:active { background: transparent; color: #e6edf3; }
+.copy-action:active { background: transparent; color: var(--text-primary); }
 .copy-action.mermaid-copy { width: 26px; height: 24px; }
 
 .assistant-text .code-block {
   position: relative;
   margin: 8px 0;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #161b22;
+  background: var(--surface);
   overflow: hidden;
 }
 .code-block-head {
@@ -39,10 +39,10 @@
   min-height: 34px;
   padding: 1px 5px 0 12px;
 }
-.code-block-head .code-copy { background: #161b22; }
+.code-block-head .code-copy { background: var(--surface); }
 .code-language {
   display: none;
-  color: #8b949e;
+  color: var(--text-secondary);
   font: 11px/1.5 'SF Mono', 'Fira Code', monospace;
 }
 .assistant-text .code-block > pre {
@@ -73,9 +73,9 @@
 
 /* Copy feedback changes only the glyph and color; hover never leaves a background. */
 @media (hover: hover) and (pointer: fine) {
-  .copy-action:hover, .mermaid-head .mermaid-zoom:hover { color: #e6edf3; background: transparent; }
-  .copy-action.copied:hover { color: #3fb950; }
-  .copy-action.copy-failed:hover { color: #ff7b72; }
+  .copy-action:hover, .mermaid-head .mermaid-zoom:hover { color: var(--text-primary); background: transparent; }
+  .copy-action.copied:hover { color: var(--success); }
+  .copy-action.copy-failed:hover { color: var(--syntax-red); }
 }
 @media (pointer: coarse) {
   .copy-action { position: relative; }

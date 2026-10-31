@@ -1,8 +1,8 @@
 /* macOS titlebar tab strip. Height must match STRIP_HEIGHT in src-tauri/src/macos_tabs.rs. */
-:root { --tab-strip-height: 41px; --tab-height: 35px; --tab-active: #161b22; --tab-radius: 8px; }
+:root { --tab-strip-height: 41px; --tab-height: 35px; --tab-active: var(--surface-elevated); --tab-radius: 8px; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
-  height: 100%; overflow: hidden; background: #010409; color-scheme: dark;
+  height: 100%; overflow: hidden; background: var(--tab-strip); color-scheme: inherit;
   font: 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-user-select: none; user-select: none; cursor: default;
 }
@@ -18,7 +18,7 @@ html, body {
   /* No minimum width: with many tabs they keep shrinking, so the last tab and + stay visible. */
   flex: 0 1 240px; min-width: 0; height: var(--tab-height);
   /* Bottom padding centres the content on the strip (and the traffic lights), not the tab. */
-  padding: 0 6px 6px 12px; color: #b1bac4; transition: color .12s; container-type: inline-size;
+  padding: 0 6px 6px 12px; color: var(--tab-text); transition: color .12s; container-type: inline-size;
 }
 .tab-title {
   flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; line-height: calc(var(--tab-height) - 6px);
@@ -26,17 +26,17 @@ html, body {
 }
 /* Separators between inactive tabs, hidden next to the active or hovered tab. */
 .tab + .tab::before {
-  content: ''; position: absolute; left: 0; top: 7px; bottom: 13px; width: 1.5px; border-radius: 1px; background: #484f58;
+  content: ''; position: absolute; left: 0; top: 7px; bottom: 13px; width: 1.5px; border-radius: 1px; background: var(--border-strong);
 }
 /* The selected tab's ::before draws its corners, so it is never hidden as a separator. */
 .tab:not(.active):hover::before, .tab.active + .tab::before, .tab:hover + .tab:not(.active)::before { opacity: 0; }
 /* Like Chrome, hover and selection share one shape inset 2px from the separators;
    selecting only extends it down into the top bar. */
 .tab:hover::after, .tab.active::after {
-  content: ''; position: absolute; inset: 0 2px 6px; border-radius: var(--tab-radius); background: #161b22; z-index: -1;
+  content: ''; position: absolute; inset: 0 2px 6px; border-radius: var(--tab-radius); background: var(--surface); z-index: -1;
 }
-.tab:not(.active):hover { color: #c9d1d9; }
-.tab.active { color: #e6edf3; z-index: 1; }
+.tab:not(.active):hover { color: var(--text-normal); }
+.tab.active { color: var(--text-primary); z-index: 1; }
 .tab.active::after { bottom: 0; border-radius: var(--tab-radius) var(--tab-radius) 0 0; background: var(--tab-active); }
 /* Concave bottom corners join the selected tab to the top bar below. */
 .tab.active::before {
@@ -57,10 +57,10 @@ html, body {
 .tab:not(.active) { overflow: hidden; }
 .tab.active { min-width: 36px; }
 @container (max-width: 72px) { .tab:not(.active):not(:hover) .tab-close { display: none; } }
-.tab-close:hover { opacity: 1; background: #30363d; color: #e6edf3; }
+.tab-close:hover { opacity: 1; background: var(--border); color: var(--text-primary); }
 .tab-new {
   display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px;
-  align-self: center; margin: 0 0 0 6px; border: 0; border-radius: 50%; background: transparent; color: #7d8590;
+  align-self: center; margin: 0 0 0 6px; border: 0; border-radius: 50%; background: transparent; color: var(--tab-action);
 }
-.tab-new:hover { background: #161b22; color: #e6edf3; }
-.tab-new:active, .tab-close:active { background: #30363d; }
+.tab-new:hover { background: var(--surface); color: var(--text-primary); }
+.tab-new:active, .tab-close:active { background: var(--border); }

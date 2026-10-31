@@ -8,6 +8,71 @@ static int _baton_cancel_swizzle_attempts = 0;
 static char _baton_skeleton_installed_key;
 static char _baton_skeleton_controller_key;
 static char _baton_safe_area_script_installed_key;
+static char _baton_appearance_installed_key;
+
+static NSDictionary *baton_saved_appearance(void) {
+    return [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"baton-appearance"] ?: @{};
+}
+
+static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
+    NSString *hex = baton_saved_appearance()[name] ?: fallback;
+    if (![hex isKindOfClass:[NSString class]] || hex.length != 7) hex = fallback;
+    unsigned int rgb = 0;
+    [[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&rgb];
+    return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0
+                           green:((rgb >> 8) & 255) / 255.0
+                            blue:(rgb & 255) / 255.0 alpha:1];
+}
+
+static void baton_apply_appearance(UIWindow *window) {
+    BOOL light = [baton_saved_appearance()[@"mode"] isEqual:@"light"];
+    window.overrideUserInterfaceStyle = light ? UIUserInterfaceStyleLight : UIUserInterfaceStyleDark;
+    window.backgroundColor = baton_appearance_color(@"canvas", @"#0d1117");
+    [window.rootViewController setNeedsStatusBarAppearanceUpdate];
+}
+
+@interface BatonAppearanceHandler : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation BatonAppearanceHandler
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (!message.frameInfo.isMainFrame || ![message.body isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary *value = message.body;
+    if (![value[@"mode"] isEqual:@"light"] && ![value[@"mode"] isEqual:@"dark"]) return;
+    NSRegularExpression *colorPattern = [NSRegularExpression regularExpressionWithPattern:@"^#[0-9a-fA-F]{6}$" options:0 error:nil];
+    for (NSString *name in @[@"canvas", @"surface", @"strip"]) {
+        NSString *color = value[name];
+        if (![color isKindOfClass:[NSString class]] ||
+            [colorPattern numberOfMatchesInString:color options:0 range:NSMakeRange(0, color.length)] != 1) return;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:value forKey:@"baton-appearance"];
+    UIWindow *window = message.webView.window;
+    baton_apply_appearance(window);
+    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    message.webView.backgroundColor = background;
+    message.webView.scrollView.backgroundColor = background;
+    message.webView.scrollView.indicatorStyle = [value[@"mode"] isEqual:@"light"]
+        ? UIScrollViewIndicatorStyleBlack : UIScrollViewIndicatorStyleWhite;
+    if (@available(iOS 15.0, *)) message.webView.underPageBackgroundColor = background;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"BatonAppearanceChanged" object:nil];
+}
+@end
+
+static void baton_install_appearance_bridge(WKWebView *webview) {
+    if (objc_getAssociatedObject(webview, &_baton_appearance_installed_key)) return;
+    BatonAppearanceHandler *handler = [BatonAppearanceHandler new];
+    [webview.configuration.userContentController addScriptMessageHandler:handler name:@"batonAppearance"];
+    objc_setAssociatedObject(webview, &_baton_appearance_installed_key, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSString *mode = [baton_saved_appearance()[@"mode"] isEqual:@"light"] ? @"light" : @"dark";
+    NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", mode];
+    [webview.configuration.userContentController addUserScript:[[WKUserScript alloc]
+        initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    webview.backgroundColor = background;
+    webview.scrollView.backgroundColor = background;
+    [webview evaluateJavaScript:[script stringByAppendingString:
+        @"window.dispatchEvent(new Event('baton-native-appearance-ready'));"] completionHandler:nil];
+}
 
 // Find the barcode-scanner Swift class. Its runtime name is mangled with the module
 // prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
@@ -222,6 +287,7 @@ static void baton_install_kb_swizzle(void) {
 // Only applies when WKContentView height < window height (bug is present).
 static void baton_inject_safe_area(WKWebView *wv, UIEdgeInsets sa) {
     if (!wv) return;
+    baton_install_appearance_bridge(wv);
 
     // Install one reload-safe bootstrap. The immediate update below stores the
     // latest orientation's values, and future page loads restore them before
@@ -399,7 +465,7 @@ static void baton_layout_skeleton_content(
 
 static void baton_attach_skeleton_overlay(UIWindow *kw) {
     if (!kw || !kw.rootViewController) return;
-    kw.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    baton_apply_appearance(kw);
     UIViewController *hostController = kw.rootViewController;
     UIView *hostView = hostController.view;
     UIViewController *existing = objc_getAssociatedObject(
@@ -434,10 +500,7 @@ static void baton_attach_skeleton_overlay(UIWindow *kw) {
 
     UIViewController *skeletonController = [UIViewController new];
     UIView *skel = [[UIView alloc] initWithFrame:hostView.bounds];
-    skel.backgroundColor = [UIColor colorWithRed:22.0 / 255.0
-                                           green:27.0 / 255.0
-                                            blue:34.0 / 255.0
-                                           alpha:1.0];
+    skel.backgroundColor = baton_appearance_color(@"surface", @"#161b22");
     skel.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     skeletonController.view = skel;

@@ -26,8 +26,8 @@
   transform: translate(-50%, -50%);
 }
 .project-files-entry.active {
-  color: #c9d1d9;
-  background: #21262d;
+  color: var(--text-normal);
+  background: var(--surface-raised);
 }
 html.native-mobile #top-right .project-files-entry {
   width: 44px;
@@ -55,7 +55,7 @@ html.native-mobile .edge-back-top-right .project-files-entry svg {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0d1117;
+  background: var(--canvas);
 }
 .project-files-page[hidden] {
   display: none;
@@ -80,14 +80,14 @@ html.native-mobile .edge-back-top-right .project-files-entry svg {
   gap: 11px;
   padding: 8px 16px;
   border: 0;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--surface-raised);
   background: transparent;
-  color: #e6edf3;
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
 .project-file-row:active {
-  background: #161b22;
+  background: var(--surface);
 }
 .project-file-icon {
   width: 22px;
@@ -96,10 +96,10 @@ html.native-mobile .edge-back-top-right .project-files-entry svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #8b949e;
+  color: var(--text-secondary);
 }
 .project-file-icon.directory {
-  color: #d7ba7d;
+  color: var(--syntax-path);
 }
 .project-file-icon svg {
   width: 22px;
@@ -115,7 +115,7 @@ html.native-mobile .edge-back-top-right .project-files-entry svg {
 }
 .project-file-chevron {
   flex: 0 0 auto;
-  color: #6e7681;
+  color: var(--text-muted);
   font-size: 22px;
   line-height: 1;
 }
@@ -135,6 +135,6 @@ html.native-mobile .project-file-row {
   }
 }
 .project-files-error {
-  color: #8b949e;
+  color: var(--text-secondary);
   font-size: 12px;
 }

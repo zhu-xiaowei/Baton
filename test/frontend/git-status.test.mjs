@@ -1,3 +1,4 @@
+import { readDarkStyles } from './helpers/theme-css.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,7 +110,7 @@ test('Git renderer exposes row and Section operations without opening Diff', () 
 });
 
 test('Git Section toggle owns the full left side of its Header', () => {
-  const css = fs.readFileSync(path.join(ROOT, 'web/css/git-status.css'), 'utf8');
+  const css = readDarkStyles(path.join(ROOT, 'web/css/git-status.css'));
   assert.match(css, /\.git-section-header\{[^}]*position:sticky;[^}]*top:0;[^}]*z-index:3;[^}]*padding:0;[^}]*background:#1c2128/);
   assert.doesNotMatch(css, /\.git-section-header\{[^}]*box-shadow:/);
   assert.match(css, /\.git-section-toggle\{[^}]*padding:0 0 0 10px/);
@@ -136,7 +137,7 @@ test('Git file rows keep the filename, directory, status, and actions on one com
   assert.equal(copy.children[0].className, 'git-file-name');
   assert.equal(copy.children[1].className, 'git-file-directory');
 
-  const css = fs.readFileSync(path.join(ROOT, 'web/css/git-status.css'), 'utf8');
+  const css = readDarkStyles(path.join(ROOT, 'web/css/git-status.css'));
   assert.match(css, /\.git-file-row\{[^}]*min-height:40px/);
   assert.match(css, /\.git-row-actions \.git-action\{height:40px\}/);
   assert.match(css, /\.git-file-copy\{[^}]*display:flex;[^}]*align-items:baseline;[^}]*overflow:hidden/);
@@ -261,9 +262,9 @@ test('Git Diff and Code mode survive refresh for the same session', () => {
 });
 
 test('Workspace Header actions match top-bar height without growing desktop headers', () => {
-  const css = fs.readFileSync(path.join(ROOT, 'web/css/git-status.css'), 'utf8');
-  const workspaceCss = fs.readFileSync(path.join(ROOT, 'web/css/workspace-header.css'), 'utf8');
-  const style = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
+  const css = readDarkStyles(path.join(ROOT, 'web/css/git-status.css'));
+  const workspaceCss = readDarkStyles(path.join(ROOT, 'web/css/workspace-header.css'));
+  const style = readDarkStyles(path.join(ROOT, 'web/css/style.css'));
   assert.match(workspaceCss, /\.workspace-switch \{[\s\S]*?width: 28px;[\s\S]*?height: 28px;[\s\S]*?flex: 0 0 28px;/);
   assert.match(workspaceCss, /html\.native-mobile \.workspace-switch \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
   assert.match(workspaceCss, /\.workspace-switch svg\.git-branch-icon \{[\s\S]*?width: 20px;/);
@@ -290,10 +291,10 @@ test('Workspace Header actions match top-bar height without growing desktop head
 test('Diff back consumes Escape before Git page can close', () => {
   const diff = fs.readFileSync(path.join(ROOT, 'web/js/git/diff-viewer.js'), 'utf8');
   const viewer = fs.readFileSync(path.join(ROOT, 'web/js/project/file-viewer.js'), 'utf8');
-  const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
-  const style = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
+  const html = readDarkStyles(path.join(ROOT, 'web/index.html'));
+  const style = readDarkStyles(path.join(ROOT, 'web/css/style.css'));
   const page = fs.readFileSync(path.join(ROOT, 'web/js/git/page.js'), 'utf8');
-  const css = fs.readFileSync(path.join(ROOT, 'web/css/git-status.css'), 'utf8');
+  const css = readDarkStyles(path.join(ROOT, 'web/css/git-status.css'));
   assert.match(diff, /import \{ closeFileViewer, openFile \} from '\.\.\/project\/file-viewer\.js'/);
   assert.doesNotMatch(diff, /createElement|addEventListener|renderSourceView/);
   assert.match(viewer, /stopImmediatePropagation\(\)/);
