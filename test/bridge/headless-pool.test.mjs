@@ -77,3 +77,13 @@ test('the result of a turn CC started itself does not finish a waiting message',
   await finished;
   assert.deepEqual(results.map((r) => [r.consumedInputIds.length, r.continued]), [[0, true], [1, false]]);
 });
+
+test('a permission asked after the turn ended reaches the pool', async (t) => {
+  const asked = [];
+  const pool = new ClaudePool({ bin: fakeClaude(t), onControlRequest: (sid, req) => asked.push([sid, req.request_id]) });
+  t.after(() => pool.shutdownAll());
+  const proc = await turn(pool, 'sid', 'one');
+  // A background agent, or a turn CC started itself, asks with no pool turn bound.
+  proc._onLine(JSON.stringify({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Monitor' } }));
+  assert.deepEqual(asked, [['sid', 'r1']]);
+});

@@ -8,7 +8,7 @@
 // Lifecycle (litter ClaudePool model): on-demand spawn, idle reap, LRU cap.
 // Reap = close stdin (CC exits cleanly, jsonl persists), never kill.
 
-import { spawn, execFile, execFileSync } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
@@ -19,22 +19,6 @@ export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this lon
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
 export const HEADLESS_REAP_INTERVAL_MS = 60_000;
-// Background servers never report back: a task is one when a TCP listener or one of its
-// ancestors writes to that task's tasks/<id>.output. null = no lsof, so none can be told apart.
-async function serverTaskIds() {
-  const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, (error, stdout) => (
-    resolve(error?.code === 'ENOENT' ? null : stdout || ''))));
-  const listeners = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-t']);
-  if (listeners === null) return null;
-  const parents = new Map((await run('ps', ['-A', '-o', 'pid=,ppid=']) || '').trim().split('\n')
-    .map((line) => line.trim().split(/\s+/)));
-  const pids = new Set();
-  for (let pid of listeners.split('\n').filter(Boolean)) {
-    for (; pid && pid !== '1' && !pids.has(pid); pid = parents.get(pid)) pids.add(pid);
-  }
-  const out = pids.size ? await run('lsof', ['-a', '-p', [...pids].join(','), '-d', '1', '-Fn']) : '';
-  return new Set(out?.match(/(?<=tasks\/)\w+(?=\.output)/g));
-}
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
@@ -110,8 +94,7 @@ class HeadlessProc {
     const t = o.type;
 
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
-      this.tasks = Array.isArray(o.tasks) ? o.tasks : [];
-      this.backgroundTasks = this.tasks.length;
+      this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
       // The turn CC starts when a task ends counts from here, not from the last pool turn.
       this.pool._touch(this);
       return;
@@ -188,13 +171,14 @@ class HeadlessProc {
 
     // Permission / user-interaction request
     if (t === 'control_request') {
-      this._cb?.onControlRequest?.(o);
+      // Background agents and turns CC starts itself ask outside any pool turn.
+      if (this._cb?.onControlRequest) this._cb.onControlRequest(o);
+      else this.pool._onControlRequest?.(this.sessionId, o);
       return;
     }
 
     // Turn finished
     if (t === 'result') {
-      this.refreshServers();  // a server listens only some time after it starts
       this._framer.finish();
       this._flushHeldReplies();
       // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
@@ -222,23 +206,6 @@ class HeadlessProc {
       return;
     }
 
-  }
-
-  // Background tasks other than servers; while any run, the session stays running.
-  get awaitedTasks() {
-    if (this.servers === null) return 0;
-    return (this.tasks || []).filter((task) => !this.servers?.has(task.task_id)).length;
-  }
-
-  // Once only servers are left, the idle session is completed. A task that ended is not
-  // checked here: the turn CC starts to report it ends the session itself.
-  refreshServers() {
-    if (!this.tasks?.length) return;
-    serverTaskIds().then((servers) => {
-      const before = this.awaitedTasks;
-      this.servers = servers;
-      if (before && !this.awaitedTasks && !this.busy && !this.dead) this.pool._onSettled?.(this.sessionId);
-    });
   }
 
   _flushHeldReplies() {
@@ -372,7 +339,7 @@ export class ClaudePool {
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
     this._onExit = opts.onExit || null;  // (sessionId) => void, fired when a proc leaves the pool
-    this._onSettled = opts.onSettled || null;  // (sessionId) => void, its awaited background tasks are gone
+    this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
     if (this._reaper.unref) this._reaper.unref();
   }
@@ -539,12 +506,10 @@ export class ClaudePool {
 
   // Busy turns own status; idle processes may be resumed from a terminal.
   isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && p.busy; }
-  awaitsTasks(key) { const p = this.procs.get(key); return !!p && !p.dead && p.awaitedTasks > 0; }
 
   reapIdle() {
     const now = Date.now();
     for (const [key, proc] of this.procs) {
-      if (!proc.busy && !proc.dead) proc.refreshServers();
       if (proc.busy || proc.dead || proc.backgroundTasks) continue;
       if (proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) {
         proc.shutdown();

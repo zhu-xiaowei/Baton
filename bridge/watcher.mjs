@@ -23,7 +23,6 @@ import {
   headlessRoute,
   pendingInteractionDetail,
   poolOwns,
-  poolOwnsStatus,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
@@ -326,7 +325,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
-    const poolOwned = poolOwnsStatus(sessionId);
+    const poolOwned = poolOwns(sessionId);
     if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
       synced.set(sessionId, lastParsedLine);
       return;
