@@ -5,6 +5,7 @@ import { showToast } from './components/toast.js';
 // Baton is in the background; the local push plugin owns notification taps.
 const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
+const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
 let platform, config, initialization, pendingTarget, permission;
 let status = '';
@@ -131,9 +132,11 @@ async function initialize() {
   });
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
-  // On each page load: refreshes the iOS token TTL, restarts the Android service. Only the
-  // switch asks for the permission.
-  await apply(false);
+  // On each page load: refreshes the iOS token TTL, restarts the Android service. The first
+  // load (also after updating) asks once; later only the switch asks.
+  const prompt = !localStorage.getItem(ASKED);
+  localStorage.setItem(ASKED, '1');
+  await apply(prompt);
 }
 
 export function initMobileNotifications() {
