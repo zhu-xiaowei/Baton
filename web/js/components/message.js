@@ -253,7 +253,7 @@ import { copyButtonHtml } from '../copy.js';
   window.renderForkedSkillSummary = function (msg, command) {
     if (command?.type !== 'user' || !/^\/[\w:-]+(?:\s|$)/.test(userText(command).trim())) return '';
     var text = localCommandStdoutText(msg);
-    return text ? renderAssistantText(text) : '';
+    return text ? { html: renderAssistantText(text), messageText: text } : '';
   };
   window.renderLocalCommandStdout = function (msg) {
     var text = localCommandStdoutText(msg);
