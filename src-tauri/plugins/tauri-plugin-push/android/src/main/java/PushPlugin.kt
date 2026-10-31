@@ -25,6 +25,7 @@ import org.json.JSONArray
 class StartArgs {
   lateinit var server: String
   lateinit var apiKey: String
+  var prompt: Boolean = true
 }
 
 @InvokeArg
@@ -64,7 +65,8 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun start(invoke: Invoke) {
-    if (Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) {
+    val prompt = invoke.parseArgs(StartArgs::class.java).prompt
+    if (prompt && Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) {
       requestPermissionForAlias("notifications", invoke, "startAfterPermission")
     } else {
       startService(invoke)

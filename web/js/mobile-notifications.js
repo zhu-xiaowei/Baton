@@ -79,10 +79,10 @@ function showSwitch() {
   if (input) input.checked = enabled() && permission?.granted !== false;
 }
 
-async function apply() {
+async function apply(prompt = true) {
   if (enabled()) {
     permission = await (platform === 'ios' ? enableIos()
-      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY })) || permission;
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
   } else {
     setStatus('');
   }
@@ -168,8 +168,9 @@ export function mountNotificationSettings() {
     }
     showSwitch();
   });
+  // Re-check only: an Android request the system denies at once still pauses and resumes the page.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && config) void apply().catch(error => setStatus(error.message));
+    if (document.visibilityState === 'visible' && config) void apply(false).catch(error => setStatus(error.message));
   });
   setStatus(status);
 }
