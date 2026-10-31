@@ -2721,7 +2721,7 @@ function pendingStatus(pending, text, color) {
   var status = el && el.querySelector('.sending-status');
   if (!status) return;
   status.textContent = text;
-  status.style.color = color || '#d29922';
+  status.style.color = color || 'var(--warning)';
 }
 
 function handleCodexSendConflict(pending, msg) {
@@ -2937,7 +2937,7 @@ function markPendingTime(pending) {
   var status = el.querySelector('.sending-status');
   if (status) {
     status.textContent = sentAt.toLocaleTimeString();
-    status.style.color = '#6e7681';
+    status.style.color = 'var(--text-muted)';
   }
 }
 
@@ -2959,7 +2959,7 @@ function markPendingFailed(pending, error) {
   if (!status) return;
   var label = error ? esc(error) : 'Not delivered';
   status.innerHTML = label + ' · <span class="send-retry" onclick="retryPendingSend(\'' + pending.id + '\')">Retry</span>';
-  status.style.color = '#f85149';
+  status.style.color = 'var(--danger)';
 }
 
 // Timeout reconciliation: only acts if the bubble is still pending (ack/dedup

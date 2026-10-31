@@ -30,6 +30,7 @@ var _pdfLoadController = null;
 var _officePreview = null;
 var _objectUrl = '';
 var _documentObjectUrls = [];
+var _themedSvgDocuments = new Map();
 var _documentImages = new Map(); // path → URL promise for the open file; survives Source/Preview toggles
 var _clearPdfRanges = null;
 var _clearHtmlPreview = null;
@@ -346,7 +347,7 @@ async function showDiff(loadDiff, token) {
       drawFileList: false,
       outputFormat: 'line-by-line',
       matching: 'lines',
-      colorScheme: 'dark',
+      colorScheme: document.documentElement.dataset.theme || 'dark',
       highlight: true,
     });
     ui.draw();
@@ -493,10 +494,27 @@ function schemedSvgUrl(url, svgScheme) {
   return fetch(url, { cache: 'no-store' }).then(function (response) { return response.ok ? response.text() : null; }).then(function (svg) {
     if (!svg || !/prefers-color-scheme/i.test(svg)) return url;
     var objectUrl = URL.createObjectURL(new Blob([svgScheme(svg)], { type: 'image/svg+xml' }));
+    _themedSvgDocuments.set(objectUrl, { source: svg, scheme: svgScheme });
     _documentObjectUrls.push(objectUrl);
     return objectUrl;
   }).catch(function () { return url; });
 }
+
+window.addEventListener('themechange', function () {
+  const updated = new Map();
+  for (const [url, value] of Array.from(_themedSvgDocuments)) {
+    if (!document.querySelector('img[src="' + url + '"]')) continue;
+    const next = URL.createObjectURL(new Blob([value.scheme(value.source)], { type: 'image/svg+xml' }));
+    document.querySelectorAll('img[src="' + url + '"]').forEach(image => { image.src = next; });
+    _documentObjectUrls.push(next);
+    updated.set(url, next);
+    _themedSvgDocuments.delete(url);
+    _themedSvgDocuments.set(next, value);
+  }
+  for (const [path, pending] of _documentImages) {
+    _documentImages.set(path, pending.then(url => updated.get(url) || url));
+  }
+});
 
 // Document images use the per-file cache; failures fall back to the chat loader's retry UI.
 function showDocumentImage(el, path, context, cache, svgScheme) {

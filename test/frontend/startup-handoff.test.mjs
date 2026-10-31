@@ -1,9 +1,10 @@
+import { readDarkStyles } from './helpers/theme-css.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 
-const indexHtml = readFileSync(
+const indexHtml = readDarkStyles(
   new URL('../../web/index.html', import.meta.url),
   'utf8',
 );
@@ -15,7 +16,7 @@ const appSource = readFileSync(
   new URL('../../web/js/app.js', import.meta.url),
   'utf8',
 );
-const styleSource = readFileSync(
+const styleSource = readDarkStyles(
   new URL('../../web/css/style.css', import.meta.url),
   'utf8',
 );
@@ -96,7 +97,7 @@ test('native container keeps the shared skeleton until WKWebView is ready', () =
   );
   assert.match(
     skeletonSection,
-    /skel\.backgroundColor = \[UIColor colorWithRed:22\.0 \/ 255\.0/,
+    /skel\.backgroundColor = baton_appearance_color\(@"surface", @"#161b22"\)/,
   );
   assert.doesNotMatch(skeletonSection, /UIWindowLevelNormal \+ 1\.0/);
   assert.doesNotMatch(skeletonSection, /\[hostView layoutIfNeeded\]/);

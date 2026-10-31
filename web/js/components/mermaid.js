@@ -4,6 +4,7 @@
   var MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs';
 
   var _mermaidPromise = null;
+  var _themeGeneration = 0;
   var _renderSeq = 0;                  // unique id per render() — mermaid needs distinct ids
   var _pending = Object.create(null);  // stable key → source currently being rendered (in-flight guard)
   var _svgCache = Object.create(null); // trimmed source → rendered SVG string (survives node swaps)
@@ -71,7 +72,7 @@
       var mermaid = mod.default || mod;
       mermaid.initialize({
         startOnLoad: false,
-        theme: 'dark',
+        theme: document.documentElement.dataset.theme === 'light' ? 'neutral' : 'dark',
         securityLevel: 'loose',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       });
@@ -207,7 +208,7 @@
       var key = stableKey(block);
       if (_pending[key] === code) continue;                 // a render for this source is already in flight
       _pending[key] = code;
-      todo.push({ block: block, code: code, key: key });
+      todo.push({ block: block, code: code, key: key, generation: _themeGeneration });
     }
     if (!todo.length) return;
 
@@ -218,6 +219,7 @@
         mermaid.parse(t.code, { suppressErrors: true }).then(function (ok) {
           if (!ok) { markFailed(t.block, t.code); return; } // parse failed — if final code, mark failed
           return renderResilient(mermaid, renderId, t.code).then(function (res) {
+            if (t.generation !== _themeGeneration) return;
             cacheSvg(t.code, res.svg); // remember by source so a later node swap restores it sync
             var srcEl = t.block.querySelector('.mermaid-src');
             var box = t.block.querySelector('.mermaid-svg');
@@ -227,16 +229,31 @@
             box.innerHTML = res.svg;
             var svg = box.firstElementChild;
             if (svg) svg.setAttribute('data-mcode', t.code); // tag so unchanged frames become a no-op
+            if (_fs && _fs.code === t.code && svg) _fs.svg.innerHTML = svg.innerHTML;
             clearTimeout(_failTimers[t.key]);                // a good render cancels any pending fail switch
             t.block.classList.remove('mermaid-failed');
             t.block.classList.add('rendered');
             limitLiveSvgs(t.block);
           });
         }).catch(function () { markFailed(t.block, t.code); })
-          .then(function () { if (_pending[t.key] === t.code) delete _pending[t.key]; });
+          .then(function () { if (t.generation === _themeGeneration && _pending[t.key] === t.code) delete _pending[t.key]; });
       });
     }).catch(function () { /* CDN unavailable → placeholder stays (code tab still works) */ });
   };
+
+  window.addEventListener('themechange', function () {
+    _themeGeneration++;
+    _mermaidPromise = null;
+    _pending = Object.create(null);
+    _svgCache = Object.create(null);
+    _svgCacheKeys = [];
+    document.querySelectorAll('.mermaid-block').forEach(function (block) {
+      var box = block.querySelector('.mermaid-svg');
+      if (box) box.innerHTML = '';
+      block.classList.remove('rendered');
+    });
+    window.renderMermaidBlocks(document);
+  });
 
   // Toggle a block between diagram and source view (tab buttons in the header).
   window.toggleMermaidView = function (btn, mode) {
@@ -248,8 +265,6 @@
   };
 
   // ---- Fullscreen download: the whole diagram (not the current zoom) as a PNG ----
-  var PNG_BACKGROUND = '#0d1117'; // .mermaid-fs-overlay background; the dark theme needs a dark backdrop
-
   function svgToPng(svg, view) {
     var clone = svg.cloneNode(true);
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -266,7 +281,7 @@
         canvas.width = Math.max(1, Math.round(view.w * scale));
         canvas.height = Math.max(1, Math.round(view.h * scale));
         var ctx = canvas.getContext('2d');
-        ctx.fillStyle = PNG_BACKGROUND;
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#0d1117';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         try {
@@ -578,6 +593,7 @@
     fullSvg.removeAttribute('transform');
 
     _fs = {
+      code: code.trim(),
       overlay: overlay,
       stage: stage,
       svg: fullSvg,

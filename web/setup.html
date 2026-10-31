@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script src="/theme-init.js"></script>
+<link rel="stylesheet" href="css/themes/dark.css">
+<link rel="stylesheet" href="css/themes/light.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
 <title>Baton Setup</title>
@@ -9,74 +12,75 @@
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon-light.svg" media="(prefers-color-scheme: dark)">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-  html{scrollbar-color:#3a4049 transparent}
+  html,body{background:var(--canvas);color:var(--text-primary);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+  html{scrollbar-color:var(--scrollbar) transparent}
   ::-webkit-scrollbar{width:6px;height:6px}
   ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:#3a4049;border-radius:3px}
+  ::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px}
 </style>
 <link rel="stylesheet" href="css/style.css">
 <script type="module" src="js/entry-setup.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { color-scheme: dark; }
+  html { color-scheme: inherit; }
   html, body { height: 100%; overflow: hidden; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0d1117; color: #e6edf3;
+    background: var(--canvas); color: var(--text-primary);
     display: flex; flex-direction: column;
   }
-  .setup-bar { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
-  .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: #0d1117; }
+  .setup-bar { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); background: var(--surface-elevated); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: var(--canvas); }
   .setup-back-slot { width: 28px; height: 28px; flex: 0 0 28px; display: flex; }
-  .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: #e6edf3; }
+  .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: var(--text-primary); }
   .setup-bar .spacer { width: 28px; flex-shrink: 0; }
   .section {
-    width: 100%; max-width: 610px; background: #161b22; border: 1px solid #30363d;
+    width: 100%; max-width: 610px; background: var(--surface-elevated); border: 1px solid var(--border); box-shadow: var(--shadow-card);
     border-radius: 10px; padding: 20px; margin-bottom: 20px;
   }
   .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
   .section h2 .num {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 24px; border-radius: 50%; background: #238636;
-    font-size: 13px; font-weight: 700; flex-shrink: 0;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--success-solid);
+    font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--on-step);
   }
-  .platform-switch { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; }
-  .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #8b949e; font-size: 12px; cursor: pointer; }
-  .platform-option.active { background: #30363d; color: #e6edf3; }
+  .platform-switch { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; }
+  .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+  .platform-option.active, .platform-option[aria-pressed="true"] { background: var(--border); color: var(--text-primary); }
   .code-block {
-    width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    width: 100%; background: var(--canvas); border: 1px solid var(--border); border-radius: 8px;
     padding: 14px 16px; font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap;
-    word-break: break-all; position: relative; color: #e6edf3;
+    word-break: break-all; position: relative; color: var(--text-primary);
   }
   .code-btn {
     position: absolute; top: 6px; right: 6px; padding: 3px 10px;
-    background: rgba(33, 38, 45, 0.92); border: 1px solid #30363d; border-radius: 6px;
-    color: #8b949e; font-size: 11px; cursor: pointer; backdrop-filter: blur(4px);
+    background: var(--code-button); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-secondary); font-size: 11px; cursor: pointer; backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
   }
-  .code-btn:hover { background: #30363d; color: #e6edf3; }
-  .code-btn.copied { background: #238636; color: #fff; border-color: #238636; }
-  .hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+  .code-btn:hover { background: var(--border); color: var(--text-primary); }
+  .code-btn.copied { background: var(--success-solid); color: var(--on-accent); border-color: var(--success-solid); }
+  .hint { color: var(--text-secondary); font-size: 12px; margin-top: 8px; line-height: 1.5; }
   .qr-wrap { display: flex; flex-direction: column; align-items: center; }
-  .qr-frame { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
+  .qr-frame { background: var(--on-accent); padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
   #notificationStatus:empty { display: none; }
-  .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: #30363d; position: relative; cursor: pointer; transition: background .15s; }
-  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #e6edf3; transition: transform .15s; }
-  .switch:checked { background: #238636; }
+  .setting-row .platform-switch { margin: 0; }
+  .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: var(--switch-track); position: relative; cursor: pointer; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--switch-knob); transition: transform .15s; }
+  .switch:checked { background: var(--success-solid); }
   .switch:checked::after { transform: translateX(18px); }
-  .switch:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+  .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   html.native-mobile .setup-bar {
     min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
     padding: var(--sat, env(safe-area-inset-top, 0px)) 0 0;
     border-bottom: 0;
-    box-shadow: inset 0 -1px #30363d;
+    box-shadow: inset 0 -1px var(--border);
   }
   html.native-mobile .setup-back-slot { width: 44px; height: 44px; flex-basis: 44px; }
   html.native-mobile .setup-bar .title { font-size: 17px; }
@@ -139,15 +143,26 @@
   <p class="hint" id="notificationStatus" role="status"></p>
 </div>
 
+<div id="themeSettings" class="section">
+  <div class="setting-row">
+    <strong>Appearance</strong>
+    <div class="platform-switch" role="group" aria-label="Appearance">
+      <button class="platform-option" data-theme-option="system">System</button>
+      <button class="platform-option" data-theme-option="light">Light</button>
+      <button class="platform-option" data-theme-option="dark">Dark</button>
+    </div>
+  </div>
+</div>
+
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">
   <button onclick="logout()"
     class="logout-btn"
-    style="padding:8px 24px; background:transparent; border:1px solid #30363d; border-radius:8px; color:#f85149; cursor:pointer;">Log out</button>
+    style="padding:8px 24px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--danger); cursor:pointer;">Log out</button>
 </div>
 
 <!-- App version (iOS only — undefined elsewhere, hidden by default) -->
-<div id="appVersion" style="text-align:center; margin-bottom:32px; color:#6e7681; font-size:11px; display:none;"></div>
+<div id="appVersion" style="text-align:center; margin-bottom:32px; color:var(--text-muted); font-size:11px; display:none;"></div>
 </div>
 
 </body>

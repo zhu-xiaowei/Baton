@@ -46,7 +46,7 @@ export function previewListen(event, handler) {
 
 export async function previewOpenExternal(url) {
   if (!harmonyBridge() && /Android/i.test(navigator.userAgent)) {
-    return invoke('plugin:in-app-browser|open_chrome', { payload: { url, toolbarColor: '#161b22' } });
+    return invoke('plugin:in-app-browser|open_chrome', { payload: { url, toolbarColor: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#161b22' } });
   }
   return openExternalLink(url);
 }

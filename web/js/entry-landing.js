@@ -1,3 +1,4 @@
+import './theme.js';
 // Entry for landing.html — single Start URL field for sign-in.
 // A Start URL looks like one of:
 //   https://<server>/?t=<token>            (install.sh: 12h, Setup: 10 min; reusable until then)

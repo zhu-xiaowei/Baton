@@ -44,10 +44,8 @@ targets:
         BatonPushEnvironment: $(BATON_APNS_ENVIRONMENT)
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
-        # Dark app: force light (white) status bar text from the first launch frame, else iOS
-        # defaults to dark text (invisible on our dark bg) and flashes white->dark->white.
-        UIStatusBarStyle: UIStatusBarStyleLightContent
-        UIViewControllerBasedStatusBarAppearance: false
+        UIStatusBarStyle: UIStatusBarStyleDefault
+        UIViewControllerBasedStatusBarAppearance: true
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -59,7 +57,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 1.0.0
-        CFBundleVersion: "60"
+        CFBundleVersion: "61"
         NSMicrophoneUsageDescription: Baton uses the microphone for voice input.
         NSSpeechRecognitionUsageDescription: Baton uses speech recognition to convert your voice to text.
         NSPhotoLibraryAddUsageDescription: Baton can save downloaded images or videos when you choose Save in the share sheet.
@@ -125,7 +123,7 @@ targets:
         BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
         CFBundleDisplayName: Baton
         CFBundleShortVersionString: 1.0.0
-        CFBundleVersion: "60"
+        CFBundleVersion: "61"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
