@@ -157,11 +157,10 @@ export function mountNotificationSettings() {
       else await unregisterMobileNotifications().then(() => setStatus(''));
       // The system no longer asks: only its Settings can allow Baton, which is checked on return.
       if (wanted && permission?.blocked) {
-        if (window.confirm('Notifications are off for Baton. Open Settings to allow them?')) {
-          await invoke('plugin:push|open_settings');
-        } else {
-          localStorage.setItem(ENABLED, '0');
-        }
+        const { opened } = await invoke('plugin:push|open_settings', {
+          message: 'Notifications are off for Baton. Open Settings to allow them?',
+        });
+        if (!opened) localStorage.setItem(ENABLED, '0');
       }
     } catch (error) {
       setStatus(error.message);

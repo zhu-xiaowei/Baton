@@ -10,7 +10,8 @@ before this layout show `title` (**folder · session**).
 The switch is on only when it is wanted and the system allows Baton's notifications. Turning
 it on shows the system prompt while the system still asks; declining it leaves the switch off.
 Once the system no longer asks (iOS after one denial, Android 13+ after two, or notifications
-turned off in system settings), a dialog offers the system's Baton notification settings; the
+turned off in system settings), a native alert offers the system's Baton notification settings
+(native because the iOS WKWebView has no `window.confirm`); the
 permission is re-checked whenever the app returns to the foreground.
 
 ## Flow

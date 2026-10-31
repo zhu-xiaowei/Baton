@@ -2,6 +2,7 @@ package com.batonai.push
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -31,6 +32,11 @@ class StartArgs {
 @InvokeArg
 class ListenArgs {
   lateinit var onClick: Channel
+}
+
+@InvokeArg
+class SettingsArgs {
+  lateinit var message: String
 }
 
 @InvokeArg
@@ -89,14 +95,24 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve(JSObject().put("granted", true))
   }
 
+  // The same native alert as iOS, whose WebView has no window.confirm.
   @Command
   fun openSettings(invoke: Invoke) {
-    activity.startActivity(if (Build.VERSION.SDK_INT >= 26) {
-      Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
-    } else {
-      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null))
-    })
-    invoke.resolve()
+    val message = invoke.parseArgs(SettingsArgs::class.java).message
+    activity.runOnUiThread {
+      AlertDialog.Builder(activity).setMessage(message)
+        .setNegativeButton(android.R.string.cancel) { _, _ -> invoke.resolve(JSObject().put("opened", false)) }
+        .setOnCancelListener { invoke.resolve(JSObject().put("opened", false)) }
+        .setPositiveButton("Settings") { _, _ ->
+          activity.startActivity(if (Build.VERSION.SDK_INT >= 26) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+          } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null))
+          })
+          invoke.resolve(JSObject().put("opened", true))
+        }
+        .show()
+    }
   }
 
   @Command

@@ -42,6 +42,10 @@ private struct OpenArgs: Decodable {
   let sessionId: String
 }
 
+private struct SettingsArgs: Decodable {
+  let message: String
+}
+
 // Outlives webview navigation. Taps are persisted before JS is signaled, so a cold
 // launch or a sign-in redirect cannot lose the destination.
 private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate {
@@ -200,12 +204,19 @@ class PushPlugin: Plugin {
     }
   }
 
-  @objc public func openSettings(_ invoke: Invoke) {
+  // A native alert: this WKWebView has no window.confirm.
+  @objc public func openSettings(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SettingsArgs.self)
     DispatchQueue.main.async {
-      var url = UIApplication.openSettingsURLString
-      if #available(iOS 16.0, *) { url = UIApplication.openNotificationSettingsURLString }
-      UIApplication.shared.open(URL(string: url)!)
-      invoke.resolve()
+      let alert = UIAlertController(title: nil, message: args.message, preferredStyle: .alert)
+      alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in invoke.resolve(["opened": false]) })
+      alert.addAction(UIAlertAction(title: "Settings", style: .default) { _ in
+        var url = UIApplication.openSettingsURLString
+        if #available(iOS 16.0, *) { url = UIApplication.openNotificationSettingsURLString }
+        UIApplication.shared.open(URL(string: url)!)
+        invoke.resolve(["opened": true])
+      })
+      self.manager.viewController?.present(alert, animated: true)
     }
   }
 
