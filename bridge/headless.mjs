@@ -112,8 +112,6 @@ class HeadlessProc {
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       this.tasks = Array.isArray(o.tasks) ? o.tasks : [];
       this.backgroundTasks = this.tasks.length;
-      // A task that ended is reported by the turn CC starts next; that turn's end settles it.
-      this.refreshServers(false);
       // The turn CC starts when a task ends counts from here, not from the last pool turn.
       this.pool._touch(this);
       return;
@@ -196,7 +194,7 @@ class HeadlessProc {
 
     // Turn finished
     if (t === 'result') {
-      this.refreshServers(true);  // a server listens only some time after it starts
+      this.refreshServers();  // a server listens only some time after it starts
       this._framer.finish();
       this._flushHeldReplies();
       // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
@@ -232,13 +230,14 @@ class HeadlessProc {
     return (this.tasks || []).filter((task) => !this.servers?.has(task.task_id)).length;
   }
 
-  // settle: once only servers are left, the idle session is completed.
-  refreshServers(settle) {
+  // Once only servers are left, the idle session is completed. A task that ended is not
+  // checked here: the turn CC starts to report it ends the session itself.
+  refreshServers() {
     if (!this.tasks?.length) return;
     serverTaskIds().then((servers) => {
       const before = this.awaitedTasks;
       this.servers = servers;
-      if (settle && before && !this.awaitedTasks && !this.busy && !this.dead) this.pool._onSettled?.(this.sessionId);
+      if (before && !this.awaitedTasks && !this.busy && !this.dead) this.pool._onSettled?.(this.sessionId);
     });
   }
 
@@ -545,7 +544,7 @@ export class ClaudePool {
   reapIdle() {
     const now = Date.now();
     for (const [key, proc] of this.procs) {
-      if (!proc.busy && !proc.dead) proc.refreshServers(true);
+      if (!proc.busy && !proc.dead) proc.refreshServers();
       if (proc.busy || proc.dead || proc.backgroundTasks) continue;
       if (proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) {
         proc.shutdown();
