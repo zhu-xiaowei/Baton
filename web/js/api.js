@@ -248,35 +248,39 @@ function showLoadedImage(el, url) {
   el.replaceChildren(image);
 }
 
-function imageLoadAction(el, detail) {
+function imageLoadAction(el, label, detail, manual) {
   var button = document.createElement('button');
   button.type = 'button';
   button.className = 'image-load-action';
-  button.textContent = 'Retry';
-  button.title = detail || 'Retry image';
-  button.setAttribute('aria-label', 'Retry image');
+  button.textContent = label;
+  button.title = detail || label;
+  button.setAttribute('aria-label', label === 'Retry' ? 'Retry image' : label);
   button.onclick = function (event) {
     event.preventDefault();
     event.stopPropagation();
     delete el.dataset.failed;
     el.innerHTML = loadingSpinner({ label: 'Loading image' });
-    loadOneImage(el);
+    loadOneImage(el, manual);
   };
   el.classList.remove('loaded');
   el.replaceChildren(button);
 }
 
-async function loadOneImage(el) {
+async function loadOneImage(el, manual = false) {
   var context = imageContexts.get(el) || currentImageContext();
   var path = el.dataset.path;
-  var requestPath = path && automaticImagePath(path, context);
+  var requestPath = path && (manual ? path : automaticImagePath(path, context));
+  if (path && requestPath === null) {
+    imageLoadAction(el, 'Load image', 'Load image from this device', true);
+    return;
+  }
   try {
     var url = path ? await getLocalImageUrl(requestPath, context)
       : await getImageUrl(el.dataset.key);
     showLoadedImage(el, url);
   } catch(e) {
     el.dataset.failed = '1';
-    imageLoadAction(el, e.message || 'Image unavailable');
+    imageLoadAction(el, 'Retry', e.message || 'Image unavailable', manual);
   }
 }
 
@@ -289,6 +293,10 @@ function loadImages(container, contextOverride) {
       var context = currentImageContext(contextOverride);
       imageContexts.set(el, context);
       var path = automaticImagePath(el.dataset.path, context);
+      if (path === null) {
+        imageLoadAction(el, 'Load image', 'Load image from this device', true);
+        return;
+      }
       cached = cachedLocalImage(path, context);
     } else {
       cached = cachedImageUrl(imageStorageKey(el.dataset.key));
