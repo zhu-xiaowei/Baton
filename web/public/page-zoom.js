@@ -7,12 +7,12 @@
   var enabled = !nativeMac;
   var key = mobile ? 'baton-text-size' : 'baton-browser-zoom';
   var levels = mobile ? [
-    { id: 'small', label: 'S', scale: 0.9 },
-    { id: 'standard', label: 'M', scale: 1 },
-    { id: 'large', label: 'L', scale: 1.1 },
-    { id: 'extra-large', label: 'XL', scale: 1.2 },
-    { id: 'double-extra-large', label: '2XL', scale: 1.3 },
-    { id: 'triple-extra-large', label: '3XL', scale: 1.4 },
+    { id: 'small', scale: 0.9 },
+    { id: 'standard', scale: 1 },
+    { id: 'large', scale: 1.1 },
+    { id: 'extra-large', scale: 1.2 },
+    { id: 'double-extra-large', scale: 1.3 },
+    { id: 'triple-extra-large', scale: 1.4 },
   ] : [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map(function (scale) {
     return { id: String(scale), scale: scale };
   });
