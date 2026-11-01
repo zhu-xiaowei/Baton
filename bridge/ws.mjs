@@ -53,6 +53,7 @@ import {
 } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
 import { ActiveTurnRegistry } from './active-turn-registry.mjs';
+import { batonSessions } from './presence.mjs';
 import { LiveExecutionStream } from './live-execution-stream.mjs';
 import {
   assertTurnEventEnvelope,
@@ -335,6 +336,7 @@ function commandCatalog(runtime, cwd, fallbackDir = cwd, options = {}) {
 // Push an interaction-owned session's status to DDB.
 function syncInteractionStatus(sessionId, status, detail, runtimeHint, options = {}) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
+  batonSessions.add(identity.nativeSessionId);
   const key = identity.sessionId;
   const previous = _statusSyncs.get(key) || Promise.resolve();
   const next = previous.then(async () => {
@@ -1044,6 +1046,7 @@ async function handleSendMessage(
   if (!text) return;
   if (!sessionId && !projectHash) return;
   const identity = parseStorageSessionId(sessionId || '', runtime);
+  if (sessionId) batonSessions.add(identity.nativeSessionId);
   const adapter = getRuntimeAdapter(identity.runtime);
   const allowed = sessionId ? adapter.features.send : adapter.features.create;
   if (!allowed) {

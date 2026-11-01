@@ -19,6 +19,7 @@ import {
 import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
+import { batonSessions, localIdleSec } from './presence.mjs';
 import {
   headlessRoute,
   pendingInteractionDetail,
@@ -488,6 +489,10 @@ async function postSessionMeta(
   }
   if (newStatus === 'needs_input' && interactionDetail !== null) {
     sessionMeta.agentDetail = interactionDetail;
+  }
+  // A turn started outside Baton: let the server skip the alert if the user is at the computer.
+  if (oldStatus === 'running' && newStatus !== 'running' && !dm && !batonSessions.has(sessionId)) {
+    sessionMeta.localIdleSec = await localIdleSec();
   }
   trackAgentSession(sessionMeta);
   await postRequired('/api/bridge/sync-sessions', {
