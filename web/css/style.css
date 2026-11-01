@@ -1135,6 +1135,12 @@ html.native-mobile .slash-description {
 }
 @media (max-width: 480px) {
   .slash-item { grid-template-columns: 1fr; gap: 2px; }
+  .slash-name { flex-direction: column; align-items: stretch; gap: 2px; }
+  .slash-argument-hint {
+    white-space: normal; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+    max-height: 2.7em;
+  }
   .slash-description {
     -webkit-line-clamp: 2; line-clamp: 2;
     max-height: 2.7em;
