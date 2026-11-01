@@ -1,5 +1,6 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
+import { layoutPixels } from './page-zoom.js';
 import { copyButtonHtml, refreshMessageCopy } from './copy.js';
 import { attachmentPreviewText, attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
@@ -41,6 +42,7 @@ import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
 import { ExecutionEventQueue } from './execution-events.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+var _vpBaseWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
 var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
@@ -142,6 +144,12 @@ function followBottomAfterLayout() {
 if (window.visualViewport && _isMobile) {
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
+    // A native page zoom or rotation changes viewport units, unlike a keyboard.
+    if (vv.width !== _vpBaseWidth) {
+      _vpBaseWidth = vv.width;
+      _vpBaseHeight = Math.max(vv.height, window.innerHeight);
+      _lastMobileViewportHeight = vv.height;
+    }
     var previousHeight = _lastMobileViewportHeight;
     var viewportShrinking = vv.height < previousHeight;
     var viewportGrowing = vv.height > previousHeight;
@@ -183,8 +191,8 @@ if (window.visualViewport && _isMobile) {
       }
     }
     document.body.style.bottom = 'auto';
-    document.body.style.top = (_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (vv.height + chromeHeight) + 'px';
+    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
+    document.body.style.height = (layoutPixels(vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     if (_isIOS) {
       var bar = document.getElementById('input-bar');
@@ -203,6 +211,7 @@ if (window.visualViewport && _isMobile) {
     }
   };
   window.visualViewport.addEventListener('resize', syncMobileViewport);
+  window.addEventListener('baton-page-zoom-change', syncMobileViewport);
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
@@ -2518,11 +2527,11 @@ var restoreScrollFrame = null;
     updateSendBtn({ skipSpinner: true });
   });
   window.addEventListener('resize', function () {
-    if (document.documentElement.classList.contains('macos-page-zoom')) {
+    if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) {
       requestAnimationFrame(resizeInputPreservingMessages);
     }
   });
-  if (document.documentElement.classList.contains('macos-page-zoom')) resizeInputPreservingMessages();
+  if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) resizeInputPreservingMessages();
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
 // that own Esc (slash popup handles it in capture phase; file/image viewers

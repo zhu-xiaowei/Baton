@@ -1,5 +1,6 @@
 // App state, routing, page loading
 import { state } from './state.js';
+import { layoutPixels } from './page-zoom.js';
 import {
   invalidateListCache,
   migrateLegacyListCache,
@@ -563,7 +564,7 @@ function updateBreadcrumbTruncation(nav) {
   nav.classList.remove('is-truncated');
   if (nav.classList.contains('expanded')) return;
   // Zoom can round the two integer measurements in opposite directions.
-  var tolerance = document.documentElement.classList.contains('macos-page-zoom') ? 1 : 0;
+  var tolerance = document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled ? 1 : 0;
   nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth + tolerance);
 }
 
@@ -1077,7 +1078,7 @@ function restoreListPosition(content, scrollTop, anchor) {
   for (var i = 0; i < items.length; i++) {
     if (items[i].getAttribute('data-id') !== anchor.id) continue;
     var top = content.getBoundingClientRect().top;
-    content.scrollTop += items[i].getBoundingClientRect().top - top - anchor.offset;
+    content.scrollTop += layoutPixels(items[i].getBoundingClientRect().top - top - anchor.offset);
     return;
   }
 }
@@ -2206,7 +2207,7 @@ async function loadOlderAndPrepend() {
     return item.node.isConnected && item.node.getBoundingClientRect().height > 0;
   });
   var anchor = saved && saved.node;
-  if (anchor) content.scrollTop += anchor.getBoundingClientRect().top - saved.top;
+  if (anchor) content.scrollTop += layoutPixels(anchor.getBoundingClientRect().top - saved.top);
 
   if (_pinRo) { _pinRo.disconnect(); _pinRo = null; }
   clearTimeout(_pinRoTimer);
@@ -2217,7 +2218,7 @@ async function loadOlderAndPrepend() {
       if (Math.abs(content.scrollTop - lastSet) > 2) { _pinRo.disconnect(); _pinRo = null; return; }
       var delta = anchor.getBoundingClientRect().top - pinTop;
       if (delta) {
-        content.scrollTop += delta;
+        content.scrollTop += layoutPixels(delta);
         lastSet = content.scrollTop;
         pinTop = anchor.getBoundingClientRect().top;
       }

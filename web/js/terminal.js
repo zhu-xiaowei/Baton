@@ -1,4 +1,5 @@
 import '../css/terminal.css';
+import { layoutPixels } from './page-zoom.js';
 import { backButtonHtml } from './components/back-button.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { registerEdgeBackLayer } from './edge-back.js';
@@ -53,8 +54,8 @@ function syncTerminalViewport(current) {
   const keyboardClosed = current.keyboardOpen && !keyboardNowOpen;
   current.keyboardOpen = keyboardNowOpen;
   current.page.classList.toggle('keyboard-open', keyboardNowOpen);
-  current.page.style.height = visible ? `${visible.height}px` : '';
-  current.page.style.top = visible ? `${visible.offsetTop}px` : '';
+  current.page.style.height = visible ? `${layoutPixels(visible.height)}px` : '';
+  current.page.style.top = visible ? `${layoutPixels(visible.offsetTop)}px` : '';
   return keyboardClosed;
 }
 
@@ -342,8 +343,8 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     syncFill();
     const bounds = screen.querySelector('.xterm-screen')?.getBoundingClientRect();
     if (bounds) {
-      terminal.textarea.style.top = `${terminal.buffer.active.cursorY * bounds.height / terminal.rows}px`;
-      terminal.textarea.style.left = `${Math.min(terminal.cols - 1, terminal.buffer.active.cursorX) * bounds.width / terminal.cols}px`;
+      terminal.textarea.style.top = `${terminal.buffer.active.cursorY * layoutPixels(bounds.height) / terminal.rows}px`;
+      terminal.textarea.style.left = `${Math.min(terminal.cols - 1, terminal.buffer.active.cursorX) * layoutPixels(bounds.width) / terminal.cols}px`;
     }
     if (resizeAnchor || following) {
       const resizedViewport = terminal.buffer.active.viewportY;
@@ -449,7 +450,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.menu.hidden = !open;
     current.selector.setAttribute('aria-expanded', String(open));
     if (open) {
-      current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
+      current.menu.style.setProperty('--terminal-menu-top', `${layoutPixels(page.querySelector('header').getBoundingClientRect().height) + 4}px`);
       terminal.blur();
       (current.list.querySelector('[aria-current="true"]') || current.add).focus({ preventScroll: true });
     } else current.selector.focus({ preventScroll: true });
@@ -786,7 +787,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     const keyboardClosed = syncTerminalViewport(current);
     const keyboardOpened = window.__BATON_NATIVE_MOBILE__ && !keyboardWasOpen && current.keyboardOpen;
     const followBottom = (keyboardOpened || keyboardClosed) && terminal.buffer.active.type === 'normal';
-    current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
+    current.menu.style.setProperty('--terminal-menu-top', `${layoutPixels(page.querySelector('header').getBoundingClientRect().height) + 4}px`);
     if (keyboardClosed) current.mobileControls?.reset();
     if (keyboardClosed || followBottom) clearResizeAnchor();
     if (followBottom) {
@@ -802,6 +803,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   listen(screen, 'pointerdown', event => { if (event.pointerType !== 'touch') useLocalSize(); });
   listen(terminal.textarea, 'focus', viewport);
   listen(window, 'focus', useLocalSize);
+  listen(window, 'baton-page-zoom-change', viewport);
   listen(document, 'visibilitychange', () => { if (!document.hidden) useLocalSize(); });
   if (window.visualViewport) {
     listen(window.visualViewport, 'resize', viewport);

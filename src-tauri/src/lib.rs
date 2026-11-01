@@ -76,6 +76,7 @@ pub fn run() {
       ios_build_number,
       appearance::appearance_set,
       macos_zoom::macos_set_zoom,
+      macos_zoom::mobile_set_zoom,
       macos_tabs::macos_tabs_state,
       macos_tabs::macos_tabs_new,
       macos_tabs::macos_tabs_select,

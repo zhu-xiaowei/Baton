@@ -1,3 +1,5 @@
+import { layoutPixels } from './page-zoom.js';
+
 (function () {
   // Modern iOS can color the native indicator without replacing its behavior.
   if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
@@ -43,9 +45,9 @@
 
       var rect = target.getBoundingClientRect();
       var parentRect = parent.getBoundingClientRect();
-      track.style.top = (rect.top - parentRect.top) + 'px';
+      track.style.top = layoutPixels(rect.top - parentRect.top) + 'px';
       track.style.height = ch + 'px';
-      track.style.right = Math.max(0, parentRect.right - rect.right) + 'px';
+      track.style.right = layoutPixels(Math.max(0, parentRect.right - rect.right)) + 'px';
 
       var trackH = ch - EDGE_INSET * 2;
       var thumbH = Math.max(THUMB_MIN_HEIGHT, trackH * (ch / sh));

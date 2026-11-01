@@ -1,6 +1,7 @@
 // Shared image preview gestures for chat images, staged images, and project files.
 import { cancelNativeDownload, downloadFailure, downloadFile, nativeDownloads, nativeDownloadsStopOnClose } from '../project/download.js';
 import { imageMimeType } from './image-type.js';
+import { layoutPixels, layoutRect } from '../page-zoom.js';
 import { setDownloadButtonState } from './download-button.js';
 import { loadingSpinner } from './loading.js';
 import { showToast } from './toast.js';
@@ -26,7 +27,7 @@ let pendingSlide = null; // a settling swipe: { timer, finish }
 let nativeGesture = null;
 
 function baseCenter() {
-  const rect = image.getBoundingClientRect();
+  const rect = layoutRect(image);
   return { x: rect.left + rect.width / 2 - x, y: rect.top + rect.height / 2 - y };
 }
 
@@ -37,7 +38,7 @@ function clampAxis(position, center, size, start, length) {
 
 function setZoom(nextScale, nextX, nextY) {
   const center = baseCenter();
-  const bounds = overlay.getBoundingClientRect();
+  const bounds = layoutRect(overlay);
   scale = Math.max(1, Math.min(MAX_SCALE, nextScale));
   x = clampAxis(nextX, center.x, image.offsetWidth * scale, bounds.left, bounds.width);
   y = clampAxis(nextY, center.y, image.offsetHeight * scale, bounds.top, bounds.height);
@@ -57,8 +58,8 @@ function resetZoom() {
 
 function midpoint(touches) {
   return {
-    x: (touches[0].clientX + touches[1].clientX) / 2,
-    y: (touches[0].clientY + touches[1].clientY) / 2,
+    x: layoutPixels((touches[0].clientX + touches[1].clientX) / 2),
+    y: layoutPixels((touches[0].clientY + touches[1].clientY) / 2),
   };
 }
 
@@ -82,7 +83,7 @@ function beginPinch(touches) {
 }
 
 function beginPan(touch) {
-  touchMode = { type: 'pan', startX: touch.clientX, startY: touch.clientY, x, y };
+  touchMode = { type: 'pan', startX: layoutPixels(touch.clientX), startY: layoutPixels(touch.clientY), x, y };
 }
 
 function onTouchStart(event) {
@@ -91,7 +92,7 @@ function onTouchStart(event) {
   swipe = null;
   if (event.touches.length === 1 && event.target.closest('button')) return;
   if (event.touches.length === 1 && scale === 1 && items.length > 1) {
-    swipe = { x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, axis: null };
+    swipe = { x: layoutPixels(event.touches[0].clientX), y: layoutPixels(event.touches[0].clientY), dx: 0, axis: null };
   }
   if (event.touches.length >= 2) {
     event.preventDefault();
@@ -119,8 +120,8 @@ function onTouchMove(event) {
       point.y - center.y - touchMode.anchorY * nextScale);
   } else if (event.touches.length === 1 && swipe) {
     event.preventDefault();
-    const dx = event.touches[0].clientX - swipe.x;
-    const dy = event.touches[0].clientY - swipe.y;
+    const dx = layoutPixels(event.touches[0].clientX) - swipe.x;
+    const dy = layoutPixels(event.touches[0].clientY) - swipe.y;
     if (!swipe.axis && Math.hypot(dx, dy) > 8) swipe.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
     if (swipe.axis !== 'x') return;
     // The images follow the finger, with resistance past the first and last image.
@@ -130,14 +131,14 @@ function onTouchMove(event) {
     event.preventDefault();
     if (touchMode?.type !== 'pan') beginPan(event.touches[0]);
     setZoom(scale,
-      touchMode.x + event.touches[0].clientX - touchMode.startX,
-      touchMode.y + event.touches[0].clientY - touchMode.startY);
+      touchMode.x + layoutPixels(event.touches[0].clientX) - touchMode.startX,
+      touchMode.y + layoutPixels(event.touches[0].clientY) - touchMode.startY);
   }
 }
 
 function gesturePoint(event) {
-  if (event.clientX || event.clientY) return { x: event.clientX, y: event.clientY };
-  const bounds = overlay.getBoundingClientRect();
+  if (event.clientX || event.clientY) return { x: layoutPixels(event.clientX), y: layoutPixels(event.clientY) };
+  const bounds = layoutRect(overlay);
   return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
 }
 

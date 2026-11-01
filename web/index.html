@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="css/themes/light.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
+<script src="/page-zoom.js"></script>
 <title>Baton</title>
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon-light.svg" media="(prefers-color-scheme: dark)">
@@ -31,11 +32,11 @@
      Floor it at 59px (Dynamic Island / notch device standard) to prevent the top-bar
      from briefly touching the top of the screen. -webkit-touch-callout is iOS-only,
      so Android skips this. Once env() resolves, the larger value naturally takes over. */
-  @supports (-webkit-touch-callout:none){html.native-mobile .top-bar{min-height:calc(max(var(--sat,env(safe-area-inset-top,0px)),59px) + 44px);padding-top:max(var(--sat,env(safe-area-inset-top,0px)),59px)}}
+  @supports (-webkit-touch-callout:none){html.native-mobile-app .top-bar{min-height:calc(max(var(--sat,env(safe-area-inset-top,0px)),59px) + 44px);padding-top:max(var(--sat,env(safe-area-inset-top,0px)),59px)}}
   /* iOS WKWebView's frame settles ~50ms after first paint (status bar area gets cropped).
      Hide body briefly on iOS so users see the dark background instead of content jumping down.
      Android renders correctly on first frame, so it skips this. */
-  @supports (-webkit-touch-callout:none){html.native-mobile body{opacity:0}html.native-mobile body.ready{opacity:1;transition:none}}
+  @supports (-webkit-touch-callout:none){html.native-mobile-app body{opacity:0}html.native-mobile-app body.ready{opacity:1;transition:none}}
   .top-left{font-size:13px;display:flex;align-items:center;gap:4px;padding:14px 0 14px 24px;margin:-14px 0 -14px -24px}
   .top-logo{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:3px}
   .top-logo img{display:block;width:100%;height:100%}
