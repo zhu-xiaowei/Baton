@@ -144,6 +144,9 @@ export class PreviewTunnel {
         ['preview-socket-bytes', event => this.nativeBytes(event.payload)],
         ['preview-socket-fin', event => this.nativeFin(event.payload)],
         ['preview-socket-close', event => this.nativeClose(event.payload)],
+        ['preview-listener-closed', event => {
+          if (event.payload.tunnelId === this.localId) this.fail('Preview failed: local port closed');
+        }],
       ]) {
         const unlisten = await listen(name, handler);
         if (this.closed) {

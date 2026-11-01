@@ -184,7 +184,9 @@ impl PreviewProxy {
   }
 
   fn accept_loop(self: Arc<Self>, app: AppHandle, tunnel_id: String,
-      listener: TcpListener, session: Arc<PreviewSession>) {
+      mut listener: TcpListener, session: Arc<PreviewSession>) {
+    let addr = listener.local_addr().ok();
+    let mut rebind_attempts = 0;
     while !session.stopped.load(Ordering::Acquire) {
       match listener.accept() {
         Ok((reader, _)) => {
@@ -235,7 +237,27 @@ impl PreviewProxy {
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
           thread::sleep(Duration::from_millis(20));
         }
-        Err(_) => break,
+        Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::ConnectionAborted) => {}
+        // iOS reclaims a suspended app's listening sockets; take the same port back.
+        Err(error) => {
+          log::warn!("Preview listener failed: {error}");
+          match addr.and_then(|addr| TcpListener::bind(addr).ok()) {
+            Some(fresh) if fresh.set_nonblocking(true).is_ok() => {
+              listener = fresh;
+              rebind_attempts = 0;
+            }
+            _ if rebind_attempts < 25 => {
+              rebind_attempts += 1;
+              thread::sleep(Duration::from_millis(200));
+            }
+            _ => {
+              let _ = app.emit_to(&session.owner, "preview-listener-closed", SocketEvent {
+                tunnel_id: tunnel_id.clone(), stream_id: String::new(),
+              });
+              break;
+            }
+          }
+        }
       }
     }
   }
