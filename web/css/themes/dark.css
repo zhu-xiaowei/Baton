@@ -109,6 +109,7 @@
   --surface-input: #161b22;
   --divider: #21262d;
   --bubble-user: #2d333b;
+  --bubble-user-meta: #6e7681;
   --card-running-border: rgba(63, 185, 80, 0.2);
   --card-running-hover: rgba(63, 185, 80, 0.35);
   --card-idle-border: rgba(210, 153, 34, 0.15);

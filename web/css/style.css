@@ -237,7 +237,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .msg-user .msg-text.expanded { max-height: none; }
 .msg-user .msg-text.expanded::after { display: none; }
 .msg-user .msg-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
-.msg-user .msg-meta .msg-time { font-size: 10px; color: var(--text-muted); }
+.msg-user .msg-meta .msg-time { font-size: 10px; color: var(--bubble-user-meta); }
 .send-retry { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
 .file-badge {
