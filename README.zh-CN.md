@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/insta
 | iOS | Android | HarmonyOS（鸿蒙） | macOS | Windows |
 |:---:|:---:|:---:|:---:|:---:|
 | <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/harmonyos.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.apk) | [构建与安装](harmony/README.zh-CN.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.exe) |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.apk) | [构建与安装](harmony/README.zh-CN.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.exe) |
 
 下载 App 后，扫描二维码或输入 Start URL 即可开始使用。
 
@@ -70,6 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/insta
 - **斜杠命令与 Skills** — 输入 `/` 自动补全各运行环境的内置命令、自定义命令、Codex Skills 和已保存的提示词。
 - **Codex Goals** — 使用 `/goal` 设置、暂停、恢复或清除线程目标，并实时跟踪代理自主继续执行的过程。
 - **子代理** — 将 Claude Code 和 Codex 的嵌套子代理归入主会话，显示实时状态和层级化线程列表。
+- **移动端通知** — 在 iOS 和 Android 上接收会话完成或等待输入的提醒，点击通知即可打开对应会话。
 - **自有基础设施** — 一条命令部署到自己的 AWS 账户，会话数据始终保存在该账户中。
 
 ### 开发工具
@@ -82,6 +83,8 @@ curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/insta
 ### 快速、稳定、轻量
 
 - **接近原生的 App 体验** — 原生启动画面与各阶段的骨架屏无缝衔接，无白屏闪烁；从屏幕边缘滑动返回时，可看到下层页面。
+- **浅色与深色主题** — 在设置中选择跟随系统、浅色或深色，界面、代码、图表和原生 App 外观同步切换。
+- **页面大小调节** — 移动端可调整字号，桌面端可使用缩放快捷键；设置在切换页面和重启 App 后保留。
 - **即时加载** — 列表、历史记录和项目数据先从本地页面缓存加载，再在后台刷新。
 - **稳定传输** — 有序传输、自动重连和消息发送队列，让会话在移动网络不稳定或 App 切换到后台后仍能保持连贯。
 - **轻量 App** — 基于 Tauri 构建的小体积原生安装包，以及适用于 HarmonyOS NEXT 的 ArkWeb 壳。
@@ -90,13 +93,13 @@ curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/insta
 ### 丰富的内容展示
 
 - **执行时间线** — 工具调用与结果可折叠，完整输出按需加载。
-- **差异、Mermaid 和 LaTeX** — 在实时输出过程中直接渲染。
+- **差异、Mermaid 和 LaTeX** — 在实时输出过程中直接渲染，可复制源码及下载为图片。
 - **会话内嵌 HTML** — 支持交互式预览，可展开至全屏并保留当前状态。
 - **文件预览** — 预览项目或消息中的 Markdown、HTML、PDF、Office、图片和视频文件；HTML 页面会加载相对路径的 CSS、脚本和图片，无需本地服务器即可完整显示；消息中的图片直接展示，支持全屏打开和双指缩放。
 
 ### 更多功能
 
-- **文件、图片与语音输入** — 添加文件附件、发送压缩图片，并在 iOS 上通过语音输入消息。
+- **文件、图片与语音输入** — 添加文件附件，在桌面端拖入文件或图片，发送压缩图片，并在 iOS 上通过语音输入消息。
 - **会话草稿** — 在同一设备上切换会话或重新打开 App 时，保留文字和已上传的附件。
 - **会话管理** — 通过对应运行环境的原生能力重命名会话，长按可多选并删除会话或项目，也可同时删除本地文件。
 - **设备管理** — 从 Baton 移除设备并停止其在线 Bridge，保留本地会话文件。

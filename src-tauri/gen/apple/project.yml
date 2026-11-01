@@ -56,7 +56,7 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 1.0.0
+        CFBundleShortVersionString: 1.1.0
         CFBundleVersion: "63"
         NSMicrophoneUsageDescription: Baton uses the microphone for voice input.
         NSSpeechRecognitionUsageDescription: Baton uses speech recognition to convert your voice to text.
@@ -122,7 +122,7 @@ targets:
       properties:
         BatonKeychainGroup: $(AppIdentifierPrefix)com.batonai.shared
         CFBundleDisplayName: Baton
-        CFBundleShortVersionString: 1.0.0
+        CFBundleShortVersionString: 1.1.0
         CFBundleVersion: "63"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service

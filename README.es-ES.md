@@ -51,7 +51,7 @@ En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ej
 | iOS | Android | HarmonyOS | macOS | Windows |
 |:---:|:---:|:---:|:---:|:---:|
 | <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/harmonyos.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.exe) |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.exe) |
 
 Después de descargar la aplicación, escanea el código QR o introduce la Start URL para comenzar.
 
@@ -70,6 +70,7 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
 - **Comandos con barra y Skills** — autocompletado con `/` para los comandos integrados y personalizados de cada entorno, las Skills de Codex y los prompts guardados.
 - **Codex Goals** — establece, pausa, reanuda o elimina objetivos de una conversación con `/goal` y sigue sus turnos de continuación autónoma en tiempo real.
 - **Subagentes** — subagentes anidados de Claude Code y Codex agrupados bajo su sesión principal, con estado en directo y una lista jerárquica de hilos.
+- **Notificaciones móviles** — recibe avisos en iOS y Android cuando una sesión termina o necesita tu intervención; toca el aviso para abrir la sesión.
 - **Infraestructura propia** — despliega con un solo comando en tu cuenta de AWS; los datos de tus sesiones permanecen en ella.
 
 ### Herramientas de desarrollo
@@ -82,6 +83,8 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
 ### Rápido, estable y ligero
 
 - **Experiencia de aplicación nativa** — la pantalla de inicio nativa da paso sin interrupciones a las pantallas de carga de cada etapa, sin destellos blancos; al deslizar desde el borde para volver, se revela la página anterior.
+- **Temas claro y oscuro** — elige Sistema, Claro u Oscuro en Ajustes; la interfaz, el código, los diagramas y la apariencia nativa cambian juntos.
+- **Tamaño de página ajustable** — cambia el tamaño de letra en el móvil o usa los atajos de zoom en el escritorio; la elección se conserva entre páginas y al reiniciar la aplicación.
 - **Carga instantánea** — las listas, el historial y los datos del proyecto se abren desde la caché local y se actualizan en segundo plano.
 - **Entrega estable** — la transmisión ordenada, la reconexión automática y la cola de envíos mantienen la continuidad de las sesiones con redes móviles inestables y después de pasar la aplicación a segundo plano.
 - **Aplicaciones ligeras** — paquetes nativos pequeños basados en Tauri, además de una aplicación contenedora con ArkWeb para HarmonyOS NEXT.
@@ -90,13 +93,13 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
 ### Visualización de contenido
 
 - **Cronología de ejecución** — llamadas a herramientas y resultados plegables, con la salida completa disponible bajo demanda.
-- **Diferencias, Mermaid y LaTeX** — se muestran integrados mientras se recibe la respuesta.
+- **Diferencias, Mermaid y LaTeX** — se muestran integrados mientras se recibe la respuesta; copia el código fuente y descarga como imágenes.
 - **HTML integrado en las conversaciones** — vistas previas interactivas que se pueden ampliar a pantalla completa sin perder su estado.
 - **Vista previa de archivos** — archivos Markdown, HTML, PDF, Office, imágenes y vídeos de proyectos o mensajes; las páginas HTML cargan sus CSS, scripts e imágenes con rutas relativas y se muestran completas sin un servidor local; las imágenes de los mensajes se muestran integradas y se pueden abrir a pantalla completa y ampliar con dos dedos.
 
 ### Más funciones
 
-- **Entrada de archivos, imágenes y voz** — adjunta archivos, envía imágenes comprimidas y dicta mensajes en iOS.
+- **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS.
 - **Borradores de sesión** — conserva el texto y los archivos adjuntos ya subidos al cambiar de sesión o volver a abrir la aplicación en el mismo dispositivo.
 - **Gestión de sesiones** — cambia el nombre de las sesiones mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias sesiones o proyectos, con la opción de eliminar también sus archivos locales.
 - **Gestión de dispositivos** — elimina dispositivos de Baton y detén sus Bridges conectados, conservando los archivos locales de las sesiones.
