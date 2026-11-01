@@ -100,8 +100,8 @@ test('the mobile terminal keeps its right edge flush and a compact bottom inset'
     page.classList.add('has-mobile-controls', 'keyboard-open');
     assert.equal(dom.window.getComputedStyle(page).paddingBottom, '0px');
     assert.equal(dom.window.getComputedStyle(page.querySelector('main')).marginBottom, '4px');
-    assert.match(terminalCss, /@media \(orientation: landscape\)\s*\{\s*html\.native-mobile-app \.project-terminal-page \{ padding-bottom: 12px; \}/);
-    assert.match(terminalCss, /@media \(orientation: portrait\)\s*\{\s*html\.native-mobile-app \.project-terminal-page \{ padding-bottom: 20px; \}/);
+    assert.match(terminalCss, /@media \(orientation: landscape\)\s*\{\s*html\.native-mobile \.project-terminal-page \{ padding-bottom: 12px; \}/);
+    assert.match(terminalCss, /@media \(orientation: portrait\)\s*\{\s*html\.native-mobile \.project-terminal-page \{ padding-bottom: 20px; \}/);
   } finally {
     dom.window.close();
   }

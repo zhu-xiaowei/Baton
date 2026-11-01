@@ -68,9 +68,9 @@ html.native-mobile .project-terminal-header > .back-button svg {
   transform: translateX(2px);
 }
 @media (orientation: landscape) {
-  html.native-mobile-app .project-files-page-breadcrumb,
-  html.native-mobile-app .git-status-header,
-  html.native-mobile-app .project-terminal-header {
+  html.native-mobile .project-files-page-breadcrumb,
+  html.native-mobile .git-status-header,
+  html.native-mobile .project-terminal-header {
     padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 2px);
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 2px);
   }
