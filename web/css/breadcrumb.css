@@ -65,6 +65,11 @@
   initial-value: 0deg;
   inherits: false;
 }
+/* Light quiets the border while loading; Dark leaves --chip-border-loading unset. */
+.path-breadcrumb-item.is-loading:not(.is-loading-ending) { border-color: var(--chip-border-loading, var(--border-strong)); }
+.breadcrumb-nav a.is-loading:not(.is-loading-ending) { border-color: var(--chip-border-loading, var(--chip-border)); }
+.path-breadcrumb-item.is-loading-ending,
+.breadcrumb-nav a.is-loading-ending { transition: border-color 220ms ease-out; }
 .path-breadcrumb-item.is-loading,
 .breadcrumb-nav a.is-loading {
   position: relative;
