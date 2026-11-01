@@ -52,8 +52,8 @@ On native Windows, run the install command in PowerShell using **Run as administ
 
 | iOS | Android | HarmonyOS | macOS | Windows |
 |:---:|:---:|:---:|:---:|:---:|
-| <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.png" width="120"> | <img src="docs/assets/harmonyos.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
-| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.apk) | [Build & install](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.0.0/Baton.exe) |
+| <img src="docs/assets/baton_ios.avif" width="120"> | <img src="docs/assets/baton_android.avif" width="120"> | <img src="docs/assets/harmonyos.avif" width="120"> | <img src="docs/assets/macOS.avif" width="120"> | <img src="docs/assets/windows.avif" width="120"> |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.apk) | [Build & install](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.exe) |
 
 After downloading the app, scan the QR code or input the Start URL to get started.
 
@@ -72,6 +72,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 - **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
 - **Codex Goals** — set, pause, resume, or clear thread goals with `/goal`, and follow autonomous continuation turns in real time
 - **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
+- **Mobile notifications** — receive iOS and Android alerts when a session finishes or needs input; tap an alert to open the session
 - **Your own infrastructure** — one-command deploy to your AWS account; session data never leaves it
 
 ### Developer tools
@@ -84,6 +85,8 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 ### Fast, stable, lightweight
 
 - **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
+- **Light and dark themes** — choose System, Light, or Dark in Settings; the interface, code, diagrams, and native app appearance update together
+- **Adjustable page size** — change font size on mobile or use desktop zoom shortcuts; your choice persists across pages and app restarts
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
 - **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
@@ -92,13 +95,13 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 ### Rich rendering
 
 - **Execution timeline** — collapsible tool calls and results, with full output loaded on demand
-- **Diffs, Mermaid, and LaTeX** — rendered inline while streaming
+- **Diffs, Mermaid, and LaTeX** — rendered inline while streaming; copy source and download as images
 - **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
 - **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server; images in messages display inline and open full screen with pinch-to-zoom
 
 ### More
 
-- **File, image, and voice input** — attach files, send compressed images, and dictate messages on iOS
+- **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS
 - **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
 - **Device management** — remove devices from Baton and stop their online Bridges while keeping local session files
