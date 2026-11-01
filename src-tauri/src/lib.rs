@@ -73,6 +73,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
       macos_zoom::macos_set_zoom,
+      macos_zoom::mobile_set_zoom,
       macos_tabs::macos_tabs_state,
       macos_tabs::macos_tabs_new,
       macos_tabs::macos_tabs_select,

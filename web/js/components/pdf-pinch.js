@@ -1,3 +1,5 @@
+import { layoutPixels } from '../page-zoom.js';
+
 // Two-finger pinch zoom for the PDF.js and Office viewers: CSS-scale while the fingers move (smooth, no
 // re-render), then apply the real scale on release and keep the pinch midpoint under the fingers.
 // `pages` is the content element at the scroll origin, or a function returning positioned page elements.
@@ -9,8 +11,8 @@ function gesture(container, touches) {
   const box = container.getBoundingClientRect();
   return {
     distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
-    x: (a.clientX + b.clientX) / 2 - box.left,
-    y: (a.clientY + b.clientY) / 2 - box.top,
+    x: layoutPixels((a.clientX + b.clientX) / 2 - box.left),
+    y: layoutPixels((a.clientY + b.clientY) / 2 - box.top),
   };
 }
 

@@ -696,6 +696,7 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
         if update["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
     )
     values = root_update["ExpressionAttributeValues"]
+    assert "REMOVE localIdleSec" in root_update["UpdateExpression"]
     assert values[":count"] == 1
     assert values[":running"] == 1
     assert values[":needs"] == 0

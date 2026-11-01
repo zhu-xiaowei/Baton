@@ -54,9 +54,8 @@
   position: fixed;
   inset: 0;
   z-index: 2000;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
+  width: auto;
+  height: auto;
   border-radius: 0;
   padding: calc(var(--sat, env(safe-area-inset-top, 0px)) + 48px) max(12px, var(--sar, env(safe-area-inset-right, 0px))) max(12px, var(--sab, env(safe-area-inset-bottom, 0px))) max(12px, var(--sal, env(safe-area-inset-left, 0px)));
 }

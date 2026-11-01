@@ -2,6 +2,7 @@ import io
 import json
 import os
 import time
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -48,6 +49,10 @@ def test_status_transitions(monkeypatch):
     assert worker.notification({}, DONE, "imported") is None
     assert worker.notification(DONE, DONE, "renamed") is None
     assert worker.notification(SESSION, {**DONE, "parentSessionId": "root"}, "child") is None
+    # A turn started outside Baton alerts only when the user has left that computer.
+    assert worker.notification(SESSION, {**DONE, "localIdleSec": Decimal(30)}, "local") is None
+    assert worker.notification(SESSION, {**WAITING, "localIdleSec": 5}, "local-ask") is None
+    assert worker.notification(SESSION, {**DONE, "localIdleSec": Decimal(600)}, "away")
     assert "Session session" in worker.notification(SESSION, {**DONE, "preview": ""}, "x")["title"]
     assert worker.text_summary(json.dumps([
         {"type": "thinking", "thinking": "private reasoning"},
