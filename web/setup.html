@@ -45,7 +45,7 @@
     width: 24px; height: 24px; border-radius: 50%; background: var(--success-solid);
     font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--on-step);
   }
-  .platform-switch { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; }
+  .platform-switch { display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; padding: 2px; margin-bottom: 10px; background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; }
   .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
   .platform-option.active, .platform-option[aria-pressed="true"] { background: var(--border); color: var(--text-primary); }
   .code-block {
@@ -68,7 +68,7 @@
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { max-width: 100%; height: auto; border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
-  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
+  .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
   #notificationStatus:empty { display: none; }
