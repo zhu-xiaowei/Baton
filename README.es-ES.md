@@ -50,7 +50,7 @@ En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ej
 
 | iOS | Android | HarmonyOS | macOS | Windows |
 |:---:|:---:|:---:|:---:|:---:|
-| <img src="docs/assets/baton_ios.png" width="120"> | <img src="docs/assets/baton_android.avif" width="120"> | <img src="docs/assets/harmonyos.png" width="120"> | <img src="docs/assets/macOS.png" width="120"> | <img src="docs/assets/windows.png" width="120"> |
+| <img src="docs/assets/baton_ios.avif" width="120"> | <img src="docs/assets/baton_android.avif" width="120"> | <img src="docs/assets/harmonyos.avif" width="120"> | <img src="docs/assets/macOS.avif" width="120"> | <img src="docs/assets/windows.avif" width="120"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.exe) |
 
 Después de descargar la aplicación, escanea el código QR o introduce la Start URL para comenzar.
