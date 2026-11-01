@@ -145,7 +145,7 @@ function waitForListPointer() {
 function selectBox(id) {
   var on = state.selected.has(id);
   return '<span class="sel-box' + (on ? ' on' : '') + '" data-selid="' + esc(id) + '">'
-    + (on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '')
+    + (on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="var(--on-accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '')
     + '</span>';
 }
 
@@ -195,7 +195,7 @@ function toggleSelected(id) {
   var box = document.querySelector('.list.select-mode .item[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"] .sel-box');
   if (box) {
     box.classList.toggle('on', on);
-    box.innerHTML = on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
+    box.innerHTML = on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="var(--on-accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
   }
   updateBreadcrumb(); // refresh the Delete count only
 }
@@ -1904,7 +1904,7 @@ async function startNewSession(projectHash) {
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
   if (bar && bar.parentElement !== content) content.appendChild(bar);
-  // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
+  // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
   connectWs(null, projectHash);
 }

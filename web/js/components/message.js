@@ -163,14 +163,14 @@ import { copyButtonHtml } from '../copy.js';
       badges.push(fileBadge(d.title, content));
     });
     images.forEach(b => {
-      badges.push(`<div class="img-placeholder" data-key="${esc(b.key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="#8b949e" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
+      badges.push(`<div class="img-placeholder" data-key="${esc(b.key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(var(--spinner-rgb), 0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-secondary)" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
     });
     mdImages.forEach(imgPath => {
       // Extract image key: from "baton-bridge:key" or filename from absolute path
       const cbMatch = imgPath.match(/baton-bridge:(.+)/);
       const key = cbMatch ? cbMatch[1] : imgPath.split(/[\\/]/).pop();
       if (key && key.match(/\.(jpg|png|jpeg)$/i)) {
-        badges.push(`<div class="img-placeholder" data-key="${esc(key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="#8b949e" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
+        badges.push(`<div class="img-placeholder" data-key="${esc(key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(var(--spinner-rgb), 0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-secondary)" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
       }
     });
     const attachHtml = badges.length ? `<div class="msg-attachments">${badges.join('')}</div>` : '';

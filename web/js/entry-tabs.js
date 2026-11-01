@@ -1,3 +1,4 @@
+import './theme.js';
 // Entry for tabs.html — the macOS titlebar tab strip webview.
 import '../css/tab-strip.css';
 import { invoke } from '@tauri-apps/api/core';

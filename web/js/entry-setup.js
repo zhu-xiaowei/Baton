@@ -1,3 +1,4 @@
+import { mountThemeSettings } from './theme.js';
 // Entry for setup.html — install command + Start URL QR
 import { state } from './state.js';
 import './api.js';
@@ -26,6 +27,7 @@ setNativeTabTitle('Settings');
   mountTextSizeSettings();
   mountNotificationSettings();
   void initMobileNotifications();
+  mountThemeSettings();
 
   function leaveSetup() {
     if (!(window.isTauri || window.__TAURI_INTERNALS__)) {

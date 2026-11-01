@@ -6,23 +6,23 @@
   flex-direction: column;
   box-sizing: border-box;
   padding-bottom: 4px;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--canvas);
+  color: var(--text-primary);
   overflow: hidden;
 }
 
 .project-terminal-heading { min-width: 0; flex: 1; display: flex; align-items: center; overflow: hidden; }
 .project-terminal-project { min-width: 0; cursor: default; }
-.project-terminal-status { flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid #30363d; color: #f0b66c; font-size: 12px; overflow-wrap: anywhere; }
+.project-terminal-status { flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--terminal-warning); font-size: 12px; overflow-wrap: anywhere; }
 .project-terminal-action {
   height: 28px;
   flex: 0 0 auto;
   margin-left: 8px;
   padding: 0 8px;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #161b22;
-  color: #c9d1d9;
+  background: var(--surface);
+  color: var(--text-normal);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -45,7 +45,7 @@
 }
 .project-terminal-screen .xterm { height: 100%; }
 .project-terminal-screen.fills .xterm { height: auto; margin-top: auto; }
-.project-terminal-screen .xterm:not(.allow-transparency) .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
+.project-terminal-screen .xterm:not(.allow-transparency) .xterm-viewport { background-color: var(--canvas); overscroll-behavior: contain; }
 .project-terminal-screen .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider { border-radius: 3px; }
 .project-terminal-keybar { display: none; }
 html.native-mobile .project-terminal-page.has-mobile-controls.keyboard-open { padding-bottom: 0; }
@@ -56,25 +56,25 @@ html.native-mobile .keyboard-open .project-terminal-keybar {
   flex: 0 0 auto;
   gap: 4px;
   padding: 5px max(6px, var(--sar, env(safe-area-inset-right, 0px))) 5px max(6px, var(--sal, env(safe-area-inset-left, 0px)));
-  border-top: 1px solid #30363d;
-  background: #0d1117;
+  border-top: 1px solid var(--border);
+  background: var(--canvas);
 }
 .project-terminal-keybar button {
   height: 36px;
   min-width: 0;
   padding: 0 2px;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #161b22;
-  color: #c9d1d9;
+  background: var(--surface);
+  color: var(--text-normal);
   font: inherit;
   font-size: 12px;
   touch-action: manipulation;
   user-select: none;
   -webkit-touch-callout: none;
 }
-.project-terminal-keybar button[aria-pressed="true"] { border-color: #58a6ff; background: #1c3552; color: #fff; }
-.project-terminal-keybar button:active { background: #30363d; }
+.project-terminal-keybar button[aria-pressed="true"] { border-color: var(--accent); background: var(--surface-toggle); color: var(--on-selected); }
+.project-terminal-keybar button:active { background: var(--border); }
 .project-terminal-keybar button:disabled { opacity: .4; }
 .project-terminal-joystick {
   position: fixed;
@@ -84,9 +84,9 @@ html.native-mobile .keyboard-open .project-terminal-keybar {
   gap: 3px;
   padding: 5px;
   transform: translate(-50%, -50%);
-  border: 1px solid #8b949e66;
+  border: 1px solid rgba(var(--text-secondary-rgb), 0.4);
   border-radius: 50%;
-  background: #0d111799;
+  background: rgba(var(--canvas-rgb), 0.6);
   pointer-events: auto;
   touch-action: none;
 }
@@ -97,16 +97,16 @@ html.native-mobile .keyboard-open .project-terminal-keybar {
   -webkit-touch-callout: none;
 }
 .project-terminal-joystick[hidden] { display: none; }
-.project-terminal-joystick button { display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: transparent; color: #e6edf3; font: inherit; font-size: 23px; touch-action: none; }
+.project-terminal-joystick button { display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-primary); font: inherit; font-size: 23px; touch-action: none; }
 .project-terminal-joystick [data-direction="ArrowUp"] { grid-area: 1 / 2; }
 .project-terminal-joystick [data-direction="ArrowLeft"] { grid-area: 2 / 1; }
 .project-terminal-joystick [data-direction="ArrowRight"] { grid-area: 2 / 3; }
 .project-terminal-joystick [data-direction="ArrowDown"] { grid-area: 3 / 2; }
-.project-terminal-joystick-center { grid-area: 2 / 2; margin: 17px; border-radius: 50%; background: #8b949e; }
+.project-terminal-joystick-center { grid-area: 2 / 2; margin: 17px; border-radius: 50%; background: var(--text-secondary); }
 .project-terminal-joystick[data-direction="ArrowUp"] [data-direction="ArrowUp"],
 .project-terminal-joystick[data-direction="ArrowLeft"] [data-direction="ArrowLeft"],
 .project-terminal-joystick[data-direction="ArrowRight"] [data-direction="ArrowRight"],
-.project-terminal-joystick[data-direction="ArrowDown"] [data-direction="ArrowDown"] { color: #fff; background: #388bfd99; }
+.project-terminal-joystick[data-direction="ArrowDown"] [data-direction="ArrowDown"] { color: var(--on-accent); background: rgba(var(--accent-bright-rgb), 0.6); }
 html.native-mobile .project-terminal-screen { margin-right: 0; }
 .project-terminal-confirm { z-index: 1000; }
 .project-terminal-selector {
@@ -115,18 +115,18 @@ html.native-mobile .project-terminal-screen { margin-right: 0; }
   gap: 8px;
   height: auto;
   padding: 1px 10px;
-  border-color: #484f58;
+  border-color: var(--border-strong);
   border-radius: 12px;
-  background: #0d1117;
+  background: var(--canvas);
   font-size: 11px;
   line-height: 1.8;
   white-space: nowrap;
 }
 html.native-mobile .project-terminal-selector { padding-top: 2px; padding-bottom: 2px; font-size: 13px; }
-.project-terminal-selector-chevron { width: 16px; height: 16px; flex: 0 0 16px; color: #8b949e; }
-.project-terminal-selector[aria-expanded="true"] { background: #21262d; border-color: #6e7681; }
+.project-terminal-selector-chevron { width: 16px; height: 16px; flex: 0 0 16px; color: var(--text-secondary); }
+.project-terminal-selector[aria-expanded="true"] { background: var(--surface-raised); border-color: var(--text-muted); }
 .project-terminal-selector[aria-expanded="true"] .project-terminal-selector-chevron { transform: rotate(180deg); }
-.project-terminal-selector:not(:disabled):active { background: #30363d; }
+.project-terminal-selector:not(:disabled):active { background: var(--border); }
 .project-terminal-menu { position: absolute; inset: 0; z-index: 3; background: rgba(0, 0, 0, .16); }
 .project-terminal-menu-panel {
   position: absolute;
@@ -137,30 +137,30 @@ html.native-mobile .project-terminal-selector { padding-top: 2px; padding-bottom
   padding: 4px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 8px 32px #0006;
+  box-shadow: var(--shadow-menu);
 }
-.project-terminal-menu-heading { display: flex; align-items: center; gap: 8px; min-height: 44px; padding-left: 10px; border-bottom: 1px solid #30363d; font-size: 14px; font-weight: 600; }
-.project-terminal-count { margin-left: auto; color: #8b949e; font-size: 13px; font-weight: 400; }
-.project-terminal-menu button { min-height: 44px; padding: 0; border: 0; border-radius: 8px; color: #c9d1d9; background: transparent; font: inherit; cursor: pointer; touch-action: manipulation; }
+.project-terminal-menu-heading { display: flex; align-items: center; gap: 8px; min-height: 44px; padding-left: 10px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; }
+.project-terminal-count { margin-left: auto; color: var(--text-secondary); font-size: 13px; font-weight: 400; }
+.project-terminal-menu button { min-height: 44px; padding: 0; border: 0; border-radius: 8px; color: var(--text-normal); background: transparent; font: inherit; cursor: pointer; touch-action: manipulation; }
 .project-terminal-menu button:disabled { opacity: .4; cursor: default; }
 .project-terminal-add, .project-terminal-close { width: 44px; flex: 0 0 44px; }
 .project-terminal-menu .project-terminal-add { font-size: 22px; }
 .project-terminal-list { padding-top: 4px; }
 .project-terminal-row { display: flex; align-items: center; border-radius: 8px; }
 .project-terminal-menu .project-terminal-option { display: flex; align-items: center; flex: 1; gap: 8px; min-width: 0; padding: 0 10px; text-align: left; font-size: 13px; }
-.project-terminal-option[aria-current="true"] { background: #21262d; color: #f0f6fc; }
+.project-terminal-option[aria-current="true"] { background: var(--surface-raised); color: var(--text-emphasis); }
 .project-terminal-check { flex: 0 0 14px; font-size: 12px; }
-.project-terminal-exited { margin-left: auto; color: #8b949e; font-size: 10px; }
-.project-terminal-menu .project-terminal-close { color: #8b949e; font-size: 20px; }
-.project-terminal-menu button:focus-visible, .project-terminal-selector:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.project-terminal-exited { margin-left: auto; color: var(--text-secondary); font-size: 10px; }
+.project-terminal-menu .project-terminal-close { color: var(--text-secondary); font-size: 20px; }
+.project-terminal-menu button:focus-visible, .project-terminal-selector:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .project-terminal-menu[hidden] { display: none; }
 @media (hover: hover) and (pointer: fine) {
-  .project-terminal-selector:not(:disabled):hover { background: #21262d; border-color: #6e7681; color: #e6edf3; }
-  .project-terminal-menu button:not(:disabled):hover { background: #21262d; }
-  .project-terminal-menu .project-terminal-close:not(:disabled):hover { color: #ff7b72; background: #f851491a; }
+  .project-terminal-selector:not(:disabled):hover { background: var(--surface-raised); border-color: var(--text-muted); color: var(--text-primary); }
+  .project-terminal-menu button:not(:disabled):hover { background: var(--surface-raised); }
+  .project-terminal-menu .project-terminal-close:not(:disabled):hover { color: var(--syntax-red); background: rgba(var(--danger-rgb), 0.102); }
 }
 @media (pointer: coarse) {
   .project-terminal-screen { margin-right: 0; }

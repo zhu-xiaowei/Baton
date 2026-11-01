@@ -1,0 +1,5 @@
+<resources>
+    <color name="baton_background">#0d1117</color>
+    <color name="baton_surface">#161b22</color>
+    <color name="baton_splash_glyph">#e6edf3</color>
+</resources>

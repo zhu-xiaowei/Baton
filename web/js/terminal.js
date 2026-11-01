@@ -11,6 +11,31 @@ import { setButtonLoading } from './components/loading.js';
 let view = null;
 let retained = null;
 const encoder = new TextEncoder();
+function terminalTheme() {
+  const style = getComputedStyle(document.documentElement);
+  const color = (name, fallback) => style.getPropertyValue('--' + name).trim() || fallback;
+  const base = {
+    background: color('canvas', '#0d1117'), foreground: color('text-primary', '#e6edf3'),
+    cursor: color('text-primary', '#e6edf3'),
+    scrollbarSliderBackground: color('scrollbar', '#3a4049'),
+    scrollbarSliderHoverBackground: color('scrollbar-hover', '#4a5059'),
+    scrollbarSliderActiveBackground: color('scrollbar-hover', '#4a5059'),
+    overviewRulerBorder: '#00000000',
+  };
+  if (document.documentElement.dataset.theme !== 'light') return base;
+  return {
+    ...base, cursorAccent: color('canvas', '#0d1117'),
+    selectionBackground: color('surface-selected', '#292f37'),
+    black: color('text-primary', '#24292f'), red: color('syntax-red', '#ff7b72'),
+    green: color('success', '#3fb950'), yellow: color('warning', '#d29922'),
+    blue: color('accent', '#58a6ff'), magenta: color('purple', '#bc8cff'),
+    cyan: color('cyan', '#39c5cf'), white: color('text-secondary', '#6e7781'),
+    brightBlack: color('text-subtle', '#57606a'), brightRed: color('syntax-red', '#ff7b72'),
+    brightGreen: color('success', '#3fb950'), brightYellow: color('warning', '#d29922'),
+    brightBlue: color('accent', '#58a6ff'), brightMagenta: color('purple', '#bc8cff'),
+    brightCyan: color('cyan', '#39c5cf'), brightWhite: color('border-strong', '#8c959f'),
+  };
+}
 const edgeBack = registerEdgeBackLayer({ navigateBack: () => closeProjectTerminal({ keepAlive: true }),
   foregroundSelectors: ['#projectTerminalPage'], guardZIndex: 902, foregroundZIndex: 900 });
 
@@ -215,9 +240,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   const terminal = current.terminal = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 1000, allowProposedApi: true,
     fontFamily: 'Menlo, Monaco, Consolas, monospace', disableStdin: true,
     scrollbar: { width: 6 },
-    theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3',
-      scrollbarSliderBackground: '#3a4049', scrollbarSliderHoverBackground: '#4a5059',
-      scrollbarSliderActiveBackground: '#4a5059', overviewRulerBorder: '#00000000' } });
+    theme: terminalTheme() });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   const screen = page.querySelector('.project-terminal-screen');
@@ -226,6 +249,11 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     target.addEventListener(name, callback, options);
     current.listeners.push(() => target.removeEventListener(name, callback, options));
   };
+  listen(window, 'themechange', () => {
+    terminal.options.theme = terminalTheme();
+    // Older Bridges reject unknown frame types; they only learn the theme from `open`.
+    if (current.themeUpdates) send({ type: 'theme', theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' });
+  });
   // Bottom-anchor only once content fills the screen so the fit remainder moves above row one.
   const syncFill = () => {
     const buffer = terminal.buffer.active;
@@ -545,6 +573,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (message.error) { current.focusAfterSync = false; status(message.error, 'error'); }
       else settledStatus();
     } else if (message.type === 'ready') {
+      current.themeUpdates = message.themeUpdates === true;
       if (!current.sessions.some(session => session.id === message.sessionId)) throw new Error('Terminal list out of sync. Update Bridge and reconnect.');
       clearTimeout(current.ackTimer);
       current.ackTimer = null;
@@ -642,7 +671,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.retry.hidden = true;
     current.socket?.close();
     status('Connecting…', 'connecting');
-    const initialOpen = { sessionId: current.sessionId, ...proposedSize() };
+    const initialOpen = { sessionId: current.sessionId, ...proposedSize(), theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' };
     const socket = current.socket = new RemoteTerminalSocket(device, { direct: true, projectHash, initialOpen });
     socket.addEventListener('open', () => {
       if (view === current && generation === current.generation && !socket.initialOpenAccepted) socket.send(JSON.stringify({ type: 'open', ...initialOpen }));
@@ -682,6 +711,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.modal.querySelector('.cancel').disabled = false;
     hideCenteredModal(current.modal);
     current.closingId = null;
+    current.mobileControls?.sync();
     current.selector.focus({ preventScroll: true });
   }
 

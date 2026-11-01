@@ -45,12 +45,14 @@ function replaceShortcodes(root) {
   });
 }
 
-// Baton is always dark, so color-scheme queries are fixed to dark (also inside SVG images,
-// where WebKit follows the OS appearance instead of the page's color-scheme).
+// Embedded SVGs on WebKit may follow the OS instead of the host's chosen appearance.
+const currentTheme = () => window.document.documentElement.dataset.theme || 'dark';
+
 export function darkColorScheme(css) {
+  const light = currentTheme() === 'light';
   return css
-    .replace(/\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, '(min-width: 0px)')
-    .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, '(max-width: 0px)');
+    .replace(/\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, light ? '(max-width: 0px)' : '(min-width: 0px)')
+    .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, light ? '(min-width: 0px)' : '(max-width: 0px)');
 }
 
 function isRelative(url) {
@@ -62,20 +64,36 @@ function isRelative(url) {
 function prepareMedia(root) {
   root.querySelectorAll('img[src]').forEach((img) => {
     const src = img.getAttribute('src');
-    if (/#gh-light-mode-only$/.test(src)) { img.remove(); return; }
+    const scheme = src.match(/#gh-(light|dark)-mode-only$/);
+    if (scheme) {
+      img.dataset.themeOnly = scheme[1];
+      img.hidden = scheme[1] !== currentTheme();
+    }
     if (!isRelative(src)) return;
     img.dataset.mdSrc = src;
     img.removeAttribute('src');
   });
   root.querySelectorAll('source').forEach((source) => {
     const media = source.getAttribute('media');
-    if (media) source.setAttribute('media', darkColorScheme(media));
+    if (media) {
+      source.dataset.themeMedia = media;
+      source.setAttribute('media', darkColorScheme(media));
+    }
     const srcset = source.getAttribute('srcset');
     if (!srcset || !srcset.split(',').some((part) => isRelative(part.trim().split(/\s+/)[0]))) return;
     source.dataset.mdSrcset = srcset;
     source.removeAttribute('srcset');
   });
 }
+
+window.addEventListener('themechange', () => {
+  window.document.querySelectorAll('img[data-theme-only]').forEach(image => {
+    image.hidden = image.dataset.themeOnly !== currentTheme();
+  });
+  window.document.querySelectorAll('source[data-theme-media]').forEach(source => {
+    source.media = darkColorScheme(source.dataset.themeMedia);
+  });
+});
 
 // github-slugger: lowercase, drop punctuation, spaces to dashes, de-duplicate with -1, -2 ...
 function addHeadingIds(root) {

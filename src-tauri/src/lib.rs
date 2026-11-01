@@ -3,6 +3,7 @@
 mod preview_proxy;
 mod macos_zoom;
 mod macos_tabs;
+mod appearance;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,7 +48,8 @@ pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
     .min_inner_size(480.0, 400.0)
     .resizable(true)
     .disable_drag_drop_handler()
-    .background_color(tauri::webview::Color(0x16, 0x1b, 0x22, 0xff))
+    .background_color(appearance::current(app).color(false))
+    .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", appearance::current(app).preference))
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
     .position(120.0 + offset, 120.0 + offset)
@@ -72,6 +74,7 @@ pub fn run() {
     .manage(std::sync::Arc::new(preview_proxy::PreviewProxy::default()))
     .invoke_handler(tauri::generate_handler![
       ios_build_number,
+      appearance::appearance_set,
       macos_zoom::macos_set_zoom,
       macos_zoom::mobile_set_zoom,
       macos_tabs::macos_tabs_state,
@@ -91,6 +94,7 @@ pub fn run() {
       preview_proxy::preview_reset
     ])
     .setup(|app| {
+      appearance::setup(app.handle());
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

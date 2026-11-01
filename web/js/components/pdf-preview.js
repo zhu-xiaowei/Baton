@@ -110,19 +110,19 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
   shadow.innerHTML = `<style>
     ${pdfViewerCss}
     :host { display: block; width: 100%; height: 100%; }
-    .pdf-surface { position: relative; width: 100%; height: 100%; background: #0d1117; }
+    .pdf-surface { position: relative; width: 100%; height: 100%; background: var(--canvas); }
     .pdf-container { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
     .pdfViewer { padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px)); }
-    .pdf-loading { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: #0d1117; color: #8b949e; font: 14px system-ui; }
+    .pdf-loading { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: var(--canvas); color: var(--text-secondary); font: 14px system-ui; }
     .pdf-loading-indicator { display: flex; align-items: center; gap: 10px; visibility: hidden; animation: pdf-loading-reveal 0s 250ms forwards; }
-    .pdf-loading-indicator::before { content: ''; width: 18px; height: 18px; border: 2px solid #484f58; border-top-color: #e6edf3; border-radius: 50%; animation: pdf-loading-spin .6s linear infinite; }
+    .pdf-loading-indicator::before { content: ''; width: 18px; height: 18px; border: 2px solid var(--border-strong); border-top-color: var(--text-primary); border-radius: 50%; animation: pdf-loading-spin .6s linear infinite; }
     @keyframes pdf-loading-reveal { to { visibility: visible; } }
     @keyframes pdf-loading-spin { to { transform: rotate(360deg); } }
-    .pdf-controls { position: absolute; right: 12px; bottom: calc(12px + var(--sab, env(safe-area-inset-bottom, 0px))); z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: rgba(22,27,34,.9); box-shadow: 0 2px 12px #0008; }
+    .pdf-controls { position: absolute; right: 12px; bottom: calc(12px + var(--sab, env(safe-area-inset-bottom, 0px))); z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: rgba(var(--surface-rgb), .9); box-shadow: var(--shadow-float); }
     .pdf-controls[hidden] { display: none; }
-    .pdf-controls button { min-width: 36px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: #e6edf3; font: 14px system-ui; cursor: pointer; }
-    .pdf-controls button:hover { background: #30363d; }
-    .pdf-controls button:focus-visible { outline: 2px solid #58a6ff; }
+    .pdf-controls button { min-width: 36px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text-primary); font: 14px system-ui; cursor: pointer; }
+    .pdf-controls button:hover { background: var(--border); }
+    .pdf-controls button:focus-visible { outline: 2px solid var(--accent); }
   </style>
   <div class="pdf-surface">
     <div class="pdf-container" tabindex="0" aria-label="PDF pages. Press Enter to toggle zoom controls"><div class="pdfViewer"></div></div>

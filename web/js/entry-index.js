@@ -1,3 +1,4 @@
+import './theme.js';
 // Entry for index.html — first-paint modules only.
 // Viewer libs and modules are loaded
 // lazily by globals.js -> loadViewerLibs(), triggered after the inline shell renders

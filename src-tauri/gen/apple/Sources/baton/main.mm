@@ -2,12 +2,180 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
+#import <libkern/OSByteOrder.h>
 
 static int _baton_swizzle_attempts = 0;
 static int _baton_cancel_swizzle_attempts = 0;
 static char _baton_skeleton_installed_key;
 static char _baton_skeleton_controller_key;
 static char _baton_safe_area_script_installed_key;
+static char _baton_appearance_installed_key;
+
+static NSDictionary *baton_saved_appearance(void) {
+    return [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"baton-appearance"] ?: @{};
+}
+
+// `preference` is system/light/dark; `mode` is the light/dark palette the page last applied.
+static NSString *baton_preference(void) {
+    NSString *value = baton_saved_appearance()[@"preference"] ?: baton_saved_appearance()[@"mode"];
+    return [@[@"system", @"light"] containsObject:value] ? value : @"dark";
+}
+
+static UIColor *baton_hex_color(NSString *hex) {
+    unsigned int rgb = 0;
+    [[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&rgb];
+    return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0
+                           green:((rgb >> 8) & 255) / 255.0
+                            blue:(rgb & 255) / 255.0 alpha:1];
+}
+
+// Following the system resolves canvas/surface from the trait, so they flip with the system appearance.
+static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
+    if ([baton_preference() isEqual:@"system"]) {
+        BOOL canvas = [name isEqual:@"canvas"];
+        return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            BOOL dark = traits.userInterfaceStyle == UIUserInterfaceStyleDark;
+            return baton_hex_color(canvas ? (dark ? @"#0d1117" : @"#ffffff") : (dark ? @"#161b22" : @"#f6f8fa"));
+        }];
+    }
+    NSString *hex = baton_saved_appearance()[name] ?: fallback;
+    if (![hex isKindOfClass:[NSString class]] || hex.length != 7) hex = fallback;
+    return baton_hex_color(hex);
+}
+
+static void baton_apply_appearance(UIWindow *window) {
+    NSString *preference = baton_preference();
+    window.overrideUserInterfaceStyle = [preference isEqual:@"system"] ? UIUserInterfaceStyleUnspecified
+        : [preference isEqual:@"light"] ? UIUserInterfaceStyleLight : UIUserInterfaceStyleDark;
+    window.backgroundColor = baton_appearance_color(@"canvas", @"#0d1117");
+    [window.rootViewController setNeedsStatusBarAppearanceUpdate];
+}
+
+// iOS draws the cold-start LaunchScreen from snapshots it renders for the light and dark system
+// appearance (Library/SplashBoard, one per orientation). Copying the chosen appearance's snapshot
+// over the other one keeps the launch skeleton in the app's theme whatever the system appearance.
+// Returns @"dark"/@"light" from the snapshot's first ASTC void-extent block, or nil if unrecognised.
+static NSString *baton_snapshot_style(NSData *file, uint32_t *width, uint32_t *height) {
+    const uint8_t *bytes = (const uint8_t *)file.bytes;
+    if (file.length < 16 || memcmp(bytes, "AAPL\r\n\x1a\n", 8) != 0) return nil;
+    NSData *blocks = nil;
+    for (NSUInteger p = 8; p + 8 <= file.length;) {
+        uint32_t length = OSReadLittleInt32(bytes, p);
+        if (p + 8 + length > file.length) return nil;
+        NSData *body = [file subdataWithRange:NSMakeRange(p + 8, length)];
+        if (memcmp(bytes + p + 4, "HEAD", 4) == 0 && length >= 32) {
+            *width = OSReadLittleInt32(body.bytes, 24);
+            *height = OSReadLittleInt32(body.bytes, 28);
+        } else if (memcmp(bytes + p + 4, "astc", 4) == 0) {
+            blocks = body;
+        } else if (memcmp(bytes + p + 4, "LZFS", 4) == 0 && length > 4) {
+            blocks = [[body subdataWithRange:NSMakeRange(4, length - 4)]
+                decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmLZFSE error:nil];
+        }
+        p += 8 + length;
+    }
+    const uint8_t marker[2] = {0xfc, 0xfd};
+    NSRange found = blocks ? [blocks rangeOfData:[NSData dataWithBytes:marker length:2]
+                                         options:0 range:NSMakeRange(0, blocks.length)] : NSMakeRange(NSNotFound, 0);
+    if (found.location == NSNotFound || found.location + 14 > blocks.length || !*width) return nil;
+    const uint8_t *rgba = (const uint8_t *)blocks.bytes + found.location;
+    return rgba[9] + rgba[11] + rgba[13] < 300 ? @"dark" : @"light";
+}
+
+static void baton_sync_launch_snapshots(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("baton.launch-snapshots", DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(queue, ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *library = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
+        NSString *group = [NSString stringWithFormat:@"%@ - {DEFAULT GROUP}", NSBundle.mainBundle.bundleIdentifier];
+        NSString *live = [[library stringByAppendingPathComponent:@"SplashBoard/Snapshots"] stringByAppendingPathComponent:group];
+        NSString *saved = [library stringByAppendingPathComponent:@"Application Support/BatonLaunchSnapshots"];
+        NSArray<NSString *> *names = [[fm contentsOfDirectoryAtPath:live error:nil]
+            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self ENDSWITH '.ktx'"]];
+        if (!names.count) return;
+        // Snapshots are kept as the system rendered them; a new set (app update) replaces the copy.
+        NSString *manifestPath = [saved stringByAppendingPathComponent:@"manifest.plist"];
+        NSDictionary<NSString *, NSArray *> *manifest = [NSDictionary dictionaryWithContentsOfFile:manifestPath];
+        if (![[NSSet setWithArray:manifest.allKeys] isEqualToSet:[NSSet setWithArray:names]]) {
+            NSMutableDictionary *next = [NSMutableDictionary dictionary];
+            for (NSString *name in names) {
+                NSData *data = [NSData dataWithContentsOfFile:[live stringByAppendingPathComponent:name]];
+                uint32_t w = 0, h = 0;
+                NSString *style = data ? baton_snapshot_style(data, &w, &h) : nil;
+                if (!style) return;
+                next[name] = @[style, @(w), @(h)];
+            }
+            [fm removeItemAtPath:saved error:nil];
+            [fm createDirectoryAtPath:saved withIntermediateDirectories:YES attributes:nil error:nil];
+            for (NSString *name in names) {
+                if (![fm copyItemAtPath:[live stringByAppendingPathComponent:name]
+                                 toPath:[saved stringByAppendingPathComponent:name] error:nil]) return;
+            }
+            if (![next writeToFile:manifestPath atomically:YES]) return;
+            manifest = next;
+        }
+        // Following the system restores each snapshot to the one the system rendered.
+        NSString *target = baton_preference();
+        for (NSString *name in names) {
+            NSArray *info = manifest[name];
+            NSString *source = [target isEqual:@"system"] ? name : nil;
+            for (NSString *other in manifest) {
+                NSArray *candidate = manifest[other];
+                if (!source && [candidate[0] isEqual:target] && [candidate[1] isEqual:info[1]] && [candidate[2] isEqual:info[2]]) source = other;
+            }
+            if (!source) continue;
+            NSData *wanted = [NSData dataWithContentsOfFile:[saved stringByAppendingPathComponent:source]];
+            NSString *path = [live stringByAppendingPathComponent:name];
+            if (wanted && ![[NSData dataWithContentsOfFile:path] isEqualToData:wanted]) [wanted writeToFile:path atomically:YES];
+        }
+    });
+}
+
+@interface BatonAppearanceHandler : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation BatonAppearanceHandler
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (!message.frameInfo.isMainFrame || ![message.body isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary *value = message.body;
+    if (![value[@"mode"] isEqual:@"light"] && ![value[@"mode"] isEqual:@"dark"]) return;
+    if (value[@"preference"] && ![@[@"system", @"light", @"dark"] containsObject:value[@"preference"]]) return;
+    NSRegularExpression *colorPattern = [NSRegularExpression regularExpressionWithPattern:@"^#[0-9a-fA-F]{6}$" options:0 error:nil];
+    for (NSString *name in @[@"canvas", @"surface", @"strip"]) {
+        NSString *color = value[name];
+        if (![color isKindOfClass:[NSString class]] ||
+            [colorPattern numberOfMatchesInString:color options:0 range:NSMakeRange(0, color.length)] != 1) return;
+    }
+    [[NSUserDefaults standardUserDefaults] setObject:value forKey:@"baton-appearance"];
+    baton_sync_launch_snapshots();
+    UIWindow *window = message.webView.window;
+    baton_apply_appearance(window);
+    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    message.webView.backgroundColor = background;
+    message.webView.scrollView.backgroundColor = background;
+    message.webView.scrollView.indicatorStyle = [baton_preference() isEqual:@"system"] ? UIScrollViewIndicatorStyleDefault
+        : [value[@"mode"] isEqual:@"light"] ? UIScrollViewIndicatorStyleBlack : UIScrollViewIndicatorStyleWhite;
+    if (@available(iOS 15.0, *)) message.webView.underPageBackgroundColor = background;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"BatonAppearanceChanged" object:nil];
+}
+@end
+
+static void baton_install_appearance_bridge(WKWebView *webview) {
+    if (objc_getAssociatedObject(webview, &_baton_appearance_installed_key)) return;
+    BatonAppearanceHandler *handler = [BatonAppearanceHandler new];
+    [webview.configuration.userContentController addScriptMessageHandler:handler name:@"batonAppearance"];
+    objc_setAssociatedObject(webview, &_baton_appearance_installed_key, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", baton_preference()];
+    [webview.configuration.userContentController addUserScript:[[WKUserScript alloc]
+        initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    webview.backgroundColor = background;
+    webview.scrollView.backgroundColor = background;
+    [webview evaluateJavaScript:[script stringByAppendingString:
+        @"window.dispatchEvent(new Event('baton-native-appearance-ready'));"] completionHandler:nil];
+}
 
 // Find the barcode-scanner Swift class. Its runtime name is mangled with the module
 // prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
@@ -222,6 +390,7 @@ static void baton_install_kb_swizzle(void) {
 // Only applies when WKContentView height < window height (bug is present).
 static void baton_inject_safe_area(WKWebView *wv, UIEdgeInsets sa) {
     if (!wv) return;
+    baton_install_appearance_bridge(wv);
 
     // Install one reload-safe bootstrap. The immediate update below stores the
     // latest orientation's values, and future page loads restore them before
@@ -399,7 +568,7 @@ static void baton_layout_skeleton_content(
 
 static void baton_attach_skeleton_overlay(UIWindow *kw) {
     if (!kw || !kw.rootViewController) return;
-    kw.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    baton_apply_appearance(kw);
     UIViewController *hostController = kw.rootViewController;
     UIView *hostView = hostController.view;
     UIViewController *existing = objc_getAssociatedObject(
@@ -434,10 +603,7 @@ static void baton_attach_skeleton_overlay(UIWindow *kw) {
 
     UIViewController *skeletonController = [UIViewController new];
     UIView *skel = [[UIView alloc] initWithFrame:hostView.bounds];
-    skel.backgroundColor = [UIColor colorWithRed:22.0 / 255.0
-                                           green:27.0 / 255.0
-                                            blue:34.0 / 255.0
-                                           alpha:1.0];
+    skel.backgroundColor = baton_appearance_color(@"surface", @"#161b22");
     skel.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     skeletonController.view = skel;
@@ -613,6 +779,8 @@ int main(int argc, char * argv[]) {
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_scanner_cancel_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_viewport_refresh_observers(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
+	// The system writes or refreshes the launch snapshots during the first seconds after launch.
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ baton_sync_launch_snapshots(); });
 	ffi::start_app();
 	return 0;
 }

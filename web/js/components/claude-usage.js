@@ -170,7 +170,7 @@
     var labels = chart && chart.labels || [];
     var series = chart && chart.series || [];
     if (!labels.length || !series.length) return '';
-    var colors = ['#58a6ff', '#3fb950', '#d29922', '#f778ba', '#39c5cf', '#8b949e'];
+    var colors = ['var(--accent)', 'var(--success)', 'var(--warning)', 'var(--pink)', 'var(--cyan)', 'var(--text-secondary)'];
     var width = 680;
     var height = 250;
     var left = 62;
