@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
+<script src="/page-zoom.js"></script>
 <title>Baton</title>
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon-light.svg" media="(prefers-color-scheme: dark)">
@@ -47,6 +48,7 @@
     border-radius: 8px; color: #e6edf3; font-size: 14px; outline: none;
   }
   .input-group input:focus { border-color: #58a6ff; }
+  html.native-mobile[data-page-zoom] .input-group input { font-size: 16px; }
   .input-group input::placeholder { color: #6e7681; }
   .input-row { position: relative; }
   .input-row input { width: 100%; padding-right: 44px; }

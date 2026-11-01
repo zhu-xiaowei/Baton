@@ -14,9 +14,11 @@ function detectNativeMobile({
   platform = '',
   maxTouchPoints = 0,
   protocol = 'https:',
+  coarsePointer = false,
 } = {}) {
   const classes = new Set();
   const window = { location: { protocol } };
+  window.matchMedia = () => ({ matches: coarsePointer });
   if (tauri) window.__TAURI_INTERNALS__ = {};
   const context = {
     navigator: { userAgent, platform, maxTouchPoints },
@@ -35,8 +37,10 @@ function detectNativeMobile({
 
   vm.runInNewContext(detectorSource, context);
   return {
-    classApplied: classes.has('native-mobile'),
+    classApplied: classes.has('native-mobile-app'),
     flag: context.window.__BATON_NATIVE_MOBILE__,
+    mobileLayout: classes.has('native-mobile'),
+    layoutFlag: context.window.__BATON_MOBILE_LAYOUT__,
   };
 }
 
@@ -82,6 +86,25 @@ test('native mobile detection requires Tauri and a mobile operating system', () 
     assert.equal(result.classApplied, scenario.expected, scenario.name);
     assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
   }
+});
+
+test('mobile browsers share the app layout without enabling native capabilities', () => {
+  for (const input of [
+    { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' },
+    { userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9)' },
+    { userAgent: HARMONY_UA },
+    { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', platform: 'MacIntel', maxTouchPoints: 5 },
+    { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 1, coarsePointer: true },
+  ]) {
+    const result = detectNativeMobile(input);
+    assert.equal(result.mobileLayout, true);
+    assert.equal(result.layoutFlag, true);
+    assert.equal(result.classApplied, false);
+    assert.equal(result.flag, false);
+  }
+  const desktop = detectNativeMobile({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', platform: 'MacIntel' });
+  assert.equal(desktop.mobileLayout, false);
+  assert.equal(desktop.layoutFlag, false);
 });
 
 test('the HarmonyOS shell counts as native mobile even without Tauri internals', () => {
@@ -132,7 +155,7 @@ test('all entry pages run mobile detection before their first style block', () =
   }
 });
 
-test('mobile readability styles are scoped to the native mobile class', () => {
+test('mobile readability styles are shared by native apps and mobile browsers', () => {
   const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   const setup = readFileSync(new URL('../../web/setup.html', import.meta.url), 'utf8');
 
@@ -165,7 +188,7 @@ test('short iOS browse lists reserve horizontal drags for edge-back navigation',
 
   assert.match(
     css,
-    /html\.native-mobile body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
+    /html\.native-mobile-app body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
   );
 });
 
@@ -179,19 +202,19 @@ test('native landscape hides navigation chrome and applies live content safe are
 
   assert.match(
     css,
-    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile \.top-bar,\s*html\.native-mobile \.breadcrumb\s*\{\s*display:\s*none !important;/s,
+    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile-app \.top-bar,\s*html\.native-mobile-app \.breadcrumb\s*\{\s*display:\s*none !important;/s,
   );
   assert.match(
     css,
-    /html\.native-mobile #content,\s*html\.native-mobile \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
+    /html\.native-mobile-app #content,\s*html\.native-mobile-app \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
+    /html\.native-mobile-app \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
+    /html\.native-mobile-app \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
   );
   assert.match(app, /function scheduleScrollBtnPosition\(\)/);
   assert.match(app, /addEventListener\('orientationchange', scheduleScrollBtnPosition\)/);

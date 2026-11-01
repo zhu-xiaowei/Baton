@@ -168,15 +168,15 @@ html.native-mobile .project-terminal-selector { padding-top: 2px; padding-bottom
   .project-terminal-selector::before { content: ''; position: absolute; inset: -8px 0; }
 }
 @media (orientation: portrait) {
-  html.native-mobile .project-terminal-page { padding-bottom: 20px; }
+  html.native-mobile-app .project-terminal-page { padding-bottom: 20px; }
 }
 @media (orientation: landscape) {
-  html.native-mobile .project-terminal-page { padding-bottom: 12px; }
-  html.native-mobile .project-terminal-screen {
+  html.native-mobile-app .project-terminal-page { padding-bottom: 12px; }
+  html.native-mobile-app .project-terminal-screen {
     margin-left: max(8px, var(--sal, env(safe-area-inset-left, 0px)));
     margin-right: var(--sar, env(safe-area-inset-right, 0px));
   }
-  html.native-mobile .project-terminal-menu-panel {
+  html.native-mobile-app .project-terminal-menu-panel {
     right: max(8px, var(--sar, env(safe-area-inset-right, 0px)));
   }
 }

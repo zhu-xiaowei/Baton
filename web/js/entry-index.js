@@ -20,11 +20,13 @@ import './preview-prewarm.js';
 import './project/browser.js';
 import './scroll-indicator.js';
 import { initMacosZoom } from './macos-zoom.js';
+import { initPageZoomShortcuts } from './page-zoom.js';
 import { initMacosTabs } from './macos-tabs.js';
 import { initSystemBack } from './system-back.js';
 import { initMobileNotifications } from './mobile-notifications.js';
 
 initMacosZoom();
+initPageZoomShortcuts();
 initMacosTabs();
 initSystemBack();
 void initMobileNotifications();

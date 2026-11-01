@@ -6,8 +6,10 @@ import { harmonyBridge, harmonyCall } from './harmony.js';
 import { state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+import { initPageZoomShortcuts } from './page-zoom.js';
 
 initMacosTabs();
+initPageZoomShortcuts();
 setNativeTabTitle('Baton');
 
 (function () {

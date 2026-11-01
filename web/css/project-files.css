@@ -124,12 +124,12 @@ html.native-mobile .project-file-row {
   padding: 9px 16px 9px 12px;
 }
 @media (orientation: landscape) {
-  html.native-mobile .project-files-page-breadcrumb {
+  html.native-mobile-app .project-files-page-breadcrumb {
     min-height: 44px;
     padding: 0 calc(var(--sar, env(safe-area-inset-right, 0px)) + 12px)
       0 var(--sal, env(safe-area-inset-left, 0px));
   }
-  html.native-mobile .project-files-page-content {
+  html.native-mobile-app .project-files-page-content {
     padding-left: var(--sal, env(safe-area-inset-left, 0px));
     padding-right: var(--sar, env(safe-area-inset-right, 0px));
   }

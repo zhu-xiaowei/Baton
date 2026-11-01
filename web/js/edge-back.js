@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { layoutPixels } from './page-zoom.js';
 import '../css/edge-back.css';
 
 var renderedState = window.__inlineRendered
@@ -338,7 +339,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   }
 
   function setOffset(px) {
-    document.body.style.setProperty('--edge-back-x', px + 'px');
+    document.body.style.setProperty('--edge-back-x', layoutPixels(px) + 'px');
   }
 
   function beginSwipe(snapshot, dx, selectors, underlaySelectors) {

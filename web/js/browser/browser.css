@@ -109,7 +109,7 @@ html.native-mobile .browser-address-form .browser-button { --browser-feedback-si
   .browser-address-form .browser-button { --browser-feedback-size: 28px; width: 32px; }
 }
 @media (orientation: landscape) {
-  html.native-mobile .browser-toolbar {
+  html.native-mobile-app .browser-toolbar {
     padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 2px);
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 2px);
   }

@@ -27,6 +27,12 @@ html { scrollbar-color: #3a4049 transparent; }
   will-change: transform;
 }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; color-scheme: dark; --action-icon-color: #6e7681; --action-icon-hover-color: #e6edf3; }
+/* Keep input focus from triggering a second, automatic Safari zoom. */
+html.native-mobile[data-page-zoom] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+html.native-mobile[data-page-zoom] textarea,
+html.native-mobile[data-page-zoom] select {
+  font-size: max(16px, 1em) !important;
+}
 html, body { height: 100%; overflow: clip; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -112,13 +118,13 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 /* Native iOS browse pages keep a 1px scroll range so short lists can rubber-band.
    Session and new-session views never receive the browse-view class. */
 @supports (-webkit-touch-callout: none) {
-  html.native-mobile body.browse-view #content {
+  html.native-mobile-app body.browse-view #content {
     position: relative;
     overflow-y: scroll;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-y;
   }
-  html.native-mobile body.browse-view #content::after {
+  html.native-mobile-app body.browse-view #content::after {
     content: "";
     position: absolute;
     top: 100%;
@@ -1221,7 +1227,7 @@ html.native-mobile .slash-description {
 }
 .img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 #msg-input { flex: 1; min-width: 0; padding: 6px 4px; background: transparent; border: none; color: #e6edf3; font-size: 14px; outline: none; resize: none; max-height: 172px; overflow-y: auto; line-height: 20px; font-family: inherit; }
-.macos-page-zoom #msg-input { overflow-x: hidden; }
+.macos-page-zoom #msg-input, html[data-page-zoom] #msg-input { overflow-x: hidden; }
 .mic-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #8b949e; cursor: pointer; flex-shrink: 0; border-radius: 50%; }
 @media (hover: hover) and (pointer: fine) { .mic-btn:hover { color: #c9d1d9; } }
 .mic-btn.recording { background: #da3633; color: #fff; animation: mic-pulse 1.4s ease-in-out infinite; }
@@ -1387,21 +1393,32 @@ section:first-child > .home-section-heading > .home-section-toggle { padding-top
 html.native-mobile .recent-project-name, html.native-mobile .recent-session-title { font-size: 15px; }
 html.native-mobile .recent-project-device, html.native-mobile .recent-project-more, html.native-mobile .recent-session-time { font-size: 12px; }
 
-/* Native mobile readability: CSS px maps to logical points in the Tauri WebView. */
+/* Shared mobile typography and touch targets for browsers and native apps. */
 html.native-mobile .top-bar {
+  container: mobile-toolbar / inline-size;
   min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
   padding: var(--sat, env(safe-area-inset-top, 0px)) 8px 0 12px;
   border-bottom: 0;
   box-shadow: inset 0 -1px #30363d;
 }
-html.native-mobile .top-left { min-height: 44px; gap: 6px; font-size: 17px; line-height: 21px; }
+html.native-mobile .top-left { min-height: 44px; gap: 6px; font-size: 17px; line-height: 21px; min-width: 0; overflow: hidden; }
 html.native-mobile .top-logo {
   width: 20px; height: 21px; line-height: 21px; flex: 0 0 20px; margin-right: 0;
 }
 html.native-mobile .top-title {
   display: inline-flex; align-items: center; height: 21px; line-height: 21px;
+  min-width: 0; overflow: hidden; white-space: nowrap;
 }
-html.native-mobile #top-right { min-height: 44px; gap: 0; line-height: 0; }
+html.native-mobile #top-right { min-height: 44px; gap: 0; line-height: 0; flex-shrink: 0; }
+@container mobile-toolbar (max-width: 280px) {
+  html.native-mobile .top-left { gap: 4px; }
+  /* Retain the full brand and a 44px physical hit area at larger zoom levels. */
+  html.native-mobile .top-bar #top-right > :is(.project-files-entry, .new-session-btn, .runtime-switch, .runtime-mark, .top-gear) {
+    width: max(32px, calc(44px / var(--page-zoom, 1)));
+    height: max(32px, calc(44px / var(--page-zoom, 1)));
+    flex: 0 0 max(32px, calc(44px / var(--page-zoom, 1)));
+  }
+}
 html.native-mobile .ws-reconnect-indicator { width: 44px; }
 html.native-mobile .edge-back-top-right { min-height: 44px; gap: 0; line-height: 0; }
 html.native-mobile .top-gear,
@@ -1564,36 +1581,36 @@ html.native-mobile #top-right.select-actions .text-btn {
 /* Native landscape: use the live iOS left/right safe-area values injected by
    main.mm. Portrait and all browser layouts retain their existing geometry. */
 @media (orientation: landscape) {
-  html.native-mobile .top-bar,
-  html.native-mobile .breadcrumb {
+  html.native-mobile-app .top-bar,
+  html.native-mobile-app .breadcrumb {
     display: none !important;
   }
-  html.native-mobile #content,
-  html.native-mobile .edge-back-content {
+  html.native-mobile-app #content,
+  html.native-mobile-app .edge-back-content {
     padding-top: var(--sat, env(safe-area-inset-top, 0px));
     padding-left: var(--sal, env(safe-area-inset-left, 0px));
     padding-right: var(--sar, env(safe-area-inset-right, 0px));
   }
-  html.native-mobile body:not(.new-session) > #input-bar {
+  html.native-mobile-app body:not(.new-session) > #input-bar {
     padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 12px);
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 12px);
   }
-  html.native-mobile .agent-threads-box {
+  html.native-mobile-app .agent-threads-box {
     padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 14px);
     padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 16px);
   }
-  html.native-mobile .file-modal-header {
+  html.native-mobile-app .file-modal-header {
     min-height: 44px;
     padding: 0 calc(var(--sar, env(safe-area-inset-right, 0px)) + 8px)
       0 var(--sal, env(safe-area-inset-left, 0px));
   }
-  html.native-mobile .file-modal-body {
+  html.native-mobile-app .file-modal-body {
     padding-top: var(--sat, env(safe-area-inset-top, 0px));
     padding-left: var(--sal, env(safe-area-inset-left, 0px));
     padding-right: var(--sar, env(safe-area-inset-right, 0px));
     padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px));
   }
-  html.native-mobile .scroll-bottom-btn {
+  html.native-mobile-app .scroll-bottom-btn {
     right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 16px);
   }
 }
