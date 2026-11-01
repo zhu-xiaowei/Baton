@@ -482,7 +482,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             Key=root_key,
             UpdateExpression=(
                 "SET agentCount = :count, runningAgentCount = :running, "
-                "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
+                "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now "
+                "REMOVE localIdleSec"  # It describes the root's own turn end, not this change.
             ),
             ExpressionAttributeValues={
                 ":count": max(0, update.agentCount),
