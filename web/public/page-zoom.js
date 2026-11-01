@@ -19,8 +19,7 @@
   var standard = levels.find(function (level) { return level.scale === 1; });
   var ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '')
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  var native = enabled && mobile && ios && typeof window.__TAURI_INTERNALS__?.invoke === 'function';
-  var nativeScale = 1;
+  var nativeIOS = enabled && mobile && ios && typeof window.__TAURI_INTERNALS__?.invoke === 'function';
   var current = standard;
   var queue = Promise.resolve();
   var root = document.documentElement;
@@ -39,7 +38,7 @@
     if (!enabled) return;
     root.style.setProperty('--page-zoom', String(current.scale));
     root.dataset.pageZoom = current.id;
-    root.style.zoom = native ? '' : String(current.scale / nativeScale);
+    root.style.zoom = String(current.scale);
     ['top', 'bottom', 'left', 'right'].forEach(function (side, index) {
       var inset = ['sat', 'sab', 'sal', 'sar'][index];
       root.style.setProperty('--page-safe-' + side,
@@ -60,43 +59,32 @@
     if (persist) {
       try { window.localStorage.setItem(key, current.id); } catch (_) {}
     }
-    if (native) {
-      var requested = current;
-      queue = queue.then(async function () {
-        if (!native || requested !== current) return;
-        try {
-          // iOS 14+ exposes the same WKWebView.pageZoom used on macOS.
-          await window.__TAURI_INTERNALS__.invoke('mobile_set_zoom', { scale: requested.scale });
-          nativeScale = requested.scale;
-        } catch (error) {
-          // An older app may support smaller levels but reject a new large one.
-          // Reset native zoom before falling back, so the two scales cannot compound.
-          try {
-            await window.__TAURI_INTERNALS__.invoke('mobile_set_zoom', { scale: 1 });
-            nativeScale = 1;
-          } catch (_) {}
-          native = false;
-          paint();
-          window.console.warn('Native page zoom unavailable; using CSS zoom', error);
-        }
-        notify();
-      });
-    } else {
-      notify();
-    }
+    notify();
   }
 
   var saved;
   try { saved = window.localStorage.getItem(key); } catch (_) {}
   apply(saved, false);
 
+  if (nativeIOS) {
+    queue = queue.then(async function () {
+      try {
+        // iOS pageZoom scales the fixed layout viewport without reflowing its width.
+        // Reset zoom left by older pages; use CSS zoom in both apps and browsers.
+        await window.__TAURI_INTERNALS__.invoke('mobile_set_zoom', { scale: 1 });
+      } catch (error) {
+        window.console.warn('Could not reset native page zoom', error);
+      }
+      notify();
+    });
+  }
+
   window.batonPageZoom = {
     enabled: enabled,
     levels: levels,
     get: function () { return current.id; },
     scale: function () { return enabled ? current.scale : 1; },
-    // Native zoom already reports viewport values in layout coordinates.
-    cssScale: function () { return enabled && !native ? current.scale / nativeScale : 1; },
+    cssScale: function () { return enabled ? current.scale : 1; },
     settled: function () { return queue; },
     set: function (value) { apply(value, true); },
     changeZoom: function (action) {
