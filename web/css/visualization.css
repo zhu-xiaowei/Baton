@@ -31,7 +31,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text-normal);
-  background: rgba(var(--canvas-rgb), .92);
+  background: light-dark(rgba(255, 255, 255, .92), rgba(13, 17, 23, .88));
   cursor: pointer;
 }
 .visualization-expand:focus-visible,

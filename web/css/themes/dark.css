@@ -5,7 +5,6 @@
   --surface: #161b22;
   --surface-rgb: 22, 27, 34;
   --surface-raised: #21262d;
-  --surface-raised-rgb: 33, 38, 45;
   --border: #30363d;
   --border-rgb: 48, 54, 61;
   --border-strong: #484f58;
@@ -48,7 +47,6 @@
   --surface-gradient: #1c2128;
   --surface-hover: #272d35;
   --surface-hover-rgb: 39, 45, 53;
-  --surface-active: #2d333b;
   --surface-active-rgb: 45, 51, 59;
   --surface-selected: #292f37;
   --surface-subtle: #151b23;
@@ -73,7 +71,6 @@
   --graph-blue: #4493f8;
   --graph-violet: #ab7df8;
   --syntax-violet: #b88aff;
-  --syntax-green: #74c991;
   --syntax-deletion: #c74e39;
   --syntax-cyan: #13a7cd;
   --syntax-function: #82aaff;
@@ -99,6 +96,7 @@
   --code-doctag: #608b4e;
   --code-meta: #9b9b9b;
   --code-variable: #bd63c5;
+  --code-section: #ffd700;
   --code-attr: #9cdcfe;
   --code-selector: #d7ba7d;
   --code-addition: #144212;

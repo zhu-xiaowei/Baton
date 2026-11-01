@@ -69,7 +69,7 @@ code.hljs {
   color: var(--code-attr)
 }
 .hljs-section {
-  color: var(--warning)
+  color: var(--code-section)
 }
 .hljs-emphasis {
   font-style: italic

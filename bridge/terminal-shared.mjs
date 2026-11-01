@@ -319,7 +319,7 @@ export function createSharedTerminals(options) {
         pumpSnapshot(peer);
       }
     } else if (message.type === 'theme') {
-      if (OSC_COLORS[message.theme]) theme = message.theme;
+      if (message.theme === 'light' || message.theme === 'dark') theme = message.theme;
     } else if (message.type !== 'heartbeat') {
       if (!session || session.closed || message.epoch !== session.epoch || message.sessionId !== session.id) {
         rawSend(peer, { type: 'error', message: 'Terminal switched or closed. Previous input was ignored.', fatal: false });
@@ -344,7 +344,7 @@ export function createSharedTerminals(options) {
       const message = JSON.parse(payload);
       if (message.type === 'open') {
         if (message.clientSeq !== 0) throw new Error('Invalid open sequence');
-        if (OSC_COLORS[message.theme]) theme = message.theme;
+        if (message.theme === 'light' || message.theme === 'dark') theme = message.theme;
         peer.work = peer.work.then(() => attach(peer, message)).catch(error => drop(peer, error.message || 'Terminal initialization failed.'));
         return;
       }

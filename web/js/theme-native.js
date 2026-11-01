@@ -28,7 +28,7 @@ export async function initNativeTheme() {
   };
   await listen('baton-theme', event => {
     receiving = true;
-    try { window.batonTheme.receive(event.payload); } finally { receiving = false; }
+    try { window.batonTheme.set(event.payload); } finally { receiving = false; }
   });
   window.addEventListener('themechange', sync);
   window.addEventListener('baton-native-appearance-ready', sync);

@@ -24,11 +24,8 @@
     try { if (window.BatonAndroid) initial = window.BatonAndroid.getTheme(); } catch (_) {}
   }
   window.batonTheme = {
-    get: function () { return root.dataset.theme || 'dark'; },
     preference: function () { return preference; },
     set: function (value) { return apply(value, true); },
-    receive: function (value) { return apply(value, true); },
-    color: function (token) { return getComputedStyle(root).getPropertyValue('--' + token).trim(); },
   };
   apply(initial, false);
   if (media) {

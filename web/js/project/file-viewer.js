@@ -488,7 +488,7 @@ function syncedImageUrl(path, context, cache, svgScheme) {
   return cache.get(path);
 }
 
-// An SVG's own prefers-color-scheme rules are rewritten so its text follows Baton's dark theme.
+// An SVG's own prefers-color-scheme rules are rewritten so its text follows Baton's theme.
 function schemedSvgUrl(url, svgScheme) {
   // no-store: the <img> preload cached this URL without CORS headers, which a plain fetch would reuse.
   return fetch(url, { cache: 'no-store' }).then(function (response) { return response.ok ? response.text() : null; }).then(function (svg) {
@@ -653,6 +653,7 @@ export function closeFileViewer(options) {
   setBody('');
   _documentObjectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
   _documentObjectUrls = [];
+  _themedSvgDocuments.clear();
   _documentImages = new Map();
   updateTabs();
   if (wasOpen && onClose) onClose(options);

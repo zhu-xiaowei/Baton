@@ -26,14 +26,14 @@ function terminalTheme() {
   return {
     ...base, cursorAccent: color('canvas', '#0d1117'),
     selectionBackground: color('surface-selected', '#292f37'),
-    black: color('text-secondary', '#8b949e'), red: color('syntax-red', '#ff7b72'),
+    black: color('text-primary', '#24292f'), red: color('syntax-red', '#ff7b72'),
     green: color('success', '#3fb950'), yellow: color('warning', '#d29922'),
     blue: color('accent', '#58a6ff'), magenta: color('purple', '#bc8cff'),
-    cyan: color('cyan', '#39c5cf'), white: color('text-normal', '#c9d1d9'),
-    brightBlack: color('text-muted', '#6e7681'), brightRed: color('syntax-red', '#ff7b72'),
+    cyan: color('cyan', '#39c5cf'), white: color('text-secondary', '#6e7781'),
+    brightBlack: color('text-subtle', '#57606a'), brightRed: color('syntax-red', '#ff7b72'),
     brightGreen: color('success', '#3fb950'), brightYellow: color('warning', '#d29922'),
     brightBlue: color('accent', '#58a6ff'), brightMagenta: color('purple', '#bc8cff'),
-    brightCyan: color('cyan', '#39c5cf'), brightWhite: color('text-primary', '#e6edf3'),
+    brightCyan: color('cyan', '#39c5cf'), brightWhite: color('border-strong', '#8c959f'),
   };
 }
 const edgeBack = registerEdgeBackLayer({ navigateBack: () => closeProjectTerminal({ keepAlive: true }),

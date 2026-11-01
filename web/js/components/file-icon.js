@@ -2,7 +2,7 @@ import { FILE_ICON_SVG } from './icons.js';
 
 const ICON_ROOT = './assets/file-icons/';
 export const LIGHT_FILE_ICONS = new Set([
-  'audio', 'console', 'document', 'image', 'javascript', 'json', 'markdown',
+  'audio', 'console', 'database', 'document', 'image', 'javascript', 'json', 'markdown',
   'pdf', 'python', 'react', 'rust', 'svg', 'swift', 'table', 'toml', 'video', 'xml', 'yaml', 'zip',
 ]);
 

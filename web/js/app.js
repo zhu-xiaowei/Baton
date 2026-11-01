@@ -1904,7 +1904,7 @@ async function startNewSession(projectHash) {
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
   if (bar && bar.parentElement !== content) content.appendChild(bar);
-  // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
+  // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
   connectWs(null, projectHash);
 }

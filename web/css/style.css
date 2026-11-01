@@ -503,7 +503,7 @@ html[data-theme="light"] :is(.assistant-text, .md-preview) input[type="checkbox"
   color: inherit; font: inherit;
 }
 
-/* diff2html dark overrides */
+/* diff2html theme overrides */
 .diff-render-staging {
   position: fixed; left: -100000px; top: 0; z-index: -1;
   visibility: hidden; pointer-events: none;
