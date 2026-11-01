@@ -6,6 +6,7 @@ import {
   syncComposerDraft,
 } from '../drafts/composer-draft.js';
 import { currentProjectHash } from '../project/project-hash.js';
+import { confirmDialog } from './confirm-dialog.js';
 
 var CACHE_PREFIX = 'apeek_cmds:v6:';
 var CACHE_TTL_MS = 5 * 60 * 1000;
@@ -272,7 +273,7 @@ function backToCommands() {
   return true;
 }
 
-function selectCommand(i) {
+async function selectCommand(i) {
   var item = _filtered[i];
   if (!item) return;
   if (item.disabled) return;
@@ -280,7 +281,7 @@ function selectCommand(i) {
   if (_mode === 'options') {
     var parent = _parentCommand;
     if (!parent) { closePopup(); return; }
-    if (item.confirm && !window.confirm(item.confirm)) return;
+    if (item.confirm && !(await confirmDialog(item.confirm))) return;
     var value = item.value == null ? item.name : item.value;
     setInputValue(
       input,
@@ -326,7 +327,7 @@ function selectCommand(i) {
     closePopup();
     return;
   }
-  if (item.behavior === 'confirm' && item.confirm && !window.confirm(item.confirm)) {
+  if (item.behavior === 'confirm' && item.confirm && !(await confirmDialog(item.confirm))) {
     return;
   }
   if (input) {

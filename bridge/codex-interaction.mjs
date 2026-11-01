@@ -1152,6 +1152,8 @@ export class CodexInteraction {
         }
       }
 
+      // Counted as in flight: a notification it causes (archive clears the Goal) must not release the client.
+      session.submitting++;
       try {
         switch (name) {
           case 'model':
@@ -1251,6 +1253,7 @@ export class CodexInteraction {
             throw new Error(`Unsupported Codex command: /${name}`);
         }
       } finally {
+        session.submitting--;
         await this.#release(session);
       }
     });
