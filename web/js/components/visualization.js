@@ -1,4 +1,5 @@
 import { state } from '../state.js';
+import { layoutPixels } from '../page-zoom.js';
 import { requestProjectFiles } from '../project/rpc.js';
 import { loadVisualizationIcons } from './visualization-icons.js';
 
@@ -324,7 +325,7 @@ export function openVisualizationFullscreen(block) {
     minHeight: block.style.minHeight,
     scrollContainer, scrollTop: scrollContainer?.scrollTop,
   };
-  block.style.minHeight = block.getBoundingClientRect().height + 'px';
+  block.style.minHeight = layoutPixels(block.getBoundingClientRect().height) + 'px';
   if (window.__BATON_NATIVE_MOBILE__) {
     const snapshot = preview.frame.cloneNode(false);
     snapshot.classList.add('visualization-snapshot');

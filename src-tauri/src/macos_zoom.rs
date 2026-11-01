@@ -23,3 +23,19 @@ pub fn macos_set_zoom(window: tauri::Webview, scale: f64) -> Result<(), String> 
     Err("This zoom command is only available on macOS".into())
   }
 }
+
+#[tauri::command]
+pub fn mobile_set_zoom(window: tauri::Webview, scale: f64) -> Result<(), String> {
+  if !scale.is_finite() || !(0.9..=1.4).contains(&scale) {
+    return Err("Mobile zoom must be between 90% and 140%".into());
+  }
+  #[cfg(target_os = "ios")]
+  {
+    window.set_zoom(scale).map_err(|error| error.to_string())
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = window;
+    Err("Native mobile page zoom is only available on iOS".into())
+  }
+}
