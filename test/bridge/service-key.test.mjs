@@ -39,7 +39,8 @@ test('a removed device turns off autostart and drops its key', () => {
     ['darwin', ['Library', 'LaunchAgents', 'com.baton.bridge.plist'], []],
     ['linux', ['.config', 'systemd', 'user', 'baton-bridge.service'],
       [['systemctl', ['--user', 'disable', 'baton-bridge']], ['systemctl', ['--user', 'daemon-reload']]]],
-    ['win32', null, [['schtasks', ['/Delete', '/TN', 'Baton Bridge', '/F']]]],
+    ['win32', null, [['schtasks', ['/Delete', '/TN', 'Baton Bridge', '/F']],
+      ['schtasks', ['/Delete', '/TN', 'Baton Presence', '/F']]]],
   ]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-uninstall-'));
     const config = path.join(home, '.baton-bridge', 'config.json');

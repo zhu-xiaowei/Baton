@@ -138,6 +138,10 @@ Done:
   `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
   `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
   focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
+  A turn started outside Baton also skips while the user is at that computer: Bridge attaches
+  `localIdleSec` (`presence.mjs`: own pty atime, macOS `HIDIdleTime`, Windows Interactive helper
+  task) and the worker drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
+  agents and Baton's own terminals never set it, so their alerts are unchanged.
 - iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
   extension fetches the text from the user's own server (`/api/notifications/event`, credentials
   in the shared `$(AppIdentifierPrefix)com.batonai.shared` keychain group). They go through the shared, stateless APNs relay

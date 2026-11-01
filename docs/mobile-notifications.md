@@ -37,6 +37,19 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    the session (`ROOT#<root>`), and a visible, focused one showing it answers
    `notify_seen` within 2 s. A suspended iOS socket never answers, so it still gets
    the push; each app also hides alerts for the session open in the foreground.
+   Turns started outside Baton (terminal TUI, VS Code, the Codex/Claude apps) while
+   the user is at that computer: when such a turn leaves `running`, Bridge
+   (`presence.mjs`) attaches `localIdleSec`, and the worker skips the alert (event
+   included) when it is under 120 s. It is the smaller of the newest input on the
+   user's own ptys (a pty's atime moves only when its reader consumes typed input;
+   Linux rounds it to 8 s) and, on macOS, `ioreg` `HIDIdleTime` (none while locked).
+   Windows Bridge runs in session 0, where `GetLastInputInfo` never sees the user, so
+   it registers an Interactive `Baton Presence` task for the console user that runs a
+   hidden helper (wscript → PowerShell) and writes the value to `~/.baton-bridge`.
+   No value means alert as before. The field is never set for a session Baton has sent
+   to, created or written status for since Bridge started (`batonSessions`: pool busy
+   and Codex client ownership both end before the watcher's last write), for daemon
+   agents, or from Baton's own remote terminals' ptys (input from the phone).
 3. **Summary.** The turn's last reply (Claude marks it `end_turn`; Codex appends an
    empty `end_turn` row), or a slash command's `<local-command-stdout>`. The reply is
    persisted separately from the status, so the worker re-reads up to twice, 1 s apart.

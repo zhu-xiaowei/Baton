@@ -28,6 +28,7 @@ _ddb = boto3.resource("dynamodb")
 _session = boto3.Session()
 _ws_api = None
 _relay = None
+LOCAL_IDLE_ALERT_SEC = 120
 
 
 def status(item):
@@ -129,6 +130,8 @@ def being_viewed(event, timeout=2.0):
 def notification(old, new, event_id):
     if not old or new.get("parentSessionId"):
         return None  # Subagent threads surface through their root row.
+    if new.get("localIdleSec") is not None and new["localIdleSec"] < LOCAL_IDLE_ALERT_SEC:
+        return None  # Started outside Baton and the user is at that computer.
     before, after = status(old), status(new)
     if after == "needs_input":
         # A queued next approval changes the detail without leaving needs_input.
