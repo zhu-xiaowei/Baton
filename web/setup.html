@@ -103,6 +103,17 @@
 </div>
 
 <div class="setup-content">
+<section id="textSizeSettings" class="section text-size-setting" aria-labelledby="textSizeTitle" hidden>
+  <div class="text-size-heading">
+    <h2 id="textSizeTitle">Page zoom</h2>
+    <div class="text-size-actions">
+      <button type="button" class="text-size-reset" aria-label="Reset page zoom to 100%" disabled>Reset</button>
+      <span class="text-size-value" aria-hidden="true">100%</span>
+    </div>
+  </div>
+  <input id="textSizeSlider" class="text-size-slider" type="range" min="0" max="5" step="1" value="1" aria-labelledby="textSizeTitle">
+  <div class="text-size-stops" aria-hidden="true"></div>
+</section>
 <!-- Step 1: Install Bridge -->
 <div class="section">
   <h2><span class="num">1</span> Install Bridge</h2>
@@ -139,15 +150,6 @@
   </label>
   <p class="hint" id="notificationStatus" role="status"></p>
 </div>
-
-<section id="textSizeSettings" class="section text-size-setting" aria-labelledby="textSizeTitle" hidden>
-  <div class="text-size-heading">
-    <h2 id="textSizeTitle">Page zoom</h2>
-    <output for="textSizeSlider" aria-live="polite"></output>
-  </div>
-  <input id="textSizeSlider" class="text-size-slider" type="range" min="0" max="5" step="1" value="1" aria-labelledby="textSizeTitle">
-  <div class="text-size-stops" aria-hidden="true"></div>
-</section>
 
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">

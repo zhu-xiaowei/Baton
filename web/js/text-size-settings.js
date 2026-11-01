@@ -8,21 +8,50 @@ export function mountTextSizeSettings() {
   if (!preference?.enabled || !section) return;
   section.hidden = false;
   const slider = section.querySelector('input');
-  const status = section.querySelector('output');
+  const value = section.querySelector('.text-size-value');
+  const reset = section.querySelector('.text-size-reset');
   const stops = section.querySelector('.text-size-stops');
+  const defaultIndex = preference.levels.findIndex(level => level.scale === 1);
+  let previewing = false;
   slider.max = String(preference.levels.length - 1);
-  stops.replaceChildren(...preference.levels.map(() => document.createElement('i')));
-  const sync = () => {
-    const index = preference.levels.findIndex(level => level.id === preference.get());
+  stops.replaceChildren(...preference.levels.map((_, index) => {
+    const stop = document.createElement('i');
+    if (index === defaultIndex) stop.className = 'is-default';
+    return stop;
+  }));
+  const render = index => {
     slider.value = String(index);
     const level = preference.levels[index];
     const percent = `${Math.round(level.scale * 100)}%`;
-    slider.setAttribute('aria-valuetext', level.label ? `${level.label}, ${percent}` : percent);
+    slider.setAttribute('aria-valuetext', index === defaultIndex ? `${percent} (default)` : percent);
     slider.style.setProperty('--range-progress', `${index / (preference.levels.length - 1) * 100}%`);
-    status.textContent = level.label ? `${level.label} · ${percent}` : percent;
-    if (document.activeElement === slider) slider.scrollIntoView({ block: 'nearest' });
+    value.textContent = percent;
+    reset.disabled = index === defaultIndex;
   };
-  slider.addEventListener('input', () => preference.set(preference.levels[Number(slider.value)].id));
+  const sync = () => {
+    if (!previewing) render(preference.levels.findIndex(level => level.id === preference.get()));
+  };
+  slider.addEventListener('input', () => {
+    previewing = true;
+    render(Number(slider.value));
+  });
+  slider.addEventListener('pointerup', () => { previewing = false; });
+  slider.addEventListener('change', () => {
+    previewing = false;
+    preference.set(preference.levels[Number(slider.value)].id);
+    sync();
+  });
+  const cancelPreview = () => {
+    previewing = false;
+    sync();
+  };
+  slider.addEventListener('pointercancel', cancelPreview);
+  slider.addEventListener('blur', cancelPreview);
+  reset.addEventListener('click', () => {
+    previewing = false;
+    preference.set(preference.levels[defaultIndex].id);
+    sync();
+  });
   window.addEventListener(macos ? 'baton-macos-zoom-change' : 'baton-page-zoom-change', sync);
   sync();
 }

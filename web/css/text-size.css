@@ -1,7 +1,11 @@
 .text-size-setting[hidden] { display: none; }
-.text-size-heading { display: flex; justify-content: space-between; align-items: baseline; min-height: 28px; gap: 12px; }
+.text-size-heading { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 12px; }
 .text-size-heading h2 { min-width: 0; margin-bottom: 0; }
-.text-size-heading output { flex-shrink: 0; color: #8b949e; font-size: 12px; white-space: nowrap; }
+.text-size-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.text-size-value { min-width: 5ch; color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.text-size-reset { min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: #58a6ff; font: inherit; font-size: 12px; cursor: pointer; }
+.text-size-reset:disabled { visibility: hidden; }
+.text-size-reset:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }
 .text-size-slider { display: block; width: 100%; height: 44px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
 .text-size-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #3fb950 var(--range-progress), #484f58 var(--range-progress)); }
 .text-size-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #484f58; }
@@ -11,3 +15,4 @@
 .text-size-slider:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 6px; }
 .text-size-stops { display: flex; justify-content: space-between; margin: -6px 12px 0; pointer-events: none; }
 .text-size-stops i { width: 1px; height: 5px; background: #6e7681; }
+.text-size-stops .is-default { height: 9px; background: #c9d1d9; transform: scaleX(2); }
