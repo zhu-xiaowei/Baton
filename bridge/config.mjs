@@ -128,6 +128,7 @@ export function uninstallBridge({ platform = process.platform, home = os.homedir
     run('systemctl', ['--user', 'daemon-reload']);
   } else if (platform === 'win32') {
     run('schtasks', ['/Delete', '/TN', 'Baton Bridge', '/F']);
+    run('schtasks', ['/Delete', '/TN', 'Baton Presence', '/F']);
   }
   fs.rmSync(path.join(home, '.baton-bridge', 'config.json'), { force: true });
 }

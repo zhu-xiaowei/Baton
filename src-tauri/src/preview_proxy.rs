@@ -184,7 +184,8 @@ impl PreviewProxy {
   }
 
   fn accept_loop(self: Arc<Self>, app: AppHandle, tunnel_id: String,
-      listener: TcpListener, session: Arc<PreviewSession>) {
+      mut listener: TcpListener, session: Arc<PreviewSession>) {
+    let addr = listener.local_addr().ok();
     while !session.stopped.load(Ordering::Acquire) {
       match listener.accept() {
         Ok((reader, _)) => {
@@ -233,7 +234,31 @@ impl PreviewProxy {
           thread::spawn(move || manager.read_loop(app, owner, tunnel_id, stream_id, reader, socket));
         }
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-          thread::sleep(Duration::from_millis(20));
+          // iOS defuncts a suspended app's sockets: accept keeps returning WouldBlock
+          // and only SO_ERROR reports it. Close it, then take the same port back.
+          if matches!(listener.take_error(), Ok(None)) {
+            thread::sleep(Duration::from_millis(20));
+            continue;
+          }
+          log::warn!("Preview listener on {addr:?} is defunct; rebinding");
+          drop(listener);
+          let fresh = addr.and_then(|addr| (0..25).find_map(|_| {
+            let fresh = TcpListener::bind(addr).ok().filter(|fresh| fresh.set_nonblocking(true).is_ok());
+            if fresh.is_none() { thread::sleep(Duration::from_millis(200)); }
+            fresh
+          }));
+          match fresh {
+            Some(fresh) => listener = fresh,
+            None => {
+              // The IPv4 listener is required; a lost optional IPv6 one is not fatal.
+              if addr.is_some_and(|addr| addr.is_ipv4()) {
+                let _ = app.emit_to(&session.owner, "preview-listener-closed", SocketEvent {
+                  tunnel_id: tunnel_id.clone(), stream_id: String::new(),
+                });
+              }
+              return;
+            }
+          }
         }
         Err(_) => break,
       }
