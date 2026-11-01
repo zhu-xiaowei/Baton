@@ -710,6 +710,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.modal.querySelector('.cancel').disabled = false;
     hideCenteredModal(current.modal);
     current.closingId = null;
+    current.mobileControls?.sync();
     current.selector.focus({ preventScroll: true });
   }
 
