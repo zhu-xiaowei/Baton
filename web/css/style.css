@@ -1247,6 +1247,7 @@ html.native-mobile .slash-description {
 @keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--danger-solid-rgb), 0.5); } 50% { box-shadow: 0 0 0 6px rgba(var(--danger-solid-rgb), 0); } }
 #send-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--border-strong); border: none; border-radius: 50%; color: var(--text-primary); cursor: pointer; flex-shrink: 0; }
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#send-btn:disabled:not(.has-text):not(.is-stop) { opacity: 1; background: var(--composer-button); color: var(--text-muted); }
 #send-btn.has-text { background: var(--text-primary); color: var(--canvas); }
 #send-btn.is-stop { background: var(--send-stop); color: var(--send-stop-icon); }
 #msg-input:disabled { opacity: 0.4; cursor: not-allowed; }
