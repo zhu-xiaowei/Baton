@@ -1,7 +1,7 @@
 import { attachZoomShortcuts, pageZoomShortcut } from './page-zoom.js';
 
 const ZOOM_KEY = 'baton-macos-zoom';
-export const ZOOM_LEVELS = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const ZOOM_LEVELS = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 let controller;
 
 export function isNativeMac(win) {

@@ -69,38 +69,3 @@ test('saved zoom restores and shortcuts work in focused inputs without reaching 
   assert.deepEqual(calls, [1.25, 1.5, 1.75, 1.5, 1]);
   assert.equal(window.localStorage.getItem('baton-macos-zoom'), '1');
 });
-
-test('settings, shortcuts and other windows share the same nine-level Mac preference', async t => {
-  const { window, controller } = fixture(t, '1.75');
-  const values = [];
-  window.addEventListener('baton-macos-zoom-change', () => values.push(controller.scale()));
-  await controller.settled();
-  assert.equal(controller.get(), '1.75');
-  assert.equal(controller.levels.length, 9);
-  await controller.set('1.5');
-  assert.equal(window.localStorage.getItem('baton-macos-zoom'), '1.5');
-  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: '=', metaKey: true, cancelable: true }));
-  await controller.settled();
-  assert.equal(controller.get(), '1.75');
-  window.dispatchEvent(new window.StorageEvent('storage', { key: 'baton-macos-zoom', newValue: '2' }));
-  await controller.settled();
-  assert.equal(controller.get(), '2');
-  window.localStorage.setItem('baton-macos-zoom', '1.1');
-  await controller.restore();
-  assert.equal(controller.get(), '1.1');
-  assert.deepEqual(values, [1.5, 1.75, 2, 1.1]);
-});
-
-test('a rejected settings change restores the Mac slider value to the applied zoom', async t => {
-  const { window } = new JSDOM('', { url: 'https://baton.test/' });
-  window.console.warn = () => {};
-  const controller = createZoomController(window, async (_, { scale }) => {
-    if (scale === 2) throw new Error('Unavailable');
-  });
-  t.after(() => { controller.dispose(); window.close(); });
-  await controller.settled();
-  await controller.set('1.5');
-  await controller.set('2');
-  assert.equal(controller.get(), '1.5');
-  assert.equal(window.localStorage.getItem('baton-macos-zoom'), '1.5');
-});

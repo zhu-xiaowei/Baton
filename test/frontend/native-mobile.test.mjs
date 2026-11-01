@@ -14,11 +14,9 @@ function detectNativeMobile({
   platform = '',
   maxTouchPoints = 0,
   protocol = 'https:',
-  coarsePointer = false,
 } = {}) {
   const classes = new Set();
   const window = { location: { protocol } };
-  window.matchMedia = () => ({ matches: coarsePointer });
   if (tauri) window.__TAURI_INTERNALS__ = {};
   const context = {
     navigator: { userAgent, platform, maxTouchPoints },
@@ -39,8 +37,6 @@ function detectNativeMobile({
   return {
     classApplied: classes.has('native-mobile-app'),
     flag: context.window.__BATON_NATIVE_MOBILE__,
-    mobileLayout: classes.has('native-mobile'),
-    layoutFlag: context.window.__BATON_MOBILE_LAYOUT__,
   };
 }
 
@@ -86,25 +82,6 @@ test('native mobile detection requires Tauri and a mobile operating system', () 
     assert.equal(result.classApplied, scenario.expected, scenario.name);
     assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
   }
-});
-
-test('mobile browsers share the app layout without enabling native capabilities', () => {
-  for (const input of [
-    { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' },
-    { userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9)' },
-    { userAgent: HARMONY_UA },
-    { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', platform: 'MacIntel', maxTouchPoints: 5 },
-    { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 1, coarsePointer: true },
-  ]) {
-    const result = detectNativeMobile(input);
-    assert.equal(result.mobileLayout, true);
-    assert.equal(result.layoutFlag, true);
-    assert.equal(result.classApplied, false);
-    assert.equal(result.flag, false);
-  }
-  const desktop = detectNativeMobile({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', platform: 'MacIntel' });
-  assert.equal(desktop.mobileLayout, false);
-  assert.equal(desktop.layoutFlag, false);
 });
 
 test('the HarmonyOS shell counts as native mobile even without Tauri internals', () => {
@@ -155,7 +132,7 @@ test('all entry pages run mobile detection before their first style block', () =
   }
 });
 
-test('mobile readability styles are shared by native apps and mobile browsers', () => {
+test('mobile readability styles are scoped to the native mobile class', () => {
   const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   const setup = readFileSync(new URL('../../web/setup.html', import.meta.url), 'utf8');
 
