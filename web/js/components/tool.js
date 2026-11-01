@@ -1,4 +1,5 @@
 import { state } from '../state.js';
+import { layoutPixels } from '../page-zoom.js';
 import { loadingSpinner } from './loading.js';
 import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
 
@@ -460,8 +461,8 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         staging = document.createElement('div');
         staging.className = 'diff-container diff-render-staging';
         const targetWidth = Math.ceil(
-          element.getBoundingClientRect().width
-          || element.closest('.tool-body')?.getBoundingClientRect().width
+          layoutPixels(element.getBoundingClientRect().width
+            || element.closest('.tool-body')?.getBoundingClientRect().width || 0)
           || content?.clientWidth
           || 720,
         );

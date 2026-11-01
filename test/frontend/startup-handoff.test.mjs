@@ -44,7 +44,7 @@ test('native startup handoff releases after the Web shell is painted', () => {
   assert.match(indexHtml, /new MutationObserver\(check\)/);
   assert.match(
     indexHtml,
-    /html\.native-mobile body\.ready\{opacity:1;transition:none\}/,
+    /html\.native-mobile-app body\.ready\{opacity:1;transition:none\}/,
   );
   assert.equal(
     indexHtml.match(/window\.__skelReady = 1/g)?.length,

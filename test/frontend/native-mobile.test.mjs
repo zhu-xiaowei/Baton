@@ -35,7 +35,7 @@ function detectNativeMobile({
 
   vm.runInNewContext(detectorSource, context);
   return {
-    classApplied: classes.has('native-mobile'),
+    classApplied: classes.has('native-mobile-app'),
     flag: context.window.__BATON_NATIVE_MOBILE__,
   };
 }
@@ -165,7 +165,7 @@ test('short iOS browse lists reserve horizontal drags for edge-back navigation',
 
   assert.match(
     css,
-    /html\.native-mobile body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
+    /html\.native-mobile-app body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
   );
 });
 
@@ -179,19 +179,19 @@ test('native landscape hides navigation chrome and applies live content safe are
 
   assert.match(
     css,
-    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile \.top-bar,\s*html\.native-mobile \.breadcrumb\s*\{\s*display:\s*none !important;/s,
+    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile-app \.top-bar,\s*html\.native-mobile-app \.breadcrumb\s*\{\s*display:\s*none !important;/s,
   );
   assert.match(
     css,
-    /html\.native-mobile #content,\s*html\.native-mobile \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
+    /html\.native-mobile-app #content,\s*html\.native-mobile-app \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
+    /html\.native-mobile-app \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
+    /html\.native-mobile-app \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
   );
   assert.match(app, /function scheduleScrollBtnPosition\(\)/);
   assert.match(app, /addEventListener\('orientationchange', scheduleScrollBtnPosition\)/);

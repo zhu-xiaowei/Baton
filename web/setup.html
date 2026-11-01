@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script src="/native-mobile.js"></script>
+<script src="/page-zoom.js"></script>
 <title>Baton Setup</title>
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon-light.svg" media="(prefers-color-scheme: dark)">
@@ -60,9 +61,9 @@
   .code-btn.copied { background: #238636; color: #fff; border-color: #238636; }
   .hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
   .qr-wrap { display: flex; flex-direction: column; align-items: center; }
-  .qr-frame { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
+  .qr-frame { max-width: 100%; background: #fff; padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
   .qr-frame.ready { visibility: visible; }
-  .qr-frame canvas { border-radius: 4px; display: block; }
+  .qr-frame canvas { max-width: 100%; height: auto; border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
@@ -138,6 +139,15 @@
   </label>
   <p class="hint" id="notificationStatus" role="status"></p>
 </div>
+
+<section id="textSizeSettings" class="section text-size-setting" aria-labelledby="textSizeTitle" hidden>
+  <div class="text-size-heading">
+    <h2 id="textSizeTitle">Font size</h2>
+    <span class="text-size-value" aria-hidden="true">100%</span>
+  </div>
+  <input id="textSizeSlider" class="text-size-slider" type="range" min="0" max="5" step="1" value="1" aria-labelledby="textSizeTitle">
+  <div class="text-size-stops" aria-hidden="true"></div>
+</section>
 
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">

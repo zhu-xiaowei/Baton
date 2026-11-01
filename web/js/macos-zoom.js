@@ -1,3 +1,5 @@
+import { attachZoomShortcuts, pageZoomShortcut } from './page-zoom.js';
+
 const ZOOM_KEY = 'baton-macos-zoom';
 const ZOOM_LEVELS = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 let controller;
@@ -17,11 +19,7 @@ export function normalizeZoom(value) {
 }
 
 export function zoomShortcut(event) {
-  if (!event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.defaultPrevented) return null;
-  if (event.key === '=' || event.key === '+') return 'in';
-  if (!event.shiftKey && event.key === '-') return 'out';
-  if (!event.shiftKey && event.key === '0') return 'reset';
-  return null;
+  return pageZoomShortcut(event, { allowControl: false });
 }
 
 export function createZoomController(win, invoke) {
@@ -32,10 +30,15 @@ export function createZoomController(win, invoke) {
   let queue = Promise.resolve();
   let disposed = false;
 
+  function notify() {
+    win.dispatchEvent(new win.CustomEvent('baton-macos-zoom-change', { detail: { scale: zoom } }));
+  }
+
   function apply(value, persist = true) {
     if (disposed) return queue;
     zoom = normalizeZoom(value);
     const requested = zoom;
+    notify();
     queue = queue.then(async () => {
       if (disposed) return;
       await invoke('macos_set_zoom', { scale: requested });
@@ -47,6 +50,7 @@ export function createZoomController(win, invoke) {
       win.dispatchEvent(new win.Event('resize'));
     }).catch(error => {
       if (zoom === requested) zoom = appliedZoom;
+      notify();
       win.console.warn('Baton could not change zoom', error);
     });
     return queue;
@@ -58,14 +62,6 @@ export function createZoomController(win, invoke) {
     return apply(action === 'reset' ? 1 : ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, index))]);
   }
 
-  function keydown(event) {
-    const action = zoomShortcut(event);
-    if (!action) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    changeZoom(action);
-  }
-
   function storage(event) {
     if (event.storageArea && event.storageArea !== win.localStorage) return;
     if (event.key === ZOOM_KEY || event.key === null) {
@@ -73,15 +69,27 @@ export function createZoomController(win, invoke) {
     }
   }
 
-  win.addEventListener('keydown', keydown, true);
+  function restore() {
+    let value;
+    try { value = win.localStorage.getItem(ZOOM_KEY); } catch {}
+    return apply(value, false);
+  }
+
+  const detachShortcuts = attachZoomShortcuts(win, { changeZoom }, { allowControl: false });
   win.addEventListener('storage', storage);
   apply(zoom, false);
   return {
+    enabled: true,
+    levels: ZOOM_LEVELS.map(scale => ({ id: String(scale), scale })),
+    get: () => String(zoom),
+    scale: () => zoom,
+    set: value => apply(value),
+    restore,
     changeZoom,
     settled: () => queue,
     dispose() {
       disposed = true;
-      win.removeEventListener('keydown', keydown, true);
+      detachShortcuts();
       win.removeEventListener('storage', storage);
     },
   };
@@ -96,6 +104,9 @@ export function initMacosZoom(win = window) {
       native.then(({ invoke }) => invoke(command, args)));
     win.addEventListener('pagehide', event => {
       if (!event.persisted) controller?.dispose();
+    });
+    win.addEventListener('pageshow', event => {
+      if (event.persisted) controller?.restore();
     });
   }
   return controller;
