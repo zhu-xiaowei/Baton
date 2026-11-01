@@ -32,7 +32,7 @@ Bridge version as `<package.json version>-<git hash>`.
 Update the download links and feature descriptions in all three root READMEs,
 and prepare English GitHub Release notes with changes and upgrade instructions.
 Draft notes can be kept locally in `docs/releases/<version>.md`.
-Update version-specific download QR codes such as `docs/assets/baton_android.png`,
+Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
 and decode the generated image to verify that it points to the new release.
 Keep previous release notes, protocol examples, test fixtures, and dependency
 versions unchanged.
