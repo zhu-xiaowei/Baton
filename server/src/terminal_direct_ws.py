@@ -152,7 +152,8 @@ class DirectSessions:
                     or (initial.get("sessionId") is not None and (not isinstance(initial["sessionId"], str)
                         or not UUID.fullmatch(initial["sessionId"])))):
                 raise ValueError("Invalid initial terminal request")
-            initial = {"cols": initial["cols"], "rows": initial["rows"], "sessionId": initial.get("sessionId")}
+            initial = {"cols": initial["cols"], "rows": initial["rows"], "sessionId": initial.get("sessionId"),
+                       **({"theme": initial["theme"]} if initial.get("theme") in ("light", "dark") else {})}
         self.available_control(connection_id)
         terminal_id = body["terminalId"]
         tokens = {side: secrets.token_hex(32) for side in ["app", "bridge"]}
