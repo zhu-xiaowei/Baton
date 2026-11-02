@@ -26,7 +26,7 @@ html, body {
 }
 /* Separators between inactive tabs, hidden next to the active or hovered tab. */
 .tab + .tab::before {
-  content: ''; position: absolute; left: 0; top: 7px; bottom: 13px; width: 1.5px; border-radius: 1px; background: var(--border-strong);
+  content: ''; position: absolute; left: 0; top: 7px; bottom: 13px; width: 1.5px; border-radius: 1px; background: var(--tab-separator);
 }
 /* The selected tab's ::before draws its corners, so it is never hidden as a separator. */
 .tab:not(.active):hover::before, .tab.active + .tab::before, .tab:hover + .tab:not(.active)::before { opacity: 0; }
