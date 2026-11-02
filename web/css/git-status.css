@@ -131,7 +131,7 @@ html.native-mobile .git-section-actions,html.native-mobile .git-row-actions{marg
 .git-commit.expanded .git-commit-time{color:var(--text-normal)}
 .git-commit-bar{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--canvas)}
 .git-commit-bar[hidden],.git-commit-input[hidden]{display:none}
-.git-commit-input{width:100%;min-height:38px;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--tab-strip);color:var(--text-primary);font:inherit;font-size:16px;line-height:20px;resize:none;overflow-y:auto}
+.git-commit-input{width:100%;min-height:38px;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-sunken);color:var(--text-primary);font:inherit;font-size:16px;line-height:20px;resize:none;overflow-y:auto}
 .git-commit-input:focus{border-color:var(--accent-solid);outline:none}
 .git-commit-action{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:8px;background:var(--success-solid);color:var(--on-accent);font:inherit;font-size:14px;font-weight:500}
 .git-commit-action-push,.git-commit-action-publish{background:var(--accent-solid)}

@@ -43,7 +43,8 @@
   --on-accent: #ffffff;
   --on-accent-rgb: 255, 255, 255;
   --on-step: #ffffff;
-  --tab-strip: #eaeef2;
+  --tab-strip: #d8dee4;
+  --surface-sunken: #eaeef2;
   --surface-gradient: #eef1f4;
   --surface-hover: #dbe1e7;
   --surface-hover-rgb: 226, 231, 236;
