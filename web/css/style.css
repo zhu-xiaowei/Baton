@@ -564,7 +564,7 @@ html[data-theme="light"] .d2h-info { background-color: var(--surface-info); }
 .img-placeholder img { width: 40px; height: 40px; border-radius: 6px; cursor: pointer; object-fit: cover; }
 .img-placeholder.markdown-image { box-sizing: border-box; width: min(100%, 320px); height: 180px; max-width: 100%; vertical-align: middle; }
 .img-placeholder.markdown-image { color: var(--text-secondary); font-size: 12px; }
-.img-placeholder[data-failed] { cursor: pointer; }
+.img-placeholder[data-failed="1"] { cursor: pointer; }
 .img-placeholder.markdown-image img { width: 100%; height: 100%; }
 .markdown-image-external { max-width: 100%; height: auto; }
 .assistant-text .markdown-image, .assistant-text .markdown-image-external { margin: 4px 0; }

@@ -6,6 +6,7 @@ import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
 import { loadingSpinner } from './components/loading.js';
+import { showToast } from './components/toast.js';
 import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-cache.js';
 import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
@@ -260,13 +261,13 @@ function imageLoadAction(el, label, detail, manual) {
     event.stopPropagation();
     delete el.dataset.failed;
     el.innerHTML = loadingSpinner({ label: 'Loading image' });
-    loadOneImage(el, manual);
+    loadOneImage(el, manual, true);
   };
   el.classList.remove('loaded');
   el.replaceChildren(button);
 }
 
-async function loadOneImage(el, manual = false) {
+async function loadOneImage(el, manual = false, notify = false) {
   var context = imageContexts.get(el) || currentImageContext();
   var path = el.dataset.path;
   var requestPath = path && (manual ? path : automaticImagePath(path, context));
@@ -279,8 +280,18 @@ async function loadOneImage(el, manual = false) {
       : await getImageUrl(el.dataset.key);
     showLoadedImage(el, url);
   } catch(e) {
+    if (path && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
+      el.dataset.failed = 'missing';
+      el.classList.remove('loaded');
+      var label = document.createElement('span');
+      label.textContent = 'File not found';
+      label.setAttribute('role', 'status');
+      el.replaceChildren(label);
+      return;
+    }
     el.dataset.failed = '1';
     imageLoadAction(el, 'Retry', e.message || 'Image unavailable', manual);
+    if (notify) showToast(e.message || 'Could not load the image.');
   }
 }
 
