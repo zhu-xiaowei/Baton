@@ -46,7 +46,7 @@ impl Appearance {
   // Window backgrounds need concrete colors before a page has loaded.
   #[cfg(desktop)]
   fn palette(&mut self, light: bool) {
-    let (mode, canvas, surface, strip) = if light { ("light", "#ffffff", "#f6f8fa", "#eaeef2") }
+    let (mode, canvas, surface, strip) = if light { ("light", "#ffffff", "#f6f8fa", "#d8dee4") }
       else { ("dark", "#0d1117", "#161b22", "#010409") };
     *self = Self { mode: mode.into(), preference: self.preference.clone(), canvas: canvas.into(),
       surface: surface.into(), strip: strip.into() };

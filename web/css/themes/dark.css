@@ -44,6 +44,8 @@
   --on-accent-rgb: 255, 255, 255;
   --on-step: #e6edf3;
   --tab-strip: #010409;
+  --tab-separator: #484f58;
+  --surface-sunken: #010409;
   --surface-gradient: #1c2128;
   --surface-hover: #272d35;
   --surface-hover-rgb: 39, 45, 53;
