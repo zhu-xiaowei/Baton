@@ -4,12 +4,11 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import hljs from 'highlight.js';
 import { Marked } from 'marked';
-import markedFootnote from 'marked-footnote';
 
 const source = fs.readFileSync(
   new URL('../../web/js/components/markdown.js', import.meta.url),
   'utf8',
-).replace(/^import markedFootnote from 'marked-footnote';\n/m, '');
+);
 
 function setupMarkdown() {
   const dom = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only' });
@@ -17,7 +16,6 @@ function setupMarkdown() {
     hljs.registerLanguage('mermaid', () => ({ contains: [] }));
   }
   dom.window.marked = new Marked();
-  dom.window.markedFootnote = markedFootnote;
   dom.window.hljs = hljs;
   dom.window.eval(source);
   return dom.window;
@@ -139,12 +137,6 @@ test('project Markdown keeps GitHub-allowed HTML and strips active content', asy
       'line :rocket: `:tada:` :not_an_emoji:',
       '',
       '[at line](src/app.js:12) [bad](javascript:alert(1))',
-      '',
-      'Footnote[^details].',
-      '',
-      '[^details]: **Safe** <img src=x onerror="alert(1)">',
-      '',
-      '<div id="content">Cannot shadow the application.</div>',
     ].join('\n'));
 
     assert.equal(host.querySelector('script, style, [onclick], [onerror], [style]'), null);
@@ -159,12 +151,6 @@ test('project Markdown keeps GitHub-allowed HTML and strips active content', asy
     assert.match(host.textContent, /line 🚀 :tada: :not_an_emoji:/);
     assert.equal(host.querySelector('a[href="src/app.js:12"]')?.textContent, 'at line');
     assert.equal(host.querySelector('a[href^="javascript"]'), null);
-    const footnote = host.querySelector('[data-footnote-ref]');
-    assert.ok(footnote);
-    assert.ok(host.querySelector(footnote.getAttribute('href')));
-    assert.ok(host.querySelector('#' + footnote.getAttribute('aria-describedby')));
-    assert.equal(host.querySelector('.footnotes strong').textContent, 'Safe');
-    assert.equal(host.querySelector('#content'), null);
     assert.match(window.renderMd('<p align="center">x</p>'), /&lt;p align/);
   } finally {
     delete globalThis.window;

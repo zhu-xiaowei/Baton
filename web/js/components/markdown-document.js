@@ -7,7 +7,7 @@ const ALLOWED_TAGS = [
   'div', 'ins', 'del', 'sup', 'sub', 'p', 'ol', 'ul', 'table', 'thead', 'tbody', 'tfoot', 'blockquote',
   'dl', 'dt', 'dd', 'kbd', 'q', 'samp', 'var', 'hr', 'ruby', 'rt', 'rp', 'li', 'tr', 'td', 'th', 's',
   'strike', 'summary', 'details', 'caption', 'figure', 'figcaption', 'abbr', 'bdo', 'cite', 'dfn',
-  'mark', 'small', 'span', 'time', 'wbr', 'picture', 'source', 'input', 'section',
+  'mark', 'small', 'span', 'time', 'wbr', 'picture', 'source', 'input',
 ];
 const ALLOWED_ATTR = [
   'href', 'src', 'srcset', 'media', 'longdesc', 'cite', 'abbr', 'align', 'alt', 'aria-describedby',
@@ -15,18 +15,11 @@ const ALLOWED_ATTR = [
   'char', 'charoff', 'clear', 'cols', 'colspan', 'color', 'compact', 'datetime', 'dir', 'headers',
   'height', 'hreflang', 'hspace', 'lang', 'nowrap', 'open', 'rel', 'rev', 'role', 'rows', 'rowspan',
   'rules', 'scope', 'span', 'start', 'summary', 'title', 'valign', 'value', 'vspace', 'width',
-  'checked', 'disabled', 'type', 'data-baton-slot', 'id',
-  'data-footnotes', 'data-footnote-ref', 'data-footnote-backref',
+  'checked', 'disabled', 'type', 'data-baton-slot',
 ];
 // DOMPurify's default URI rule, plus `dir/file.ext:12` links, which (as in chat) open a file at a line.
 const ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$)|[^:?#]*[./][^:?#]*:\d+(?:-\d+)?$)/i;
 const purify = DOMPurify(window);
-purify.addHook('uponSanitizeAttribute', (node, attribute) => {
-  // Only generated, namespaced footnote IDs survive; raw HTML cannot shadow the host UI.
-  if (attribute.attrName === 'id' && !attribute.attrValue.startsWith('footnote-')) {
-    attribute.keepAttr = false;
-  }
-});
 const SHORTCODE = /:([a-z0-9_+-]+):/g;
 let emojiNames = null;
 
@@ -104,7 +97,6 @@ window.addEventListener('themechange', () => {
 function addHeadingIds(root) {
   const seen = new Map();
   root.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading) => {
-    if (heading.id === 'footnote-label' && heading.parentElement?.hasAttribute('data-footnotes')) return;
     const base = heading.textContent.trim().toLowerCase()
       .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '').replace(/ /g, '-');
     const count = seen.get(base) || 0;

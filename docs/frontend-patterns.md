@@ -387,16 +387,16 @@ Assistant text blocks rendered to HTML via `renderMd(text)`:
 marked.js (GFM + breaks) + highlight.js (code highlighting)
 ```
 
-The shared chat/file renderer uses explicit delimiter rules:
+Chat, streamed messages, summaries and file previews share these rules. Each issue has one regression case in `test/frontend/markdown-math.test.mjs`, except table layout, which is checked in browser screenshots.
 
-- Strikethrough requires `~~text~~`. Single `~` characters stay literal, including approximate values such as `~100` and `~$20`. This deliberately differs from GitHub's optional single-tilde strikethrough.
-- Inline `$...$` math requires non-whitespace next to both delimiters; a closing `$` cannot precede a digit or another `$`. Thus `$5 and $10` stays text.
-- Bare dollar math cannot span other Markdown tokens (emphasis, links, code, etc.); the existing Marked lexer determines those boundaries. Use [GitHub's protected math syntax](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions), ``$`...`$``, when TeX overlaps with Markdown syntax.
-- `\(...\)`, `$$...$$`, and `\[...\]` remain explicit math delimiters. Escaped delimiters and code spans/fences retain their usual Markdown meaning.
-- Chat, streamed messages, summaries and file previews share math fences, GitHub alerts and `marked-footnote` parsing. Footnote links navigate within their message/document; document sanitization retains only footnote IDs.
-- Table cells have a minimum width of `6em`; wide tables still scroll horizontally without squeezing short labels into single-character columns.
-
-Regression coverage lives in `test/frontend/markdown-math.test.mjs`, including pricing tables, streaming, and mixed Markdown/math.
+| Case | Expected result |
+|---|---|
+| Prices: `$0.06 = **+$3**` | Dollar signs and bold text survive, including streaming. |
+| Approximation: `~$20`, `~~old~~` | Single tildes stay literal; only double tildes strike text. |
+| Long table at 390px width | Cells retain a minimum width of `6em`; remaining columns are reachable by horizontal scrolling. |
+| Incomplete math: `$$x$` | Stays literal without swallowing later Markdown; normal formulas and [protected math syntax](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions) still render. |
+| `math` code fence | Displays math; ordinary code fences remain code. |
+| `> [!WARNING]` | Displays a GitHub alert; the same marker inside code stays literal. |
 
 ## 15. Thinking Block Rendering
 

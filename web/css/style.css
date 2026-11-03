@@ -874,8 +874,6 @@ html.native-mobile .agent-threads-list {
 .assistant-text .markdown-alert-important { --alert: var(--graph-violet); }
 .assistant-text .markdown-alert-warning { --alert: var(--warning); }
 .assistant-text .markdown-alert-caution { --alert: var(--danger); }
-.assistant-text .footnotes { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: .9em; }
-.assistant-text .footnotes-label { margin-top: 0; font-size: 1em; }
 .file-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--text-secondary); font-size: 13px; }
 .file-loading-content { display: flex; align-items: center; gap: 10px; }
 .file-loading-delayed { background: var(--canvas); }

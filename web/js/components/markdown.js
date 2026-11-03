@@ -1,12 +1,6 @@
 // Markdown rendering via marked.js + highlight.js
-import markedFootnote from 'marked-footnote';
-
 (function () {
   marked.setOptions({ breaks: true, gfm: true });
-  marked.use(markedFootnote({
-    // Labels are user input; do not interpolate them into HTML attributes.
-    backRefLabel: 'Back to reference',
-  }));
 
   function escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -269,10 +263,7 @@ import markedFootnote from 'marked-footnote';
       if (mathClosers.get(output)?.has(src.length)) return { type: 'text', raw: '$', text: '$' };
       var m = /^\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$/.exec(src);
       if (!m) return;
-      // Probe Markdown without registering footnote references a second time.
-      var probe = new this.lexer.constructor({ gfm: true });
-      probe.tokens.links = this.lexer.tokens.links;
-      var tokens = probe.inlineTokens(m[1]);
+      var tokens = this.lexer.inlineTokens(m[1]);
       // Dollar delimiters hug plain inline text and cannot close before a digit.
       if (!/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '') && !tokens.some(function (token) {
         return token.type !== 'text' && token.type !== 'escape';
@@ -383,26 +374,12 @@ import markedFootnote from 'marked-footnote';
       alert.append(title, ...quote.childNodes);
       quote.replaceWith(alert);
     });
-    root.querySelectorAll('[data-footnotes]').forEach(function (section) {
-      section.classList.add('footnotes');
-      section.querySelector('h2')?.classList.add('footnotes-label');
-    });
   };
-
-  // Scope footnote navigation to its message: different messages reuse the same labels.
-  document.addEventListener('click', function (event) {
-    var link = event.target.closest?.('a[data-footnote-ref], a[data-footnote-backref]');
-    var root = link?.closest('.assistant-text');
-    if (!root || root.classList.contains('md-preview')) return;
-    var id = link.getAttribute('href')?.slice(1);
-    var target = Array.from(root.querySelectorAll('[id]')).find(function (node) { return node.id === id; });
-    if (target) { event.preventDefault(); target.scrollIntoView({ block: 'nearest' }); }
-  });
 
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
     var html = linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
-    if (/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]|data-footnotes/i.test(html)) {
+    if (/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.test(html)) {
       var template = document.createElement('template');
       template.innerHTML = html;
       window.decorateMarkdown(template.content);
@@ -461,11 +438,9 @@ import markedFootnote from 'marked-footnote';
   }
 
   function updateMarkdownHtml(host, html) {
-    var selector = '.img-placeholder, img.markdown-image-external, .mermaid-block, .codex-visualization';
+    var selector = '.img-placeholder, img.markdown-image-external';
     var images = new Map();
     var identity = function (node) {
-      if (node.classList.contains('mermaid-block')) return 'mermaid';
-      if (node.classList.contains('codex-visualization')) return 'visualization:' + node.dataset.visualizationPath;
       return node.dataset.path ? 'path:' + node.dataset.path
         : node.dataset.key ? 'key:' + node.dataset.key : 'src:' + node.getAttribute('src');
     };
@@ -480,9 +455,6 @@ import markedFootnote from 'marked-footnote';
     template.content.querySelectorAll(selector).forEach(function (node) {
       var previous = images.get(identity(node))?.shift();
       if (!previous) return;
-      if (node.classList.contains('mermaid-block')) {
-        window.setMermaidSource(previous, node.querySelector('.mermaid-src').textContent);
-      }
       if (node.hasAttribute('title')) previous.title = node.title;
       else previous.removeAttribute('title');
       if (node.dataset.alt != null) {
@@ -497,21 +469,12 @@ import markedFootnote from 'marked-footnote';
 
   // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
-    // Footnotes can be defined beyond a diagram or preview, so parse the whole
-    // message while retaining those live DOM nodes just as we retain images.
-    if (/\[\^[^\]\n]+\]/.test(text || '')) {
-      updateMarkdownHtml(host, chatMarkdown(text));
-      return;
-    }
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
       segs = segs.flatMap(function (segment) {
         if (segment.type !== 'text') return [segment];
         var result = [];
-        var tokens = marked.lexer(segment.text);
-        marked.walkTokens(tokens, marked.defaults.walkTokens);
-        tokens.forEach(function (token) {
-          if (token.type === 'footnotes') return;
+        marked.lexer(segment.text).forEach(function (token) {
           if (token.type === 'codexVisualization') {
             result.push({ type: 'visualization', text: token.text });
           } else if (result.length && result[result.length - 1].type === 'text') {

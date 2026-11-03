@@ -446,10 +446,8 @@ function bindDocumentLinks(container, dir, rootPromise) {
     if (href[0] === '#') {
       event.preventDefault();
       var id = href.slice(1);
-      var anchor = container.querySelector('#' + CSS.escape(id));
       try { id = decodeURIComponent(id); } catch (e) {}
-      (anchor || container.querySelector('#' + CSS.escape(id))
-        || container.querySelector('#' + CSS.escape('user-content-' + id.replace(/^user-content-/, ''))))
+      container.querySelector('#' + CSS.escape('user-content-' + id.replace(/^user-content-/, '')))
         ?.scrollIntoView({ block: 'start' });
     } else if (target) {
       event.preventDefault();
