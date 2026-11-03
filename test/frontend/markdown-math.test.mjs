@@ -74,10 +74,19 @@ test('math fences render display math and ordinary fences stay code', t => {
     assert.equal(host.querySelectorAll('pre').length, 1);
     assert.equal(host.querySelector('pre code').textContent, '$x$');
   });
+  // Only streaming waits for the closing fence; a mismatched fence does not close it.
   const window = setup(t);
   const host = window.document.createElement('div');
-  window.renderStreamMd(host, '```math\nx^');
-  assert.equal(host.querySelector('pre code').textContent, 'x^');
+  for (const input of ['```math\nx^', '````math\nx^\n```', '~~~math\nx^\n```']) {
+    window.renderStreamMd(host, input);
+    assert.ok(host.querySelector('pre code').textContent.startsWith('x^'));
+  }
+  assert.match(window.renderMd('```math\nx^2'), /katex-display/);
+  assert.match(window.renderMdDocument('```math\nx^2', html => {
+    const root = window.document.createElement('div');
+    root.innerHTML = html;
+    return root;
+  }), /katex-display/);
 });
 
 test('GitHub alerts render consistently without interpreting markers in code', t => {

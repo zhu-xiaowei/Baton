@@ -10,6 +10,7 @@
   // is parked here so the sanitizer only sees the document's Markdown and raw HTML.
   var _documentSlots = null;
   var _chatCode = false;
+  var _streaming = false;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -283,6 +284,12 @@
       return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw;
     },
   };
+  // A closing fence repeats the opening character at least as many times.
+  function fenceClosed(raw) {
+    var open = /^ {0,3}(`{3,}|~{3,})/.exec(raw)[1];
+    var lines = raw.replace(/\n+$/, '').split('\n');
+    return lines.length > 1 && new RegExp('^ {0,3}' + open[0] + '{' + open.length + ',}[ \\t]*$').test(lines[lines.length - 1]);
+  }
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
     tokenizer: {
@@ -290,7 +297,7 @@
       // A streaming math fence stays code until its closing fence arrives.
       fences: function (src) {
         var token = Object.getPrototypeOf(this).fences.call(this, src);
-        if (token && /^math\b/i.test(token.lang) && !/\n {0,3}(?:`{3,}|~{3,})[ \t]*\n*$/.test(token.raw)) token.lang = '';
+        if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
         return token;
       },
     },
@@ -477,8 +484,13 @@
     host.replaceChildren(template.content);
   }
 
-  // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
+    _streaming = true;
+    try { renderStream(host, text); } finally { _streaming = false; }
+  };
+
+  // Keep decoded images and pending loads alive while streamed text changes around them.
+  function renderStream(host, text) {
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
       segs = segs.flatMap(function (segment) {
@@ -533,5 +545,5 @@
       }
     }
     while (host.childNodes.length > segs.length) host.removeChild(host.lastChild); // drop trailing stale nodes
-  };
+  }
 })();
