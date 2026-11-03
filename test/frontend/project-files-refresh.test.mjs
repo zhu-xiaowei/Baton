@@ -15,7 +15,7 @@ test('project files persist their project and directory across a browser refresh
   );
   assert.match(
     source,
-    /saved\.device !== state\.appState\.device[\s\S]*saved\.projectHash !== state\.appState\.project\?\.hash/,
+    /saved\.device !== state\.appState\.device[\s\S]*saved\.projectHash !== filesProject\(\)\?\.hash/,
   );
   assert.match(source, /openProjectFilesPath\(saved\.path \|\| ''\)/);
   assert.match(
