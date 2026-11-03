@@ -31,6 +31,8 @@ var directoryCache = new Map();
 var pendingDirectories = new Map();
 var preloads = { queue: new Map(), active: 0 };
 var visibilityObserver = null;
+// Set while browsing the device's home folder from the project list.
+var homeContext = null;
 // A directory fetched this recently (usually by a visible-row preload) opens without another request.
 var FRESH_DIRECTORY_MS = 30000;
 var edgeBack = registerEdgeBackLayer({
@@ -52,8 +54,12 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function filesProject() {
+  return homeContext || state.appState.project;
+}
+
 function projectName() {
-  return state.appState.project?.name || 'Project';
+  return filesProject()?.name || 'Project';
 }
 
 function directoryCacheKey(projectHash, path) {
@@ -98,8 +104,8 @@ function cacheDirectory(projectHash, path, entries, scrollTop, options) {
 }
 
 function rememberDirectoryScroll() {
-  if (!state.projectFilesOpen || !state.appState.project) return;
-  var cached = cachedDirectory(state.appState.project.hash, currentPath);
+  if (!state.projectFilesOpen || !filesProject()) return;
+  var cached = cachedDirectory(filesProject().hash, currentPath);
   if (!cached) return;
   cached.scrollTop = projectFilesContent().scrollTop;
 }
@@ -109,7 +115,8 @@ function saveProjectFilesView(scrollTop = projectFilesContent().scrollTop) {
   savedProjectFilesView = {
     server: state.SERVER,
     device: state.appState.device,
-    projectHash: state.appState.project?.hash || '',
+    projectHash: filesProject()?.hash || '',
+    home: !!homeContext,
     session: state.appState.session || null,
     path: currentPath,
     scrollTop: Math.max(0, scrollTop || 0),
@@ -124,7 +131,7 @@ function saveProjectFilesView(scrollTop = projectFilesContent().scrollTop) {
   } catch (error) {}
 }
 
-function readProjectFilesView() {
+function readProjectFilesView(anyProject) {
   var saved = savedProjectFilesView;
   if (!saved) {
     try {
@@ -134,7 +141,7 @@ function readProjectFilesView() {
   if (!saved
     || saved.server !== state.SERVER
     || saved.device !== state.appState.device
-    || saved.projectHash !== state.appState.project?.hash
+    || (!anyProject && saved.projectHash !== filesProject()?.hash)
     || typeof saved.path !== 'string'
     || !Number.isFinite(saved.scrollTop)
     || saved.scrollTop < 0) return null;
@@ -142,9 +149,16 @@ function readProjectFilesView() {
 }
 
 function restoreProjectFilesView() {
+  if (!state.appState.project) {
+    var home = readProjectFilesView(true);
+    homeContext = home?.home ? { hash: home.projectHash, name: '~' } : null;
+  }
   var saved = readProjectFilesView();
-  if (!saved?.open || saved.session !== (state.appState.session || null)
-    || state.appState.session === '__new__') return false;
+  if (!saved?.open || !!saved.home !== !!homeContext || saved.session !== (state.appState.session || null)
+    || state.appState.session === '__new__') {
+    homeContext = null;
+    return false;
+  }
   returnToGit = !!saved.returnToGit;
   openProjectFilesPath(saved.path || '');
   return true;
@@ -181,7 +195,8 @@ function renderEntries(entries) {
       if (row.dataset.type === 'directory') {
         openProjectFilesPath(nextPath);
       } else if (window.openFile) {
-        window.openFile(nextPath, row.dataset.name || nextPath);
+        window.openFile(nextPath, row.dataset.name || nextPath, '', null,
+          homeContext ? { projectHash: homeContext.hash } : undefined);
       }
     });
   });
@@ -233,7 +248,7 @@ function runPreloads() {
     preloads.queue.delete(key);
     if (directoryCache.has(key) || pendingDirectories.has(key)) continue;
     preloads.active++;
-    fetchDirectory(state.appState.project?.hash || '', path).catch(function () {}).finally(function () {
+    fetchDirectory(filesProject()?.hash || '', path).catch(function () {}).finally(function () {
       preloads.active--;
       runPreloads();
     });
@@ -243,7 +258,7 @@ function runPreloads() {
 function observeVisibleDirectories(content) {
   stopVisiblePreloads();
   if (!window.IntersectionObserver) return;
-  var projectHash = state.appState.project?.hash || '';
+  var projectHash = filesProject()?.hash || '';
   var directory = currentPath;
   var observer = new window.IntersectionObserver(function (entries) {
     if (visibilityObserver !== observer) return;
@@ -263,7 +278,7 @@ function observeVisibleDirectories(content) {
 
 async function loadDirectory(version, options) {
   options = options || {};
-  var projectHash = state.appState.project?.hash || '';
+  var projectHash = filesProject()?.hash || '';
   var path = options.path == null ? currentPath : options.path;
   var current = function () {
     return state.projectFilesOpen && version === navigationVersion;
@@ -281,11 +296,11 @@ async function loadDirectory(version, options) {
 }
 
 export async function openProjectFilesPath(path) {
-  if (!state.appState.project) return;
+  if (!filesProject()) return;
   rememberDirectoryScroll();
   currentPath = normalizeProjectPath(path);
   stopVisiblePreloads();
-  var projectHash = state.appState.project.hash;
+  var projectHash = filesProject().hash;
   var cached = cachedDirectory(projectHash, currentPath);
   var recent = readProjectFilesView();
   var scrollTop = cached?.scrollTop
@@ -296,7 +311,7 @@ export async function openProjectFilesPath(path) {
   openProjectFilesPage({
     onBack: closeProjectFiles,
     onNavigate: openProjectFilesPath,
-    onGit: function () {
+    onGit: homeContext ? null : function () {
       var returning = returnToGit;
       returnToGit = false;
       deactivateProjectFiles(true);
@@ -407,6 +422,13 @@ export async function refreshProjectFiles() {
 }
 
 export function openProjectFiles() {
+  homeContext = null;
+  returnToGit = false;
+  return openProjectFilesPath(readProjectFilesView()?.path || '');
+}
+
+export function openHomeFiles(project) {
+  homeContext = project;
   returnToGit = false;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
@@ -435,6 +457,7 @@ export function deactivateProjectFiles(keepWs) {
   rememberDirectoryScroll();
   state.projectFilesOpen = false;
   saveProjectFilesView();
+  homeContext = null;
   stopVisiblePreloads();
   navigationVersion++;
   edgeBack.deactivate();
@@ -450,6 +473,8 @@ export function projectFilesBack() {
 
 Object.assign(window, {
   openProjectFiles: openProjectFiles,
+  openHomeFiles: openHomeFiles,
+  projectFilesProject: filesProject,
   openProjectFilesPath: openProjectFilesPath,
   openProjectFilesFromGit: openProjectFilesFromGit,
   resumeProjectFilesFromGit: resumeProjectFilesFromGit,
@@ -462,6 +487,8 @@ Object.assign(window, {
 queueMicrotask(function () {
   if (state.appState.project) {
     window.updateBreadcrumb?.();
+    restoreProjectFilesView();
+  } else if (state.appState.device) {
     restoreProjectFilesView();
   }
 });
