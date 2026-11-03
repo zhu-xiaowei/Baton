@@ -7,7 +7,7 @@ const ALLOWED_TAGS = [
   'div', 'ins', 'del', 'sup', 'sub', 'p', 'ol', 'ul', 'table', 'thead', 'tbody', 'tfoot', 'blockquote',
   'dl', 'dt', 'dd', 'kbd', 'q', 'samp', 'var', 'hr', 'ruby', 'rt', 'rp', 'li', 'tr', 'td', 'th', 's',
   'strike', 'summary', 'details', 'caption', 'figure', 'figcaption', 'abbr', 'bdo', 'cite', 'dfn',
-  'mark', 'small', 'span', 'time', 'wbr', 'picture', 'source', 'input',
+  'mark', 'small', 'span', 'time', 'wbr', 'picture', 'source', 'input', 'section',
 ];
 const ALLOWED_ATTR = [
   'href', 'src', 'srcset', 'media', 'longdesc', 'cite', 'abbr', 'align', 'alt', 'aria-describedby',
@@ -15,13 +15,18 @@ const ALLOWED_ATTR = [
   'char', 'charoff', 'clear', 'cols', 'colspan', 'color', 'compact', 'datetime', 'dir', 'headers',
   'height', 'hreflang', 'hspace', 'lang', 'nowrap', 'open', 'rel', 'rev', 'role', 'rows', 'rowspan',
   'rules', 'scope', 'span', 'start', 'summary', 'title', 'valign', 'value', 'vspace', 'width',
-  'checked', 'disabled', 'type', 'data-baton-slot',
+  'checked', 'disabled', 'type', 'data-baton-slot', 'id',
+  'data-footnotes', 'data-footnote-ref', 'data-footnote-backref',
 ];
 // DOMPurify's default URI rule, plus `dir/file.ext:12` links, which (as in chat) open a file at a line.
 const ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$)|[^:?#]*[./][^:?#]*:\d+(?:-\d+)?$)/i;
-const ALERTS = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
-
 const purify = DOMPurify(window);
+purify.addHook('uponSanitizeAttribute', (node, attribute) => {
+  // Only generated, namespaced footnote IDs survive; raw HTML cannot shadow the host UI.
+  if (attribute.attrName === 'id' && !attribute.attrValue.startsWith('footnote-')) {
+    attribute.keepAttr = false;
+  }
+});
 const SHORTCODE = /:([a-z0-9_+-]+):/g;
 let emojiNames = null;
 
@@ -99,6 +104,7 @@ window.addEventListener('themechange', () => {
 function addHeadingIds(root) {
   const seen = new Map();
   root.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading) => {
+    if (heading.id === 'footnote-label' && heading.parentElement?.hasAttribute('data-footnotes')) return;
     const base = heading.textContent.trim().toLowerCase()
       .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '').replace(/ /g, '-');
     const count = seen.get(base) || 0;
@@ -107,32 +113,11 @@ function addHeadingIds(root) {
   });
 }
 
-function addAlerts(root) {
-  root.querySelectorAll('blockquote').forEach((quote) => {
-    const first = quote.firstElementChild;
-    const text = first?.tagName === 'P' ? first.firstChild : null;
-    const match = text?.nodeType === 3 && /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i.exec(text.data);
-    if (!match) return;
-    text.data = text.data.slice(match[0].length);
-    if (first.firstChild === text && !text.data.trim()) text.remove();
-    if (first.firstChild?.tagName === 'BR') first.firstChild.remove();
-    if (!first.childNodes.length) first.remove();
-    const kind = match[1].toUpperCase();
-    const alert = root.ownerDocument.createElement('div');
-    alert.className = 'markdown-alert markdown-alert-' + kind.toLowerCase();
-    const title = root.ownerDocument.createElement('p');
-    title.className = 'markdown-alert-title';
-    title.textContent = ALERTS[kind];
-    alert.append(title, ...quote.childNodes);
-    quote.replaceWith(alert);
-  });
-}
-
 function sanitize(html) {
   const root = purify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR, ALLOWED_URI_REGEXP, ALLOW_DATA_ATTR: false, RETURN_DOM: true });
   prepareMedia(root);
   addHeadingIds(root);
-  addAlerts(root);
+  window.decorateMarkdown(root);
   replaceShortcodes(root);
   return root;
 }

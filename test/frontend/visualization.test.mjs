@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { Marked } from 'marked';
+import markedFootnote from 'marked-footnote';
 import hljs from 'highlight.js';
 import { createVisualizationIconRuntime } from '../../web/js/components/visualization-icons.js';
 
@@ -10,7 +11,8 @@ const iconRuntime = createVisualizationIconRuntime(fs.readFileSync(
   new URL('../../node_modules/lucide/dist/umd/lucide.min.js', import.meta.url), 'utf8',
 ));
 
-const markdown = fs.readFileSync(new URL('../../web/js/components/markdown.js', import.meta.url), 'utf8');
+const markdown = fs.readFileSync(new URL('../../web/js/components/markdown.js', import.meta.url), 'utf8')
+  .replace(/^import markedFootnote from 'marked-footnote';\n/m, '');
 const zoomHelpers = fs.readFileSync(new URL('../../web/js/page-zoom.js', import.meta.url), 'utf8')
   .replace(/^export /gm, '');
 const viewer = fs.readFileSync(new URL('../../web/js/components/visualization.js', import.meta.url), 'utf8')
@@ -80,6 +82,7 @@ function setup(t, request = async () => ({ content: '<style>body{color:red}</sty
   const { window } = dom;
   window.TextEncoder = TextEncoder;
   window.marked = new Marked();
+  window.markedFootnote = markedFootnote;
   window.hljs = hljs;
   window.state = {
     appState: { device: 'Mac', project: { hash: 'project', name: 'Project' }, session: 'codex:root' },

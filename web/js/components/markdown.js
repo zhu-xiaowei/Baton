@@ -1,6 +1,12 @@
 // Markdown rendering via marked.js + highlight.js
+import markedFootnote from 'marked-footnote';
+
 (function () {
   marked.setOptions({ breaks: true, gfm: true });
+  marked.use(markedFootnote({
+    // Labels are user input; do not interpolate them into HTML attributes.
+    backRefLabel: 'Back to reference',
+  }));
 
   function escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -159,6 +165,11 @@
           tokens: this.lexer.inlineTokens(match[1]),
         };
       },
+      del: function (src) {
+        // Require explicit ~~ delimiters; single tildes are common in approximations.
+        if (!src.startsWith('~~')) return;
+        return false;
+      },
     },
     renderer: {
       image: function (href, title, text) {
@@ -180,7 +191,7 @@
           return trusted('<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>');
         }
         // GitHub renders ```math fences as display math.
-        if (_documentSlots && lang.toLowerCase() === 'math' && window.katexHtml) {
+        if (lang.toLowerCase() === 'math' && window.katexHtml) {
           return trusted(window.katexHtml(code.trim(), true));
         }
         var html;
@@ -244,14 +255,38 @@
     },
     renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, true)) : t.raw; },
   };
+  var mathClosers = new WeakMap();
   var mathInline = {
     name: 'mathInline', level: 'inline',
     start: function (src) { var m = src.match(/\$|\\\(/); return m ? m.index : undefined; },
-    tokenizer: function (src) {
-      var m = /^\$([^\$\n]+?)\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
-      if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim() };
+    tokenizer: function (src, output) {
+      // GitHub's $`...`$ syntax protects TeX that overlaps with Markdown syntax.
+      var explicit = /^\$`([^`\r\n]+)`\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
+      if (explicit) return { type: 'mathInline', raw: explicit[0], text: explicit[1].trim() };
+      // An incomplete display delimiter must not reopen at its second dollar.
+      var dollars = /^\${2,}/.exec(src);
+      if (dollars) return { type: 'text', raw: dollars[0], text: dollars[0] };
+      if (mathClosers.get(output)?.has(src.length)) return { type: 'text', raw: '$', text: '$' };
+      var m = /^\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$/.exec(src);
+      if (!m) return;
+      // Probe Markdown without registering footnote references a second time.
+      var probe = new this.lexer.constructor({ gfm: true });
+      probe.tokens.links = this.lexer.tokens.links;
+      var tokens = probe.inlineTokens(m[1]);
+      // Dollar delimiters hug plain inline text and cannot close before a digit.
+      if (!/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '') && !tokens.some(function (token) {
+        return token.type !== 'text' && token.type !== 'escape';
+      })) return { type: 'mathInline', raw: m[0], text: m[1] };
+      // Let Marked parse rejected spans unchanged, but do not reuse their closing
+      // delimiter as an opener. A following letter/digit/backtick may start new math.
+      if (!/[\p{L}\p{N}\\`]/u.test(src[m[0].length] || '')) {
+        if (!mathClosers.has(output)) mathClosers.set(output, new Set());
+        mathClosers.get(output).add(src.length - m[0].length + 1);
+      }
     },
-    renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw; },
+    renderer: function (t) {
+      return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw;
+    },
   };
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
@@ -327,9 +362,53 @@
 
   window.linkifyPreviewAddresses = linkifyPreviewAddresses;
 
+  // Shared by chat and sanitized project documents.
+  window.decorateMarkdown = function (root) {
+    var alerts = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+    root.querySelectorAll('blockquote').forEach(function (quote) {
+      var first = quote.firstElementChild;
+      var text = first?.tagName === 'P' ? first.firstChild : null;
+      var match = text?.nodeType === 3 && /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i.exec(text.data);
+      if (!match) return;
+      text.data = text.data.slice(match[0].length);
+      if (!text.data.trim()) text.remove();
+      if (first.firstChild?.tagName === 'BR') first.firstChild.remove();
+      if (!first.childNodes.length) first.remove();
+      var kind = match[1].toUpperCase();
+      var alert = root.ownerDocument.createElement('div');
+      alert.className = 'markdown-alert markdown-alert-' + kind.toLowerCase();
+      var title = root.ownerDocument.createElement('p');
+      title.className = 'markdown-alert-title';
+      title.textContent = alerts[kind];
+      alert.append(title, ...quote.childNodes);
+      quote.replaceWith(alert);
+    });
+    root.querySelectorAll('[data-footnotes]').forEach(function (section) {
+      section.classList.add('footnotes');
+      section.querySelector('h2')?.classList.add('footnotes-label');
+    });
+  };
+
+  // Scope footnote navigation to its message: different messages reuse the same labels.
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest?.('a[data-footnote-ref], a[data-footnote-backref]');
+    var root = link?.closest('.assistant-text');
+    if (!root || root.classList.contains('md-preview')) return;
+    var id = link.getAttribute('href')?.slice(1);
+    var target = Array.from(root.querySelectorAll('[id]')).find(function (node) { return node.id === id; });
+    if (target) { event.preventDefault(); target.scrollIntoView({ block: 'nearest' }); }
+  });
+
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
-    return linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    var html = linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    if (/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]|data-footnotes/i.test(html)) {
+      var template = document.createElement('template');
+      template.innerHTML = html;
+      window.decorateMarkdown(template.content);
+      html = template.innerHTML;
+    }
+    return html;
   };
 
   // Project files render like GitHub: raw HTML is kept and soft line breaks are not <br>.
@@ -382,9 +461,11 @@
   }
 
   function updateMarkdownHtml(host, html) {
-    var selector = '.img-placeholder, img.markdown-image-external';
+    var selector = '.img-placeholder, img.markdown-image-external, .mermaid-block, .codex-visualization';
     var images = new Map();
     var identity = function (node) {
+      if (node.classList.contains('mermaid-block')) return 'mermaid';
+      if (node.classList.contains('codex-visualization')) return 'visualization:' + node.dataset.visualizationPath;
       return node.dataset.path ? 'path:' + node.dataset.path
         : node.dataset.key ? 'key:' + node.dataset.key : 'src:' + node.getAttribute('src');
     };
@@ -399,6 +480,9 @@
     template.content.querySelectorAll(selector).forEach(function (node) {
       var previous = images.get(identity(node))?.shift();
       if (!previous) return;
+      if (node.classList.contains('mermaid-block')) {
+        window.setMermaidSource(previous, node.querySelector('.mermaid-src').textContent);
+      }
       if (node.hasAttribute('title')) previous.title = node.title;
       else previous.removeAttribute('title');
       if (node.dataset.alt != null) {
@@ -413,12 +497,21 @@
 
   // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
+    // Footnotes can be defined beyond a diagram or preview, so parse the whole
+    // message while retaining those live DOM nodes just as we retain images.
+    if (/\[\^[^\]\n]+\]/.test(text || '')) {
+      updateMarkdownHtml(host, chatMarkdown(text));
+      return;
+    }
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
       segs = segs.flatMap(function (segment) {
         if (segment.type !== 'text') return [segment];
         var result = [];
-        marked.lexer(segment.text).forEach(function (token) {
+        var tokens = marked.lexer(segment.text);
+        marked.walkTokens(tokens, marked.defaults.walkTokens);
+        tokens.forEach(function (token) {
+          if (token.type === 'footnotes') return;
           if (token.type === 'codexVisualization') {
             result.push({ type: 'visualization', text: token.text });
           } else if (result.length && result[result.length - 1].type === 'text') {
