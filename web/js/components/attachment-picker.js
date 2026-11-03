@@ -13,7 +13,8 @@ export function openAttachmentPicker() {
   const keyboardOpen = () => bar?.classList.contains('kb-up')
     || (viewport && viewport.height < window.innerHeight * 0.75);
   const mobile = document.documentElement.classList.contains('native-mobile');
-  if (!mobile || !keyboardOpen()) {
+  // Older engines cannot retain a picker gesture across the viewport wait.
+  if (!mobile || !keyboardOpen() || typeof picker.showPicker !== 'function') {
     picker.click();
     return;
   }
@@ -39,7 +40,9 @@ export function openAttachmentPicker() {
       if (sameSession && picker.isConnected && !button.disabled
         && !bar?.inert && bar?.getClientRects().length && !document.hidden) {
         window.syncMobileViewport?.();
-        picker.click();
+        // WKWebView drops click()'s gesture context after viewport callbacks.
+        // showPicker() uses the tap's transient activation instead.
+        picker.showPicker();
       }
       resolve();
     };

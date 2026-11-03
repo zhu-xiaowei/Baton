@@ -22,7 +22,9 @@ function fixture(t, { mobile = true, keyboard = true } = {}) {
   const input = document.getElementById('msg-input');
   const button = document.querySelector('.img-btn');
   const openings = [];
-  document.getElementById('img-picker').click = () => openings.push(viewport.height);
+  const picker = document.getElementById('img-picker');
+  picker.click = () => openings.push(viewport.height);
+  picker.showPicker = () => openings.push(viewport.height);
   t.mock.timers.enable({ apis: ['setTimeout'] });
   t.after(() => dom.window.close());
   const resize = height => {
@@ -30,7 +32,7 @@ function fixture(t, { mobile = true, keyboard = true } = {}) {
     bar.classList.toggle('kb-up', height < 633);
     viewport.dispatchEvent(new window.Event('resize'));
   };
-  return { window, bar, input, button, openings, resize };
+  return { window, bar, input, button, picker, openings, resize };
 }
 
 for (const [name, options] of [
@@ -45,7 +47,8 @@ for (const [name, options] of [
 }
 
 test('picker waits for keyboard dismissal and the final viewport position', async t => {
-  const { input, openings, resize } = fixture(t);
+  const { input, picker, openings, resize } = fixture(t);
+  picker.click = () => assert.fail('delayed click loses its gesture in WKWebView');
   input.focus();
   const pending = openAttachmentPicker();
   assert.notEqual(document.activeElement, input);
@@ -64,6 +67,13 @@ test('picker waits for keyboard dismissal and the final viewport position', asyn
   assert.deepEqual(openings, [844]);
   t.mock.timers.tick(1000);
   assert.deepEqual(openings, [844], 'deadline and resize callbacks are cleaned up');
+});
+
+test('engines without showPicker retain synchronous file selection', t => {
+  const { picker, openings } = fixture(t);
+  picker.showPicker = undefined;
+  openAttachmentPicker();
+  assert.deepEqual(openings, [420]);
 });
 
 test('missing viewport events do not leave the attachment button stuck', async t => {
