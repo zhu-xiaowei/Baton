@@ -287,12 +287,14 @@
   marked.use({
     tokenizer: {
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
+      // A streaming math fence stays code until its closing fence arrives.
+      fences: function (src) {
+        var token = Object.getPrototypeOf(this).fences.call(this, src);
+        if (token && /^math\b/i.test(token.lang) && !/\n {0,3}(?:`{3,}|~{3,})[ \t]*\n*$/.test(token.raw)) token.lang = '';
+        return token;
+      },
     },
     extensions: [mathBlock, mathInline],
-    // A streaming math fence stays code until its closing fence arrives.
-    walkTokens: function (token) {
-      if (token.type === 'code' && /^math\b/i.test(token.lang || '') && !/\n {0,3}(?:`{3,}|~{3,})[ \t]*\n*$/.test(token.raw)) token.lang = '';
-    },
   });
 
   function rewriteFileLinks(html) {
