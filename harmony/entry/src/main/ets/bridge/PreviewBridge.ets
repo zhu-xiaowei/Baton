@@ -21,6 +21,7 @@ class PreviewArgs {
   id: number = 0;
   tunnelId: string = '';
   preferredPort: number = 0;
+  mode: string = '';
   streamId: string = '';
   data: string = '';
   bytes: number = 0;
@@ -109,7 +110,7 @@ export class PreviewBridge {
     if (args === null) {
       return;
     }
-    this.openSession(args.id, `${args.tunnelId}`, args.preferredPort);
+    this.openSession(args.id, `${args.tunnelId}`, args.preferredPort, `${args.mode}`);
   }
 
   stop(argsJson: string): void {
@@ -175,7 +176,8 @@ export class PreviewBridge {
     this.closeAllSessions();
   }
 
-  private async openSession(id: number, tunnelId: string, preferredPort: number): Promise<void> {
+  // Only "next" may move off the requested port; one webview never competes with itself.
+  private async openSession(id: number, tunnelId: string, preferredPort: number, mode: string): Promise<void> {
     if (!UUID.test(tunnelId)) {
       this.fail(id, 'Invalid preview tunnel ID');
       return;
@@ -194,9 +196,12 @@ export class PreviewBridge {
       this.fail(id, 'Too many active previews');
       return;
     }
+    // Privileged ports a phone cannot bind still move up, as on the other platforms.
+    const strict: boolean = mode !== 'next' && mode !== '' && requested >= 1024;
+    const attempts: number = strict ? 1 : MAX_PORT_ATTEMPTS;
     let server: socket.TCPSocketServer | null = null;
     let port: number = 0;
-    for (let attempt: number = 0; attempt < MAX_PORT_ATTEMPTS && server === null; attempt++) {
+    for (let attempt: number = 0; attempt < attempts && server === null; attempt++) {
       const candidate: number = requested + attempt;
       if (candidate > 65535) {
         break;
@@ -218,12 +223,16 @@ export class PreviewBridge {
       } catch (e) {
         bound = 0;
       }
-      if (!(bound >= 1) || bound > 65535) {
+      if (!(bound >= 1) || bound > 65535 || (strict && bound !== requested)) {
         closeServer(instance);
         continue;
       }
       server = instance;
       port = bound;
+    }
+    if (server === null && strict) {
+      this.fail(id, 'port-in-use:');
+      return;
     }
     if (server === null) {
       this.fail(id, `No local preview port available starting at ${requested}`);

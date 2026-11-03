@@ -382,7 +382,9 @@ export function openBrowserPage(options = {}) {
     if (action === 'forward') traverse(1);
     if (action === 'stop') stopLoading();
     if (action === 'reload' && !currentUrl && initialAddress) void navigate(initialAddress);
-    if (action === 'reload' && currentUrl) {
+    const reconnect = action === 'reload' && currentUrl && options.reloadAddress?.(currentUrl);
+    if (reconnect) void navigate(reconnect);
+    else if (action === 'reload' && currentUrl) {
       prepareNavigation();
       if (nativeView) void nativeView.action('reload');
       else if (bridgeReady) post('reload');

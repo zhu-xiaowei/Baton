@@ -16,15 +16,19 @@ const WINDOW_BYTES: usize = 128 * 1024;
 const MAX_STREAMS: usize = 24;
 const MAX_TUNNELS: usize = 4;
 const MAX_PORT_ATTEMPTS: usize = 1024;
+// Rejection prefix for a taken local port; the suffix names the owner for the app's dialog.
+const PORT_IN_USE: &str = "port-in-use:";
 
 fn local_origin(port: u16) -> String {
   let host = if cfg!(target_os = "macos") { "localhost" } else { "127.0.0.1" };
   format!("http://{host}:{port}")
 }
 
-fn bind_local_listeners(preferred_port: u16) -> Result<(Vec<TcpListener>, u16), String> {
+// Without `next`, only the requested port is tried; privileged ports a phone cannot bind still move up.
+fn bind_local_listeners(preferred_port: u16, next: bool) -> Result<(Vec<TcpListener>, u16), String> {
   if preferred_port == 0 { return Err("Invalid preview port".into()); }
-  for port in (preferred_port..=u16::MAX).take(MAX_PORT_ATTEMPTS) {
+  let attempts = if next || preferred_port < 1024 { MAX_PORT_ATTEMPTS } else { 1 };
+  for port in (preferred_port..=u16::MAX).take(attempts) {
     let ipv4 = match TcpListener::bind(("127.0.0.1", port)) {
       Ok(listener) => listener,
       Err(error) if error.kind() == ErrorKind::AddrInUse
@@ -42,7 +46,53 @@ fn bind_local_listeners(preferred_port: u16) -> Result<(Vec<TcpListener>, u16), 
     }
     return Ok((listeners, port));
   }
+  if attempts == 1 { return Err(PORT_IN_USE.into()); }
   Err(format!("No local preview port available starting at {preferred_port}"))
+}
+
+// The process listening on a local port, as (pid, name). Desktop only: phones cannot see other apps.
+#[cfg(desktop)]
+fn port_process(port: u16) -> Option<(u32, String)> {
+  use std::process::Command;
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = Command::new("netstat").args(["-ano", "-p", "TCP"]).creation_flags(CREATE_NO_WINDOW).output().ok()?;
+    let pid: u32 = String::from_utf8_lossy(&output.stdout).lines().find_map(|line| {
+      let fields: Vec<&str> = line.split_whitespace().collect();
+      (fields.len() == 5 && fields[3] == "LISTENING" && fields[1].ends_with(&format!(":{port}")))
+        .then(|| fields[4].parse().ok()).flatten()
+    })?;
+    let output = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+      .creation_flags(CREATE_NO_WINDOW).output().ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).split(',').next()?.trim_matches('"').trim().to_string();
+    return (!name.is_empty() && pid != std::process::id()).then_some((pid, name));
+  }
+  #[cfg(not(windows))]
+  {
+    let output = Command::new("lsof").args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"]).output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let pid: u32 = text.lines().find_map(|line| line.strip_prefix('p')?.parse().ok())?;
+    let name = text.lines().find_map(|line| line.strip_prefix('c'))?.to_string();
+    (pid != std::process::id()).then_some((pid, name))
+  }
+}
+
+#[cfg(desktop)]
+fn quit_port_process(port: u16) -> Result<(), String> {
+  let Some((pid, name)) = port_process(port) else { return Ok(()) };
+  #[cfg(windows)]
+  let status = {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).creation_flags(0x0800_0000).status()
+  };
+  #[cfg(not(windows))]
+  let status = std::process::Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+  match status {
+    Ok(status) if status.success() => Ok(()),
+    _ => Err(format!("Could not quit {name}")),
+  }
 }
 
 #[cfg(test)]
@@ -80,10 +130,11 @@ mod tests {
       if listener.local_addr().unwrap().port() < u16::MAX { break listener; }
     };
     let requested = occupied.local_addr().unwrap().port();
-    let (fallback_listeners, fallback) = bind_local_listeners(requested).unwrap();
+    assert_eq!(bind_local_listeners(requested, false).err().as_deref(), Some(super::PORT_IN_USE));
+    let (fallback_listeners, fallback) = bind_local_listeners(requested, true).unwrap();
     assert!(fallback > requested);
     drop(occupied);
-    let (listeners, available) = bind_local_listeners(requested).unwrap();
+    let (listeners, available) = bind_local_listeners(requested, false).unwrap();
     assert_eq!(available, requested);
     TcpStream::connect(("127.0.0.1", available)).unwrap();
     if listeners.len() == 2 {
@@ -169,6 +220,26 @@ impl PreviewProxy {
     let ids: Vec<String> = sessions.iter()
       .filter(|(_, session)| session.owner == owner).map(|(id, _)| id.clone()).collect();
     ids.iter().filter_map(|id| sessions.remove(id)).collect()
+  }
+
+  // Another tab (or device) forwarding this local port gives it up; its page reports the closed listener.
+  fn take_over(&self, app: &AppHandle, port: u16) {
+    let taken: Vec<(String, Arc<PreviewSession>)> = self.sessions.lock().map(|mut sessions| {
+      let ids: Vec<String> = sessions.iter().filter(|(_, session)| session.port == port).map(|(id, _)| id.clone()).collect();
+      ids.into_iter().filter_map(|id| sessions.remove(&id).map(|session| (id, session))).collect()
+    }).unwrap_or_default();
+    for (tunnel_id, session) in taken {
+      self.stop_session(&session);
+      let _ = app.emit_to(&session.owner, "preview-listener-closed", SocketEvent { tunnel_id, stream_id: String::new() });
+    }
+  }
+
+  fn port_in_use(&self, port: u16) -> String {
+    let baton = self.sessions.lock().map(|sessions| sessions.values().any(|session| session.port == port)).unwrap_or(false);
+    if baton { return format!("{PORT_IN_USE}baton"); }
+    #[cfg(desktop)]
+    if let Some((_, name)) = port_process(port) { return format!("{PORT_IN_USE}app:{name}"); }
+    PORT_IN_USE.into()
   }
 
   fn stop_session(&self, session: &PreviewSession) {
@@ -320,21 +391,38 @@ impl PreviewProxy {
 }
 
 #[tauri::command]
+// mode: "strict" (only the requested port), "next" (the first free port from it),
+// "takeover" (release Baton's own listener on it first) or "quit" (desktop: quit its process first).
 pub fn preview_start(app: AppHandle, window: Webview,
     manager: State<'_, Arc<PreviewProxy>>, tunnel_id: String,
-    preferred_port: u16) -> Result<String, String> {
+    preferred_port: u16, mode: Option<String>) -> Result<String, String> {
   Uuid::parse_str(&tunnel_id).map_err(|_| "Invalid preview tunnel ID".to_string())?;
   if preferred_port == 0 { return Err("Invalid preview port".into()); }
-  let mut sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
-  if let Some(session) = sessions.get(&tunnel_id) {
+  let mode = mode.unwrap_or_else(|| "next".into());
+  if let Some(session) = manager.sessions.lock().map_err(|_| "Preview state unavailable")?.get(&tunnel_id) {
     if session.owner != window.label() { return Err("Preview already open in another window".into()); }
     return Ok(local_origin(session.port));
   }
-  if sessions.len() >= MAX_TUNNELS { return Err("Too many active previews".into()); }
-  let (listeners, port) = bind_local_listeners(preferred_port)?;
+  if mode == "takeover" { manager.take_over(&app, preferred_port); }
+  #[cfg(desktop)]
+  if mode == "quit" { quit_port_process(preferred_port)?; }
+  // A quit process may take a moment to release its socket.
+  let mut waits = if mode == "quit" { 30 } else { 0 };
+  let (listeners, port) = loop {
+    match bind_local_listeners(preferred_port, mode == "next") {
+      Err(error) if error == PORT_IN_USE && waits > 0 => {
+        waits -= 1;
+        thread::sleep(Duration::from_millis(100));
+      }
+      Err(error) if error == PORT_IN_USE => return Err(manager.port_in_use(preferred_port)),
+      result => break result?,
+    }
+  };
   for listener in &listeners {
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
   }
+  let mut sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
+  if sessions.len() >= MAX_TUNNELS { return Err("Too many active previews".into()); }
   let session = Arc::new(PreviewSession {
     port, owner: window.label().to_string(), stopped: AtomicBool::new(false),
     accept_threads: Mutex::new(Vec::new()),
