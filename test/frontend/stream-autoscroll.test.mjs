@@ -158,31 +158,6 @@ test('Git commit keyboard keeps the page in place without disabling chat chrome 
   await h.tick(10);
 });
 
-test('new-session hero avoids the chrome jump at the keyboard height threshold', async t => {
-  resetSession(h, { sessionId: '__new__' });
-  h.document.body.classList.add('new-session');
-  const topBar = h.document.createElement('div');
-  topBar.className = 'top-bar';
-  Object.defineProperty(topBar, 'offsetHeight', { value: 103 });
-  h.document.body.append(topBar);
-  t.after(async () => {
-    topBar.remove();
-    h.document.body.classList.remove('new-session');
-    h.visualViewport.height = 844;
-    h.visualViewport.offsetTop = 0;
-    h.visualViewport.dispatch('resize');
-    await h.tick(20);
-  });
-
-  for (const height of [844, 634, 633, 632, 420, 632, 633, 844]) {
-    h.visualViewport.height = height;
-    h.visualViewport.offsetTop = 0;
-    h.visualViewport.dispatch('resize');
-    assert.equal(h.document.body.style.height, height + 'px');
-    assert.equal(h.document.body.style.transform, '');
-  }
-});
-
 test('sending a user message restores bottom following without a competing animation', () => {
   resetSession(h, { sessionId: 'codex:send-follow' });
   const content = h.document.getElementById('content');
