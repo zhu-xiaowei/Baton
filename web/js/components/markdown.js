@@ -10,6 +10,7 @@
   // is parked here so the sanitizer only sees the document's Markdown and raw HTML.
   var _documentSlots = null;
   var _chatCode = false;
+  var _streaming = false;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -159,6 +160,11 @@
           tokens: this.lexer.inlineTokens(match[1]),
         };
       },
+      del: function (src) {
+        // Require explicit ~~ delimiters; single tildes are common in approximations.
+        if (!src.startsWith('~~')) return;
+        return false;
+      },
     },
     renderer: {
       image: function (href, title, text) {
@@ -180,7 +186,7 @@
           return trusted('<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>');
         }
         // GitHub renders ```math fences as display math.
-        if (_documentSlots && lang.toLowerCase() === 'math' && window.katexHtml) {
+        if (lang.toLowerCase() === 'math' && window.katexHtml) {
           return trusted(window.katexHtml(code.trim(), true));
         }
         var html;
@@ -244,19 +250,56 @@
     },
     renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, true)) : t.raw; },
   };
+  var mathClosers = new WeakMap();
+  // Dollar delimiters hug plain inline text and cannot close before a digit.
+  function isMath(lexer, src, m) {
+    return !/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '')
+      && !lexer.inlineTokens(m[1]).some(function (token) { return token.type !== 'text' && token.type !== 'escape'; });
+  }
   var mathInline = {
     name: 'mathInline', level: 'inline',
     start: function (src) { var m = src.match(/\$|\\\(/); return m ? m.index : undefined; },
-    tokenizer: function (src) {
-      var m = /^\$([^\$\n]+?)\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
-      if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim() };
+    tokenizer: function (src, output) {
+      // GitHub's $`...`$ syntax protects TeX that overlaps with Markdown syntax.
+      var explicit = /^\$`([^`\r\n]+)`\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
+      if (explicit) return { type: 'mathInline', raw: explicit[0], text: explicit[1].trim() };
+      // Like GitHub, a complete `$$...$$` inside a paragraph is inline math.
+      var display = /^\$\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$\$/.exec(src);
+      if (display && isMath(this.lexer, src, display)) return { type: 'mathInline', raw: display[0], text: display[1] };
+      // An incomplete display delimiter must not reopen at its second dollar.
+      var dollars = /^\${2,}/.exec(src);
+      if (dollars) return { type: 'text', raw: dollars[0], text: dollars[0] };
+      if (mathClosers.get(output)?.has(src.length)) return { type: 'text', raw: '$', text: '$' };
+      var m = /^\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$/.exec(src);
+      if (!m) return;
+      if (isMath(this.lexer, src, m)) return { type: 'mathInline', raw: m[0], text: m[1] };
+      // Let Marked parse rejected spans unchanged, but do not reuse their closing
+      // delimiter as an opener. A following letter/digit/backtick may start new math.
+      if (!/[\p{L}\p{N}\\`]/u.test(src[m[0].length] || '')) {
+        if (!mathClosers.has(output)) mathClosers.set(output, new Set());
+        mathClosers.get(output).add(src.length - m[0].length + 1);
+      }
     },
-    renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw; },
+    renderer: function (t) {
+      return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw;
+    },
   };
+  // A closing fence repeats the opening character at least as many times.
+  function fenceClosed(raw) {
+    var open = /^ {0,3}(`{3,}|~{3,})/.exec(raw)[1];
+    var lines = raw.replace(/\n+$/, '').split('\n');
+    return lines.length > 1 && new RegExp('^ {0,3}' + open[0] + '{' + open.length + ',}[ \\t]*$').test(lines[lines.length - 1]);
+  }
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
     tokenizer: {
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
+      // A streaming math fence stays code until its closing fence arrives.
+      fences: function (src) {
+        var token = Object.getPrototypeOf(this).fences.call(this, src);
+        if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
+        return token;
+      },
     },
     extensions: [mathBlock, mathInline],
   });
@@ -327,9 +370,39 @@
 
   window.linkifyPreviewAddresses = linkifyPreviewAddresses;
 
+  // Shared by chat and sanitized project documents.
+  window.decorateMarkdown = function (root) {
+    var alerts = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+    root.querySelectorAll('blockquote').forEach(function (quote) {
+      var first = quote.firstElementChild;
+      var text = first?.tagName === 'P' ? first.firstChild : null;
+      var match = text?.nodeType === 3 && /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i.exec(text.data);
+      if (!match) return;
+      text.data = text.data.slice(match[0].length);
+      if (!text.data.trim()) text.remove();
+      if (first.firstChild?.tagName === 'BR') first.firstChild.remove();
+      if (!first.childNodes.length) first.remove();
+      var kind = match[1].toUpperCase();
+      var alert = root.ownerDocument.createElement('div');
+      alert.className = 'markdown-alert markdown-alert-' + kind.toLowerCase();
+      var title = root.ownerDocument.createElement('p');
+      title.className = 'markdown-alert-title';
+      title.textContent = alerts[kind];
+      alert.append(title, ...quote.childNodes);
+      quote.replaceWith(alert);
+    });
+  };
+
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
-    return linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    var html = linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    if (/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.test(html)) {
+      var template = document.createElement('template');
+      template.innerHTML = html;
+      window.decorateMarkdown(template.content);
+      html = template.innerHTML;
+    }
+    return html;
   };
 
   // Project files render like GitHub: raw HTML is kept and soft line breaks are not <br>.
@@ -411,8 +484,13 @@
     host.replaceChildren(template.content);
   }
 
-  // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
+    _streaming = true;
+    try { renderStream(host, text); } finally { _streaming = false; }
+  };
+
+  // Keep decoded images and pending loads alive while streamed text changes around them.
+  function renderStream(host, text) {
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
       segs = segs.flatMap(function (segment) {
@@ -467,5 +545,5 @@
       }
     }
     while (host.childNodes.length > segs.length) host.removeChild(host.lastChild); // drop trailing stale nodes
-  };
+  }
 })();
