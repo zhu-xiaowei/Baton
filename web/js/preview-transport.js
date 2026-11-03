@@ -26,13 +26,14 @@ function waitForOpen(socket) {
   });
 }
 
-// The local listener rejects a taken port as `port-in-use:` + `baton`, `app:<name>` or nothing.
+// The local listener rejects a taken port as `port-in-use:` + `baton`, `app:<pid>:<name>` or nothing.
 function portInUseError(error, port) {
-  const match = /^port-in-use:(baton|app:([\s\S]*))?$/.exec(String(error?.message ?? error));
+  const match = /^port-in-use:(baton|app:(\d+):([\s\S]*))?$/.exec(String(error?.message ?? error));
   if (!match) return null;
-  const owner = match[1] === 'baton' ? 'baton' : match[2] || '';
-  const result = new Error(`Port ${port} is in use by ${owner === 'baton' ? 'another Baton tab' : owner || 'another app'}`);
+  const owner = match[1] === 'baton' ? 'baton' : match[3] || '';
+  const result = new Error(`Port ${port} is in use by ${owner === 'baton' ? 'another Baton preview' : owner || 'another app'}`);
   result.portInUse = owner;
+  result.pid = match[2];
   return result;
 }
 

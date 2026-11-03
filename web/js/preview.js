@@ -6,6 +6,7 @@ import { openBrowserPage } from './browser/page.js';
 import { normalizeBrowserAddress } from './browser/address.js';
 import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
+import { confirmDialog } from './components/confirm-dialog.js';
 import { previewNativeAvailable } from './native-shell.js';
 import { previewOpenExternal } from './preview-native.js';
 import '../css/preview.css';
@@ -432,6 +433,7 @@ async function connect(entry, { speculative = false, mode } = {}) {
       if (entry.version === version) {
         entry.origin = '';
         entry.portInUse = error.portInUse;
+        entry.pid = error.pid;
         entry.status = `Preview failed: ${error.message || error}`;
         await entry.tunnel?.close();
         if (entry.version === version) {
@@ -459,50 +461,18 @@ async function connect(entry, { speculative = false, mode } = {}) {
   return entry.pending;
 }
 
-function choosePortMode(title, choices) {
-  return new Promise(resolve => {
-    const view = document.createElement('div');
-    view.className = 'modal-overlay';
-    view.style.zIndex = '1500';
-    view.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true"><div class="modal-title"></div><div class="modal-actions"></div></div>';
-    view.querySelector('.modal-title').textContent = title;
-    const finish = mode => {
-      window.removeEventListener('keydown', onKey, true);
-      view.remove();
-      resolve(mode);
-    };
-    const onKey = event => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      finish('');
-    };
-    for (const [mode, label, primary] of choices) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `modal-btn ${primary ? 'confirm' : 'cancel'}`;
-      button.textContent = label;
-      button.addEventListener('click', () => finish(mode));
-      view.querySelector('.modal-actions').append(button);
-    }
-    view.addEventListener('click', event => {
-      if (event.target === view) finish('');
-    });
-    window.addEventListener('keydown', onKey, true);
-    document.body.append(view);
-    view.querySelector('.confirm').focus();
-  });
-}
-
 // A taken local port is never replaced silently: the user decides how to open it.
 async function connectChoosing(entry, page) {
   const origin = await connect(entry);
   const owner = entry.portInUse;
   if (origin || owner === undefined) return origin;
   page?.setError(entry.status);
-  const mode = await choosePortMode(entry.status.replace(/^Preview failed: /, ''), owner === 'baton'
+  // A second click while the dialog is open shares its answer.
+  entry.choosing ??= confirmDialog(entry.status.replace(/^Preview failed: /, ''), owner === 'baton'
     ? [['next', 'Open on another port'], ['takeover', 'Take over', true]]
-    : [owner ? ['quit', `Quit ${owner}`] : ['', 'Cancel'], ['next', 'Open on another port', true]]);
+    : [owner ? [`quit:${entry.pid}`, `Quit ${owner}`] : ['', 'Cancel'], ['next', 'Open on another port', true]], '')
+    .finally(() => { entry.choosing = null; });
+  const mode = await entry.choosing;
   return mode ? connect(entry, { mode }) : null;
 }
 

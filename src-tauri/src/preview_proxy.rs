@@ -61,12 +61,13 @@ fn port_process(port: u16) -> Option<(u32, String)> {
     let output = Command::new("netstat").args(["-ano", "-p", "TCP"]).creation_flags(CREATE_NO_WINDOW).output().ok()?;
     let pid: u32 = String::from_utf8_lossy(&output.stdout).lines().find_map(|line| {
       let fields: Vec<&str> = line.split_whitespace().collect();
-      (fields.len() == 5 && fields[3] == "LISTENING" && fields[1].ends_with(&format!(":{port}")))
+      // A listening socket has no foreign address; the state column is localized.
+      (fields.len() == 5 && fields[1].ends_with(&format!(":{port}")) && matches!(fields[2], "0.0.0.0:0" | "[::]:0"))
         .then(|| fields[4].parse().ok()).flatten()
     })?;
     let output = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
       .creation_flags(CREATE_NO_WINDOW).output().ok()?;
-    let name = String::from_utf8_lossy(&output.stdout).split(',').next()?.trim_matches('"').trim().to_string();
+    let name = String::from_utf8_lossy(&output.stdout).lines().next()?.strip_prefix('"')?.split('"').next()?.to_string();
     return (!name.is_empty() && pid != std::process::id()).then_some((pid, name));
   }
   #[cfg(not(windows))]
@@ -79,9 +80,11 @@ fn port_process(port: u16) -> Option<(u32, String)> {
   }
 }
 
+// Quits the process only while it is still the one the dialog named.
 #[cfg(desktop)]
-fn quit_port_process(port: u16) -> Result<(), String> {
+fn quit_port_process(port: u16, expected: u32) -> Result<(), String> {
   let Some((pid, name)) = port_process(port) else { return Ok(()) };
+  if pid != expected { return Err(PORT_IN_USE.into()); }
   #[cfg(windows)]
   let status = {
     use std::os::windows::process::CommandExt;
@@ -238,7 +241,7 @@ impl PreviewProxy {
     let baton = self.sessions.lock().map(|sessions| sessions.values().any(|session| session.port == port)).unwrap_or(false);
     if baton { return format!("{PORT_IN_USE}baton"); }
     #[cfg(desktop)]
-    if let Some((_, name)) = port_process(port) { return format!("{PORT_IN_USE}app:{name}"); }
+    if let Some((pid, name)) = port_process(port) { return format!("{PORT_IN_USE}app:{pid}:{name}"); }
     PORT_IN_USE.into()
   }
 
@@ -392,22 +395,40 @@ impl PreviewProxy {
 
 #[tauri::command]
 // mode: "strict" (only the requested port), "next" (the first free port from it),
-// "takeover" (release Baton's own listener on it first) or "quit" (desktop: quit its process first).
-pub fn preview_start(app: AppHandle, window: Webview,
+// "takeover" (release Baton's own listener on it first) or "quit:<pid>" (desktop: quit that process first).
+// Process lookups and the quit wait block, so this runs off the main thread.
+pub async fn preview_start(app: AppHandle, window: Webview,
     manager: State<'_, Arc<PreviewProxy>>, tunnel_id: String,
+    preferred_port: u16, mode: Option<String>) -> Result<String, String> {
+  let manager = Arc::clone(manager.inner());
+  let owner = window.label().to_string();
+  tauri::async_runtime::spawn_blocking(move || start_preview(app, manager, owner, tunnel_id, preferred_port, mode))
+    .await.map_err(|error| error.to_string())?
+}
+
+fn start_preview(app: AppHandle, manager: Arc<PreviewProxy>, owner: String, tunnel_id: String,
     preferred_port: u16, mode: Option<String>) -> Result<String, String> {
   Uuid::parse_str(&tunnel_id).map_err(|_| "Invalid preview tunnel ID".to_string())?;
   if preferred_port == 0 { return Err("Invalid preview port".into()); }
   let mode = mode.unwrap_or_else(|| "next".into());
-  if let Some(session) = manager.sessions.lock().map_err(|_| "Preview state unavailable")?.get(&tunnel_id) {
-    if session.owner != window.label() { return Err("Preview already open in another window".into()); }
-    return Ok(local_origin(session.port));
+  {
+    let sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
+    if let Some(session) = sessions.get(&tunnel_id) {
+      if session.owner != owner { return Err("Preview already open in another window".into()); }
+      return Ok(local_origin(session.port));
+    }
+    let released = if mode == "takeover" { sessions.values().filter(|session| session.port == preferred_port).count() } else { 0 };
+    if sessions.len() - released >= MAX_TUNNELS { return Err("Too many active previews".into()); }
   }
   if mode == "takeover" { manager.take_over(&app, preferred_port); }
+  let quit = mode.strip_prefix("quit:").map(|pid| pid.parse::<u32>().unwrap_or(0));
   #[cfg(desktop)]
-  if mode == "quit" { quit_port_process(preferred_port)?; }
+  if let Some(pid) = quit {
+    quit_port_process(preferred_port, pid)
+      .map_err(|error| if error == PORT_IN_USE { manager.port_in_use(preferred_port) } else { error })?;
+  }
   // A quit process may take a moment to release its socket.
-  let mut waits = if mode == "quit" { 30 } else { 0 };
+  let mut waits = if quit.is_some() { 30 } else { 0 };
   let (listeners, port) = loop {
     match bind_local_listeners(preferred_port, mode == "next") {
       Err(error) if error == PORT_IN_USE && waits > 0 => {
@@ -424,14 +445,13 @@ pub fn preview_start(app: AppHandle, window: Webview,
   let mut sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
   if sessions.len() >= MAX_TUNNELS { return Err("Too many active previews".into()); }
   let session = Arc::new(PreviewSession {
-    port, owner: window.label().to_string(), stopped: AtomicBool::new(false),
+    port, owner, stopped: AtomicBool::new(false),
     accept_threads: Mutex::new(Vec::new()),
     sockets: Mutex::new(HashSet::new()),
   });
   let mut accept_threads = session.accept_threads.lock().map_err(|_| "Preview state unavailable")?;
   sessions.insert(tunnel_id.clone(), Arc::clone(&session));
   drop(sessions);
-  let manager = Arc::clone(manager.inner());
   for listener in listeners {
     let manager = Arc::clone(&manager);
     let app = app.clone();

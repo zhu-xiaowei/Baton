@@ -396,7 +396,7 @@ export function openBrowserPage(options = {}) {
     if (action === 'close') close();
   });
   function onEscape(event) {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || event.target.closest?.('.modal-overlay')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (document.activeElement === address) {
