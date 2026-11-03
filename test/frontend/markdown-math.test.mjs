@@ -59,11 +59,11 @@ test('single tildes remain approximate values and double tildes strike text', t 
 });
 
 test('incomplete math stays literal without swallowing later Markdown or formulas', t => {
-  const input = '$$x$\n\n$a **b** c$；公式 $`a * b`$ 和 $x+1$。\n\n`$x$`';
+  const input = '$$x$\n\n$a **b** c$；公式 $`a * b`$ 和 $x+1$，以及 $$y$$；价格 $$5 和 $$10。\n\n`$x$`';
   checkRenderers(setup(t), input, host => {
     assert.equal(host.querySelector('p').textContent, '$$x$');
     assert.equal(host.querySelector('strong').textContent, 'b');
-    assert.deepEqual([...host.querySelectorAll('.katex')].map(el => el.textContent), ['a * b', 'x+1']);
+    assert.deepEqual([...host.querySelectorAll('.katex')].map(el => el.textContent), ['a * b', 'x+1', 'y']);
     assert.equal(host.querySelector('code').textContent, '$x$');
   });
 });
@@ -74,6 +74,10 @@ test('math fences render display math and ordinary fences stay code', t => {
     assert.equal(host.querySelectorAll('pre').length, 1);
     assert.equal(host.querySelector('pre code').textContent, '$x$');
   });
+  const window = setup(t);
+  const host = window.document.createElement('div');
+  window.renderStreamMd(host, '```math\nx^');
+  assert.equal(host.querySelector('pre code').textContent, 'x^');
 });
 
 test('GitHub alerts render consistently without interpreting markers in code', t => {

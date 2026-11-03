@@ -250,6 +250,11 @@
     renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, true)) : t.raw; },
   };
   var mathClosers = new WeakMap();
+  // Dollar delimiters hug plain inline text and cannot close before a digit.
+  function isMath(lexer, src, m) {
+    return !/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '')
+      && !lexer.inlineTokens(m[1]).some(function (token) { return token.type !== 'text' && token.type !== 'escape'; });
+  }
   var mathInline = {
     name: 'mathInline', level: 'inline',
     start: function (src) { var m = src.match(/\$|\\\(/); return m ? m.index : undefined; },
@@ -257,17 +262,16 @@
       // GitHub's $`...`$ syntax protects TeX that overlaps with Markdown syntax.
       var explicit = /^\$`([^`\r\n]+)`\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
       if (explicit) return { type: 'mathInline', raw: explicit[0], text: explicit[1].trim() };
+      // Like GitHub, a complete `$$...$$` inside a paragraph is inline math.
+      var display = /^\$\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$\$/.exec(src);
+      if (display && isMath(this.lexer, src, display)) return { type: 'mathInline', raw: display[0], text: display[1] };
       // An incomplete display delimiter must not reopen at its second dollar.
       var dollars = /^\${2,}/.exec(src);
       if (dollars) return { type: 'text', raw: dollars[0], text: dollars[0] };
       if (mathClosers.get(output)?.has(src.length)) return { type: 'text', raw: '$', text: '$' };
       var m = /^\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$/.exec(src);
       if (!m) return;
-      var tokens = this.lexer.inlineTokens(m[1]);
-      // Dollar delimiters hug plain inline text and cannot close before a digit.
-      if (!/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '') && !tokens.some(function (token) {
-        return token.type !== 'text' && token.type !== 'escape';
-      })) return { type: 'mathInline', raw: m[0], text: m[1] };
+      if (isMath(this.lexer, src, m)) return { type: 'mathInline', raw: m[0], text: m[1] };
       // Let Marked parse rejected spans unchanged, but do not reuse their closing
       // delimiter as an opener. A following letter/digit/backtick may start new math.
       if (!/[\p{L}\p{N}\\`]/u.test(src[m[0].length] || '')) {
@@ -285,6 +289,10 @@
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
     },
     extensions: [mathBlock, mathInline],
+    // A streaming math fence stays code until its closing fence arrives.
+    walkTokens: function (token) {
+      if (token.type === 'code' && /^math\b/i.test(token.lang || '') && !/\n {0,3}(?:`{3,}|~{3,})[ \t]*\n*$/.test(token.raw)) token.lang = '';
+    },
   });
 
   function rewriteFileLinks(html) {
