@@ -496,9 +496,9 @@ function updateBreadcrumb() {
     topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
-    var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage()"'
+    var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
       + ' aria-label="Home files" title="Home files">' + FOLDER_ICON_SVG + '</button>';
-    var homeTerminalButton = '<button class="project-files-entry project-terminal-entry" type="button" onclick="openHomeTerminalPage()"'
+    var homeTerminalButton = '<button class="project-files-entry project-terminal-entry" type="button" onclick="openHomeTerminalPage(this)"'
       + ' aria-label="Home terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>';
     var previewButton = '<button class="project-files-entry" type="button" onclick="openPreviewPortPrompt()"'
       + ' aria-label="Remote preview" title="Remote preview">'
@@ -565,18 +565,26 @@ function openProjectTerminalPage() {
   return opening;
 }
 
+let homeOpening = null;
+
 // Home tools open only while the project list of the same device is still showing.
-function withHomeProject(open) {
+function withHomeProject(open, button) {
   const device = state.appState.device;
-  if (!device || state.appState.project) return;
-  return homeProject(device).then(project => {
+  if (!device || state.appState.project || homeOpening) return homeOpening;
+  button?.setAttribute('aria-busy', 'true');
+  homeOpening = homeProject(device).then(project => {
     if (state.appState.device === device && !state.appState.project) return open(device, project);
   }).catch(error => showToast(error.message === 'project not found'
-    ? 'Update this device’s Bridge to browse files.' : `Home folder unavailable: ${error.message}`));
+    ? 'Update this device’s Bridge to browse files.' : `Home folder unavailable: ${error.message}`))
+    .finally(() => {
+      homeOpening = null;
+      button?.removeAttribute('aria-busy');
+    });
+  return homeOpening;
 }
 
-function openHomeFilesPage() {
-  return withHomeProject((device, project) => window.openHomeFiles?.(project));
+function openHomeFilesPage(button) {
+  return withHomeProject((device, project) => window.openHomeFiles?.(project), button);
 }
 
 function openHomeTerminal(device, projectHash) {
@@ -586,8 +594,12 @@ function openHomeTerminal(device, projectHash) {
   return opening;
 }
 
-function openHomeTerminalPage() {
-  return withHomeProject((device, project) => openHomeTerminal(device, project.hash));
+function openHomeTerminalPage(button) {
+  return withHomeProject((device, project) => {
+    // Resolving home needed the control socket; the terminal uses its own.
+    if (!state.wsSessionId) disconnectWs();
+    return openHomeTerminal(device, project.hash);
+  }, button);
 }
 
 function updateBreadcrumbTruncation(nav) {
