@@ -22,6 +22,7 @@
   if (!valid(initial)) {
     initial = window.__BATON_NATIVE_THEME__;
     try { if (window.BatonAndroid) initial = window.BatonAndroid.getTheme(); } catch (_) {}
+    try { if (window.harmonyBridge && window.harmonyBridge.getTheme) initial = window.harmonyBridge.getTheme(); } catch (_) {}
   }
   window.batonTheme = {
     preference: function () { return preference; },

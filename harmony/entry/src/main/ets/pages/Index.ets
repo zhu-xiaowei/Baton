@@ -77,6 +77,7 @@ struct Index {
   private resMgr: resourceManager.ResourceManager | null = null;
   @State loading: boolean = true;
   @State failed: boolean = false;
+  @StorageProp('baton.canvas') canvas: string = '#0D1117';
 
   aboutToAppear(): void {
     const ctx: common.Context = getContext(this);
@@ -166,13 +167,20 @@ struct Index {
     return true;
   }
 
-  // Back key: navigate web history first, exit the app only at the first page.
+  // Back gesture goes to the page's in-app navigation (web/js/system-back.js),
+  // like Android. Web history is never used: it would return to landing.html.
+  // A page without the hook, or one already at its root, backgrounds the app.
   onBackPress(): boolean {
-    if (this.controller.accessBackward()) {
-      this.controller.backward();
-      return true;
-    }
-    return false;
+    this.controller.runJavaScript('window.__batonSystemBack ? String(window.__batonSystemBack()) : "none"')
+      .then((result: string) => {
+        if (result.replace(/"/g, '') !== 'true') { this.moveToBackground(); }
+      })
+      .catch(() => { this.moveToBackground(); });
+    return true;
+  }
+
+  private moveToBackground(): void {
+    (getContext(this) as common.UIAbilityContext).moveAbilityToBackground().catch(() => {});
   }
 
   build() {
@@ -191,6 +199,10 @@ struct Index {
         .onlineImageAccess(true)
         // The secure app:// page embeds the http://127.0.0.1 Remote preview iframe.
         .mixedMode(MixedMode.All)
+        // prefers-color-scheme follows the system for the System theme; pages are never force-darkened.
+        .darkMode(WebDarkMode.Auto)
+        .forceDarkAccess(false)
+        .backgroundColor(this.canvas)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         // Declarative, because registerJavaScriptProxy objects appear only after a reload.
         .javaScriptProxy({
@@ -231,7 +243,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#0D1117')
+    .backgroundColor(this.canvas)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 }

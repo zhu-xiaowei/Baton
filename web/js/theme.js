@@ -41,7 +41,7 @@ function updateThemeControls() {
 window.addEventListener('themechange', updateThemeControls);
 updateThemeControls();
 
-if (window.__TAURI_INTERNALS__) {
+if (window.__TAURI_INTERNALS__ || window.harmonyBridge?.setTheme) {
   import('./theme-native.js').then(({ initNativeTheme }) => initNativeTheme()).catch(error => {
     console.warn('Could not synchronize native appearance', error);
   });

@@ -3,6 +3,14 @@
     {
       "name": "camera_reason",
       "value": "仅在扫码登录时使用相机识别登录二维码，不拍照、不录像、不保存图像。"
+    },
+    {
+      "name": "dialog_ok",
+      "value": "确定"
+    },
+    {
+      "name": "dialog_cancel",
+      "value": "取消"
     }
   ]
 }

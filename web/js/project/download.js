@@ -1,14 +1,14 @@
-import { harmonyBridge, harmonyCall } from '../harmony.js';
+import { harmonyBridge, harmonyCall, harmonySend } from '../harmony.js';
 
 export function nativeDownloads() {
   return !!window.__TAURI_INTERNALS__ || !!harmonyBridge();
 }
 
-// iOS saves one file at a time through the share sheet, so its download stops when the viewer closes.
-// iPadOS reports a Mac user agent; touch support tells them apart.
+// iOS (share sheet) and HarmonyOS (save dialog) save one file at a time, so their download stops
+// when the viewer closes. iPadOS reports a Mac user agent; touch support tells them apart.
 export function nativeDownloadsStopOnClose() {
   const navigator = window.navigator;
-  return nativeDownloads() && (/iPhone|iPad|iPod/.test(navigator.userAgent)
+  return !!harmonyBridge() || nativeDownloads() && (/iPhone|iPad|iPod/.test(navigator.userAgent)
     || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
@@ -18,6 +18,10 @@ export function nativeSaveOpensAfterTransfer() {
 }
 
 export async function cancelNativeDownload() {
+  if (harmonyBridge()) {
+    try { harmonySend('cancelDownload'); } catch {}
+    return;
+  }
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke('plugin:file-download|cancel').catch(() => {});
 }

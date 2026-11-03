@@ -35,6 +35,11 @@ export function handleSystemBack(navigate = () => window.navigateUp?.() === true
 
 // Tauri keeps plugin listeners across page loads, so every page must register its own.
 export function initSystemBack({ navigate } = {}) {
+  // HarmonyOS: Index.ets onBackPress calls this hook; false backgrounds the app.
+  if (window.harmonyBridge) {
+    window.__batonSystemBack = () => handleSystemBack(navigate);
+    return Promise.resolve(null);
+  }
   const android = window.BatonAndroid;
   if (!android) return Promise.resolve(null);
   return onBackButtonPress(() => {
