@@ -124,8 +124,8 @@
   --spinner: #59636e;
   --spinner-rgb: 89, 99, 110;
   --on-selected: #1f2328;
-  --composer-button: #d0d7de;
-  --composer-button-hover: #afb8c1;
+  --composer-button: #ececec;
+  --composer-button-hover: #e2e2e2;
   --send-stop: #1f2328;
   --send-stop-icon: #ffffff;
   --diff-del-line: #ffebe9;
