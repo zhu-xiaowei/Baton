@@ -1555,7 +1555,11 @@ html.native-mobile .input-row { border-radius: 24px; }
 html.native-mobile .img-btn,
 html.native-mobile .mic-btn,
 html.native-mobile #send-btn { width: 36px; height: 36px; }
-html.native-mobile .img-btn { font-size: 21px; }
+/* Extend the attachment hit area into the row padding, keeping its 36px circle. */
+html.native-mobile .img-btn {
+  width: 44px; height: 44px; margin: -4px; padding: 4px;
+  background-clip: content-box; font-size: 21px;
+}
 html.native-mobile .slash-popup-title { font-size: 13px; }
 html.native-mobile .slash-name { font-size: 15px; }
 

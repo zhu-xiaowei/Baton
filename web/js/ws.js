@@ -181,7 +181,9 @@ if (window.visualViewport && _isMobile) {
       });
     }
     var chromeHeight = 0;
-    if (_isIOS && kbUp
+    // The centered new-session layout already follows the viewport height.
+    // Hiding chrome at the keyboard threshold would make its hero jump.
+    if (_isIOS && kbUp && !document.body.classList.contains('new-session')
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
