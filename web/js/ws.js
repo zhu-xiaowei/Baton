@@ -291,6 +291,12 @@ function extractFirstPromptFromMsg(msg) {
   for (var j = 0; j < texts.length; j++) {
     var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
+    var cmd = /<command-name>\s*(\/?[^<]+?)\s*<\/command-name>/i.exec(t);
+    if (cmd) {
+      var args = (/<command-args>([\s\S]*?)<\/command-args>/i.exec(t)?.[1] || '').trim();
+      t = (cmd[1].startsWith('/') ? cmd[1] : '/' + cmd[1]) + (args ? ' ' + args : '');
+      return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
+    }
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
     if (SKIP_FIRST_PROMPT.test(t)) continue;
