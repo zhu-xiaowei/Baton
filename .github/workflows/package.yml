@@ -208,7 +208,7 @@ jobs:
       - name: DEBUG compile and render icons
         if: ${{ inputs.package == 'dev-macos' }}
         run: |
-          debug-icons/exp.sh build "$RUNNER_TEMP/up"
+          exit 1
       - uses: actions/upload-artifact@v6
         if: ${{ inputs.package == 'dev-macos' }}
         with:
@@ -240,22 +240,23 @@ jobs:
 
 
   icon15:
-    name: DEBUG icon render macOS 15
-    needs: macos
-    if: ${{ always() && inputs.package == 'dev-macos' }}
-    runs-on: macos-15
+    name: DEBUG screenshot ${{ matrix.os }}
+    if: ${{ inputs.package == 'dev-macos' }}
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v6
-        with:
-          name: icon-debug-26
-          path: ${{ runner.temp }}/in
-      - run: debug-icons/exp.sh render "$RUNNER_TEMP/in/cars" "$RUNNER_TEMP/render15"
+      - run: debug-icons/shot.sh "$RUNNER_TEMP/shot"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v6
         with:
-          name: icon-debug-15
-          path: ${{ runner.temp }}/render15
-
+          name: shot-${{ matrix.os }}
+          path: ${{ runner.temp }}/shot
   windows:
     name: Windows NSIS
     if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-windows' || inputs.package == 'dev-windows' }}
