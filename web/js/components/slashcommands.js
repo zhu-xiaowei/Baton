@@ -251,7 +251,6 @@ function renderPopup() {
 
 // One shared name-column width so every row's description starts at the same x.
 function alignNameColumn(list) {
-  if (!window.matchMedia('(min-width: 481px)').matches) return;
   list.style.setProperty('--slash-name-w', 'max-content');
   var width = 0;
   list.querySelectorAll('.slash-command-name').forEach(function (el) {
