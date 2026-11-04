@@ -8,7 +8,7 @@ if [ "$1" = build ]; then
   mkdir -p "$RUNNER_TEMP/ac"; actool "$src" --compile "$RUNNER_TEMP/ac" --output-format human-readable-text --errors --output-partial-info-plist "$RUNNER_TEMP/ac/i.plist" --app-icon Icon --include-all-app-icons --enable-on-demand-resources NO --development-region en --target-device mac --minimum-deployment-target 26.0 --platform macosx >/dev/null
   clang -fobjc-arc -framework Foundation -o "$RUNNER_TEMP/cartrim" debug-icons/cartrim.m || exit 1
   T="$RUNNER_TEMP/cartrim"; base="$RUNNER_TEMP/ac/Assets.car"
-  $T "$base" "$RUNNER_TEMP/list.car" list
+  DUMP=1 $T "$base" "$RUNNER_TEMP/list.car" list | grep -iE "==|key|asset|write|remove|enumerate|format|comp|bytes="
   for m in rewrite dropicons dropall keep:Icon256x256 keep:Icon128x128; do n=$(echo $m | tr ':' '_'); mkdir -p "$c/$n"; $T "$base" "$c/$n/Assets.car" $m; echo "$n gz=$(gzip -9c "$c/$n/Assets.car" | wc -c)"; done
   mkdir -p "$c/orig"; cp "$base" "$c/orig/Assets.car"
   for n in dropall keep_Icon256x256; do echo "== after $n"; $T "$c/$n/Assets.car" "$RUNNER_TEMP/l2.car" list; done
