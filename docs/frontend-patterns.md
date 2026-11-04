@@ -387,6 +387,17 @@ Assistant text blocks rendered to HTML via `renderMd(text)`:
 marked.js (GFM + breaks) + highlight.js (code highlighting)
 ```
 
+Chat, streamed messages, summaries and file previews share these rules. Each issue has one regression case in `test/frontend/markdown-math.test.mjs`, except table layout, which is checked in browser screenshots.
+
+| Case | Expected result |
+|---|---|
+| Prices: `$0.06 = **+$3**` | Dollar signs and bold text survive, including streaming. |
+| Approximation: `~$20`, `~~old~~` | Single tildes stay literal; only double tildes strike text. |
+| Long table at 390px width | Cells retain a minimum width of `6em`; remaining columns are reachable by horizontal scrolling. |
+| Incomplete math: `$$x$` | Stays literal without swallowing later Markdown; normal formulas and [protected math syntax](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions) still render. |
+| `math` code fence | Displays math; ordinary code fences remain code. |
+| `> [!WARNING]` | Displays a GitHub alert; the same marker inside code stays literal. |
+
 ## 15. Thinking Block Rendering
 
 `thinking` blocks in assistant messages rendered as collapsible regions:
