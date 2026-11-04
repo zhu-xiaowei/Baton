@@ -133,7 +133,7 @@ jobs:
           sdk: xcode-26.6
       - run: npm ci
       - run: mkdir -p src-tauri/gen/apple/assets
-      - run: npm run tauri -- ios build --ci --no-sign --archive-only
+      - run: npm run tauri -- ios build --ci --no-sign --archive-only --features tauri/devtools
       - name: Stage unsigned IPA
         run: |
           archive="$(find src-tauri/gen/apple/build -maxdepth 1 -name '*.xcarchive' -type d -print -quit)"
