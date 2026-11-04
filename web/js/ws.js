@@ -278,7 +278,7 @@ if (_isMobile) {
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
 var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
 
-function extractFirstPromptFromMsg(msg) {
+function extractFirstPromptFromMsg(msg, fallback) {
   if (msg.type !== 'user') return '';
   var c = msg.content;
   var texts = [];
@@ -291,11 +291,11 @@ function extractFirstPromptFromMsg(msg) {
   for (var j = 0; j < texts.length; j++) {
     var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
-    var cmd = /<command-name>\s*(\/?[^<]+?)\s*<\/command-name>/i.exec(t);
+    // Like CC: a command names the session only when no real prompt follows.
+    var cmd = fallback && /<command-name>(.*?)<\/command-name>/.exec(t);
     if (cmd) {
-      var args = (/<command-args>([\s\S]*?)<\/command-args>/i.exec(t)?.[1] || '').trim();
-      t = (cmd[1].startsWith('/') ? cmd[1] : '/' + cmd[1]) + (args ? ' ' + args : '');
-      return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
+      fallback.command = fallback.command || cmd[1];
+      continue;
     }
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
@@ -320,17 +320,18 @@ function isInheritedAgentContext(message, messages) {
 }
 
 function updateTitleFromMessages() {
-  var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
+  var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '', fallback = {};
   for (var i = 0; i < state.wsAllMessages.length; i++) {
     var m = state.wsAllMessages[i];
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
     if (!firstUser) {
-      var fp = extractFirstPromptFromMsg(m);
+      var fp = extractFirstPromptFromMsg(m, fallback);
       if (fp) firstUser = fp;
     }
   }
+  firstUser = firstUser || fallback.command || '';
   var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
   if (state._titleRename?.sessionId === state.appState.session) {
     if (customTitle !== state._titleRename.name) return;
