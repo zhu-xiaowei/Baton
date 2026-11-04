@@ -2,7 +2,7 @@ import { showCenteredModal, hideCenteredModal } from './modal-viewport.js';
 
 // In-page, because window.confirm returns false at once in the iOS app's WKWebView.
 // choices are [value, label, primary]; dismissing (Escape, backdrop) resolves `dismissed`.
-export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Confirm', true]], dismissed = false) {
+export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Confirm', true]], dismissed = false, detail = '') {
   return new Promise(resolve => {
     const previousFocus = document.activeElement;
     const overlay = document.createElement('div');
@@ -12,6 +12,8 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     overlay.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true">'
       + '<div class="modal-title"></div><div class="modal-actions"></div></div>';
     overlay.querySelector('.modal-title').textContent = message;
+    if (detail) overlay.querySelector('.modal-title').insertAdjacentHTML('afterend', '<div class="modal-desc"></div>');
+    if (detail) overlay.querySelector('.modal-desc').textContent = detail;
     const buttons = choices.map(([value, label, primary]) => {
       const button = document.createElement('button');
       button.type = 'button';

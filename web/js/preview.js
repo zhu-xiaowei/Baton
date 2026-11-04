@@ -470,7 +470,8 @@ async function connectChoosing(entry, page) {
   // A second click while the dialog is open shares its answer.
   entry.choosing ??= confirmDialog(entry.status.replace(/^Preview failed: /, ''), owner === 'baton'
     ? [['next', 'Open on another port'], ['takeover', 'Take over', true]]
-    : [owner ? [`quit:${entry.pid}`, `Quit ${owner}`] : ['', 'Cancel'], ['next', 'Open on another port', true]], '')
+    : [owner ? [`quit:${entry.pid}`, 'Take over'] : ['', 'Cancel'], ['next', 'Open on another port', true]], '',
+  owner && owner !== 'baton' ? 'Take over stops it.' : '')
     .finally(() => { entry.choosing = null; });
   const mode = await entry.choosing;
   return mode ? connect(entry, { mode }) : null;
