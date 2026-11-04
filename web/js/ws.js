@@ -171,10 +171,11 @@ if (window.visualViewport && _isMobile) {
     }
     if (viewportGrowing) _followKeyboardOpen = false;
     _mobileKeyboardOpen = kbUp;
-    if (keyboardClosing && state.stickBottom) {
+    if (keyboardClosing && state.stickBottom && state.appState.session && state.appState.session !== '__new__') {
+      var sessionId = state.appState.session;
       requestAnimationFrame(function () {
         requestAnimationFrame(function () {
-          if (!state.stickBottom) return;
+          if (!state.stickBottom || state.appState.session !== sessionId) return;
           var currentContent = document.getElementById('content');
           if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
         });
