@@ -205,23 +205,17 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
           npm run build:mac
-      - name: DEBUG render icons
+      - name: DEBUG compile and render icons
         if: ${{ inputs.package == 'dev-macos' }}
         run: |
-          sw_vers
-          d="$RUNNER_TEMP/apps"; o="$RUNNER_TEMP/render"; mkdir -p "$d" "$o"
-          mk() { a="$d/$1.app"; mkdir -p "$a/Contents/Resources" "$a/Contents/MacOS"; cp /usr/bin/true "$a/Contents/MacOS/$1"
-            /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string $1" -c "Add :CFBundleIdentifier string com.batonai.debug.$1" -c "Add :CFBundlePackageType string APPL" -c "Add :CFBundleIconFile string icon.icns" "$a/Contents/Info.plist"; }
-          for v in A_old B_palette C_rgba D_noshadow; do mk $v; cp debug-icons/$v.icns "$d/$v.app/Contents/Resources/icon.icns"; done
-          mk E_car; cp debug-icons/B_palette.icns "$d/E_car.app/Contents/Resources/icon.icns"; cp debug-icons/E_Assets.car "$d/E_car.app/Contents/Resources/Assets.car"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Icon" "$d/E_car.app/Contents/Info.plist"
-          for a in "$d"/*.app; do /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$a"; done
-          swift debug-icons/render.swift "$d" "$o"
+          debug-icons/car.sh compile "$RUNNER_TEMP/cars"
+          debug-icons/car.sh render "$RUNNER_TEMP/cars" "$RUNNER_TEMP/render26"
+          mkdir -p "$RUNNER_TEMP/up"; cp -R "$RUNNER_TEMP/cars" "$RUNNER_TEMP/render26" "$RUNNER_TEMP/up/"
       - uses: actions/upload-artifact@v6
         if: ${{ inputs.package == 'dev-macos' }}
         with:
-          name: icon-render
-          path: ${{ runner.temp }}/render
+          name: icon-debug-26
+          path: ${{ runner.temp }}/up
       - name: DEBUG stop
         if: ${{ inputs.package == 'dev-macos' }}
         run: exit 1
@@ -245,6 +239,24 @@ jobs:
           path: artifacts/Baton.dmg
           if-no-files-found: error
           retention-days: 7
+
+
+  icon15:
+    name: DEBUG icon render macOS 15
+    needs: macos
+    if: ${{ always() && inputs.package == 'dev-macos' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with:
+          name: icon-debug-26
+          path: ${{ runner.temp }}/in
+      - run: debug-icons/car.sh render "$RUNNER_TEMP/in/cars" "$RUNNER_TEMP/render15"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: icon-debug-15
+          path: ${{ runner.temp }}/render15
 
   windows:
     name: Windows NSIS
