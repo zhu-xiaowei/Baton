@@ -41,7 +41,7 @@ def test_status_transitions(monkeypatch):
     monkeypatch.setattr(worker, "completion_summary", lambda session: "Fixed it.")
     finished = worker.notification(SESSION, DONE, "finished")
     assert finished["title"] == "Baton · Fix login"
-    assert finished["body"] == "✅ Finished · Fixed it."
+    assert finished["body"] == "✅ Done · Fixed it."
     assert worker.notification(SESSION, WAITING, "ask")["body"] == "🟡 Needs input · npm test"
     # A queued next approval stays needs_input but changes the detail.
     assert worker.notification(WAITING, {**WAITING, "agentDetail": "rm -rf build"}, "next")
@@ -125,6 +125,11 @@ def test_summary_waits_for_the_final_reply_and_skips_interrupts(monkeypatch):
     stopped = Pages([{"type": "user", "content": json.dumps([{"type": "text", "text": "[Request interrupted by user]"}])}])
     monkeypatch.setattr(worker._ddb, "Table", lambda name: stopped)
     assert worker.notification(SESSION, DONE, "stopped") is None
+    notice = {"type": "user", "content": "<task-notification>"}  # Starts CC's report-back turn.
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([notice, assistant("4/5")]))
+    assert worker.completion_summary(SESSION) is None  # That turn alerts when it ends.
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([assistant("All done."), notice]))
+    assert worker.completion_summary(SESSION) == "All done."
     codex = Pages([{"type": "assistant", "stopReason": "end_turn", "content": "[]"}, assistant("Done.", None), user])
     monkeypatch.setattr(worker._ddb, "Table", lambda name: codex)
     assert worker.completion_summary(SESSION) == "Done." and codex.queries == 1  # Codex's empty end marker.

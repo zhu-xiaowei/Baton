@@ -291,6 +291,8 @@ export function statusFromEntry(entry) {
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
     if (sr === 'tool_use') return 'running';
+    // A thinking row already carries the message's end_turn while its reply is still coming.
+    if (content?.length === 1 && /^(redacted_)?thinking$/.test(content[0].type)) return 'running';
     if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'completed';
   }
   if (t === 'user') {
@@ -300,8 +302,6 @@ export function statusFromEntry(entry) {
       // [Request interrupted by user] or [Request interrupted by user for tool use]
       if (c.length === 1 && c[0].type === 'text'
         && c[0].text.startsWith('[Request interrupted by user')) return 'completed';
-      // tool_result with is_error=true only (user interrupted during tool execution)
-      if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'completed';
     }
     if (typeof c === 'string') {
       const cs = c.trim();
