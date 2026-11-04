@@ -232,16 +232,31 @@ function renderPopup() {
     var argumentHint = _mode === 'commands' && item.argumentHint
       ? '<span class="slash-argument-hint">' + esc(item.argumentHint) + '</span>'
       : '';
+    var fullText = prefix + label + (argumentHint ? ' ' + item.argumentHint : '')
+      + (item.description ? '\n' + item.description : '');
     return '<div class="slash-item' + (i === _selected ? ' active' : '')
-      + (item.disabled ? ' disabled' : '') + '" data-i="' + i + '">'
+      + (argumentHint ? ' has-hint' : '')
+      + (item.disabled ? ' disabled' : '') + '" data-i="' + i + '"'
+      + ' title="' + esc(fullText).replace(/"/g, '&quot;') + '">'
       + '<span class="slash-name"><span class="slash-command-name">'
       + prefix + esc(label) + '</span>' + argumentHint + '</span>'
       + description
       + '</div>';
   }).join('');
   popupEl().style.display = 'block';
+  alignNameColumn(list);
   _open = true;
   scrollSelectedIntoView();
+}
+
+// One shared name-column width so every row's description starts at the same x.
+function alignNameColumn(list) {
+  list.style.setProperty('--slash-name-w', 'max-content');
+  var width = 0;
+  list.querySelectorAll('.slash-command-name').forEach(function (el) {
+    width = Math.max(width, el.getBoundingClientRect().width);
+  });
+  list.style.setProperty('--slash-name-w', Math.min(Math.ceil(width), 180) + 'px');
 }
 
 function scrollSelectedIntoView() {
