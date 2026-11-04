@@ -208,7 +208,7 @@ jobs:
       - name: DEBUG compile and render icons
         if: ${{ inputs.package == 'dev-macos' }}
         run: |
-          debug-icons/car.sh compile "$RUNNER_TEMP/cars"
+          mkdir -p "$RUNNER_TEMP/cars"
           debug-icons/car.sh render "$RUNNER_TEMP/cars" "$RUNNER_TEMP/render26"
           mkdir -p "$RUNNER_TEMP/up"; cp -R "$RUNNER_TEMP/cars" "$RUNNER_TEMP/render26" "$RUNNER_TEMP/up/"
       - uses: actions/upload-artifact@v6

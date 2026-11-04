@@ -21,7 +21,7 @@ mk() { a="$d/$1.app"; mkdir -p "$a/Contents/Resources" "$a/Contents/MacOS"; cp /
   /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string $1" -c "Add :CFBundleIdentifier string com.batonai.debug.$1" -c "Add :CFBundlePackageType string APPL" -c "Add :CFBundleIconFile string icon.icns" "$a/Contents/Info.plist"
   cp debug-icons/A_old.icns "$a/Contents/Resources/icon.icns"; }
 mk A_old
-mk B_palette; cp debug-icons/B_palette.icns "$d/B_palette.app/Contents/Resources/icon.icns"
-for n in $(ls "$cars"); do [ -f "$cars/$n/Assets.car" ] || continue; mk "car_$n"; cp "$cars/$n/Assets.car" "$d/car_$n.app/Contents/Resources/"; /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Icon" "$d/car_$n.app/Contents/Info.plist"; done
+for v in B_palette V1_fullbleed_round V2_offwhite V3_gradient V4_inset50 V5_stroke; do mk $v; cp debug-icons/$v.icns "$d/$v.app/Contents/Resources/icon.icns"; done
+for n in $(ls "$cars" 2>/dev/null); do [ -f "$cars/$n/Assets.car" ] || continue; mk "car_$n"; cp "$cars/$n/Assets.car" "$d/car_$n.app/Contents/Resources/"; /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Icon" "$d/car_$n.app/Contents/Info.plist"; done
 for a in "$d"/*.app; do $LSR -f "$a"; done
 swift debug-icons/render.swift "$d" "$o"
