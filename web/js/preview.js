@@ -6,6 +6,7 @@ import { openBrowserPage } from './browser/page.js';
 import { normalizeBrowserAddress } from './browser/address.js';
 import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
+import { confirmDialog } from './components/confirm-dialog.js';
 import { previewNativeAvailable } from './native-shell.js';
 import { previewOpenExternal } from './preview-native.js';
 import '../css/preview.css';
@@ -216,7 +217,7 @@ function ensureOverlay(device) {
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
     try {
-      const origin = await connect(entry);
+      const origin = await connectChoosing(entry);
       if (origin || portNotListening(entry)) {
         input.value = '';
         if (view.isConnected && overlay?.classList.contains('open') && !browserView
@@ -379,7 +380,7 @@ async function wsUrl() {
   return config.wsUrl;
 }
 
-async function connect(entry, { speculative = false } = {}) {
+async function connect(entry, { speculative = false, mode } = {}) {
   if (!speculative) adoptPrewarm(entry);
   if (entry.closing) await entry.closing;
   if (entry.origin && !entry.tunnel?.closed) {
@@ -393,13 +394,14 @@ async function connect(entry, { speculative = false } = {}) {
   if (entry.pending) return entry.pending;
   const version = ++entry.version;
   entry.origin = '';
+  entry.portInUse = undefined;
   entry.status = 'Connecting…';
   entry.pending = (async () => {
     try {
       const endpoint = await wsUrl();
       if (entry.version !== version) return null;
       const tunnel = new PreviewTunnel({
-        device: entry.device, target: entry.target, wsUrl: endpoint, key: state.KEY,
+        device: entry.device, target: entry.target, wsUrl: endpoint, key: state.KEY, mode,
         onStatus(message) {
           if (entry.version !== version) return;
           entry.status = message;
@@ -430,6 +432,8 @@ async function connect(entry, { speculative = false } = {}) {
     } catch (error) {
       if (entry.version === version) {
         entry.origin = '';
+        entry.portInUse = error.portInUse;
+        entry.pid = error.pid;
         entry.status = `Preview failed: ${error.message || error}`;
         await entry.tunnel?.close();
         if (entry.version === version) {
@@ -439,7 +443,7 @@ async function connect(entry, { speculative = false } = {}) {
               entry.listed = true;
               savePorts();
               renderList();
-            } else {
+            } else if (entry.speculative || entry.portInUse === undefined) {
               connections.delete(JSON.stringify([entry.device, entry.target.port]));
             }
           }
@@ -455,6 +459,22 @@ async function connect(entry, { speculative = false } = {}) {
   })();
   updateEntry(entry);
   return entry.pending;
+}
+
+// A taken local port is never replaced silently: the user decides how to open it.
+async function connectChoosing(entry, page) {
+  const origin = await connect(entry);
+  const owner = entry.portInUse;
+  if (origin || owner === undefined) return origin;
+  page?.setError(entry.status);
+  // A second click while the dialog is open shares its answer.
+  entry.choosing ??= confirmDialog(entry.status.replace(/^Preview failed: /, ''), owner === 'baton'
+    ? [['next', 'New port'], ['takeover', 'Take over', true]]
+    : [owner ? [`quit:${entry.pid}`, 'Take over'] : ['', 'Cancel'], ['next', 'New port', true]], '',
+  owner && owner !== 'baton' ? 'Take over stops it.' : '')
+    .finally(() => { entry.choosing = null; });
+  const mode = await entry.choosing;
+  return mode ? connect(entry, { mode }) : null;
 }
 
 function localUrl(origin, target) {
@@ -496,7 +516,7 @@ async function openInline(entry, fromList) {
         connection.device === entry.device && connection.origin === origin);
       if (existing) target = parsePreviewTarget(`http://127.0.0.1:${existing.target.port}${target.pathname}${target.search}${target.hash}`);
       const connection = getConnection(target, entry.device);
-      const localOrigin = await connect(connection);
+      const localOrigin = await connectChoosing(connection, page);
       if (!localOrigin) throw new Error(connection.status);
       if (browserView === page) selected = connection;
       savePorts();
@@ -507,6 +527,12 @@ async function openInline(entry, fromList) {
       const origin = new URL(url).origin;
       selected = Array.from(connections.values()).find(connection =>
         connection.device === entry.device && connection.origin === origin) || null;
+    },
+    // A tunnel this tab lost (taken over by another tab) reconnects instead of reloading through that tab.
+    reloadAddress(url) {
+      if (browserView !== page || !selected || (selected.origin && !selected.tunnel?.closed)) return null;
+      const current = new URL(url);
+      return `http://127.0.0.1:${selected.target.port}${current.pathname}${current.search}${current.hash}`;
     },
     onExternal: launchBrowser,
     onStop() {
@@ -523,7 +549,7 @@ async function openInline(entry, fromList) {
   cachedBrowser = { page, entry, requestUrl, fromList };
   browserView = page;
   const target = entry.target;
-  const origin = await connect(entry);
+  const origin = await connectChoosing(entry, page);
   if (browserView !== page || selected !== entry || version !== navigationVersion) return;
   if (!origin) {
     page.setError(entry.status);
@@ -534,7 +560,7 @@ async function openInline(entry, fromList) {
 
 async function openBrowser(entry) {
   const target = entry.target;
-  const origin = await connect(entry);
+  const origin = await connectChoosing(entry);
   if (!origin) {
     if (overlay?.isConnected) {
       const message = overlay.querySelector('.preview-form-error');
