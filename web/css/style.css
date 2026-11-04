@@ -1153,6 +1153,16 @@ html.native-mobile .slash-description {
   -webkit-line-clamp: 2; line-clamp: 2;
   max-height: 2.7em;
 }
+/* Wide popup: name column shared by all rows (--slash-name-w, set by renderPopup);
+   with an argument hint the description takes at most half the row, the hint follows it. */
+@media (min-width: 481px) {
+  .slash-item { grid-template-columns: var(--slash-name-w, max-content) minmax(0, 1fr); }
+  .slash-item.has-hint { grid-template-columns: var(--slash-name-w, max-content) fit-content(50%) minmax(0, 1fr); }
+  .slash-name { display: contents; }
+  .slash-command-name { grid-column: 1; grid-row: 1; }
+  .slash-description { grid-column: 2; grid-row: 1; }
+  .slash-argument-hint { grid-column: 3; grid-row: 1; }
+}
 @media (max-width: 480px) {
   .slash-item { grid-template-columns: 1fr; gap: 2px; }
   .slash-name { flex-direction: column; align-items: stretch; gap: 2px; }
