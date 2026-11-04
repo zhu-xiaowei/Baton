@@ -208,9 +208,7 @@ jobs:
       - name: DEBUG compile and render icons
         if: ${{ inputs.package == 'dev-macos' }}
         run: |
-          mkdir -p "$RUNNER_TEMP/cars"
-          debug-icons/vol.sh "$RUNNER_TEMP/render26"
-          mkdir -p "$RUNNER_TEMP/up"; cp -R "$RUNNER_TEMP/cars" "$RUNNER_TEMP/render26" "$RUNNER_TEMP/up/"
+          debug-icons/exp.sh build "$RUNNER_TEMP/up"
       - uses: actions/upload-artifact@v6
         if: ${{ inputs.package == 'dev-macos' }}
         with:
@@ -252,7 +250,7 @@ jobs:
         with:
           name: icon-debug-26
           path: ${{ runner.temp }}/in
-      - run: debug-icons/vol.sh "$RUNNER_TEMP/render15"
+      - run: debug-icons/exp.sh render "$RUNNER_TEMP/in/cars" "$RUNNER_TEMP/render15"
       - uses: actions/upload-artifact@v6
         with:
           name: icon-debug-15
