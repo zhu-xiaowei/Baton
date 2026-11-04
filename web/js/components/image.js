@@ -7,6 +7,7 @@ import { cacheAttachment, isCachedPreview } from './attachment-cache.js';
 import { contentHash } from './content-hash.js';
 import { progressRingHtml, setProgressRingPercent } from './progress-ring.js';
 import { syncComposerDraft } from '../drafts/composer-draft.js';
+import { openAttachmentPicker } from './attachment-picker.js';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -289,7 +290,7 @@ function viewStagedImage(i) {
 
 // Function bridges for inline HTML handlers (state.stagedImages lives in state.js).
 Object.assign(window, {
-  onImagePicked, onInputPaste, stageImageFile, renderStagedImages, removeStagedImage,
+  openAttachmentPicker, onImagePicked, onInputPaste, stageImageFile, renderStagedImages, removeStagedImage,
   viewStagedImage,
   stageAttachmentFile, retryStagedFile,
 });

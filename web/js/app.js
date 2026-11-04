@@ -29,7 +29,9 @@ import { setNativeTabTitle } from './macos-tabs.js';
 import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
-import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { saveHomeTerminalView, savedHomeTerminal, saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { homeProject } from './project/home.js';
+import { showToast } from './components/toast.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
@@ -494,11 +496,15 @@ function updateBreadcrumb() {
     topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
+    var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
+      + ' aria-label="Home files" title="Home files">' + FOLDER_ICON_SVG + '</button>';
+    var homeTerminalButton = '<button class="project-files-entry project-terminal-entry" type="button" onclick="openHomeTerminalPage(this)"'
+      + ' aria-label="Home terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>';
     var previewButton = '<button class="project-files-entry" type="button" onclick="openPreviewPortPrompt()"'
       + ' aria-label="Remote preview" title="Remote preview">'
-      + '<svg style="width:26px;height:26px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
       + '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>';
-    topRight.innerHTML = previewButton
+    topRight.innerHTML = homeFilesButton + previewButton + homeTerminalButton
       + '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
@@ -557,6 +563,43 @@ function openProjectTerminalPage() {
   saveNav();
   saveTerminalView(state.appState);
   return opening;
+}
+
+let homeOpening = null;
+
+// Home tools open only while the project list of the same device is still showing.
+function withHomeProject(open, button) {
+  const device = state.appState.device;
+  if (!device || state.appState.project || homeOpening) return homeOpening;
+  button?.setAttribute('aria-busy', 'true');
+  homeOpening = homeProject(device).then(project => {
+    if (state.appState.device === device && !state.appState.project) return open(device, project);
+  }).catch(error => showToast(error.message === 'project not found'
+    ? 'Update this device’s Bridge to browse files.' : `Home folder unavailable: ${error.message}`))
+    .finally(() => {
+      homeOpening = null;
+      button?.removeAttribute('aria-busy');
+    });
+  return homeOpening;
+}
+
+function openHomeFilesPage(button) {
+  return withHomeProject((device, project) => window.openHomeFiles?.(project), button);
+}
+
+function openHomeTerminal(device, projectHash) {
+  const opening = openProjectTerminal({ device, projectHash, projectName: '~' });
+  saveNav();
+  saveHomeTerminalView(device, projectHash);
+  return opening;
+}
+
+function openHomeTerminalPage(button) {
+  return withHomeProject((device, project) => {
+    // Resolving home needed the control socket; the terminal uses its own.
+    if (!state.wsSessionId) disconnectWs();
+    return openHomeTerminal(device, project.hash);
+  }, button);
 }
 
 function updateBreadcrumbTruncation(nav) {
@@ -2290,7 +2333,9 @@ attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteMo
   if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
     openGitStatusPage({ restoring: true });
   }
-  if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
+  var homeTerminalHash = savedHomeTerminal(state.appState);
+  if (homeTerminalHash) openHomeTerminal(state.appState.device, homeTerminalHash);
+  else if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();
 
 // In a native shell (WKWebView/WebView2/ArkWeb) target=_blank can't open a tab,
@@ -2328,6 +2373,8 @@ Object.assign(window, {
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
+  openHomeFilesPage,
+  openHomeTerminalPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
   maybeLoadOlderAndPrepend,
 });

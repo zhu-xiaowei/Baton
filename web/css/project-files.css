@@ -25,6 +25,10 @@
   stroke-width: 1.5;
   transform: translate(-50%, -50%);
 }
+.project-files-entry[aria-busy="true"] {
+  opacity: 0.5;
+  cursor: progress;
+}
 .project-files-entry.active {
   color: var(--text-normal);
   background: var(--surface-raised);
