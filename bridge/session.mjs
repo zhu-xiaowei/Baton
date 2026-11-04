@@ -291,18 +291,15 @@ export function statusFromEntry(entry) {
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
     if (sr === 'tool_use') return 'running';
-    // CC writes each block as its own row with the message's final stop_reason, so a
-    // thinking row can read end_turn while its reply is still being generated.
-    if (Array.isArray(content) && content.length
-      && content.every((b) => b.type === 'thinking' || b.type === 'redacted_thinking')) return 'running';
+    // A thinking row already carries the message's end_turn while its reply is still coming.
+    if (content?.length === 1 && /^(redacted_)?thinking$/.test(content[0].type)) return 'running';
     if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'completed';
   }
   if (t === 'user') {
     if (entry.isMeta || entry.isCompactSummary) return null; // meta, not a turn
     const c = entry.message?.content;
     if (Array.isArray(c)) {
-      // [Request interrupted by user] or [Request interrupted by user for tool use].
-      // A failed tool's is_error result is not an interrupt; CC appends this row when one happens.
+      // [Request interrupted by user] or [Request interrupted by user for tool use]
       if (c.length === 1 && c[0].type === 'text'
         && c[0].text.startsWith('[Request interrupted by user')) return 'completed';
     }
