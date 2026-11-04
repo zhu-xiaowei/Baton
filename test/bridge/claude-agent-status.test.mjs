@@ -824,6 +824,17 @@ test('a background task notification starts a turn instead of reading as the las
   }), 'running');
 });
 
+test('a failed tool or a reply still after its thinking row keeps the turn running', () => {
+  assert.equal(statusFromEntry({
+    type: 'user',
+    message: { content: [{ type: 'tool_result', is_error: true, content: 'Exit code 1' }] },
+  }), 'running');
+  assert.equal(statusFromEntry({
+    type: 'assistant',
+    message: { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }] },
+  }), 'running');
+});
+
 test('idle pooled process no longer owns session status', () => {
   const sessionId = '88888888-8888-4888-8888-888888888888';
   const pool = new ClaudePool();

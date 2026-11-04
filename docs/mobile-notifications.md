@@ -3,7 +3,7 @@
 Baton alerts when a session goes from running to done, or needs input (an
 approval, a question or a plan). Settings has one **Push notifications** switch,
 on by default. Alerts show the project folder and the session on their own lines (iOS
-title + subtitle; Android sub-text + title), then `✅ Finished · <last reply>` or
+title + subtitle; Android sub-text + title), then `✅ Done · <last reply>` or
 `🟡 Needs input · <command, file or question>`; tapping opens the session. Builds
 before this layout show `title` (**folder · session**).
 
@@ -28,7 +28,9 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
    `needs_input`, and on a new `agentDetail` while waiting. Every turn end counts,
-   including the turns CC starts to report a finished background task. Every
+   including the turns CC starts to report a finished background task. A turn end
+   whose newest row is already that task's `<task-notification>` is skipped: CC has
+   started the report-back turn, which alerts when it ends. Every
    alert is kept and stacked per session (iOS thread, Android group + summary).
    Android clears a session's stack when the app opens it: a tap cancels only the
    tapped alert, and the summary would otherwise stay on its own.
