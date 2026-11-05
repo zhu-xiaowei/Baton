@@ -15,6 +15,7 @@ const jobs = () => [
     ['Android APK', 'Warm production Android build on main'],
     ['iOS archive', 'Warm production iOS build on main'],
     ['macOS DMG', 'Warm production universal macOS build on main'],
+    ['Linux DEB', 'Warm production Linux build on main'],
     ['Windows NSIS', 'Warm production Windows build on main'],
   ].map(([name, stepName]) => ({
     name, conclusion: 'success', steps: [{ name: stepName, conclusion: 'success' }],
