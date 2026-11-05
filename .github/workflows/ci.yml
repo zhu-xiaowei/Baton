@@ -59,11 +59,19 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - name: Install Linux build dependencies
+      - name: Prepare Linux dependencies
         run: |
+          # Download the pinned compiler and npm packages while apt prepares GTK.
+          rust_version="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$rust_version" --profile minimal --no-self-update &
+          rust_pid=$!
+          npm ci &
+          npm_pid=$!
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
+          wait "$rust_pid"
+          wait "$npm_pid"
       - uses: ./.github/actions/rust-build-cache
         with:
           platform: linux
@@ -71,7 +79,6 @@ jobs:
           flavor: pr
           pr-opt-level: '0'
           sdk: ubuntu-24.04-webkit2gtk-4.1
-      - run: npm ci
       - run: npm run build:linux
       - name: Restore production Rust cache on main
         if: github.event_name == 'push'
