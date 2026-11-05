@@ -105,13 +105,14 @@ export class CodexAppServerClient extends EventEmitter {
     this.bin = options.bin || null;
     this.cwd = options.cwd || os.homedir();
     this.env = options.env;
+    this.configOverrides = options.configOverrides || null;
     this.spawnFn = options.spawnFn;
     this.runtime = {
       platform: options.platform || process.platform,
       nodeExecutable: options.nodeExecutable || process.execPath,
     };
     this.socketOptions = {
-      socketPath: options.socketPath,
+      socketPath: this.configOverrides ? false : options.socketPath,
       webSocketFactory: options.webSocketFactory,
       codexHomes: options.codexHomes,
       env: options.env,
@@ -185,7 +186,11 @@ export class CodexAppServerClient extends EventEmitter {
     const bin = this.bin || resolveCodexBin();
     if (!bin) throw new Error('Codex executable not found');
 
-    const proc = spawnExecutable(bin, ['app-server', '--stdio'], {
+    const args = ['app-server', '--stdio'];
+    for (const [key, value] of Object.entries(this.configOverrides || {})) {
+      args.push('-c', `${key}=${JSON.stringify(value)}`);
+    }
+    const proc = spawnExecutable(bin, args, {
       cwd: this.cwd,
       ...(this.env ? { env: this.env } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],

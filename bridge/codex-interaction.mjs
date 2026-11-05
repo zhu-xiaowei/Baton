@@ -1,3 +1,4 @@
+import { BedrockModelConfig, regionOverrides } from './bedrock-model-config.mjs';
 import { execFile } from 'node:child_process';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import {
@@ -378,9 +379,11 @@ export class CodexInteraction {
         ? () => options.client
         : (context = {}) => new CodexAppServerClient({
           ...options.clientOptions,
+          ...(context.configOverrides ? { configOverrides: context.configOverrides } : {}),
           ...(context.cwd ? { cwd: context.cwd } : {}),
           ...(context.managedOnly ? { managedOnly: true } : {}),
         }));
+    this.modelConfig = options.modelConfig || new BedrockModelConfig();
     this.writerController = options.writerController || codexWriterController;
     this.sessions = new Map();
     this.turns = new Map();
@@ -398,6 +401,7 @@ export class CodexInteraction {
         skills: null,
         tokenUsage: null,
         model: '',
+        bedrock: this.modelConfig.saved(nativeSessionId),
         effort: null,
         client: null,
         releasePromise: null,
@@ -422,6 +426,7 @@ export class CodexInteraction {
     const client = this.clientFactory({
       nativeSessionId: session.nativeSessionId,
       storageSessionId: session.storageSessionId,
+      ...(session.bedrock ? { configOverrides: regionOverrides(session.bedrock.region) } : {}),
       ...(session.cwd ? { cwd: session.cwd } : {}),
       ...(options.managedOnly ? { managedOnly: true } : {}),
     });
@@ -489,6 +494,8 @@ export class CodexInteraction {
     const resumeThread = () => client.request('thread/resume', {
       threadId: session.nativeSessionId,
       excludeTurns: true,
+      ...(session.bedrock ? { model: session.bedrock.model,
+        config: { model_reasoning_effort: session.bedrock.effort } } : {}),
     });
     let result;
     try {
@@ -592,6 +599,7 @@ export class CodexInteraction {
     if (session.releasePromise) return session.releasePromise;
     const client = session.client;
     if (!client) return;
+    if (session.controlling) return;
 
     session.subscribedGeneration = 0;
     session.releasingClient = client;
@@ -856,7 +864,11 @@ export class CodexInteraction {
   }
 
   async create(options) {
-    const client = this.clientFactory({ cwd: options.cwd });
+    const selection = this.modelConfig.defaultSettings();
+    const client = this.clientFactory({ cwd: options.cwd,
+      ...(selection ? { configOverrides: { ...regionOverrides(selection.region),
+        model: selection.model, model_reasoning_effort: selection.effort } } : {}),
+    });
     if (!client) throw new Error('Codex interaction client factory returned no client');
     let session = null;
     try {
@@ -868,6 +880,10 @@ export class CodexInteraction {
       const sessionId = storageSessionId('codex', nativeSessionId);
       session = this.#session(nativeSessionId, sessionId);
       session.cwd = options.cwd || '';
+      if (selection) {
+        this.modelConfig.save(nativeSessionId, selection);
+        session.bedrock = selection;
+      }
       session.model = result.model || '';
       session.effort = result.reasoningEffort ?? null;
       if (session.client && session.client !== client) {
@@ -965,7 +981,11 @@ export class CodexInteraction {
   }
 
   async listCommandContext(options = {}) {
-    const client = this.clientFactory({ cwd: options.cwd || process.cwd() });
+    const selection = options.nativeSessionId
+      ? this.modelConfig.saved(options.nativeSessionId) : this.modelConfig.defaultSettings();
+    const client = this.clientFactory({ cwd: options.cwd || process.cwd(),
+      ...(selection ? { configOverrides: regionOverrides(selection.region) } : {}),
+    });
     if (!client) throw new Error('Codex interaction client factory returned no client');
     try {
       await client.start();
@@ -1025,6 +1045,13 @@ export class CodexInteraction {
             value: `${model.model} ${effort.reasoningEffort}`,
           });
         }
+      }
+      const config = await client.request('config/read', { cwd, includeLayers: false }).catch(() => null);
+      if (config?.config?.model_provider === 'amazon-bedrock') {
+        for (const region of ['us-west-2', 'us-east-1']) modelOptions.push({
+          name: `region-${region}`, label: `Bedrock region: ${region}`,
+          description: 'List models and test before switching regions.', value: `region ${region}`,
+        });
       }
       const experimentalOptions = (featuresResponse?.data || [])
         .filter((feature) => feature.displayName && feature.description)
@@ -1099,6 +1126,9 @@ export class CodexInteraction {
   }
 
   async runCommand(options) {
+    if (options.name === 'model' && /^(region|test-region|apply-region)(?:\s|$)/.test(options.args || '')) {
+      return { output: await this.#regionCommand(options) };
+    }
     const session = this.#session(options.nativeSessionId, options.sessionId);
     if (options.cwd) session.cwd = options.cwd;
     const operation = session.sendLock.then(async () => {
@@ -1261,14 +1291,95 @@ export class CodexInteraction {
     return operation;
   }
 
+  async #regionCommand(options) {
+    const cwd = options.cwd || process.cwd();
+    const id = options.nativeSessionId;
+    if (!id) throw new Error('Open a session before configuring its Bedrock region.');
+    const [action, first, model, effort, extra] = String(options.args || '').trim().split(/\s+/);
+    const owner = id;
+    if (action === 'region') {
+      if (model) throw new Error('Usage: /model region <region>');
+      if (first === 'clear-default') {
+        this.modelConfig.save('', null, true);
+        return 'New sessions will use the backend configuration. Existing sessions are unchanged.';
+      }
+      const region = first || (await this.modelConfig.config(cwd)).region;
+      const catalog = await this.modelConfig.catalog(region, cwd);
+      return [
+        `**Bedrock: ${region}**`,
+        'Test a selection before saving it. Each test sends a short billable prompt using the Bridge credentials.',
+        ...catalog.models.flatMap(entry => entry.efforts.map(value =>
+          `\`/model test-region ${region} ${entry.id} ${value}\``)),
+        catalog.models.length ? '' : 'No supported models are available in this region.',
+        'Use `/model region clear-default` to reset new-session defaults.',
+      ].filter(Boolean).join('\n\n');
+    }
+    if (action === 'test-region') {
+      if (!first || !model || !effort || extra) throw new Error('Usage: /model test-region <region> <model> <effort>');
+      const result = await this.modelConfig.test({ region: first, model, effort }, cwd, owner);
+      return `Connection test passed (${result.milliseconds} ms). Save for this session's next turn:\n\n`
+        + `\`/model apply-region ${result.testId}\`\n\n`
+        + 'Append `default` to also use this selection for new sessions. This receipt expires in five minutes.';
+    }
+    if (action !== 'apply-region' || !first || (model && model !== 'default') || effort) {
+      throw new Error('Usage: /model apply-region <test-receipt> [default]');
+    }
+    const session = this.#session(id, options.sessionId);
+    if (options.cwd) session.cwd = options.cwd;
+    const operation = session.sendLock.then(async () => {
+      if (session.active || session.submitting || session.goalCallbacks) {
+        throw new Error('Stop the current turn and pause the Goal before changing regions.');
+      }
+      const selection = this.modelConfig.receipt(first, cwd, owner);
+      session.controlling = true;
+      // A read-only connection checks persisted state without resuming or taking over a writer.
+      const reader = this.clientFactory({ cwd });
+      try {
+        await reader.start();
+        const { thread } = await reader.request('thread/read', { threadId: id, includeTurns: false });
+        if (thread?.id !== id) throw new Error('Unexpected thread identity.');
+        const { goal } = await reader.request('thread/goal/get', { threadId: id });
+        if (thread.status?.type === 'active' || goal?.status === 'active'
+          || session.active || session.submitting || session.goalCallbacks) {
+          throw new Error('Stop the current turn and pause the Goal before changing regions.');
+        }
+        this.modelConfig.receipt(first, cwd, owner);
+        this.modelConfig.save(id, selection, model === 'default');
+        session.bedrock = selection;
+      } finally {
+        await Promise.resolve(reader.stop()).catch(() => {});
+        session.controlling = false;
+        await this.#release(session);
+      }
+      return `Saved **${selection.region} · ${selection.model} · ${selection.effort}** for this session's next turn.`
+        + (model === 'default' ? ' New sessions will use the same selection.' : '');
+    });
+    session.sendLock = operation.catch(() => {});
+    return operation;
+  }
+
   async #setModel(session, args) {
     const [model, effort, extra] = args.split(/\s+/);
     if (!model || !effort || extra) throw new Error('Usage: /model <model> <effort>');
+    const previous = { model: session.model, effort: session.effort };
     await session.client.request('thread/settings/update', {
-      threadId: session.nativeSessionId,
-      model,
-      effort,
+      threadId: session.nativeSessionId, model, effort,
     });
+    if (session.bedrock) {
+      try {
+        this.modelConfig.save(session.nativeSessionId, { ...session.bedrock, model, effort });
+      } catch (error) {
+        try {
+          await session.client.request('thread/settings/update', {
+            threadId: session.nativeSessionId, ...previous,
+          });
+        } catch {
+          error.message += ' Model rollback could not be confirmed; check /status before continuing.';
+        }
+        throw error;
+      }
+      session.bedrock = { ...session.bedrock, model, effort };
+    }
     session.model = model;
     session.effort = effort;
     return `Using **${model}** with **${effort}** reasoning.`;
