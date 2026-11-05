@@ -54,7 +54,7 @@ def text_summary(content):
 
 
 def completion_summary(session, attempts=3):
-    """The finished turn's last reply, or None when the user interrupted it."""
+    """The finished turn's last reply, or None when no alert should follow it."""
     messages = _ddb.Table(os.environ["BRIDGE_MESSAGES_TABLE"])
     partition = history_partition(messages, session["sessionId"])
     summary = ""
@@ -66,17 +66,20 @@ def completion_summary(session, attempts=3):
             KeyConditionExpression=Key("sessionId").eq(partition),
             ScanIndexForward=False, Limit=20, ConsistentRead=True,
         )
-        done = False
+        done = replied = False
         for message in result.get("Items", []):
             text = text_summary(message.get("content", ""))
             if message.get("type") == "user":
                 if text.startswith("[Request interrupted"):
                     return None
+                if text.startswith("<task-notification>") and not replied:
+                    return None  # CC already started a report-back turn; its own end alerts.
                 if text.startswith("<local-command-stdout>"):
                     # A slash command or Skill answers with its output, not an assistant row.
                     return re.sub(r"</?local-command-stdout>", "", text).strip()
                 break  # Never show a previous turn's answer.
             if message.get("type") == "assistant":
+                replied = True
                 summary = summary or text
                 # Claude marks its final reply end_turn; Codex appends an empty end_turn row.
                 if message.get("stopReason") == "end_turn" and (text or not _blocks(message)):
@@ -139,9 +142,9 @@ def notification(old, new, event_id):
             return None
         action, detail = "Needs input", text_summary(new.get("agentDetail", ""))
     elif after == "completed" and before == "running":
-        action, detail = "Finished", completion_summary(new)
+        action, detail = "Done", completion_summary(new)
         if detail is None:
-            return None  # The user stopped it, so they already know.
+            return None  # The user stopped it, or CC's next turn will alert.
     else:
         return None
     session_id = new["sessionId"]

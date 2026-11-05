@@ -50,6 +50,40 @@ jobs:
           done
           exit "$status"
 
+  linux:
+    name: Linux DEB
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: linux
+          targets: x86_64-unknown-linux-gnu
+          flavor: pr
+          pr-opt-level: '0'
+          sdk: ubuntu-24.04-webkit2gtk-4.1
+      - run: npm ci
+      - run: npm run build:linux
+      - name: Restore production Rust cache on main
+        if: github.event_name == 'push'
+        uses: ./.github/actions/rust-build-cache
+        with:
+          platform: linux
+          targets: x86_64-unknown-linux-gnu
+          sdk: ubuntu-24.04-webkit2gtk-4.1
+      - name: Warm production Linux build on main
+        if: github.event_name == 'push'
+        run: npm run build:linux
+
   android:
     name: Android APK
     runs-on: ubuntu-24.04

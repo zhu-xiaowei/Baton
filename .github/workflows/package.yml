@@ -17,7 +17,7 @@ on:
         required: false
         type: choice
         default: release
-        options: [release, release-android, release-macos, release-windows, dev-android, dev-ios, dev-macos, dev-windows]
+        options: [release, release-android, release-macos, release-windows, release-linux, dev-android, dev-ios, dev-macos, dev-windows, dev-linux]
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
           PACKAGE: ${{ inputs.package }}
         run: |
           case "${PACKAGE:-release}" in
-            release|release-android|release-macos|release-windows|dev-android|dev-ios|dev-macos|dev-windows) ;;
+            release|release-android|release-macos|release-windows|release-linux|dev-android|dev-ios|dev-macos|dev-windows|dev-linux) ;;
             *) echo "Unsupported package selection: $PACKAGE" >&2; exit 1 ;;
           esac
       - uses: actions/checkout@v5
@@ -50,11 +50,52 @@ jobs:
             const verify = require('./.github/scripts/verify-production-ci.cjs');
             const url = await verify({
               github, owner: context.repo.owner, repo: context.repo.repo, sha: context.sha,
-              ref: context.ref,
+              ref: context.ref, package: context.payload.inputs?.package,
             });
             core.info(url
               ? `Production CI verified: ${url}`
               : 'release/testflight candidate: packaging without main production CI.');
+
+  linux:
+    name: Linux DEB
+    if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-linux' || inputs.package == 'dev-linux' }}
+    needs: source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
+      - uses: ./.github/actions/rust-build-cache
+        with:
+          platform: linux
+          targets: x86_64-unknown-linux-gnu
+          sdk: ubuntu-24.04-webkit2gtk-4.1
+      - run: npm ci
+      - name: Build Linux release installer
+        run: npm run build:linux
+      - name: Stage DEB and checksum
+        run: |
+          deb="$(find src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb -name '*.deb' -type f -print -quit)"
+          test -n "$deb" && test -s "$deb"
+          mkdir -p artifacts
+          cp "$deb" artifacts/Baton.deb
+          (cd artifacts && sha256sum Baton.deb > Baton.deb.sha256)
+          dpkg-deb --info artifacts/Baton.deb
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.package == 'dev-linux' && 'Baton-dev-Linux' || 'Baton-Linux' }}
+          path: |
+            artifacts/Baton.deb
+            artifacts/Baton.deb.sha256
+          if-no-files-found: error
+          retention-days: 7
 
   android:
     name: Android APK

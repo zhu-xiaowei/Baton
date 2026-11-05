@@ -25,14 +25,17 @@
     "release:ios:cloud": "node scripts/release-ios-cloud.mjs",
     "build:mac": "./scripts/release-mac.sh",
     "build:windows": "./scripts/release-windows.sh",
+    "build:linux": "tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb",
     "package": "bash scripts/package-all.sh",
     "package:android": "node scripts/package-cloud.mjs --platform android",
     "package:macos": "node scripts/package-cloud.mjs --platform macos",
     "package:windows": "node scripts/package-cloud.mjs --platform windows",
+    "package:linux": "node scripts/package-cloud.mjs --platform linux",
     "package:dev:android": "node scripts/package-cloud.mjs --dev --platform android",
     "package:dev:ios": "node scripts/package-cloud.mjs --dev --platform ios",
     "package:dev:macos": "node scripts/package-cloud.mjs --dev --platform macos",
-    "package:dev:windows": "node scripts/package-cloud.mjs --dev --platform windows"
+    "package:dev:windows": "node scripts/package-cloud.mjs --dev --platform windows",
+    "package:dev:linux": "node scripts/package-cloud.mjs --dev --platform linux"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
