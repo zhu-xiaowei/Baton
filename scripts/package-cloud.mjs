@@ -15,12 +15,14 @@ const releaseTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },
   { platform: 'macos', label: 'macOS', artifact: 'Baton-macOS', file: 'Baton.dmg', job: 'macOS notarized DMG' },
   { platform: 'windows', label: 'Windows', artifact: 'Baton-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+  { platform: 'linux', label: 'Linux', artifact: 'Baton-Linux', file: 'Baton.deb', job: 'Linux DEB' },
 ];
 const devTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-dev-Android', file: 'Baton.apk', job: 'Android APK' },
   { platform: 'ios', label: 'iOS', artifact: 'Baton-dev-iOS', file: 'Baton.ipa', job: 'iOS unsigned IPA' },
   { platform: 'macos', label: 'macOS', artifact: 'Baton-dev-macOS', file: 'Baton.dmg', job: 'macOS dev DMG' },
   { platform: 'windows', label: 'Windows', artifact: 'Baton-dev-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+  { platform: 'linux', label: 'Linux', artifact: 'Baton-dev-Linux', file: 'Baton.deb', job: 'Linux DEB' },
 ];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -56,11 +58,11 @@ const dryRun = args.includes('--dry-run');
 const devMode = args.includes('--dev');
 const selection = args.filter((arg) => arg !== '--dry-run' && arg !== '--dev');
 const platform = selection.length === 2 && selection[0] === '--platform'
-  && ['android', 'ios', 'macos', 'windows'].includes(selection[1]) ? selection[1] : null;
+  && ['android', 'ios', 'macos', 'windows', 'linux'].includes(selection[1]) ? selection[1] : null;
 if ((selection.length && !platform) || (devMode && !platform) || (platform === 'ios' && !devMode)
   || args.filter((arg) => arg === '--dry-run').length > 1
   || args.filter((arg) => arg === '--dev').length > 1) {
-  die('Usage: node scripts/package-cloud.mjs [--platform android|macos|windows] [--dry-run] | --dev --platform android|ios|macos|windows [--dry-run]');
+  die('Usage: node scripts/package-cloud.mjs [--platform android|macos|windows|linux] [--dry-run] | --dev --platform android|ios|macos|windows|linux [--dry-run]');
 }
 const targets = devMode ? [devTargets.find((target) => target.platform === platform)]
   : platform ? [releaseTargets.find((target) => target.platform === platform)] : releaseTargets;

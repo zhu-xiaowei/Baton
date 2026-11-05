@@ -89,6 +89,11 @@ runs:
             windows)
               powershell.exe -NoProfile -Command '$ErrorActionPreference = "Stop"; $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"; $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if (!$vs) { throw "MSVC installation missing" }; $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim(); "MSVC=$tools"; (Get-Item "$vs\VC\Tools\MSVC\$tools\bin\Hostx64\x64\cl.exe").VersionInfo.FileVersion; Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" -Directory | Where-Object Name -Match "^\d+\.\d+\.\d+\.\d+$" | Sort-Object { [version]$_.Name } | Select-Object -Last 1 -ExpandProperty Name'
               ;;
+            linux)
+              cat /etc/os-release
+              cc --version
+              pkg-config --modversion gtk+-3.0 webkit2gtk-4.1 openssl
+              ;;
             *) echo "Unknown native platform: $BUILD_PLATFORM" >&2; exit 1 ;;
           esac
           node -e 'for (const key of Object.keys(process.env).sort()) if (/^(CARGO|RUST|CC|CFLAGS|CXX|CMAKE)/.test(key)) console.log(`${key}=${process.env[key]}`);'
@@ -107,7 +112,7 @@ runs:
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
         cache-on-failure: true
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        save-if: ${{ github.ref == 'refs/heads/main' || inputs.platform == 'linux' }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:

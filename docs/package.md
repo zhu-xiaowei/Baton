@@ -1,6 +1,6 @@
 # Release packages
 
-Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. The command collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, and `Baton.exe`. iOS releases use the separate TestFlight workflow.
+Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, and `Baton.deb`. iOS releases use the separate TestFlight workflow.
 
 On macOS the command uses the local Android, macOS, and Windows build scripts. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
@@ -83,6 +83,7 @@ From any clean branch pushed to GitHub, choose a single release package:
 npm run package:android
 npm run package:macos
 npm run package:windows
+npm run package:linux
 ```
 
 For a development test package, use:
@@ -92,10 +93,13 @@ npm run package:dev:android  # disposable-key APK
 npm run package:dev:ios      # unsigned IPA
 npm run package:dev:macos    # unsigned DMG
 npm run package:dev:windows  # unsigned NSIS installer
+npm run package:dev:linux    # x86_64 DEB, with native desktop smoke test
 ```
 
-`npm run package` and `$package` still build the original three release
-installers. There is no `package:ios`: signed iOS releases use the existing
+Cloud `npm run package` and `$package` build all four release installers.
+The local macOS path still builds Android, macOS, and Windows; use
+`npm run package:linux` separately for the Linux runner.
+There is no `package:ios`: signed iOS releases use the existing
 TestFlight flow. The `dev` packages are installable test builds, not live
 development servers. The Android dev APK uses a disposable signing key, so
 it may require removing a previously installed Baton app.
@@ -106,4 +110,27 @@ Release packages go to `release/<version>/`; dev packages go to the ignored
 `release/dev/<first 12 characters of SHA>/`. Use
 `node scripts/package-cloud.mjs --dev --platform ios --dry-run` to check a
 selection without starting a build. The manual **Package** workflow offers
-the same selections and defaults to the three release packages.
+the same selections and defaults to the four release packages.
+
+## Linux desktop package
+
+The initial Linux target is **x86_64 Ubuntu 24.04**, packaged as `Baton.deb`.
+Other distributions, ARM64, AppImage, and RPM are not part of this target.
+`npm run build:linux` builds locally when Rust and the
+[Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)
+are installed. On other hosts, use `npm run package:linux` or
+`npm run package:dev:linux` to dispatch the Ubuntu runner. Linux does not
+need the Android or Apple signing secrets.
+
+The packaging job installs the actual DEB, opens `/usr/bin/baton` through
+`tauri-driver` and WebKitWebDriver under Xvfb/Openbox, and checks the login,
+home, projects, sessions, conversation, files, file preview, Git changes/diff,
+preview connection dialog, terminal, and dark/light settings. It also reloads
+the app to check persisted login and theme. HTTP/WebSocket data comes from a
+local TLS fixture; this verifies the installed native app and rendering,
+not a production Bridge, real agent execution, or remote preview tunneling.
+
+Each run uploads `Baton-Linux` (or `Baton-dev-Linux`) with the installer and
+`Baton-Linux-smoke` with desktop screenshots, JSON results, logs, and an HTML
+gallery. The screenshots include the native window and title bar. A desktop
+check failure fails the job while retaining the installer and diagnostics.

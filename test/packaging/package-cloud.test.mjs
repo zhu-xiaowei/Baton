@@ -43,11 +43,11 @@ if (args[0] === 'secret' && args[1] === 'list') {
 } else if (args[0] === 'run' && args[1] === 'list') {
   process.stdout.write(JSON.stringify([{databaseId: 42, displayTitle: 'Package ' + fs.readFileSync(path.join(root, 'request-id'), 'utf8'), headSha: process.env.PACKAGE_TEST_SHA}]));
 } else if (args[0] === 'run' && args[1] === 'view') {
-  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:['Android APK','iOS unsigned IPA','macOS notarized DMG','macOS dev DMG','Windows NSIS'].map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
+  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:['Android APK','iOS unsigned IPA','macOS notarized DMG','macOS dev DMG','Windows NSIS','Linux DEB'].map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
 } else if (args[0] === 'run' && args[1] === 'download') {
   const artifact = args[args.indexOf('--name') + 1];
   const dir = args[args.indexOf('--dir') + 1];
-  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-dev-iOS':'Baton.ipa'}[artifact];
+  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-dev-iOS':'Baton.ipa','Baton-Linux':'Baton.deb','Baton-dev-Linux':'Baton.deb'}[artifact];
   fs.writeFileSync(path.join(dir, file), 'fixture-' + file);
 } else process.exit(2);
 `;
@@ -73,11 +73,11 @@ function run(root, extra = {}, args = []) {
   });
 }
 
-test('cloud package collects three artifacts from the verified run', (t) => {
+test('cloud package collects four artifacts from the verified run', (t) => {
   const root = fixture(t);
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
-  for (const file of ['Baton.apk', 'Baton.dmg', 'Baton.exe']) {
+  for (const file of ['Baton.apk', 'Baton.dmg', 'Baton.exe', 'Baton.deb']) {
     assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3', file), 'utf8'), `fixture-${file}`);
   }
   assert.match(result.stdout, /SUMMARY \(v1\.2\.3\)/);
@@ -138,3 +138,18 @@ test('Windows release package dispatches alone', (t) => {
   assert.ok(!fs.existsSync(path.join(root, 'release/1.2.3/Baton.apk')));
   assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
 });
+
+for (const dev of [false, true]) {
+  test(`Linux ${dev ? 'dev' : 'release'} package dispatches alone and collects its DEB`, (t) => {
+    const root = fixture(t);
+    const args = [...(dev ? ['--dev'] : []), '--platform', 'linux'];
+    const result = run(root, {}, args);
+    assert.equal(result.status, 0, result.stderr);
+    const directory = dev ? `release/dev/${sha.slice(0, 12)}` : 'release/1.2.3';
+    assert.equal(fs.readFileSync(path.join(root, directory, 'Baton.deb'), 'utf8'), 'fixture-Baton.deb');
+    assert.ok(JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8'))
+      .includes(`package=${dev ? 'dev' : 'release'}-linux`));
+    assert.ok(!fs.existsSync(path.join(root, directory, 'Baton.apk')));
+    assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
+  });
+}
