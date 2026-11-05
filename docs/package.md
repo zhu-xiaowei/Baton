@@ -31,6 +31,11 @@ Bridge version as `<package.json version>-<git hash>`.
 
 Update the download links and feature descriptions in all three root READMEs,
 and prepare English GitHub Release notes with changes and upgrade instructions.
+For the first Linux release, upload `Baton.deb` alongside the other installers
+and replace the temporary Actions download link in all three READMEs with
+`https://github.com/zhu-xiaowei/baton/releases/download/<tag>/Baton.deb`.
+The temporary download requires GitHub sign-in and expires seven days after
+the packaging run.
 Draft notes can be kept locally in `docs/releases/<version>.md`.
 Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
 and decode the generated image to verify that it points to the new release.
@@ -121,6 +126,12 @@ Other distributions, ARM64, AppImage, and RPM are not part of this target.
 are installed. On other hosts, use `npm run package:linux` or
 `npm run package:dev:linux` to dispatch the Ubuntu runner. Linux does not
 need the Android or Apple signing secrets.
+
+Users install the downloaded package with `sudo apt install ./Baton.deb`.
+Local DEB installation does not require code signing or notarization.
+For direct GitHub release downloads, publish a SHA-256 checksum alongside
+the package. If distribution later moves to an APT repository, sign that
+repository's metadata with GPG.
 
 The packaging job installs the actual DEB, opens `/usr/bin/baton` through
 `tauri-driver` and WebKitWebDriver under Xvfb/Openbox, and checks the login,
