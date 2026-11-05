@@ -24,7 +24,11 @@ trust_file = Path("/usr/local/share/ca-certificates/baton-linux-smoke.crt")
 
 def command(method, path, body=None):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request("http://127.0.0.1:4444" + path, data=data,
+    # Tauri maps the new-session capabilities; subsequent commands are standard
+    # WebDriver. Talk to WebKit directly to avoid tauri-driver's pooled proxy
+    # connections being reset between screenshot and navigation requests.
+    port = 4445 if path.startswith("/session/") else 4444
+    request = urllib.request.Request(f"http://127.0.0.1:{port}" + path, data=data,
                                      method=method, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=40) as response:
@@ -123,7 +127,8 @@ try:
         with (output / "fixture.log").open("w") as fixture_log, (output / "native.log").open("w") as native_log:
             fixture = subprocess.Popen(["node", "test/linux/fixture.mjs", str(cert), str(key)],
                                        stdout=fixture_log, stderr=subprocess.STDOUT)
-            driver = subprocess.Popen(["tauri-driver", "--native-driver", "/usr/bin/WebKitWebDriver"],
+            driver = subprocess.Popen(["tauri-driver", "--native-port", "4445",
+                                       "--native-driver", "/usr/bin/WebKitWebDriver"],
                                       env=environment, stdout=native_log, stderr=subprocess.STDOUT)
             for attempt in range(100):
                 try:
