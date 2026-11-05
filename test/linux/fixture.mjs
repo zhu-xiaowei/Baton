@@ -105,7 +105,7 @@ websocket.on('connection', socket => {
       }
     } else if (message.action === 'terminal_direct' && message.op === 'open') {
       terminals.set(message.terminalId, { control: socket, message, sequence: 0 });
-      reply({ type: 'offer', side: 'app', dataEndpoint: origin, joinToken: 'local-fixture' });
+      reply({ type: 'offer', side: 'app', dataEndpoint: origin, joinToken: 'local-fixture', initialOpen: null });
     } else if (message.action === 'terminal_direct' && message.op === 'join') {
       const terminal = terminals.get(message.terminalId);
       terminal.socket = socket;
