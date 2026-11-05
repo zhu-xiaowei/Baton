@@ -2037,6 +2037,20 @@ async function handleListCommandOptions(msg) {
     sessionId = '',
     commandName = '',
   } = msg;
+  if (commandName === '__session_model') {
+    let modelStatus = null;
+    try {
+      if (runtime === 'codex') {
+        const identity = parseStorageSessionId(sessionId, 'codex');
+        modelStatus = getRuntimeAdapter('codex').interaction.modelStatus(identity.nativeSessionId);
+      } else if (runtime === 'claude') {
+        modelStatus = _pool.modelStatus(sessionId);
+      }
+    } catch { /* Status is optional on older or unavailable sessions. */ }
+    wsSend({ action: 'command_options', requestId, commandName, options: [],
+      modelStatus, runtime, device, projectHash, sessionId });
+    return;
+  }
   let options = [];
   let error = '';
   try {

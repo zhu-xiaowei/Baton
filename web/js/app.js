@@ -1,3 +1,4 @@
+import { initSessionModel, refreshSessionModel } from './components/session-model.js';
 // App state, routing, page loading
 import { state } from './state.js';
 import { layoutPixels } from './page-zoom.js';
@@ -897,6 +898,7 @@ function showInputBar(visible) {
   var bar = document.getElementById('input-bar');
   var scrollButton = document.getElementById('scroll-bottom-btn');
   bar.style.display = visible ? 'flex' : 'none';
+  refreshSessionModel();
   scrollButton.style.display = visible ? '' : 'none';
   if (visible) {
     applyThreadInputState();
@@ -2391,3 +2393,5 @@ if (window.__APEEK_TEST__) {
     agentStatus: agentThreadStatus,
   };
 }
+
+initSessionModel();

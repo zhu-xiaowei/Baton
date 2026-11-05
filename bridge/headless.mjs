@@ -93,6 +93,9 @@ class HeadlessProc {
     let o;
     try { o = JSON.parse(line); } catch { return; }
     const t = o.type;
+    if (t === 'assistant' && o.message?.model && o.message.model !== '<synthetic>') {
+      this.model = o.message.model;
+    }
 
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
@@ -102,6 +105,8 @@ class HeadlessProc {
     }
 
     if (t === 'system' && o.subtype === 'init') {
+      this.model = o.model || null;
+      this.effort = o.effort ?? o.reasoning_effort ?? null;
       if (o.session_id) this.sessionId = o.session_id;
       if (o.cwd) this.cwd = o.cwd;
       this.ready = true;
@@ -419,6 +424,13 @@ export class ClaudePool {
       this._inspectProcs.delete(proc);
       proc.shutdown();
     }
+  }
+
+  modelStatus(key) {
+    const proc = this.procs.get(key);
+    return proc && !proc.dead && proc.model
+      ? { model: proc.model, reasoningEffort: proc.effort ?? null, source: 'last-known' }
+      : null;
   }
 
   async inspectSession(key, cwd, subtypes) {
