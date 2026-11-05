@@ -3,6 +3,7 @@ import html
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,8 @@ def capture(name, expected):
     assert not checks["horizontalOverflow"], f"Page overflows horizontally: {name}"
     assert not checks["brokenImages"], checks["brokenImages"]
     assert not checks["errors"], checks["errors"]
+    assert not re.search(r"\b(?:undefined|NaN\w*)\b", checks["text"]), \
+        f"Uninitialized display value on {name}: {checks['text']}"
     subprocess.run(["scrot", "--overwrite", str(output / f"{name}.png")], check=True)
     results.append({"page": name, "passed": True, **checks})
     (output / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False))
@@ -162,6 +165,9 @@ try:
             wait_for("document.querySelector('#qrUrl')?.innerText.includes('linux-smoke-token')", "settings")
             observe_errors()
             capture("12-settings-dark", "document.querySelector('[data-theme-option=\"light\"]')")
+            execute("document.querySelector('#themeSettings').scrollIntoView({block: 'center'})")
+            capture("12a-settings-options-dark",
+                    "document.querySelector('#themeSettings').getBoundingClientRect().bottom < innerHeight")
             click('[data-theme-option="light"]')
             capture("13-settings-light", "document.documentElement.dataset.theme === 'light'")
             click("#setupBackButton button")

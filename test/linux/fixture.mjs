@@ -12,15 +12,20 @@ const now = new Date().toISOString();
 const session = {
   sessionId, preview: 'Verify Linux desktop packaging / 验证 Linux 桌面',
   runtime: 'claude', status: 'completed', lastActive: now,
-  messageCount: 2, model: 'claude-sonnet-4-6',
+  messageCount: 2, model: 'claude-sonnet-4-6', size: 4096,
 };
 const project = {
   projectHash, projectName: 'Baton Linux', projectPath: '/home/runner/work/Baton',
-  sessionCount: 1, lastActive: now, sessions: [session],
+  sessionCount: 2, runningCount: 1, lastActive: now, sessions: [session],
 };
 const devices = [{ deviceName: device, deviceDisplayName: 'Ubuntu Runner',
   online: true, os: 'linux', platform: 'linux', version: '1.1.0',
+  lastActive: now, projectCount: 1, runningCount: 1, needsInputCount: 0,
   runtimes: [{ id: 'claude', available: true }] }];
+const activeSession = { ...session, sessionId: 'linux-active-session',
+  preview: 'Inspect Linux desktop rendering', status: 'running',
+  deviceName: device, projectHash, projectName: project.projectName };
+project.sessions.push(activeSession);
 const files = [
   { name: 'src', type: 'directory' },
   { name: 'README.md', type: 'file' },
@@ -44,9 +49,9 @@ const server = https.createServer({
   const routes = {
     '/api/bridge/devices': { devices },
     '/api/bridge/config': { wsUrl: origin.replace('https:', 'wss:') },
-    '/api/bridge/active-sessions': { sessions: [], recentProjects: [{ ...project, deviceName: device }] },
+    '/api/bridge/active-sessions': { sessions: [activeSession], recentProjects: [{ ...project, deviceName: device }] },
     '/api/bridge/projects': { projects: [project], hasMore: false },
-    '/api/bridge/sessions': { sessions: [session], hasMore: false },
+    '/api/bridge/sessions': { sessions: project.sessions, hasMore: false },
     '/api/bridge/session-threads': { threads: [], sessions: [] },
     '/api/bridge/messages': { status: 'completed', hasMore: false, messages: [
       { uuid: 'linux-user', type: 'user', content: session.preview, timestamp: now },
