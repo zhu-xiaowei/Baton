@@ -96,7 +96,7 @@ npm run package:dev:android  # disposable-key APK
 npm run package:dev:ios      # unsigned IPA
 npm run package:dev:macos    # unsigned DMG
 npm run package:dev:windows  # unsigned NSIS installer
-npm run package:dev:linux    # x86_64 DEB, with native desktop smoke test
+npm run package:dev:linux    # unsigned x86_64 DEB
 ```
 
 Cloud `npm run package` and `$package` build all four release installers.
@@ -117,31 +117,12 @@ the same selections and defaults to the four release packages.
 
 ## Linux desktop package
 
-The initial Linux target is **x86_64 Ubuntu 24.04**, packaged as `Baton.deb`.
-Other distributions, ARM64, AppImage, and RPM are not part of this target.
-`npm run build:linux` builds locally when Rust and the
-[Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux)
-are installed. On other hosts, use `npm run package:linux` or
-`npm run package:dev:linux` to dispatch the Ubuntu runner. Linux does not
-need the Android or Apple signing secrets.
+Linux currently targets **Ubuntu 24.04 x86_64**. Use `npm run package:linux`
+or `npm run package:dev:linux` for cloud builds. `npm run build:linux` also
+works locally with Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux).
 
-Users install the downloaded package with `sudo apt install ./Baton.deb`.
-Local DEB installation does not require code signing or notarization.
-The Linux job generates `Baton.deb.sha256`, and the packaging command downloads
-both files and verifies the checksum before keeping the installer. Publish
-both files in the GitHub release. Users can verify the downloaded pair with
-`sha256sum --check Baton.deb.sha256` from their download directory.
-
-The packaging job installs the actual DEB, opens `/usr/bin/baton` through
-`tauri-driver` and WebKitWebDriver under Xvfb/Openbox, and checks the login,
-home, projects, sessions, conversation, files, file preview, Git changes/diff,
-preview connection dialog and a page loaded through the native TCP proxy,
-terminal, and dark/light settings. It also reloads
-the app to check persisted login and theme. HTTP/WebSocket data comes from a
-local TLS fixture; this verifies the installed native app and rendering,
-not a production Bridge, real agent execution, or tunneling to a real remote device.
-
-Each run uploads `Baton-Linux` (or `Baton-dev-Linux`) with the installer, checksum, and
-`Baton-Linux-smoke` with desktop screenshots, JSON results, logs, and an HTML
-gallery. The screenshots include the native window and title bar. A desktop
-check failure fails the job while retaining the installer and diagnostics.
+The `Baton-Linux` (or `Baton-dev-Linux`) artifact contains `Baton.deb` and
+`Baton.deb.sha256`; the packaging command verifies the checksum before keeping
+the download. Publish both files. Users can verify them with
+`sha256sum --check Baton.deb.sha256` and install with `sudo apt install ./Baton.deb`.
+The package is unsigned and needs no signing secrets.

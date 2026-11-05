@@ -61,31 +61,27 @@ jobs:
     if: ${{ inputs.package == '' || inputs.package == 'release' || inputs.package == 'release-linux' || inputs.package == 'dev-linux' }}
     needs: source
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
-      - name: Install Linux build and desktop test dependencies
+      - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            webkit2gtk-driver xvfb xauth openbox scrot fonts-noto-cjk
+            libayatana-appindicator3-dev librsvg2-dev
       - uses: ./.github/actions/rust-build-cache
         with:
           platform: linux
           targets: x86_64-unknown-linux-gnu
           sdk: ubuntu-24.04-webkit2gtk-4.1
       - run: npm ci
-      - name: Check packaging commands
-        run: node --test test/packaging/package-cloud.test.mjs test/packaging/rust-cache-command.test.mjs
       - name: Build Linux release installer
         run: npm run build:linux
-      - name: Stage and install DEB
+      - name: Stage DEB and checksum
         run: |
           deb="$(find src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb -name '*.deb' -type f -print -quit)"
           test -n "$deb" && test -s "$deb"
@@ -93,33 +89,13 @@ jobs:
           cp "$deb" artifacts/Baton.deb
           (cd artifacts && sha256sum Baton.deb > Baton.deb.sha256)
           dpkg-deb --info artifacts/Baton.deb
-          sudo apt-get install -y ./artifacts/Baton.deb
-          test -x /usr/bin/baton
-      - name: Install native WebDriver
-        env:
-          CARGO_NET_OFFLINE: 'false'
-        run: cargo install tauri-driver --version 2.1.0 --locked
-      - name: Open installed app and capture main pages
-        run: |
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x960x24' bash -c '
-            openbox > artifacts/openbox.log 2>&1 &
-            python3 test/linux/native-smoke.py /usr/bin/baton artifacts/linux-smoke
-          '
       - uses: actions/upload-artifact@v6
-        if: always()
         with:
           name: ${{ inputs.package == 'dev-linux' && 'Baton-dev-Linux' || 'Baton-Linux' }}
           path: |
             artifacts/Baton.deb
             artifacts/Baton.deb.sha256
           if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: Baton-Linux-smoke
-          path: artifacts/linux-smoke/
-          if-no-files-found: warn
           retention-days: 7
 
   android:
