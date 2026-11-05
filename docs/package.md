@@ -125,10 +125,11 @@ need the Android or Apple signing secrets.
 The packaging job installs the actual DEB, opens `/usr/bin/baton` through
 `tauri-driver` and WebKitWebDriver under Xvfb/Openbox, and checks the login,
 home, projects, sessions, conversation, files, file preview, Git changes/diff,
-preview connection dialog, terminal, and dark/light settings. It also reloads
+preview connection dialog and a page loaded through the native TCP proxy,
+terminal, and dark/light settings. It also reloads
 the app to check persisted login and theme. HTTP/WebSocket data comes from a
 local TLS fixture; this verifies the installed native app and rendering,
-not a production Bridge, real agent execution, or remote preview tunneling.
+not a production Bridge, real agent execution, or tunneling to a real remote device.
 
 Each run uploads `Baton-Linux` (or `Baton-dev-Linux`) with the installer and
 `Baton-Linux-smoke` with desktop screenshots, JSON results, logs, and an HTML

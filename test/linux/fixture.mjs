@@ -73,6 +73,7 @@ const server = https.createServer({
 });
 
 const terminals = new Map();
+const previews = new Map();
 const frameKey = 'f'.repeat(64);
 const websocket = new WebSocketServer({ server });
 websocket.on('connection', socket => {
@@ -107,6 +108,48 @@ websocket.on('connection', socket => {
         ], hasMore: false });
       } else if (message.operation === 'refs') {
         reply({ refs: [{ name: 'refs/heads/feat/linux-package', kind: 'branch' }] });
+      }
+    } else if (message.action === 'preview_tunnel' && message.op === 'open') {
+      previews.set(message.tunnelId, { control: socket, message, streams: new Map() });
+      reply({ type: 'offer', side: 'app', dataEndpoint: origin, joinToken: 'local-preview-fixture' });
+    } else if (message.action === 'preview_tunnel' && message.op === 'join') {
+      const preview = previews.get(message.tunnelId);
+      preview.control.send(JSON.stringify({ ...preview.message, type: 'ready', side: 'app',
+        endpoint: origin, region: 'us-east-1', connectionId: 'preview-app', peerConnectionId: 'preview-bridge',
+        frameKey, credentials: { accessKeyId: 'fixture', secretAccessKey: 'fixture', sessionToken: 'fixture',
+          expiresAt: Math.floor(Date.now() / 1000) + 3600 } }));
+    } else if (message.action === 'preview_data') {
+      const frame = JSON.parse(JSON.parse(message.body).payload);
+      const preview = previews.get(frame.tunnelId);
+      const input = frame.message;
+      const send = fields => {
+        const payload = JSON.stringify({ action: 'preview_frame', v: 1,
+          tunnelId: frame.tunnelId, device, message: { streamId: input.streamId, ...fields } });
+        socket.send(JSON.stringify({ payload, mac: createHmac('sha256', frameKey).update(payload).digest('hex') }));
+      };
+      if (input.type === 'open') {
+        preview.streams.set(input.streamId, { headers: '', responded: false });
+        send({ type: 'opened' });
+      } else if (input.type === 'bytes') {
+        const stream = preview.streams.get(input.streamId);
+        stream.headers += Buffer.from(input.data, 'base64').toString();
+        send({ type: 'ack', seq: input.seq });
+        if (!stream.responded && stream.headers.includes('\r\n\r\n')) {
+          stream.responded = true;
+          const body = Buffer.from('<!doctype html><meta charset="utf-8"><title>Linux preview</title>'
+            + '<style>body{font:18px system-ui;background:#eef5ff;color:#172a45;padding:48px}'
+            + 'article{max-width:650px;background:white;padding:32px;border-radius:16px}'
+            + 'code{background:#e8edf5;padding:4px 8px}</style>'
+            + '<article><h1>Linux preview is running</h1><p>Loaded through the installed app’s native TCP proxy.</p>'
+            + '<p>中文预览页面正常显示。</p><p><code>WebKitGTK · HTTP · local fixture</code></p></article>');
+          const response = Buffer.concat([Buffer.from('HTTP/1.1 200 OK\r\n'
+            + 'Content-Type: text/html; charset=utf-8\r\n'
+            + `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n`), body]);
+          send({ type: 'bytes', seq: 1, data: response.toString('base64') });
+          send({ type: 'fin', seq: 1 });
+        }
+      } else if (input.type === 'close') {
+        preview.streams.delete(input.streamId);
       }
     } else if (message.action === 'terminal_direct' && message.op === 'open') {
       terminals.set(message.terminalId, { control: socket, message, sequence: 0 });

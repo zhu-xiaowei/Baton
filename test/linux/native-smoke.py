@@ -156,6 +156,22 @@ try:
             execute("window.closeGitStatus()")
             execute("window.openPreviewPortPrompt()")
             capture("10-preview-dialog", "document.querySelector('#previewOverlay #previewAddress')")
+            execute("document.querySelector('#previewAddress').value = '3000'")
+            click("#previewOverlay .preview-add")
+            wait_for("document.querySelector('#previewOverlay .preview-local')?.innerText === '3000'",
+                     "native preview tunnel")
+            click('#previewOverlay [data-preview-action="local"]')
+            wait_for("document.querySelector('#internalBrowserPage[aria-busy=\"false\"] .browser-frame:not([hidden])')",
+                     "preview page loaded")
+            frame = command("POST", f"/session/{session}/element",
+                            {"using": "css selector", "value": "#internalBrowserPage .browser-frame"})
+            command("POST", f"/session/{session}/frame", {"id": frame})
+            wait_for("document.body.innerText.includes('Linux preview is running')", "preview content")
+            assert execute("return document.body.innerText.includes('中文预览页面正常显示')"), \
+                "Chinese preview content missing"
+            command("POST", f"/session/{session}/frame", {"id": None})
+            capture("10a-preview-page", "document.querySelector('#internalBrowserPage[aria-busy=\"false\"]')")
+            click('#internalBrowserPage [data-browser-action="close"]')
             click("#previewOverlay .preview-close")
             click("[onclick='openProjectTerminalPage()']")
             capture("11-terminal", "document.querySelector('.project-terminal-page')?.dataset.epoch === 'epoch-1' && document.querySelector('.project-terminal-selector:not([disabled])')")
