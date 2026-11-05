@@ -138,7 +138,7 @@ try:
             capture("04-sessions", "document.querySelector('.session-item')")
             click(".session-item")
             capture("05-conversation", "document.querySelector('.messages')?.innerText.includes('Linux desktop verification')")
-            assert execute("!!document.querySelector('.messages table')"), "Markdown table missing"
+            assert execute("return !!document.querySelector('.messages table')"), "Markdown table missing"
             click("[onclick='openProjectFiles()']")
             capture("06-files", "document.querySelector('.project-file-row[data-name=\"README.md\"]')")
             click('.project-file-row[data-name="README.md"]')
