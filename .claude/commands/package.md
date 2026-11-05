@@ -14,8 +14,8 @@ platforms independently):
 bash scripts/package-all.sh
 ```
 
-On macOS the script builds Android, macOS, and Windows locally; use
-`npm run package:linux` separately. On Linux it dispatches the native GitHub
+On macOS the script builds Android, macOS, and Windows locally, then invokes
+the Linux runner. On Linux it dispatches the native GitHub
 Actions workflow for the pushed source commit and downloads all four platforms.
 See `docs/package.md` for one-time GitHub secrets and other prerequisites.
 

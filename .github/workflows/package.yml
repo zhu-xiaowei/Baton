@@ -50,7 +50,7 @@ jobs:
             const verify = require('./.github/scripts/verify-production-ci.cjs');
             const url = await verify({
               github, owner: context.repo.owner, repo: context.repo.repo, sha: context.sha,
-              ref: context.ref,
+              ref: context.ref, package: context.payload.inputs?.package,
             });
             core.info(url
               ? `Production CI verified: ${url}`

@@ -7,9 +7,10 @@ const productionSteps = new Map([
   ['Windows NSIS', 'Warm production Windows build on main'],
 ]);
 
-module.exports = async function verifyProductionCI({ github, owner, repo, sha, ref }) {
+module.exports = async function verifyProductionCI({ github, owner, repo, sha, ref, package: selection = 'release' }) {
   // The release branch packages candidates before they are merged into main.
   if (ref === 'refs/heads/release/testflight') return null;
+  const checkLinux = !selection || selection === 'release' || selection === 'release-linux';
 
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner, repo, workflow_id: 'ci.yml', event: 'push', branch: 'main',
@@ -19,13 +20,20 @@ module.exports = async function verifyProductionCI({ github, owner, repo, sha, r
     .filter(item => item.head_sha === sha && item.event === 'push' && item.head_branch === 'main')
     .sort((a, b) => b.id - a.id)[0];
   if (!run) throw new Error(`No production CI on main for ${sha}; merge and complete main CI before release packaging.`);
-  if (run.status !== 'completed' || run.conclusion !== 'success') {
+  if (run.status !== 'completed' || (checkLinux && run.conclusion !== 'success')) {
     throw new Error(`Production CI must pass before release packaging: ${run.html_url} (${run.status}/${run.conclusion || 'pending'}).`);
   }
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     owner, repo, run_id: run.id, filter: 'latest', per_page: 100,
   });
+  const failedJobs = jobs.filter(job => !['success', 'skipped'].includes(job.conclusion));
+  if (run.conclusion !== 'success'
+      && (run.conclusion !== 'failure' || !failedJobs.length
+          || failedJobs.some(job => job.name !== 'Linux DEB'))) {
+    throw new Error(`Production CI must pass before release packaging: ${run.html_url} (${run.status}/${run.conclusion}).`);
+  }
   for (const [name, stepName] of productionSteps) {
+    if (name === 'Linux DEB' && !checkLinux) continue;
     const job = jobs.find(item => item.name === name);
     if (job?.conclusion !== 'success'
         || (stepName && !job.steps?.some(step => step.name === stepName && step.conclusion === 'success'))) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build Android APK, macOS DMG, and Windows EXE, then copy each into
-# release/<version>/ (version read from package.json) as Baton.{apk,dmg,exe}.
+# Build Android APK, macOS DMG, Windows EXE, and Linux DEB into
+# release/<version>/ (version read from package.json) as Baton.{apk,dmg,exe,deb}.
 # Each platform builds independently — one failing never blocks the others.
 # Invoked by /package and $package. iOS is excluded (TestFlight flow).
 
@@ -60,9 +60,16 @@ package_one "macOS"   "npm run build:mac"     "Baton.dmg" \
 package_one "Windows" "npm run build:windows" "Baton.exe" \
   src-tauri/target/x86_64-pc-windows-msvc -path "*bundle/nsis/*.exe" -type f
 
+rm -f "${DEST}/Baton.deb" "${DEST}/Baton.deb.sha256"
+if node scripts/package-cloud.mjs --platform linux; then
+  RESULTS+=("Linux: ${DEST}/Baton.deb ($(du -h "${DEST}/Baton.deb" | cut -f1)); SHA-256 verified")
+else
+  RESULTS+=("Linux: BUILD FAILED")
+fi
+
 echo ""
 echo "==================== SUMMARY (v${VERSION}) ===================="
 for r in "${RESULTS[@]}"; do echo "  - ${r}"; done
-if ((${#RESULTS[@]} != 3)) || printf '%s\n' "${RESULTS[@]}" | grep -Eq 'BUILD FAILED|artifact not found'; then
+if ((${#RESULTS[@]} != 4)) || printf '%s\n' "${RESULTS[@]}" | grep -Eq 'BUILD FAILED|artifact not found'; then
   exit 1
 fi

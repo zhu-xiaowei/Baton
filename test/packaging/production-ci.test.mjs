@@ -50,6 +50,29 @@ test('release packaging accepts all production checks for the exact commit', asy
   assert.equal(await verifyProductionCI(fixture()), success().html_url);
 });
 
+test('only full and Linux releases require Linux production CI', async () => {
+  for (const linuxState of ['missing', 'failure']) {
+    const checks = jobs().filter(job => job.name !== 'Linux DEB');
+    if (linuxState === 'failure') checks.push({ name: 'Linux DEB', conclusion: 'failure' });
+    const run = { ...success(), conclusion: linuxState === 'failure' ? 'failure' : 'success' };
+    for (const selection of ['release-android', 'release-macos', 'release-windows']) {
+      assert.equal(await verifyProductionCI({ ...fixture([run], checks), package: selection }), run.html_url);
+    }
+    for (const selection of ['release', 'release-linux']) {
+      await assert.rejects(verifyProductionCI({ ...fixture([run], checks), package: selection }), /Production (CI|validation)/);
+    }
+  }
+});
+
+test('single-platform releases still reject cancelled CI and failures outside Linux', async () => {
+  for (const conclusion of ['cancelled', 'failure']) {
+    const checks = [...jobs(), { name: 'Additional check', conclusion: 'failure' }];
+    await assert.rejects(verifyProductionCI({
+      ...fixture([{ ...success(), conclusion }], checks), package: 'release-windows',
+    }), /Production CI must pass/);
+  }
+});
+
 test('release/testflight can package candidates without querying main CI', async () => {
   assert.equal(await verifyProductionCI({
     ...fixture([]),
