@@ -12,12 +12,15 @@ function loadPdfModules() {
         (_, quote) => `url(${quote}${PDF_ASSETS}images/`,
       );
     });
-    const pdfjs = await import(/* @vite-ignore */ `${PDF_ASSETS}pdf.mjs`);
-    pdfjs.GlobalWorkerOptions.workerSrc = `${PDF_ASSETS}pdf.worker.mjs`;
-    const [pdfjsViewer, css] = await Promise.all([
-      import(/* @vite-ignore */ `${PDF_ASSETS}pdf_viewer.mjs`), cssPromise,
-    ]);
-    return { pdfjs, pdfjsViewer, css };
+    const modulesPromise = (async () => {
+      const pdfjs = await import(/* @vite-ignore */ `${PDF_ASSETS}pdf.mjs`);
+      pdfjs.GlobalWorkerOptions.workerSrc = `${PDF_ASSETS}pdf.worker.mjs`;
+      const pdfjsViewer = await import(/* @vite-ignore */ `${PDF_ASSETS}pdf_viewer.mjs`);
+      return { pdfjs, pdfjsViewer };
+    })();
+    // Attach both rejection handlers immediately, including when both assets fail.
+    const [css, modules] = await Promise.all([cssPromise, modulesPromise]);
+    return { ...modules, css };
   })().catch(error => { pdfModulesPromise = null; throw error; });
   return pdfModulesPromise;
 }
