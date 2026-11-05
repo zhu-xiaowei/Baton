@@ -312,3 +312,22 @@ test('concurrent starts share initialization before later requests are written',
   assert.equal((await first).thread.id, 'thread-1');
   assert.equal((await second).thread.id, 'thread-2');
 });
+
+test('region overrides use a separate stdio process and are passed as argument values', async t => {
+  const proc = fakeProcess();
+  let args;
+  const client = new CodexAppServerClient({
+    bin: '/fake/codex', socketPath: '/existing/managed.sock',
+    configOverrides: { model_provider: 'amazon-bedrock', 'model_providers.amazon-bedrock.aws.region': 'us-east-1' },
+    spawnFn(_bin, values) { args = values; return proc; },
+    webSocketFactory() { throw new Error('Must not reuse managed configuration'); },
+    requestTimeout: 1000,
+  });
+  t.after(() => client.stop());
+  const started = client.start();
+  const init = await waitForWrite(proc, 'initialize');
+  proc.stdout.write(`${JSON.stringify({ id: init.id, result: {} })}\n`);
+  await started;
+  assert.deepEqual(args, ['app-server', '--stdio', '-c', 'model_provider="amazon-bedrock"',
+    '-c', 'model_providers.amazon-bedrock.aws.region="us-east-1"']);
+});
