@@ -1,5 +1,6 @@
 """Exercise the installed .deb through tauri-driver, with local network fixtures."""
 import html
+import base64
 import json
 import os
 from pathlib import Path
@@ -71,7 +72,15 @@ def observe_errors():
 
 def capture(name, expected):
     wait_for(expected, name)
-    time.sleep(0.5)  # Allow transitions and WebKit painting to finish.
+    command("POST", f"/session/{session}/execute/async", {"script": """
+      const done = arguments[arguments.length - 1];
+      requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+    """, "args": []})
+    # WebKit's snapshot synchronizes its render process. Keep it alongside the
+    # desktop capture, then allow GTK to present the same frame under Xvfb.
+    snapshot = command("GET", f"/session/{session}/screenshot")
+    (output / f"{name}-webview.png").write_bytes(base64.b64decode(snapshot))
+    time.sleep(1.5)
     checks = execute("""
       return {
         url: location.href,
