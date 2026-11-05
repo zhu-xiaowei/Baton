@@ -4,6 +4,7 @@ import { requestWsRpc } from '../ws-rpc.js';
 let route = '';
 let lastRead = 0;
 let pending = '';
+let unsupported = '';
 
 export function modelStatusLabel(status) {
   if (typeof status?.model !== 'string' || !status.model) return '';
@@ -43,7 +44,7 @@ export async function refreshSessionModel() {
     lastRead = 0;
     return;
   }
-  if (pending === current || Date.now() - lastRead < 15000) return;
+  if (unsupported === current || pending === current || Date.now() - lastRead < 15000) return;
   pending = current;
   lastRead = Date.now();
   try {
@@ -51,6 +52,7 @@ export async function refreshSessionModel() {
       commandName: '__session_model', ...ctx }, { timeout: 10000 });
     if (key(context()) !== current || bar.style.display === 'none' || state.ws?.readyState !== 1) return;
     if (['device', 'projectHash', 'sessionId', 'runtime'].some(field => result[field] !== ctx[field])) return;
+    if (!Object.hasOwn(result, 'modelStatus')) unsupported = current;
     const text = modelStatusLabel(result.modelStatus);
     if (!text || result.error) { label?.remove(); return; }
     label = document.getElementById('session-model');
