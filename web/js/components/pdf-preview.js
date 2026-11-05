@@ -1,46 +1,36 @@
 import { MAX_SCALE, MIN_SCALE, attachPinchZoom } from './pdf-pinch.js';
 
-const PDF_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174';
+const PDF_ASSETS = new URL(`${import.meta.env.BASE_URL}pdfjs/`, document.baseURI).href;
 let pdfModulesPromise;
-
-function loadScript(url) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = url;
-    script.async = true;
-    script.crossOrigin = 'anonymous';
-    script.onload = resolve;
-    script.onerror = () => reject(new Error('Failed to load PDF viewer'));
-    document.head.appendChild(script);
-  });
-}
 
 function loadPdfModules() {
   if (!pdfModulesPromise) pdfModulesPromise = (async () => {
-    const cssPromise = fetch(`${PDF_CDN}/web/pdf_viewer.css`).then(async response => {
+    const cssPromise = fetch(`${PDF_ASSETS}pdf_viewer.css`).then(async response => {
       if (!response.ok) throw new Error('Failed to load PDF styles');
       return (await response.text()).replace(
         /url\((["']?)images\//g,
-        (_, quote) => `url(${quote}${PDF_CDN}/web/images/`,
+        (_, quote) => `url(${quote}${PDF_ASSETS}images/`,
       );
     });
-    const scriptsPromise = (async () => {
-      await loadScript(`${PDF_CDN}/build/pdf.min.js`);
-      const pdfjs = globalThis.pdfjsLib;
-      if (!pdfjs) throw new Error('PDF viewer is unavailable');
-      pdfjs.GlobalWorkerOptions.workerSrc = `${PDF_CDN}/build/pdf.worker.min.js`;
-      const worker = new pdfjs.PDFWorker({ name: 'baton-pdf' });
-      await Promise.all([loadScript(`${PDF_CDN}/web/pdf_viewer.js`), worker.promise]);
-      return worker;
+    const modulesPromise = (async () => {
+      const pdfjs = await import(/* @vite-ignore */ `${PDF_ASSETS}pdf.mjs`);
+      pdfjs.GlobalWorkerOptions.workerSrc = `${PDF_ASSETS}pdf.worker.mjs`;
+      const pdfjsViewer = await import(/* @vite-ignore */ `${PDF_ASSETS}pdf_viewer.mjs`);
+      return { pdfjs, pdfjsViewer };
     })();
-    const [css, worker] = await Promise.all([cssPromise, scriptsPromise]);
-    const pdfjs = globalThis.pdfjsLib;
-    const pdfjsViewer = globalThis.pdfjsViewer;
-    if (!pdfjs || !pdfjsViewer) throw new Error('PDF viewer is unavailable');
-    return { pdfjs, pdfjsViewer, css, worker };
+    // Attach both rejection handlers immediately, including when both assets fail.
+    const [css, modules] = await Promise.all([cssPromise, modulesPromise]);
+    return { ...modules, css };
   })().catch(error => { pdfModulesPromise = null; throw error; });
   return pdfModulesPromise;
 }
+
+const documentOptions = {
+  cMapUrl: `${PDF_ASSETS}cmaps/`, cMapPacked: true,
+  standardFontDataUrl: `${PDF_ASSETS}standard_fonts/`,
+  wasmUrl: `${PDF_ASSETS}wasm/`, iccUrl: `${PDF_ASSETS}iccs/`,
+  isEvalSupported: false,
+};
 
 let activePreview = null;
 const RANGE_CHUNK_SIZE = 64 * 1024;
@@ -48,10 +38,15 @@ const RANGE_CHUNK_SIZE = 64 * 1024;
 const WHOLE_FILE_LIMIT = 8 * 1024 * 1024;
 const RANGE_CACHE_LIMIT = 16 * 1024 * 1024;
 const rangeCache = new Map();
+// Session-local and bounded; use the same identity/invalidation as the byte cache.
+const readingPositions = new Map();
 let rangeCacheBytes = 0;
 
 export function clearPdfRangeCache(prefix) {
   if (!prefix) return;
+  for (const key of readingPositions.keys()) {
+    if (key.startsWith(prefix)) readingPositions.delete(key);
+  }
   for (const [id, entry] of rangeCache) {
     if (!id.startsWith(prefix)) continue;
     rangeCache.delete(id);
@@ -99,8 +94,9 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
   const initialRange = data ? Promise.resolve({ bytes: new Uint8Array(data), partial: false })
     : hasSize ? fetchPdfRange(url, 0, firstEnd, signal, cacheKey)
       : Promise.resolve(null);
-  const [{ pdfjs, pdfjsViewer, css: pdfViewerCss, worker }, firstRange] =
+  const [{ pdfjs, pdfjsViewer, css: pdfViewerCss }, firstRange] =
     await Promise.all([loadPdfModules(), initialRange]);
+  if (signal?.aborted) throw new DOMException('PDF loading cancelled', 'AbortError');
   activePreview?.destroy();
 
   const previousLoading = body.querySelector('.file-loading');
@@ -206,7 +202,23 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
     fitWidth = true;
     viewer.currentScaleValue = 'page-width';
   };
-  eventBus.on('pagesinit', fit);
+  const savedPosition = cacheKey && readingPositions.get(cacheKey);
+  eventBus.on('updateviewarea', ({ location }) => {
+    if (disposed || !cacheKey) return;
+    readingPositions.delete(cacheKey);
+    readingPositions.set(cacheKey, { ...location, fitWidth, scale: viewer.currentScale });
+    if (readingPositions.size > 50) readingPositions.delete(readingPositions.keys().next().value);
+  });
+  eventBus.on('pagesinit', () => {
+    fit();
+    if (!savedPosition) return;
+    fitWidth = savedPosition.fitWidth;
+    if (!fitWidth) viewer.currentScale = savedPosition.scale;
+    viewer.scrollPageIntoView({
+      pageNumber: Math.min(savedPosition.pageNumber, viewer.pagesCount),
+      destArray: [null, { name: 'XYZ' }, savedPosition.left, savedPosition.top, null],
+    });
+  });
   const resizeObserver = new ResizeObserver(() => {
     if (fitWidth) fit();
   });
@@ -241,7 +253,7 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
       if (disposed) return;
       if (!first.partial || first.bytes.length === size) {
         if (onFile) onFile(first.bytes);
-        loadingTask = pdfjs.getDocument({ data: first.bytes, worker, isEvalSupported: false });
+        loadingTask = pdfjs.getDocument({ ...documentOptions, data: first.bytes });
       } else {
         const transport = new class extends pdfjs.PDFDataRangeTransport {
           requestDataRange(begin, end) {
@@ -257,14 +269,14 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
         }(size, first.bytes);
         loadingTask = pdfjs.getDocument({
           range: transport,
-          worker,
+          ...documentOptions,
           disableAutoFetch: true,
           disableStream: true,
           isEvalSupported: false,
         });
       }
     } else {
-      loadingTask = pdfjs.getDocument({ url, worker, isEvalSupported: false });
+      loadingTask = pdfjs.getDocument({ ...documentOptions, url });
     }
     const document = await Promise.race([loadingTask.promise, rangeFailure]);
     if (disposed) return;
