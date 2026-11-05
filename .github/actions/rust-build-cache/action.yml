@@ -10,6 +10,9 @@ inputs:
   flavor:
     description: pr or release; release preserves the production Cargo profile.
     default: release
+  pr-opt-level:
+    description: Optimization level for PR validation builds.
+    default: '1'
   sdk:
     description: SDK version used by this build.
     required: true
@@ -21,6 +24,7 @@ runs:
       shell: bash
       env:
         BUILD_FLAVOR: ${{ inputs.flavor }}
+        PR_OPT_LEVEL: ${{ inputs.pr-opt-level }}
       run: |
         rust_version="$(node -e 'const fs = require("node:fs"); const text = fs.readFileSync("rust-toolchain.toml", "utf8"); const match = text.match(/^\s*channel\s*=\s*"(\d+\.\d+\.\d+)"/m); if (!match) throw new Error("Pin a Rust version in rust-toolchain.toml"); process.stdout.write(match[1]);')"
         case "$BUILD_FLAVOR" in
@@ -28,7 +32,7 @@ runs:
             target_dir=target-ci
             lto=false
             codegen_units=16
-            opt_level=1
+            opt_level="$PR_OPT_LEVEL"
             ;;
           release)
             target_dir=target
@@ -112,7 +116,7 @@ runs:
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
         cache-on-failure: true
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        save-if: ${{ github.ref == 'refs/heads/main' || (inputs.platform == 'linux' && github.event_name == 'pull_request') }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:
