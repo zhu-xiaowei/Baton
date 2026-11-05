@@ -150,7 +150,9 @@ const results = [];
 try {
   for (const target of targets) {
     const output = path.join(destination, target.file);
+    const checksumFile = target.platform === 'linux' ? `${target.file}.sha256` : null;
     fs.rmSync(output, { force: true });
+    if (checksumFile) fs.rmSync(path.join(destination, checksumFile), { force: true });
     const job = detail.jobs?.find((candidate) => candidate.name === target.job);
     if (job?.conclusion !== 'success') {
       results.push(`${target.label}: BUILD FAILED (${job?.conclusion || 'job missing'})`);
@@ -162,8 +164,15 @@ try {
       gh(['run', 'download', String(run.databaseId), '--name', target.artifact, '--dir', extract]);
       const source = path.join(extract, target.file);
       if (!fs.existsSync(source) || !fs.statSync(source).size) throw new Error(`${target.file} missing or empty`);
+      if (checksumFile) {
+        const checksum = fs.readFileSync(path.join(extract, checksumFile), 'utf8').trim();
+        const hash = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+        if (checksum !== `${hash}  ${target.file}`) throw new Error(`${target.file} SHA-256 verification failed`);
+      }
       fs.copyFileSync(source, output);
+      if (checksumFile) fs.copyFileSync(path.join(extract, checksumFile), path.join(destination, checksumFile));
       results.push(`${target.label}: ${path.relative(root, output)} (${humanSize(fs.statSync(output).size)})`);
+      if (checksumFile) results.push(`SHA-256 verified: ${path.relative(root, path.join(destination, checksumFile))}`);
     } catch (error) {
       results.push(`${target.label}: artifact download failed (${error.message})`);
     }

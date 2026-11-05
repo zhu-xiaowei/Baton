@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,7 @@ else process.exit(2);
   const gh = `#!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const args = process.argv.slice(2);
 const root = process.env.PACKAGE_TEST_DIR;
 if (args[0] === 'secret' && args[1] === 'list') {
@@ -49,6 +51,11 @@ if (args[0] === 'secret' && args[1] === 'list') {
   const dir = args[args.indexOf('--dir') + 1];
   const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-dev-iOS':'Baton.ipa','Baton-Linux':'Baton.deb','Baton-dev-Linux':'Baton.deb'}[artifact];
   fs.writeFileSync(path.join(dir, file), 'fixture-' + file);
+  if (file === 'Baton.deb' && process.env.PACKAGE_TEST_CHECKSUM !== 'missing') {
+    const hash = crypto.createHash('sha256').update('fixture-' + file).digest('hex');
+    fs.writeFileSync(path.join(dir, file + '.sha256'), hash + '  ' + file + '\\n');
+    if (process.env.PACKAGE_TEST_CHECKSUM === 'corrupt') fs.appendFileSync(path.join(dir, file), '-corrupt');
+  }
 } else process.exit(2);
 `;
   for (const [name, body] of Object.entries({ git, gh })) {
@@ -80,6 +87,7 @@ test('cloud package collects four artifacts from the verified run', (t) => {
   for (const file of ['Baton.apk', 'Baton.dmg', 'Baton.exe', 'Baton.deb']) {
     assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3', file), 'utf8'), `fixture-${file}`);
   }
+  assert.ok(fs.existsSync(path.join(root, 'release/1.2.3/Baton.deb.sha256')));
   assert.match(result.stdout, /SUMMARY \(v1\.2\.3\)/);
 });
 
@@ -147,9 +155,30 @@ for (const dev of [false, true]) {
     assert.equal(result.status, 0, result.stderr);
     const directory = dev ? `release/dev/${sha.slice(0, 12)}` : 'release/1.2.3';
     assert.equal(fs.readFileSync(path.join(root, directory, 'Baton.deb'), 'utf8'), 'fixture-Baton.deb');
+    const checksum = createHash('sha256').update('fixture-Baton.deb').digest('hex');
+    assert.equal(fs.readFileSync(path.join(root, directory, 'Baton.deb.sha256'), 'utf8'),
+      `${checksum}  Baton.deb\n`);
+    assert.match(result.stdout, /SHA-256 verified:/);
     assert.ok(JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8'))
       .includes(`package=${dev ? 'dev' : 'release'}-linux`));
     assert.ok(!fs.existsSync(path.join(root, directory, 'Baton.apk')));
     assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
+  });
+}
+
+for (const problem of ['missing', 'corrupt']) {
+  test(`Linux package rejects a ${problem} checksum or package without leaving stale release files`, (t) => {
+    const root = fixture(t);
+    const directory = path.join(root, 'release/1.2.3');
+    fs.mkdirSync(directory, { recursive: true });
+    for (const file of ['Baton.deb', 'Baton.deb.sha256']) {
+      fs.writeFileSync(path.join(directory, file), 'stale');
+    }
+    const result = run(root, { PACKAGE_TEST_CHECKSUM: problem }, ['--platform', 'linux']);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /Linux: artifact download failed/);
+    assert.match(result.stdout, problem === 'corrupt' ? /SHA-256 verification failed/ : /Baton\.deb\.sha256/);
+    assert.ok(!fs.existsSync(path.join(directory, 'Baton.deb')));
+    assert.ok(!fs.existsSync(path.join(directory, 'Baton.deb.sha256')));
   });
 }

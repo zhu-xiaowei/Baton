@@ -112,7 +112,7 @@ runs:
         workspaces: src-tauri -> ${{ steps.config.outputs.target-dir }}
         cache-bin: false
         cache-on-failure: true
-        save-if: ${{ github.ref == 'refs/heads/main' || inputs.platform == 'linux' }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Check whether Cargo can build offline
       shell: bash
       env:

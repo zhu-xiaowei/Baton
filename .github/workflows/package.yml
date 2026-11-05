@@ -91,6 +91,7 @@ jobs:
           test -n "$deb" && test -s "$deb"
           mkdir -p artifacts
           cp "$deb" artifacts/Baton.deb
+          (cd artifacts && sha256sum Baton.deb > Baton.deb.sha256)
           dpkg-deb --info artifacts/Baton.deb
           sudo apt-get install -y ./artifacts/Baton.deb
           test -x /usr/bin/baton
@@ -108,7 +109,9 @@ jobs:
         if: always()
         with:
           name: ${{ inputs.package == 'dev-linux' && 'Baton-dev-Linux' || 'Baton-Linux' }}
-          path: artifacts/Baton.deb
+          path: |
+            artifacts/Baton.deb
+            artifacts/Baton.deb.sha256
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v6

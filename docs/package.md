@@ -1,6 +1,6 @@
 # Release packages
 
-Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, and `Baton.deb`. iOS releases use the separate TestFlight workflow.
+Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`. iOS releases use the separate TestFlight workflow.
 
 On macOS the command uses the local Android, macOS, and Windows build scripts. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
@@ -31,11 +31,8 @@ Bridge version as `<package.json version>-<git hash>`.
 
 Update the download links and feature descriptions in all three root READMEs,
 and prepare English GitHub Release notes with changes and upgrade instructions.
-For the first Linux release, upload `Baton.deb` alongside the other installers
-and replace the temporary Actions download link in all three READMEs with
-`https://github.com/zhu-xiaowei/baton/releases/download/<tag>/Baton.deb`.
-The temporary download requires GitHub sign-in and expires seven days after
-the packaging run.
+Upload `Baton.deb` and `Baton.deb.sha256` alongside the other installers so the
+Linux download links in all three READMEs resolve to published release assets.
 Draft notes can be kept locally in `docs/releases/<version>.md`.
 Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
 and decode the generated image to verify that it points to the new release.
@@ -46,7 +43,8 @@ Before packaging, merge the release preparation into `main` and wait for
 production CI to pass for the exact commit being packaged. The versioned
 `release/1.1.0` branch has no production-CI exemption. Package the resulting
 `main` commit with `npm run package`, then publish the `v1.1.0` GitHub release
-with `Baton.apk`, `Baton.dmg`, and `Baton.exe` from `release/1.1.0/`. The README
+with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`
+from `release/1.1.0/`. The README
 download links become available once those assets are published. iOS uses the
 separate TestFlight workflow; HarmonyOS requires its own DevEco build.
 
@@ -129,9 +127,10 @@ need the Android or Apple signing secrets.
 
 Users install the downloaded package with `sudo apt install ./Baton.deb`.
 Local DEB installation does not require code signing or notarization.
-For direct GitHub release downloads, publish a SHA-256 checksum alongside
-the package. If distribution later moves to an APT repository, sign that
-repository's metadata with GPG.
+The Linux job generates `Baton.deb.sha256`, and the packaging command downloads
+both files and verifies the checksum before keeping the installer. Publish
+both files in the GitHub release. Users can verify the downloaded pair with
+`sha256sum --check Baton.deb.sha256` from their download directory.
 
 The packaging job installs the actual DEB, opens `/usr/bin/baton` through
 `tauri-driver` and WebKitWebDriver under Xvfb/Openbox, and checks the login,
@@ -142,7 +141,7 @@ the app to check persisted login and theme. HTTP/WebSocket data comes from a
 local TLS fixture; this verifies the installed native app and rendering,
 not a production Bridge, real agent execution, or tunneling to a real remote device.
 
-Each run uploads `Baton-Linux` (or `Baton-dev-Linux`) with the installer and
+Each run uploads `Baton-Linux` (or `Baton-dev-Linux`) with the installer, checksum, and
 `Baton-Linux-smoke` with desktop screenshots, JSON results, logs, and an HTML
 gallery. The screenshots include the native window and title bar. A desktop
 check failure fails the job while retaining the installer and diagnostics.
