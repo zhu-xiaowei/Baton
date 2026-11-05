@@ -146,9 +146,16 @@ setNativeTabTitle('Settings');
     verEl.textContent = 'v' + __APP_VERSION__;
     verEl.style.display = 'block';
 
-    // On iOS, use the build number from the installed app bundle so the
-    // display always matches the archive that produced this app.
-    if (window.__TAURI_INTERNALS__) {
+    // Native shells show the installed package's version and build number.
+    var harmony = window.harmonyBridge;
+    if (harmony && typeof harmony.appVersion === 'function') {
+      try {
+        var installed = JSON.parse(harmony.appVersion());
+        if (installed.versionCode) {
+          verEl.textContent = 'v' + (installed.versionName || __APP_VERSION__) + ' (' + installed.versionCode + ')';
+        }
+      } catch (_) {}
+    } else if (window.__TAURI_INTERNALS__) {
       import('@tauri-apps/api/core').then(function (core) {
         return core.invoke('ios_build_number');
       }).then(function (buildNumber) {
