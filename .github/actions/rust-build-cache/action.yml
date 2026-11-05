@@ -33,7 +33,6 @@ runs:
             lto=false
             codegen_units=16
             opt_level="$PR_OPT_LEVEL"
-            if [[ "$opt_level" == 0 ]]; then codegen_units=256; fi
             ;;
           release)
             target_dir=target
