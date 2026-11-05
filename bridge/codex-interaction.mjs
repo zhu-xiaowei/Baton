@@ -1,4 +1,3 @@
-import { readCodexModel } from './session-model.mjs';
 import { execFile } from 'node:child_process';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import {
@@ -21,6 +20,7 @@ import {
 } from './codex-plan.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { readCodexModel } from './session-model.mjs';
 import { compactToolFields } from './tool-preview.mjs';
 
 const CODEX_GOAL_RESUME_APPROVAL_TYPE = 'codex-goal-resume';
