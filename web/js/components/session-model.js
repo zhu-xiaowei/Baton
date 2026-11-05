@@ -71,7 +71,7 @@ export async function refreshSessionModel() {
 
 // One inexpensive status read per visible session, at most every 15 seconds.
 export function initSessionModel() {
-  setInterval(refreshSessionModel, 5000);
+  window.setInterval(refreshSessionModel, 5000);
   window.addEventListener('focus', () => { lastRead = 0; refreshSessionModel(); });
   document.addEventListener('visibilitychange', refreshSessionModel);
 }
