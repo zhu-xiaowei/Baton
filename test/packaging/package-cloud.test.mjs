@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,7 @@ else process.exit(2);
   const gh = `#!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const args = process.argv.slice(2);
 const root = process.env.PACKAGE_TEST_DIR;
 if (args[0] === 'secret' && args[1] === 'list') {
@@ -43,12 +45,17 @@ if (args[0] === 'secret' && args[1] === 'list') {
 } else if (args[0] === 'run' && args[1] === 'list') {
   process.stdout.write(JSON.stringify([{databaseId: 42, displayTitle: 'Package ' + fs.readFileSync(path.join(root, 'request-id'), 'utf8'), headSha: process.env.PACKAGE_TEST_SHA}]));
 } else if (args[0] === 'run' && args[1] === 'view') {
-  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:['Android APK','iOS unsigned IPA','macOS notarized DMG','macOS dev DMG','Windows NSIS'].map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
+  process.stdout.write(JSON.stringify({status:'completed', conclusion: process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success', headSha:process.env.PACKAGE_TEST_SHA, url:'https://github.com/example/run/42', jobs:['Android APK','iOS unsigned IPA','macOS notarized DMG','macOS dev DMG','Windows NSIS','Linux DEB'].map(name => ({name, conclusion: name === process.env.PACKAGE_TEST_FAILED_TARGET ? 'failure' : 'success'}))}));
 } else if (args[0] === 'run' && args[1] === 'download') {
   const artifact = args[args.indexOf('--name') + 1];
   const dir = args[args.indexOf('--dir') + 1];
-  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-dev-iOS':'Baton.ipa'}[artifact];
+  const file = {'Baton-Android':'Baton.apk','Baton-macOS':'Baton.dmg','Baton-Windows':'Baton.exe','Baton-dev-iOS':'Baton.ipa','Baton-Linux':'Baton.deb','Baton-dev-Linux':'Baton.deb'}[artifact];
   fs.writeFileSync(path.join(dir, file), 'fixture-' + file);
+  if (file === 'Baton.deb') {
+    const hash = crypto.createHash('sha256').update('fixture-' + file).digest('hex');
+    fs.writeFileSync(path.join(dir, file + '.sha256'), hash + '  ' + file + '\\n');
+    if (process.env.PACKAGE_TEST_CORRUPT_DEB) fs.appendFileSync(path.join(dir, file), '-corrupt');
+  }
 } else process.exit(2);
 `;
   for (const [name, body] of Object.entries({ git, gh })) {
@@ -73,13 +80,14 @@ function run(root, extra = {}, args = []) {
   });
 }
 
-test('cloud package collects three artifacts from the verified run', (t) => {
+test('cloud package collects four artifacts from the verified run', (t) => {
   const root = fixture(t);
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
-  for (const file of ['Baton.apk', 'Baton.dmg', 'Baton.exe']) {
+  for (const file of ['Baton.apk', 'Baton.dmg', 'Baton.exe', 'Baton.deb']) {
     assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3', file), 'utf8'), `fixture-${file}`);
   }
+  assert.ok(fs.existsSync(path.join(root, 'release/1.2.3/Baton.deb.sha256')));
   assert.match(result.stdout, /SUMMARY \(v1\.2\.3\)/);
 });
 
@@ -137,4 +145,29 @@ test('Windows release package dispatches alone', (t) => {
   assert.ok(JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8')).includes('package=release-windows'));
   assert.ok(!fs.existsSync(path.join(root, 'release/1.2.3/Baton.apk')));
   assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
+});
+
+test('Linux dev package dispatches alone and verifies its DEB checksum', (t) => {
+  const root = fixture(t);
+  const result = run(root, {}, ['--dev', '--platform', 'linux']);
+  assert.equal(result.status, 0, result.stderr);
+  const directory = path.join(root, 'release/dev', sha.slice(0, 12));
+  assert.equal(fs.readFileSync(path.join(directory, 'Baton.deb'), 'utf8'), 'fixture-Baton.deb');
+  const checksum = createHash('sha256').update('fixture-Baton.deb').digest('hex');
+  assert.equal(fs.readFileSync(path.join(directory, 'Baton.deb.sha256'), 'utf8'), `${checksum}  Baton.deb\n`);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8')).includes('package=dev-linux'));
+  assert.ok(!fs.existsSync(path.join(directory, 'Baton.apk')));
+  assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
+});
+
+test('Linux package rejects a corrupt DEB without leaving stale release files', (t) => {
+  const root = fixture(t);
+  const directory = path.join(root, 'release/1.2.3');
+  fs.mkdirSync(directory, { recursive: true });
+  for (const file of ['Baton.deb', 'Baton.deb.sha256']) fs.writeFileSync(path.join(directory, file), 'stale');
+  const result = run(root, { PACKAGE_TEST_CORRUPT_DEB: '1' }, ['--platform', 'linux']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /SHA-256 verification failed/);
+  assert.ok(!fs.existsSync(path.join(directory, 'Baton.deb')));
+  assert.ok(!fs.existsSync(path.join(directory, 'Baton.deb.sha256')));
 });
