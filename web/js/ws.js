@@ -279,20 +279,6 @@ if (_isMobile) {
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
 var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
 
-function promptTitle(text) {
-  var t = attachmentPreviewText(String(text || '')).replace(/\s+/g, ' ').trim();
-  return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
-}
-
-// Mirrors bridge/session.mjs commandPrompt().
-function commandPromptTitle(text) {
-  var cmd = /<command-name>\s*(\/?[^<]+?)\s*<\/command-name>/i.exec(text);
-  if (!cmd) return '';
-  var name = cmd[1].charAt(0) === '/' ? cmd[1] : '/' + cmd[1];
-  var args = (/<command-args>([\s\S]*?)<\/command-args>/i.exec(text) || [])[1] || '';
-  return promptTitle(args.trim() ? name + ' ' + args.trim() : name);
-}
-
 function extractFirstPromptFromMsg(msg) {
   if (msg.type !== 'user') return '';
   var c = msg.content;
@@ -306,12 +292,14 @@ function extractFirstPromptFromMsg(msg) {
   for (var j = 0; j < texts.length; j++) {
     var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
-    var cmd = commandPromptTitle(texts[j]);
-    if (cmd) return cmd;
+    // Same as bridge/session.mjs commandPrompt(): a command row is the first prompt.
+    var cmd = /<command-name>\s*\/?([^<]+?)\s*<\/command-name>/.exec(t);
+    var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
+    if (cmd) return ('/' + cmd[1] + ' ' + (args ? args[1] : '')).trim();
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
     if (SKIP_FIRST_PROMPT.test(t)) continue;
-    return promptTitle(t);
+    return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
   }
   return '';
 }
@@ -342,7 +330,6 @@ function updateTitleFromMessages() {
       if (fp) firstUser = fp;
     }
   }
-  // Same order as the Bridge list preview: the first prompt names the session.
   var tier = customTitle ? 4 : aiTitle ? 3 : firstUser ? 2 : lastPrompt ? 1 : 0;
   if (state._titleRename?.sessionId === state.appState.session) {
     if (customTitle !== state._titleRename.name) return;
@@ -1013,9 +1000,8 @@ function dispatchWsMessage(msg) {
           pending.sessionId = msg.sessionId;
         }
         state.appState.session = msg.sessionId;
-        var sentTitle = promptTitle(pending?.text);
-        state.appState.sessionPreview = sentTitle || 'New Session';
-        if (sentTitle) state._titleTier = 2;
+        state.appState.sessionPreview = pending?.text?.trim() || 'New Session';
+        if (pending?.text?.trim()) state._titleTier = 2;
         state.rootSessionId = msg.sessionId;
         state.rootSessionPreview = state.appState.sessionPreview;
         state.activeThreadId = msg.sessionId;
