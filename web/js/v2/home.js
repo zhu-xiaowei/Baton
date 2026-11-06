@@ -53,13 +53,14 @@ async function run() {
   const cache = cachedAnswers();
   const fresh = new Map();
   const asked = new Map();
+  const timedOut = new Set();
   const ask = (device) => {
     if (asked.has(device)) return;
     const known = cache[device]?.answer;
     asked.set(device, request(device, 'home', { revision: known?.revision }).then((answer) => {
       if (!answer.notModified) cache[device] = { answer, at: Date.now() };
       if (cache[device]) fresh.set(device, cache[device]);
-    }, () => {}));
+    }, (error) => { if (error.message === 'timeout') timedOut.add(device); }));
   };
   connect(dataUrl());
   cachedOnlineDevices().forEach(ask);
@@ -75,6 +76,10 @@ async function run() {
   for (const device of devicesResponse.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
   await Promise.all(asked.values());
   saveAnswers(cache);
+  // Offline devices already say so on their row; only an online device that stayed silent is news.
+  if (devicesResponse.devices.some((device) => device.online && timedOut.has(device.deviceName))) {
+    showToast('Device not responding');
+  }
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
   const result = latest = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
   window.__v2Timings.total = Math.round(performance.now() - started);
