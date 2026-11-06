@@ -77,9 +77,9 @@ async function run() {
   await Promise.all(asked.values());
   saveAnswers(cache);
   // Offline devices already say so on their row; only an online device that stayed silent is news.
-  if (devicesResponse.devices.some((device) => device.online && timedOut.has(device.deviceName))) {
-    showToast('Device not responding');
-  }
+  const silent = devicesResponse.devices.filter((device) => device.online && timedOut.has(device.deviceName))
+    .map((device) => device.deviceDisplayName || device.deviceName);
+  if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
   const result = latest = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
   window.__v2Timings.total = Math.round(performance.now() - started);
