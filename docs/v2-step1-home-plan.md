@@ -147,3 +147,21 @@ Known limitation: a sleeping laptop stays online for up to one heartbeat (~4 min
   receiver-verified frame signatures, the EC2 relay for the hosted service, or Lambda forwarding.
 - With the EC2 relay (profile B) the credentials, `whoami` and routes disappear; the request API, frame
   format, chunking, compression, `revision`, `home-index` and the App merge stay the same.
+
+## Starting point for step 2 (project and Session lists)
+
+- Reuse, do not rebuild:
+  - App: `request(device, method, params)` (`web/js/v2/direct-transport.js`) already handles routes, whoami,
+    resend, 2 s retry, 6 s cap and offline; `api.js` routes `/api/bridge/*` paths to v2 modules.
+  - Bridge: add methods next to `home` / `ping` in the `DirectRpcBridge` handlers (`bridge/ws.mjs`). The
+    `HomeIndex` file index, parse caches and status rules already cover every root Session per project.
+  - `bridge/direct-rpc-protocol.mjs` chunks and compresses any answer.
+- Still on v1 REST: `/projects`, `/sessions`, `/session-threads` (`app.js` list options with `cursor` /
+  `limit`, `list-pagination.js`, `list-cache.js`). `/active-sessions` is still read by the Bridge's
+  `checkStopped`. DynamoDB writes and the startup full scan stay until the DynamoDB removal step.
+- Lessons from step 1: new modules must be added to the hand-maintained lists (`server/src/Dockerfile`,
+  the WS zip and the web build context in `install.sh`); a warm-up must queue only what the answer shows;
+  answers that depend on time need the recompute interval; devices the App cannot ask show cache only.
+- Validation tools (untracked) live in `.scratch/v2-spike/` (`app-logic-check`, `e2e-home`, `restart-check`,
+  `index-vs-full`); the `BatonV2` endpoint and key are in `.scratch/batonv2.env`; the test Bridge runs on
+  `test-ec2-ap` and is reached through SSM.
