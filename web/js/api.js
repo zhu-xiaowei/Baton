@@ -11,7 +11,7 @@ import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-c
 import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
-import { loadHomeV2 } from './v2/home.js';
+import { expandedHome, loadHomeV2 } from './v2/home.js';
 import { resetDirectTransport } from './v2/direct-transport.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
@@ -93,7 +93,7 @@ async function _do(path, params, opts, init) {
 // The home lists come from each Bridge; the remaining pages still use REST until they move.
 async function api(path, params, opts) {
   if (!(opts && (opts.key || opts.server))) {
-    if (path === '/api/bridge/active-sessions') return (await loadHomeV2()).active;
+    if (path === '/api/bridge/active-sessions') return (await (params?.allProjects ? expandedHome() : loadHomeV2())).active;
     if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
   }
   return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();

@@ -7,6 +7,7 @@ import { cachedOnlineDevices, connect, request, updateRoutes } from './direct-tr
 const CACHE_KEY = 'apeek_v2_home_devices';
 const PROJECT_LIMIT = 15;
 let inflight = null;
+let latest = null;
 
 function readJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
@@ -32,6 +33,11 @@ function cachedAnswers() {
 
 function saveAnswers(devices) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify({ server: state.SERVER, devices })); } catch {}
+}
+
+// "Show more" only reveals projects the last answer already holds (15), so it sends nothing.
+export function expandedHome() {
+  return latest ? Promise.resolve(latest) : loadHomeV2();
 }
 
 export function loadHomeV2() {
@@ -70,7 +76,7 @@ async function run() {
   await Promise.all(asked.values());
   saveAnswers(cache);
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
-  const result = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
+  const result = latest = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
   window.__v2Timings.total = Math.round(performance.now() - started);
   window.__v2Timings.fresh = [...fresh.keys()];
   return result;
