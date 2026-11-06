@@ -17,7 +17,7 @@ const claudeHistoryCache = new Map();
 const DEFAULT_CLAUDE_HISTORY = path.join(path.dirname(CLAUDE_PROJECTS), 'history.jsonl');
 const CLAUDE_SESSIONS = path.join(path.dirname(CLAUDE_PROJECTS), 'sessions');
 
-function previewText(value) {
+export function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}…` : text;

@@ -333,6 +333,9 @@ function commandCatalog(runtime, cwd, fallbackDir = cwd, options = {}) {
   );
 }
 
+// First prompt of Sessions created here, until their transcript names them.
+const _sentPrompts = new Map();
+
 // Push an interaction-owned session's status to DDB.
 function syncInteractionStatus(sessionId, status, detail, runtimeHint, options = {}) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
@@ -362,8 +365,9 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         status,
         detail,
         identity.runtime,
-        { isNew },
+        { isNew, sentPrompt: _sentPrompts.get(key) },
       );
+      if (status === 'completed') _sentPrompts.delete(key);
       if (isNew && !knownProjects.has(normalizedProjectHash)) {
         knownProjects.add(normalizedProjectHash);
         await reconcile(_config);
@@ -1819,6 +1823,7 @@ async function newRegularSession(
   replyConnectionId,
 ) {
   const sessionId = crypto.randomUUID();
+  _sentPrompts.set(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);
   // The server routes sequenced events directly to this originating connection,
   // so the result and early stream frames may safely arrive in either order.
