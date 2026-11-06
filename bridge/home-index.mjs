@@ -41,7 +41,6 @@ export class HomeIndex {
     this.names = new Map();
     this.answer = null;
     this.dirty = true;
-    this.ready = false;
   }
 
   // ---------- index ----------
@@ -370,7 +369,6 @@ export class HomeIndex {
       }
       await yieldToLoop();
     }
-    this.ready = true;
     this.markDirty();
   }
 

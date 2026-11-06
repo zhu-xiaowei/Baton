@@ -22,7 +22,6 @@ export class DirectRpcBridge {
     this.queue = [];
     this.signers = new Map();
     this.active = true;
-    this.stats = { requests: 0, ms: 0, bytes: 0, frames: 0 };
   }
 
   onCredentials(authorization) {
@@ -86,7 +85,6 @@ export class DirectRpcBridge {
 
   async serve(frame) {
     this.running++;
-    const started = performance.now();
     let frames;
     try {
       const handler = this.handlers[frame.method];
@@ -102,14 +100,10 @@ export class DirectRpcBridge {
       for (const out of frames) {
         const signed = await sign(JSON.stringify(out));
         if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(signed);
-        this.stats.bytes += signed.length;
       }
-      this.stats.frames += frames.length;
     } catch (error) {
       console.error(`[direct-rpc] reply failed: ${error.message}`);
     }
-    this.stats.requests++;
-    this.stats.ms += performance.now() - started;
     this.running--;
     const next = this.queue.shift();
     if (next) void this.serve(next);

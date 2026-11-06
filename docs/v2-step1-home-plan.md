@@ -262,3 +262,16 @@ E 首次安装，没有缓存          显示骨架屏；/devices → 建连 →
 | `/devices` 下发凭证、`whoami`、路由表、地址变化后补发 | 中继在建连时完成鉴权，按设备名转发；这些逻辑全部去掉，`direct-transport.js` 预计缩减到约 50 行 |
 | `request()` 接口、帧格式、分块、压缩、`revision` | **完全相同** |
 | `home-index`、App 端合并 | **完全相同** |
+
+## 8. 实现与方案的差异（2026-11-06，已在 `BatonV2` 上验证）
+
+- **只支持 v2**：前端删除了所有 v1 首页路径、"强制 v1"开关和对比函数。连到没有 `protocol: 2` 的服务器时，保留缓存并提示升级服务器。`/active-sessions` 还要留给 Bridge 的 `checkStopped` 使用，第 2 阶段和 DDB 一起删除。
+- **`/devices` 只返回 v2 字段**：`{ protocol, devices: [{ deviceName, deviceDisplayName, os, online }], rpc: { endpoint, credentials, bridges: [{ device, dataId }] } }`。统计数字全部来自 Bridge。WS 地址由 App 拼成 `wss://<登录域名>/data`；区域从 `endpoint` 的主机名中解析。`/config` 只给 Bridge 返回 `wsUrl`。
+- **凭证范围是整个数据 API**：实测 API Gateway 对 `@connections` 授权时，资源 ARN 用的是路由模板 `@connections/{connectionId}`，所以按连接 ID 限定的凭证一律被拒绝。App 和 Bridge 的凭证因此是同一范围（只允许 `POST`）。§12.8 计划的"按连接签发凭证"不可行，第 2 阶段的多租户隔离需要换方案：接收端校验帧签名、托管版只用 EC2 中继，或者回到 Lambda 转发。
+- **没有新增路由响应**：投递失败由 `bridges_changed` 推送（Bridge 重连后带上新地址）、2 秒重试和 6 秒上限覆盖。
+- **没有引入 fflate**：解压用浏览器自带的 `DecompressionStream('deflate-raw')`；不支持它的旧系统在请求里不声明 `deflate`，Bridge 返回未压缩的 JSON。
+- **首页计算不调用 Agent CLI**：只读 Agent 轮询留下的缓存（`cachedDaemonSessions`），避免同步执行 `claude agents --json` 阻塞主线程。
+- **CloudFront**：REST 源站的保活时间设为 60 秒。请求量很小时，节点到源站的连接池大多是冷的：从美国访问时 REST 仍常多约 300ms，从东京只多约 35ms。有缓存时首屏不等 `/devices`，所以对首屏没有影响。不开 Origin Shield，因为它不适合不能缓存的请求。
+- **部署清单**：新增的 Python 模块要同时写进 `server/src/Dockerfile` 和 `install.sh` 的 WS Lambda 打包清单；前端引用的 Bridge 模块要写进 `install.sh` 的构建上下文。
+
+实测结果（中位数）：东京首屏 0.10~0.17 秒，请求往返 45~56ms；美国首屏约 0.9 秒。线上 Bridge 的回答和全量扫描逐项一致。离线 0.6 秒内改用缓存；Bridge 卡住时 2 秒重试、6 秒后改用缓存；Bridge 重启约 2 秒后恢复。

@@ -24,7 +24,6 @@ const pending = new Map();    // key → request state
 const byRequestId = new Map(); // wire requestId → key
 const signers = new Map();
 const assembler = new RpcAssembler();
-const listeners = new Set();
 let routesKnown = false;      // true once /devices answered in this page
 
 function storageKey() {
@@ -132,7 +131,6 @@ function receive(ws, text) {
   }
   if (frame.action === 'direct_rpc' && frame.type === 'bridges') {
     applyRpc(frame.rpc, frame.rpc?.bridges?.map((b) => b.device) || []);
-    for (const listener of listeners) listener(frame.rpc);
     return;
   }
   const part = assembler.add(frame);
@@ -206,11 +204,6 @@ export function request(device, method, params = {}) {
       attemptVersion: null, retried: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });
-}
-
-export function onBridgesChanged(listener) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
 }
 
 export function resetDirectTransport() {
