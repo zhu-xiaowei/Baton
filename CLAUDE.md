@@ -171,7 +171,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 ### Bridge
 - Watches `~/.claude/projects/<project-hash>/<session-id>.jsonl`
 - `readableProjectName()` resolves hash back to real path by walking filesystem
-- `preview` uses `ai-title` from .jsonl, falls back to first user message
+- `preview` / Session title: `custom-title > ai-title > summary > first prompt > last-prompt`, in
+  the Bridge list and the open-Session title alike. CC's resume list puts `last-prompt` first;
+  Baton deliberately does not follow it. Until a Baton-created Session's transcript has a
+  prompt (a forked Skill writes none until it finishes), the Bridge uses the prompt it sent.
 - Filters: skips empty/no-preview files, subagent sessions
 - Session `status`: **three-state** (`running`/`needs_input`/`completed`), one field, no
   parallel `agentState`. Displayed as Running (green) / Needs input (amber) / Done (grey).
