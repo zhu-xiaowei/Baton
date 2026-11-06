@@ -138,6 +138,8 @@ the Bridge's existing 200-character limit. The App adds `deviceName`.
   screen with cached routes does not wait for `/devices`. Origin Shield was not enabled: it does not
   suit uncacheable requests.
 
+Known limitation: a sleeping laptop stays online for up to one heartbeat (~4 min), so the home waits the full 6 s for it, then shows its cache.
+
 ## Phase 2 consequences
 
 - App credentials cannot be limited to the account's own sockets, so they are acceptable only for
