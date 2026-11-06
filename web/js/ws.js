@@ -279,7 +279,7 @@ if (_isMobile) {
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
 var SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
 
-function extractFirstPromptFromMsg(msg, fallback) {
+function extractFirstPromptFromMsg(msg) {
   if (msg.type !== 'user') return '';
   var c = msg.content;
   var texts = [];
@@ -292,12 +292,10 @@ function extractFirstPromptFromMsg(msg, fallback) {
   for (var j = 0; j < texts.length; j++) {
     var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
-    // Like CC: a command names the session only when no real prompt follows.
-    var cmd = fallback && /<command-name>(.*?)<\/command-name>/.exec(t);
-    if (cmd) {
-      fallback.command = fallback.command || cmd[1];
-      continue;
-    }
+    // Same as bridge/session.mjs commandPrompt(): a command row is the first prompt.
+    var cmd = /<command-name>\s*\/?([^<]+?)\s*<\/command-name>/.exec(t);
+    var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
+    if (cmd) return ('/' + cmd[1] + ' ' + (args ? args[1] : '')).trim();
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
     if (SKIP_FIRST_PROMPT.test(t)) continue;
@@ -321,26 +319,25 @@ function isInheritedAgentContext(message, messages) {
 }
 
 function updateTitleFromMessages() {
-  var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '', fallback = {};
+  var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
   for (var i = 0; i < state.wsAllMessages.length; i++) {
     var m = state.wsAllMessages[i];
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
     if (!firstUser) {
-      var fp = extractFirstPromptFromMsg(m, fallback);
+      var fp = extractFirstPromptFromMsg(m);
       if (fp) firstUser = fp;
     }
   }
-  firstUser = firstUser || fallback.command || '';
-  var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
+  var tier = customTitle ? 4 : aiTitle ? 3 : firstUser ? 2 : lastPrompt ? 1 : 0;
   if (state._titleRename?.sessionId === state.appState.session) {
     if (customTitle !== state._titleRename.name) return;
     state._titleRename = null;
   }
   if (tier === 0) return;
   if (tier < (state._titleTier || 0)) return;
-  var title = attachmentPreviewText(customTitle || aiTitle || lastPrompt || firstUser);
+  var title = attachmentPreviewText(customTitle || aiTitle || firstUser || lastPrompt);
   if (title === state.appState.sessionPreview) return;
   state.appState.sessionPreview = title;
   if (state.activeThreadId === state.rootSessionId) {
@@ -1003,7 +1000,8 @@ function dispatchWsMessage(msg) {
           pending.sessionId = msg.sessionId;
         }
         state.appState.session = msg.sessionId;
-        state.appState.sessionPreview = 'New Session';
+        state.appState.sessionPreview = pending?.text?.trim() || 'New Session';
+        if (pending?.text?.trim()) state._titleTier = 2;
         state.rootSessionId = msg.sessionId;
         state.rootSessionPreview = state.appState.sessionPreview;
         state.activeThreadId = msg.sessionId;
