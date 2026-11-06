@@ -67,7 +67,7 @@ async function run() {
   const devicesResponse = await rest('/api/bridge/devices');
   window.__v2Timings.devices = Math.round(performance.now() - started);
   if (devicesResponse.protocol !== 2) {
-    showToast('This server is too old for this app. Update it by running server/install.sh again.');
+    showToast('Server update required');
     throw new Error('server_outdated');
   }
   updateRoutes(devicesResponse);
