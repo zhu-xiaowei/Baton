@@ -418,7 +418,7 @@ def test_devices_projects_only_home_list_fields(monkeypatch):
 
     result = asyncio.run(bridge_read.get_devices(FakeRequest()))
 
-    assert result == {"devices": [{
+    assert result["devices"] == [{
         "deviceName": "Mac",
         "deviceDisplayName": "Office Mac",
         "os": "darwin",
@@ -427,7 +427,9 @@ def test_devices_projects_only_home_list_fields(monkeypatch):
         "needsInputCount": 2,
         "lastActive": "2026-09-01T00:00:00.000Z",
         "online": False,
-    }]}
+        "bridgeProtocol": 0,
+    }]
+    assert result["protocol"] == 2 and "rpc" not in result
     assert table.query_calls[0]["ProjectionExpression"] == bridge_read.DEVICE_LIST_PROJECTION
     assert table.query_calls[0]["ExpressionAttributeNames"] == bridge_read.DEVICE_LIST_ATTRIBUTE_NAMES
 

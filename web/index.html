@@ -90,9 +90,22 @@
   var hdr = { 'x-api-key': key };
 
   // Fire both requests immediately (network flies out before any other JS loads).
-  window.__preload = {
+  // A v2 server is answered by each Bridge through api.js, which resolves __apiReady when loaded.
+  var proto = null;
+  try { proto = JSON.parse(localStorage.getItem('baton-proto') || 'null'); } catch (e) {}
+  var v2 = !!proto && proto.server === server && proto.protocol === 2 && localStorage.getItem('baton-force-v1') !== '1';
+  window.__apiReady = new Promise(function (resolve) { window.__resolveApiReady = resolve; });
+  var viaApi = function (path) {
+    return window.__apiReady.then(function () { return window.api(path); }).catch(function () { return null; });
+  };
+  window.__preload = v2 ? { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') } : {
     active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
-    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
+      if (data && data.protocol === 2 && localStorage.getItem('baton-force-v1') !== '1') {
+        try { localStorage.setItem('baton-proto', JSON.stringify({ server: server, protocol: 2, dataUrl: data.dataUrl || '' })); } catch (e) {}
+      }
+      return data;
+    }).catch(function () { return null; })
   };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
@@ -657,6 +670,14 @@
   }
   window.__loadHome = loadHome;
   window.__setTopSync = setSync;
+  // v2: device rows (online state) update before every Bridge has answered.
+  window.__renderHomeDevices = function (devices) {
+    var cached = readCache();
+    if (!cached || !cached.active) return;
+    whenContentReady(function () {
+      if (document.querySelector('.top-gear') && document.body.classList.contains('browse-view')) renderInline(cached.active, devices);
+    });
+  };
 
   if (willRenderInline) {
     loadHome(window.__preload.active, window.__preload.devices);

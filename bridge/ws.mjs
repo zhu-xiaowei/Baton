@@ -71,6 +71,8 @@ import {
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
+import { DirectRpcBridge } from './direct-rpc.mjs';
+import { homeIndex } from './home-index.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
 import { handleToolDetails } from './tool-details.mjs';
@@ -79,6 +81,7 @@ let _ws = null;
 let _checkUpdate = null;
 let _onSuperseded = null;
 let _realtime = null;
+let _directRpc = null;
 let _config = null;
 let _reconnectTimer = null;
 let _heartbeatTimer = null;
@@ -727,7 +730,7 @@ function connect() {
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + '&terminal=2&terminalStartup=1&preview=1';
+    + '&terminal=2&terminalStartup=1&preview=1&protocol=2';
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
@@ -752,6 +755,14 @@ function connect() {
       return true;
     };
     _realtime = new RealtimeSender({ send, fallback: event => send(JSON.stringify(event)) });
+    _directRpc = new DirectRpcBridge({
+      key: _config.apiKey,
+      sendControl: message => send(JSON.stringify(message)),
+      handlers: {
+        home: params => homeIndex.home(params.revision),
+        ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
+      },
+    });
     _realtime.start();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
@@ -835,6 +846,8 @@ function resetConnection() {
   }
   _realtime?.dispose();
   _realtime = null;
+  _directRpc?.dispose();
+  _directRpc = null;
   _terminalRemote?.closeAll();
   _sharedTerminals?.detachAll();
   _previewBridge?.detachAll();
@@ -854,7 +867,11 @@ function scheduleReconnect() {
 }
 
 async function handleMessage(msg) {
-  if (_realtime?.handle(msg)) return;
+  if (_realtime?.handle(msg)) {
+    if (msg.type === 'credentials') _directRpc?.onCredentials(_realtime.authorization);
+    return;
+  }
+  if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
     case 'rename_session':
       await handleSessionRename(msg, {
@@ -1973,6 +1990,7 @@ export async function handleDeleteFiles(msg, {
     ...(errors.length ? { error: errors.join('; ') } : {}),
   };
   console.log(`[ws] deleted files: ${result.deletedSessions} sessions, ${result.deletedProjects} projects, ${result.errors.length} errors`);
+  if (result.deletedSessions || result.deletedProjects) void homeIndex.build();
   send(result);
   return result;
 }

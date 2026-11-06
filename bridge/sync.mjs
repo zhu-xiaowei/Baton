@@ -8,14 +8,16 @@ import {
 } from './runtime-registry.mjs';
 import { pendingInteractionDetail, poolOwns } from './ws.mjs';
 import { rebuildAgentCounts } from './agent-counts.mjs';
+import { ObservedMap } from './observed-map.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
 
 // Startup catalog keys let the watcher distinguish new sessions from resumed ones.
 export const recentSessions = new Set();
 
-// Cache of last-known status per sessionId for periodic stopped detection
-export const lastKnownStatus = new Map();
+// Cache of last-known status per sessionId for periodic stopped detection.
+// Changes also invalidate the v2 home answer (see home-index.mjs).
+export const lastKnownStatus = new ObservedMap();
 
 // Seeded project hashes keep the watcher from reconciling existing projects.
 export const knownProjects = new Set();

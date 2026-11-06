@@ -29,6 +29,7 @@ RECENT_SESSION_LIMIT = 100
 RECENT_PROJECT_LIMIT = 5
 RECENT_PROJECT_EXPANDED_LIMIT = 15
 RECENT_PROJECT_SESSION_LIMIT = 5
+PROTOCOL_VERSION = 2
 MESSAGE_READ_ATTRIBUTES = {
     f"#m{index}": name
     for index, name in enumerate((
@@ -294,12 +295,21 @@ def _query_list_page(
     return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
 
 
-@read_router.get("/config")
-async def get_config():
-    """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
+def _socket_urls(request: Request):
+    """Control and data WebSocket URLs; through CloudFront when the request came through it."""
+    host = request.headers.get("x-baton-host", "")
+    if host and re.fullmatch(r"[A-Za-z0-9.-]+", host):
+        return f"wss://{host}/ws", f"wss://{host}/data"
     ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
-    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
-    return {"wsUrl": ws_url}
+    data = os.environ.get("TERMINAL_DIRECT_ENDPOINT", "")
+    return ws_endpoint.replace("https://", "wss://"), data.replace("https://", "wss://")
+
+
+@read_router.get("/config")
+async def get_config(request: Request):
+    """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
+    ws_url, data_url = _socket_urls(request)
+    return {"wsUrl": ws_url, "dataUrl": data_url, "protocol": PROTOCOL_VERSION}
 
 
 def _recent_projects(active_sessions, completed_sessions):
@@ -447,6 +457,18 @@ async def get_devices(request: Request):
     )
 
     online_devices = _online_bridge_devices(account_id) or set()
+    bridge_protocols = {}
+    rpc = None
+    if _connections_table is not None:
+        from bridge_ws import _query_connections
+        from direct_rpc_ws import rpc_info
+        query = lambda account, role, device="": _query_connections(account, role, table=_connections_table, device=device)
+        for row in query(account_id, "bridge"):
+            bridge_protocols[row.get("deviceName", "")] = int(row.get("bridgeProtocol", 0))
+        try:
+            rpc = rpc_info(account_id, query)
+        except Exception as error:
+            print(f"rpc credentials unavailable: {error}")
 
     devices = []
     for item in items:
@@ -463,9 +485,15 @@ async def get_devices(request: Request):
             "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
             "online": name in online_devices,
+            "bridgeProtocol": bridge_protocols.get(name, 0),
         })
     devices.sort(key=lambda x: x["lastActive"], reverse=True)
-    return {"devices": devices}
+    ws_url, data_url = _socket_urls(request)
+    result = {"devices": devices, "protocol": PROTOCOL_VERSION, "maxFrameBytes": 28672,
+              "wsUrl": ws_url, "dataUrl": data_url}
+    if rpc is not None:
+        result["rpc"] = rpc
+    return result
 
 
 @read_router.get("/projects")

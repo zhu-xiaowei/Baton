@@ -27,6 +27,7 @@ import {
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
+import { homeIndex } from './home-index.mjs';
 import {
   claudeSubagentParentSessionId,
   claudeSubagentEnded,
@@ -247,6 +248,7 @@ function queuePolledClaudeFile(
 
 async function readAndSend(config, filename, sessionId, enqueue) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
+  homeIndex.touch(filePath);
   if (!fs.existsSync(filePath)) return;
   if (String(filename).split(path.sep).includes('subagents')) {
     return readAndSendSubagent(config, filename, filePath, sessionId, enqueue);
@@ -458,6 +460,7 @@ async function postSessionMeta(
 
   // Skip empty-shell sessions even if process detection briefly marks them running.
   const preview = metadata.preview;
+  homeIndex.noteClaude(filePath, metadata);
   if (shouldSkipClaudeSession(preview, dm)) return;
   if (!(statusChanged || isNew || gotNewTitle || forceActivity)) return;
 

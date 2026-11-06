@@ -2,7 +2,7 @@ name: PR title lint
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/v2]
     types: [opened, synchronize, reopened, edited]
 
 permissions:
