@@ -730,7 +730,7 @@ function connect() {
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + '&terminal=2&terminalStartup=1&preview=1&protocol=2';
+    + '&terminal=2&terminalStartup=1&preview=1';
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried

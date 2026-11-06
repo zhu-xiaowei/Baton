@@ -55,8 +55,8 @@ def world(monkeypatch):
     monkeypatch.setenv("AWS_REGION", "ap-northeast-1")
     direct_rpc_ws._credential_cache.clear()
     table = Table([
-        {"connectionId": "bridge-a", "accountId": "A", "role": "bridge", "deviceName": "mac", "bridgeProtocol": 2},
-        {"connectionId": "bridge-b", "accountId": "B", "role": "bridge", "deviceName": "pc", "bridgeProtocol": 2},
+        {"connectionId": "bridge-a", "accountId": "A", "role": "bridge", "deviceName": "mac"},
+        {"connectionId": "bridge-b", "accountId": "B", "role": "bridge", "deviceName": "pc"},
         {"connectionId": "data-a", "accountId": "A", "role": "bridge_data"},
         {"connectionId": "app-a", "accountId": "A", "role": "app_data"},
         {"connectionId": "app-b", "accountId": "B", "role": "app_data"},

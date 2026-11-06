@@ -369,8 +369,6 @@ def _handle_connect(event, connection_id):
             item["terminalStartup"] = 1
     if role == "bridge" and qs.get("preview") == "1":
         item["previewProtocol"] = 1
-    if role == "bridge" and qs.get("protocol") == "2":
-        item["bridgeProtocol"] = 2
     if role in _DATA_ROLES:
         item["terminalDataEndpoint"] = connected_endpoint
     if role in ("app", "bridge") and qs.get("realtime") == "1":
