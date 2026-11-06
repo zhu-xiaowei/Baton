@@ -1,8 +1,8 @@
 """v2 direct App ⇄ Bridge requests.
 
 A Bridge binds a `bridge_data` socket on the data API to its control connection. Apps get
-STS credentials (from /devices) that may only post to their account's bridge data sockets, so
-requests and replies travel through the API Gateway HTTP integration without Lambda.
+STS credentials (from /devices) for the data API, so requests and replies travel through the
+API Gateway HTTP integration without Lambda.
 """
 
 import hashlib
@@ -11,7 +11,6 @@ import os
 import re
 import secrets
 import time
-import urllib.parse
 import uuid
 
 import boto3
@@ -32,33 +31,26 @@ def _ticket_key(token):
     return "RPCJOIN#" + hashlib.sha256(token.encode()).hexdigest()
 
 
-def _policy(data_ids):
-    policy = callback_policy(data_endpoint(), os.environ["TERMINAL_DIRECT_ROLE_ARN"], os.environ["AWS_REGION"])
-    prefix = policy["Statement"][0]["Resource"][:-1]
-    # Connection ids contain "=", which the signed @connections path carries percent-encoded.
-    policy["Statement"][0]["Resource"] = sorted({prefix + form for data_id in data_ids
-        for form in (data_id, urllib.parse.quote(data_id, safe=""))})
-    return policy
-
-
 def issue_app_credentials(account_id, data_ids, sts=None):
-    ids = tuple(sorted(set(data_ids)))
-    if not ids:
+    """API Gateway authorizes @connections on the route template (`@connections/{connectionId}`),
+    not on the connection id, so credentials cannot be narrowed to single sockets; they carry the
+    same data-API scope the Bridge already gets. Cross-account isolation is a phase-2 item."""
+    if not data_ids:
         return None
-    cached = _credential_cache.get((account_id, ids))
+    cached = _credential_cache.get(account_id)
     if cached and cached["expiresAt"] - time.time() > CREDENTIAL_REUSE_MARGIN:
         return cached
     region = os.environ["AWS_REGION"]
+    role_arn = os.environ["TERMINAL_DIRECT_ROLE_ARN"]
     sts = sts or boto3.client("sts", region_name=region)
-    result = sts.assume_role(RoleArn=os.environ["TERMINAL_DIRECT_ROLE_ARN"],
-        RoleSessionName="rpc-" + uuid.uuid4().hex[:20], DurationSeconds=CREDENTIAL_SECONDS,
-        Policy=json.dumps(_policy(ids)))
+    result = sts.assume_role(RoleArn=role_arn, RoleSessionName="rpc-" + uuid.uuid4().hex[:20],
+        DurationSeconds=CREDENTIAL_SECONDS, Policy=json.dumps(callback_policy(data_endpoint(), role_arn, region)))
     credentials = result["Credentials"]
     value = {"accessKeyId": credentials["AccessKeyId"], "secretAccessKey": credentials["SecretAccessKey"],
         "sessionToken": credentials["SessionToken"], "expiresAt": int(credentials["Expiration"].timestamp())}
     if len(_credential_cache) > 256:
         _credential_cache.clear()
-    _credential_cache[(account_id, ids)] = value
+    _credential_cache[account_id] = value
     return value
 
 

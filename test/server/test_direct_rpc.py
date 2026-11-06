@@ -94,10 +94,7 @@ def test_join_binds_bridge_and_pushes_scoped_credentials_to_same_account_apps(wo
     rpc = pushes[0][1]["rpc"]
     assert rpc["bridges"] == [{"device": "mac", "dataId": "data-a", "bridgeProtocol": 2}]
     policy = json.loads(sts.calls[-1]["Policy"])
-    assert policy["Statement"][0]["Resource"] == ["arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/data-a"]
-    assert direct_rpc_ws._policy(["ab=="])["Statement"][0]["Resource"] == [
-        "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/ab%3D%3D",
-        "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/ab=="]
+    assert policy["Statement"][0]["Resource"] == "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/*"
 
 
 def test_join_rejects_bad_expired_reused_or_cross_account_tokens(world):
@@ -120,7 +117,7 @@ def test_join_rejects_a_replaced_bridge_connection(world):
     assert join(world, token)["statusCode"] == 403
 
 
-def test_credentials_are_reused_and_only_list_joined_bridges(world):
+def test_credentials_are_reused_and_only_issued_with_a_joined_bridge(world):
     table, query, post, sent, sts = world
     assert "credentials" not in direct_rpc_ws.rpc_info("A", query, sts)
     join(world, token_for(world))
