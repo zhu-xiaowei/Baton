@@ -87,14 +87,6 @@ ACTIVE_COUNT_ATTRIBUTE_NAMES = {
     "#parent": "parentSessionId",
 }
 ACTIVE_COUNT_PROJECTION = ", ".join(ACTIVE_COUNT_ATTRIBUTE_NAMES)
-DEVICE_LIST_ATTRIBUTE_NAMES = {
-    "#device": "deviceName",
-    "#display": "deviceDisplayName",
-    "#os": "os",
-    "#projects": "projectCount",
-    "#last": "lastActive",
-}
-DEVICE_LIST_PROJECTION = ", ".join(DEVICE_LIST_ATTRIBUTE_NAMES)
 
 
 def _tables():
@@ -295,21 +287,12 @@ def _query_list_page(
     return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
 
 
-def _socket_urls(request: Request):
-    """Control and data WebSocket URLs; through CloudFront when the request came through it."""
-    host = request.headers.get("x-baton-host", "")
-    if host and re.fullmatch(r"[A-Za-z0-9.-]+", host):
-        return f"wss://{host}/ws", f"wss://{host}/data"
-    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
-    data = os.environ.get("TERMINAL_DIRECT_ENDPOINT", "")
-    return ws_endpoint.replace("https://", "wss://"), data.replace("https://", "wss://")
-
-
 @read_router.get("/config")
-async def get_config(request: Request):
+async def get_config():
     """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
-    ws_url, data_url = _socket_urls(request)
-    return {"wsUrl": ws_url, "dataUrl": data_url, "protocol": PROTOCOL_VERSION}
+    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
+    return {"wsUrl": ws_url}
 
 
 def _recent_projects(active_sessions, completed_sessions):
@@ -444,55 +427,34 @@ def _live_active_counts(sessions_table, account_id):
 
 @read_router.get("/devices")
 async def get_devices(request: Request):
-    """Projected DEV# fields for the home list; running/needs_input counted live."""
+    """v2: names and online state only; counts come from each Bridge. `rpc` addresses the
+    joined Bridges directly (see direct_rpc_ws)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
-    live_dev, _ = _live_active_counts(sessions_table, account_id)
-
     items = _query_all(
         sessions_table,
         KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with("DEV#"),
-        ProjectionExpression=DEVICE_LIST_PROJECTION,
-        ExpressionAttributeNames=DEVICE_LIST_ATTRIBUTE_NAMES,
+        ProjectionExpression="#device, #display, #os",
+        ExpressionAttributeNames={"#device": "deviceName", "#display": "deviceDisplayName", "#os": "os"},
     )
-
-    online_devices = _online_bridge_devices(account_id) or set()
-    bridge_protocols = {}
-    rpc = None
+    bridges = []
     if _connections_table is not None:
         from bridge_ws import _query_connections
+        bridges = _query_connections(account_id, "bridge", table=_connections_table)
+    online_devices = {row.get("deviceName", "") for row in bridges}
+    devices = [{
+        "deviceName": item["deviceName"],
+        "deviceDisplayName": item.get("deviceDisplayName") or item["deviceName"],
+        "os": item.get("os", ""),
+        "online": item["deviceName"] in online_devices,
+    } for item in items if item.get("deviceName")]
+    result = {"protocol": PROTOCOL_VERSION, "devices": devices}
+    if _connections_table is not None:
         from direct_rpc_ws import rpc_info
-        query = lambda account, role, device="": _query_connections(account, role, table=_connections_table, device=device)
-        for row in query(account_id, "bridge"):
-            bridge_protocols[row.get("deviceName", "")] = int(row.get("bridgeProtocol", 0))
         try:
-            rpc = rpc_info(account_id, query)
+            result["rpc"] = rpc_info(account_id, lambda account, role, device="": bridges)
         except Exception as error:
             print(f"rpc credentials unavailable: {error}")
-
-    devices = []
-    for item in items:
-        name = item.get("deviceName", "")
-        if not name:
-            continue
-        lc = live_dev.get(name, {})
-        devices.append({
-            "deviceName": name,
-            "deviceDisplayName": item.get("deviceDisplayName") or name,
-            "os": item.get("os", ""),
-            "projectCount": int(item.get("projectCount", 0)),
-            "runningCount": lc.get("running", 0),
-            "needsInputCount": lc.get("needs_input", 0),
-            "lastActive": item.get("lastActive", ""),
-            "online": name in online_devices,
-            "bridgeProtocol": bridge_protocols.get(name, 0),
-        })
-    devices.sort(key=lambda x: x["lastActive"], reverse=True)
-    ws_url, data_url = _socket_urls(request)
-    result = {"devices": devices, "protocol": PROTOCOL_VERSION, "maxFrameBytes": 28672,
-              "wsUrl": ws_url, "dataUrl": data_url}
-    if rpc is not None:
-        result["rpc"] = rpc
     return result
 
 

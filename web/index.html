@@ -90,23 +90,18 @@
   var hdr = { 'x-api-key': key };
 
   // Fire both requests immediately (network flies out before any other JS loads).
-  // A v2 server is answered by each Bridge through api.js, which resolves __apiReady when loaded.
+  // Unless the server is known to be v1, api.js answers through each Bridge once it has loaded.
   var proto = null;
   try { proto = JSON.parse(localStorage.getItem('baton-proto') || 'null'); } catch (e) {}
-  var v2 = !!proto && proto.server === server && proto.protocol === 2 && localStorage.getItem('baton-force-v1') !== '1';
+  var v1 = !!proto && proto.server === server && proto.protocol === 1;
   window.__apiReady = new Promise(function (resolve) { window.__resolveApiReady = resolve; });
   var viaApi = function (path) {
     return window.__apiReady.then(function () { return window.api(path); }).catch(function () { return null; });
   };
-  window.__preload = v2 ? { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') } : {
+  window.__preload = v1 ? {
     active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
-    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
-      if (data && data.protocol === 2 && localStorage.getItem('baton-force-v1') !== '1') {
-        try { localStorage.setItem('baton-proto', JSON.stringify({ server: server, protocol: 2, dataUrl: data.dataUrl || '' })); } catch (e) {}
-      }
-      return data;
-    }).catch(function () { return null; })
-  };
+    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+  } : { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';
@@ -541,8 +536,8 @@
         var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
         return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + (d.lastActive ? timeAgo(d.lastActive) : '') + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + (d.projectCount != null ? ' &middot; ' + d.projectCount + ' projects' : '') + '</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</a>';
       }).join('');
       html += '</div></section>';

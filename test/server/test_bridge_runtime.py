@@ -388,16 +388,8 @@ def test_active_sessions_projects_only_home_card_fields(monkeypatch):
     )
 
 
-def test_devices_projects_only_home_list_fields(monkeypatch):
-    item = {
-        "deviceName": "Mac",
-        "deviceDisplayName": "Office Mac",
-        "os": "darwin",
-        "projectCount": 3,
-        "sessionCount": 99,
-        "lastActive": "2026-09-01T00:00:00.000Z",
-        "runtimeCapabilities": {"codex": {"canCreate": True}},
-    }
+def test_devices_returns_only_v2_fields(monkeypatch):
+    item = {"deviceName": "Mac", "deviceDisplayName": "Office Mac", "os": "darwin"}
 
     class DeviceTable:
         def __init__(self):
@@ -409,29 +401,14 @@ def test_devices_projects_only_home_list_fields(monkeypatch):
 
     table = DeviceTable()
     monkeypatch.setattr(bridge_read, "_tables", lambda: (table, None))
-    monkeypatch.setattr(
-        bridge_read,
-        "_live_active_counts",
-        lambda *_: ({"Mac": {"running": 1, "needs_input": 2}}, {}),
-    )
     monkeypatch.setattr(bridge_read, "_connections_table", None)
 
     result = asyncio.run(bridge_read.get_devices(FakeRequest()))
 
-    assert result["devices"] == [{
-        "deviceName": "Mac",
-        "deviceDisplayName": "Office Mac",
-        "os": "darwin",
-        "projectCount": 3,
-        "runningCount": 1,
-        "needsInputCount": 2,
-        "lastActive": "2026-09-01T00:00:00.000Z",
-        "online": False,
-        "bridgeProtocol": 0,
-    }]
-    assert result["protocol"] == 2 and "rpc" not in result
-    assert table.query_calls[0]["ProjectionExpression"] == bridge_read.DEVICE_LIST_PROJECTION
-    assert table.query_calls[0]["ExpressionAttributeNames"] == bridge_read.DEVICE_LIST_ATTRIBUTE_NAMES
+    assert result == {"protocol": 2, "devices": [
+        {"deviceName": "Mac", "deviceDisplayName": "Office Mac", "os": "darwin", "online": False}]}
+    assert len(table.query_calls) == 1
+    assert table.query_calls[0]["ExpressionAttributeNames"] == {"#device": "deviceName", "#display": "deviceDisplayName", "#os": "os"}
 
 
 def test_ws_sync_payload_decodes_storage_id():

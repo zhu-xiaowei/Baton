@@ -12,18 +12,20 @@ function readJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
 }
 
-// 2 = v2 server, 1 = v1 server or forced, 0 = not known yet.
+// 2 = v2 server, 1 = v1 server, 0 = not known yet.
 export function serverProtocol() {
-  if (localStorage.getItem('baton-force-v1') === '1') return 1;
   const saved = readJson(PROTOCOL_KEY);
   return saved?.server === state.SERVER ? saved.protocol : 0;
 }
 
 function rememberProtocol(response) {
   const protocol = response?.protocol === 2 ? 2 : 1;
-  try {
-    localStorage.setItem(PROTOCOL_KEY, JSON.stringify({ server: state.SERVER, protocol, dataUrl: response?.dataUrl || '' }));
-  } catch {}
+  try { localStorage.setItem(PROTOCOL_KEY, JSON.stringify({ server: state.SERVER, protocol })); } catch {}
+}
+
+// v2 stacks are reached through their CloudFront domain, which also serves /data.
+function dataUrl() {
+  return 'wss://' + new URL(state.SERVER).host + '/data';
 }
 
 async function rest(path, params) {
@@ -65,7 +67,7 @@ async function run() {
     }, () => {}));
   };
   if (serverProtocol() === 2) {
-    connect(readJson(PROTOCOL_KEY)?.dataUrl);
+    connect(dataUrl());
     cachedOnlineDevices().forEach(ask);
   }
   const devicesResponse = await rest('/api/bridge/devices');
@@ -74,7 +76,7 @@ async function run() {
   if (devicesResponse.protocol !== 2) {
     return { active: await rest('/api/bridge/active-sessions'), devices: devicesResponse };
   }
-  connect(devicesResponse.dataUrl);
+  connect(dataUrl());
   updateRoutes(devicesResponse);
   window.__renderHomeDevices?.(mergeDevices(devicesResponse, (name) => cache[name]?.answer));
   const reachable = new Set((devicesResponse.rpc?.bridges || []).map((bridge) => bridge.device));
@@ -92,13 +94,10 @@ async function run() {
 function mergeDevices(response, answerFor) {
   const devices = response.devices.map((device) => {
     const answer = answerFor(device.deviceName);
-    const out = { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
-      online: device.online, projectCount: device.projectCount, runningCount: device.runningCount,
-      needsInputCount: device.needsInputCount, lastActive: device.lastActive };
-    if (answer) Object.assign(out, answer.device);
-    return out;
+    return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
+      online: device.online, ...(answer ? answer.device : {}) };
   });
-  devices.sort((a, b) => (a.lastActive < b.lastActive ? 1 : a.lastActive > b.lastActive ? -1 : 0));
+  devices.sort((a, b) => ((a.lastActive || '') < (b.lastActive || '') ? 1 : (a.lastActive || '') > (b.lastActive || '') ? -1 : 0));
   return { devices };
 }
 
@@ -121,18 +120,11 @@ function mergeActive(response, answerFor) {
   return { sessions, recentSessions: [], recentProjects: projects.slice(0, PROJECT_LIMIT), hasMoreProjects: false };
 }
 
-// Dev check: v2 against the v1 REST answer on the same stack (active sessions and device counts).
+// Dev check: v2 active sessions against v1 /active-sessions on the same stack.
 window.compareHomeV1V2 = async function () {
-  const [v2, v1Active, v1Devices] = await Promise.all([loadHomeV2(), rest('/api/bridge/active-sessions'), rest('/api/bridge/devices')]);
+  const [v2, v1] = await Promise.all([loadHomeV2(), rest('/api/bridge/active-sessions')]);
   const key = (s) => `${s.deviceName}/${s.sessionId}:${s.status}`;
-  const active = { v1: v1Active.sessions.map(key), v2: v2.active.sessions.map(key) };
-  const devices = v1Devices.devices.map((d) => {
-    const n = v2.devices.devices.find((x) => x.deviceName === d.deviceName) || {};
-    return { device: d.deviceName, online: d.online, running: `${d.runningCount}/${n.runningCount}`,
-      needsInput: `${d.needsInputCount}/${n.needsInputCount}`, projects: `${d.projectCount}/${n.projectCount}`,
-      lastActive: `${d.lastActive} / ${n.lastActive}` };
-  });
+  const active = { v1: v1.sessions.map(key), v2: v2.active.sessions.map(key) };
   console.log('[v2 compare] active identical:', active.v1.join() === active.v2.join(), active);
-  console.table(devices);
-  return { active, devices };
+  return active;
 };

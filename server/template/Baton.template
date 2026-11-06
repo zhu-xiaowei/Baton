@@ -978,7 +978,8 @@
               "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
               "OriginPath": "/v1",
               "CustomOriginConfig": {
-                "OriginProtocolPolicy": "https-only"
+                "OriginProtocolPolicy": "https-only",
+                "OriginKeepaliveTimeout": 60
               }
             },
             {
@@ -1015,8 +1016,7 @@
             "CachedMethods": ["GET", "HEAD"],
             "Compress": true,
             "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
-            "FunctionAssociations": [{ "EventType": "viewer-request", "FunctionARN": { "Fn::GetAtt": ["CDNRequestFunction", "FunctionARN"] } }]
+            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
           }
         }
       }
@@ -1026,8 +1026,8 @@
       "Properties": {
         "Name": { "Fn::Sub": "${AWS::StackName}-cdn-request" },
         "AutoPublish": true,
-        "FunctionConfig": { "Comment": "WebSocket paths to the stage; pass the viewer host to the API", "Runtime": "cloudfront-js-2.0" },
-        "FunctionCode": "function handler(event) { var r = event.request; if (r.uri === '/ws' || r.uri === '/data') { r.uri = '/v1'; return r; } r.headers['x-baton-host'] = { value: r.headers.host.value }; return r; }"
+        "FunctionConfig": { "Comment": "Map the /ws and /data WebSocket paths to the API stage", "Runtime": "cloudfront-js-2.0" },
+        "FunctionCode": "function handler(event) { event.request.uri = '/v1'; return event.request; }"
       }
     }
   },

@@ -92,7 +92,7 @@ def test_join_binds_bridge_and_pushes_scoped_credentials_to_same_account_apps(wo
     pushes = [(target, data) for _, target, data in sent if data.get("type") == "bridges"]
     assert [target for target, _ in pushes] == ["app-a"]
     rpc = pushes[0][1]["rpc"]
-    assert rpc["bridges"] == [{"device": "mac", "dataId": "data-a", "bridgeProtocol": 2}]
+    assert rpc["bridges"] == [{"device": "mac", "dataId": "data-a"}]
     policy = json.loads(sts.calls[-1]["Policy"])
     assert policy["Statement"][0]["Resource"] == "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/*"
 

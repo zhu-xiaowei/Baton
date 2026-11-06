@@ -80,7 +80,6 @@ function applyRpc(next, onlineDevices, { persist = true } = {}) {
 // Called with the /devices response; every route difference is resent by reconcile().
 export function updateRoutes(devicesResponse) {
   restore();
-  if (devicesResponse?.dataUrl) dataUrl = devicesResponse.dataUrl;
   const online = (devicesResponse?.devices || []).filter((d) => d.online).map((d) => d.deviceName);
   routesKnown = true;
   if (devicesResponse?.rpc) applyRpc(devicesResponse.rpc, online);
