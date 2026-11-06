@@ -7,7 +7,8 @@ import { RpcAssembler, decodeRpcPayload, rpcRequest } from '../../../bridge/dire
 
 const RETRY_MS = 2000;
 const DEADLINE_MS = 6000;
-const PING_MS = 25000;
+const PING_MS = 60000;
+const PROBE_MS = 1000;
 const CAN_INFLATE = typeof DecompressionStream === 'function' && (() => {
   try { new DecompressionStream('deflate-raw'); return true; } catch { return false; }
 })();
@@ -20,9 +21,10 @@ let dataUrl = '';
 let retryTimer = null;
 let pingTimer = null;
 let tickTimer = null;
+let lastInboundAt = 0;
+let probeTimer = null;
 const pending = new Map();    // key → request state
 const byRequestId = new Map(); // wire requestId → key
-const signers = new Map();
 const assembler = new RpcAssembler();
 let routesKnown = false;      // true once /devices answered in this page
 
@@ -46,16 +48,15 @@ function restore() {
   restored = true;
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey()) || 'null');
-    if (saved) applyRpc(saved.rpc, saved.online || [], { persist: false });
+    if (saved) applyRpc(saved.rpc, { persist: false });
   } catch {}
 }
 
-function applyRpc(next, onlineDevices, { persist = true } = {}) {
+// Routes not in `bridges` are offline (a device without a route counts as offline too).
+function applyRpc(next, { persist = true } = {}) {
   if (!next) return;
   // The region is part of the execute-api host: <api>.execute-api.<region>.amazonaws.com.
   rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials };
-  signers.clear();
-  const online = new Set(onlineDevices);
   const seen = new Set();
   for (const bridge of next.bridges || []) {
     seen.add(bridge.device);
@@ -68,11 +69,8 @@ function applyRpc(next, onlineDevices, { persist = true } = {}) {
   for (const [device, route] of routes) {
     if (!seen.has(device)) routes.set(device, { ...route, online: false, version: route.version + '|off' });
   }
-  for (const device of online) if (!routes.has(device)) routes.set(device, { online: false, version: 'none' });
   if (persist) {
-    try {
-      localStorage.setItem(storageKey(), JSON.stringify({ rpc: next, online: [...seen] }));
-    } catch {}
+    try { localStorage.setItem(storageKey(), JSON.stringify({ rpc: next })); } catch {}
   }
   reconcile();
 }
@@ -80,9 +78,8 @@ function applyRpc(next, onlineDevices, { persist = true } = {}) {
 // Called with the /devices response; every route difference is resent by reconcile().
 export function updateRoutes(devicesResponse) {
   restore();
-  const online = (devicesResponse?.devices || []).filter((d) => d.online).map((d) => d.deviceName);
   routesKnown = true;
-  if (devicesResponse?.rpc) applyRpc(devicesResponse.rpc, online);
+  if (devicesResponse?.rpc) applyRpc(devicesResponse.rpc);
   else reconcile();
 }
 
@@ -91,10 +88,34 @@ export function cachedOnlineDevices() {
   return [...routes].filter(([, route]) => route.online).map(([device]) => device);
 }
 
+// A socket idle past the ping interval may have been dropped by a NAT without a close event:
+// ping it and rebuild it if nothing arrives within a second. whoami then resends pending requests.
+function probe() {
+  const ws = socket;
+  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer || performance.now() - lastInboundAt < PING_MS) return;
+  const sentAt = performance.now();
+  ws.send('{"action":"realtime_ping"}');
+  probeTimer = setTimeout(() => {
+    probeTimer = null;
+    if (socket !== ws || lastInboundAt >= sentAt) return;
+    ws.onclose = null;
+    ws.close();
+    socket = null;
+    connectionId = '';
+    clearInterval(pingTimer);
+    connect();
+  }, PROBE_MS);
+}
+
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') probe(); });
+}
+
 export function connect(url) {
   if (url) dataUrl = url;
   if (!dataUrl || !state.KEY) return;
-  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+  if (socket?.readyState === WebSocket.OPEN) return probe();
+  if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
   const ws = socket = new WebSocket(dataUrl + '?' + new URLSearchParams({ apiKey: state.KEY, role: 'app_data' }));
   connectionId = '';
@@ -109,7 +130,7 @@ export function connect(url) {
       if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) ws.send('{"action":"realtime_ping"}');
     }, PING_MS);
   };
-  ws.onmessage = (event) => receive(ws, event.data);
+  ws.onmessage = (event) => { lastInboundAt = performance.now(); receive(ws, event.data); };
   ws.onclose = () => {
     if (socket !== ws) return;
     socket = null;
@@ -130,7 +151,7 @@ function receive(ws, text) {
     return;
   }
   if (frame.action === 'direct_rpc' && frame.type === 'bridges') {
-    applyRpc(frame.rpc, frame.rpc?.bridges?.map((b) => b.device) || []);
+    applyRpc(frame.rpc);
     return;
   }
   const part = assembler.add(frame);
@@ -151,16 +172,6 @@ async function finish(key, request, outcome) {
   catch (error) { request.reject(error); }
 }
 
-function signer(route) {
-  let sign = signers.get(route.dataId);
-  if (!sign) {
-    sign = createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
-      target: route.dataId, action: 'terminal_direct_data' });
-    signers.set(route.dataId, sign);
-  }
-  return sign;
-}
-
 async function send(key, request, route) {
   const requestId = uuid();
   request.ids.add(requestId);
@@ -171,7 +182,9 @@ async function send(key, request, route) {
   const body = rpcRequest({ requestId, method: request.method, params: request.params, replyTo: connectionId });
   if (!CAN_INFLATE) body.accept = [];
   try {
-    socket.send(await signer(route)(JSON.stringify(body)));
+    const sign = createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
+      target: route.dataId, action: 'terminal_direct_data' });
+    socket.send(await sign(JSON.stringify(body)));
   } catch {
     request.attemptVersion = null;
   }
