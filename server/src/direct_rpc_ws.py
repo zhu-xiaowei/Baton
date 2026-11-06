@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 import uuid
 
 import boto3
@@ -34,7 +35,9 @@ def _ticket_key(token):
 def _policy(data_ids):
     policy = callback_policy(data_endpoint(), os.environ["TERMINAL_DIRECT_ROLE_ARN"], os.environ["AWS_REGION"])
     prefix = policy["Statement"][0]["Resource"][:-1]
-    policy["Statement"][0]["Resource"] = [prefix + data_id for data_id in data_ids]
+    # Connection ids contain "=", which the signed @connections path carries percent-encoded.
+    policy["Statement"][0]["Resource"] = sorted({prefix + form for data_id in data_ids
+        for form in (data_id, urllib.parse.quote(data_id, safe=""))})
     return policy
 
 

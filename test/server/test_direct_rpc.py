@@ -95,6 +95,9 @@ def test_join_binds_bridge_and_pushes_scoped_credentials_to_same_account_apps(wo
     assert rpc["bridges"] == [{"device": "mac", "dataId": "data-a", "bridgeProtocol": 2}]
     policy = json.loads(sts.calls[-1]["Policy"])
     assert policy["Statement"][0]["Resource"] == ["arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/data-a"]
+    assert direct_rpc_ws._policy(["ab=="])["Statement"][0]["Resource"] == [
+        "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/ab%3D%3D",
+        "arn:aws:execute-api:ap-northeast-1:123456789012:data/v1/POST/@connections/ab=="]
 
 
 def test_join_rejects_bad_expired_reused_or_cross_account_tokens(world):
