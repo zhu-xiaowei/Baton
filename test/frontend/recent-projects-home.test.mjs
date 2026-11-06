@@ -50,6 +50,8 @@ function harness({ cache, fetchData, nativeMobile = false } = {}) {
     beforeParse(win) {
       win.localStorage.setItem('_ak', win.btoa('fixture-key'));
       if (cache) win.localStorage.setItem('apeek_home_cache', JSON.stringify(cache));
+      win.__apiReady = Promise.resolve();
+      win.api = async path => { const r = await win.fetch(new URL(path, win.location.href).href); if (!r.ok) throw new Error(String(r.status)); return r.json(); };
       win.fetch = async url => {
         requests.push(new URL(url).pathname);
         if (fetchData) return fetchData(url);

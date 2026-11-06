@@ -53,7 +53,8 @@ function restore() {
 
 function applyRpc(next, onlineDevices, { persist = true } = {}) {
   if (!next) return;
-  rpc = { endpoint: next.endpoint, region: next.region, credentials: next.credentials };
+  // The region is part of the execute-api host: <api>.execute-api.<region>.amazonaws.com.
+  rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials };
   signers.clear();
   const online = new Set(onlineDevices);
   const seen = new Set();

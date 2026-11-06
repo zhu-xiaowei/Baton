@@ -11,7 +11,7 @@ import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-c
 import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
-import { loadHomeV2, serverProtocol } from './v2/home.js';
+import { loadHomeV2 } from './v2/home.js';
 import { resetDirectTransport } from './v2/direct-transport.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
@@ -39,7 +39,6 @@ function clearCachedAccountData() {
   state.WS_URL = '';
   localStorage.removeItem('_wsurl');
   localStorage.removeItem('apeek_home_cache');
-  localStorage.removeItem('baton-proto');
   localStorage.removeItem('apeek_v2_home_devices');
   resetDirectTransport();
   localStorage.removeItem('baton-preview-ports');
@@ -91,9 +90,9 @@ async function _do(path, params, opts, init) {
   return res;
 }
 
-// v2 servers answer the home lists from each Bridge; everything else stays REST for now.
+// The home lists come from each Bridge; the remaining pages still use REST until they move.
 async function api(path, params, opts) {
-  if (!(opts && (opts.key || opts.server)) && serverProtocol() !== 1) {
+  if (!(opts && (opts.key || opts.server))) {
     if (path === '/api/bridge/active-sessions') return (await loadHomeV2()).active;
     if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
   }

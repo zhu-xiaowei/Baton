@@ -44,6 +44,8 @@ test('inline home cards preserve quoted session previews for detail navigation',
     pretendToBeVisual: true,
     beforeParse(window) {
       window.localStorage.setItem('_ak', window.btoa('test-key'));
+      window.__apiReady = Promise.resolve();
+      window.api = async path => { const r = await window.fetch(new URL(path, window.location.href).href); if (r && r.ok === false) throw new Error(String(r.status)); return r && r.json ? r.json() : r; };
       window.fetch = async function (url) {
         return {
           ok: true,

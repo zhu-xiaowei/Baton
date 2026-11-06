@@ -86,33 +86,13 @@
   var key = '';
   try { key = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
   if (!key) { location.replace('landing.html'); return; }
-  var server = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
-  var hdr = { 'x-api-key': key };
 
-  // Fire both requests immediately (network flies out before any other JS loads).
-  // A v2 server is answered through each Bridge by api.js, which resolves __apiReady when loaded.
-  var proto = null;
-  try { proto = JSON.parse(localStorage.getItem('baton-proto') || 'null'); } catch (e) {}
-  var v2 = !!proto && proto.server === server && proto.protocol === 2;
-  window.__apiReady = new Promise(function (resolve) { window.__resolveApiReady = resolve; });
+  // The home is answered through each Bridge by api.js, which resolves __apiReady when loaded.
+  window.__apiReady = window.__apiReady || new Promise(function (resolve) { window.__resolveApiReady = resolve; });
   var viaApi = function (path) {
     return window.__apiReady.then(function () { return window.api(path); }).catch(function () { return null; });
   };
-  var rest = function (path) {
-    return fetch(server + path, { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
-  };
-  if (v2) {
-    window.__preload = { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') };
-  } else {
-    // v1 or not known yet: both REST requests leave at once; a v2 answer from /devices switches over.
-    var activeRest = rest('/api/bridge/active-sessions');
-    var devicesRest = rest('/api/bridge/devices');
-    var isV2 = function (data) { return !!data && data.protocol === 2; };
-    window.__preload = {
-      active: devicesRest.then(function (data) { return isV2(data) ? viaApi('/api/bridge/active-sessions') : activeRest; }),
-      devices: devicesRest.then(function (data) { return isV2(data) ? viaApi('/api/bridge/devices') : data; })
-    };
-  }
+  window.__preload = { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';

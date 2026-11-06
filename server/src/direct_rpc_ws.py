@@ -58,7 +58,7 @@ def rpc_info(account_id, query, sts=None):
     """Bridges an App can address directly, plus credentials limited to exactly those sockets."""
     bridges = [{"device": bridge.get("deviceName", ""), "dataId": bridge["rpcDataId"]}
                for bridge in query(account_id, "bridge") if bridge.get("rpcDataId")]
-    info = {"bridges": bridges, "endpoint": data_endpoint(), "region": os.environ.get("AWS_REGION", "")}
+    info = {"bridges": bridges, "endpoint": data_endpoint()}
     credentials = issue_app_credentials(account_id, [bridge["dataId"] for bridge in bridges], sts)
     if credentials:
         info["credentials"] = credentials

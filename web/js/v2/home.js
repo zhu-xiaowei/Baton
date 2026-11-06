@@ -1,9 +1,9 @@
-// v2 home: device names/online from /devices (server), everything else from each Bridge.
-// Produces the same shapes as v1 /active-sessions and /devices so the page renders unchanged.
+// Home: device names/online from /devices (server), everything else from each Bridge.
+// Produces the shapes the home page renders (former /active-sessions and /devices).
 import { state } from '../state.js';
+import { showToast } from '../components/toast.js';
 import { cachedOnlineDevices, connect, request, updateRoutes } from './direct-transport.js';
 
-const PROTOCOL_KEY = 'baton-proto';
 const CACHE_KEY = 'apeek_v2_home_devices';
 const PROJECT_LIMIT = 15;
 let inflight = null;
@@ -12,18 +12,7 @@ function readJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
 }
 
-// 2 = v2 server, 1 = v1 server, 0 = not known yet.
-export function serverProtocol() {
-  const saved = readJson(PROTOCOL_KEY);
-  return saved?.server === state.SERVER ? saved.protocol : 0;
-}
-
-function rememberProtocol(response) {
-  const protocol = response?.protocol === 2 ? 2 : 1;
-  try { localStorage.setItem(PROTOCOL_KEY, JSON.stringify({ server: state.SERVER, protocol })); } catch {}
-}
-
-// v2 stacks are reached through their CloudFront domain, which also serves /data.
+// The server is reached through its CloudFront domain, which also serves /data.
 function dataUrl() {
   return 'wss://' + new URL(state.SERVER).host + '/data';
 }
@@ -66,17 +55,14 @@ async function run() {
       if (cache[device]) fresh.set(device, cache[device]);
     }, () => {}));
   };
-  if (serverProtocol() === 2) {
-    connect(dataUrl());
-    cachedOnlineDevices().forEach(ask);
-  }
+  connect(dataUrl());
+  cachedOnlineDevices().forEach(ask);
   const devicesResponse = await rest('/api/bridge/devices');
   window.__v2Timings.devices = Math.round(performance.now() - started);
-  rememberProtocol(devicesResponse);
   if (devicesResponse.protocol !== 2) {
-    return { active: await rest('/api/bridge/active-sessions'), devices: devicesResponse };
+    showToast('This server is too old for this app. Update it by running server/install.sh again.');
+    throw new Error('server_outdated');
   }
-  connect(dataUrl());
   updateRoutes(devicesResponse);
   window.__renderHomeDevices?.(mergeDevices(devicesResponse, (name) => cache[name]?.answer));
   const reachable = new Set((devicesResponse.rpc?.bridges || []).map((bridge) => bridge.device));
@@ -119,12 +105,3 @@ function mergeActive(response, answerFor) {
   projects.sort(newestFirst);
   return { sessions, recentSessions: [], recentProjects: projects.slice(0, PROJECT_LIMIT), hasMoreProjects: false };
 }
-
-// Dev check: v2 active sessions against v1 /active-sessions on the same stack.
-window.compareHomeV1V2 = async function () {
-  const [v2, v1] = await Promise.all([loadHomeV2(), rest('/api/bridge/active-sessions')]);
-  const key = (s) => `${s.deviceName}/${s.sessionId}:${s.status}`;
-  const active = { v1: v1.sessions.map(key), v2: v2.active.sessions.map(key) };
-  console.log('[v2 compare] active identical:', active.v1.join() === active.v2.join(), active);
-  return active;
-};
