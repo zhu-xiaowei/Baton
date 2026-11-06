@@ -34,12 +34,16 @@ export class DirectRpcBridge {
   requestToken() {
     if (!this.active) return;
     this.pending = true;
+    clearTimeout(this.tokenTimer);
+    this.tokenTimer = setTimeout(() => { if (this.pending && !this.socket) this.retry(); }, 10_000);
+    this.tokenTimer.unref?.();
     if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_token' })) this.retry();
   }
 
   // Control-socket replies for this channel; returns true when consumed.
   handleControl(message) {
     if (message?.action !== 'direct_rpc') return false;
+    clearTimeout(this.tokenTimer);
     if (message.type === 'token' && this.auth) this.open(message.token);
     else this.retry();
     return true;
@@ -141,6 +145,7 @@ export class DirectRpcBridge {
   dispose() {
     this.active = false;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.tokenTimer);
     clearInterval(this.pingTimer);
     clearTimeout(this.pongTimer);
     const socket = this.socket;

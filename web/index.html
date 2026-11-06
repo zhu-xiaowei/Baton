@@ -105,9 +105,6 @@
   var homeActiveData = null;
   var homeDeviceData = null;
   var homeLoadVersion = 0;
-  window.__homeActiveParams = function () {
-    return allRecentProjects ? { allProjects: true } : undefined;
-  };
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) { return null; }
   }

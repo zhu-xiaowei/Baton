@@ -71,8 +71,8 @@ async function run() {
     throw new Error('server_outdated');
   }
   updateRoutes(devicesResponse);
-  window.__renderHomeDevices?.(mergeDevices(devicesResponse, (name) => cache[name]?.answer));
   const reachable = new Set((devicesResponse.rpc?.bridges || []).map((bridge) => bridge.device));
+  window.__renderHomeDevices?.(mergeDevices(devicesResponse, (name) => cache[name]?.answer, reachable));
   for (const device of devicesResponse.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
   await Promise.all(asked.values());
   saveAnswers(cache);
@@ -81,30 +81,34 @@ async function run() {
     .map((device) => device.deviceDisplayName || device.deviceName);
   if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
-  const result = latest = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
+  const result = latest = { active: mergeActive(devicesResponse, answerFor, reachable),
+    devices: mergeDevices(devicesResponse, answerFor, reachable) };
   window.__v2Timings.total = Math.round(performance.now() - started);
   window.__v2Timings.fresh = [...fresh.keys()];
   return result;
 }
 
-function mergeDevices(response, answerFor) {
+// A device the App cannot ask (offline, or online without a joined Bridge) keeps its cached
+// project count and time, but nothing is shown as running or waiting.
+function mergeDevices(response, answerFor, reachable) {
   const devices = response.devices.map((device) => {
     const answer = answerFor(device.deviceName);
+    const live = device.online && reachable.has(device.deviceName);
     return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
-      online: device.online, ...(answer ? answer.device : {}) };
+      online: device.online, ...(answer ? answer.device : {}), ...(answer && !live ? { runningCount: 0, needsInputCount: 0 } : {}) };
   });
   devices.sort((a, b) => ((a.lastActive || '') < (b.lastActive || '') ? 1 : (a.lastActive || '') > (b.lastActive || '') ? -1 : 0));
   return { devices };
 }
 
-function mergeActive(response, answerFor) {
+function mergeActive(response, answerFor, reachable) {
   const sessions = [];
   const projects = [];
   for (const device of response.devices) {
     const answer = answerFor(device.deviceName);
     if (!answer) continue;
     const deviceName = device.deviceName;
-    if (device.online) for (const session of answer.sessions) sessions.push({ ...session, deviceName });
+    if (device.online && reachable.has(deviceName)) for (const session of answer.sessions) sessions.push({ ...session, deviceName });
     for (const project of answer.recentProjects) {
       projects.push({ ...project, deviceName, sessions: project.sessions.map((session) => ({
         ...session, deviceName, projectHash: project.projectHash, projectName: project.projectName })) });

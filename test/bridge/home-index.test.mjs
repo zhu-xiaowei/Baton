@@ -99,3 +99,27 @@ test('Codex child threads are counted on their root and never listed', async (t)
   assert.equal(project.projectHash, projectHashFromCwd('/repo', claudeRoot));
   assert.deepEqual(project.sessions.map((s) => [s.sessionId, s.agentCount]), [[`codex:${id(1)}`, 1]]);
 });
+
+test('refuses to answer before the warm-up finishes', async (t) => {
+  const { claudeRoot, index } = fixture(t);
+  claude(claudeRoot, '-a', 1, 1);
+  assert.throws(() => index.home(), /warming/);
+  await index.warm();
+  assert.equal(index.home().recentProjects.length, 1);
+});
+
+test('time alone ages an answer out after the recompute interval', async (t) => {
+  const { claudeRoot, statuses, index } = fixture(t);
+  const file = claude(claudeRoot, '-a', 1, 0);
+  const now = Date.now();
+  const edge = new Date(now - 7 * 86400_000 + 10_000);
+  fs.utimesSync(file, edge, edge);
+  statuses.set(id(1), 'needs_input');
+  await index.warm();
+  const first = index.home();
+  assert.equal(first.sessions.length, 1);
+  t.mock.method(Date, 'now', () => now + 20_000);
+  const later = index.home(first.revision);
+  assert.notEqual(later.revision, first.revision, 'no event, yet the 7-day window closed');
+  assert.equal(later.sessions.length, 0);
+});

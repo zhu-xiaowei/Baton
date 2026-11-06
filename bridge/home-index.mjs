@@ -21,6 +21,8 @@ const NEEDS_INPUT_WINDOW_MS = 7 * 86400_000;
 const CLAUDE_FRESH_MS = 300_000;
 const HEADER_BYTES = 8192;
 const RUNNING_INFO_TTL_MS = 5000;
+// Status also changes with time alone (15 s / 5 min / 15 min / 7 day windows), so recompute at least this often.
+const ANSWER_TTL_MS = 15_000;
 
 const yieldToLoop = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -41,6 +43,8 @@ export class HomeIndex {
     this.names = new Map();
     this.answer = null;
     this.dirty = true;
+    this.ready = false;
+    this.answerAt = 0;
   }
 
   // ---------- index ----------
@@ -310,7 +314,10 @@ export class HomeIndex {
     for (const entry of roots) {
       const list = projects.get(entry.project);
       if (list ? list.length >= SESSIONS_PER_PROJECT : projects.size >= PROJECT_LIMIT) continue;
-      const view = this.view(entry, ctx);
+      const queued = ctx.missing?.length;
+      let view = this.view(entry, ctx);
+      // Warm-up: an unparsed file holds its slot so only the files the answer can show are queued.
+      if (!view && ctx.missing && ctx.missing.length > queued) view = {};
       if (!view) continue;
       if (list) list.push(view); else projects.set(entry.project, [view]);
     }
@@ -321,11 +328,13 @@ export class HomeIndex {
       if (view && view.status !== 'completed') active.push(view);
     }
     const counted = new Set();
+    const waiting = new Set();  // warm-up: a project's newest unparsed file is queued, older ones wait
     let lastActive = '';
     for (const entry of roots) {
-      if (counted.has(entry.project)) continue;
+      if (counted.has(entry.project) || waiting.has(entry.project)) continue;
       const meta = this.metadata(entry, ctx);
-      const valid = meta && (entry.runtime === 'claude'
+      if (!meta) { waiting.add(entry.project); continue; }
+      const valid = (entry.runtime === 'claude'
         ? !!meta.preview || fs.existsSync(path.join(entry.dir, entry.id, 'subagents'))
         : !meta.invalid);
       if (!valid) continue;
@@ -369,6 +378,7 @@ export class HomeIndex {
       }
       await yieldToLoop();
     }
+    this.ready = true;
     this.markDirty();
   }
 
@@ -382,10 +392,12 @@ export class HomeIndex {
 
   // The revision embeds a per-process id so a restarted Bridge never matches an old one.
   home(knownRevision) {
-    if (this.dirty || !this.answer) {
+    if (!this.ready) throw new Error('warming');
+    if (this.dirty || !this.answer || Date.now() - this.answerAt > ANSWER_TTL_MS) {
       const next = this.compute();
       const changed = JSON.stringify(next) !== JSON.stringify(this.answer);
       this.answer = next;
+      this.answerAt = Date.now();
       this.dirty = false;
       if (changed) this.revision++;
     }

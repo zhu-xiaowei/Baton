@@ -47,7 +47,7 @@ App opens (cached home shown at once)
 
 Callers use only `request(device, method, params)`. Everything else is internal:
 
-- One socket for the App's lifetime; rebuilt (with a new `whoami`) after a drop. Pings every 25 s while
+- One socket for the App's lifetime; rebuilt (with a new `whoami`) after a drop. Pings every 60 s while
   visible because CloudFront closes idle WebSockets after 10 minutes.
 - Routes `{ online, dataId, version }` come from the cached `rpc`, then `/devices`, then
   `bridges_changed` pushes; a changed route bumps `version`.
@@ -84,7 +84,7 @@ Callers use only `request(device, method, params)`. Everything else is internal:
   - Status: `lastKnownStatus` first (pool, watchers, `checkStopped`, agent poll), else computed for
     candidates only (live process, daemon agent, Claude file within 5 min, Codex within 15 min, fresh
     subagent). Agents come from the poll's cache, never from a synchronous `claude agents --json`.
-  - Changes only mark the answer dirty; a request rebuilds it (2–3 ms) and bumps
+  - Changes only mark the answer dirty; a request rebuilds it (~5 ms, at least every 15 s for the time windows) and bumps
     `revision = <boot id>.<n>`, so an equal revision yields `notModified`.
   - Warmed in slices after startup; no periodic rescan (watchers plus rebuild on restart, as in v1).
 - `direct-rpc.mjs` (new): `bridge_token` → `bridge_data` socket on the credentials' endpoint →

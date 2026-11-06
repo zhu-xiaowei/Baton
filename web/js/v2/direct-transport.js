@@ -125,6 +125,8 @@ export function connect(url) {
     const whoamiAt = performance.now();
     ws.__whoamiAt = whoamiAt;
     ws.send(JSON.stringify({ action: 'whoami' }));
+    // Without an id nothing can be addressed to this socket; rebuild it rather than wait for a drop.
+    setTimeout(() => { if (socket === ws && !connectionId) ws.close(); }, 5000);
     clearInterval(pingTimer);
     pingTimer = setInterval(() => {
       if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) ws.send('{"action":"realtime_ping"}');

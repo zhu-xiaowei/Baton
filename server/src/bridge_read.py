@@ -440,7 +440,10 @@ async def get_devices(request: Request):
     bridges = []
     if _connections_table is not None:
         from bridge_ws import _query_connections
-        bridges = _query_connections(account_id, "bridge", table=_connections_table)
+        try:
+            bridges = _query_connections(account_id, "bridge", table=_connections_table)
+        except Exception as error:
+            print(f"bridge connections unavailable: {error}")
     online_devices = {row.get("deviceName", "") for row in bridges}
     devices = [{
         "deviceName": item["deviceName"],
