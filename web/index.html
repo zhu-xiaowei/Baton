@@ -86,14 +86,13 @@
   var key = '';
   try { key = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
   if (!key) { location.replace('landing.html'); return; }
-  var server = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
-  var hdr = { 'x-api-key': key };
 
-  // Fire both requests immediately (network flies out before any other JS loads).
-  window.__preload = {
-    active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
-    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+  // The home is answered through each Bridge by api.js, which resolves __apiReady when loaded.
+  window.__apiReady = window.__apiReady || new Promise(function (resolve) { window.__resolveApiReady = resolve; });
+  var viaApi = function (path) {
+    return window.__apiReady.then(function () { return window.api(path); }).catch(function () { return null; });
   };
+  window.__preload = { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';
@@ -106,9 +105,6 @@
   var homeActiveData = null;
   var homeDeviceData = null;
   var homeLoadVersion = 0;
-  window.__homeActiveParams = function () {
-    return allRecentProjects ? { allProjects: true } : undefined;
-  };
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) { return null; }
   }
@@ -528,8 +524,8 @@
         var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
         return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + (d.lastActive ? timeAgo(d.lastActive) : '') + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + (d.projectCount != null ? ' &middot; ' + d.projectCount + ' projects' : '') + '</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</a>';
       }).join('');
       html += '</div></section>';
@@ -657,6 +653,17 @@
   }
   window.__loadHome = loadHome;
   window.__setTopSync = setSync;
+  // A later /devices answer changed the home after it was shown (device online state, new address).
+  window.__applyHome = function (active, devices) {
+    writeCache(active, devices);
+    whenContentReady(function () {
+      if (!document.querySelector('.top-gear') || !document.body.classList.contains('browse-view')) return;
+      var content = document.getElementById('content');
+      var keepScroll = content ? content.scrollTop : 0;
+      renderInline(active, devices);
+      if (content) content.scrollTop = keepScroll;
+    });
+  };
 
   if (willRenderInline) {
     loadHome(window.__preload.active, window.__preload.devices);

@@ -594,6 +594,11 @@ export function getDaemonSessions() {
   return getAgentsJson();
 }
 
+// Last agent catalog without spawning the CLI; the agent poll keeps it fresh.
+export function cachedDaemonSessions() {
+  return _agentsCache.map;
+}
+
 export function getDaemonRunningSessionIds() {
   const sessions = new Set();
   try {

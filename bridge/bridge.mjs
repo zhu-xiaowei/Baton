@@ -14,7 +14,8 @@ import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.m
 import { loadConfig, fetchServerConfig, removeServiceKeyArgs, saveConfig } from './config.mjs';
 import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
-import { syncSessions, checkStopped, reconcile } from './sync.mjs';
+import { syncSessions, checkStopped, reconcile, lastKnownStatus } from './sync.mjs';
+import { homeIndex } from './home-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
@@ -81,6 +82,8 @@ if (CONFIG.wsUrl) {
 // Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
 // --skip-init only skips replaying historical messages — metadata is cheap and required
 // for the periodic checkStopped() to detect disappeared CC processes.
+homeIndex.statuses = lastKnownStatus;
+lastKnownStatus.onChange = () => homeIndex.markDirty();
 const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {
@@ -94,6 +97,9 @@ if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {
 // (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
 if (initialSync?.catalogComplete !== false) await reconcile(CONFIG);
 else console.log('[sync] reconcile skipped because local discovery was incomplete');
+const warmStarted = Date.now();
+homeIndex.warm().then(() => console.log(`[home-index] warm in ${Date.now() - warmStarted}ms, ${homeIndex.files.size} files`))
+  .catch((error) => console.error(`[home-index] warm failed: ${error.message}`));
 checkStopped(CONFIG); // run once on boot — pool is empty after restart, so settle just-orphaned running rows now
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 

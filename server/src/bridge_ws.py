@@ -20,6 +20,9 @@ from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
 from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
+from direct_rpc_ws import direct_rpc_disconnect, handle_direct_rpc
+
+_DATA_ROLES = ("terminal_data", "realtime_data", "preview_data", "app_data", "bridge_data")
 
 _ddb = None
 _connections_table = None
@@ -334,7 +337,7 @@ def _handle_connect(event, connection_id):
     context = event.get("requestContext", {})
     connected_endpoint = f"https://{context.get('domainName', '')}/{context.get('stage', '')}"
     data_endpoint = os.environ.get("TERMINAL_DIRECT_ENDPOINT")
-    if (role in ("terminal_data", "realtime_data", "preview_data")) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
+    if (role in _DATA_ROLES) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
         return {"statusCode": 403}
     if role == "realtime_data" and not realtime_enabled():
         return {"statusCode": 403}
@@ -366,7 +369,7 @@ def _handle_connect(event, connection_id):
             item["terminalStartup"] = 1
     if role == "bridge" and qs.get("preview") == "1":
         item["previewProtocol"] = 1
-    if role in ("terminal_data", "realtime_data", "preview_data"):
+    if role in _DATA_ROLES:
         item["terminalDataEndpoint"] = connected_endpoint
     if role in ("app", "bridge") and qs.get("realtime") == "1":
         item["realtimeVersion"] = 1
@@ -416,6 +419,11 @@ def _handle_disconnect(connection_id, endpoint=None):
         _connections_table.delete_item(Key={"connectionId": connection_id})
     except Exception:
         pass
+    try:
+        direct_rpc_disconnect(connection, table=_connections_table, query=_query_connections,
+            post=_post_to_connection)
+    except Exception:
+        print("Direct RPC disconnect notification failed")
 
     # Clean up subscriptions via connectionId-index GSI (vs Scan over the whole table).
     try:
@@ -489,7 +497,10 @@ def _handle_message(event, connection_id, endpoint):
     if action == "preview_tunnel":
         return handle_preview_tunnel(body, conn, connection_id, endpoint, table=_connections_table,
             query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
-    if role in ("terminal_data", "realtime_data", "preview_data"):
+    if action == "direct_rpc":
+        return handle_direct_rpc(body, conn, connection_id, endpoint, table=_connections_table,
+            query=_query_connections, post=_post_to_connection)
+    if role in _DATA_ROLES:
         return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \
             and not _has_valid_turn_sequence(body):

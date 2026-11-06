@@ -119,6 +119,8 @@
             "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
             "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
@@ -466,7 +468,7 @@
         "RoleName": { "Fn::Sub": "${AWS::StackName}-terminal-direct-role" },
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
-          "Statement": [{ "Effect": "Allow", "Principal": { "AWS": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] } }, "Action": "sts:AssumeRole" }]
+          "Statement": [{ "Effect": "Allow", "Principal": { "AWS": [{ "Fn::GetAtt": ["WsLambdaRole", "Arn"] }, { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] }] }, "Action": "sts:AssumeRole" }]
         },
         "Policies": [{
           "PolicyName": "TerminalCallbackOnly",
@@ -475,6 +477,16 @@
             "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/v1/POST/@connections/*" }
           }] }
         }]
+      }
+    },
+    "RestRpcAssumePolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "RestRpcAssumeSession",
+        "Roles": [{ "Ref": "LambdaExecutionRole" }],
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
+          "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] }
+        }] }
       }
     },
     "RealtimeDirectIntegration": {
@@ -601,6 +613,33 @@
       "Type": "AWS::ApiGatewayV2::RouteResponse",
       "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "TerminalDirectPingRoute" }, "RouteResponseKey": "$default" }
     },
+    "DirectWhoamiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "DirectWhoamiIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationId": { "Ref": "DirectWhoamiIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"whoami\",\"connectionId\":\"$context.connectionId\"}" }
+      }
+    },
+    "DirectWhoamiRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["DirectWhoamiIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "whoami", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${DirectWhoamiIntegration}" }
+      }
+    },
+    "DirectWhoamiRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "DirectWhoamiRoute" }, "RouteResponseKey": "$default" }
+    },
     "WsStage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
@@ -634,7 +673,7 @@
             "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
           }
         },
-        "MemorySize": 128,
+        "MemorySize": 512,
         "Role": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] },
         "Timeout": 30
       }
@@ -939,8 +978,35 @@
               "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
               "OriginPath": "/v1",
               "CustomOriginConfig": {
-                "OriginProtocolPolicy": "https-only"
+                "OriginProtocolPolicy": "https-only",
+                "OriginKeepaliveTimeout": 60
               }
+            },
+            {
+              "Id": "ws",
+              "DomainName": { "Fn::Sub": "${WsApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "CustomOriginConfig": { "OriginProtocolPolicy": "https-only" }
+            },
+            {
+              "Id": "data",
+              "DomainName": { "Fn::Sub": "${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "CustomOriginConfig": { "OriginProtocolPolicy": "https-only" }
+            }
+          ],
+          "CacheBehaviors": [
+            {
+              "PathPattern": "/ws", "TargetOriginId": "ws", "ViewerProtocolPolicy": "https-only",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": false,
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+              "FunctionAssociations": [{ "EventType": "viewer-request", "FunctionARN": { "Fn::GetAtt": ["CDNRequestFunction", "FunctionARN"] } }]
+            },
+            {
+              "PathPattern": "/data", "TargetOriginId": "data", "ViewerProtocolPolicy": "https-only",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": false,
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+              "FunctionAssociations": [{ "EventType": "viewer-request", "FunctionARN": { "Fn::GetAtt": ["CDNRequestFunction", "FunctionARN"] } }]
             }
           ],
           "DefaultCacheBehavior": {
@@ -953,6 +1019,15 @@
             "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
           }
         }
+      }
+    },
+    "CDNRequestFunction": {
+      "Type": "AWS::CloudFront::Function",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-cdn-request" },
+        "AutoPublish": true,
+        "FunctionConfig": { "Comment": "Map the /ws and /data WebSocket paths to the API stage", "Runtime": "cloudfront-js-2.0" },
+        "FunctionCode": "function handler(event) { event.request.uri = '/v1'; return event.request; }"
       }
     }
   },

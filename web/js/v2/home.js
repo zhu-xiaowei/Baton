@@ -1,0 +1,152 @@
+// Home: device names/online from /devices (server), everything else from each Bridge.
+// Produces the shapes the home page renders (former /active-sessions and /devices).
+import { state } from '../state.js';
+import { showToast } from '../components/toast.js';
+import { cachedOnlineDevices, connect, request, updateRoutes } from './direct-transport.js';
+
+const CACHE_KEY = 'apeek_v2_home_devices';
+const PROJECT_LIMIT = 15;
+let inflight = null;
+let latest = null;
+
+function readJson(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+}
+
+// The server is reached through its CloudFront domain, which also serves /data.
+function dataUrl() {
+  return 'wss://' + new URL(state.SERVER).host + '/data';
+}
+
+async function rest(path, params) {
+  const query = params ? '?' + new URLSearchParams(params) : '';
+  const response = await fetch(state.SERVER + path + query, { headers: { 'x-api-key': state.KEY } });
+  if (response.status === 401 || response.status === 403) window.logout?.();
+  if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+  return response.json();
+}
+
+// Per-device answers plus the last /devices list, so a re-entry can merge before /devices answers.
+function readCache() {
+  const saved = readJson(CACHE_KEY);
+  return saved?.server === state.SERVER ? saved : {};
+}
+
+function saveCache(devices, list) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ server: state.SERVER, devices, list })); } catch {}
+}
+
+// "Show more" only reveals projects the last answer already holds (15), so it sends nothing.
+export function expandedHome() {
+  return latest ? Promise.resolve(latest) : loadHomeV2();
+}
+
+export function loadHomeV2() {
+  if (inflight && performance.now() - inflight.at < 1500) return inflight.promise;
+  const promise = run().finally(() => { if (inflight?.promise === promise) inflight.at = 0; });
+  inflight = { at: performance.now(), promise };
+  return promise;
+}
+
+// Resolves as soon as the page can be updated: on a re-entry once the Bridges answered (using the
+// cached device list), otherwise once /devices answered too. A later /devices change re-renders
+// through window.__applyHome.
+function run() {
+  return new Promise((resolve, reject) => { load(resolve).then(resolve, reject); });
+}
+
+async function load(publish) {
+  const started = performance.now();
+  window.__v2Timings = {};
+  const saved = readCache();
+  const cache = saved.devices || {};
+  const fresh = new Map();
+  const asked = new Map();
+  const timedOut = new Set();
+  const ask = (device) => {
+    if (asked.has(device)) return;
+    const known = cache[device]?.answer;
+    asked.set(device, request(device, 'home', { revision: known?.revision }).then((answer) => {
+      if (!answer.notModified) cache[device] = { answer, at: Date.now() };
+      if (cache[device]) fresh.set(device, cache[device]);
+    }, (error) => { if (error.message === 'timeout') timedOut.add(device); }));
+  };
+  const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
+  const merge = (list, reachable) => ({ active: mergeActive(list, answerFor, reachable), devices: mergeDevices(list, answerFor, reachable) });
+  connect(dataUrl());
+  cachedOnlineDevices().forEach(ask);
+  // Route changes (offline, new address) must reach pending requests at once.
+  let listed = false;
+  const devicesRequest = rest('/api/bridge/devices').then((response) => {
+    listed = true;
+    window.__v2Timings.devices = Math.round(performance.now() - started);
+    if (response.protocol === 2) updateRoutes(response);
+    return response;
+  });
+  let early = null;
+  if (saved.list && asked.size) await Promise.all(asked.values());
+  // Publish from the cached list only when the Bridges beat /devices; otherwise use the fresh list.
+  if (saved.list && asked.size && !listed) {
+    // Only devices that answered just now are live; one that answered is online whatever the cache said.
+    const answered = new Set(fresh.keys());
+    early = latest = merge(saved.list.map((d) => (answered.has(d.deviceName) ? { ...d, online: true } : d)), answered);
+    window.__v2Timings.total = Math.round(performance.now() - started);
+    publish(early);
+  }
+  let response;
+  try {
+    response = await devicesRequest;
+  } catch (error) {
+    if (early) return early;
+    throw error;
+  }
+  if (response.protocol !== 2) {
+    showToast('Server update required');
+    throw new Error('server_outdated');
+  }
+  const reachable = new Set((response.rpc?.bridges || []).map((bridge) => bridge.device));
+  for (const device of response.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
+  await Promise.all(asked.values());
+  saveCache(cache, response.devices);
+  // Offline devices already say so on their row; only an online device that stayed silent is news.
+  const silent = response.devices.filter((device) => device.online && timedOut.has(device.deviceName))
+    .map((device) => device.deviceDisplayName || device.deviceName);
+  if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
+  const result = latest = merge(response.devices, reachable);
+  window.__v2Timings.fresh = [...fresh.keys()];
+  if (!early) window.__v2Timings.total = Math.round(performance.now() - started);
+  else if (JSON.stringify(result) !== JSON.stringify(early)) window.__applyHome?.(result.active, result.devices);
+  return result;
+}
+
+// A device the App cannot ask (offline, or online without a joined Bridge) keeps its cached
+// project count and time, but nothing is shown as running or waiting.
+function mergeDevices(list, answerFor, reachable) {
+  const devices = list.map((device) => {
+    const answer = answerFor(device.deviceName);
+    const live = device.online && reachable.has(device.deviceName);
+    return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
+      online: device.online, ...(answer ? answer.device : {}), ...(answer && !live ? { runningCount: 0, needsInputCount: 0 } : {}) };
+  });
+  devices.sort((a, b) => ((a.lastActive || '') < (b.lastActive || '') ? 1 : (a.lastActive || '') > (b.lastActive || '') ? -1 : 0));
+  return { devices };
+}
+
+function mergeActive(list, answerFor, reachable) {
+  const sessions = [];
+  const projects = [];
+  for (const device of list) {
+    const answer = answerFor(device.deviceName);
+    if (!answer) continue;
+    const deviceName = device.deviceName;
+    if (device.online && reachable.has(deviceName)) for (const session of answer.sessions) sessions.push({ ...session, deviceName });
+    for (const project of answer.recentProjects) {
+      projects.push({ ...project, deviceName, sessions: project.sessions.map((session) => ({
+        ...session, deviceName, projectHash: project.projectHash, projectName: project.projectName })) });
+    }
+  }
+  const newestFirst = (a, b) => (a.lastActive < b.lastActive ? 1 : a.lastActive > b.lastActive ? -1 : 0);
+  sessions.sort(newestFirst);
+  projects.sort(newestFirst);
+  return { sessions, recentSessions: [], recentProjects: projects.slice(0, PROJECT_LIMIT), hasMoreProjects: false };
+}

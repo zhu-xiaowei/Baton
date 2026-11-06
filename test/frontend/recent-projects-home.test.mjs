@@ -50,6 +50,8 @@ function harness({ cache, fetchData, nativeMobile = false } = {}) {
     beforeParse(win) {
       win.localStorage.setItem('_ak', win.btoa('fixture-key'));
       if (cache) win.localStorage.setItem('apeek_home_cache', JSON.stringify(cache));
+      win.__apiReady = Promise.resolve();
+      win.api = async path => { const r = await win.fetch(new URL(path, win.location.href).href); if (!r.ok) throw new Error(String(r.status)); return r.json(); };
       win.fetch = async url => {
         requests.push(new URL(url).pathname);
         if (fetchData) return fetchData(url);
@@ -379,7 +381,6 @@ test('Show more appends unseen projects without replacing existing projects, ses
     assert.equal(h.doc.getElementById('recent-projects-footer'), null);
     const folded = [...h.doc.querySelectorAll('.recent-project-toggle')].find(el => el.dataset.homeToggle === foldKey);
     assert.equal(folded.getAttribute('aria-expanded'), 'false');
-    assert.deepEqual({ ...h.win.__homeActiveParams() }, { allProjects: true });
     const cached = JSON.parse(h.win.localStorage.getItem('apeek_home_cache')).active;
     assert.equal(cached.recentProjects.length, 8);
     assert.deepEqual(cached.sessions, first.sessions);
@@ -403,7 +404,6 @@ test('a failed Show more keeps the five projects and restores an unnumbered retr
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 5);
     assert.equal(h.doc.querySelector('[data-show-more-projects]').textContent, 'Show more');
     assert.ok(h.doc.querySelector('.recent-projects-error'));
-    assert.equal(h.win.__homeActiveParams(), undefined);
     h.win.api = async () => projectPage(7, false);
     h.doc.querySelector('[data-show-more-projects]').click();
     await h.win.__homeLoadPromise;
@@ -537,7 +537,6 @@ for (const outcome of ['success', 'failure']) {
       await retryRun;
       assert.equal(h.doc.querySelectorAll('.recent-project').length, 7);
       assert.equal(h.doc.querySelector('[data-show-more-projects]'), null);
-      assert.deepEqual({ ...h.win.__homeActiveParams() }, { allProjects: true });
       assert.equal(JSON.parse(h.win.localStorage.getItem('apeek_home_cache')).active.recentProjects.length, 7);
     } finally { h.win.close(); }
   });

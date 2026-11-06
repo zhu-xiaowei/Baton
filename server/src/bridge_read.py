@@ -29,6 +29,7 @@ RECENT_SESSION_LIMIT = 100
 RECENT_PROJECT_LIMIT = 5
 RECENT_PROJECT_EXPANDED_LIMIT = 15
 RECENT_PROJECT_SESSION_LIMIT = 5
+PROTOCOL_VERSION = 2
 MESSAGE_READ_ATTRIBUTES = {
     f"#m{index}": name
     for index, name in enumerate((
@@ -86,14 +87,6 @@ ACTIVE_COUNT_ATTRIBUTE_NAMES = {
     "#parent": "parentSessionId",
 }
 ACTIVE_COUNT_PROJECTION = ", ".join(ACTIVE_COUNT_ATTRIBUTE_NAMES)
-DEVICE_LIST_ATTRIBUTE_NAMES = {
-    "#device": "deviceName",
-    "#display": "deviceDisplayName",
-    "#os": "os",
-    "#projects": "projectCount",
-    "#last": "lastActive",
-}
-DEVICE_LIST_PROJECTION = ", ".join(DEVICE_LIST_ATTRIBUTE_NAMES)
 
 
 def _tables():
@@ -434,38 +427,38 @@ def _live_active_counts(sessions_table, account_id):
 
 @read_router.get("/devices")
 async def get_devices(request: Request):
-    """Projected DEV# fields for the home list; running/needs_input counted live."""
+    """v2: names and online state only; counts come from each Bridge. `rpc` addresses the
+    joined Bridges directly (see direct_rpc_ws)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
-    live_dev, _ = _live_active_counts(sessions_table, account_id)
-
     items = _query_all(
         sessions_table,
         KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with("DEV#"),
-        ProjectionExpression=DEVICE_LIST_PROJECTION,
-        ExpressionAttributeNames=DEVICE_LIST_ATTRIBUTE_NAMES,
+        ProjectionExpression="#device, #display, #os",
+        ExpressionAttributeNames={"#device": "deviceName", "#display": "deviceDisplayName", "#os": "os"},
     )
-
-    online_devices = _online_bridge_devices(account_id) or set()
-
-    devices = []
-    for item in items:
-        name = item.get("deviceName", "")
-        if not name:
-            continue
-        lc = live_dev.get(name, {})
-        devices.append({
-            "deviceName": name,
-            "deviceDisplayName": item.get("deviceDisplayName") or name,
-            "os": item.get("os", ""),
-            "projectCount": int(item.get("projectCount", 0)),
-            "runningCount": lc.get("running", 0),
-            "needsInputCount": lc.get("needs_input", 0),
-            "lastActive": item.get("lastActive", ""),
-            "online": name in online_devices,
-        })
-    devices.sort(key=lambda x: x["lastActive"], reverse=True)
-    return {"devices": devices}
+    bridges = []
+    if _connections_table is not None:
+        from bridge_ws import _query_connections
+        try:
+            bridges = _query_connections(account_id, "bridge", table=_connections_table)
+        except Exception as error:
+            print(f"bridge connections unavailable: {error}")
+    online_devices = {row.get("deviceName", "") for row in bridges}
+    devices = [{
+        "deviceName": item["deviceName"],
+        "deviceDisplayName": item.get("deviceDisplayName") or item["deviceName"],
+        "os": item.get("os", ""),
+        "online": item["deviceName"] in online_devices,
+    } for item in items if item.get("deviceName")]
+    result = {"protocol": PROTOCOL_VERSION, "devices": devices}
+    if _connections_table is not None:
+        from direct_rpc_ws import rpc_info
+        try:
+            result["rpc"] = rpc_info(account_id, lambda account, role, device="": bridges)
+        except Exception as error:
+            print(f"rpc credentials unavailable: {error}")
+    return result
 
 
 @read_router.get("/projects")

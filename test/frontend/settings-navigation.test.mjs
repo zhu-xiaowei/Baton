@@ -51,6 +51,8 @@ for (const fails of [false, true]) {
           topBarHtml: '<div id="top-right"><a class="top-gear"></a></div>',
           contentHtml: '<div id="saved-home-frame">Saved content</div>',
         }));
+        window.__apiReady = Promise.resolve();
+        window.api = async path => { const r = await window.fetch(new URL(path, window.location.href).href); if (r && r.ok === false) throw new Error(String(r.status)); return r && r.json ? r.json() : r; };
         window.fetch = url => url.includes('active-sessions') ? active : devices;
       },
     });

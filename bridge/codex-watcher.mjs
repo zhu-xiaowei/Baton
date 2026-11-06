@@ -26,6 +26,7 @@ import {
 import { codexInteraction } from './codex-interaction.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
+import { homeIndex } from './home-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import {
   knownProjects,
@@ -662,6 +663,7 @@ export class CodexWatcher {
   }
 
   async processFile(filePath, options = {}) {
+    homeIndex.touch(filePath);
     const nativeSessionId = codexSessionIdFromPath(filePath);
     const sessionId = storageSessionId('codex', nativeSessionId);
     const processedStat = fs.statSync(filePath);
@@ -760,6 +762,7 @@ export class CodexWatcher {
   }
 
   async syncMetadata(session, options = {}) {
+    homeIndex.noteCodex(session);
     const sessionId = storageSessionId('codex', session.nativeSessionId);
     const previousStatus = this.statuses.get(sessionId);
     const isNew = !this.recent.has(sessionId);
