@@ -73,7 +73,6 @@ async function run() {
   const result = { active: mergeActive(devicesResponse, answerFor), devices: mergeDevices(devicesResponse, answerFor) };
   window.__v2Timings.total = Math.round(performance.now() - started);
   window.__v2Timings.fresh = [...fresh.keys()];
-  console.log('[v2] home', window.__v2Timings);
   return result;
 }
 
