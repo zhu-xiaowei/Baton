@@ -1992,7 +1992,7 @@ async function loadMessages(sessionId, preview, options) {
   state.appState.runtime = sessionRuntime(sessionId, state.appState.runtime);
   markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
-  // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
+  // List preview = bridge's getPreview (custom > ai > summary > firstUser > lastPrompt); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = false;
   updateBreadcrumb();
