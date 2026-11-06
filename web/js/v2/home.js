@@ -26,13 +26,14 @@ async function rest(path, params) {
   return response.json();
 }
 
-function cachedAnswers() {
+// Per-device answers plus the last /devices list, so a re-entry can merge before /devices answers.
+function readCache() {
   const saved = readJson(CACHE_KEY);
-  return saved?.server === state.SERVER ? saved.devices || {} : {};
+  return saved?.server === state.SERVER ? saved : {};
 }
 
-function saveAnswers(devices) {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ server: state.SERVER, devices })); } catch {}
+function saveCache(devices, list) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ server: state.SERVER, devices, list })); } catch {}
 }
 
 // "Show more" only reveals projects the last answer already holds (15), so it sends nothing.
@@ -47,10 +48,18 @@ export function loadHomeV2() {
   return promise;
 }
 
-async function run() {
+// Resolves as soon as the page can be updated: on a re-entry once the Bridges answered (using the
+// cached device list), otherwise once /devices answered too. A later /devices change re-renders
+// through window.__applyHome.
+function run() {
+  return new Promise((resolve, reject) => { load(resolve).then(resolve, reject); });
+}
+
+async function load(publish) {
   const started = performance.now();
   window.__v2Timings = {};
-  const cache = cachedAnswers();
+  const saved = readCache();
+  const cache = saved.devices || {};
   const fresh = new Map();
   const asked = new Map();
   const timedOut = new Set();
@@ -62,36 +71,58 @@ async function run() {
       if (cache[device]) fresh.set(device, cache[device]);
     }, (error) => { if (error.message === 'timeout') timedOut.add(device); }));
   };
+  const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
+  const merge = (list, reachable) => ({ active: mergeActive(list, answerFor, reachable), devices: mergeDevices(list, answerFor, reachable) });
   connect(dataUrl());
   cachedOnlineDevices().forEach(ask);
-  const devicesResponse = await rest('/api/bridge/devices');
-  window.__v2Timings.devices = Math.round(performance.now() - started);
-  if (devicesResponse.protocol !== 2) {
+  // Route changes (offline, new address) must reach pending requests at once.
+  let listed = false;
+  const devicesRequest = rest('/api/bridge/devices').then((response) => {
+    listed = true;
+    window.__v2Timings.devices = Math.round(performance.now() - started);
+    if (response.protocol === 2) updateRoutes(response);
+    return response;
+  });
+  let early = null;
+  if (saved.list && asked.size) await Promise.all(asked.values());
+  // Publish from the cached list only when the Bridges beat /devices; otherwise use the fresh list.
+  if (saved.list && asked.size && !listed) {
+    // Only devices that answered just now are live; one that answered is online whatever the cache said.
+    const answered = new Set(fresh.keys());
+    early = latest = merge(saved.list.map((d) => (answered.has(d.deviceName) ? { ...d, online: true } : d)), answered);
+    window.__v2Timings.total = Math.round(performance.now() - started);
+    publish(early);
+  }
+  let response;
+  try {
+    response = await devicesRequest;
+  } catch (error) {
+    if (early) return early;
+    throw error;
+  }
+  if (response.protocol !== 2) {
     showToast('Server update required');
     throw new Error('server_outdated');
   }
-  updateRoutes(devicesResponse);
-  const reachable = new Set((devicesResponse.rpc?.bridges || []).map((bridge) => bridge.device));
-  window.__renderHomeDevices?.(mergeDevices(devicesResponse, (name) => cache[name]?.answer, reachable));
-  for (const device of devicesResponse.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
+  const reachable = new Set((response.rpc?.bridges || []).map((bridge) => bridge.device));
+  for (const device of response.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
   await Promise.all(asked.values());
-  saveAnswers(cache);
+  saveCache(cache, response.devices);
   // Offline devices already say so on their row; only an online device that stayed silent is news.
-  const silent = devicesResponse.devices.filter((device) => device.online && timedOut.has(device.deviceName))
+  const silent = response.devices.filter((device) => device.online && timedOut.has(device.deviceName))
     .map((device) => device.deviceDisplayName || device.deviceName);
   if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
-  const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
-  const result = latest = { active: mergeActive(devicesResponse, answerFor, reachable),
-    devices: mergeDevices(devicesResponse, answerFor, reachable) };
-  window.__v2Timings.total = Math.round(performance.now() - started);
+  const result = latest = merge(response.devices, reachable);
   window.__v2Timings.fresh = [...fresh.keys()];
+  if (!early) window.__v2Timings.total = Math.round(performance.now() - started);
+  else if (JSON.stringify(result) !== JSON.stringify(early)) window.__applyHome?.(result.active, result.devices);
   return result;
 }
 
 // A device the App cannot ask (offline, or online without a joined Bridge) keeps its cached
 // project count and time, but nothing is shown as running or waiting.
-function mergeDevices(response, answerFor, reachable) {
-  const devices = response.devices.map((device) => {
+function mergeDevices(list, answerFor, reachable) {
+  const devices = list.map((device) => {
     const answer = answerFor(device.deviceName);
     const live = device.online && reachable.has(device.deviceName);
     return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
@@ -101,10 +132,10 @@ function mergeDevices(response, answerFor, reachable) {
   return { devices };
 }
 
-function mergeActive(response, answerFor, reachable) {
+function mergeActive(list, answerFor, reachable) {
   const sessions = [];
   const projects = [];
-  for (const device of response.devices) {
+  for (const device of list) {
     const answer = answerFor(device.deviceName);
     if (!answer) continue;
     const deviceName = device.deviceName;

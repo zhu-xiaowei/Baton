@@ -653,12 +653,15 @@
   }
   window.__loadHome = loadHome;
   window.__setTopSync = setSync;
-  // v2: device rows (online state) update before every Bridge has answered.
-  window.__renderHomeDevices = function (devices) {
-    var cached = readCache();
-    if (!cached || !cached.active) return;
+  // A later /devices answer changed the home after it was shown (device online state, new address).
+  window.__applyHome = function (active, devices) {
+    writeCache(active, devices);
     whenContentReady(function () {
-      if (document.querySelector('.top-gear') && document.body.classList.contains('browse-view')) renderInline(cached.active, devices);
+      if (!document.querySelector('.top-gear') || !document.body.classList.contains('browse-view')) return;
+      var content = document.getElementById('content');
+      var keepScroll = content ? content.scrollTop : 0;
+      renderInline(active, devices);
+      if (content) content.scrollTop = keepScroll;
     });
   };
 
