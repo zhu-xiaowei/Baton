@@ -73,6 +73,10 @@
   .setting-row strong { font-size: 15px; font-weight: 600; }
   #notificationStatus:empty { display: none; }
   .setting-row .platform-switch { margin: 0; }
+  .voice-settings { display: flex; flex-direction: column; gap: 14px; }
+  .voice-settings[hidden] { display: none; }
+  .voice-settings h2 { margin: 0; }
+  .voice-settings .hint { margin: 0; }
   .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: var(--switch-track); position: relative; cursor: pointer; transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--switch-knob); transition: transform .15s; }
   .switch:checked { background: var(--success-solid); }
@@ -154,6 +158,40 @@
       <button class="platform-option" data-theme-option="dark">Dark</button>
     </div>
   </div>
+</div>
+<div id="voiceSettings" class="section voice-settings" hidden>
+  <h2>Voice</h2>
+  <p class="hint">Sessions start in text mode. Tap the headphones next to a Session's title to talk and listen there.</p>
+  <label class="setting-row">
+    <strong>Read replies aloud</strong>
+    <input id="voiceAutoRead" class="switch" type="checkbox" role="switch">
+  </label>
+  <label class="setting-row">
+    <strong>Brief long replies</strong>
+    <input id="voiceBriefDefault" class="switch" type="checkbox" role="switch">
+  </label>
+  <div class="setting-row">
+    <strong>Brief after</strong>
+    <div class="platform-switch" role="group" aria-label="Brief long replies after">
+      <button class="platform-option" data-brief-threshold="200">200</button>
+      <button class="platform-option" data-brief-threshold="300">300</button>
+      <button class="platform-option" data-brief-threshold="500">500</button>
+    </div>
+  </div>
+  <div class="setting-row">
+    <strong>Dictation language</strong>
+    <div class="platform-switch" role="group" aria-label="Dictation language">
+      <button class="platform-option" data-voice-language="auto" title="Chinese or English, detected per dictation">Auto</button>
+      <button class="platform-option" data-voice-language="zh-CN">中文</button>
+      <button class="platform-option" data-voice-language="en-US">English</button>
+      <button class="platform-option" data-voice-language="system" title="The phone's language">System</button>
+    </div>
+  </div>
+  <label class="setting-row">
+    <strong>Send after dictation</strong>
+    <input id="voiceAutoSend" class="switch" type="checkbox" role="switch">
+  </label>
+  <p class="hint">Brief: a reply longer than this many characters is condensed before it is read. New Sessions take this choice; the Brief chip changes it per Session.</p>
 </div>
 <section id="textSizeSettings" class="section text-size-setting" aria-labelledby="textSizeTitle" hidden>
   <div class="text-size-heading">

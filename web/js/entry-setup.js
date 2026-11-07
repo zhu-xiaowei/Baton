@@ -10,6 +10,7 @@ import { initSystemBack } from './system-back.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
+import { mountVoiceSettings } from './voice-mode.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 
 initMacosTabs();
@@ -26,6 +27,7 @@ setNativeTabTitle('Settings');
   if (!state.KEY) { location.replace('landing.html'); return; }
   mountTextSizeSettings();
   mountNotificationSettings();
+  mountVoiceSettings();
   void initMobileNotifications();
   mountThemeSettings();
 

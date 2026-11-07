@@ -101,7 +101,7 @@ After downloading the app, scan the QR code or input the Start URL to get starte
 
 ### More
 
-- **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS
+- **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS. Stacks deployed with `BATON_VOICE=true` add a per-Session voice mode: hold-to-talk dictation on Android and the web (Amazon Transcribe, Chinese/English detected per sentence) and replies read aloud, optionally as a short brief. See [docs/voice.md](docs/voice.md)
 - **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
 - **Device management** — remove devices from Baton and stop their online Bridges while keeping local session files

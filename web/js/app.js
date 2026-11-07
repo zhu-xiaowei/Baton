@@ -493,7 +493,10 @@ function updateBreadcrumb() {
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
-    topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
+    var voiceButton = state.appState.session && state.appState.session !== '__new__'
+      ? (window.voiceModeControl?.() || '')
+      : '';
+    topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton + voiceButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
