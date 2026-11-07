@@ -99,7 +99,7 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
 
 ### Más funciones
 
-- **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS.
+- **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS. Los stacks desplegados con `BATON_VOICE=true` añaden un modo de voz por sesión: dictado manteniendo pulsado en Android y la web (Amazon Transcribe, chino/inglés detectado por frase) y lectura en voz alta de las respuestas, opcionalmente como un resumen breve. Consulta [docs/voice.md](docs/voice.md)
 - **Borradores de sesión** — conserva el texto y los archivos adjuntos ya subidos al cambiar de sesión o volver a abrir la aplicación en el mismo dispositivo.
 - **Gestión de sesiones** — cambia el nombre de las sesiones mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias sesiones o proyectos, con la opción de eliminar también sus archivos locales.
 - **Gestión de dispositivos** — elimina dispositivos de Baton y detén sus Bridges conectados, conservando los archivos locales de las sesiones.
