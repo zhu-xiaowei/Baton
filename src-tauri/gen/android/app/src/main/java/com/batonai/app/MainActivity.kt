@@ -63,6 +63,8 @@ class MainActivity : TauriActivity() {
   // System Back reaches JS through Tauri's onBackButtonPress; this lets the root page background the app.
   override fun onWebViewCreate(webView: WebView) {
     webView.setBackgroundColor(getColor(R.color.baton_background))
+    // Voice mode reads a finished reply aloud without a fresh tap.
+    webView.settings.mediaPlaybackRequiresUserGesture = false
     if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
       WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, false)
     }

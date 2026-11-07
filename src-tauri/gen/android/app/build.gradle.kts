@@ -28,7 +28,9 @@ android {
     }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.batonai.app"
+        // A side-by-side test build sets -PbatonAppIdSuffix=.voice -PbatonAppLabel="Baton Voice".
+        applicationId = "com.batonai.app" + (findProperty("batonAppIdSuffix") as String? ?: "")
+        manifestPlaceholders["appLabel"] = findProperty("batonAppLabel") as String? ?: "Baton"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
