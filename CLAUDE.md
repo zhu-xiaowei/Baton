@@ -113,7 +113,7 @@ Done:
 - **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_permission`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
 - **New Session / new agent / create project DONE** — regular sessions mint a UUID, acknowledge
   it before spawning headless with `--session-id`, and then stream the first turn. Background
-  agents launch through `claude --bg`. Creating a project seeds an empty PROJ row and enters the
+  agents launch through `claude --bg`. Creating a project creates its directory and enters the
   new-Session input view.
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
@@ -252,7 +252,12 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Deployed bridge runs from `~/.baton-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.baton-bridge/` + restart service.
 - Auto-update: startup and WebSocket reconnect check `/api/version` once. Existing four-minute heartbeat replies include `bridgeVersion`; only a different non-dev version triggers another check, so normal heartbeats add no REST requests and there is no dedicated update timer. On change, Bridge resolves the S3 package through `/api/install`, stages and validates it, then restarts even with active terminal sessions. Existing terminal/agent processes may be interrupted; they do not defer updates. Checks never overlap and network requests have timeouts. `install.sh` uploads the Bridge package before exposing its version through CloudFormation; both API and WS Lambdas receive `AppVersion`. Bridge WS connections report `bridgeVersion` for fleet verification.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
-- Initial sync: merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2. `await syncSessions()` then `await reconcile()` (recount aggregates at that definite completion point).
+- v2 lists (home, projects, sessions) are answered by `session-index.mjs` from memory, warmed at startup
+  before the DDB sync: 2 workers read each JSONL's head and tail only (Codex back to its last turn
+  start; Claude's last 1 MB, where CC re-stamps titles) (`session-summary.mjs`,
+  `docs/v2-step2-lists-plan.md`). Watchers call `touch()`; appends read
+  only the new bytes.
+- Initial sync (M1 only, removed in M2): merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2.
 - Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips roster-active daemon agents + busy pool-owned sessions)
 - Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
 - Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
@@ -284,7 +289,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - The key lives only in the Bridge's `~/.baton-bridge/config.json` (0600); service definitions no
   longer pass `--key`, and older ones are rewritten at startup.
 - Removing a device (home long-press → `/api/bridge/delete-device`) sends `device_removed` and
-  closes its Bridge sockets, then deletes its DEV#/PROJ#/SESS# rows. The Bridge removes its
+  closes its Bridge sockets, then deletes its DEV#/SESS# rows. The Bridge removes its
   launchd/systemd/Task Scheduler entry and `config.json`, then exits 0 (no restart). A Bridge that is
   offline at the time comes back and re-adds the device; remove it again.
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
@@ -330,14 +335,14 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 
 ## DynamoDB Schema
 
-**Single-table design** — `BridgeSessions` holds three entity types keyed by SK prefix:
+**Single-table design** — `BridgeSessions` holds two entity types keyed by SK prefix. Lists and
+counts come from each Bridge; Session rows stay only for notifications and the Session view (M2
+removes them):
 
 ```
 BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
   SK: DEV#<device>                          entityType=device   — one row per device
-      → sessionCount, projectCount, os, lastActive, runtimeCapabilities
-  SK: PROJ#<device>#<projectHash>           entityType=project  — one row per project
-      → sessionCount, projectName, lastActive         (aggregates)
+      → deviceDisplayName, os                         (identity only)
   SK: SESS#<device>#<projectHash>#<sid>     entityType=session  — the real session row
       → status (running/needs_input/completed), preview, model, size, lastActive,
         runtime, nativeSessionId, modelProvider, clientSource, cliVersion,
@@ -345,20 +350,13 @@ BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
   GSI accountId-activeStatus-index (sparse, ProjectionType ALL):
       activeStatus = "running" | "needs_input"      (active sessions)
                    | "done#<lastActive>"            (every completed session)
-      → homepage Active Sessions = between("needs_input","running"); c<n<r so
-        completed/done# are excluded. Completed Sessions = begins_with("done#") desc limit 20.
+      → /active-sessions (checkStopped) = between("needs_input","running"); c<n<r so
+        completed/done# are excluded.
 
 BridgeMessages   PK: sessionId    SK: timestamp#uuid
   Attributes: uuid, type, content (JSON), timestamp, optional stopReason/toolUseResult
   TTL: 90 days
 ```
-
-**Count consistency (aggregates drift; DDB-self-consistent, not disk-truth):**
-- Bridge calls reconcile right after `await syncSessions()` (a definite completion point — all
-  SESS# writes are awaited-done; no timer guessing) and again when a brand-new project first
-  appears in the watcher. NOT periodic.
-- The incremental `statusDelta` ADD path still maintains `sessionCount` (+1 on `from:'new'`);
-  aggregate status deltas are now unread (reconcile owns those numbers).
 
 ## API Summary
 
@@ -366,13 +364,9 @@ BridgeMessages   PK: sessionId    SK: timestamp#uuid
 ```
 POST /api/bridge/sync-sessions              — bridge uploads session metadata
 POST /api/bridge/sync-messages              — startup/fallback/on-demand message history
-POST /api/bridge/reconcile                  — recount DEV#/PROJ# from SESS# + prune orphan PROJ# (device row == list length)
-POST /api/bridge/create-project             — seed an empty project row
-POST /api/bridge/delete                     — delete Session/Project metadata and reconcile
-GET  /api/bridge/devices                    — device list (projectCount/sessionCount from aggregates; running/needsInput live)
-GET  /api/bridge/projects?device=X          — project list
-GET  /api/bridge/sessions?device=X&project=Y — session list
-GET  /api/bridge/active-sessions            — homepage: active (running+needs_input) + 20 most-recent completed (recentSessions)
+POST /api/bridge/delete                     — delete Session rows (Sessions or whole projects)
+GET  /api/bridge/devices                    — v2: names, online, rpc routes (counts come from each Bridge)
+GET  /api/bridge/active-sessions            — active root Sessions, read by the Bridge's checkStopped (M2 removes it)
 GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
 POST /api/bridge/command-catalog            — bridge stores the full project command catalog in S3
 GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped command catalog
@@ -384,6 +378,15 @@ GET  /auth/install?t=…                      — install script for a token (pu
 POST /api/bridge/delete-device              — remove a device and make its Bridge uninstall itself
 GET  /api/version                           — app and Bridge release versions
 ```
+
+### Bridge RPC (v2, App → Bridge over the `app_data` socket)
+```
+home {revision?}              — devices' counts, active Sessions, 15 recent projects × 5 Sessions
+projects {limit?, cursor?}    — project list page (same rows as the former REST endpoint)
+sessions {project, limit?, cursor?} — session list page
+```
+`api.js` maps `/api/bridge/projects|sessions` to these; `direct-transport.js` owns the socket,
+routes (`/devices`) and retries. Full protocol: `docs/api.md`.
 
 ### WebSocket (real-time)
 ```

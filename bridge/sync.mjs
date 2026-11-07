@@ -1,11 +1,7 @@
 import { post, postRequired, get } from './http.mjs';
 import { synced, uploadMessages } from './extract.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
-import {
-  detectRegisteredRuntimeCapabilities,
-  getRuntimeAdapter,
-  runtimeAdapters,
-} from './runtime-registry.mjs';
+import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { pendingInteractionDetail, poolOwns } from './ws.mjs';
 import { rebuildAgentCounts } from './agent-counts.mjs';
 import { ObservedMap } from './observed-map.mjs';
@@ -16,50 +12,8 @@ const INITIAL_SYNC_WINDOW_MS = 86400_000;
 export const recentSessions = new Set();
 
 // Cache of last-known status per sessionId for periodic stopped detection.
-// Changes also invalidate the v2 home answer (see home-index.mjs).
+// Changes also invalidate the v2 list answers (see session-index.mjs).
 export const lastKnownStatus = new ObservedMap();
-
-// Seeded project hashes keep the watcher from reconciling existing projects.
-export const knownProjects = new Set();
-
-export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
-  sessions = sessions.filter((session) => !session.parentSessionId);
-  const projects = new Map();
-  let deviceLastActive = '';
-  let runningCount = 0;
-  let idleCount = 0;
-  for (const s of sessions) {
-    const activeStatus = s.activeStatus || s.status;
-    if (s.lastActive > deviceLastActive) deviceLastActive = s.lastActive;
-    if (activeStatus === 'running') runningCount++;
-    else if (activeStatus === 'needs_input') idleCount++;
-    let p = projects.get(s.project);
-    if (!p) {
-      p = {
-        projectHash: s.project,
-        projectName: s.projectName || s.project,
-        sessionCount: 0, runningCount: 0, idleCount: 0,
-        lastActive: '',
-      };
-      projects.set(s.project, p);
-    }
-    p.sessionCount++;
-    // idleCount stores needs_input for the existing DDB field.
-    if (activeStatus === 'running') p.runningCount++;
-    else if (activeStatus === 'needs_input') p.idleCount++;
-    if (s.lastActive > p.lastActive) p.lastActive = s.lastActive;
-  }
-  const projectAggregates = Array.from(projects.values());
-  const deviceAggregate = {
-    sessionCount: sessions.length,
-    projectCount: projectAggregates.length,
-    runningCount,
-    idleCount,
-    lastActive: deviceLastActive,
-    runtimeCapabilities,
-  };
-  return { deviceAggregate, projectAggregates };
-}
 
 export function isRecentSession(lastActive, now = Date.now()) {
   return Date.parse(lastActive) >= now - INITIAL_SYNC_WINDOW_MS;
@@ -70,34 +24,17 @@ function publicSession(session) {
   return item;
 }
 
-export async function uploadCatalog(config, sessions, aggregates, catalogComplete, postFn = post) {
+// Session rows still feed notifications and the Session view until they move to the Bridge.
+export async function uploadCatalog(config, sessions, postFn = post) {
   // ~350-800 bytes per session, 5000 is safely under Lambda's 6MB request limit.
   const BATCH = 5000;
-  for (let i = 0; i < sessions.length; i += BATCH) {
-    const body = {
+  for (let i = 0; i === 0 || i < sessions.length; i += BATCH) {
+    await postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       deviceDisplayName: config.deviceDisplayName || config.deviceName,
       os: process.platform,
       sessions: sessions.slice(i, i + BATCH).map(publicSession),
-      catalogComplete,
-    };
-    if (i === 0) {
-      body.device = aggregates.deviceAggregate;
-      body.projects = aggregates.projectAggregates;
-    }
-    await postFn('/api/bridge/sync-sessions', body);
-  }
-  if (sessions.length === 0) {
-    const body = {
-      deviceName: config.deviceName,
-      deviceDisplayName: config.deviceDisplayName || config.deviceName,
-      os: process.platform,
-      sessions: [],
-      catalogComplete,
-    };
-    body.device = aggregates.deviceAggregate;
-    body.projects = aggregates.projectAggregates;
-    await postFn('/api/bridge/sync-sessions', body);
+    });
   }
 }
 
@@ -116,24 +53,17 @@ export async function syncSessions(config, opts = {}) {
   }));
   const sessions = catalogs.flatMap(({ catalog }) => catalog.sessions);
   rebuildAgentCounts(sessions);
-  const catalogComplete = catalogs.every(({ catalog }) => catalog.complete);
-  const runtimeCapabilities = opts.runtimeCapabilities
-    || detectRegisteredRuntimeCapabilities(runtimeOptions);
-  const aggregates = buildCatalogAggregates(sessions, runtimeCapabilities);
 
   for (const session of sessions) {
     const sessionKey = storageSessionId(session.runtime, session.nativeSessionId);
     recentSessions.add(sessionKey);
     lastKnownStatus.set(sessionKey, session.status);
-    knownProjects.add(session.project);
   }
+  await uploadCatalog(config, sessions, postFn);
 
-  if (!catalogComplete) {
-    console.error('[sync] discovery incomplete; server will preserve existing DEV/PROJ aggregates');
-  }
-  await uploadCatalog(config, sessions, aggregates, catalogComplete, postFn);
-
-  const { runningCount, idleCount: needsInputCount } = aggregates.deviceAggregate;
+  const roots = sessions.filter((session) => !session.parentSessionId);
+  const runningCount = roots.filter((s) => (s.activeStatus || s.status) === 'running').length;
+  const needsInputCount = roots.filter((s) => (s.activeStatus || s.status) === 'needs_input').length;
   const runtimeCounts = catalogs
     .map(({ adapter, catalog }) => `${adapter.displayName} ${catalog.sessions.length}`)
     .join(', ');
@@ -158,12 +88,7 @@ export async function syncSessions(config, opts = {}) {
     const runtimeDiagnostics = Object.fromEntries(
       catalogs.map(({ adapter, catalog }) => [adapter.runtime, catalog.diagnostics || {}]),
     );
-    return {
-      catalogComplete,
-      sessions,
-      runtimeDiagnostics,
-      messageCount: 0,
-    };
+    return { sessions, runtimeDiagnostics, messageCount: 0 };
   }
 
   const syncJobs = [];
@@ -224,21 +149,10 @@ export async function syncSessions(config, opts = {}) {
   const runtimeDiagnostics = Object.fromEntries(
     catalogs.map(({ adapter, catalog }) => [adapter.runtime, catalog.diagnostics || {}]),
   );
-  return {
-    catalogComplete,
-    sessions,
-    runtimeDiagnostics,
-    messageCount,
-  };
+  return { sessions, runtimeDiagnostics, messageCount };
 }
 
-// Recount DEV/PROJ aggregates from DDB session rows.
-export async function reconcile(config) {
-  try { await post('/api/bridge/reconcile', { deviceName: config.deviceName, os: process.platform }); }
-  catch {}
-}
-
-// Push runtime-owned status metadata and counter deltas.
+// Push runtime-owned status metadata.
 export async function updateSessionStatus(
   config,
   sessionId,
@@ -271,7 +185,6 @@ export async function checkStopped(config) {
   if (!active || !Array.isArray(active.sessions)) return;
 
   const updates = [];
-  const statusDeltas = [];
   const statusContexts = new Map();
 
   for (const s of active.sessions) {
@@ -292,7 +205,6 @@ export async function checkStopped(config) {
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
     updates.push(result.session, ...(result.extraSessions || []));
-    statusDeltas.push(result.statusDelta);
   }
 
   if (updates.length > 0) {
@@ -300,7 +212,6 @@ export async function checkStopped(config) {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: updates.map(publicSession),
-      statusDeltas,
     });
   }
 }

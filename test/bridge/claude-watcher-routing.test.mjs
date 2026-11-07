@@ -37,7 +37,7 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
       import { CLAUDE_PROJECTS } from './bridge/config.mjs';
       import { initHttp } from './bridge/http.mjs';
       import { createClaudeFileQueue } from './bridge/watcher.mjs';
-      import { knownProjects, recentSessions } from './bridge/sync.mjs';
+      import { recentSessions } from './bridge/sync.mjs';
       const requests = [];
       const server = createServer(async (request, response) => {
         let body = '';
@@ -52,7 +52,6 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
         const id = '12345678-1234-4123-8123-123456789012';
         const filename = path.join('-review', id + '.jsonl');
         const file = path.join(CLAUDE_PROJECTS, filename);
-        knownProjects.add('-review');
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue' }) + '\\n');
         const enqueue = createClaudeFileQueue(config);
@@ -69,7 +68,7 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
         assert.equal(JSON.parse(patched.trim().split('\\n')[1]).entrypoint, 'cli');
         assert.equal(patched.length, original.length);
         assert.equal(recentSessions.has(id), true);
-        assert.equal(requests.find(body => body.sessions?.[0]?.id === id).statusDelta.from, 'new');
+        assert.ok(requests.find(body => body.sessions?.[0]?.id === id));
         const count = requests.length;
         fs.writeFileSync(file, original);
         await enqueue(filename, id);
@@ -196,7 +195,7 @@ test('a stop recorded in the parent settles a child whose file no longer changes
       import { initHttp } from './bridge/http.mjs';
       import { synced } from './bridge/extract.mjs';
       import { createClaudeFileQueue } from './bridge/watcher.mjs';
-      import { lastKnownStatus, recentSessions, knownProjects } from './bridge/sync.mjs';
+      import { lastKnownStatus, recentSessions } from './bridge/sync.mjs';
       const parent = 'parent', child = parent + ':subagent:agent-a1b2c3';
       const accepted = [];
       const server = createServer(async (request, response) => {
@@ -216,7 +215,7 @@ test('a stop recorded in the parent settles a child whose file no longer changes
         fs.writeFileSync(childFile, JSON.stringify({ type: 'assistant', message: { stop_reason: 'tool_use', content: [] } }) + '\\n');
         fs.utimesSync(childFile, new Date(0), new Date(0));
         synced.set(parent, 1); synced.set(child, 1);
-        recentSessions.add(parent); recentSessions.add(child); knownProjects.add('-repo');
+        recentSessions.add(parent); recentSessions.add(child);
         lastKnownStatus.set(parent, 'running'); lastKnownStatus.set(child, 'running');
         fs.appendFileSync(parentFile, JSON.stringify({
           type: 'queue-operation', operation: 'enqueue',

@@ -13,7 +13,9 @@ Context: `docs/v2-architecture.md` §3–§5, §9, §14. Offline spikes live in 
   shows an update message.
 - Recent projects: the 5 most recent projects (15 when expanded), each with its 5 newest root sessions.
 - Unchanged in this step: lists and Session detail (still v1 REST), DynamoDB writes, the Bridge's
-  startup full scan, `checkStopped` (which still reads `/active-sessions`). Step 2 removes them.
+  startup full scan, `checkStopped` (which still reads `/active-sessions`). Step 2
+  (`docs/v2-step2-lists-plan.md`) moves the lists and replaces `home-index.mjs` with
+  `session-index.mjs`; Session rows, the startup sync and `checkStopped` go in M2.
 
 ## Request flow
 
@@ -75,7 +77,7 @@ Callers use only `request(device, method, params)`. Everything else is internal:
 
 ## Bridge
 
-- `home-index.mjs` (new): on-demand answer without a full scan.
+- `home-index.mjs` (new, replaced by `session-index.mjs` in step 2): on-demand answer without a full scan.
   - Index: stat every Claude JSONL (mtime = lastActive) and read the first 8 KB of each Codex rollout
     (`cwd` → project, `parent_thread_id` / `forked_from_id` → child).
   - In-memory caches: Codex headers, previews and validity per file, Claude subagents, process info

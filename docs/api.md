@@ -46,31 +46,12 @@ Bridge uploads session metadata to DDB.
       "cliVersion": "2.1.220",
       "status": "running"
     }
-  ],
-  "device": {
-    "sessionCount": 1,
-    "projectCount": 1,
-    "runningCount": 1,
-    "idleCount": 0,
-    "lastActive": "2026-03-27T10:30:00.000Z",
-    "runtimeCapabilities": {
-      "claude": {
-        "installed": true,
-        "historyAvailable": true,
-        "canRead": true,
-        "canCreate": true,
-        "canSend": true,
-        "version": "2.1.220"
-      }
-    }
-  },
-  "projects": []
+  ]
 }
 ```
 
-`device` and `projects` are included on an authoritative full catalog sync. Incremental status
-updates use `statusDelta` or `statusDeltas`. Valid status values are `running`,
-`needs_input`, and `completed`.
+Valid status values are `running`, `needs_input`, and `completed`. A request with
+`deviceDisplayName` (the startup catalog) also records the device's name and `os`.
 
 **Response** `200`
 ```json
@@ -80,38 +61,17 @@ updates use `statusDelta` or `statusDeltas`. Valid status values are `running`,
 **DDB write**: BridgeSessions table
 - PK: `accountId`
 - Session SK: `SESS#{deviceName}#{project}#{storageSessionId}`
-- Device SK: `DEV#{deviceName}` (one row per device; `runtimeCapabilities` is a nested map)
-- Project SK: `PROJ#{deviceName}#{projectHash}`
+- Device SK: `DEV#{deviceName}` (identity only: `deviceDisplayName`, `os`)
+
+Session rows remain only for notifications and the Session view until v2 moves them to the
+Bridge. Device, project and Session lists are answered by the Bridge (see **Bridge RPC** below).
 
 ---
 
-### POST /api/bridge/reconcile
-
-Recounts a device's DEV/PROJ aggregates from its SESS rows and prunes orphan project rows.
-
-```json
-{ "deviceName": "MacBook-Pro", "os": "darwin" }
-```
-
-Response: `{ "sessionCount": 522, "projectCount": 12 }`.
-
-### POST /api/bridge/create-project
-
-Creates an idempotent empty project row before its first Session exists.
-
-```json
-{
-  "deviceName": "MacBook-Pro",
-  "projectHash": "-Users-user-workspace-new-project",
-  "projectName": "new-project",
-  "os": "darwin"
-}
-```
-
 ### POST /api/bridge/delete
 
-Deletes Session/Project metadata rows and reconciles device counts. Message rows remain until TTL
-expiry. Optional local JSONL deletion is a separate WS `delete_files` action.
+Deletes the Session rows of the given Sessions (with their nested children) or projects. Message
+rows remain until TTL expiry. Optional local JSONL deletion is a separate WS `delete_files` action.
 
 ```json
 {
@@ -286,7 +246,7 @@ command. `GET /auth/install?t=<token>[&platform=windows][&name=…]` returns the
 
 `{ "deviceName": "MyMac" }` → `{ "ok": true, "deletedSessions": N }`. Sends
 `{ "action": "device_removed" }` to the device's Bridge sockets and closes them, then deletes its
-`DEV#`/`PROJ#`/`SESS#` rows (message rows expire via TTL). The Bridge removes its autostart entry and
+`DEV#`/`SESS#` rows (message rows expire via TTL). The Bridge removes its autostart entry and
 `config.json` and exits; session files on the device are kept. A new install command adds it back.
 
 ---
@@ -333,253 +293,49 @@ systemd user service on Linux, or Task Scheduler on native Windows.
 
 ### GET /api/bridge/active-sessions
 
-Returns all `running`/`needs_input` Sessions plus the 20 most recently completed Sessions across
-devices and runtimes. Also returns `recentProjects`: by default up to 5 recent projects,
-each with up to 5 Sessions, computed from the same query results.
-
-**Query**: optional `allProjects=true` selects the expanded view, returning up to 15 projects
-from a freshly queried recent 100-Session window. It does not read additional history or
-query individual projects.
+Used only by the Bridge's `checkStopped` until M2: the account's `running`/`needs_input` root
+Sessions (offline devices and `needs_input` older than 7 days omitted), newest first.
 
 ```json
-{
-  "sessions": [
-    {
-      "sessionId": "codex:019e...",
-      "status": "running",
-      "deviceName": "MacBook-Pro",
-      "projectHash": "-Users-user-project",
-      "projectName": "project",
-      "preview": "Inspect the current changes",
-      "lastActive": "2026-08-09T08:00:00.000Z"
-    }
-  ],
-  "recentSessions": [],
-  "hasMoreProjects": false,
-  "recentProjects": [
-    {
-      "deviceName": "MacBook-Pro",
-      "projectHash": "-Users-user-project",
-      "projectName": "project",
-      "lastActive": "2026-08-09T08:00:00.000Z",
-      "sessions": [
-        {
-          "sessionId": "codex:019e...",
-          "status": "running",
-          "deviceName": "MacBook-Pro",
-          "projectHash": "-Users-user-project",
-          "projectName": "project",
-          "preview": "Inspect the current changes",
-          "lastActive": "2026-08-09T08:00:00.000Z"
-        }
-      ]
-    }
-  ]
-}
+{ "sessions": [{ "sessionId": "codex:019e...", "status": "running", "deviceName": "MacBook-Pro",
+  "projectHash": "-Users-user-project", "projectName": "project", "preview": "Inspect the current changes",
+  "lastActive": "2026-08-09T08:00:00.000Z", "agentCount": 0 }] }
 ```
-
-Active cards return only fields consumed by the home page. `status` is the
-effective root-plus-agents status. Completed cards omit `status` because their
-collection already defines the state.
-
-`recentProjects` is a bounded snapshot of recent work:
-
-- Merge the visible active root Sessions with the completed root Sessions from the existing
-  single descending query page (`Limit=100`). The existing offline-device and stale
-  `needs_input` visibility rules still apply to active Sessions.
-- Deduplicate by `(deviceName, projectHash, sessionId)`, keeping the newer `lastActive`;
-  active data wins ties. Omit rows missing any of these navigation identifiers.
-- Sort by `lastActive` descending and keep at most 100 Sessions **before** grouping.
-  Equal timestamps sort by device name, project hash, then Session ID descending.
-- Group by `(deviceName, projectHash)`, not the display name. Return the 5 projects with
-  the newest Sessions; each group's `lastActive` is its newest Session's timestamp.
-  Each group contains up to 5 Sessions ordered by `lastActive` descending.
-  With `allProjects=true`, return up to 15 groups from this same bounded window instead.
-- Nested Sessions include `status` (`running`, `needs_input`, or `completed`), along with
-  the existing home-card fields, including agent identity and pending-input detail when present.
-- Counts are upper bounds. Filtering and DynamoDB page size may yield fewer candidates.
-  No extra project queries, history queries, or pagination are performed to fill a group.
-  These groups do not represent complete project history or project-wide Session counts.
-
-The existing `sessions` and `recentSessions` fields retain their previous behavior and limits.
-
-`hasMoreProjects` indicates whether the default view can be expanded beyond 5 projects.
-It is false in expanded mode (`allProjects=true`), even if the candidate window contains
-more than 15 groups. A client can show **Show more** when it is true, then request
-`?allProjects=true`, exclude already displayed `(deviceName, projectHash)` pairs, and append
-up to 10 unseen groups, keeping at most 15 displayed projects. This request reruns the
-existing queries and needs no additional `/devices` request.
-
-The Web client preserves the existing project order, Session rows, and Active Sessions during
-this append operation, and caches the combined displayed snapshot. Regular home refreshes
-replace the whole snapshot with the latest data and ordering, requesting 5 or 15 projects
-according to the current in-memory view mode. Reloading the page resets the view to 5.
 
 ---
 
 ### GET /api/bridge/devices
 
-Get all devices under the current account.
+Device names and online state; everything else on the home page comes from each Bridge.
+`rpc` addresses the joined Bridges directly (`docs/v2-step1-home-plan.md`).
 
-**Query**: none
-
-**Logic**: Scan BridgeSessions table (PK=accountId), aggregate by `deviceName`
-
-**Response** `200`
 ```json
-{
-  "devices": [
-    {
-      "deviceName": "MacBook-Pro",
-      "deviceDisplayName": "Office Mac",
-      "os": "darwin",
-      "projectCount": 12,
-      "runningCount": 2,
-      "needsInputCount": 1,
-      "lastActive": "2026-03-27T10:30:00.000Z",
-      "online": true
-    },
-    {
-      "deviceName": "Ubuntu-Server",
-      "os": "linux",
-      "projectCount": 3,
-      "runningCount": 0,
-      "needsInputCount": 0,
-      "lastActive": "2026-03-26T08:00:00.000Z",
-      "online": false
-    }
-  ]
-}
+{ "protocol": 2,
+  "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "os": "darwin", "online": true }],
+  "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }] } }
 ```
-
-**Notes**:
-- `projectCount`: number of projects on this device (deduplicated by `projectHash`)
-- `runningCount`: sessions with `status="running"`
-- `needsInputCount`: sessions with `status="needs_input"`
-- `lastActive`: most recent session's lastActive on this device
-- `online`: whether bridge WS is connected (checks Connections table for role=bridge with matching deviceName)
-- Sorted by `lastActive` descending
 
 ---
 
-### GET /api/bridge/projects
+### Bridge RPC (App → Bridge over the `app_data` socket)
 
-Get projects under a specific device.
+`request(device, method, params)` in `web/js/v2/direct-transport.js`; frames, chunking and
+compression are in `bridge/direct-rpc-protocol.mjs`. The Bridge answers from
+`bridge/session-index.mjs` (`docs/v2-step2-lists-plan.md`).
 
-**Query**:
-| Param | Required | Description |
-|-------|----------|-------------|
-| `device` | Yes | Device name |
-| `limit` | No | Page size (`1-100`). Omit for the legacy full response |
-| `cursor` | No | Opaque `nextCursor` from the previous page; requires `limit` |
+| Method | Params | Answer |
+|---|---|---|
+| `home` | `revision?` | `{ revision, notModified?, device, sessions, recentProjects }` |
+| `projects` | `limit?` (50, ≤100), `cursor?` | `{ projects, hasMore, nextCursor }` |
+| `sessions` | `project`, `limit?`, `cursor?` | `{ sessions, hasMore, nextCursor }` |
+| `ping` | — | `{ bridgeVersion, runtimes }` |
 
-**Example**: `GET /api/bridge/projects?device=MacBook-Pro&limit=50`
-
-**Logic**: Paginated requests query `listPk-listSk-index` in reverse `lastActive`
-order. Requests without `limit` retain the legacy base-table query for older clients.
-
-**Response** `200`
-```json
-{
-  "projects": [
-    {
-      "projectHash": "-Users-xiaoweii-workspace-rn-baton",
-      "projectName": "baton",
-      "projectPath": "workspace/rn/baton",
-      "sessionCount": 15,
-      "runningCount": 1,
-      "needsInputCount": 1,
-      "lastActive": "2026-03-27T10:30:00.000Z"
-    }
-  ],
-  "hasMore": true,
-  "nextCursor": "eyJhY2NvdW50SWQiOi..."
-}
-```
-
-**Notes**:
-- `projectName`: last path segment (directory name), used as UI title
-- `projectPath`: full path relative to home, used as UI subtitle
-- `projectHash`: passed back when calling the sessions endpoint
-- `runningCount`: sessions with `status="running"`
-- `needsInputCount`: sessions with `status="needs_input"`
-- Sorted by `lastActive` descending
-- `hasMore` and `nextCursor` are returned only when `limit` is provided
-
----
-
-### GET /api/bridge/sessions
-
-Get sessions under a specific device + project.
-
-**Query**:
-| Param | Required | Description |
-|-------|----------|-------------|
-| `device` | Yes | Device name |
-| `project` | Yes | projectHash |
-| `limit` | No | Page size (`1-100`). Omit for the legacy full response |
-| `cursor` | No | Opaque `nextCursor` from the previous page; requires `limit` |
-
-**Example**: `GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-xiaoweii-workspace-rn-baton&limit=50`
-
-**Logic**: Paginated requests query `listPk-listSk-index` in reverse `lastActive`
-order. Requests without `limit` retain the legacy base-table query for older clients.
-
-**Response** `200`
-```json
-{
-  "sessions": [
-    {
-      "sessionId": "codex:019e86c2-fd17-7031-b8cb-63c1f56d3609",
-      "preview": "Review the current changes",
-      "lastActive": "2026-03-27T10:30:00.000Z",
-      "size": 102400,
-      "model": "gpt-5",
-      "status": "completed",
-      "agentCount": 0
-    },
-    {
-      "sessionId": "b880a5db-xxxx-xxxx-xxxx",
-      "preview": "Fix the login bug",
-      "lastActive": "2026-03-26T15:00:00.000Z",
-      "size": 8192,
-      "model": "claude-opus-4-6-20250610",
-      "status": "completed",
-      "agentCount": 0
-    }
-  ],
-  "hasMore": true,
-  "nextCursor": "eyJhY2NvdW50SWQiOi..."
-}
-```
-
-`status` is the effective list status of the root Session and all nested
-agents. The query projects only fields consumed by the Session list; runtime
-and native IDs are derived from `sessionId`, while thread capabilities are
-returned by `/session-threads`. Agent roots may additionally include
-`isAgent`, `agentName`, and a current `agentDetail`.
-
-`hasMore` and `nextCursor` are returned only when `limit` is provided.
-
-Existing rows gain the sparse list-index fields during the Bridge's full catalog sync
-after an upgrade. Before enabling paginated clients on an existing stack, run the
-idempotent backfill once to include rows belonging to offline devices:
-
-```bash
-python3 server/backfill-list-index.py \
-  --table Baton-bridge-sessions \
-  --region ap-northeast-1 \
-  --dry-run
-```
-
-Remove `--dry-run` after checking the counts. The GSI must be active before applying
-the backfill. Concurrent Bridge writes are skipped and reported as `conflicts`; rerun
-the command until that count reaches zero.
-
-**Notes**:
-- Sorted by `lastActive` descending
-- `status`: `running`, `needs_input`, or `completed`
-- `modelProvider`, `clientSource`, and `cliVersion` are sparse optional fields
+Project rows: `projectHash, projectName, projectPath, sessionCount, runningCount,
+needsInputCount, lastActive`. Session rows: `sessionId, preview, lastActive, size, model, status,
+agentCount` plus `isAgent, agentName` for daemon agents and `agentDetail` while one waits for input.
+Both lists are newest first (`lastActive`, then id, descending); the cursor is opaque. `status` is
+the effective root-plus-agents status. `api.js` maps `/api/bridge/projects` and
+`/api/bridge/sessions` to these methods, so the pages keep their former REST call sites.
 
 ---
 
@@ -984,8 +740,8 @@ the Session.
 
 **Server handling**: Forward to matching bridge by `device` (rejected with `400` if `projectPath` missing).
 
-**Bridge handling**: create the path → derive `projectHash` → call REST `create-project` → reply
-`create_project_result`.
+**Bridge handling**: create the path → derive `projectHash` → reply `create_project_result`. The
+project appears in the list with its first Session; the directory stays selectable for new Sessions.
 The hash uses the directory's real path so symbolic-link aliases resolve to the same project.
 
 ---
@@ -1621,7 +1377,7 @@ All endpoints use a unified error format:
 
 | Table | PK | SK | Purpose | TTL |
 |-------|----|----|---------|-----|
-| BridgeSessions | accountId | `DEV#...` / `PROJ#...` / `SESS#...` | Device, Project, and Session metadata | No TTL value written |
+| BridgeSessions | accountId | `DEV#...` / `SESS#...` | Device identity; Session rows for notifications and the Session view | No TTL value written |
 | BridgeMessages | sessionId | timestamp#uuid | Message cache | 90 days |
 | Connections | connectionId | — | WS connection records with role/device routing | 24h |
 | Subscriptions | sessionId | connectionId | WS subscription relationships | 24h |

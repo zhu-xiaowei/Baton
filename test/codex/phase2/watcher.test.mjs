@@ -82,7 +82,6 @@ function watcherHarness(homes, options = {}) {
     watermarks,
     recentSessions: options.recentSessions || new Set(),
     lastKnownStatus: options.lastKnownStatus || new Map(),
-    knownProjects: options.knownProjects || new Set(),
     deliverFn: options.deliverFn || (async (sessionId, messages, identity) => {
       delivered.push({ sessionId, messages, identity });
     }),
@@ -93,7 +92,6 @@ function watcherHarness(homes, options = {}) {
       posts.push({ endpoint, body });
       return { ok: true };
     },
-    reconcileFn: async () => {},
     runningInfoFn: () => ({ projects: new Set(), sessions: new Set() }),
     ...(options.scanRollout ? { scanRollout: options.scanRollout } : {}),
     ...(options.subscribeFn ? { subscribeFn: options.subscribeFn } : {}),
@@ -132,7 +130,7 @@ test('Codex watcher sends new lines once and preserves a partial trailing line',
   assert.equal(lifecycle.stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[0])), lines.length);
   assert.equal(h.posts.length, 1);
-  assert.equal(h.posts[0].body.statusDelta.from, 'new');
+  assert.equal(h.posts[0].body.sessions[0].nativeSessionId, IDS[0]);
 
   await h.watcher.scanNow();
   assert.equal(h.delivered.length, 1);
@@ -614,7 +612,6 @@ test('Codex watcher refreshes session metadata for throttled message activity', 
 
   assert.equal(h.posts.length, 2);
   assert.equal(h.posts[1].body.sessions[0].status, 'running');
-  assert.equal(h.posts[1].body.statusDelta, undefined);
   assert.equal(h.posts[1].body.sessions[0].lastActive, newer.toISOString());
 });
 
@@ -931,7 +928,7 @@ test('Codex watcher handles rename, multiple homes, and running to completed sta
   await h.watcher.scanNow();
 
   assert.equal(h.watermarks.get(firstKey), firstLines.length + 1);
-  assert.equal(h.posts.some((entry) => entry.body.statusDelta?.to === 'completed'), true);
+  assert.equal(h.posts.some((entry) => entry.body.sessions?.[0]?.status === 'completed'), true);
   assert.equal(h.delivered.some((entry) => entry.sessionId === storageSessionId('codex', IDS[2])), true);
 });
 

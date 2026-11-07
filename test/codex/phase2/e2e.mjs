@@ -180,13 +180,11 @@ const initial = discoverCodexSessions({ codexHomes: [codexHome] });
 const watermarks = new Map();
 const recent = new Set();
 const statuses = new Map();
-const projects = new Set();
 for (const session of initial.sessions) {
   const sessionId = storageSessionId('codex', session.nativeSessionId);
   watermarks.set(sessionId, session._lineCount);
   recent.add(sessionId);
   statuses.set(sessionId, session.status);
-  projects.add(session.project);
 }
 
 initHttp(config);
@@ -198,7 +196,6 @@ const watcher = new CodexWatcher(config, {
   watermarks,
   recentSessions: recent,
   lastKnownStatus: statuses,
-  knownProjects: projects,
 }).start();
 
 const app = new WebSocket(`${serverConfig.wsUrl}?apiKey=${apiKey}&role=app`);

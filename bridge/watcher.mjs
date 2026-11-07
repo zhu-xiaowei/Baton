@@ -17,7 +17,7 @@ import {
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
-import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
+import { recentSessions, lastKnownStatus } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
 import {
@@ -27,7 +27,7 @@ import {
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
-import { homeIndex } from './home-index.mjs';
+import { sessionIndex } from './session-index.mjs';
 import {
   claudeSubagentParentSessionId,
   claudeSubagentEnded,
@@ -248,7 +248,7 @@ function queuePolledClaudeFile(
 
 async function readAndSend(config, filename, sessionId, enqueue) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
-  homeIndex.touch(filePath);
+  sessionIndex.touch(filePath);
   if (!fs.existsSync(filePath)) return;
   if (String(filename).split(path.sep).includes('subagents')) {
     return readAndSendSubagent(config, filename, filePath, sessionId, enqueue);
@@ -460,21 +460,11 @@ async function postSessionMeta(
 
   // Skip empty-shell sessions even if process detection briefly marks them running.
   const preview = metadata.preview;
-  homeIndex.noteClaude(filePath, metadata);
   if (shouldSkipClaudeSession(preview, dm)) return;
   if (!(statusChanged || isNew || gotNewTitle || forceActivity)) return;
 
   const stat = fs.statSync(filePath);
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
-  // Counter delta — server uses this to ADD/SUBTRACT counters; 'new' means += 1.
-  const statusDelta = (statusChanged || isNew) ? {
-    deviceName: config.deviceName,
-    projectHash,
-    from: isNew && oldStatus === undefined ? 'new' : (oldStatus || 'completed'),
-    to: newStatus,
-    projectName: readableProjectName(projectHash),
-    lastActive: stat.mtime.toISOString(),
-  } : null;
   const sessionMeta = {
     id: sessionId,
     project: projectHash,
@@ -502,17 +492,11 @@ async function postSessionMeta(
     deviceName: config.deviceName,
     os: process.platform,
     sessions: [sessionMeta],
-    ...(statusDelta ? { statusDelta } : {}),
   }, { signal: AbortSignal.timeout(5000) });
   lastKnownStatus.set(sessionId, newStatus);
   markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
   exposeKnownClaudeSession(filePath, sessionId);
-  // First session of a brand-new project → recount totals so projectCount stays accurate.
-  if (!knownProjects.has(projectHash)) {
-    knownProjects.add(projectHash);
-    reconcile(config);
-  }
 }
 
 const _jobsState = new Map(); // sessionId → { agentName, agentDetail, status }

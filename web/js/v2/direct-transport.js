@@ -27,6 +27,7 @@ const pending = new Map();    // key → request state
 const byRequestId = new Map(); // wire requestId → key
 const assembler = new RpcAssembler();
 let routesKnown = false;      // true once /devices answered in this page
+let devicesInflight = null;
 
 function storageKey() {
   return 'baton-v2-rpc:' + state.SERVER;
@@ -111,9 +112,10 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') probe(); });
 }
 
-export function connect(url) {
-  if (url) dataUrl = url;
-  if (!dataUrl || !state.KEY) return;
+// The server is reached through its CloudFront domain, which also serves /data.
+export function connect() {
+  if (!state.KEY || !state.SERVER) return;
+  dataUrl ||= 'wss://' + new URL(state.SERVER).host + '/data';
   if (socket?.readyState === WebSocket.OPEN) return probe();
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
@@ -210,9 +212,24 @@ function reconcile() {
   }
 }
 
+// GET /devices; its routes reach pending requests at once. Concurrent callers share one request.
+export function devices() {
+  devicesInflight ||= (async () => {
+    const response = await fetch(state.SERVER + '/api/bridge/devices', { headers: { 'x-api-key': state.KEY } });
+    if (response.status === 401 || response.status === 403) window.logout?.();
+    if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+    const body = await response.json();
+    if (body.protocol === 2) updateRoutes(body);
+    return body;
+  })().finally(() => { devicesInflight = null; });
+  return devicesInflight;
+}
+
 export function request(device, method, params = {}) {
   restore();
   connect();
+  // A page opened without the home (reload, link) still learns current routes and credentials.
+  if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
     pending.set(key, { device, method, params, resolve, reject, ids: new Set(), createdAt: performance.now(),
@@ -226,6 +243,7 @@ export function resetDirectTransport() {
   rpc = null;
   routesKnown = false;
   restored = true;
+  dataUrl = '';
   try { localStorage.removeItem(storageKey()); } catch {}
   if (socket) { const ws = socket; socket = null; ws.close(); }
 }

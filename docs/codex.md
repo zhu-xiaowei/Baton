@@ -202,7 +202,6 @@ The Codex integration adds no tables and does not change primary keys, GSIs, or 
 PK = accountId
 
 SK = DEV#<deviceName>
-SK = PROJ#<deviceName>#<projectHash>
 SK = SESS#<deviceName>#<projectHash>#<sessionId>
 ```
 

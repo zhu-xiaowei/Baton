@@ -337,18 +337,7 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
     const children = refreshClaudeSubagents(session, gone ? '' : filePath);
-    return {
-      session,
-      extraSessions: children,
-      statusDelta: {
-        deviceName: active.deviceName,
-        projectHash,
-        projectName,
-        from: active.status,
-        to: newStatus,
-        lastActive,
-      },
-    };
+    return { session, extraSessions: children };
   },
 
   async updateSessionStatus(config, nativeSessionId, filePath, projectHash, newStatus, detail, context) {
@@ -385,14 +374,6 @@ export const claudeRuntime = defineRuntimeAdapter({
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [session],
-      statusDeltas: [{
-        deviceName: config.deviceName,
-        projectHash,
-        projectName,
-        from: context.isNew && previousStatus === undefined ? 'new' : previousStatus || 'completed',
-        to: newStatus,
-        lastActive,
-      }],
     });
     context.lastKnownStatus.set(nativeSessionId, newStatus);
   },

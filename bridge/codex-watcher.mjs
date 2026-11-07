@@ -26,14 +26,9 @@ import {
 import { codexInteraction } from './codex-interaction.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
-import { homeIndex } from './home-index.mjs';
+import { sessionIndex } from './session-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
-import {
-  knownProjects,
-  lastKnownStatus,
-  recentSessions,
-  reconcile,
-} from './sync.mjs';
+import { lastKnownStatus, recentSessions } from './sync.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
 import {
@@ -117,9 +112,7 @@ export class CodexWatcher {
     this.watermarks = options.watermarks || synced;
     this.recent = options.recentSessions || recentSessions;
     this.statuses = options.lastKnownStatus || lastKnownStatus;
-    this.projects = options.knownProjects || knownProjects;
     this.postFn = options.postFn || postRequired;
-    this.reconcileFn = options.reconcileFn || reconcile;
     this.deliverFn = options.deliverFn || deliverRealtimeMessages;
     this.uploadFn = options.uploadFn || uploadMessages;
     this.scanRollout = options.scanRollout || scanCodexRollout;
@@ -663,7 +656,7 @@ export class CodexWatcher {
   }
 
   async processFile(filePath, options = {}) {
-    homeIndex.touch(filePath);
+    sessionIndex.touch(filePath);
     const nativeSessionId = codexSessionIdFromPath(filePath);
     const sessionId = storageSessionId('codex', nativeSessionId);
     const processedStat = fs.statSync(filePath);
@@ -762,7 +755,6 @@ export class CodexWatcher {
   }
 
   async syncMetadata(session, options = {}) {
-    homeIndex.noteCodex(session);
     const sessionId = storageSessionId('codex', session.nativeSessionId);
     const previousStatus = this.statuses.get(sessionId);
     const isNew = !this.recent.has(sessionId);
@@ -771,15 +763,6 @@ export class CodexWatcher {
     const statusChanged = previousStatus !== session.status;
     if (!options.forceActivity && !isNew && !metadataChanged && !statusChanged) return;
 
-    const projectWasKnown = this.projects.has(session.project);
-    const statusDelta = !session.parentSessionId && (isNew || statusChanged) ? {
-      deviceName: this.config.deviceName,
-      projectHash: session.project,
-      projectName: session.projectName,
-      from: isNew ? 'new' : (previousStatus || 'completed'),
-      to: session.status,
-      lastActive: session.lastActive,
-    } : null;
     const agentCountUpdates = trackAgentSession(session);
     const { _filePath, _lineCount, ...publicSession } = session;
     if (previousStatus === 'running' && session.status !== 'running'
@@ -791,17 +774,14 @@ export class CodexWatcher {
       os: process.platform,
       sessions: [publicSession],
       ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-      ...(statusDelta ? { statusDelta } : {}),
     });
 
     markActivitySynced(this.lastActivitySyncAt, sessionId);
     this.statuses.set(sessionId, session.status);
     this.recent.add(sessionId);
-    this.projects.add(session.project);
     this.metadataSignatures.set(sessionId, signature);
     this.threadKinds.set(sessionId, session.threadKind || 'main');
     if (isNew || metadataChanged || statusChanged) this.refreshFileWatchers();
-    if (!projectWasKnown) await this.reconcileFn(this.config);
   }
 
   scheduleRetry(nativeSessionId, filePath) {

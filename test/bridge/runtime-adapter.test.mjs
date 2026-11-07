@@ -120,7 +120,6 @@ test('Codex permission status refresh preserves needs_input detail without a cou
 
   assert.equal(request.sessions[0].status, 'needs_input');
   assert.equal(request.sessions[0].agentDetail, 'Allow network access?');
-  assert.equal(request.statusDeltas, undefined);
 });
 
 test('Codex stopped polling updates the original project after its worktree disappears', () => {
@@ -138,9 +137,6 @@ test('Codex stopped polling updates the original project after its worktree disa
 
   assert.equal(result.session.project, oldProject);
   assert.equal(result.session.status, 'completed');
-  assert.equal(result.statusDelta.projectHash, oldProject);
-  assert.equal(result.statusDelta.from, 'running');
-  assert.equal(result.statusDelta.to, 'completed');
 });
 
 test('capability detection is dispatched through runtime adapters', () => {

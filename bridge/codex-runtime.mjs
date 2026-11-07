@@ -221,17 +221,7 @@ export const codexRuntime = defineRuntimeAdapter({
     if (session.status === active.status) return null;
 
     context.lastKnownStatus.set(sessionId, session.status);
-    return {
-      session: publicSession(session),
-      statusDelta: {
-        deviceName: active.deviceName,
-        projectHash: session.project,
-        projectName: session.projectName,
-        from: active.status,
-        to: session.status,
-        lastActive: session.lastActive,
-      },
-    };
+    return { session: publicSession(session) };
   },
 
   async updateSessionStatus(config, nativeSessionId, filePath, _projectHash, newStatus, detail, context) {
@@ -246,23 +236,12 @@ export const codexRuntime = defineRuntimeAdapter({
     if (!session) return;
     session.status = newStatus;
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
-    const statusChanged = previousStatus !== newStatus;
     const agentCountUpdates = trackAgentSession(session);
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: [publicSession(session)],
       ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-      ...(statusChanged && !session.parentSessionId ? {
-        statusDeltas: [{
-          deviceName: config.deviceName,
-          projectHash: session.project,
-          projectName: session.projectName,
-          from: previousStatus || 'completed',
-          to: newStatus,
-          lastActive: session.lastActive,
-        }],
-      } : {}),
     });
     context.lastKnownStatus.set(sessionId, newStatus);
   },

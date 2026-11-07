@@ -298,7 +298,7 @@ def test_active_session_visibility_falls_back_to_last_active_and_keeps_unknown_t
     }, None, now)
 
 
-def test_active_sessions_projects_only_home_card_fields(monkeypatch):
+def test_active_sessions_returns_only_active_roots(monkeypatch):
     active = {
         "sessionId": "codex:active",
         "preview": "Active",
@@ -347,7 +347,7 @@ def test_active_sessions_projects_only_home_card_fields(monkeypatch):
 
     result = asyncio.run(bridge_read.get_active_sessions(FakeRequest()))
 
-    assert {key: result[key] for key in ("sessions", "recentSessions")} == {
+    assert result == {
         "sessions": [{
             "sessionId": "codex:active",
             "preview": "Active",
@@ -360,32 +360,9 @@ def test_active_sessions_projects_only_home_card_fields(monkeypatch):
             "isAgent": True,
             "agentName": "worker",
         }],
-        "recentSessions": [{
-            "sessionId": "done",
-            "preview": "Done",
-            "deviceName": "Mac",
-            "projectHash": "-workspace",
-            "projectName": "project",
-            "lastActive": "2026-08-31T00:00:00.000Z",
-            "agentCount": 0,
-        }],
     }
-    assert result["recentProjects"] == [{
-        "deviceName": "Mac",
-        "projectHash": "-workspace",
-        "projectName": "project",
-        "lastActive": active["lastActive"],
-        "sessions": [
-            result["sessions"][0],
-            {**result["recentSessions"][0], "status": "completed"},
-        ],
-    }]
-    assert len(table.query_calls) == 2
-    assert all(
-        call["ProjectionExpression"] == bridge_read.ACTIVE_HOME_PROJECTION
-        and call["ExpressionAttributeNames"] == bridge_read.ACTIVE_HOME_ATTRIBUTE_NAMES
-        for call in table.query_calls
-    )
+    assert len(table.query_calls) == 1
+    assert table.query_calls[0]["ProjectionExpression"] == bridge_read.ACTIVE_HOME_PROJECTION
 
 
 def test_devices_returns_only_v2_fields(monkeypatch):
@@ -547,11 +524,6 @@ def test_delete_session_deletes_all_nested_children_only(monkeypatch):
     }]
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
     monkeypatch.setattr(bridge_sync, "_query_all", lambda *_args, **_kwargs: rows)
-    monkeypatch.setattr(
-        bridge_sync,
-        "_reconcile_device",
-        lambda *_args, **_kwargs: {"sessionCount": 1, "projectCount": 1},
-    )
 
     result = asyncio.run(bridge_sync.delete_sessions(
         bridge_sync.DeleteRequest(deviceName="Linux", sessionIds=["root"]),
@@ -600,13 +572,6 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
         bridge_sync.SyncSessionsRequest(
             deviceName="Linux",
             sessions=[bridge_sync.SessionItem(**root, status="needs_input")],
-            statusDeltas=[bridge_sync.StatusDelta(
-                deviceName="Linux",
-                projectHash="-repo",
-                from_="completed",
-                to="needs_input",
-                lastActive=root["lastActive"],
-            )],
         ),
         FakeRequest(),
     ))
@@ -617,16 +582,10 @@ def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkey
     assert sessions.items[-1]["activeStatus"] == "needs_input"
     assert sessions.items[-1]["threadRootId"] == "codex:parent"
     assert sessions.items[-1]["threadRootSk"] == "codex:parent"
-    counter_updates = [
-        update for update in sessions.updates
-        if update["UpdateExpression"].startswith("ADD runningCount")
-    ]
-    assert counter_updates
-    assert counter_updates[0]["ExpressionAttributeValues"][":dr"] == -1
-    assert counter_updates[0]["ExpressionAttributeValues"][":di"] == 1
+    assert not any("listPk" in item for item in sessions.items)
 
 
-def test_child_status_summary_updates_root_active_status_and_counters(monkeypatch):
+def test_child_status_summary_updates_root_active_status(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
     notifications = []
@@ -680,11 +639,7 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
     assert values[":running"] == 1
     assert values[":needs"] == 0
     assert values[":active"] == "running"
-    counter_updates = [
-        update for update in sessions.updates
-        if update["UpdateExpression"].startswith("ADD runningCount")
-    ]
-    assert counter_updates[0]["ExpressionAttributeValues"][":dr"] == 1
+    assert len(sessions.updates) == 1, "no device or project counters"
     assert notifications == [(
         account_id,
         "Linux",
@@ -757,123 +712,6 @@ def test_effective_status_prioritizes_needs_input_across_main_and_children():
     assert bridge_sync._effective_status("completed", 2, 1) == "needs_input"
     assert bridge_sync._effective_status("running", 0, 1) == "needs_input"
     assert bridge_sync._effective_status("needs_input", 3, 0) == "needs_input"
-
-
-def test_new_root_session_updates_device_and_project_once(monkeypatch):
-    sessions = FakeTable()
-    messages = FakeTable()
-    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
-
-    asyncio.run(bridge_sync.sync_sessions(
-        bridge_sync.SyncSessionsRequest(
-            deviceName="Linux",
-            sessions=[bridge_sync.SessionItem(
-                id="codex:new-root",
-                nativeSessionId="new-root",
-                runtime="codex",
-                project="-repo",
-                projectName="repo",
-                lastActive="2026-08-21T00:00:00.000Z",
-                status="running",
-                agentCount=0,
-                runningAgentCount=0,
-                needsInputAgentCount=0,
-                threadRootId="codex:new-root",
-            )],
-            statusDeltas=[bridge_sync.StatusDelta(
-                deviceName="Linux",
-                projectHash="-repo",
-                projectName="repo",
-                from_="new",
-                to="running",
-                lastActive="2026-08-21T00:00:00.000Z",
-            )],
-        ),
-        FakeRequest(),
-    ))
-
-    root = sessions.items[-1]
-    assert root["status"] == "running"
-    assert root["activeStatus"] == "running"
-    counter_updates = [
-        update for update in sessions.updates
-        if update["UpdateExpression"].startswith("ADD runningCount")
-    ]
-    assert len(counter_updates) == 2
-    assert all(update["ExpressionAttributeValues"][":dr"] == 1 for update in counter_updates)
-    assert all(update["ExpressionAttributeValues"][":ds"] == 1 for update in counter_updates)
-
-
-def test_live_counts_use_root_effective_status_and_ignore_children(monkeypatch):
-    rows = [{
-        "deviceName": "Linux",
-        "projectHash": "-repo",
-        "status": "completed",
-        "activeStatus": "running",
-    }, {
-        "deviceName": "Linux",
-        "projectHash": "-repo",
-        "status": "running",
-        "activeStatus": "needs_input",
-    }, {
-        "deviceName": "Linux",
-        "projectHash": "-repo",
-        "status": "running",
-        "activeStatus": "running",
-        "parentSessionId": "root",
-    }]
-    monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: rows)
-
-    device_counts, project_counts = bridge_read._live_active_counts(object(), "account")
-
-    assert device_counts["Linux"] == {"running": 1, "needs_input": 1}
-    assert project_counts[("Linux", "-repo")] == {"running": 1, "needs_input": 1}
-
-
-def test_reconcile_counts_only_root_effective_statuses(monkeypatch):
-    sessions = FakeTable()
-    account_id = bridge_sync._hash_key("test-key")
-    rows = [{
-        "accountId": account_id,
-        "sk": "SESS#Linux#-repo#root-running",
-        "sessionId": "root-running",
-        "projectHash": "-repo",
-        "projectName": "repo",
-        "lastActive": "2026-08-21T00:00:00.000Z",
-        "status": "completed",
-        "activeStatus": "running",
-    }, {
-        "accountId": account_id,
-        "sk": "SESS#Linux#-repo#root-needs",
-        "sessionId": "root-needs",
-        "projectHash": "-repo",
-        "projectName": "repo",
-        "lastActive": "2026-08-21T00:00:01.000Z",
-        "status": "needs_input",
-        "activeStatus": "needs_input",
-    }, {
-        "accountId": account_id,
-        "sk": "SESS#Linux#-repo#child",
-        "sessionId": "child",
-        "projectHash": "-repo",
-        "lastActive": "2026-08-21T00:00:02.000Z",
-        "status": "running",
-        "parentSessionId": "root-running",
-        "activeStatus": "running",
-    }]
-    monkeypatch.setattr(bridge_sync, "_query_all", lambda *_args, **_kwargs: rows)
-
-    result = bridge_sync._reconcile_device(
-        sessions, account_id, "Linux", "linux", prune=True
-    )
-
-    project = next(item for item in sessions.items if item.get("entityType") == "project")
-    assert project["sessionCount"] == 2
-    assert project["runningCount"] == 1
-    assert project["idleCount"] == 1
-    assert result["sessionCount"] == 2
-    assert result["runningCount"] == 1
-    assert result["idleCount"] == 1
 
 
 def test_session_threads_returns_root_and_children(monkeypatch):
@@ -1078,106 +916,22 @@ def test_message_reads_omit_only_thinking_signatures():
     assert json.loads(stored) == content
 
 
-def test_sync_sessions_persists_device_runtime_capabilities(monkeypatch):
+def test_sync_sessions_keeps_only_the_device_identity(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
     monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
-    request = bridge_sync.SyncSessionsRequest(
-        deviceName="Mac",
-        deviceDisplayName="Office Mac",
-        sessions=[],
-        device=bridge_sync.DeviceAggregate(
-            runtimeCapabilities={
-                "claude": bridge_sync.RuntimeCapability(
-                    installed=True, historyAvailable=True, canRead=True,
-                    canCreate=True, canSend=True, version="2.0.0",
-                ),
-                "codex": bridge_sync.RuntimeCapability(
-                    installed=True, historyAvailable=True, canRead=True,
-                    canCreate=False, canSend=False, version="1.0.0",
-                ),
-            },
-        ),
-        projects=[],
-    )
-    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
-    devices = [item for item in sessions.items if item["entityType"] == "device"]
-    assert len(devices) == 1
-    device = devices[0]
-    assert device["sk"] == "DEV#Mac"
-    assert device["deviceDisplayName"] == "Office Mac"
-    assert device["runtimeCapabilities"]["claude"]["canCreate"] is True
-    assert device["runtimeCapabilities"]["codex"]["canRead"] is True
-    assert device["runtimeCapabilities"]["codex"]["canCreate"] is False
-
-
-def test_incomplete_first_catalog_bootstraps_device_and_projects(monkeypatch):
-    sessions = FakeTable()
-    messages = FakeTable()
-    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
-    request = bridge_sync.SyncSessionsRequest(
-        deviceName="Windows",
-        os="win32",
-        catalogComplete=False,
-        sessions=[bridge_sync.SessionItem(
-            id="session-1",
-            project="C--repo",
-            projectName="repo",
-            lastActive="2026-08-16T00:00:00.000Z",
-        )],
-        device=bridge_sync.DeviceAggregate(
-            sessionCount=1,
-            projectCount=1,
-            lastActive="2026-08-16T00:00:00.000Z",
-        ),
-        projects=[bridge_sync.ProjectAggregate(
-            projectHash="C--repo",
-            projectName="repo",
-            sessionCount=1,
-            lastActive="2026-08-16T00:00:00.000Z",
-        )],
-    )
-
-    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
-
-    assert any(item["sk"] == "DEV#Windows" for item in sessions.items)
-    assert any(item["sk"] == "PROJ#Windows#C--repo" for item in sessions.items)
-
-
-def test_incomplete_catalog_preserves_existing_device_aggregates(monkeypatch):
-    account_id = bridge_sync._hash_key("test-key")
-    existing_device = {
-        "accountId": account_id,
-        "sk": "DEV#Windows",
-        "entityType": "device",
-        "deviceName": "Windows",
-        "sessionCount": 99,
-        "projectCount": 12,
-    }
-    sessions = FakeTable()
-    sessions.items.append(existing_device)
-    messages = FakeTable()
-    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
-    request = bridge_sync.SyncSessionsRequest(
-        deviceName="Windows",
-        deviceDisplayName="Office Windows",
-        os="win32",
-        catalogComplete=False,
-        sessions=[],
-        device=bridge_sync.DeviceAggregate(sessionCount=1, projectCount=1),
-        projects=[bridge_sync.ProjectAggregate(
-            projectHash="partial",
-            sessionCount=1,
-        )],
-    )
-
-    asyncio.run(bridge_sync.sync_sessions(request, FakeRequest()))
-
-    devices = [item for item in sessions.items if item.get("sk") == "DEV#Windows"]
-    assert devices == [existing_device]
-    assert sessions.updates[0]["ExpressionAttributeValues"][":name"] == "Office Windows"
-    assert not any(item.get("sk") == "PROJ#Windows#partial" for item in sessions.items)
-
+    asyncio.run(bridge_sync.sync_sessions(bridge_sync.SyncSessionsRequest(
+        deviceName="Mac", deviceDisplayName="Office Mac", os="darwin", sessions=[],
+    ), FakeRequest()))
+    [update] = sessions.updates
+    assert update["Key"]["sk"] == "DEV#Mac"
+    values = update["ExpressionAttributeValues"]
+    assert (values[":name"], values[":os"], values[":et"]) == ("Office Mac", "darwin", "device")
+    assert "Count" not in update["UpdateExpression"]
+    asyncio.run(bridge_sync.sync_sessions(bridge_sync.SyncSessionsRequest(
+        deviceName="Mac", os="darwin", sessions=[],
+    ), FakeRequest()))
+    assert len(sessions.updates) == 1, "status updates without a display name leave the device row alone"
 
 def test_messages_default_to_200_and_preserve_explicit_limits(monkeypatch):
     timestamp = "2026-09-20T00:00:00.000Z"
