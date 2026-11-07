@@ -10,6 +10,7 @@
 #   ./install.sh --region us-west-2 --profile myprofile
 #   ./install.sh --rotate-key                    # replace the API key; every device signs in again
 #   PUSH_RELAY_URL=https://… ./install.sh         # another iOS push relay, every deploy (docs/mobile-notifications.md)
+#   BATON_VOICE=true ./install.sh                 # turn voice mode on (false turns it off); kept on later deploys (docs/voice.md)
 
 main() {
 set -euo pipefail
@@ -189,6 +190,16 @@ aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
   '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type"],"MaxAgeSeconds":3600}]}'
+# Spoken replies are a cache: expire voice/ after a day, keeping any other lifecycle rules.
+LIFECYCLE_CURRENT="$(aws s3api get-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" 2>/dev/null || echo '{}')"
+LIFECYCLE_NEXT="$(LIFECYCLE_CURRENT="$LIFECYCLE_CURRENT" node -e '
+  const current = JSON.parse(process.env.LIFECYCLE_CURRENT || "{}");
+  const rules = (current.Rules || []).filter(rule => rule.ID !== "baton-voice-expire");
+  rules.push({ ID: "baton-voice-expire", Status: "Enabled", Filter: { Prefix: "voice/" }, Expiration: { Days: 1 } });
+  process.stdout.write(JSON.stringify({ Rules: rules }));
+')"
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" \
+  --lifecycle-configuration "$LIFECYCLE_NEXT"
 UPLOAD_ACCELERATION=false
 if [ "${S3_UPLOAD_ACCELERATE:-true}" = "true" ]; then
   echo "Enabling S3 upload acceleration (AWS transfer acceleration charges may apply)..."
@@ -495,6 +506,9 @@ if [ "$ROTATE_KEY" = true ]; then
     STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true")
   done
   [ "$(stack_param PushRelayUrl)" = "None" ] || STACK_PARAMS+=("ParameterKey=PushRelayUrl,UsePreviousValue=true")
+  for key in VoiceMode VoiceAutoLanguages VoiceBriefModelId; do
+    case "$(stack_param "$key")" in ""|None) ;; *) STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true") ;; esac
+  done
 else
   TEMPLATE_ARGS=(--template-body "file://$TEMPLATE")
   STACK_PARAMS=(
@@ -508,6 +522,20 @@ fi
 # Without PUSH_RELAY_URL the template default (the shared relay) applies, so it can move.
 if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL+x}" ]; then
   STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
+fi
+# Voice settings persist across deploys; BATON_VOICE / BATON_VOICE_LANGUAGES change them.
+if [ "$ROTATE_KEY" != true ]; then
+  for pair in "VoiceMode:BATON_VOICE" "VoiceAutoLanguages:BATON_VOICE_LANGUAGES"; do
+    key="${pair%%:*}"; var="${pair#*:}"
+    if [ -n "${!var+x}" ]; then
+      STACK_PARAMS+=("ParameterKey=$key,ParameterValue=${!var}")
+    elif [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+      case "$(stack_param "$key")" in ""|None) ;; *) STACK_PARAMS+=("ParameterKey=$key,UsePreviousValue=true") ;; esac
+    fi
+  done
+  if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+    case "$(stack_param VoiceBriefModelId)" in ""|None) ;; *) STACK_PARAMS+=("ParameterKey=VoiceBriefModelId,UsePreviousValue=true") ;; esac
+  fi
 fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"
