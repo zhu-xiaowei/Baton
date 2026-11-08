@@ -593,12 +593,6 @@ html[data-theme="light"] .d2h-info { background-color: var(--surface-info); }
 .modal-title { font-size: 18px; font-weight: 600; line-height: 24px; color: var(--text-primary); margin: 0 0 16px; }
 .modal-title:has(+ .modal-desc) { margin-bottom: 8px; }
 .modal-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5; }
-.delete-toggle { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--canvas); cursor: pointer; transition: all 0.15s; }
-.delete-toggle span { font-size: 13px; color: var(--text-normal); }
-.delete-toggle input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--danger-solid); cursor: pointer; }
-.delete-toggle:has(input:checked) { border-color: rgba(var(--danger-rgb), 0.5); background: rgba(var(--danger-rgb), 0.06); }
-.delete-hint { font-size: 12px; color: var(--text-secondary); margin-top: 8px; line-height: 1.45; }
-.delete-toggle:has(input:checked) ~ .delete-hint { color: var(--danger-emphasis); }
 .modal-input { display: block; width: 100%; padding: 10px 12px; background: var(--canvas); border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-primary); font: inherit; font-size: 16px; line-height: 20px; outline: none; box-sizing: border-box; }
 .modal-input:focus { border-color: var(--accent); }
 .modal-error { color: var(--danger); font-size: 12px; line-height: 18px; margin-top: 8px; }

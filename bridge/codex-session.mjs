@@ -16,7 +16,7 @@ export function codexSessionIdFromPath(filePath) {
   return UUID_AT_END.exec(path.basename(filePath))?.[1] || '';
 }
 
-function walkJsonl(dir, files, errors) {
+export function walkJsonl(dir, files, errors = []) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -69,7 +69,7 @@ export async function discoverCodexHistory(options = {}) {
   return history;
 }
 
-function previewText(value) {
+export function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;

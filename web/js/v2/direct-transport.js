@@ -9,6 +9,10 @@ const RETRY_MS = 2000;
 const DEADLINE_MS = 6000;
 const PING_MS = 60000;
 const PROBE_MS = 1000;
+// After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
+// foregrounding or a route update connect again.
+const MAX_RETRIES = 3;
+const RETRY_JITTER_MS = 2000;
 const CAN_INFLATE = typeof DecompressionStream === 'function' && (() => {
   try { new DecompressionStream('deflate-raw'); return true; } catch { return false; }
 })();
@@ -19,6 +23,7 @@ let socket = null;
 let connectionId = '';
 let dataUrl = '';
 let retryTimer = null;
+let retries = 0;              // consecutive drops since the last whoami
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
@@ -26,7 +31,8 @@ let probeTimer = null;
 const pending = new Map();    // key → request state
 const byRequestId = new Map(); // wire requestId → key
 const assembler = new RpcAssembler();
-let routesKnown = false;      // true once /devices answered in this page
+let routesKnown = false;      // true once /devices answered since the socket last dropped
+let devicesInflight = null;
 
 function storageKey() {
   return 'baton-v2-rpc:' + state.SERVER;
@@ -111,9 +117,10 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') probe(); });
 }
 
-export function connect(url) {
-  if (url) dataUrl = url;
-  if (!dataUrl || !state.KEY) return;
+// The server is reached through its CloudFront domain, which also serves /data.
+export function connect() {
+  if (!state.KEY || !state.SERVER) return;
+  dataUrl ||= 'wss://' + new URL(state.SERVER).host + '/data';
   if (socket?.readyState === WebSocket.OPEN) return probe();
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
@@ -138,7 +145,11 @@ export function connect(url) {
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
-    if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = null; connect(); }, 1000 + Math.random() * 2000);
+    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
+    routesKnown = false;
+    if (retryTimer || retries > MAX_RETRIES) return;
+    const delay = retries++ ? Math.random() * RETRY_JITTER_MS : 0;
+    retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
 }
 
@@ -147,6 +158,7 @@ function receive(ws, text) {
   try { frame = JSON.parse(text); } catch { return; }
   if (frame.action === 'whoami' && frame.connectionId) {
     connectionId = frame.connectionId;
+    retries = 0;
     timing('whoami', performance.now() - ws.__whoamiAt);
     for (const request of pending.values()) request.attemptVersion = null;
     reconcile();
@@ -210,9 +222,24 @@ function reconcile() {
   }
 }
 
+// GET /devices; its routes reach pending requests at once. Concurrent callers share one request.
+export function devices() {
+  devicesInflight ||= (async () => {
+    const response = await fetch(state.SERVER + '/api/bridge/devices', { headers: { 'x-api-key': state.KEY } });
+    if (response.status === 401 || response.status === 403) window.logout?.();
+    if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+    const body = await response.json();
+    if (body.protocol === 2) updateRoutes(body);
+    return body;
+  })().finally(() => { devicesInflight = null; });
+  return devicesInflight;
+}
+
 export function request(device, method, params = {}) {
   restore();
   connect();
+  // A page opened without the home (reload, link) still learns current routes and credentials.
+  if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
     pending.set(key, { device, method, params, resolve, reject, ids: new Set(), createdAt: performance.now(),
@@ -226,6 +253,10 @@ export function resetDirectTransport() {
   rpc = null;
   routesKnown = false;
   restored = true;
+  dataUrl = '';
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  retries = 0;
   try { localStorage.removeItem(storageKey()); } catch {}
   if (socket) { const ws = socket; socket = null; ws.close(); }
 }

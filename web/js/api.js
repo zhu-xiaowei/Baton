@@ -12,7 +12,7 @@ import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 import { expandedHome, loadHomeV2 } from './v2/home.js';
-import { resetDirectTransport } from './v2/direct-transport.js';
+import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -90,11 +90,18 @@ async function _do(path, params, opts, init) {
   return res;
 }
 
-// The home lists come from each Bridge; the remaining pages still use REST until they move.
+// Lists come from each Bridge (same responses as the former REST endpoints); the remaining
+// pages still use REST until they move.
+const BRIDGE_METHODS = { '/api/bridge/projects': 'projects', '/api/bridge/sessions': 'sessions' };
+
 async function api(path, params, opts) {
   if (!(opts && (opts.key || opts.server))) {
     if (path === '/api/bridge/active-sessions') return (await (params?.allProjects ? expandedHome() : loadHomeV2())).active;
     if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
+    if (BRIDGE_METHODS[path]) {
+      const { device, ...rest } = params || {};
+      return requestBridge(device, BRIDGE_METHODS[path], rest);
+    }
   }
   return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();
 }

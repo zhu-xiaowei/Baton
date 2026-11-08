@@ -2,7 +2,7 @@
 // Produces the shapes the home page renders (former /active-sessions and /devices).
 import { state } from '../state.js';
 import { showToast } from '../components/toast.js';
-import { cachedOnlineDevices, connect, request, updateRoutes } from './direct-transport.js';
+import { cachedOnlineDevices, connect, devices, request } from './direct-transport.js';
 
 const CACHE_KEY = 'apeek_v2_home_devices';
 const PROJECT_LIMIT = 15;
@@ -11,19 +11,6 @@ let latest = null;
 
 function readJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
-}
-
-// The server is reached through its CloudFront domain, which also serves /data.
-function dataUrl() {
-  return 'wss://' + new URL(state.SERVER).host + '/data';
-}
-
-async function rest(path, params) {
-  const query = params ? '?' + new URLSearchParams(params) : '';
-  const response = await fetch(state.SERVER + path + query, { headers: { 'x-api-key': state.KEY } });
-  if (response.status === 401 || response.status === 403) window.logout?.();
-  if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-  return response.json();
 }
 
 // Per-device answers plus the last /devices list, so a re-entry can merge before /devices answers.
@@ -73,14 +60,13 @@ async function load(publish) {
   };
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
   const merge = (list, reachable) => ({ active: mergeActive(list, answerFor, reachable), devices: mergeDevices(list, answerFor, reachable) });
-  connect(dataUrl());
+  connect(); // the socket's handshake overlaps /devices
   cachedOnlineDevices().forEach(ask);
   // Route changes (offline, new address) must reach pending requests at once.
   let listed = false;
-  const devicesRequest = rest('/api/bridge/devices').then((response) => {
+  const devicesRequest = devices().then((response) => {
     listed = true;
     window.__v2Timings.devices = Math.round(performance.now() - started);
-    if (response.protocol === 2) updateRoutes(response);
     return response;
   });
   let early = null;

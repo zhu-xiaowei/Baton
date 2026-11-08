@@ -7,8 +7,6 @@ from fastapi import APIRouter, HTTPException, Request, Query, Response
 from fastapi.responses import JSONResponse
 from boto3.dynamodb.conditions import Key
 import asyncio
-import base64
-import binascii
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -22,13 +20,8 @@ _ddb = None
 _sessions_table = None
 _messages_table = None
 _connections_table = None
-LIST_INDEX_NAME = "listPk-listSk-index"
 THREAD_ROOT_INDEX_NAME = "threadRootPk-threadRootSk-index"
 NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
-RECENT_SESSION_LIMIT = 100
-RECENT_PROJECT_LIMIT = 5
-RECENT_PROJECT_EXPANDED_LIMIT = 15
-RECENT_PROJECT_SESSION_LIMIT = 5
 PROTOCOL_VERSION = 2
 MESSAGE_READ_ATTRIBUTES = {
     f"#m{index}": name
@@ -38,27 +31,6 @@ MESSAGE_READ_ATTRIBUTES = {
     ))
 }
 MESSAGE_READ_PROJECTION = ", ".join(MESSAGE_READ_ATTRIBUTES)
-SESSION_LIST_ATTRIBUTE_NAMES = {
-    "#sid": "sessionId",
-    "#preview": "preview",
-    "#last": "lastActive",
-    "#size": "size",
-    "#model": "model",
-    "#status": "status",
-    "#active": "activeStatus",
-    "#agents": "agentCount",
-    "#running_agents": "runningAgentCount",
-    "#waiting_agents": "needsInputAgentCount",
-    "#is_agent": "isAgent",
-    "#agent_name": "agentName",
-    "#agent_detail": "agentDetail",
-}
-SESSION_LIST_PROJECTION = ", ".join(SESSION_LIST_ATTRIBUTE_NAMES)
-LEGACY_SESSION_LIST_ATTRIBUTE_NAMES = {
-    **SESSION_LIST_ATTRIBUTE_NAMES,
-    "#parent": "parentSessionId",
-}
-LEGACY_SESSION_LIST_PROJECTION = ", ".join(LEGACY_SESSION_LIST_ATTRIBUTE_NAMES)
 ACTIVE_HOME_ATTRIBUTE_NAMES = {
     "#sid": "sessionId",
     "#preview": "preview",
@@ -77,16 +49,7 @@ ACTIVE_HOME_ATTRIBUTE_NAMES = {
     "#parent": "parentSessionId",
 }
 ACTIVE_HOME_PROJECTION = ", ".join(ACTIVE_HOME_ATTRIBUTE_NAMES)
-ACTIVE_COUNT_ATTRIBUTE_NAMES = {
-    "#status": "status",
-    "#active": "activeStatus",
-    "#device": "deviceName",
-    "#project": "projectHash",
-    "#running_agents": "runningAgentCount",
-    "#waiting_agents": "needsInputAgentCount",
-    "#parent": "parentSessionId",
-}
-ACTIVE_COUNT_PROJECTION = ", ".join(ACTIVE_COUNT_ATTRIBUTE_NAMES)
+
 
 
 def _tables():
@@ -199,14 +162,6 @@ def _online_bridge_devices(account_id):
         return None
 
 
-def _project_list_pk(account_id, device):
-    return f"{account_id}#PROJ#{device}"
-
-
-def _session_list_pk(account_id, device, project):
-    return f"{account_id}#SESS#{device}#{project}"
-
-
 def _thread_root_pk(account_id, device, project, root_session_id):
     return f"{account_id}#THREAD#{device}#{project}#{root_session_id}"
 
@@ -242,51 +197,6 @@ def _ordered_thread_items(items, root_session_id):
     return roots + descendants
 
 
-def _encode_list_cursor(key):
-    raw = json.dumps(key, separators=(",", ":"), sort_keys=True).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _decode_list_cursor(cursor, account_id, list_pk):
-    try:
-        raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
-        key = json.loads(raw.decode())
-        required = ("accountId", "sk", "listPk", "listSk")
-        if not isinstance(key, dict) or any(not isinstance(key.get(name), str) for name in required):
-            raise ValueError
-        if key["accountId"] != account_id or key["listPk"] != list_pk:
-            raise ValueError
-        return {name: key[name] for name in required}
-    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid pagination cursor")
-
-
-def _query_list_page(
-    table,
-    account_id,
-    list_pk,
-    limit,
-    cursor,
-    projection_expression=None,
-    expression_attribute_names=None,
-):
-    kwargs = {
-        "IndexName": LIST_INDEX_NAME,
-        "KeyConditionExpression": Key("listPk").eq(list_pk),
-        "ScanIndexForward": False,
-        "Limit": limit,
-    }
-    if projection_expression:
-        kwargs["ProjectionExpression"] = projection_expression
-    if expression_attribute_names:
-        kwargs["ExpressionAttributeNames"] = expression_attribute_names
-    if cursor:
-        kwargs["ExclusiveStartKey"] = _decode_list_cursor(cursor, account_id, list_pk)
-    response = table.query(**kwargs)
-    next_key = response.get("LastEvaluatedKey")
-    return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
-
-
 @read_router.get("/config")
 async def get_config():
     """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
@@ -295,66 +205,25 @@ async def get_config():
     return {"wsUrl": ws_url}
 
 
-def _recent_projects(active_sessions, completed_sessions):
-    """Group the latest 100 eligible sessions without querying project history."""
-    unique = {}
-    # On equal timestamps, prefer the active copy if an index update made a
-    # session appear in both query results.
-    for session in active_sessions + completed_sessions:
-        identity = (session["deviceName"], session["projectHash"], session["sessionId"])
-        if not all(identity):
-            continue
-        previous = unique.get(identity)
-        if previous is None or session["lastActive"] > previous["lastActive"]:
-            unique[identity] = session
-    recent = sorted(
-        unique.values(),
-        key=lambda s: (s["lastActive"], s["deviceName"], s["projectHash"], s["sessionId"]),
-        reverse=True,
-    )[:RECENT_SESSION_LIMIT]
-
-    projects = {}
-    for session in recent:
-        key = (session["deviceName"], session["projectHash"])
-        if key not in projects:
-            projects[key] = {
-                "deviceName": session["deviceName"],
-                "projectHash": session["projectHash"],
-                "projectName": session["projectName"],
-                "lastActive": session["lastActive"],
-                "sessions": [],
-            }
-        if len(projects[key]["sessions"]) < RECENT_PROJECT_SESSION_LIMIT:
-            projects[key]["sessions"].append(session)
-    return list(projects.values())
-
-
 @read_router.get("/active-sessions")
-async def get_active_sessions(request: Request, allProjects: bool = False):
-    """Return active sessions, 20 completed sessions, and recent project groups.
-    Reuse the active query and one page of up to 100 completed candidates."""
+async def get_active_sessions(request: Request):
+    """Active root sessions; the Bridge's checkStopped settles the stale ones (M2 removes it)."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
-
-    import asyncio
-
     loop = asyncio.get_running_loop()
-    active_items, done_items, online_devices = await asyncio.gather(
+    active_items, online_devices = await asyncio.gather(
         loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"),
             ProjectionExpression=ACTIVE_HOME_PROJECTION,
             ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES)),
-        loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=RECENT_SESSION_LIMIT,
-            ProjectionExpression=ACTIVE_HOME_PROJECTION,
-            ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES).get("Items", [])),
         loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
     )
-
-    def _to_session(item, include_status):
+    sessions = []
+    for item in active_items:
+        if item.get("parentSessionId") or not _active_session_visible(item, online_devices):
+            continue
         pn = item.get("projectName", "")
-        s = {
+        session = {
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
             "deviceName": item.get("deviceName", ""),
@@ -362,67 +231,16 @@ async def get_active_sessions(request: Request, allProjects: bool = False):
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "lastActive": item.get("lastActive", ""),
             "agentCount": item.get("agentCount", 0),
+            "status": _public_active_status(item),
         }
-        if include_status:
-            s["status"] = _public_active_status(item)
         if item.get("isAgent"):
-            s["isAgent"] = True
-            s["agentName"] = item.get("agentName", "")
-        if include_status and item.get("status") == "needs_input" and item.get("agentDetail"):
-            s["agentDetail"] = item.get("agentDetail", "")
-        return s
-
-    sessions = [
-        _to_session(item, True)
-        for item in active_items
-        if not item.get("parentSessionId")
-        and _active_session_visible(item, online_devices)
-    ]
+            session["isAgent"] = True
+            session["agentName"] = item.get("agentName", "")
+        if item.get("status") == "needs_input" and item.get("agentDetail"):
+            session["agentDetail"] = item.get("agentDetail", "")
+        sessions.append(session)
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
-
-    recent_sessions = [
-        _to_session(item, False)
-        for item in done_items
-        if not item.get("parentSessionId")
-    ][:20]
-
-    completed_sessions = [
-        _to_session(item, True)
-        for item in done_items
-        if not item.get("parentSessionId")
-    ]
-    projects = _recent_projects(sessions, completed_sessions)
-    return {
-        "sessions": sessions,
-        "recentSessions": recent_sessions,
-        "recentProjects": projects[:RECENT_PROJECT_EXPANDED_LIMIT if allProjects else RECENT_PROJECT_LIMIT],
-        "hasMoreProjects": not allProjects and len(projects) > RECENT_PROJECT_LIMIT,
-    }
-
-
-def _live_active_counts(sessions_table, account_id):
-    """Live count of running/needs_input per device and per device#project, from the
-    sparse active GSI (a few rows). Avoids drift-prone stored counters."""
-    rows = _query_all(
-        sessions_table,
-        IndexName="accountId-activeStatus-index",
-        KeyConditionExpression=Key("accountId").eq(account_id)
-        & Key("activeStatus").between("needs_input", "running"),
-        ProjectionExpression=ACTIVE_COUNT_PROJECTION,
-        ExpressionAttributeNames=ACTIVE_COUNT_ATTRIBUTE_NAMES,
-    )
-    dev = {}   # deviceName -> {running, needs_input}
-    proj = {}  # (deviceName, projectHash) -> {running, needs_input}
-    for r in rows:
-        if r.get("parentSessionId"):
-            continue
-        st = _public_active_status(r)
-        if st not in ("running", "needs_input"):
-            continue
-        dn, ph = r.get("deviceName", ""), r.get("projectHash", "")
-        d = dev.setdefault(dn, {"running": 0, "needs_input": 0}); d[st] += 1
-        p = proj.setdefault((dn, ph), {"running": 0, "needs_input": 0}); p[st] += 1
-    return dev, proj
+    return {"sessions": sessions}
 
 
 @read_router.get("/devices")
@@ -458,111 +276,6 @@ async def get_devices(request: Request):
             result["rpc"] = rpc_info(account_id, lambda account, role, device="": bridges)
         except Exception as error:
             print(f"rpc credentials unavailable: {error}")
-    return result
-
-
-@read_router.get("/projects")
-async def get_projects(
-    request: Request,
-    device: str = Query(...),
-    limit: int = Query(None, ge=1, le=100),
-    cursor: str = Query(None),
-):
-    """PROJ# items for sessionCount; running/needs_input counted live."""
-    sessions_table, _ = _tables()
-    account_id = _account_id(request)
-    _, live_proj = _live_active_counts(sessions_table, account_id)
-
-    if cursor and limit is None:
-        raise HTTPException(status_code=400, detail="limit is required with cursor")
-    next_cursor = None
-    if limit is None:
-        items = _query_all(
-            sessions_table,
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"PROJ#{device}#"),
-        )
-    else:
-        items, next_cursor = _query_list_page(
-            sessions_table, account_id, _project_list_pk(account_id, device), limit, cursor
-        )
-
-    projects = []
-    for item in items:
-        ph = item.get("projectHash", "")
-        if not ph:
-            continue
-        pn = item.get("projectName", ph)
-        lc = live_proj.get((device, ph), {})
-        projects.append({
-            "projectHash": ph,
-            "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
-            "projectPath": pn,
-            "sessionCount": int(item.get("sessionCount", 0)),
-            "runningCount": lc.get("running", 0),
-            "needsInputCount": lc.get("needs_input", 0),
-            "lastActive": item.get("lastActive", ""),
-        })
-    projects.sort(key=lambda x: (x["lastActive"], x["projectHash"]), reverse=True)
-    result = {"projects": projects}
-    if limit is not None:
-        result.update({"hasMore": next_cursor is not None, "nextCursor": next_cursor})
-    return result
-
-
-@read_router.get("/sessions")
-async def get_sessions(
-    request: Request,
-    device: str = Query(...),
-    project: str = Query(...),
-    limit: int = Query(None, ge=1, le=100),
-    cursor: str = Query(None),
-):
-    sessions_table, _ = _tables()
-    account_id = _account_id(request)
-
-    if cursor and limit is None:
-        raise HTTPException(status_code=400, detail="limit is required with cursor")
-    next_cursor = None
-    if limit is None:
-        items = _query_all(
-            sessions_table,
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"SESS#{device}#{project}#"),
-            ProjectionExpression=LEGACY_SESSION_LIST_PROJECTION,
-            ExpressionAttributeNames=LEGACY_SESSION_LIST_ATTRIBUTE_NAMES,
-        )
-    else:
-        items, next_cursor = _query_list_page(
-            sessions_table,
-            account_id,
-            _session_list_pk(account_id, device, project),
-            limit,
-            cursor,
-            SESSION_LIST_PROJECTION,
-            SESSION_LIST_ATTRIBUTE_NAMES,
-        )
-    items = [item for item in items if not item.get("parentSessionId")]
-
-    sessions = []
-    for item in items:
-        s = {
-            "sessionId": item.get("sessionId", ""),
-            "preview": item.get("preview", ""),
-            "lastActive": item.get("lastActive", ""),
-            "size": item.get("size", 0),
-            "model": item.get("model", ""),
-            "status": _public_active_status(item),
-            "agentCount": item.get("agentCount", 0),
-        }
-        if item.get("isAgent"):
-            s["isAgent"] = True
-            s["agentName"] = item.get("agentName", "")
-        if item.get("status") == "needs_input" and item.get("agentDetail"):
-            s["agentDetail"] = item.get("agentDetail", "")
-        sessions.append(s)
-    sessions.sort(key=lambda x: (x["lastActive"], x["sessionId"]), reverse=True)
-    result = {"sessions": sessions}
-    if limit is not None:
-        result.update({"hasMore": next_cursor is not None, "nextCursor": next_cursor})
     return result
 
 

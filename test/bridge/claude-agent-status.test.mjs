@@ -637,8 +637,6 @@ test('stopped polling settles an inactive historical agent without dropping its 
     assert.equal(result.session.isAgent, true);
     assert.equal(result.session.agentName, 'Historical agent');
     assert.equal(result.session.agentDetail, '');
-    assert.equal(result.statusDelta.from, 'running');
-    assert.equal(result.statusDelta.to, 'completed');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -731,8 +729,6 @@ test('first interaction status registers a new Claude session', async () => {
       },
     );
     assert.equal(request.sessions[0].status, 'running');
-    assert.equal(request.statusDeltas[0].from, 'new');
-    assert.equal(request.statusDeltas[0].to, 'running');
     assert.equal(statuses.get(sessionId), 'running');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });

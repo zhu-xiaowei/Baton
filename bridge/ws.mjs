@@ -40,12 +40,7 @@ import {
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
-import {
-  updateSessionStatus,
-  knownProjects,
-  recentSessions,
-  reconcile,
-} from './sync.mjs';
+import { updateSessionStatus, recentSessions } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   PermissionQueue,
@@ -72,7 +67,7 @@ import {
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 import { DirectRpcBridge } from './direct-rpc.mjs';
-import { homeIndex } from './home-index.mjs';
+import { sessionIndex } from './session-index.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
 import { handleToolDetails } from './tool-details.mjs';
@@ -356,7 +351,6 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
     }
     if (!filePath || !_config) return;
     const projectHash = path.basename(path.dirname(filePath));
-    const normalizedProjectHash = normalizeProjectHash(projectHash);
     const isNew = !!options.registerNew && !recentSessions.has(key);
     if (isNew) recentSessions.add(key);
     try {
@@ -371,10 +365,6 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         { isNew, sentPrompt: _sentPrompts.get(key) },
       );
       if (status === 'completed') _sentPrompts.delete(key);
-      if (isNew && !knownProjects.has(normalizedProjectHash)) {
-        knownProjects.add(normalizedProjectHash);
-        await reconcile(_config);
-      }
     } catch {
       if (isNew) recentSessions.delete(key);
     }
@@ -763,7 +753,9 @@ function connect() {
       key: _config.apiKey,
       sendControl: message => send(JSON.stringify(message)),
       handlers: {
-        home: params => homeIndex.home(params.revision),
+        home: params => sessionIndex.home(params.revision),
+        projects: params => sessionIndex.projects(params),
+        sessions: params => sessionIndex.sessions(params),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });
@@ -1841,6 +1833,7 @@ async function newRegularSession(
 ) {
   const sessionId = crypto.randomUUID();
   _sentPrompts.set(sessionId, text);
+  sessionIndex.notePrompt(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);
   // The server routes sequenced events directly to this originating connection,
   // so the result and early stream frames may safely arrive in either order.
@@ -1916,9 +1909,8 @@ async function newAgentSession(cwd, text) {
   return { ok: false, error: 'Agent launched but its session id could not be resolved yet.' };
 }
 
-// Create a new project directory and return its projectHash. No session is
-// spawned — seed the PROJ# metadata, then enter the new-session input. The user's
-// first real message creates the session and its SESS# row.
+// Create a new project directory and return its projectHash. No session is spawned:
+// the App enters the new-session input, and the first message creates the session.
 async function handleCreateProject(rawPath, asAgent) {
   if (!rawPath) {
     wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
@@ -1926,13 +1918,6 @@ async function handleCreateProject(rawPath, asAgent) {
   }
   try {
     const { projectHash, projectName } = createProjectDirectory(rawPath);
-    // Seed an empty PROJ# row so the project shows in the list right away (before its first session).
-    try {
-      await post('/api/bridge/create-project', {
-        deviceName: _config.deviceName, projectHash, projectName, os: process.platform,
-      });
-      knownProjects.add(projectHash); // watcher won't re-reconcile it as a brand-new project
-    } catch {}
     wsSend({ action: 'create_project_result', ok: true, projectHash, projectName, projectPath: rawPath, asAgent: !!asAgent });
   } catch (err) {
     wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
@@ -1995,7 +1980,7 @@ export async function handleDeleteFiles(msg, {
     ...(errors.length ? { error: errors.join('; ') } : {}),
   };
   console.log(`[ws] deleted files: ${result.deletedSessions} sessions, ${result.deletedProjects} projects, ${result.errors.length} errors`);
-  if (result.deletedSessions || result.deletedProjects) void homeIndex.build();
+  if (result.deletedSessions || result.deletedProjects) sessionIndex.rescan();
   send(result);
   return result;
 }

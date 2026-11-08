@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  buildCatalogAggregates,
   isRecentSession,
-  knownProjects,
   lastKnownStatus,
   recentSessions,
   syncSessions,
@@ -36,21 +34,7 @@ function session(index, runtime = 'claude', project = '-repo') {
   };
 }
 
-test('mixed runtime catalog aggregates into the same project', () => {
-  const capabilities = { claude: { canRead: true }, codex: { canRead: true } };
-  const aggregates = buildCatalogAggregates([
-    session(1, 'claude'),
-    session(2, 'codex'),
-    session(3, 'codex', '-other'),
-  ], capabilities);
-  assert.equal(aggregates.deviceAggregate.sessionCount, 3);
-  assert.equal(aggregates.deviceAggregate.projectCount, 2);
-  assert.equal(aggregates.deviceAggregate.runningCount, 1);
-  assert.equal(aggregates.deviceAggregate.runtimeCapabilities, capabilities);
-  assert.equal(aggregates.projectAggregates.find((p) => p.projectHash === '-repo').sessionCount, 2);
-});
-
-test('catalog aggregates count root sessions but still upload child threads', async () => {
+test('the catalog upload carries child threads with their root counts', async () => {
   const root = session(1, 'codex');
   const child = {
     ...session(2, 'codex'),
@@ -59,11 +43,6 @@ test('catalog aggregates count root sessions but still upload child threads', as
     threadKind: 'subagent',
   };
   rebuildAgentCounts([root, child]);
-  const aggregates = buildCatalogAggregates([root, child]);
-  assert.equal(aggregates.deviceAggregate.sessionCount, 1);
-  assert.equal(aggregates.projectAggregates[0].sessionCount, 1);
-  assert.equal(aggregates.deviceAggregate.runningCount, 1);
-  assert.equal(aggregates.projectAggregates[0].runningCount, 1);
   assert.equal(root.agentCount, 1);
   assert.equal(root.runningAgentCount, 1);
   assert.equal(root.activeStatus, 'running');
@@ -74,8 +53,6 @@ test('catalog aggregates count root sessions but still upload child threads', as
   await uploadCatalog(
     { deviceName: 'Mac' },
     [root, child],
-    aggregates,
-    true,
     async (_url, body) => requests.push(body),
   );
   assert.equal(requests[0].sessions.length, 2);
@@ -160,43 +137,22 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
   assert.deepEqual(trackAgentSession(guardian), []);
 });
 
-test('catalog batching sends authoritative aggregates only in the first request', async () => {
+test('catalog upload is batched and an empty catalog still names the device', async () => {
   const sessions = Array.from({ length: 5001 }, (_, index) => session(index));
-  const aggregates = buildCatalogAggregates(sessions);
   const requests = [];
   await uploadCatalog(
     { deviceName: 'Mac', deviceDisplayName: 'Office Mac' },
     sessions,
-    aggregates,
-    true,
     async (url, body) => requests.push({ url, body }),
   );
   assert.equal(requests.length, 2);
   assert.equal(requests[0].body.sessions.length, 5000);
   assert.equal(requests[0].body.deviceDisplayName, 'Office Mac');
-  assert.equal(requests[0].body.catalogComplete, true);
-  assert.ok(requests[0].body.device);
-  assert.ok(requests[0].body.projects);
   assert.equal(requests[1].body.sessions.length, 1);
-  assert.equal(requests[1].body.catalogComplete, true);
-  assert.equal(requests[1].body.device, undefined);
-  assert.equal(requests[1].body.projects, undefined);
   assert.equal(requests[0].body.sessions[0]._filePath, undefined);
-});
-
-test('incomplete discovery sends candidate aggregates for server-side bootstrap', async () => {
-  const requests = [];
-  await uploadCatalog(
-    { deviceName: 'Mac' },
-    [session(1, 'codex')],
-    buildCatalogAggregates([session(1, 'codex')]),
-    false,
-    async (_url, body) => requests.push(body),
-  );
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].catalogComplete, false);
-  assert.equal(requests[0].device.sessionCount, 1);
-  assert.equal(requests[0].projects.length, 1);
+  const empty = [];
+  await uploadCatalog({ deviceName: 'Mac' }, [], async (_url, body) => empty.push(body));
+  assert.deepEqual(empty.map((body) => [body.deviceDisplayName, body.sessions.length]), [['Mac', 0]]);
 });
 
 test('24-hour cutoff includes the boundary and future timestamps', () => {
@@ -217,8 +173,7 @@ test('startup accepts Claude-only, Codex-only, mixed, and empty catalogs', async
     synced.clear();
     recentSessions.clear();
     lastKnownStatus.clear();
-    knownProjects.clear();
-    let aggregate;
+    let uploadedSessions = 0;
     let messageUploads = 0;
     const result = await syncSessions({ deviceName: 'test' }, {
       skipMessages: true,
@@ -230,12 +185,11 @@ test('startup accepts Claude-only, Codex-only, mixed, and empty catalogs', async
           diagnostics: { files: item.codex.length, errors: [], malformedLines: 0 },
         },
       },
-      runtimeCapabilities: { claude: {}, codex: {} },
-      postFn: async (_url, body) => { if (body.device) aggregate = body.device; },
+      postFn: async (_url, body) => { uploadedSessions += body.sessions.length; },
       messageUploader: async () => { messageUploads++; },
     });
     assert.equal(result.sessions.length, item.expected);
-    assert.equal(aggregate.sessionCount, item.expected);
+    assert.equal(uploadedSessions, item.expected);
     assert.equal(messageUploads, 0);
     assert.equal(result.messageCount, 0);
     assert.equal(synced.size, item.expected);
@@ -247,7 +201,6 @@ test('startup reports messages written during recovery', async () => {
   synced.clear();
   recentSessions.clear();
   lastKnownStatus.clear();
-  knownProjects.clear();
   const recovered = {
     ...session(1, 'codex'),
     id: '22222222-2222-4222-8222-222222222222',
@@ -267,7 +220,6 @@ test('startup reports messages written during recovery', async () => {
         diagnostics: { files: 1, errors: [], malformedLines: 0 },
       },
     },
-    runtimeCapabilities: { claude: {}, codex: {} },
     postFn: async () => {},
     messageUploader: async (_sessionId, messages) => { uploaded += messages.length; },
   });

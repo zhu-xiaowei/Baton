@@ -164,7 +164,6 @@ to refresh already-running processes immediately.
 BridgeSessions
   PK: accountId (SHA256(apiKey)[:16])
   SK: DEV#deviceName
-      PROJ#deviceName#projectHash
       SESS#deviceName#projectHash#sessionId
   Attributes: deviceName, projectHash, projectName, sessionId,
               lastActive, preview, model, status (running/needs_input/completed),
@@ -199,9 +198,8 @@ bridge never deletes rows). Result, before the fix:
 - The same sessionId has **two** rows (two SKs) → the app shows two cards for
   one session; opening either shows identical messages (messages are keyed by
   sessionId over WS, so both cards read the same jsonl).
-- The worktree project often never appears in the project list, because the
-  agent poll (`pushAgentMeta`) writes the `SESS#` row but not the `PROJ#`
-  aggregate the projects list reads.
+- The worktree project often never appeared in the (v1, DDB) project list. In v2 the Bridge's
+  `session-index.mjs` groups by the same normalized hash, so the session is listed once.
 
 **Fix — `normalizeProjectHash(hash)` (`session.mjs`)**: strips the
 `--claude-worktrees-*` suffix, collapsing a worktree hash back to its parent.
@@ -242,13 +240,8 @@ Body: {
 
 ```
 GET /api/bridge/devices
-→ { devices: [{ deviceName, os, lastActive, projectCount, sessionCount, runningCount, needsInputCount, runtimeCapabilities }] }
-
-GET /api/bridge/projects?device=MacBook-Pro
-→ { projects: [{ projectHash, projectName, lastActive, sessionCount, runningCount, needsInputCount }] }
-
-GET /api/bridge/sessions?device=MacBook-Pro&project=-Users-...
-→ { sessions: [{ sessionId, nativeSessionId, runtime, preview, lastActive, size, model, status }] }
+→ { protocol: 2, devices: [{ deviceName, deviceDisplayName, os, online }], rpc }
+# Home, project and session lists are Bridge RPCs (home / projects / sessions), see docs/api.md.
 
 GET /api/bridge/messages?session=abc&after=<timestamp>&device=D&project=P
 → { messages: [{ uuid, type, content, timestamp }], status: "running|needs_input|completed" }

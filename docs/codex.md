@@ -190,7 +190,7 @@ worktree        → verify Git repository identity, normalize to the original pr
 Claude/Codex Sessions with the same cwd must land in the same Device → Project. Native Windows has been verified compatible with drive letters,
 spaces, Chinese paths, and existing Claude project hashes; Codex does not depend on WSL.
 
-The actual session cwd of a Codex worktree stays unchanged. Existing standalone projects have their metadata migrated by a one-time script, with no compatibility layer for old hash lookups; see the [worktree migration notes](codex-worktree-migration.md).
+The actual session cwd of a Codex worktree stays unchanged; v2 lists group by the resolved project when the Bridge reads each rollout.
 
 ## 5. DynamoDB Data Model
 
@@ -202,7 +202,6 @@ The Codex integration adds no tables and does not change primary keys, GSIs, or 
 PK = accountId
 
 SK = DEV#<deviceName>
-SK = PROJ#<deviceName>#<projectHash>
 SK = SESS#<deviceName>#<projectHash>#<sessionId>
 ```
 
