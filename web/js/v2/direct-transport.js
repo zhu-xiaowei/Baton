@@ -31,7 +31,7 @@ let probeTimer = null;
 const pending = new Map();    // key → request state
 const byRequestId = new Map(); // wire requestId → key
 const assembler = new RpcAssembler();
-let routesKnown = false;      // true once /devices answered in this page
+let routesKnown = false;      // true once /devices answered since the socket last dropped
 let devicesInflight = null;
 
 function storageKey() {
@@ -145,6 +145,8 @@ export function connect() {
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
+    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
+    routesKnown = false;
     if (retryTimer || retries > MAX_RETRIES) return;
     const delay = retries++ ? Math.random() * RETRY_JITTER_MS : 0;
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
