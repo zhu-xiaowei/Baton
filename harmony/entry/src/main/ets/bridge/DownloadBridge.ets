@@ -90,6 +90,8 @@ export class DownloadBridge {
   private task: request.agent.Task | null = null;
   private percent: number = -1;
   private abort: (() => void) | null = null;
+  // A cancel can arrive before the task exists, while abort is still null.
+  private cancelRequested: boolean = false;
 
   download(argsJson: string): void {
     const args: DownloadArgs | null = parseArgs(argsJson);
@@ -117,6 +119,7 @@ export class DownloadBridge {
     }
     this.busy = true;
     this.percent = -1;
+    this.cancelRequested = false;
     this.run(context, id, `${args.url}`, name);
   }
 
@@ -159,6 +162,7 @@ export class DownloadBridge {
 
   // Closing the preview stops the transfer. Once the save dialog is open it is the user's.
   cancel(): void {
+    this.cancelRequested = this.busy;
     const abort: (() => void) | null = this.abort;
     this.abort = null;
     if (abort !== null) {
@@ -193,6 +197,9 @@ export class DownloadBridge {
       };
       const task: request.agent.Task = await request.agent.create(context, config);
       this.task = task;
+      if (this.cancelRequested) {
+        throw new Error(CANCELLED);
+      }
       await new Promise<void>((resolve: () => void, reject: (error: Error) => void) => {
         // A foreground task that sat in the background is paused rather than
         // failed, and emits neither 'completed' nor 'failed' — without this

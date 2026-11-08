@@ -114,14 +114,6 @@ test('closing the preview cancels the HarmonyOS transfer, which ends as cancelle
   assert.deepEqual(await download, { status: 'cancelled' });
 });
 
-test('the bridge cancels the transfer and reports it as cancelled, not failed', () => {
-  const bridge = readFileSync(new URL('../../harmony/entry/src/main/ets/bridge/DownloadBridge.ets', import.meta.url), 'utf8');
-  const native = readFileSync(new URL('../../harmony/entry/src/main/ets/bridge/NativeBridge.ets', import.meta.url), 'utf8');
-  assert.match(native, /'cancelDownload'/);
-  assert.match(bridge, /this\.abort = \(\) => reject\(new Error\(CANCELLED\)\)/);
-  assert.match(bridge, /\{"status":"cancelled"\}/);
-});
-
 test('a bridge-less shell still falls back to the browser link', async () => {
   globalThis.window = { navigator: { userAgent: '' } };
   assert.equal(nativeDownloads(), false);

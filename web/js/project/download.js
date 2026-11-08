@@ -14,7 +14,7 @@ export function nativeDownloadsStopOnClose() {
 
 // iOS's share sheet and the HarmonyOS save dialog open only after the bytes arrive.
 export function nativeSaveOpensAfterTransfer() {
-  return nativeDownloadsStopOnClose() || !!harmonyBridge();
+  return nativeDownloadsStopOnClose();
 }
 
 export async function cancelNativeDownload() {

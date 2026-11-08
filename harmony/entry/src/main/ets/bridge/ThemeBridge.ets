@@ -6,10 +6,14 @@ import { window } from '@kit.ArkUI';
 // appearance; the shell paints system bars and backgrounds to match and keeps
 // the choice so the next cold start opens in it.
 
+// --canvas in web/css/themes/dark.css and light.css.
+const CANVAS_DARK: string = '#0D1117';
+const CANVAS_LIGHT: string = '#FFFFFF';
+
 export class Appearance {
   mode: string = 'dark';
   preference: string = 'dark';
-  canvas: string = '#0D1117';
+  canvas: string = CANVAS_DARK;
 }
 
 const STORE: string = 'appearance';
@@ -39,6 +43,17 @@ export class ThemeBridge {
       saved.canvas = store.getSync('canvas', saved.canvas) as string;
     } catch (e) {
       // First launch, or unreadable: keep the dark default.
+    }
+    return saved;
+  }
+
+  // For System, the saved mode is last run's; the device may have switched since.
+  static resolve(context: common.UIAbilityContext): Appearance {
+    const saved: Appearance = ThemeBridge.load(context);
+    if (saved.preference === 'system') {
+      const light: boolean = context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+      saved.mode = light ? 'light' : 'dark';
+      saved.canvas = light ? CANVAS_LIGHT : CANVAS_DARK;
     }
     return saved;
   }

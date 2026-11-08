@@ -1,11 +1,14 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { ThemeBridge } from '../bridge/ThemeBridge';
+import { Appearance, ThemeBridge } from '../bridge/ThemeBridge';
 
 export default class EntryAbility extends UIAbility {
+  private appearance: Appearance = new Appearance();
+
   onCreate(_want: Want, _launchParam: AbilityConstant.LaunchParam): void {
-    ThemeBridge.applyColorMode(this.context, ThemeBridge.load(this.context).preference);
+    this.appearance = ThemeBridge.resolve(this.context);
+    ThemeBridge.applyColorMode(this.context, this.appearance.preference);
 
     // Remote DevTools (PC chrome://inspect over hdc). Must be set BEFORE the
     // ArkWeb kernel initializes, so it lives here rather than onControllerAttached
@@ -48,8 +51,7 @@ export default class EntryAbility extends UIAbility {
       // so no white strip remains; the web pads itself via env(safe-area-inset-*).
       win.setWindowLayoutFullScreen(true);
       ThemeBridge.mainWindow = win;
-      const saved = ThemeBridge.load(this.context);
-      ThemeBridge.paint(saved.mode, saved.canvas);
+      ThemeBridge.paint(this.appearance.mode, this.appearance.canvas);
     } catch (e) {
       console.error(`window chrome setup failed: ${JSON.stringify(e)}`);
     }

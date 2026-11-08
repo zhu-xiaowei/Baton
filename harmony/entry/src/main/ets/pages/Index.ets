@@ -1,6 +1,5 @@
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
-import { ComponentContent } from '@kit.ArkUI';
 import { resourceManager } from '@kit.LocalizationKit';
 import { NativeBridge } from '../bridge/NativeBridge';
 
@@ -41,31 +40,6 @@ function isTextMime(mime: string): boolean {
     || mime === 'application/javascript'
     || mime === 'application/json'
     || mime === 'image/svg+xml';
-}
-
-class PromptParams {
-  message: string = '';
-  value: string = '';
-  onCancel: () => void = () => {};
-  onConfirm: () => void = () => {};
-}
-
-@Builder
-function promptDialog(params: PromptParams) {
-  Column({ space: 16 }) {
-    Text(params.message).fontSize(16).width('100%')
-    TextInput({ text: params.value })
-      .defaultFocus(true)
-      .onChange((value: string) => { params.value = value; })
-    Row({ space: 12 }) {
-      Button($r('app.string.dialog_cancel')).layoutWeight(1).onClick(() => { params.onCancel(); })
-      Button($r('app.string.dialog_ok')).layoutWeight(1).onClick(() => { params.onConfirm(); })
-    }
-  }
-  .width('80%')
-  .padding(24)
-  .borderRadius(16)
-  .backgroundColor($r('sys.color.comp_background_primary'))
 }
 
 @Entry
@@ -123,7 +97,7 @@ struct Index {
     this.nativeBridge.release();
   }
 
-  // ArkWeb shows no dialog for alert/confirm/prompt without these handlers;
+  // ArkWeb shows no dialog for alert/confirm without these handlers (Remote preview pages);
   // confirm() would silently return false.
   private showJsAlert(message: string, result: JsResult): boolean {
     this.getUIContext().showAlertDialog({
@@ -142,28 +116,6 @@ struct Index {
       secondaryButton: { value: $r('app.string.dialog_ok'), action: () => { result.handleConfirm(); } },
       cancel: () => { result.handleCancel(); }
     });
-    return true;
-  }
-
-  private showJsPrompt(message: string, value: string, result: JsResult): boolean {
-    const uiContext: UIContext = this.getUIContext();
-    const params: PromptParams = new PromptParams();
-    params.message = message;
-    params.value = value;
-    const content: ComponentContent<PromptParams> =
-      new ComponentContent(uiContext, wrapBuilder(promptDialog), params);
-    let settled: boolean = false;
-    const close = (ok: boolean): void => {
-      if (settled) { return; }
-      settled = true;
-      if (ok) { result.handlePromptConfirm(params.value); } else { result.handleCancel(); }
-      uiContext.getPromptAction().closeCustomDialog(content).catch(() => {});
-    };
-    params.onCancel = () => { close(false); };
-    params.onConfirm = () => { close(true); };
-    uiContext.getPromptAction().openCustomDialog(content, {
-      onWillDismiss: () => { close(false); }
-    }).catch(() => { close(false); });
     return true;
   }
 
@@ -218,7 +170,6 @@ struct Index {
         .onPageEnd(() => { this.loading = false; })
         .onAlert((e) => this.showJsAlert(e.message, e.result))
         .onConfirm((e) => this.showJsConfirm(e.message, e.result))
-        .onPrompt((e) => this.showJsPrompt(e.message, e.value, e.result))
         .onErrorReceive((e) => {
           if (e && e.request && e.request.isMainFrame()) {
             this.loading = false;
