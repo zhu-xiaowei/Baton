@@ -9,6 +9,10 @@ const RETRY_MS = 2000;
 const DEADLINE_MS = 6000;
 const PING_MS = 60000;
 const PROBE_MS = 1000;
+// After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
+// foregrounding or a route update connect again.
+const MAX_RETRIES = 3;
+const RETRY_JITTER_MS = 2000;
 const CAN_INFLATE = typeof DecompressionStream === 'function' && (() => {
   try { new DecompressionStream('deflate-raw'); return true; } catch { return false; }
 })();
@@ -19,6 +23,7 @@ let socket = null;
 let connectionId = '';
 let dataUrl = '';
 let retryTimer = null;
+let retries = 0;              // consecutive drops since the last whoami
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
@@ -140,7 +145,9 @@ export function connect() {
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
-    if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = null; connect(); }, 1000 + Math.random() * 2000);
+    if (retryTimer || retries > MAX_RETRIES) return;
+    const delay = retries++ ? Math.random() * RETRY_JITTER_MS : 0;
+    retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
 }
 
@@ -149,6 +156,7 @@ function receive(ws, text) {
   try { frame = JSON.parse(text); } catch { return; }
   if (frame.action === 'whoami' && frame.connectionId) {
     connectionId = frame.connectionId;
+    retries = 0;
     timing('whoami', performance.now() - ws.__whoamiAt);
     for (const request of pending.values()) request.attemptVersion = null;
     reconcile();
@@ -244,6 +252,9 @@ export function resetDirectTransport() {
   routesKnown = false;
   restored = true;
   dataUrl = '';
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  retries = 0;
   try { localStorage.removeItem(storageKey()); } catch {}
   if (socket) { const ws = socket; socket = null; ws.close(); }
 }

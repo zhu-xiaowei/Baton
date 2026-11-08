@@ -49,8 +49,9 @@ App opens (cached home shown at once)
 
 Callers use only `request(device, method, params)`. Everything else is internal:
 
-- One socket for the App's lifetime; rebuilt (with a new `whoami`) after a drop. Pings every 60 s while
-  visible because CloudFront closes idle WebSockets after 10 minutes.
+- One socket for the App's lifetime; rebuilt (with a new `whoami`) after a drop: at once, then up to 3
+  retries 0–2 s apart; after that the next request, foregrounding or route update connects again.
+  Pings every 60 s while visible because CloudFront closes idle WebSockets after 10 minutes.
 - Routes `{ online, dataId, version }` come from the cached `rpc`, then `/devices`, then
   `bridges_changed` pushes; a changed route bumps `version`.
 - `reconcile()` runs on every event (whoami, route update, reply, 250 ms tick) and, per pending request:
