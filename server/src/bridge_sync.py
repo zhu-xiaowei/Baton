@@ -429,7 +429,7 @@ class DeleteDeviceRequest(BaseModel):
 @bridge_router.post("/delete-device")
 async def delete_device(req: DeleteDeviceRequest, raw: Request):
     """Remove a device: its Bridge is told to uninstall itself and disconnected first, then the
-    device's DEV#/SESS# rows are deleted. Message rows expire via TTL as in /delete."""
+    device's DEV#/SESS# rows (and PROJ# rows left by older releases) are deleted. Message rows expire via TTL as in /delete."""
     sessions_table, _ = _tables()
     key_hash = _hash_key(raw.headers.get("x-api-key", ""))
     dev = req.deviceName
@@ -441,8 +441,9 @@ async def delete_device(req: DeleteDeviceRequest, raw: Request):
         except Exception as e:
             print(f"removed bridge disconnect failed: {e}")
     sks = [f"DEV#{dev}"]
-    sks.extend(it["sk"] for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
-                                             & Key("sk").begins_with(f"SESS#{dev}#"), ProjectionExpression="sk"))
+    for prefix in (f"SESS#{dev}#", f"PROJ#{dev}#"):
+        sks.extend(it["sk"] for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+                                                 & Key("sk").begins_with(prefix), ProjectionExpression="sk"))
     with sessions_table.batch_writer() as batch:
         for sk in sks:
             batch.delete_item(Key={"accountId": key_hash, "sk": sk})

@@ -1833,6 +1833,7 @@ async function newRegularSession(
 ) {
   const sessionId = crypto.randomUUID();
   _sentPrompts.set(sessionId, text);
+  sessionIndex.notePrompt(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);
   // The server routes sequenced events directly to this originating connection,
   // so the result and early stream frames may safely arrive in either order.

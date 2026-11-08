@@ -42,7 +42,7 @@ function harness() {
 for (const success of [false, true]) {
   test(`progress retains late ${success ? 'success' : 'errors'} and defers deleting list records`, async () => {
     const h = harness();
-    const operation = h.context.performDelete('device', true, ['project'], true);
+    const operation = h.context.performDelete('device', true, ['project']);
     await new Promise(setImmediate);
     assert.equal(h.request.progress, true);
     for (let i = 0; i < 6; i++) {
@@ -64,19 +64,12 @@ for (const success of [false, true]) {
 
 test('a silent or disconnected bridge times out without deleting list records', async () => {
   const h = harness();
-  const operation = h.context.performDelete('device', false, ['session'], true);
+  const operation = h.context.performDelete('device', false, ['session']);
   await new Promise(setImmediate);
   h.advance(8000);
   await assert.rejects(operation, /device stopped confirming/);
   assert.equal(h.writes.length, 0);
   assert.equal(Object.keys(h.context.window._deleteFilesResolvers).length, 0);
-});
-
-test('list-only deletion does not require a bridge connection', async () => {
-  const h = harness();
-  await h.context.performDelete('device', false, ['session'], false);
-  assert.equal(h.request, undefined);
-  assert.equal(h.writes.length, 1);
 });
 
 test('failed file deletion stays visible in the modal', async () => {
@@ -85,7 +78,7 @@ test('failed file deletion stays visible in the modal', async () => {
   let closed = false;
   Object.assign(h.context, {
     state: { selected: new Set(['session']), selectType: 'session', appState: { device: 'device' } },
-    document: { getElementById: (id) => id === 'deleteFilesCb' ? { checked: true } : id === 'deleteError' ? error : {} },
+    document: { getElementById: (id) => id === 'deleteError' ? error : {} },
     _deleteCountdownTimer: null,
     setButtonLoading() {},
     closeDeleteModal: () => { closed = true; },

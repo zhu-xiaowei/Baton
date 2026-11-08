@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { getSessionMetadata } from '../../bridge/session.mjs';
 import { scanCodexRollout } from '../../bridge/codex-session.mjs';
-import { advance, claudePreview, codexView, newState, summarize } from '../../bridge/session-summary.mjs';
+import { advance, claudePreview, codexView, newState, summarize, titlesBefore } from '../../bridge/session-summary.mjs';
 
 const ID = '00000000-0000-4000-8000-000000000001';
 const PARENT = '00000000-0000-4000-8000-000000000009';
@@ -124,13 +124,20 @@ test('head + tail: Codex equals a full read, Claude finds a re-stamped title, ap
   const codexTail = summarize(codexFile, 'codex', ID);
   assert.ok(codexTail.offset === codexFull.offset);
   assert.deepEqual([codexView(codexTail, ''), codexTail.model, codexTail.active], [codexView(codexFull, ''), codexFull.model, codexFull.active]);
+  // A later turn's prompt event never replaces the first prompt.
+  fs.appendFileSync(codexFile, [codexLine(90, 'event_msg', { type: 'task_started', turn_id: 't3' }),
+    codexLine(91, 'event_msg', { type: 'user_message', message: 'later prompt' })].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  assert.equal(codexView(advance(codexFile, 'codex', ID, codexTail), '').preview, 'first question');
 
   // A title only in the middle is outside the tail until CC re-stamps it.
   const pad = (model) => claudeMessage('assistant', 'p'.repeat(700_000), { model });
   const claudeFile = path.join(dir, 'c.jsonl');
   const rows = [claudeMessage('user', 'first'), pad('m1'), { type: 'custom-title', customTitle: 'Renamed', sessionId: ID }, pad('m2'), pad('m3'), pad('m4')];
   write(claudeFile, rows);
-  assert.equal(claudePreview(summarize(claudeFile, 'claude', ID), ''), 'first');
+  const running = summarize(claudeFile, 'claude', ID);
+  assert.equal(claudePreview(running, ''), 'first');
+  while (titlesBefore(claudeFile, running));
+  assert.equal(claudePreview(running, ''), 'Renamed', 'a running session reads back to its latest title');
   const full = advance(claudeFile, 'claude', ID, newState('claude'));
   assert.deepEqual([claudePreview(full, ''), full.model], ['Renamed', 'm4']);
   write(claudeFile, [...rows, { type: 'custom-title', customTitle: 'Renamed', sessionId: ID }]);

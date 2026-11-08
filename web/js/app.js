@@ -1664,26 +1664,20 @@ async function submitNewProject() {
 var _deleteCountdownTimer = null;
 var _deviceToDelete = null;
 
-function showDeleteFilesOption(show) {
-  document.querySelector('#deleteModal .delete-toggle').style.display = show ? '' : 'none';
-  document.getElementById('deleteHint').style.display = show ? '' : 'none';
-}
-
 function openDeleteModal() {
   if (!state.selected.size) return;
   _deviceToDelete = null;
-  showDeleteFilesOption(true);
   var modal = document.getElementById('deleteModal');
   var n = state.selected.size;
   var isProject = state.selectType === 'project';
   var noun = (isProject ? 'project' : 'session') + (n > 1 ? 's' : '');
   document.getElementById('deleteModalTitle').textContent = 'Delete ' + n + ' ' + noun + '?';
   document.getElementById('deleteModalDesc').textContent = isProject
-    ? 'This removes ' + (n > 1 ? 'these projects' : 'this project') + ' and all their session records from the list. Data on the device is kept unless you check below.'
-    : 'This removes ' + (n > 1 ? 'these sessions' : 'this session') + ' from the list. Data on the device is kept unless you check below.';
-  document.getElementById('deleteFilesCb').checked = false;
+    ? 'All ' + (n > 1 ? 'their' : 'its') + ' sessions will be permanently deleted from the device. Project folders are kept.'
+    : (n > 1 ? 'They' : 'It') + ' will be permanently deleted from the device.';
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
+  armDeleteCountdown('Delete');
   showCenteredModal(modal);
 }
 
@@ -1706,15 +1700,6 @@ function armDeleteCountdown(label) {
   }, 1000);
 }
 
-// Checking "delete original data" arms the countdown.
-function onDeleteFilesToggle() {
-  var btn = document.getElementById('deleteConfirmBtn');
-  if (btn.getAttribute('aria-busy') === 'true') return;
-  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
-  if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
-  armDeleteCountdown('Delete');
-}
-
 function closeDeleteModal() {
   resetDeleteBtn();
   _deviceToDelete = null;
@@ -1728,8 +1713,6 @@ function openDeviceDeleteModal(device) {
   document.getElementById('deleteModalTitle').textContent = 'Remove ' + name + '?';
   document.getElementById('deleteModalDesc').textContent = 'This removes the device with all its project and session records. '
     + 'Its Bridge stops and no longer starts automatically; files on the device are kept. To add it again, run a new install command from Setup.';
-  document.getElementById('deleteFilesCb').checked = false;
-  showDeleteFilesOption(false);
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
   armDeleteCountdown('Remove');
@@ -1758,40 +1741,37 @@ async function submitDeviceDelete(btn) {
 
 // Confirm original-file deletion before removing list records, so an active
 // session or failed device deletion remains visible and can be retried.
-async function performDelete(device, isProject, ids, deleteFiles) {
+async function performDelete(device, isProject, ids) {
   var body = { deviceName: device };
   if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
-  var filesResult = null;
-  if (deleteFiles) {
-    await window.loadViewerLibs(); // ensure WS is connected before relying on it
-    filesResult = await new Promise(function (resolve) {
-      var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-      window._deleteFilesResolvers = window._deleteFilesResolvers || {};
-      var done = false;
-      var timer;
-      var armTimeout = function () {
-        clearTimeout(timer);
-        timer = setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
-      };
-      var finish = function (r) {
-        if (done) return;
-        if (r.pending) { armTimeout(); return; }
-        done = true;
-        clearTimeout(timer);
-        delete window._deleteFilesResolvers[reqId];
-        resolve(r);
-      };
-      window._deleteFilesResolvers[reqId] = finish;
-      armTimeout();
-      try {
-        ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId, progress: true }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
-      } catch (error) { finish({ ok: false, error: error.message }); }
-    });
-    if (!filesResult.ok) {
-      throw new Error(filesResult.timeout
-        ? 'The device stopped confirming file deletion. Check the connection and retry.'
-        : filesResult.error || 'Some original files could not be deleted.');
-    }
+  await window.loadViewerLibs(); // ensure WS is connected before relying on it
+  var filesResult = await new Promise(function (resolve) {
+    var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    window._deleteFilesResolvers = window._deleteFilesResolvers || {};
+    var done = false;
+    var timer;
+    var armTimeout = function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
+    };
+    var finish = function (r) {
+      if (done) return;
+      if (r.pending) { armTimeout(); return; }
+      done = true;
+      clearTimeout(timer);
+      delete window._deleteFilesResolvers[reqId];
+      resolve(r);
+    };
+    window._deleteFilesResolvers[reqId] = finish;
+    armTimeout();
+    try {
+      ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId, progress: true }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
+    } catch (error) { finish({ ok: false, error: error.message }); }
+  });
+  if (!filesResult.ok) {
+    throw new Error(filesResult.timeout
+      ? 'The device stopped confirming file deletion. Check the connection and retry.'
+      : filesResult.error || 'Some original files could not be deleted.');
   }
   await apiPost('/api/bridge/delete', body);
   return { ddb: true, files: filesResult };
@@ -1804,12 +1784,11 @@ async function submitDelete() {
   var ids = Array.from(state.selected);
   if (!ids.length) return;
   var device = state.appState.device || '';
-  var deleteFiles = !!document.getElementById('deleteFilesCb').checked;
   var isProject = state.selectType === 'project';
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   setButtonLoading(btn, 'Deleting');
   try {
-    await performDelete(device, isProject, ids, deleteFiles);
+    await performDelete(device, isProject, ids);
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Delete failed: ' + e.message;
     setButtonLoading(btn);
@@ -2368,7 +2347,7 @@ Object.assign(window, {
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
-  exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
+  exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,

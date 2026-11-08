@@ -156,6 +156,9 @@ function slimMeta(payload) {
 function advanceCodex(file, state, nativeSessionId, mode) {
   const head = mode === 'head';
   const tail = mode === 'tail';
+  // The first prompt, as an event or a response item, is the title; once known nothing later
+  // replaces it (a later turn's event must not become the first one after a skipped middle).
+  const collecting = () => !tail && !state.events.length && !state.responses.length;
   const apply = (entry) => {
     if (!entry) return;
     const payload = entry.payload || {};
@@ -165,12 +168,12 @@ function advanceCodex(file, state, nativeSessionId, mode) {
       if (String(payload.id || payload.session_id || '') === nativeSessionId) state.matching = state.meta;
     }
     // A root shows the first prompt; a child thread only needs to have one.
-    if (entry.type === 'response_item' && !tail && !state.responses.length) {
+    if (entry.type === 'response_item' && collecting()) {
       const text = codexPreviewText(codexResponseUserText(payload));
       if (text && !state.responses.includes(text)) state.responses.push(text);
     }
     if (entry.type !== 'event_msg') return;
-    if (payload.type === 'user_message' && !tail && !state.events.length) {
+    if (payload.type === 'user_message' && collecting()) {
       const text = codexPreviewText(payload.message);
       if (text && !state.events.includes(text)) state.events.push(text);
     }
@@ -196,14 +199,14 @@ function advanceCodex(file, state, nativeSessionId, mode) {
       else if (type === 'turn_context') contexts.push(line.offset, line.length); // only the last with a model counts
       else if (type === 'response_item') {
         // Only a user message can change the result.
-        if (!tail && !state.responses.length && (!ptype || (ptype === 'message' && (!role || role === 'user')))) apply(parse(line));
+        if (collecting() && (!ptype || (ptype === 'message' && (!role || role === 'user')))) apply(parse(line));
       } else if (type === 'event_msg') {
         if (!ptype || ptype === 'task_started' || ptype === 'task_complete' || ptype === 'turn_aborted') apply(parse(line));
-        else if (ptype === 'user_message') { if (!tail && !state.events.length) apply(parse(line)); }
+        else if (ptype === 'user_message') { if (collecting()) apply(parse(line)); }
         else if (ptype === 'item_completed') { if (line.bytes().indexOf('ExitedReviewMode') !== -1) apply(parse(line)); }
       }
     }
-    if (head && state.matching && (state.events.length || state.responses.length)) { stopped = true; return STOP; }
+    if (head && state.matching && !collecting()) { stopped = true; return STOP; }
   }, CODEX_PREFIX, head ? HEAD_CHUNK : CHUNK);
   if (contexts.length) {
     const fd = fs.openSync(file, 'r');
@@ -314,6 +317,43 @@ export function summarize(file, runtime, id) {
   try { size = fs.statSync(file).size; } catch {}
   const from = tailStart(file, runtime, size, state.offset);
   const skipped = from > state.offset;
+  // A running Claude session may hold a title CC has not re-stamped yet in the skipped range.
+  if (skipped && runtime === 'claude') state.skipped = [state.offset, from];
   state.offset = from;
   return advance(file, runtime, id, state, skipped ? 'tail' : 'full');
+}
+
+// Reads the skipped range backwards, one block per call, filling the titles the tail did not
+// have (later lines win, so the first one met is the latest). Returns false when done.
+export function titlesBefore(file, state) {
+  const [floor, end] = state.skipped || [0, 0];
+  if (end <= floor || state.ct) { delete state.skipped; return false; }
+  const fd = fs.openSync(file, 'r');
+  try {
+    let start = Math.max(floor, end - CHUNK);
+    let block;
+    for (;;) {
+      block = readRange(fd, start, end - start);
+      const nl = start === floor ? -1 : block.indexOf(10);
+      if (start === floor || nl !== -1) { if (nl !== -1) { block = block.subarray(nl + 1); start += nl + 1; } break; }
+      start = Math.max(floor, start - CHUNK); // a line longer than a block
+    }
+    for (let stop = block.length; stop > 0;) {
+      const nl = block.lastIndexOf(10, stop - 1);
+      const from = nl + 1;
+      const type = CLAUDE_TYPE.exec(block.latin1Slice(from, Math.min(stop, from + 40)))?.[1];
+      if (type === 'custom-title' || type === 'ai-title' || type === 'summary') {
+        let msg = null;
+        try { msg = JSON.parse(block.toString('utf8', from, stop)); } catch {}
+        if (type === 'custom-title' && msg?.customTitle && !state.ct) state.ct = stored(msg.customTitle);
+        if (type === 'ai-title' && msg?.aiTitle && !state.at) state.at = stored(msg.aiTitle);
+        if (type === 'summary' && msg?.summary && !state.su) state.su = stored(msg.summary);
+      }
+      stop = Math.max(0, nl);
+    }
+    state.skipped = [floor, start];
+    return start > floor && !state.ct;
+  } finally {
+    fs.closeSync(fd);
+  }
 }

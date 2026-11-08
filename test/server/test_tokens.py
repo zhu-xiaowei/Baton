@@ -99,4 +99,4 @@ def test_removing_a_device_notifies_its_bridge_then_deletes_only_its_rows(monkey
     reply = asyncio.run(bridge_sync.delete_device(bridge_sync.DeleteDeviceRequest(deviceName='Mac'), REQUEST))
     assert reply == {'ok': True, 'deletedSessions': 1}
     assert notified == [(api_key.account_id(KEY), 'https://ws.test/v1', 'Mac')]
-    assert deleted == ['DEV#Mac', 'SESS#Mac#p#s']
+    assert deleted == ['DEV#Mac', 'SESS#Mac#p#s', 'PROJ#Mac#p']

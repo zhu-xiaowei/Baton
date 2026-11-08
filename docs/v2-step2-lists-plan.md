@@ -12,11 +12,14 @@ Context: `docs/v2-architecture.md` §5, §9; step 1: `docs/v2-step1-home-plan.md
 - One Bridge index (`session-index.mjs`) answers home, projects and sessions; `home-index.mjs` is gone.
 - Removed with the lists: REST `/projects`, `/sessions`, `/reconcile`, `/create-project`; `PROJ#`
   rows; device counters (`sessionCount`, `projectCount`, …) and `runtimeCapabilities` on `DEV#`;
-  `statusDelta` counters; the `listPk-listSk-index` GSI and its backfill script; the recent-project
-  part of `/active-sessions`.
+  `statusDelta` counters; the `listPk-listSk-index` GSI, its backfill script and the Codex
+  worktree migration script; the recent-project part of `/active-sessions`. Removing a device
+  still deletes `PROJ#` rows left by older releases.
 - Kept until M2 (they still feed notifications and the Session view): `SESS#` rows, the message
   table, the startup DDB sync, `checkStopped` and the slimmed `/active-sessions` it reads.
 - A created project shows in the list with its first Session; its directory stays selectable.
+- Deleting Sessions or projects always deletes their history on the device (the list is read
+  from it), then their Session rows; the dialog keeps its 5 s countdown. Project folders stay.
 
 ## Transport
 
@@ -50,13 +53,24 @@ Warm-up (2 workers, newest files first) reads each file's **head and tail**, nev
   of its file (`reAppendSessionMetadata`, also on exit), and its own resume list reads only head
   and tail (`readHeadAndTail`). Status never comes from this summary (see Requests).
 
-What the middle could still hold, never seen in this machine's 3263 files: a Claude title that CC
-did not re-stamp before the file grew by more than 1 MB (the row shows an older title until CC
-writes it again; a rename while the Bridge runs is read as an append); a second Codex
-`session_meta` with the same id; a legacy Codex `user_message` event that differs from its prompt.
+CC re-stamps titles often but not on every MB: 7 of this machine's 33 titled transcripts went
+1.3–7.2 MB between title lines. A running session can therefore hold its latest title in the
+skipped middle, so after warm-up the running Claude sessions (live process or written within
+5 minutes) are read backwards, a block at a time, until their latest title (`titlesBefore`;
+85 MB worst case: 44 ms in 1 MB steps). A rename while the Bridge runs is read as an append.
+
+A Codex title is its first prompt; once known, later prompt events are ignored, so an append after
+a skipped middle cannot replace it. What the middle could still hold, never seen in 3263 files: a
+second Codex `session_meta` with the same id; a legacy `user_message` event that differs from its
+prompt.
+
+A Session started from the App may not have a prompt in its transcript yet (a forked Skill writes
+none until it finishes): the Bridge passes the prompt it sent (`notePrompt`) and the row shows it,
+as v1 did; a daemon agent is listed before its first prompt as well.
 
 Afterwards: watchers call `touch(file)` → stat, then continue from the offset (inode change or a
-smaller file: read in full). Subagent files only recount their root. Deletions rescan the
+smaller file: read in full). Subagent files only recount their root; the subagent statuses of a
+running root are kept for 15 s, as they read every subagent transcript. Deletions rescan the
 directories. No disk cache: a restart warms again (fast while the files are in the page cache).
 
 Requests: `projects` / `sessions` page with a keyset cursor (`[lastActive ms, id]`, opaque), 50 per

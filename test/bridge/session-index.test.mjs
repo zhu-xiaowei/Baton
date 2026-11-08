@@ -160,6 +160,15 @@ test('project and session lists page with keyset cursors and count only valid ro
   await assert.rejects(index.sessions({ project: '-a', cursor: 'nope' }), /Invalid pagination cursor/);
 });
 
+test('a session started from the App is listed before CC writes its prompt', async (t) => {
+  const { claudeRoot, index } = fixture(t);
+  claude(claudeRoot, '-a', 1, 1, '');
+  await index.warm();
+  assert.equal((await index.sessions({ project: '-a' })).sessions.length, 0);
+  index.notePrompt(id(1), 'run the skill');
+  assert.deepEqual((await index.sessions({ project: '-a' })).sessions.map((s) => s.preview), ['run the skill']);
+});
+
 test('one session in two project directories shows the newer, then the larger file', async (t) => {
   const { claudeRoot, index } = fixture(t);
   const stub = claude(claudeRoot, '-repo--claude-worktrees-x', 1, 5, 'stub');

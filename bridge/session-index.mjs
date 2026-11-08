@@ -10,14 +10,14 @@ import { randomUUID } from 'crypto';
 import { Worker } from 'worker_threads';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import {
-  cachedDaemonSessions, getRunningInfo, getSessionStatus, normalizeProjectHash,
+  cachedDaemonSessions, getRunningInfo, getSessionStatus, normalizeProjectHash, previewText,
   readableProjectName, readClaudeFirstPrompts,
 } from './session.mjs';
-import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames } from './codex-session.mjs';
+import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
 import { discoverClaudeSubagents } from './claude-subagent.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
-import { advance, claudePreview, codexView, newState, summarize } from './session-summary.mjs';
+import { advance, claudePreview, codexView, newState, summarize, titlesBefore } from './session-summary.mjs';
 
 const WORKERS = 2;
 const HOME_PROJECTS = 15;
@@ -58,9 +58,10 @@ export class SessionIndex {
     this.codexHomes = codexHomes;
     this.workers = workers;
     this.records = new Map();   // file → record
-    this.subagents = new Map(); // root file → { count }
+    this.subagents = new Map(); // root file → { count, children? }
     this.names = new Map();     // projectHash → readable path
     this.cwdProjects = new Map();
+    this.sentPrompts = new Map(); // Claude id → prompt Baton sent before CC wrote it
     this.history = null;
     this.threadNames = new Map(); // Codex home → { mtime, names }
     this.boot = randomUUID().slice(0, 8);
@@ -91,18 +92,7 @@ export class SessionIndex {
         if (name.endsWith('.jsonl') && !name.startsWith('.')) found.push(path.join(dir, name));
       }
     }
-    for (const home of this.homes()) {
-      const walk = (dir) => {
-        let entries = [];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch {}
-        for (const entry of entries) {
-          const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) walk(full);
-          else if (entry.isFile() && entry.name.endsWith('.jsonl')) found.push(full);
-        }
-      };
-      walk(path.join(home, 'sessions'));
-    }
+    for (const home of this.homes()) walkJsonl(path.join(home, 'sessions'), found);
     return found;
   }
 
@@ -182,6 +172,7 @@ export class SessionIndex {
     this.markDirty();
     this.snapshot();
     this.resolveReady();
+    void this.fillTitles();
     console.log(`[session-index] ${this.records.size} files in ${Date.now() - started}ms`);
   }
 
@@ -196,6 +187,30 @@ export class SessionIndex {
       worker.once('error', (error) => console.error(`[session-index] worker failed: ${error.message}`));
       worker.once('exit', resolve);
     })));
+  }
+
+  // Running Claude sessions may hold a title in the skipped middle that CC re-stamps only later;
+  // read those few files backwards, a block at a time, until their latest title is found.
+  async fillTitles() {
+    const now = Date.now();
+    const { claude } = this.runningInfo(now);
+    const live = new Set([...claude.sessions, ...(claude.liveStatuses?.keys() || []), ...cachedDaemonSessions().keys()]);
+    for (const rec of this.records.values()) {
+      if (rec.runtime !== 'claude' || !rec.state?.skipped || (!live.has(rec.id) && now - rec.ms > CLAUDE_FRESH_MS)) continue;
+      try {
+        while (titlesBefore(rec.file, rec.state)) await new Promise((resolve) => setImmediate(resolve));
+      } catch {}
+      rec.view = undefined;
+      this.markDirty();
+    }
+  }
+
+  // A session started from the App may write its first prompt only later (a forked Skill).
+  notePrompt(sessionId, text) {
+    if (!text) return;
+    this.sentPrompts.set(sessionId, text);
+    for (const rec of this.records.values()) if (rec.id === sessionId) rec.view = undefined;
+    this.markDirty();
   }
 
   // Called by the watchers for every changed JSONL (subagent files included).
@@ -304,9 +319,14 @@ export class SessionIndex {
     let view = null;
     if (rec.state) {
       if (rec.runtime === 'claude') {
-        const preview = claudePreview(rec.state, this.history.prompts.get(rec.id));
+        let preview = claudePreview(rec.state, this.history.prompts.get(rec.id));
+        if (preview) this.sentPrompts.delete(rec.id);
+        else preview = previewText(this.sentPrompts.get(rec.id));
         const agents = this.subagentCount(rec);
-        if (preview || agents) view = { project: rec.project, preview: preview || 'New session', agentCount: agents };
+        // Like the v1 watcher: a daemon agent is listed before its transcript has a prompt.
+        if (preview || agents || cachedDaemonSessions().has(rec.id)) {
+          view = { project: rec.project, preview: preview || 'New session', agentCount: agents };
+        }
       } else {
         const codex = codexView(rec.state, this.threadNames.get(rec.home)?.names.get(rec.id));
         const project = codex && intern(this.cwdProject(codex.cwd));
@@ -418,9 +438,14 @@ export class SessionIndex {
     }
   }
 
+  // Reads every subagent transcript, so the result is kept for 15 s; touch() drops it on a change.
   claudeChildren(rec, row, status, now) {
-    const list = discoverClaudeSubagents(rec.dir, { nativeSessionId: rec.id, project: row.project, status }, { now });
-    return list.map((child) => ({ status: this.statuses.get(storageSessionId('claude', child.nativeSessionId)) || child.status }));
+    let cached = this.subagents.get(rec.file);
+    if (!cached) this.subagents.set(rec.file, cached = { count: this.subagentCount(rec) });
+    if (cached.children?.status !== status || now - cached.children.at >= SUBAGENT_FRESH_MS) {
+      cached.children = { status, at: now, list: discoverClaudeSubagents(rec.dir, { nativeSessionId: rec.id, project: row.project, status }, { now }) };
+    }
+    return cached.children.list.map((child) => ({ status: this.statuses.get(storageSessionId('claude', child.nativeSessionId)) || child.status }));
   }
 
   projectPath(projectHash) {

@@ -16,7 +16,7 @@ export function codexSessionIdFromPath(filePath) {
   return UUID_AT_END.exec(path.basename(filePath))?.[1] || '';
 }
 
-function walkJsonl(dir, files, errors) {
+export function walkJsonl(dir, files, errors = []) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });

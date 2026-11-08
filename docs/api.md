@@ -246,7 +246,7 @@ command. `GET /auth/install?t=<token>[&platform=windows][&name=…]` returns the
 
 `{ "deviceName": "MyMac" }` → `{ "ok": true, "deletedSessions": N }`. Sends
 `{ "action": "device_removed" }` to the device's Bridge sockets and closes them, then deletes its
-`DEV#`/`SESS#` rows (message rows expire via TTL). The Bridge removes its autostart entry and
+`DEV#`/`SESS#` rows, and `PROJ#` rows left by older releases (message rows expire via TTL). The Bridge removes its autostart entry and
 `config.json` and exits; session files on the device are kept. A new install command adds it back.
 
 ---
