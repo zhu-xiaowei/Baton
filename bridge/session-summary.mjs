@@ -317,26 +317,39 @@ export function summarize(file, runtime, id) {
   try { size = fs.statSync(file).size; } catch {}
   const from = tailStart(file, runtime, size, state.offset);
   const skipped = from > state.offset;
-  // A running Claude session may hold a title CC has not re-stamped yet in the skipped range.
-  if (skipped && runtime === 'claude') state.skipped = [state.offset, from];
+  const floor = state.offset;
   state.offset = from;
-  return advance(file, runtime, id, state, skipped ? 'tail' : 'full');
+  if (!skipped || runtime !== 'claude') return advance(file, runtime, id, state, skipped ? 'tail' : 'full');
+  // A running Claude session may hold a newer title than the head's in the skipped range: keep
+  // which titles the tail did not set, so titlesBefore can fill them from the middle.
+  const head = { ct: state.ct, at: state.at, su: state.su };
+  Object.assign(state, { ct: '', at: '', su: '' });
+  advance(file, runtime, id, state, 'tail');
+  const open = Object.keys(head).filter((key) => !state[key]);
+  for (const key of open) state[key] = head[key];
+  state.skipped = [floor, from, open];
+  return state;
 }
 
 // Reads the skipped range backwards, one block per call, filling the titles the tail did not
 // have (later lines win, so the first one met is the latest). Returns false when done.
 export function titlesBefore(file, state) {
-  const [floor, end] = state.skipped || [0, 0];
-  if (end <= floor || state.ct) { delete state.skipped; return false; }
+  const [floor, end, open = []] = state.skipped || [];
+  if (!(end > floor) || !open.includes('ct')) { delete state.skipped; return false; }
   const fd = fs.openSync(file, 'r');
   try {
     let start = Math.max(floor, end - CHUNK);
-    let block;
-    for (;;) {
-      block = readRange(fd, start, end - start);
-      const nl = start === floor ? -1 : block.indexOf(10);
-      if (start === floor || nl !== -1) { if (nl !== -1) { block = block.subarray(nl + 1); start += nl + 1; } break; }
-      start = Math.max(floor, start - CHUNK); // a line longer than a block
+    let block = readRange(fd, start, end - start);
+    if (start > floor) {
+      // The last byte ends the line before `end`; without another newline that line is longer
+      // than a block, so it is no title: continue before it.
+      const nl = block.subarray(0, block.length - 1).indexOf(10);
+      if (nl === -1) {
+        state.skipped = [floor, lineStartBefore(fd, end - 1, floor, Buffer.allocUnsafe(BLOCK)), open];
+        return state.skipped[1] > floor;
+      }
+      block = block.subarray(nl + 1);
+      start += nl + 1;
     }
     for (let stop = block.length; stop > 0;) {
       const nl = block.lastIndexOf(10, stop - 1);
@@ -345,14 +358,13 @@ export function titlesBefore(file, state) {
       if (type === 'custom-title' || type === 'ai-title' || type === 'summary') {
         let msg = null;
         try { msg = JSON.parse(block.toString('utf8', from, stop)); } catch {}
-        if (type === 'custom-title' && msg?.customTitle && !state.ct) state.ct = stored(msg.customTitle);
-        if (type === 'ai-title' && msg?.aiTitle && !state.at) state.at = stored(msg.aiTitle);
-        if (type === 'summary' && msg?.summary && !state.su) state.su = stored(msg.summary);
+        const [key, value] = { 'custom-title': ['ct', msg?.customTitle], 'ai-title': ['at', msg?.aiTitle], summary: ['su', msg?.summary] }[type];
+        if (value && open.includes(key)) { state[key] = stored(value); open.splice(open.indexOf(key), 1); }
       }
       stop = Math.max(0, nl);
     }
-    state.skipped = [floor, start];
-    return start > floor && !state.ct;
+    state.skipped = [floor, start, open];
+    return start > floor && open.includes('ct');
   } finally {
     fs.closeSync(fd);
   }

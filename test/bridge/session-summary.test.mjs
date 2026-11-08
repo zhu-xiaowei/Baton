@@ -138,6 +138,13 @@ test('head + tail: Codex equals a full read, Claude finds a re-stamped title, ap
   assert.equal(claudePreview(running, ''), 'first');
   while (titlesBefore(claudeFile, running));
   assert.equal(claudePreview(running, ''), 'Renamed', 'a running session reads back to its latest title');
+  // A head title (--name) does not hide a later rename, and a line longer than a block is stepped over.
+  const named = path.join(dir, 'named.jsonl');
+  write(named, [{ type: 'custom-title', customTitle: 'From --name', sessionId: ID }, claudeMessage('user', 'first'), pad('m1'),
+    { type: 'custom-title', customTitle: 'Renamed later', sessionId: ID }, claudeMessage('assistant', 'p'.repeat(3_000_000)), pad('m2'), pad('m3')]);
+  const state = summarize(named, 'claude', ID);
+  for (let calls = 0; titlesBefore(named, state); calls++) assert.ok(calls < 20, 'the backwards read keeps moving');
+  assert.equal(claudePreview(state, ''), getSessionMetadata(named, { firstPrompt: '' }).preview);
   const full = advance(claudeFile, 'claude', ID, newState('claude'));
   assert.deepEqual([claudePreview(full, ''), full.model], ['Renamed', 'm4']);
   write(claudeFile, [...rows, { type: 'custom-title', customTitle: 'Renamed', sessionId: ID }]);
