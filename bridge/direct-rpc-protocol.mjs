@@ -22,8 +22,11 @@ function fromBase64(text) {
   return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 }
 
-export function rpcRequest({ requestId, method, params = {}, replyTo }) {
-  return { v: RPC_VERSION, kind: 'rpc', requestId, method, params, replyTo, accept: ['deflate'] };
+// A resend keeps its requestId; `missing` asks only for those chunks of a reply already sent.
+export function rpcRequest({ requestId, method, params = {}, replyTo, missing }) {
+  const frame = { v: RPC_VERSION, kind: 'rpc', requestId, method, params, replyTo, accept: ['deflate'] };
+  if (missing?.length) frame.missing = missing;
+  return frame;
 }
 
 export function isRpcRequest(frame) {
@@ -72,6 +75,15 @@ export class RpcAssembler {
     if (entry.received < entry.count) return { requestId: frame.requestId, done: false };
     this.parts.delete(frame.requestId);
     return { requestId: frame.requestId, done: true, payload: { enc: entry.enc, data: entry.chunks.join('') } };
+  }
+
+  // Chunk indexes not received yet, or null when nothing arrived.
+  missing(requestId) {
+    const entry = this.parts.get(requestId);
+    if (!entry) return null;
+    const out = [];
+    for (let i = 0; i < entry.count; i++) if (entry.chunks[i] === undefined) out.push(i);
+    return out;
   }
 
   forget(requestId) {

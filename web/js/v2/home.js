@@ -50,13 +50,35 @@ async function load(publish) {
   const fresh = new Map();
   const asked = new Map();
   const timedOut = new Set();
+  let finished = null; // { list, reachable } once the home is published from /devices
+  // A device still silent at 6 s shows its cached answer; a reply by 12 s updates the home, a
+  // timeout at 12 s is reported. The wait for each device ends at whichever comes first.
   const ask = (device) => {
     if (asked.has(device)) return;
     const known = cache[device]?.answer;
-    asked.set(device, request(device, 'home', { revision: known?.revision }).then((answer) => {
+    let settle;
+    asked.set(device, new Promise((resolve) => { settle = resolve; }));
+    request(device, 'home', { revision: known?.revision }, { onSlow: () => settle() }).then((answer) => {
       if (!answer.notModified) cache[device] = { answer, at: Date.now() };
       if (cache[device]) fresh.set(device, cache[device]);
-    }, (error) => { if (error.message === 'timeout') timedOut.add(device); }));
+      settle();
+      if (finished) {
+        saveCache(cache, finished.list);
+        latest = merge(finished.list, finished.reachable);
+        window.__applyHome?.(latest.active, latest.devices);
+      }
+    }, (error) => {
+      if (error.message === 'timeout') timedOut.add(device);
+      settle();
+      if (finished) reportSilent();
+    });
+  };
+  // Offline devices already say so on their row; only an online device that stayed silent is news.
+  const reportSilent = () => {
+    const silent = finished.list.filter((device) => device.online && timedOut.has(device.deviceName))
+      .map((device) => device.deviceDisplayName || device.deviceName);
+    timedOut.clear();
+    if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
   };
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
   const merge = (list, reachable) => ({ active: mergeActive(list, answerFor, reachable), devices: mergeDevices(list, answerFor, reachable) });
@@ -94,10 +116,8 @@ async function load(publish) {
   for (const device of response.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
   await Promise.all(asked.values());
   saveCache(cache, response.devices);
-  // Offline devices already say so on their row; only an online device that stayed silent is news.
-  const silent = response.devices.filter((device) => device.online && timedOut.has(device.deviceName))
-    .map((device) => device.deviceDisplayName || device.deviceName);
-  if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
+  finished = { list: response.devices, reachable };
+  reportSilent();
   const result = latest = merge(response.devices, reachable);
   window.__v2Timings.fresh = [...fresh.keys()];
   if (!early) window.__v2Timings.total = Math.round(performance.now() - started);
