@@ -18,9 +18,10 @@ const run = (options) => new Promise((resolve, reject) => {
 });
 
 test('resends keep their requestId: the Bridge computes once and replies once', async () => {
-  const [normal, lost, slow, chunk, silent, offline, reconnect] = await Promise.all([
+  const [normal, lost, late, slow, chunk, silent, offline, reconnect] = await Promise.all([
     run({}),
     run({ dropRequests: 1 }),
+    run({ coldStart: true, devicesDelayMs: 7000, dropRequests: 1 }),
     run({ computeMs: 8000 }),
     run({ dropChunks: [1], big: true }),
     run({ silent: true }),
@@ -32,6 +33,9 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
   assert.deepEqual(lost.value, { ok: 1 }, 'a lost request');
   assert.equal(lost.requests, 2);
   assert.ok(lost.slowAt >= 6000 && lost.ms < 7000, 'resent at 6 s');
+
+  assert.deepEqual([late.value, late.requests], [{ ok: 1 }, 2], 'a first send held back 7 s is still resent');
+  assert.ok(late.ms > 9000 && late.ms < 10000, '2 s after it went out');
 
   assert.deepEqual(slow.value, { ok: 1 }, 'a slow Bridge');
   assert.equal(slow.computed, 1, 'the resend during computation is not recomputed');
@@ -74,4 +78,7 @@ test('a resend after the reply went out gets only the missing chunks from the st
   bridge.receive(socket, request());
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, count * 2 + 2, 'a full resend repeats every stored chunk');
+  bridge.receive(socket, request(5)); // not a chunk list: the whole reply again
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(sent.length, count * 3 + 2);
 });
