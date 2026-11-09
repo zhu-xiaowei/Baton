@@ -3,7 +3,7 @@ import { orderKeyLine } from './line-index.mjs';
 
 export async function readPage(reader, { after, before, limit }, firstWindow, maxWindow) {
   const stop = after ? orderKeyLine(after) : 0;
-  let hi = before ? orderKeyLine(before) + 1 : reader.index.count;
+  let hi = before ? Math.min(orderKeyLine(before) + 1, reader.index.count) : reader.index.count;
   let rows = [];
   for (let step = firstWindow; hi > stop && rows.length < limit; step = Math.min(step * 2, maxWindow)) {
     const lo = Math.max(stop, hi - step);

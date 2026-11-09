@@ -17,6 +17,7 @@ const ROLE_USER = Buffer.from('"role":"user"');
 const USER_ITEM = Buffer.from('"type":"UserMessage"');
 const FIRST_WINDOW = 128;
 const MAX_WINDOW = 1024;
+const NONE = Object.freeze([]); // most lines have no call id or process use
 
 function digits(buf, at) {
   let value = '';
@@ -65,8 +66,8 @@ export class CodexHistoryReader {
     const skip = !!head && (SKIP.has(head[1]) || SKIP.has(kind)
       || (compacted && L.subarray(0, 200).includes(EMPTY_COMPACTION)));
     this.skip[line] = skip;
-    this.callsOf[line] = [];
-    this.processUses[line] = [];
+    this.callsOf[line] = NONE;
+    this.processUses[line] = NONE;
     if (kind === 'event_msg/task_started') { this.turns.push(line); this.prompts.push([]); }
     if (kind === 'event_msg/task_complete' || kind === 'event_msg/turn_aborted') this.lastTurnEnd = line;
     // A compaction's replacement history quotes old call ids; they are not dependencies.
@@ -82,6 +83,7 @@ export class CodexHistoryReader {
         if (q === -1) continue; // unterminated tail
         const id = L.latin1Slice(a, q);
         if (this.callsOf[line].includes(id)) continue;
+        if (this.callsOf[line] === NONE) this.callsOf[line] = [];
         this.callsOf[line].push(id);
         if (!this.linesOfCall.has(id)) this.linesOfCall.set(id, []);
         this.linesOfCall.get(id).push(line);
@@ -96,7 +98,9 @@ export class CodexHistoryReader {
       let q = p + PROCESS_USE.length;
       while (L[q] === 32) q++;
       const id = digits(L, q);
-      if (id) this.processUses[line].push(id);
+      if (!id) continue;
+      if (this.processUses[line] === NONE) this.processUses[line] = [];
+      this.processUses[line].push(id);
     }
   }
 
@@ -145,8 +149,7 @@ export class CodexHistoryReader {
         let q = r;
         while (q + 1 < order.length && order[q + 1] === order[q] + 1) q++;
         const base = this.index.starts[order[r]];
-        const buf = Buffer.alloc(this.index.ends[order[q]] - base);
-        fs.readSync(fd, buf, 0, buf.length, base);
+        const buf = this.index.read(order[r], order[q] + 1, fd);
         for (let i = r; i <= q; i++) {
           const line = order[i];
           lines[line] = buf.utf8Slice(this.index.starts[line] - base, this.index.ends[line] - base);
