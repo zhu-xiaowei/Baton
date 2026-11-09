@@ -22,8 +22,8 @@ semantics stay as they are. DDB writes keep running during step 3 so v1 and v2 c
   - First open: no cursor. Page up: `before`. Re-entry with a cache: `after`. Gap fill: both.
   - `hasMore` with `after` means more than `limit` rows are newer than the cache: the App shows the
     newest page and fills the gap later with `before + after`.
-  - `epoch` identifies the file (device + inode + birth time). A different epoch, or a file that got
-    shorter, returns a fresh latest page and the App drops that Session's cache.
+  - `epoch` identifies the file (device + inode + birth time + its first line). A different epoch
+    returns a fresh latest page and the App drops that Session's cache.
   - The latest page also carries the current title rows (`ai-title`, `custom-title`, `last-prompt`).
 - `threads {sessionId}` from the session index replaces `/session-threads`.
 - `tool_details` serves every tool body and thinking text on expand (today only Edit).
@@ -62,8 +62,9 @@ implements one reader; everything else is shared.
   prepared rows; warm-up; visible-only slimming and encoding; worker thread; epoch and cursors.
 - **Line index (shared)**: start/end byte of every line, built with `Buffer.indexOf` in 8 MB chunks
   (no decoding), extended with the new bytes on each request. An unterminated last line is indexed
-  provisionally and rescanned. Inode change or a shorter file rebuilds the index and changes the
-  epoch.
+  provisionally and rescanned. An inode change, a shorter file or changed bytes before the indexed
+  end rebuild the index; the epoch is the inode plus the first line, so an in-place rewrite that
+  keeps the first line keeps it (transcripts are append-only).
 
 ### Claude reader
 
