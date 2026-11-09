@@ -13,6 +13,7 @@ import {
   getSessionMetadata,
   getSessionStatus,
   normalizeProjectHash,
+  previewText,
   readClaudeFirstPrompts,
   readableProjectName,
 } from './session.mjs';
@@ -367,7 +368,8 @@ export const claudeRuntime = defineRuntimeAdapter({
       projectName,
       lastActive,
       size: stat.size,
-      preview: metadata.preview,
+      // A forked Skill writes no user row until it finishes; show the sent prompt meanwhile.
+      preview: metadata.preview || previewText(context.sentPrompt),
       model: metadata.model,
       status: newStatus,
     };
