@@ -64,3 +64,21 @@ export async function loadToolDetails(toolId) {
   }).finally(() => { entry.pending = null; });
   return entry.pending;
 }
+
+// Thinking text is left out of history pages; it comes through the same request, under the id
+// `thinking:<message uuid>:<block index>` (bridge/tool-details.mjs).
+export async function loadThinking(id) {
+  const cache = currentEntries();
+  const known = cache.get(id);
+  if (known?.full) return known.full.toolUse.thinking;
+  const response = await requestWsRpc({
+    action: 'tool_details',
+    sessionId: state.wsSessionId,
+    device: state.appState.device,
+    toolUseIds: [id],
+  }, { assemble: assembleTextFrames });
+  const full = JSON.parse(response.content).details?.find((item) => item.toolUse?.id === id);
+  if (!full) throw new Error('Thinking is not available.');
+  cache.set(id, { full });
+  return full.toolUse.thinking || '';
+}

@@ -4,6 +4,11 @@ import { extractCodexMessages } from './codex-extract.mjs';
 import { sendTextFrames } from './project/ws-frames.mjs';
 import { compactToolFields, stripToolResultBase64, toolResultStats } from './tool-preview.mjs';
 
+// History pages leave thinking text out; it is fetched like a tool, under this id.
+export function thinkingDetailId(messageUuid, blockIndex) {
+  return `thinking:${messageUuid}:${blockIndex}`;
+}
+
 export function readToolIndex(filePath, nativeSessionId, runtime) {
   const tools = new Map();
   const messages = runtime === 'codex'
@@ -13,13 +18,19 @@ export function readToolIndex(filePath, nativeSessionId, runtime) {
       try {
         const raw = JSON.parse(line);
         return [{
+          uuid: raw.uuid,
           content: raw.message?.content || raw.content,
           toolUseResult: raw.toolUseResult || raw.tool_use_result,
         }];
       } catch { return []; }
     });
   for (const message of messages) {
-    for (const block of Array.isArray(message.content) ? message.content : []) {
+    for (const [index, block] of (Array.isArray(message.content) ? message.content : []).entries()) {
+      if (block?.type === 'thinking' && message.uuid) {
+        const id = thinkingDetailId(message.uuid, index);
+        tools.set(id, { toolUse: { id, type: 'thinking', thinking: block.thinking || '' }, toolResult: null });
+        continue;
+      }
       if (!block || !['tool_use', 'tool_result'].includes(block.type)) continue;
       const id = block.type === 'tool_use' ? block.id : block.tool_use_id;
       if (!id) continue;

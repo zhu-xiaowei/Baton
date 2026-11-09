@@ -775,6 +775,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
   function resultText(result) {
     if (!result) return '';
     const c = result.content;
+    if (c == null) return ''; // a history page leaves truncated bodies out
     if (typeof c === 'string') return c;
     if (Array.isArray(c)) return c.map(b => b.text || '').join('');
     return JSON.stringify(c);
@@ -972,6 +973,9 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     const editRemote = name === 'Edit' && !toolResult?.is_error
       && (source?.toolUse.truncated === true || source?.toolResult?.truncated === true);
     const editPending = editRemote && !source?.full;
+    // A history page carries no truncated tool body: expanding loads it first, as Edit does
+    // (data-edit-details marks every such header).
+    const remoteDetails = editRemote || (toolResult?.truncated === true && !Object.hasOwn(toolResult, 'content'));
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
     const detailPolicy = window.getToolDetailPolicy(runtime);
     const requestedDetailsCollapsed = detailPolicy.enabled && !!options.collapsed;
@@ -1030,7 +1034,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
     const headerAttrs = detailsEnabled
       ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"${truncated ? ' data-tool-preview="true"' : ''}
-        ${editRemote ? 'data-edit-details="true"' : ''}
+        ${remoteDetails ? 'data-edit-details="true"' : ''}
         onclick="toggleToolDetails(this)"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDetails(this)}"`
       : info.expandDesc
