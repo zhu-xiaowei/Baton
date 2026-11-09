@@ -252,7 +252,7 @@ function hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles) {
   return hidden;
 }
 
-function analyzeLines(lines) {
+function analyzeLines(lines, order) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
   const eventUserCounts = new Map();
@@ -269,7 +269,8 @@ function analyzeLines(lines) {
     entries.push(line);
     map.set(callId, entries);
   };
-  for (let index = lines.length - 1; index >= 0; index--) {
+  for (let k = (order ? order.length : lines.length) - 1; k >= 0; k--) {
+    const index = order ? order[k] : k;
     const hasUser = lines[index].includes('"user_message"')
       || lines[index].includes('"UserMessage"');
     const hasPatch = lines[index].includes('patch_apply_end')
@@ -385,8 +386,9 @@ function analyzeLines(lines) {
 
 export function extractCodexMessages(filePath, sessionId, options = {}) {
   if (!fs.existsSync(filePath)) return { messages: [], nextLine: options.startLine || 0 };
-  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-  if (lines.at(-1) === '') lines.pop();
+  // `lines` + `order`: a caller that already read the file passes its lines and the line numbers to visit.
+  const lines = options.lines || fs.readFileSync(filePath, 'utf-8').split('\n');
+  if (!options.lines && lines.at(-1) === '') lines.pop();
   const startLine = Math.min(options.startLine || 0, lines.length);
   const {
     commandExecutions,
@@ -397,7 +399,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     mcpToolCalls,
     skippedCustomOutputs,
     userClientIdsByTurn,
-  } = analyzeLines(lines);
+  } = analyzeLines(lines, options.order);
   const messages = [];
   let sourceLine = 0;
   let fragment = 0;
@@ -462,7 +464,8 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   };
   const peek = (callId) => (pending.get(callId) || [])[0];
 
-  for (let line = 0; line < lines.length; line++) {
+  for (let k = 0, end = options.order ? options.order.length : lines.length; k < end; k++) {
+    const line = options.order ? options.order[k] : k;
     if (!lines[line].trim()) {
       nextLine = line + 1;
       continue;

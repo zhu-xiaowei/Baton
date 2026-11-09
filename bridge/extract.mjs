@@ -178,6 +178,8 @@ export async function extractForApp(msg) {
 }
 
 export function normalizeClaudeQueuedInput(message) {
+  // A compaction summary renders like Codex's: one collapsed "Context compacted" row.
+  if (message?.type === 'user' && message.isCompactSummary) return { ...message, type: 'summary' };
   // Render system local_command output like the older <local-command-stdout> user row.
   if (message?.type === 'system' && message.subtype === 'local_command'
     && /^<local-command-stdout>/.test(message.content || '')) {
@@ -206,6 +208,23 @@ export function isClaudeLocalCommandCaveat(msg) {
     && content.trimStart().startsWith('<local-command-caveat>');
 }
 
+// One parsed JSONL line → the message to extract, or null. `metaUuids` carries the rule that a meta
+// prompt hides the prompt answering it; shared by full extraction and the history reader.
+export function claudeMessageLine(msg, metaUuids) {
+  msg = normalizeClaudeQueuedInput(msg);
+  if (!VALID_TYPES.has(msg.type)) return null;
+  if (msg.isMeta && msg.type === 'user') {
+    if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
+    return null;
+  }
+  if (msg.isCompactSummary) metaUuids.add(msg.uuid);
+  if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) {
+    metaUuids.delete(msg.parentUuid);
+    return null;
+  }
+  return msg;
+}
+
 export async function extractClaudeMessages(filePath, sessionId, options = {}) {
   const watermarks = options.watermarks || synced;
   const startLine = options.startLine ?? watermarks.get(sessionId) ?? 0;
@@ -220,13 +239,8 @@ export async function extractClaudeMessages(filePath, sessionId, options = {}) {
     if (!lines[i].trim()) continue;
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
-    msg = normalizeClaudeQueuedInput(msg);
-    if (!VALID_TYPES.has(msg.type)) continue;
-    if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') {
-      if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
-      continue;
-    }
-    if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
+    msg = claudeMessageLine(msg, metaUuids);
+    if (!msg) continue;
     const extracted = await extractForApp(msg);
     if (!extracted.uuid) continue;
     extracted.orderKey = nativeOrderKey(i);
