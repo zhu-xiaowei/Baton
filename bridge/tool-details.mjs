@@ -5,7 +5,7 @@ import { sendTextFrames } from './project/ws-frames.mjs';
 import { compactToolFields, stripToolResultBase64, toolResultStats } from './tool-preview.mjs';
 
 // History pages leave thinking text out; it is fetched like a tool, under this id.
-export function thinkingDetailId(messageUuid, blockIndex) {
+function thinkingDetailId(messageUuid, blockIndex) {
   return `thinking:${messageUuid}:${blockIndex}`;
 }
 

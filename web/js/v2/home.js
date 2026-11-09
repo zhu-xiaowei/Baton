@@ -8,6 +8,7 @@ const CACHE_KEY = 'apeek_v2_home_devices';
 const PROJECT_LIMIT = 15;
 let inflight = null;
 let latest = null;
+let generation = 0; // only the newest load writes the cache and the page
 
 function readJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
@@ -44,6 +45,8 @@ function run() {
 
 async function load(publish) {
   const started = performance.now();
+  const gen = ++generation;
+  const current = () => gen === generation;
   window.__v2Timings = {};
   const saved = readCache();
   const cache = saved.devices || {};
@@ -62,7 +65,7 @@ async function load(publish) {
       if (!answer.notModified) cache[device] = { answer, at: Date.now() };
       if (cache[device]) fresh.set(device, cache[device]);
       settle();
-      if (finished) {
+      if (finished && current() && !answer.notModified) {
         saveCache(cache, finished.list);
         latest = merge(finished.list, finished.reachable);
         window.__applyHome?.(latest.active, latest.devices);
@@ -78,7 +81,6 @@ async function load(publish) {
   const reportSilent = () => {
     const silent = finished.list.filter((device) => device.online && timedOut.has(device.deviceName))
       .map((device) => device.deviceDisplayName || device.deviceName);
-    timedOut.clear();
     if (silent.length && !state.appState.session) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
   };
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
@@ -116,13 +118,14 @@ async function load(publish) {
   const reachable = new Set((response.rpc?.bridges || []).map((bridge) => bridge.device));
   for (const device of response.devices) if (device.online && reachable.has(device.deviceName)) ask(device.deviceName);
   await Promise.all(asked.values());
-  saveCache(cache, response.devices);
+  if (current()) saveCache(cache, response.devices);
   finished = { list: response.devices, reachable };
   reportSilent();
-  const result = latest = merge(response.devices, reachable);
+  const result = merge(response.devices, reachable);
+  if (current()) latest = result;
   window.__v2Timings.fresh = [...fresh.keys()];
   if (!early) window.__v2Timings.total = Math.round(performance.now() - started);
-  else if (JSON.stringify(result) !== JSON.stringify(early)) window.__applyHome?.(result.active, result.devices);
+  else if (current() && JSON.stringify(result) !== JSON.stringify(early)) window.__applyHome?.(result.active, result.devices);
   return result;
 }
 

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HistoryService } from '../../bridge/history/history-service.mjs';
-import { createHistoryPages } from '../../bridge/history/history-pages.mjs';
+import { HistoryService } from '../../bridge/history-service.mjs';
+import { createHistoryPages } from '../../bridge/history-pages.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'history-service-'));
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -112,6 +112,7 @@ test('Sessions resolve to root, subagent and Codex child files; threads list roo
   assert.equal(service.resolve(subId).file, path.join(dir, 'root', 'subagents', 'agent-a1.jsonl'));
   assert.deepEqual(service.resolve('codex:kid'), { file: codexFile, runtime: 'codex', nativeSessionId: 'kid', status: 'needs_input' });
   assert.equal(service.resolve('missing'), null);
+  assert.equal(service.resolve('root:subagent:../../root'), null, 'a subagent id cannot leave the subagents directory');
   await assert.rejects(service.history({ sessionId: 'missing' }), /unknown_session/);
   const { rootSessionId, threads } = await service.threads({ sessionId: 'root' });
   assert.equal(rootSessionId, 'root');

@@ -874,18 +874,22 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
     if (!node) return;
-    if (header.hasAttribute('data-edit-details')
-      && !toolDetailsSource(node.dataset.toolId)?.full) {
-      return window.loadToolDetailsMore(header, true);
-    }
-    const collapsed = !node.classList.contains('tool-details-collapsed');
+    // A body the history page left out is loaded first; the member opens once it arrives.
+    const unloaded = (member) => member.querySelector(':scope > .tool-header')?.hasAttribute('data-edit-details')
+      && !toolDetailsSource(member.dataset.toolId)?.full;
+    const collapsed = !unloaded(node) && !node.classList.contains('tool-details-collapsed');
     const groupId = node.dataset.toolDetailsGroup;
     const root = node.closest('.messages') || document;
     const members = groupId
       ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
         .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
       : [node];
+    const loads = [];
     for (const member of members) {
+      if (!collapsed && unloaded(member)) {
+        loads.push(window.loadToolDetailsMore(member.querySelector(':scope > .tool-header'), true));
+        continue;
+      }
       window.setToolDetailsCollapsed(member, collapsed);
       if (!collapsed) {
         Promise.resolve(window.initializeToolDetails?.(member))
@@ -895,6 +899,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (groupId) {
       window.setToolRunGroupCollapsed?.(groupId, collapsed, root);
     }
+    return Promise.all(loads);
   };
 
   window.loadToolDetailsMore = async function (button, edit = false) {

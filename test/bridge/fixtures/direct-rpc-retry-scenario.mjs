@@ -17,7 +17,7 @@ state.KEY = 'key';
 state.SERVER = 'https://baton.example';
 
 // One relay per scenario: the App socket, the Bridge, and the faults to apply.
-function scenario({ online = true, dropRequests = 0, dropChunks = [], silent = false, computeMs = 0, result = { ok: 1 } } = {}) {
+function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChunks = [], silent = false, computeMs = 0, result = { ok: 1 } } = {}) {
   const log = { requests: 0, computed: 0, chunksSent: 0, slowAt: null };
   let appSocket = null;
   let connections = 0;
@@ -56,7 +56,7 @@ function scenario({ online = true, dropRequests = 0, dropChunks = [], silent = f
     close() { this.readyState = 3; this.onclose?.(); }
   }
   globalThis.WebSocket = FakeWebSocket;
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ protocol: 2, devices: [],
+  globalThis.fetch = async () => (await new Promise((r) => setTimeout(r, devicesDelayMs)), { ok: true, status: 200, json: async () => ({ protocol: 2, devices: [],
     rpc: { endpoint: ENDPOINT, credentials: credentials(), bridges: online ? [{ device: 'dev', dataId: 'bridge=' }] : [] } }) });
   return { log, bridge, reconnect: () => appSocket.close() };
 }
@@ -64,7 +64,7 @@ function scenario({ online = true, dropRequests = 0, dropChunks = [], silent = f
 async function run(options) {
   const env = scenario(options);
   const transport = await import('../../../web/js/v2/direct-transport.js');
-  await transport.devices();
+  if (!options.coldStart) await transport.devices(); // a cold start learns routes from the request itself
   const started = performance.now();
   const promise = transport.request('dev', 'work', {}, { onSlow: () => { env.log.slowAt = performance.now() - started; } });
   if (options.reconnectAt) setTimeout(env.reconnect, options.reconnectAt);

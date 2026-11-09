@@ -10,6 +10,7 @@ import { RpcAssembler, decodeRpcPayload, rpcRequest } from '../../../bridge/dire
 // chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
 const SLOW_MS = 6000;
 const DEADLINE_MS = 12000;
+const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
 const PROBE_MS = 1000;
 // After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
@@ -223,7 +224,8 @@ function reconcile() {
     if (!route?.online || !connectionId || !rpc?.credentials || socket?.readyState !== WebSocket.OPEN) continue;
     // A new route or connection needs the whole reply again; a stall only what is missing.
     if (request.attemptVersion !== route.version) send(key, request, route);
-    else if (!request.retried && now - request.firstSentAt > SLOW_MS) {
+    else if (!request.retried && now - request.firstSentAt
+      > (request.firstSentAt - request.createdAt > SLOW_MS - LATE_RESEND_MS ? LATE_RESEND_MS : SLOW_MS)) {
       request.retried = true;
       send(key, request, route, assembler.missing(key) || undefined);
     }

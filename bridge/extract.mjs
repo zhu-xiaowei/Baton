@@ -103,7 +103,25 @@ export function truncateToBytes(msg, maxBytes) {
   return clone;
 }
 
-async function processImage(base64Data) {
+// History pages are read again and again: each image is compressed and uploaded once per run.
+const IMAGE_MEMO_LIMIT = 500;
+const imageKeys = new Map(); // sha1(base64) → Promise<key>
+
+function processImage(base64Data) {
+  const id = crypto.createHash('sha1').update(base64Data).digest('hex');
+  let job = imageKeys.get(id);
+  if (!job) {
+    if (imageKeys.size >= IMAGE_MEMO_LIMIT) imageKeys.delete(imageKeys.keys().next().value);
+    job = compressAndUpload(base64Data).then(({ key, ok }) => {
+      if (!ok) imageKeys.delete(id); // tried again next time
+      return key;
+    }, (error) => { imageKeys.delete(id); throw error; });
+    imageKeys.set(id, job);
+  }
+  return job;
+}
+
+async function compressAndUpload(base64Data) {
   const buffer = Buffer.from(base64Data, 'base64');
   const compressed = await sharp(buffer)
     .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
@@ -114,8 +132,8 @@ async function processImage(base64Data) {
   const hash = crypto.createHash('md5').update(hashInput).digest('hex');
   const key = `${hash}.jpg`;
 
-  await post('/api/bridge/upload-image', { key, data: compressed.toString('base64') });
-  return key;
+  const res = await post('/api/bridge/upload-image', { key, data: compressed.toString('base64') });
+  return { key, ok: !!res?.ok };
 }
 
 export async function extractForApp(msg) {
