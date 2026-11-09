@@ -2,8 +2,9 @@
 // several lines (call, output, completion), so a window also reads the lines it depends on; the index
 // finds them by byte search only.
 import fs from 'node:fs';
-import { extractCodexMessages } from '../codex-extract.mjs';
-import { LineIndex, orderKeyLine } from './line-index.mjs';
+import { extractCodexMessages } from './codex-extract.mjs';
+import { LineIndex, orderKeyLine } from './history-line-index.mjs';
+import { readPage } from './history-page.mjs';
 
 const HEAD = /^\{"timestamp":"[^"]*",(?:"ordinal":\d+,)?"type":"([^"]+)"(?:,"payload":\{"type":"([^"]+)")?/;
 const SKIP = new Set(['response_item/reasoning', 'event_msg/token_count', 'token_usage_record', 'world_state',
@@ -162,22 +163,6 @@ export class CodexHistoryReader {
       .filter((row) => { const line = orderKeyLine(row.orderKey); return line >= lo && line < hi; });
   }
 
-  // Walks back in growing windows; each window is computed once (dependency lines make them independent).
-  pageEnding(hiLine, keepRow, limit) {
-    let rows = [];
-    for (let hi = hiLine, step = FIRST_WINDOW; hi > 0 && rows.length < limit; step = Math.min(step * 2, MAX_WINDOW)) {
-      const lo = Math.max(0, hi - step);
-      rows = this.rows(lo, hi).filter(keepRow).concat(rows);
-      hi = lo;
-    }
-    return rows.slice(-limit);
-  }
-
-  latest(limit) { return this.pageEnding(this.index.count, () => true, limit); }
-
-  before(cursor, limit) {
-    return this.pageEnding(Math.min(orderKeyLine(cursor) + 1, this.index.count), (row) => row.orderKey < cursor, limit);
-  }
-
-  after(cursor) { return this.rows(orderKeyLine(cursor), this.index.count).filter((row) => row.orderKey > cursor); }
+  // Growing windows, each computed once (dependency lines make them independent).
+  page(range) { return readPage(this, range, FIRST_WINDOW, MAX_WINDOW); }
 }

@@ -68,6 +68,7 @@ import { ClientTurnOrder } from './client-turn-order.mjs';
 import { RealtimeSender } from './realtime-direct.mjs';
 import { DirectRpcBridge } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
+import { historyService } from './history-service.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
 import { handleToolDetails } from './tool-details.mjs';
@@ -753,9 +754,11 @@ function connect() {
       key: _config.apiKey,
       sendControl: message => send(JSON.stringify(message)),
       handlers: {
-        home: params => sessionIndex.home(params.revision),
+        home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
+        history: params => historyService.history(params),
+        threads: params => historyService.threads(params),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });
