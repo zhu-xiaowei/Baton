@@ -13,6 +13,7 @@ import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 import { expandedHome, loadHomeV2 } from './v2/home.js';
 import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
+import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -98,6 +99,11 @@ async function api(path, params, opts) {
   if (!(opts && (opts.key || opts.server))) {
     if (path === '/api/bridge/active-sessions') return (await (params?.allProjects ? expandedHome() : loadHomeV2())).active;
     if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
+    if (path === '/api/bridge/session-threads') return requestBridge(params.device, 'threads', { sessionId: params.session });
+    if (path === '/api/bridge/messages') {
+      const target = { device: params.device, sessionId: params.session };
+      return params.before ? loadOlderHistory({ ...target, before: params.before }) : loadLatestHistory({ ...target, onSlow: opts?.onSlow });
+    }
     if (BRIDGE_METHODS[path]) {
       const { device, ...rest } = params || {};
       return requestBridge(device, BRIDGE_METHODS[path], rest);

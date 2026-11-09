@@ -171,20 +171,32 @@ test('a REST echo for a later in-flight send is not duplicated or moved ahead of
   for (const item of pending) clearTimeout(item.transportTimer);
 });
 
-test('initial skeleton hands off to buffered WS messages when REST fails or needs sync', async () => {
-  for (const fail of [true, false]) {
-    setup();
-    h.document.querySelector('.messages').classList.add('skeleton-messages');
-    const request = deferred();
-    h.setApiHandler(() => request.promise);
-    const loading = h.window.loadLatestMessages(sessionId);
-    h.hooks.handleWsMessage({ action: 'messages', sessionId, messages: [message('buffered', 'visible WS result')] });
-    if (fail) request.reject(new Error('offline'));
-    else request.resolve({ messages: [], needSync: true });
-    await loading;
-    assert.equal(h.document.querySelector('.skeleton-messages'), null);
-    assert.match(h.document.querySelector('.messages').textContent, /visible WS result/);
-  }
+test('the initial skeleton hands off to buffered WS messages after an empty history', async () => {
+  setup();
+  h.document.querySelector('.messages').classList.add('skeleton-messages');
+  const request = deferred();
+  h.setApiHandler(() => request.promise);
+  const loading = h.window.loadLatestMessages(sessionId);
+  h.hooks.handleWsMessage({ action: 'messages', sessionId, messages: [message('buffered', 'visible WS result')] });
+  request.resolve({ messages: [] });
+  await loading;
+  assert.equal(h.document.querySelector('.skeleton-messages'), null);
+  assert.match(h.document.querySelector('.messages').textContent, /visible WS result/);
+});
+
+test('a failed first load replaces the skeleton with the offline state, not buffered WS messages', async () => {
+  setup();
+  h.document.querySelector('.messages').classList.add('skeleton-messages');
+  const request = deferred();
+  h.setApiHandler(() => request.promise);
+  const loading = h.window.loadLatestMessages(sessionId);
+  h.hooks.handleWsMessage({ action: 'messages', sessionId, messages: [message('buffered', 'visible WS result')] });
+  request.reject(new Error('offline'));
+  const result = await loading;
+  assert.equal(result.handled, true);
+  assert.equal(h.document.querySelector('.skeleton-messages'), null);
+  assert.match(h.document.getElementById('content').textContent, /is offline/);
+  assert.doesNotMatch(h.document.getElementById('content').textContent, /visible WS result/);
 });
 
 test.after(() => { h.window.disconnectWs(); h.window.close(); });

@@ -36,7 +36,7 @@ test('initial and repeated history loads both request the latest 200 messages', 
   }]);
 });
 
-test('REST failure still commits complete watcher history and releases the barrier', async () => {
+test('a failed history load drops buffered events and keeps dropping them until a load succeeds', async () => {
   const sessionId = 'history-rest-failure';
   resetSession(h, { sessionId });
   const request = deferred();
@@ -58,10 +58,9 @@ test('REST failure still commits complete watcher history and releases the barri
 
   const result = await loading;
   assert.equal(result.ok, false);
-  assert.deepEqual(
-    h.state.wsAllMessages.map((message) => message.uuid),
-    ['buffered'],
-  );
+  // They would follow a gap: the next successful load brings their rows from the transcript.
+  assert.deepEqual(h.state.wsAllMessages, []);
+  assert.equal(h.state.wsHistoryPhase, 'offline');
 
   h.hooks.handleWsMessage({
     action: 'messages',
@@ -73,10 +72,7 @@ test('REST failure still commits complete watcher history and releases the barri
       timestamp: '2026-08-27T00:00:01.000Z',
     }],
   });
-  assert.deepEqual(
-    h.state.wsAllMessages.map((message) => message.uuid),
-    ['buffered', 'after'],
-  );
+  assert.deepEqual(h.state.wsAllMessages, []);
 });
 
 test('identical overlapping history requests share one active barrier', async () => {

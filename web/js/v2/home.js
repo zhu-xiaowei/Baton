@@ -77,10 +77,11 @@ async function load(publish) {
     });
   };
   // Offline devices already say so on their row; only an online device that stayed silent is news.
+  // An open Session reports its own timeout.
   const reportSilent = () => {
     const silent = finished.list.filter((device) => device.online && timedOut.has(device.deviceName))
       .map((device) => device.deviceDisplayName || device.deviceName);
-    if (silent.length) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
+    if (silent.length && !state.appState.session) showToast((silent.length > 2 ? silent.length + ' devices' : silent.join(', ')) + ' not responding');
   };
   const answerFor = (name) => (fresh.get(name) || cache[name])?.answer;
   const merge = (list, reachable) => ({ active: mergeActive(list, answerFor, reachable), devices: mergeDevices(list, answerFor, reachable) });

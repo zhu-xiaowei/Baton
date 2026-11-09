@@ -67,6 +67,7 @@ function applyRpc(next, { persist = true } = {}) {
   // The region is part of the execute-api host: <api>.execute-api.<region>.amazonaws.com.
   rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials };
   const seen = new Set();
+  const cameOnline = [];
   for (const bridge of next.bridges || []) {
     seen.add(bridge.device);
     const version = bridge.dataId + '|' + (next.credentials?.sessionToken || '').slice(-16);
@@ -74,6 +75,7 @@ function applyRpc(next, { persist = true } = {}) {
     if (previous?.version !== version || !previous.online) {
       routes.set(bridge.device, { online: true, dataId: bridge.dataId, version });
     }
+    if (!previous?.online) cameOnline.push(bridge.device);
   }
   for (const [device, route] of routes) {
     if (!seen.has(device)) routes.set(device, { ...route, online: false, version: route.version + '|off' });
@@ -82,6 +84,13 @@ function applyRpc(next, { persist = true } = {}) {
     try { localStorage.setItem(storageKey(), JSON.stringify({ rpc: next })); } catch {}
   }
   reconcile();
+  if (persist) for (const device of cameOnline) for (const listener of onlineListeners) listener(device);
+}
+
+// Pages learn when a device's Bridge joins (or rejoins) and can be asked again.
+const onlineListeners = new Set();
+export function onDeviceOnline(listener) {
+  onlineListeners.add(listener);
 }
 
 // Called with the /devices response; every route difference is resent by reconcile().
