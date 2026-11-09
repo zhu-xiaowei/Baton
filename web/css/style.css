@@ -73,6 +73,12 @@ body {
 .breadcrumb-nav a:active { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text-primary); }
 .breadcrumb-sep { color: var(--text-secondary); font-size: 13px; padding: 0 2px; vertical-align: middle; }
 .breadcrumb-title { font-size: 13px; color: var(--text-normal); line-height: 1.8; vertical-align: middle; }
+.crumb-offline-dot { display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--text-muted); vertical-align: 1px; }
+/* A Session never loaded on this device while its computer is offline or not responding. */
+.offline-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 60%;
+  padding: 0 32px 64px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.offline-empty-title { color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+.offline-empty-title .crumb-offline-dot { margin: 0 6px 0 0; vertical-align: 2px; }
 .breadcrumb.session-detail .breadcrumb-nav {
   position: relative;
   max-height: 26px;

@@ -458,7 +458,12 @@ function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
-    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
+    // On a Session, a grey dot marks its computer as offline (the page then shows only cached history).
+    var offline = state.appState.session && (state.wsHistoryPhase === 'offline' || state.deviceOnlineMap[state.appState.device] === false);
+    var deviceLabel = esc(displayDeviceName(state.appState.device));
+    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;"'
+      + (offline ? ' title="' + deviceLabel + ' is offline"' : '') + '>' + deviceLabel
+      + (offline ? '<i class="crumb-offline-dot" aria-label="offline"></i>' : '') + '</a>');
   }
   if (state.appState.project) {
     parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
@@ -1990,6 +1995,8 @@ async function loadMessages(sessionId, preview, options) {
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
+  state.wsTitleRows = [];
+  state.wsHistoryPhase = '';
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
@@ -2002,7 +2009,7 @@ async function loadMessages(sessionId, preview, options) {
     var t0 = performance.now();
     var result = await loadLatestMessages(sessionId);
     if (_navVersion !== myNav) return;
-    if (result.ok === false && state.wsAllMessages.length === 0
+    if (result.ok === false && !result.handled && state.wsAllMessages.length === 0
       && !content.querySelector('.messages .assistant-turn, .messages .msg-user')) {
       throw result.error || new Error('Unable to load messages');
     }
@@ -2338,6 +2345,7 @@ document.addEventListener('click', function (e) {
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
 // All shared state lives in state.js, not on window.
 Object.assign(window, {
+  displayDeviceName,
   osName, timeAgo, formatSize, esc,
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   openSessionRename, applySessionTitle,

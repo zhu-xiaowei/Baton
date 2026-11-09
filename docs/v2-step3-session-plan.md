@@ -139,6 +139,10 @@ of a 184 MB rollout peaks at ~800 MB RSS; the readers decode only page lines.
   (execution metadata of background commands, as v1 does). The simulation found the two rules
   above: an empty cursor must fall back to the latest page, and a Codex turn in progress must be
   refetched including its prompt (without it: 739 differences). Claude needs no turn refetch.
+- The App modules themselves (`history.js` + `history-cache.js`, memory store, an App restart between
+  visits) against the Bridge pages on the same growing copies: 845 + 15 150 checks, 0 differences (16
+  Codex rows keep their first-seen version). IndexedDB round trip in Chromium (ranges, cursor, trim,
+  gap close, reset, scopes) and eviction past 200 MB (oldest opened first) checked separately.
 
 ## A4. App: cache, request flow, sync state
 
@@ -155,9 +159,9 @@ handling goes; `loadOlderMessages` passes `device`.
   ranges (at most two, merged when the gap closes), confirmed cursor, newest cursor, status at save,
   bytes, last opened. Reading a 200-row chunk takes 0.4–0.8 ms on desktop Chromium (a reverse cursor
   over single rows 4–8 ms); writing 2000 rows as chunks 6 ms versus 52 ms as rows.
-- Stored: rows with an `orderKey`, from history responses (confirmed) and from real-time authoritative
-  messages (unconfirmed). Not stored: stream previews, `noCache` / `live:*` rows, tool details (those
-  stay in the existing in-memory cache).
+- Stored: the rows of history replies. Real-time rows are not written in A: re-entry asks from the
+  stable cursor anyway, so they would only help an offline view; B stores pushed rows once real time
+  moves to `app_data`. Not stored either: tool details (the existing in-memory cache keeps them).
 - Budget 200 MB in total, no per-Session cap; the least recently opened Session is evicted first
   (~0.46 KB per row: 100 Sessions × 2000 rows ≈ 92 MB).
 - A different `epoch` drops that Session's cache.
@@ -177,8 +181,10 @@ handling goes; `loadOlderMessages` passes `device`.
 
 ### Sync state
 
-Each open Session is `syncing`, `synced` or `stale`. Real-time events render only when `synced`;
-otherwise they stay in the `FetchBarrier` buffer. This is the contract B builds on.
+Each open Session's `state.wsHistoryPhase` is `''` (in sync or loading), `slow` (past 6 s), `stale`
+(the last load failed) or `offline`. Real-time content events wait in the `FetchBarrier` buffer while
+a load runs and are dropped while `stale` / `offline`; the next successful load brings their rows.
+This is the contract B builds on. A running Session with no rows yet keeps the skeleton.
 
 | Time | With cache | Without cache |
 |---|---|---|
@@ -197,7 +203,10 @@ timeout on an online device shows only the retry icon.
 - Device known offline (`/devices` or the transport's `offline`): no wait. A grey dot sits right of
   the device name in the breadcrumb (only while offline / not responding), the cache shows as is; a
   Session never loaded here shows a centred "test-ec2 is offline" empty state. No dialogs.
-- Today a failed fetch replays buffered events onto an empty history; v2 no longer does that.
+- Today a failed fetch replays buffered events onto an empty history; v2 no longer does that. A failed
+  load with a cache returns the cached page (`failed`), which is committed so paging still works.
+- Call sites keep `api('/api/bridge/messages', …)`; `api.js` sends it to `web/js/v2/history.js`
+  (`loadLatestHistory` / `loadOlderHistory`) over `history-cache.js`, and `/session-threads` to `threads`.
 
 ### Transport (all v2 requests: home, lists, history)
 

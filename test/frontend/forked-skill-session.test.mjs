@@ -10,7 +10,7 @@ test('a running forked-skill session with no history leaves the loading skeleton
   harness.state.ws = { readyState: WebSocket.OPEN, send() {}, close() {} };
   harness.state.deviceOnlineMap = { D: true };
   globalThis.skeletonMessages = () => '<div class="messages skeleton-messages"></div>';
-  harness.setApiHandler(() => ({ messages: [], hasMore: false, needSync: true, status: 'running' }));
+  harness.setApiHandler(() => ({ messages: [], hasMore: false, status: 'running' }));
 
   await harness.window.loadLatestMessages('skill-session');
   assert.ok(harness.document.querySelector('.skeleton-messages'));
@@ -20,9 +20,10 @@ test('a running forked-skill session with no history leaves the loading skeleton
   globalThis.updateSpinner = harness.window.updateSpinner = () => {
     spinnerChecks.push(!harness.document.querySelector('.skeleton-messages'));
   };
-  harness.hooks.handleWsMessage({
-    action: 'sync_complete', sessionId: 'skill-session', status: 'ok', count: 0,
-  });
+  // The first rows arrive in real time once the Skill writes them.
+  harness.setApiHandler(() => ({ messages: [{ uuid: 'skill-reply', type: 'assistant',
+    content: [{ type: 'text', text: 'done' }], timestamp: '2026-11-09T00:00:00.000Z' }], hasMore: false, status: 'running' }));
+  await harness.window.loadLatestMessages('skill-session');
   assert.equal(harness.document.querySelector('.skeleton-messages'), null);
   assert.ok(harness.document.querySelector('.messages'));
   assert.equal(harness.state.wsRunning, true);

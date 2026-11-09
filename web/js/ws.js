@@ -38,6 +38,7 @@ import {
   TurnEventQueue,
 } from './streaming.js';
 import { handleWsRpcMessage } from './ws-rpc.js';
+import { showToast } from './components/toast.js';
 import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
 import { ExecutionEventQueue } from './execution-events.js';
 
@@ -320,8 +321,10 @@ function isInheritedAgentContext(message, messages) {
 
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
-  for (var i = 0; i < state.wsAllMessages.length; i++) {
-    var m = state.wsAllMessages[i];
+  // History replies carry the title rows apart from the page (state.wsTitleRows).
+  var titled = (state.wsTitleRows || []).concat(state.wsAllMessages);
+  for (var i = 0; i < titled.length; i++) {
+    var m = titled[i];
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
@@ -603,7 +606,13 @@ function resendUnreceiptedSends(alreadySent) {
   }
 }
 
+// Until the history is in sync again, content events would land after a gap; the next load brings them.
+var STALE_DROPPED = new Set(['messages', 'stream_turn_start', 'stream_block_start', 'stream_delta', 'stream_tool_input',
+  'stream_block_stop', 'stream_end']);
+
 function handleWsMessage(msg) {
+    var unsynced = state.wsHistoryPhase === 'stale' || state.wsHistoryPhase === 'offline';
+    if (unsynced && msg?.sessionId === state.wsSessionId && STALE_DROPPED.has(msg.action)) return;
     routeTurnEvent(msg);
 }
 
@@ -2058,13 +2067,12 @@ function displayHistorySnapshot(data, pendingNodes) {
     container.append(...rows);
   }
   if (!state.wsAllMessages.length && !pendingNodes.length) {
-    if (data.needSync && state.deviceOnlineMap[state.appState.device] !== false
-      && typeof skeletonMessages === 'function') {
+    // A running Session can have no rows yet (a forked Skill writes none until it finishes).
+    if (data.status === 'running' && typeof skeletonMessages === 'function') {
       content.innerHTML = skeletonMessages();
       return true;
     }
-    container.innerHTML = '<div class="empty">'
-      + (data.needSync ? 'Bridge offline — no cached messages' : 'No messages') + '</div>';
+    container.innerHTML = '<div class="empty">No messages</div>';
   }
   if (permissionPrompt) container.appendChild(permissionPrompt);
   content.replaceChildren(container);
@@ -2161,9 +2169,7 @@ async function loadLatestMessages(sessionId, options = {}) {
           state.wsHasMore = !!data.hasMore;
           state.wsOldestTimestamp = data.oldestTimestamp || '';
         }
-        if (changed) displayHistorySnapshot({
-          ...data, needSync: data.needSync && !barrier.events.length,
-        }, pendingNodes);
+        if (changed) displayHistorySnapshot(data, pendingNodes);
         state.wsRunning = resolveActivityState({
           restStatus: data.status || '',
           messages: state.wsAllMessages,
@@ -2176,8 +2182,14 @@ async function loadLatestMessages(sessionId, options = {}) {
       _historyFetchBarriers.close(barrier);
     }
     if (droppedLive) scheduleTurnEndRecovery(sessionId);
-    if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
-      displayHistorySnapshot({}, []);
+    // A failed load still commits the cached page it returned (data.failed).
+    var failure = restError || (data.failed ? new Error(data.failed) : null);
+    if (failure) {
+      barrier.events.length = 0; // they would follow a gap; the next load brings their rows
+      showHistoryFailure(failure);
+    } else {
+      state.wsTitleRows = data.titles || state.wsTitleRows;
+      setHistoryPhase('');
     }
     _suppressTurnEndRecovery = !barrier.preserveLive && !restError && data.status === 'completed';
     try {
@@ -2190,8 +2202,9 @@ async function loadLatestMessages(sessionId, options = {}) {
     updateSendBtn();
     if (typeof updateSpinner === 'function') updateSpinner();
     return {
-      ok: !restError,
-      error: restError,
+      ok: !failure,
+      error: failure,
+      handled: !!failure,
       status: data.status || '',
     };
   })().catch(function (error) {
@@ -2214,10 +2227,57 @@ function fetchLatestMessages(sessionId) {
     }, HISTORY_FETCH_TIMEOUT_MS);
   });
   return Promise.race([
-    api('/api/bridge/messages', params, { signal: controller.signal }),
+    api('/api/bridge/messages', params, {
+      signal: controller.signal,
+      onSlow: function (page) { showCachedHistory(sessionId, page); },
+    }),
     timeout,
   ]).finally(function () { clearTimeout(timer); });
 }
+
+// '' (in sync or loading normally), 'slow' (past 6 s), 'stale' (the last load failed), 'offline'.
+function setHistoryPhase(phase) {
+  if (state.wsHistoryPhase === phase) return;
+  state.wsHistoryPhase = phase;
+  updateWsStatusIndicator();
+  if (typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+}
+
+// At 6 s the cache is shown read-only; real-time events keep waiting in the fetch barrier.
+function showCachedHistory(sessionId, page) {
+  if (state.wsSessionId !== sessionId) return;
+  setHistoryPhase('slow');
+  if (!page) return;
+  var content = document.getElementById('content');
+  if (!content || !content.querySelector('.skeleton-messages')) return;
+  var container = document.createElement('div');
+  container.className = 'messages runtime-' + state.appState.runtime;
+  container.innerHTML = renderMessages(page.messages, state.appState.runtime);
+  content.replaceChildren(container);
+  markTurnAdjacency(container);
+  loadImages(container);
+  clampOverflow(container);
+  followBottomAfterLayout();
+}
+
+function showHistoryFailure(error) {
+  var offline = error?.message === 'offline';
+  setHistoryPhase(offline ? 'offline' : 'stale');
+  if (!offline) showToast('Request timeout');
+  var content = document.getElementById('content');
+  if (!content || content.querySelector('.messages .assistant-turn, .messages .msg-user')) return;
+  var name = esc(window.displayDeviceName ? window.displayDeviceName(state.appState.device) : state.appState.device);
+  content.innerHTML = '<div class="offline-empty"><div class="offline-empty-title">'
+    + (offline ? '<i class="crumb-offline-dot"></i>' + name + ' is offline' : name + ' is not responding') + '</div>'
+    + (offline ? '<div>This session hasn&#39;t been loaded on this device yet.<br>It will load when ' + name + ' is back online.</div>' : '')
+    + '</div>';
+}
+
+window.retrySessionHistory = function () {
+  if (!state.wsSessionId) return;
+  setHistoryPhase('slow');
+  loadLatestMessages(state.wsSessionId, { fresh: true, preservePending: true }).catch(function () {});
+};
 
 /**
  * Load older messages (triggered by scroll-to-top).
@@ -2233,6 +2293,7 @@ async function loadOlderMessages(sessionId) {
       session: sessionId,
       before: state.wsOldestTimestamp,
       limit: MESSAGE_PAGE_SIZE,
+      device: state.appState.device,
     });
     if (data.historyReset) {
       await loadLatestMessages(sessionId, { preservePending: true });

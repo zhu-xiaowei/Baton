@@ -45,6 +45,8 @@ export const state = {
   wsRenderedCount: 0,
   wsHasMore: false,           // more older messages on server
   wsOldestTimestamp: '',      // cursor for older-load
+  wsTitleRows: [],            // title rows of the last history reply
+  wsHistoryPhase: '',         // '' | 'slow' (past 6 s) | 'stale' (last load failed) | 'offline'
   wsLoadingOlder: false,
   _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching

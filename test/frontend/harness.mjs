@@ -211,6 +211,10 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.wsRunning = mode === 'new';
   state._syncedOnce = null;
   state._titleTier = 0;
+  state.wsHistoryPhase = '';
+  state.wsTitleRows = [];
+  // Opening a Session renders its container again (a failed load may have replaced it).
+  if (!document.querySelector('.messages')) document.getElementById('content').innerHTML = '<div class="messages"></div>';
   state.pendingSentMessages = mode === 'new' && firstText
     ? [{ id: 'sent-1', seq: 0, text: firstText, fullText: firstText, images: [], sentAt: Date.now() }] : [];
   document.querySelector('.messages').innerHTML = mode === 'new' && firstText
