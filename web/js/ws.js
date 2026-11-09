@@ -39,6 +39,7 @@ import {
 } from './streaming.js';
 import { handleWsRpcMessage } from './ws-rpc.js';
 import { showToast } from './components/toast.js';
+import { onDeviceOnline } from './v2/direct-transport.js';
 import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
 import { ExecutionEventQueue } from './execution-events.js';
 
@@ -2265,7 +2266,8 @@ function showHistoryFailure(error) {
   setHistoryPhase(offline ? 'offline' : 'stale');
   if (!offline) showToast('Request timeout');
   var content = document.getElementById('content');
-  if (!content || content.querySelector('.messages .assistant-turn, .messages .msg-user')) return;
+  // The skeleton's placeholders are not history.
+  if (!content || content.querySelector('.messages:not(.skeleton-messages) :is(.assistant-turn, .msg-user)')) return;
   var name = esc(window.displayDeviceName ? window.displayDeviceName(state.appState.device) : state.appState.device);
   content.innerHTML = '<div class="offline-empty"><div class="offline-empty-title">'
     + (offline ? '<i class="crumb-offline-dot"></i>' + name + ' is offline' : name + ' is not responding') + '</div>'
@@ -2278,6 +2280,14 @@ window.retrySessionHistory = function () {
   setHistoryPhase('slow');
   loadLatestMessages(state.wsSessionId, { fresh: true, preservePending: true }).catch(function () {});
 };
+
+// The open Session reloads by itself when its offline device comes back.
+onDeviceOnline(function (device) {
+  if (state.deviceOnlineMap[device] === false) state.deviceOnlineMap[device] = true;
+  if (device !== state.appState.device || !state.wsSessionId) return;
+  if (state.wsHistoryPhase === 'offline') window.retrySessionHistory();
+  else if (typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+});
 
 /**
  * Load older messages (triggered by scroll-to-top).
