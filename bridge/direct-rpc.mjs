@@ -6,6 +6,9 @@ import { createHeaderSigner } from './terminal-direct-protocol.mjs';
 import { isRpcRequest, rpcErrorFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
 
 const MAX_CONCURRENT = 4;
+// A resend reuses its requestId: it gets the stored reply (or the reply still being computed).
+const REPLY_TTL_MS = 30_000;
+const MAX_REPLIES = 256;
 const PING_MS = 5 * 60_000;
 const PONG_TIMEOUT_MS = 10_000;
 
@@ -21,6 +24,7 @@ export class DirectRpcBridge {
     this.running = 0;
     this.queue = [];
     this.signers = new Map();
+    this.replies = new Map(); // requestId → { replyTo, frames, at }
     this.active = true;
   }
 
@@ -75,8 +79,26 @@ export class DirectRpcBridge {
     }
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
     if (!isRpcRequest(frame)) return;
+    const known = this.replies.get(frame.requestId);
+    if (known) {
+      known.replyTo = frame.replyTo; // a reconnected App has a new connection id
+      const missing = Array.isArray(frame.missing) ? frame.missing : null;
+      if (known.frames) void this.deliver(known.frames.filter((out) => !missing || missing.includes(out.chunk.index)), frame.replyTo);
+      return;
+    }
+    this.remember(frame);
     if (this.running >= MAX_CONCURRENT) this.queue.push(frame);
     else void this.serve(frame);
+  }
+
+  remember(frame) {
+    const now = Date.now();
+    for (const [id, reply] of this.replies) { // oldest first; replies still being computed stay
+      if (!reply.frames) continue;
+      if (now - reply.at < REPLY_TTL_MS && this.replies.size < MAX_REPLIES) break;
+      this.replies.delete(id);
+    }
+    this.replies.set(frame.requestId, { replyTo: frame.replyTo, frames: null, at: now });
   }
 
   ping(socket) {
@@ -99,8 +121,17 @@ export class DirectRpcBridge {
     } catch (error) {
       frames = [rpcErrorFrame(frame.requestId, error.message)];
     }
+    const reply = this.replies.get(frame.requestId);
+    if (reply) Object.assign(reply, { frames, at: Date.now() });
+    await this.deliver(frames, reply?.replyTo || frame.replyTo);
+    this.running--;
+    const next = this.queue.shift();
+    if (next) void this.serve(next);
+  }
+
+  async deliver(frames, replyTo) {
     try {
-      const sign = this.signer(frame.replyTo);
+      const sign = this.signer(replyTo);
       for (const out of frames) {
         const signed = await sign(JSON.stringify(out));
         if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(signed);
@@ -108,9 +139,6 @@ export class DirectRpcBridge {
     } catch (error) {
       console.error(`[direct-rpc] reply failed: ${error.message}`);
     }
-    this.running--;
-    const next = this.queue.shift();
-    if (next) void this.serve(next);
   }
 
   signer(target) {

@@ -1,12 +1,16 @@
 // v2 App ⇄ Bridge direct channel over one `app_data` socket. Callers only use
-// request(device, method, params); credentials, whoami, routing, resend, retry and timeout
-// are handled here by a single reconcile() pass that runs on every event.
+// request(device, method, params, { onSlow }); credentials, whoami, routing, resend, retry and
+// timeout are handled here by a single reconcile() pass that runs on every event.
+// One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
 import { createHeaderSigner } from '../../../bridge/terminal-direct-protocol.mjs';
 import { RpcAssembler, decodeRpcPayload, rpcRequest } from '../../../bridge/direct-rpc-protocol.mjs';
 
-const RETRY_MS = 2000;
-const DEADLINE_MS = 6000;
+// At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
+// chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
+const SLOW_MS = 6000;
+const DEADLINE_MS = 12000;
+const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
 const PROBE_MS = 1000;
 // After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
@@ -28,8 +32,7 @@ let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
 let probeTimer = null;
-const pending = new Map();    // key → request state
-const byRequestId = new Map(); // wire requestId → key
+const pending = new Map();    // requestId → request state
 const assembler = new RpcAssembler();
 let routesKnown = false;      // true once /devices answered since the socket last dropped
 let devicesInflight = null;
@@ -168,17 +171,15 @@ function receive(ws, text) {
     applyRpc(frame.rpc);
     return;
   }
+  if (!pending.has(frame.requestId)) return;
   const part = assembler.add(frame);
   if (!part?.done) return;
-  const key = byRequestId.get(part.requestId);
-  const request = key && pending.get(key);
-  if (!request) return;
-  finish(key, request, part.error ? { error: part.error } : { payload: part.payload });
+  finish(part.requestId, pending.get(part.requestId), part.error ? { error: part.error } : { payload: part.payload });
 }
 
 async function finish(key, request, outcome) {
   pending.delete(key);
-  for (const id of request.ids) { byRequestId.delete(id); assembler.forget(id); }
+  assembler.forget(key);
   timing('rtt:' + request.device, performance.now() - request.sentAt);
   if (outcome.error) return request.reject(new Error(outcome.error));
   if (!outcome.payload) return request.reject(new Error(outcome.reason || 'failed'));
@@ -186,14 +187,11 @@ async function finish(key, request, outcome) {
   catch (error) { request.reject(error); }
 }
 
-async function send(key, request, route) {
-  const requestId = uuid();
-  request.ids.add(requestId);
-  byRequestId.set(requestId, key);
+async function send(key, request, route, missing) {
   request.attemptVersion = route.version;
   request.sentAt = performance.now();
   request.firstSentAt ??= request.sentAt;
-  const body = rpcRequest({ requestId, method: request.method, params: request.params, replyTo: connectionId });
+  const body = rpcRequest({ requestId: key, method: request.method, params: request.params, replyTo: connectionId, missing });
   if (!CAN_INFLATE) body.accept = [];
   try {
     const sign = createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
@@ -209,13 +207,19 @@ function reconcile() {
   for (const [key, request] of pending) {
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
-    if (request.firstSentAt && now - request.firstSentAt > DEADLINE_MS) { finish(key, request, { reason: 'timeout' }); continue; }
-    if (now - request.createdAt > DEADLINE_MS * 2) { finish(key, request, { reason: 'timeout' }); continue; }
+    if (now - request.createdAt > DEADLINE_MS) { finish(key, request, { reason: 'timeout' }); continue; }
+    if (!request.slow && now - request.createdAt > SLOW_MS) {
+      request.slow = true;
+      try { request.onSlow?.(); } catch {}
+    }
     if (!route?.online || !connectionId || !rpc?.credentials || socket?.readyState !== WebSocket.OPEN) continue;
-    const stale = request.attemptVersion !== route.version;
-    const retry = !stale && !request.retried && now - request.sentAt > RETRY_MS;
-    if (retry) request.retried = true;
-    if (stale || retry) send(key, request, route);
+    // A new route or connection needs the whole reply again; a stall only what is missing.
+    if (request.attemptVersion !== route.version) send(key, request, route);
+    else if (!request.retried && now - request.firstSentAt
+      > (request.firstSentAt - request.createdAt > SLOW_MS - LATE_RESEND_MS ? LATE_RESEND_MS : SLOW_MS)) {
+      request.retried = true;
+      send(key, request, route, assembler.missing(key) || undefined);
+    }
   }
   if (pending.size && !tickTimer) {
     tickTimer = setInterval(() => { if (!pending.size) { clearInterval(tickTimer); tickTimer = null; } reconcile(); }, 250);
@@ -235,15 +239,15 @@ export function devices() {
   return devicesInflight;
 }
 
-export function request(device, method, params = {}) {
+export function request(device, method, params = {}, { onSlow } = {}) {
   restore();
   connect();
   // A page opened without the home (reload, link) still learns current routes and credentials.
   if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
-    pending.set(key, { device, method, params, resolve, reject, ids: new Set(), createdAt: performance.now(),
-      attemptVersion: null, retried: false, sentAt: 0, firstSentAt: null });
+    pending.set(key, { device, method, params, resolve, reject, onSlow, createdAt: performance.now(),
+      attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });
 }
