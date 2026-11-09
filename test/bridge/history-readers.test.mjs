@@ -195,3 +195,68 @@ test('appends, an unterminated last line, and a replaced file keep the index con
     assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), (await full(file)).map((row) => JSON.stringify(row)));
   }
 });
+
+test('an image is compressed and uploaded once, however often its page is read', async () => {
+  const { createRequire } = await import('node:module');
+  const sharp = createRequire(new URL('../../bridge/package.json', import.meta.url))('sharp');
+  const png = (color) => sharp({ create: { width: 64, height: 64, channels: 3, background: color } }).png().toBuffer();
+  const image = async (color) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: (await png(color)).toString('base64') } });
+  const file = path.join(tmp, 'claude-images.jsonl');
+  const rows = [];
+  for (const [i, color] of ['red', 'blue', 'red'].entries()) {
+    rows.push({ type: 'user', uuid: `i${i}`, timestamp: '2026-11-01T00:00:00.000Z', message: { role: 'user', content: [await image(color), { type: 'text', text: `look ${i}` }] } });
+  }
+  fs.writeFileSync(file, json(rows).join('\n') + '\n');
+  (await import('../../bridge/http.mjs')).initHttp({ server: 'https://baton.test', apiKey: 'k' });
+  const realFetch = globalThis.fetch;
+  let uploads = 0;
+  let ok = false;
+  globalThis.fetch = async (url) => { if (String(url).endsWith('/upload-image')) uploads++; return { ok, text: async () => '' }; };
+  try {
+    const reader = new ClaudeHistoryReader(file);
+    reader.update();
+    await reader.latest(50);
+    assert.equal(uploads, 3, 'a failed upload is tried again');
+    ok = true;
+    for (let i = 0; i < 3; i++) await reader.latest(50);
+    assert.equal(uploads, 5, 'then each distinct image is uploaded once');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a file rewritten in place, shorter or longer, is indexed again', async () => {
+  for (const Reader of [ClaudeHistoryReader, CodexHistoryReader]) {
+    const make = Reader === ClaudeHistoryReader ? claudeTranscript : codexRollout;
+    const full = Reader === ClaudeHistoryReader ? fullClaude : fullCodex;
+    const file = path.join(tmp, `rewrite-${Reader.name}.jsonl`);
+    fs.writeFileSync(file, make(6).join('\n') + '\n');
+    const reader = new Reader(file, 'native-1');
+    reader.update();
+    const cursor = (await reader.latest(1))[0].orderKey;
+    for (const turns of [1, 9]) { // same inode: shorter, then longer
+      fs.writeFileSync(file, make(turns).map((line) => line.replace(/prompt (\d)/g, `prompt $1 v${turns}`)).join('\n') + '\n');
+      reader.update();
+      const want = (await full(file)).map((row) => JSON.stringify(row));
+      assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), want, `${Reader.name}: ${turns} turns`);
+      if (turns === 1) assert.ok(Array.isArray(await reader.before(cursor, 500)), 'a cursor past the end reads, not throws');
+    }
+  }
+});
+
+test('a file that shrinks between stat and read leaves the index to be rebuilt', async () => {
+  const file = path.join(tmp, 'race.jsonl');
+  fs.writeFileSync(file, claudeTranscript(3).join('\n') + '\n');
+  const reader = new ClaudeHistoryReader(file);
+  const realStat = fs.statSync;
+  fs.statSync = (target, ...rest) => {
+    const st = realStat(target, ...rest);
+    if (target === file) { fs.truncateSync(file, 150); fs.statSync = realStat; }
+    return st;
+  };
+  try { reader.update(); } finally { fs.statSync = realStat; }
+  assert.equal(reader.index.count, 0, 'nothing from the short read is kept');
+  fs.writeFileSync(file, claudeTranscript(3).join('\n') + '\n');
+  reader.update();
+  assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), (await fullClaude(file)).map((row) => JSON.stringify(row)));
+});

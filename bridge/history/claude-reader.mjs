@@ -66,7 +66,7 @@ export class ClaudeHistoryReader {
 
   latest(limit) { return this.pageEnding(this.index.count, limit); }
 
-  before(cursor, limit) { return this.pageEnding(orderKeyLine(cursor), limit); }
+  before(cursor, limit) { return this.pageEnding(Math.min(orderKeyLine(cursor), this.index.count), limit); }
 
   after(cursor) { return this.rows(orderKeyLine(cursor) + 1, this.index.count); }
 }
