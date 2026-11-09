@@ -16,6 +16,7 @@ import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
 import { sessionIndex } from './session-index.mjs';
+import { historyService } from './history/history-service.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
@@ -86,6 +87,7 @@ sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
 // Lists are answered from this index; it must not wait for the DDB sync below.
 sessionIndex.warm().catch((error) => console.error(`[session-index] warm failed: ${error.message}`));
+historyService.warm().catch((error) => console.error(`[history] warm failed: ${error.message}`));
 const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
 if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
 if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {

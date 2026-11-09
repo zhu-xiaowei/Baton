@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import { extractCodexMessages } from '../codex-extract.mjs';
 import { LineIndex, orderKeyLine } from './line-index.mjs';
+import { readPage } from './page.mjs';
 
 const HEAD = /^\{"timestamp":"[^"]*",(?:"ordinal":\d+,)?"type":"([^"]+)"(?:,"payload":\{"type":"([^"]+)")?/;
 const SKIP = new Set(['response_item/reasoning', 'event_msg/token_count', 'token_usage_record', 'world_state',
@@ -159,20 +160,12 @@ export class CodexHistoryReader {
       .filter((row) => { const line = orderKeyLine(row.orderKey); return line >= lo && line < hi; });
   }
 
-  // Walks back in growing windows; each window is computed once (dependency lines make them independent).
-  pageEnding(hiLine, keepRow, limit) {
-    let rows = [];
-    for (let hi = hiLine, step = FIRST_WINDOW; hi > 0 && rows.length < limit; step = Math.min(step * 2, MAX_WINDOW)) {
-      const lo = Math.max(0, hi - step);
-      rows = this.rows(lo, hi).filter(keepRow).concat(rows);
-      hi = lo;
-    }
-    return rows.slice(-limit);
-  }
+  // Growing windows, each computed once (dependency lines make them independent).
+  page(range) { return readPage(this, range, FIRST_WINDOW, MAX_WINDOW); }
 
-  latest(limit) { return this.pageEnding(this.index.count, () => true, limit); }
+  latest(limit) { return this.page({ limit }); }
 
-  before(cursor, limit) { return this.pageEnding(orderKeyLine(cursor) + 1, (row) => row.orderKey < cursor, limit); }
+  before(cursor, limit) { return this.page({ before: cursor, limit }); }
 
-  after(cursor) { return this.rows(orderKeyLine(cursor), this.index.count).filter((row) => row.orderKey > cursor); }
+  after(cursor) { return this.page({ after: cursor, limit: Infinity }); }
 }

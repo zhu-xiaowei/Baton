@@ -24,7 +24,8 @@ semantics stay as they are. DDB writes keep running during step 3 so v1 and v2 c
     newest page and fills the gap later with `before + after`.
   - `epoch` identifies the file (device + inode + birth time). A different epoch, or a file that got
     shorter, returns a fresh latest page and the App drops that Session's cache.
-  - The latest page also carries the current title rows (`ai-title`, `custom-title`, `last-prompt`).
+  - A page that reaches the end also carries `stableCursor` and, for Claude, `titles` (the latest
+    `ai-title` / `custom-title` / `last-prompt` rows), kept apart from `messages`.
 - `threads {sessionId}` from the session index replaces `/session-threads`.
 - `tool_details` serves every tool body and thinking text on expand (today only Edit).
 - Responses use the existing RPC framing: deflate above 1 KB, 20 000-character chunks, any-order
@@ -58,8 +59,9 @@ implements one reader; everything else is shared.
 
 - **Reader (per runtime)**: `update()` (index new bytes), `latest(limit)`, `before(cursor, limit)`,
   `after(cursor)`. Readers return rows in the current API shape; they never hold a whole transcript.
-- **History service (shared)**: Session → file via `sessionIndex`; reader LRU; page cache of
-  prepared rows; warm-up; visible-only slimming and encoding; worker thread; epoch and cursors.
+- **History service (shared)**: Session → file via `sessionIndex` (roots, Claude subagents, Codex
+  children); a worker holds up to 32 readers and serves one request at a time; warm-up;
+  visible-only slimming; epoch and cursors. No page cache: a page takes 2–20 ms.
 - **Line index (shared)**: start/end byte of every line, built with `Buffer.indexOf` in 8 MB chunks
   (no decoding), extended with the new bytes on each request. An unterminated last line is indexed
   provisionally and rescanned. Inode change or a shorter file rebuilds the index and changes the
@@ -93,10 +95,10 @@ implements one reader; everything else is shared.
 |---|---|
 | Start | In a worker, index and prepare the latest page for the 10 most recent Sessions of all runtimes ∪ every running / `needs_input` Session (cap 20) |
 | First request | Precomputed: encode only. Otherwise index, then latest page |
-| Page up | Read the page's lines (+ Codex dependencies); cache the prepared page |
+| Page up | Read the page's lines (+ Codex dependencies) |
 | Re-entry (`after`) | Index new bytes, read only rows after the cursor |
 | File change | Nothing until the next request (it indexes the new bytes) |
-| Memory | Indexes (≤ 0.7 MB for a 184 MB rollout) + cached pages (LRU) |
+| Memory | Indexes of at most 32 open transcripts (≤ 0.7 MB for a 184 MB rollout) |
 
 ### Measured (warm page cache, `test-ec2`, every local transcript; median / p90 / max in ms)
 
@@ -127,6 +129,10 @@ of a 184 MB rollout peaks at ~800 MB RSS; the readers decode only page lines.
   compaction summaries only stored by the v1 watcher (4).
 - Rejected after measurement: cutting long command outputs before `JSON.parse` (no gain, one
   difference).
+- Through the RPC service and its worker on this machine: 2882 root Sessions (300 519 rows) and
+  518 subagent / Codex child Sessions paged to the top equal their full extraction, slimmed; a call
+  takes 2.1 ms median, 20 ms p90, 235 ms max. `threads` for the 62 Session trees of the last 30
+  days equals the deployed `/session-threads` field by field.
 - App cache logic simulated on growing copies of every transcript (first open at 40 %, re-entry at
   42 %, 95 % and 100 %, then scroll to the top through cache and gap fills): Claude 845 and Codex
   15 150 checks against a fresh read, 0 differences; 54 Codex rows keep their first-seen version

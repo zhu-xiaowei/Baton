@@ -1,24 +1,38 @@
 // History pages of a Claude transcript, read through a line index. A line is one message (the App pairs
 // tool_use and tool_result), so a page reads only its own lines plus one line of lead-in.
 import { claudeMessageLine, extractForApp, nativeOrderKey } from '../extract.mjs';
-import { LineIndex, orderKeyLine } from './line-index.mjs';
+import { LineIndex } from './line-index.mjs';
+import { readPage } from './page.mjs';
 
 const TITLE_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'summary', 'attachment', 'system']);
 const OBJECT_TYPE = Buffer.from('{"type":"');
 const WINDOW = 64;
 
-// A line starting {"type":"X" has top-level type X (the first key), so other kinds are skipped undecoded.
-function skippable(buf, s, e) {
-  if (e - s < OBJECT_TYPE.length || buf.compare(OBJECT_TYPE, 0, OBJECT_TYPE.length, s, s + OBJECT_TYPE.length) !== 0) return false;
+// A line starting {"type":"X" has top-level type X (the first key); null when the head says nothing.
+function headType(buf, s, e) {
+  if (e - s < OBJECT_TYPE.length || buf.compare(OBJECT_TYPE, 0, OBJECT_TYPE.length, s, s + OBJECT_TYPE.length) !== 0) return null;
   const q = buf.indexOf(34, s + OBJECT_TYPE.length);
-  if (q === -1 || q > e) return false;
-  return !MESSAGE_TYPES.has(buf.latin1Slice(s + OBJECT_TYPE.length, q));
+  return q === -1 || q > e ? null : buf.latin1Slice(s + OBJECT_TYPE.length, q);
+}
+
+// Other kinds are skipped undecoded.
+function skippable(buf, s, e) {
+  const type = headType(buf, s, e);
+  return type !== null && !MESSAGE_TYPES.has(type);
 }
 
 export class ClaudeHistoryReader {
   constructor(file) {
-    this.index = new LineIndex(file);
+    this.titleLines = new Map(); // title type → its latest line
+    this.index = new LineIndex(file, {
+      onLine: (buf, s, e, line) => {
+        const type = headType(buf, s, e);
+        if (TITLE_TYPES.has(type)) this.titleLines.set(type, line);
+      },
+      onReset: () => this.titleLines.clear(),
+      onDrop: (line) => { for (const [type, at] of this.titleLines) if (at === line) this.titleLines.delete(type); },
+    });
   }
 
   update() { return this.index.update(); }
@@ -54,19 +68,24 @@ export class ClaudeHistoryReader {
     return out;
   }
 
-  async pageEnding(hiLine, limit) {
-    let rows = [];
-    for (let hi = hiLine; hi > 0 && rows.length < limit;) {
-      const lo = Math.max(0, hi - WINDOW);
-      rows = (await this.rows(lo, hi)).concat(rows);
-      hi = lo;
+  // The latest row of each title type.
+  async titles() {
+    const out = [];
+    for (const line of [...this.titleLines.values()].sort((a, b) => a - b)) {
+      let msg;
+      try { msg = JSON.parse(this.index.read(line, line + 1).toString('utf8')); } catch { continue; }
+      const row = await extractForApp(msg);
+      row.orderKey = nativeOrderKey(line);
+      out.push(row);
     }
-    return rows.slice(-limit);
+    return out;
   }
 
-  latest(limit) { return this.pageEnding(this.index.count, limit); }
+  page(range) { return readPage(this, range, WINDOW, WINDOW); }
 
-  before(cursor, limit) { return this.pageEnding(orderKeyLine(cursor), limit); }
+  latest(limit) { return this.page({ limit }); }
 
-  after(cursor) { return this.rows(orderKeyLine(cursor) + 1, this.index.count); }
+  before(cursor, limit) { return this.page({ before: cursor, limit }); }
+
+  after(cursor) { return this.page({ after: cursor, limit: Infinity }); }
 }
