@@ -28,6 +28,7 @@ const STALL_MS: number = 60000;
 const TOO_LARGE: string = 'File exceeds 512 MB';
 const FAILED: string = 'Download failed. Check your connection and available storage.';
 const STALLED: string = 'Download stalled. Keep Baton in the foreground and try again.';
+const CANCELLED: string = 'cancelled';
 
 // Keep only the last path segment, drop characters no file system accepts, and
 // bound the length so the save dialog always gets a usable name.
@@ -88,6 +89,9 @@ export class DownloadBridge {
   private busy: boolean = false;
   private task: request.agent.Task | null = null;
   private percent: number = -1;
+  private abort: (() => void) | null = null;
+  // A cancel can arrive before the task exists, while abort is still null.
+  private cancelRequested: boolean = false;
 
   download(argsJson: string): void {
     const args: DownloadArgs | null = parseArgs(argsJson);
@@ -115,6 +119,7 @@ export class DownloadBridge {
     }
     this.busy = true;
     this.percent = -1;
+    this.cancelRequested = false;
     this.run(context, id, `${args.url}`, name);
   }
 
@@ -155,7 +160,18 @@ export class DownloadBridge {
     this.writeGenerated(context, id, name, bytes);
   }
 
+  // Closing the preview stops the transfer. Once the save dialog is open it is the user's.
+  cancel(): void {
+    this.cancelRequested = this.busy;
+    const abort: (() => void) | null = this.abort;
+    this.abort = null;
+    if (abort !== null) {
+      abort();
+    }
+  }
+
   release(): void {
+    this.abort = null;
     this.stopTask();
     this.busy = false;
   }
@@ -181,10 +197,14 @@ export class DownloadBridge {
       };
       const task: request.agent.Task = await request.agent.create(context, config);
       this.task = task;
+      if (this.cancelRequested) {
+        throw new Error(CANCELLED);
+      }
       await new Promise<void>((resolve: () => void, reject: (error: Error) => void) => {
         // A foreground task that sat in the background is paused rather than
         // failed, and emits neither 'completed' nor 'failed' — without this
         // watchdog the frontend would wait on it forever.
+        this.abort = () => reject(new Error(CANCELLED));
         const arm = (): void => {
           if (stallTimer !== -1) {
             clearTimeout(stallTimer);
@@ -207,6 +227,7 @@ export class DownloadBridge {
         arm();
         task.start().catch((error: BusinessError) => reject(new Error(`${error.message}`)));
       });
+      this.abort = null;
       clearTimeout(stallTimer);
       stallTimer = -1;
       this.report(id, 100);
@@ -224,8 +245,13 @@ export class DownloadBridge {
       this.channel?.resolve(id, '{"status":"saved_as"}');
     } catch (error) {
       const message: string = `${(error as BusinessError).message}`;
-      this.fail(id, message.length > 0 ? message : FAILED);
+      if (message === CANCELLED) {
+        this.channel?.resolve(id, '{"status":"cancelled"}');
+      } else {
+        this.fail(id, message.length > 0 ? message : FAILED);
+      }
     } finally {
+      this.abort = null;
       if (stallTimer !== -1) {
         clearTimeout(stallTimer);
       }

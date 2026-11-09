@@ -9,7 +9,8 @@ import { harmonyCall } from '../../web/js/harmony.js';
 // (harmony/.../bridge/PreviewBridge.ets) through window.harmonyBridge under the
 // Tauri command and event names, keeping preview-transport.js platform-agnostic.
 const METHODS = ['scan', 'download', 'save', 'openExternal', 'previewStart', 'previewStop',
-  'previewReset', 'previewWrite', 'previewShutdownWrite', 'previewCredit', 'previewCloseSocket'];
+  'previewReset', 'previewWrite', 'previewShutdownWrite', 'previewCredit', 'previewCloseSocket',
+  'cancelDownload', 'appVersion', 'getTheme', 'setTheme'];
 
 function installBridge() {
   const calls = [];
@@ -141,7 +142,8 @@ test('every method the shell exposes exists on the ArkTS bridge', () => {
   const declared = facade.slice(facade.indexOf('METHODS'), facade.indexOf('];', facade.indexOf('METHODS')))
     .match(/'[a-zA-Z]+'/g).map(name => name.slice(1, -1));
   assert.deepEqual(declared, METHODS);
-  for (const name of declared) assert.match(facade, new RegExp(`\\n  ${name}\\(argsJson: string\\)`));
+  // Synchronous getters (appVersion, getTheme) take no argument.
+  for (const name of declared) assert.match(facade, new RegExp(`\\n  ${name}\\((_?argsJson: string)?\\)`));
 });
 
 test('the shell injects the facade declaratively and allows the loopback preview frame', () => {

@@ -1,9 +1,15 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
+import { Appearance, ThemeBridge } from '../bridge/ThemeBridge';
 
 export default class EntryAbility extends UIAbility {
+  private appearance: Appearance = new Appearance();
+
   onCreate(_want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    this.appearance = ThemeBridge.resolve(this.context);
+    ThemeBridge.applyColorMode(this.context, this.appearance.preference);
+
     // Remote DevTools (PC chrome://inspect over hdc). Must be set BEFORE the
     // ArkWeb kernel initializes, so it lives here rather than onControllerAttached
     // (where the kernel is already up and the switch no-ops). Disable for release.
@@ -37,21 +43,15 @@ export default class EntryAbility extends UIAbility {
         console.error(`loadContent failed: ${JSON.stringify(err)}`);
       }
     });
-    // Paint the status/navigation bars in the brand dark so they don't show as
-    // white strips above/below the dark web content; use light bar icons.
+    // Transparent system bars over a background in the saved theme, so no strip
+    // shows a different color than the web content.
     try {
       const win = windowStage.getMainWindowSync();
       // Edge-to-edge: let the web (expandSafeArea) draw under the gesture inset
       // so no white strip remains; the web pads itself via env(safe-area-inset-*).
       win.setWindowLayoutFullScreen(true);
-      win.setWindowSystemBarProperties({
-        statusBarColor: '#00000000',
-        statusBarContentColor: '#FFFFFF',
-        navigationBarColor: '#00000000',
-        navigationBarContentColor: '#FFFFFF'
-      });
-      // Dark base so any area not painted by the web is dark, never white.
-      win.setWindowBackgroundColor('#0D1117');
+      ThemeBridge.mainWindow = win;
+      ThemeBridge.paint(this.appearance.mode, this.appearance.canvas);
     } catch (e) {
       console.error(`window chrome setup failed: ${JSON.stringify(e)}`);
     }

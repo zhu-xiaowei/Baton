@@ -23,6 +23,14 @@
     {
       "name": "retry",
       "value": "Retry"
+    },
+    {
+      "name": "dialog_ok",
+      "value": "OK"
+    },
+    {
+      "name": "dialog_cancel",
+      "value": "Cancel"
     }
   ]
 }
