@@ -82,7 +82,8 @@ export class DirectRpcBridge {
     const known = this.replies.get(frame.requestId);
     if (known) {
       known.replyTo = frame.replyTo; // a reconnected App has a new connection id
-      if (known.frames) void this.deliver(known.frames.filter((out) => !frame.missing || frame.missing.includes(out.chunk.index)), frame.replyTo);
+      const missing = Array.isArray(frame.missing) ? frame.missing : null;
+      if (known.frames) void this.deliver(known.frames.filter((out) => !missing || missing.includes(out.chunk.index)), frame.replyTo);
       return;
     }
     this.remember(frame);
@@ -93,9 +94,9 @@ export class DirectRpcBridge {
   remember(frame) {
     const now = Date.now();
     for (const [id, reply] of this.replies) { // oldest first; replies still being computed stay
-      const expired = reply.frames && now - reply.at >= REPLY_TTL_MS;
-      if (!expired && this.replies.size < MAX_REPLIES) break;
-      if (reply.frames) this.replies.delete(id);
+      if (!reply.frames) continue;
+      if (now - reply.at < REPLY_TTL_MS && this.replies.size < MAX_REPLIES) break;
+      this.replies.delete(id);
     }
     this.replies.set(frame.requestId, { replyTo: frame.replyTo, frames: null, at: now });
   }

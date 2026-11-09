@@ -1,7 +1,7 @@
 // What a history page carries: the fields the App reads from /messages, cut to what a collapsed view
 // shows. Truncated tool bodies and thinking text come from tool_details on expand; results shorter
 // than the preview stay, because the tool header's state (error, exit code, cancel) reads them.
-import { toolPreview } from '../tool-preview.mjs';
+import { toolPreview } from './tool-preview.mjs';
 
 const FIELDS = ['uuid', 'type', 'content', 'timestamp', 'nativeId', 'orderKey', 'stopReason', 'toolUseResult'];
 const UNREAD_INPUTS = ['workdir', 'yield_time_ms', 'max_output_tokens', 'tty'];

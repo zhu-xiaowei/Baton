@@ -1,8 +1,8 @@
 // History pages of a Claude transcript, read through a line index. A line is one message (the App pairs
 // tool_use and tool_result), so a page reads only its own lines plus one line of lead-in.
-import { claudeMessageLine, extractForApp, nativeOrderKey } from '../extract.mjs';
-import { LineIndex } from './line-index.mjs';
-import { readPage } from './page.mjs';
+import { claudeMessageLine, extractForApp, nativeOrderKey } from './extract.mjs';
+import { LineIndex } from './history-line-index.mjs';
+import { readPage } from './history-page.mjs';
 
 const TITLE_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'summary', 'attachment', 'system']);
@@ -10,16 +10,11 @@ const OBJECT_TYPE = Buffer.from('{"type":"');
 const WINDOW = 64;
 
 // A line starting {"type":"X" has top-level type X (the first key); null when the head says nothing.
+// Lines of non-message kinds (titles included) are skipped undecoded.
 function headType(buf, s, e) {
   if (e - s < OBJECT_TYPE.length || buf.compare(OBJECT_TYPE, 0, OBJECT_TYPE.length, s, s + OBJECT_TYPE.length) !== 0) return null;
   const q = buf.indexOf(34, s + OBJECT_TYPE.length);
   return q === -1 || q > e ? null : buf.latin1Slice(s + OBJECT_TYPE.length, q);
-}
-
-// Other kinds are skipped undecoded.
-function skippable(buf, s, e) {
-  const type = headType(buf, s, e);
-  return type !== null && !MESSAGE_TYPES.has(type);
 }
 
 export class ClaudeHistoryReader {
@@ -54,7 +49,8 @@ export class ClaudeHistoryReader {
     for (let line = from; line < hi; line++) {
       const s = index.starts[line] - base;
       const e = index.ends[line] - base;
-      if (skippable(buf, s, e)) continue;
+      const type = headType(buf, s, e);
+      if (type !== null && !MESSAGE_TYPES.has(type)) continue;
       let msg;
       try { msg = JSON.parse(buf.utf8Slice(s, e)); } catch { continue; }
       if (TITLE_TYPES.has(msg?.type)) continue;
@@ -82,10 +78,4 @@ export class ClaudeHistoryReader {
   }
 
   page(range) { return readPage(this, range, WINDOW, WINDOW); }
-
-  latest(limit) { return this.page({ limit }); }
-
-  before(cursor, limit) { return this.page({ before: cursor, limit }); }
-
-  after(cursor) { return this.page({ after: cursor, limit: Infinity }); }
 }
