@@ -1,5 +1,5 @@
 // The newest `limit` rows in the open interval (after, before), walking back in line windows.
-import { orderKeyLine } from './line-index.mjs';
+import { orderKeyLine } from './history-line-index.mjs';
 
 export async function readPage(reader, { after, before, limit }, firstWindow, maxWindow) {
   const stop = after ? orderKeyLine(after) : 0;

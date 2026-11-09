@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { extractClaudeMessages } from '../../bridge/extract.mjs';
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
-import { ClaudeHistoryReader } from '../../bridge/history/claude-reader.mjs';
-import { CodexHistoryReader } from '../../bridge/history/codex-reader.mjs';
+import { ClaudeHistoryReader } from '../../bridge/history-claude-reader.mjs';
+import { CodexHistoryReader } from '../../bridge/history-codex-reader.mjs';
 
 const TITLES = new Set(['ai-title', 'custom-title', 'last-prompt']);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'history-readers-'));
@@ -90,17 +90,17 @@ const fullCodex = (file) => extractCodexMessages(file, 'native-1').messages;
 // Pages back from the newest one until the start; every page must equal the full extraction's slice.
 async function assertEveryPage(reader, full, limit) {
   const want = full.map((row) => JSON.stringify(row));
-  let page = await reader.latest(limit);
+  let page = await reader.page({ limit });
   let end = full.length;
   assert.deepEqual(page.map((row) => JSON.stringify(row)), want.slice(Math.max(0, end - limit)), 'latest page');
   let pages = 1;
   while (end - page.length > 0) {
     end -= page.length;
-    page = await reader.before(full[end].orderKey, limit);
+    page = await reader.page({ before: full[end].orderKey, limit });
     assert.deepEqual(page.map((row) => JSON.stringify(row)), want.slice(Math.max(0, end - limit), end), `page ending at ${end}`);
     pages++;
   }
-  const after = await reader.after(full[full.length - 6].orderKey);
+  const after = await reader.page({ after: full[full.length - 6].orderKey, limit: Infinity });
   assert.deepEqual(after.map((row) => JSON.stringify(row)), want.slice(-5), 'after');
   return pages;
 }
@@ -185,14 +185,14 @@ test('appends, an unterminated last line, and a replaced file keep the index con
       written = cut;
       reader.update();
       const want = (await full(file)).map((row) => JSON.stringify(row));
-      assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), want.slice(-500), `${name} at ${cut}`);
+      assert.deepEqual((await reader.page({ limit: 500 })).map((row) => JSON.stringify(row)), want.slice(-500), `${name} at ${cut}`);
     }
     const epoch = reader.epoch;
     fs.rmSync(file);
     fs.writeFileSync(file, make(5).join('\n') + '\n');
     reader.update();
     assert.notEqual(reader.epoch, epoch, `${name}: a replaced file has a new epoch`);
-    assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), (await full(file)).map((row) => JSON.stringify(row)));
+    assert.deepEqual((await reader.page({ limit: 500 })).map((row) => JSON.stringify(row)), (await full(file)).map((row) => JSON.stringify(row)));
   }
 });
 
@@ -215,10 +215,10 @@ test('an image is compressed and uploaded once, however often its page is read',
   try {
     const reader = new ClaudeHistoryReader(file);
     reader.update();
-    await reader.latest(50);
+    await reader.page({ limit: 50 });
     assert.equal(uploads, 3, 'a failed upload is tried again');
     ok = true;
-    for (let i = 0; i < 3; i++) await reader.latest(50);
+    for (let i = 0; i < 3; i++) await reader.page({ limit: 50 });
     assert.equal(uploads, 5, 'then each distinct image is uploaded once');
   } finally {
     globalThis.fetch = realFetch;
@@ -233,13 +233,13 @@ test('a file rewritten in place, shorter or longer, is indexed again', async () 
     fs.writeFileSync(file, make(6).join('\n') + '\n');
     const reader = new Reader(file, 'native-1');
     reader.update();
-    const cursor = (await reader.latest(1))[0].orderKey;
+    const cursor = (await reader.page({ limit: 1 }))[0].orderKey;
     for (const turns of [1, 9]) { // same inode: shorter, then longer
       fs.writeFileSync(file, make(turns).map((line) => line.replace(/prompt (\d)/g, `prompt $1 v${turns}`)).join('\n') + '\n');
       reader.update();
       const want = (await full(file)).map((row) => JSON.stringify(row));
-      assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), want, `${Reader.name}: ${turns} turns`);
-      if (turns === 1) assert.ok(Array.isArray(await reader.before(cursor, 500)), 'a cursor past the end reads, not throws');
+      assert.deepEqual((await reader.page({ limit: 500 })).map((row) => JSON.stringify(row)), want, `${Reader.name}: ${turns} turns`);
+      if (turns === 1) assert.ok(Array.isArray(await reader.page({ before: cursor, limit: 500 })), 'a cursor past the end reads, not throws');
     }
   }
 });
@@ -258,5 +258,5 @@ test('a file that shrinks between stat and read leaves the index to be rebuilt',
   assert.equal(reader.index.count, 0, 'nothing from the short read is kept');
   fs.writeFileSync(file, claudeTranscript(3).join('\n') + '\n');
   reader.update();
-  assert.deepEqual((await reader.latest(500)).map((row) => JSON.stringify(row)), (await fullClaude(file)).map((row) => JSON.stringify(row)));
+  assert.deepEqual((await reader.page({ limit: 500 })).map((row) => JSON.stringify(row)), (await fullClaude(file)).map((row) => JSON.stringify(row)));
 });

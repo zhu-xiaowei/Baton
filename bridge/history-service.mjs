@@ -1,12 +1,11 @@
 // `history` and `threads` RPCs for the v2 Session view. The session index (main thread) says which
-// file a Session is; pages are read in the history worker so long reads never block live streaming.
+// file a Session is; files are read in the history worker so long reads never block live streaming.
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { discoverClaudeSubagents, parseClaudeSubagentSessionId } from '../claude-subagent.mjs';
-import { scanCodexRollout } from '../codex-session.mjs';
-import { sessionIndex } from '../session-index.mjs';
-import { storageSessionId } from '../session-identity.mjs';
+import { parseClaudeSubagentSessionId } from './claude-subagent.mjs';
+import { sessionIndex } from './session-index.mjs';
+import { storageSessionId } from './session-identity.mjs';
 
 const WARM_RECENT = 10;
 const WARM_MAX = 20;
@@ -43,10 +42,9 @@ function workerPages() {
       worker.postMessage({ id, op, target, params });
     });
   };
-  return { history: (target, params) => call('history', target, params), warm: (target) => call('warm', target) };
+  return { history: (target, params) => call('history', target, params), warm: (target) => call('warm', target),
+    children: (target) => call('children', target) };
 }
-
-const iso = (ms) => new Date(ms).toISOString();
 
 export class HistoryService {
   constructor({ index, pages } = {}) {
@@ -91,23 +89,29 @@ export class HistoryService {
     const row = catalog.roots.find((root) => root.sessionId === sessionId);
     if (!row) return { rootSessionId: sessionId, threads: [] };
     const rec = row.rec;
-    const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: iso(rec.ms), size: rec.size,
+    const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: new Date(rec.ms).toISOString(), size: rec.size,
       agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id }];
-    const statusOf = (id, fallback) => this.index.statuses.get(id) || fallback;
-    if (rec.runtime === 'claude' && row.agentCount) {
-      const children = discoverClaudeSubagents(rec.dir, { nativeSessionId: rec.id, project: row.project, status: row.own || row.status });
-      for (const child of children) items.push({ ...child, sessionId: child.id, status: statusOf(child.id, child.status) });
-    }
-    for (const childRec of rec.runtime === 'codex' ? row.children : []) {
-      const threadName = this.index.threadNames.get(childRec.home)?.names.get(childRec.id) || '';
-      const child = scanCodexRollout(childRec.file, { nativeSessionId: childRec.id, threadName }).session;
-      if (child) items.push({ ...child, sessionId: storageSessionId('codex', child.id), status: statusOf(storageSessionId('codex', child.id), child.status) });
+    if (row.agentCount) {
+      const codex = rec.runtime === 'codex' ? row.children.map((child) => ({ file: child.file, id: child.id,
+        threadName: this.index.threadNames.get(child.home)?.names.get(child.id) || '' })) : [];
+      const children = await this.pages.children({ runtime: rec.runtime, dir: rec.dir, id: rec.id, project: row.project,
+        status: row.own || row.status, codex });
+      for (const child of children) {
+        const childId = storageSessionId(child.runtime, child.nativeSessionId);
+        items.push({ ...child, sessionId: childId, status: this.index.statuses.get(childId) || child.status });
+      }
     }
     return { rootSessionId: sessionId, threads: orderThreads(items, sessionId).map(threadFields) };
   }
 
-  // Index and read the latest page of the Sessions most likely opened next.
-  async warm() {
+  // Index and read the latest page of the Sessions most likely opened next, once per run (from the
+  // first home request, so a Bridge no v2 App talks to never starts the worker).
+  warm() {
+    this.warming ||= this.warmNow().catch((error) => console.error(`[history] warm failed: ${error.message}`));
+    return this.warming;
+  }
+
+  async warmNow() {
     await this.index.readyPromise;
     const { catalog } = this.index.snapshot();
     const active = catalog.roots.filter((row) => row.status === 'running' || row.status === 'needs_input');
@@ -117,7 +121,6 @@ export class HistoryService {
         await this.pages.warm({ file: row.rec.file, runtime: row.rec.runtime, nativeSessionId: row.rec.id });
       } catch {}
     }
-    return picked.length;
   }
 }
 
@@ -136,8 +139,8 @@ function threadFields(item) {
     canSend: item.canSend ?? true,
   };
   if (item.parentSessionId) {
-    Object.assign(thread, { parentSessionId: item.parentSessionId, agentRole: item.agentRole || '',
-      agentPath: item.agentPath || '', agentDepth: item.agentDepth || 1 });
+    Object.assign(thread, { parentSessionId: item.parentSessionId, agentPath: item.agentPath || '',
+      agentDepth: item.agentDepth || 1 });
   }
   return thread;
 }

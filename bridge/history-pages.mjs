@@ -1,12 +1,15 @@
-// History pages for the `history` RPC, computed in the history worker. Readers stay open per file.
-import { nativeOrderKey } from '../extract.mjs';
-import { ClaudeHistoryReader } from './claude-reader.mjs';
-import { CodexHistoryReader } from './codex-reader.mjs';
-import { orderKeyLine } from './line-index.mjs';
-import { slimRow } from './slim.mjs';
+// History pages for the `history` RPC and child threads for `threads`, computed in the history worker.
+// Readers stay open per file.
+import { discoverClaudeSubagents } from './claude-subagent.mjs';
+import { scanCodexRollout } from './codex-session.mjs';
+import { nativeOrderKey } from './extract.mjs';
+import { ClaudeHistoryReader } from './history-claude-reader.mjs';
+import { CodexHistoryReader } from './history-codex-reader.mjs';
+import { orderKeyLine } from './history-line-index.mjs';
+import { slimRow } from './history-slim.mjs';
 
 const MAX_READERS = 32;
-export const PAGE_LIMIT = 200;
+const PAGE_LIMIT = 200;
 const MAX_LIMIT = 500;
 
 export function createHistoryPages() {
@@ -59,8 +62,14 @@ export function createHistoryPages() {
 
   async function warm(target) {
     await readerFor(target).page({ limit: PAGE_LIMIT });
-    return true;
   }
 
-  return { history, warm };
+  // Child threads of a root: Claude subagents, or the given Codex child rollouts (both parse whole files).
+  function children({ runtime, dir, id, project, status, codex = [] }) {
+    if (runtime === 'claude') return discoverClaudeSubagents(dir, { nativeSessionId: id, project, status });
+    return codex.map((child) => scanCodexRollout(child.file, { nativeSessionId: child.id, threadName: child.threadName }).session)
+      .filter(Boolean);
+  }
+
+  return { history, warm, children };
 }

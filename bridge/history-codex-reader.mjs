@@ -2,9 +2,9 @@
 // several lines (call, output, completion), so a window also reads the lines it depends on; the index
 // finds them by byte search only.
 import fs from 'node:fs';
-import { extractCodexMessages } from '../codex-extract.mjs';
-import { LineIndex, orderKeyLine } from './line-index.mjs';
-import { readPage } from './page.mjs';
+import { extractCodexMessages } from './codex-extract.mjs';
+import { LineIndex, orderKeyLine } from './history-line-index.mjs';
+import { readPage } from './history-page.mjs';
 
 const HEAD = /^\{"timestamp":"[^"]*",(?:"ordinal":\d+,)?"type":"([^"]+)"(?:,"payload":\{"type":"([^"]+)")?/;
 const SKIP = new Set(['response_item/reasoning', 'event_msg/token_count', 'token_usage_record', 'world_state',
@@ -165,10 +165,4 @@ export class CodexHistoryReader {
 
   // Growing windows, each computed once (dependency lines make them independent).
   page(range) { return readPage(this, range, FIRST_WINDOW, MAX_WINDOW); }
-
-  latest(limit) { return this.page({ limit }); }
-
-  before(cursor, limit) { return this.page({ before: cursor, limit }); }
-
-  after(cursor) { return this.page({ after: cursor, limit: Infinity }); }
 }
