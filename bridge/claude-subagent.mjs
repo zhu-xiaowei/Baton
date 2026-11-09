@@ -52,10 +52,11 @@ export function parseClaudeSubagentSessionId(sessionId) {
   const value = String(sessionId || '');
   const index = value.indexOf(MARKER);
   if (index <= 0) return null;
-  return {
-    parentSessionId: value.slice(0, index),
-    agentId: value.slice(index + MARKER.length),
-  };
+  const parentSessionId = value.slice(0, index);
+  const agentId = value.slice(index + MARKER.length);
+  // Both become path segments: only the names Claude writes.
+  if (!/^[\w-]+$/.test(parentSessionId) || !/^agent-[\w-]+$/.test(agentId)) return null;
+  return { parentSessionId, agentId };
 }
 
 export function readClaudeSubagentMeta(filePath) {
