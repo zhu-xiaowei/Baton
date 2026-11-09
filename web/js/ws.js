@@ -613,7 +613,10 @@ var STALE_DROPPED = new Set(['messages', 'stream_turn_start', 'stream_block_star
 
 function handleWsMessage(msg) {
     var unsynced = state.wsHistoryPhase === 'stale' || state.wsHistoryPhase === 'offline';
-    if (unsynced && msg?.sessionId === state.wsSessionId && STALE_DROPPED.has(msg.action)) return;
+    if (unsynced && msg?.sessionId === state.wsSessionId && STALE_DROPPED.has(msg.action)) {
+      if (state.wsHistoryPhase === 'stale') window.retrySessionHistory(); // the Bridge is answering again
+      return;
+    }
     routeTurnEvent(msg);
 }
 
@@ -2263,14 +2266,16 @@ function showCachedHistory(sessionId, page) {
 
 function showHistoryFailure(error) {
   var offline = error?.message === 'offline';
+  var timeout = /timeout/.test(error?.message || '');
   setHistoryPhase(offline ? 'offline' : 'stale');
-  if (!offline) showToast('Request timeout');
+  if (!offline) showToast(timeout ? 'Request timeout' : error?.message || 'Unable to load this session');
   var content = document.getElementById('content');
   // The skeleton's placeholders are not history.
   if (!content || content.querySelector('.messages:not(.skeleton-messages) :is(.assistant-turn, .msg-user)')) return;
   var name = esc(window.displayDeviceName ? window.displayDeviceName(state.appState.device) : state.appState.device);
   content.innerHTML = '<div class="offline-empty"><div class="offline-empty-title">'
-    + (offline ? '<i class="crumb-offline-dot"></i>' + name + ' is offline' : name + ' is not responding') + '</div>'
+    + (offline ? '<i class="crumb-offline-dot"></i>' + name + ' is offline'
+      : timeout ? name + ' is not responding' : 'Unable to load this session') + '</div>'
     + (offline ? '<div>This session hasn&#39;t been loaded on this device yet.<br>It will load when ' + name + ' is back online.</div>' : '')
     + '</div>';
 }

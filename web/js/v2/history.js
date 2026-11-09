@@ -48,6 +48,8 @@ export async function loadLatestHistory({ device, sessionId, onSlow: notify }) {
   try {
     reply = await sendRequest(device, 'history', params, { onSlow: () => notify?.(cachedPage()) });
   } catch (error) {
+    // A new Session has no transcript yet (a deleted one none any more): its history is empty.
+    if (error.message === 'unknown_session') return { messages: [], hasMore: false, oldestTimestamp: '', status: '', titles: [] };
     const page = cachedPage();
     if (!page) throw error;
     return { ...page, status: '', titles: [], failed: error.message };
@@ -57,7 +59,9 @@ export async function loadLatestHistory({ device, sessionId, onSlow: notify }) {
     entry.append(reply.messages, { atStart: !reply.hasMore });
   } else {
     entry.trimNewest(cursor);
-    entry.append(reply.messages, { gap: reply.hasMore }); // more than a page is newer: a gap until scrolled
+    // A gap until scrolled: more than a page is newer, or the cursor lies past the cached rows.
+    const last = entry.newest && entry.rows(entry.newest).at(-1)?.orderKey;
+    entry.append(reply.messages, { gap: reply.hasMore || (!!last && last < cursor) });
   }
   if (reply.stableCursor !== undefined) entry.stable = reply.stableCursor;
   entry.epoch = reply.epoch || entry.epoch;
@@ -84,6 +88,10 @@ export async function loadOlderHistory({ device, sessionId, before }) {
   if (!older && range.atStart) return { messages: [], hasMore: false, oldestTimestamp: '' };
   const after = older ? entry.rows(older).at(-1).orderKey : undefined;
   const reply = await sendRequest(device, 'history', { sessionId, before, ...(after ? { after } : {}), epoch: entry.epoch, limit: PAGE });
+  // A latest load may have replaced these ranges meanwhile: start over from the latest page.
+  if (!entry.ranges.includes(range) || (older && !entry.ranges.includes(older))) {
+    return { messages: [], hasMore: false, oldestTimestamp: '', historyReset: true };
+  }
   if (reply.historyReset) {
     entry.reset();
     await cache.save(entry);

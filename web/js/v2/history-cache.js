@@ -79,12 +79,15 @@ export class CachedSession {
     this.epoch = stored?.meta.epoch || '';
     this.stable = stored?.meta.stable || null;
     const byFirst = new Map((stored?.chunks || []).map((chunk) => [chunk.first, chunk]));
-    this.ranges = (stored?.meta.ranges || []).map((range) => ({
+    // A chunk deleted under this record (eviction, another window) would leave a hole: start over.
+    const whole = (stored?.meta.ranges || []).every((range) => range.chunks.every((first) => byFirst.has(first)));
+    this.ranges = whole ? (stored?.meta.ranges || []).map((range) => ({
       atStart: range.atStart,
-      chunks: range.chunks.map((first) => byFirst.get(first)).filter(Boolean).map(({ first, rows }) => ({ first, rows })),
-    })).filter((range) => range.chunks.length);
+      chunks: range.chunks.map((first) => byFirst.get(first)).map(({ first, rows }) => ({ first, rows })),
+    })).filter((range) => range.chunks.length) : [];
     this.put = new Map();
-    this.removed = new Set();
+    this.removed = new Set(whole ? [] : (stored?.chunks || []).map((chunk) => chunk.first));
+    if (!whole) this.stable = null;
   }
 
   get newest() { return this.ranges.at(-1) || null; }
