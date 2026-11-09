@@ -971,10 +971,13 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       await window.initializeToolDetails?.(node);
       if (edit) window.setToolDetailsCollapsed(node, false);
       window.clampOverflow?.(node);
-      const body = node.querySelector('.tool-body-content');
-      const more = body?.querySelector('.clamp-btn');
-      if (more) window.toggleExpand?.(more.parentElement);
-      else body?.classList.add('open');
+      // Opening an Edit shows its diff at the collapsed height like any tool; Show more opens it fully.
+      if (!edit) {
+        const body = node.querySelector('.tool-body-content');
+        const more = body?.querySelector('.clamp-btn');
+        if (more) window.toggleExpand?.(more.parentElement);
+        else body?.classList.add('open');
+      }
     } catch (error) {
       if (node?.isConnected && requestedSession === state.wsSessionId
         && requestedDevice === state.appState.device) {
