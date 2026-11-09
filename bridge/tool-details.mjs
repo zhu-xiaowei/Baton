@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extractCodexMessages } from './codex-extract.mjs';
-import { sendTextFrames } from './project/ws-frames.mjs';
-import { compactToolFields, stripToolResultBase64, toolResultStats } from './tool-preview.mjs';
+import { compactToolFields, stripToolResultBase64, toolPreview, toolResultStats } from './tool-preview.mjs';
 
 // History pages leave thinking text out; it is fetched like a tool, under this id.
 function thinkingDetailId(messageUuid, blockIndex) {
@@ -101,19 +100,22 @@ export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUse
   });
 }
 
-export async function handleToolDetails(message, { adapter, identity, send }) {
-  const envelope = {
-    action: 'tool_details',
-    requestId: message.requestId,
-    replyConnectionId: message.replyConnectionId,
-    sessionId: identity.sessionId,
-  };
-  try {
-    const filePath = adapter.findSessionFile(identity.nativeSessionId);
-    if (!filePath) throw new Error('Original session file is unavailable.');
-    const details = await readToolDetailsAsync(filePath, identity.nativeSessionId, identity.runtime, message.toolUseIds);
-    sendTextFrames({ ...envelope, ok: true }, JSON.stringify(details), send);
-  } catch (error) {
-    send({ ...envelope, ok: false, error: error.message });
-  }
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const SESSION_ID = new RegExp(`^(?:codex:${UUID}|${UUID}(?::subagent:agent-[A-Za-z0-9_-]+)?)$`, 'i');
+
+// The `tool_details` direct RPC: full tool bodies (or, with `preview`, their 500-character previews)
+// and thinking text from the original transcript.
+export async function toolDetails({ sessionId, toolUseIds, preview } = {}, { identityOf, adapterOf }) {
+  if (!SESSION_ID.test(String(sessionId || ''))) throw new Error('invalid session');
+  if (!Array.isArray(toolUseIds) || !toolUseIds.length || toolUseIds.length > 128
+    || toolUseIds.some((id) => typeof id !== 'string' || !id || id.length > 512)) throw new Error('invalid toolUseIds');
+  const identity = identityOf(sessionId);
+  const filePath = adapterOf(identity.runtime).findSessionFile(identity.nativeSessionId);
+  if (!filePath) throw new Error('Original session file is unavailable.');
+  const { details } = await readToolDetailsAsync(filePath, identity.nativeSessionId, identity.runtime, toolUseIds);
+  if (!preview) return { details };
+  return { details: details.map(({ toolUse, toolResult }) => {
+    const [use, result] = toolPreview({ content: [toolUse, ...(toolResult ? [toolResult] : [])] }).content;
+    return { toolUse: use, toolResult: result || null };
+  }) };
 }

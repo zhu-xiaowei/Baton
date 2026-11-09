@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { layoutPixels } from '../page-zoom.js';
 import { loadingSpinner } from './loading.js';
-import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
+import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSource } from '../tool-details.js';
 
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
@@ -869,7 +869,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     }
   };
 
-  window.toggleToolDetails = function (header) {
+  window.toggleToolDetails = async function (header) {
     const selection = window.getSelection?.();
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
@@ -884,6 +884,37 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
         .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
       : [node];
+    // Bodies the history page left out come first as previews, all in one request: only the clicked
+    // row shows the spinner, and the rows open once the previews are here. Edit loads its diff.
+    const previews = collapsed ? [] : members.filter((member) => unloaded(member)
+      && toolDetailsSource(member.dataset.toolId)?.toolUse?.name !== 'Edit');
+    if (previews.length) {
+      if (header.getAttribute('aria-busy') === 'true') return;
+      const requestedSession = state.wsSessionId;
+      const requestedDevice = state.appState.device;
+      const indicator = document.createElement('span');
+      indicator.className = 'tool-detail-loading';
+      indicator.innerHTML = loadingSpinner({ size: 'small' });
+      header.setAttribute('aria-busy', 'true');
+      header.append(indicator);
+      node.querySelector('.tool-detail-error')?.remove();
+      try {
+        await loadToolPreviews(previews.map((member) => member.dataset.toolId));
+      } catch (error) {
+        header.insertAdjacentHTML('afterend', '<div class="tool-detail-error">'
+          + esc(error.message || 'Unable to load details. Click to retry.') + '</div>');
+        return;
+      } finally {
+        header.removeAttribute('aria-busy');
+        indicator.remove();
+      }
+      if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device || !node.isConnected) return;
+      for (const member of previews) {
+        const preview = toolDetailsSource(member.dataset.toolId)?.preview;
+        if (preview) member.innerHTML = window.renderToolNode(preview.toolUse, preview.toolResult, state.appState.runtime, { collapsed: true });
+      }
+      window.markToolRunGroups?.(root);
+    }
     const loads = [];
     for (const member of members) {
       if (!collapsed && unloaded(member)) {

@@ -3,14 +3,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createToolDetailsReader, readToolIndex, readToolDetails, readToolDetailsAsync, handleToolDetails } from '../../bridge/tool-details.mjs';
+import { createToolDetailsReader, readToolIndex, readToolDetails, readToolDetailsAsync, toolDetails } from '../../bridge/tool-details.mjs';
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
-import { WS_FRAME_LIMIT } from '../../bridge/config.mjs';
 import { toolPreview } from '../../bridge/tool-preview.mjs';
 import { findClaudeSubagentFile } from '../../bridge/claude-subagent.mjs';
 import { parseStorageSessionId } from '../../bridge/session-identity.mjs';
 
-test('Claude details preserve full input/output and use existing bounded text frames', async () => {
+const SESSION = '11111111-1111-4111-8111-111111111111';
+const claudeAt = (file) => ({ identityOf: parseStorageSessionId, adapterOf: () => ({ findSessionFile: () => file }) });
+
+test('Claude details preserve full input/output; previews cut each field', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-details-'));
   const file = path.join(directory, 'session.jsonl');
   const input = '🙂"\\'.repeat(15000);
@@ -21,24 +23,19 @@ test('Claude details preserve full input/output and use existing bounded text fr
     JSON.stringify({ message: { content: [{ type: 'tool_use', id: 'two', name: 'Read', input: { file_path: '/file' } }] } }),
   ].join('\n'));
   try {
-    const frames = [];
-    await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one', 'two'] }, {
-      identity: { sessionId: 'session', nativeSessionId: 'session', runtime: 'claude' },
-      adapter: { findSessionFile: () => file },
-      send: (frame) => frames.push(frame),
-    });
-    assert.ok(frames.length > 1);
-    assert.ok(frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) <= WS_FRAME_LIMIT));
-    assert.deepEqual(frames.map((frame) => frame.sequence), frames.map((_, index) => index));
-    assert.equal(frames.at(-1).complete, true);
-    const data = JSON.parse(frames.map((frame) => frame.content).join(''));
+    const data = await toolDetails({ sessionId: SESSION, toolUseIds: ['one', 'two'] }, claudeAt(file));
     assert.equal(data.details[0].toolUse.input.command, input);
     assert.equal(data.details[0].toolUse.input.cmd, undefined);
     assert.equal(data.details[0].toolResult.content, output);
     assert.deepEqual(data.details[0].toolResult.codexCommandActions, [{ type: 'unknown' }]);
     assert.deepEqual(data.details[0].toolResult._agentMeta, { totalDurationMs: 12, totalToolUseCount: 2 });
     assert.equal(data.details[1].toolResult, null);
-    assert.ok(frames.every((frame) => frame.action === 'tool_details' && frame.replyConnectionId === 'app'));
+    const preview = await toolDetails({ sessionId: SESSION, toolUseIds: ['one'], preview: true }, claudeAt(file));
+    const { toolUse, toolResult } = preview.details[0];
+    assert.ok(toolUse.truncated && toolResult.truncated, 'previews are marked truncated');
+    for (const [cut, full] of [[toolUse.input.command, input], [toolResult.content, output]]) {
+      assert.ok([...cut].length <= 501 && full.startsWith(cut.replace(/…$/, '')), 'each field cut to its preview');
+    }
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -57,16 +54,15 @@ test('Codex details reuse stable normalized tool IDs from the native rollout', (
   assert.equal(result.details[0].toolResult.tool_use_id, tool.id);
 });
 
-test('missing original data returns an RPC error without a history message', async () => {
-  const sent = [];
-  await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['one'] }, {
-    identity: { sessionId: 'session', nativeSessionId: 'session', runtime: 'claude' },
-    adapter: { findSessionFile: () => null },
-    send: (frame) => sent.push(frame),
-  });
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].ok, false);
-  assert.equal(sent[0].action, 'tool_details');
+test('bad requests and missing original data are rejected', async () => {
+  const none = claudeAt(null);
+  await assert.rejects(toolDetails({ sessionId: SESSION, toolUseIds: ['one'] }, none), /unavailable/);
+  for (const sessionId of ['', '../x', `${SESSION}:subagent:../../x`, `codex:${SESSION}:subagent:agent-a`]) {
+    await assert.rejects(toolDetails({ sessionId, toolUseIds: ['one'] }, none), /invalid session/, sessionId);
+  }
+  for (const toolUseIds of [[], 'one', [1], ['x'.repeat(513)], Array(129).fill('a')]) {
+    await assert.rejects(toolDetails({ sessionId: SESSION, toolUseIds }, none), /invalid toolUseIds/);
+  }
 });
 
 test('Claude subagent details use the original child-session file', async () => {
@@ -79,15 +75,9 @@ test('Claude subagent details use the original child-session file', async () => 
     message: { content: [{ type: 'tool_use', id: 'child-tool', name: 'Read', input: { file_path: '/child.js' } }] },
   }) + '\n');
   try {
-    const frames = [];
-    await handleToolDetails({ requestId: 'request', replyConnectionId: 'app', toolUseIds: ['child-tool'] }, {
-      identity: parseStorageSessionId(session),
-      adapter: { findSessionFile: id => findClaudeSubagentFile(id, directory) },
-      send: frame => frames.push(frame),
+    const details = await toolDetails({ sessionId: session, toolUseIds: ['child-tool'] }, {
+      identityOf: parseStorageSessionId, adapterOf: () => ({ findSessionFile: id => findClaudeSubagentFile(id, directory) }),
     });
-    assert.equal(frames.at(-1).complete, true);
-    assert.equal(frames[0].sessionId, session);
-    const details = JSON.parse(frames.map(frame => frame.content).join(''));
     assert.equal(details.details[0].toolUse.input.file_path, '/child.js');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

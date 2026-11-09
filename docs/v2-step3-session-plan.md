@@ -22,7 +22,8 @@ running during step 3 so v1 and v2 can be compared on `BatonV2`; deleting them i
   - A page that reaches the end adds `stableCursor` (where the next `after` starts) and, for Claude,
     `titles` (latest `ai-title` / `custom-title` / `last-prompt` rows, apart from `messages`).
 - `threads {sessionId}` replaces `/session-threads` (same shape).
-- `tool_details` returns tool bodies and thinking text (`thinking:<uuid>:<block>`) on expand.
+- `tool_details` (direct RPC, no Lambda) returns tool bodies and thinking text (`thinking:<uuid>:<block>`) on
+  expand; with `preview: true` the 500-character previews of tools the page left out (a group asks once).
 - Existing RPC framing: deflate above 1 KB, 20 000-character chunks, reassembly by `requestId`.
 
 ## Page content: only what a collapsed view shows
