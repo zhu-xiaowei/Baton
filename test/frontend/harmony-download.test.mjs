@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { downloadFile, nativeDownloads, nativeSaveOpensAfterTransfer, saveGeneratedFile } from '../../web/js/project/download.js';
+import {
+  cancelNativeDownload, downloadFile, nativeDownloads, nativeDownloadsStopOnClose, nativeSaveOpensAfterTransfer, saveGeneratedFile,
+} from '../../web/js/project/download.js';
 
 // ArkWeb ignores <a download>, so on HarmonyOS window.harmonyBridge downloads
 // and answers through window.__onHarmony.
@@ -11,6 +13,7 @@ function installBridge() {
     harmonyBridge: {
       download(json) { calls.push({ method: 'download', ...JSON.parse(json) }); },
       save(json) { calls.push({ method: 'save', ...JSON.parse(json) }); },
+      cancelDownload(json) { calls.push({ method: 'cancelDownload', ...JSON.parse(json) }); },
     },
     navigator: { userAgent: 'Mozilla/5.0 (Phone; OpenHarmony 5.0) ArkWeb/5.0 Mobile' },
   };
@@ -98,6 +101,17 @@ test('the bridge counts as a native download path whose save dialog opens after 
   installBridge();
   assert.equal(nativeDownloads(), true);
   assert.equal(nativeSaveOpensAfterTransfer(), true);
+});
+
+// One download at a time: closing the preview must free the slot for the next one.
+test('closing the preview cancels the HarmonyOS transfer, which ends as cancelled', async () => {
+  const calls = installBridge();
+  assert.equal(nativeDownloadsStopOnClose(), true);
+  const download = downloadFile({ url: 'https://bucket.example/big', name: 'big.zip' });
+  await cancelNativeDownload();
+  assert.equal(calls[1].method, 'cancelDownload');
+  window.__onHarmony({ id: calls[0].id, result: { status: 'cancelled' } });
+  assert.deepEqual(await download, { status: 'cancelled' });
 });
 
 test('a bridge-less shell still falls back to the browser link', async () => {

@@ -49,3 +49,12 @@ test('Android Back goes through onBackButtonPress and backgrounds the app only a
   listener({ index: 1, message: {} });
   assert.equal(backgrounded, 1);
 });
+
+test('HarmonyOS Back runs the page hook, which reports false only at the root', async t => {
+  const ui = await setup(t);
+  let depth = 1;
+  ui.window.harmonyBridge = {};
+  await ui.initSystemBack({ navigate: () => depth-- > 0 });
+  assert.equal(ui.window.__batonSystemBack(), true);
+  assert.equal(ui.window.__batonSystemBack(), false);
+});
