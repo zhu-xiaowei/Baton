@@ -64,3 +64,11 @@ export async function loadToolDetails(toolId) {
   }).finally(() => { entry.pending = null; });
   return entry.pending;
 }
+
+// Thinking text is left out of history pages; it comes through the same request, under the id
+// `thinking:<message uuid>:<block index>` (bridge/tool-details.mjs).
+export async function loadThinking(id) {
+  const cache = currentEntries();
+  if (!cache.has(id)) cache.set(id, { key: id, toolUse: { id }, toolResult: null, full: null, pending: null });
+  return (await loadToolDetails(id)).toolUse.thinking || '';
+}

@@ -1,6 +1,8 @@
 import { extractAttachments, fileAttachmentHtml } from './attachment.js';
 import { systemEventId } from '../timeline.js';
 import { copyButtonHtml } from '../copy.js';
+import { loadThinking } from '../tool-details.js';
+import { showToast } from './toast.js';
 
 // Message bubble components
 (function () {
@@ -201,17 +203,38 @@ import { copyButtonHtml } from '../copy.js';
     return INTERRUPT_MAP[text] || 'Interrupted';
   };
 
-  // Render thinking block (collapsible)
-  window.renderThinking = function (block) {
+  // Render thinking block (collapsible). `ref` names text a history page left out (loaded on expand).
+  window.renderThinking = function (block, ref = '') {
     const secs = Math.round((block.duration_ms || 0) / 1000);
     const label = secs > 0 ? `Thought for ${secs}s` : 'Thinking';
     const duration = Number.isFinite(block.duration_ms)
       ? ` data-thinking-duration-ms="${Math.max(0, block.duration_ms)}"` : '';
-    const id = 'think-' + Math.random().toString(36).slice(2, 8);
-    return `<div class="thinking-block"${duration}>
-      <div class="thinking-toggle" onclick="var b=document.getElementById('${id}');if(!b.textContent.trim())return;this.classList.toggle('open');b.style.display=b.style.display==='block'?'none':'block'"><span class="thinking-label">${label}</span> <span class="thinking-chevron">&#8250;</span></div>
-      <div class="thinking-body" id="${id}">${esc(block.thinking || '')}</div>
+    const remote = block.truncated && !block.thinking && ref ? ` data-thinking-ref="${esc(ref)}"` : '';
+    return `<div class="thinking-block"${duration}${remote}>
+      <div class="thinking-toggle" onclick="toggleThinking(this)"><span class="thinking-label">${label}</span> <span class="thinking-chevron">&#8250;</span></div>
+      <div class="thinking-body">${esc(block.thinking || '')}</div>
     </div>`;
+  };
+
+  window.toggleThinking = async function (toggle) {
+    const block = toggle.closest('.thinking-block');
+    const body = block?.querySelector('.thinking-body');
+    if (!body) return;
+    if (!body.textContent.trim() && block.dataset.thinkingRef) {
+      if (block.getAttribute('aria-busy') === 'true') return;
+      block.setAttribute('aria-busy', 'true');
+      try {
+        body.textContent = await loadThinking(block.dataset.thinkingRef);
+      } catch (error) {
+        if (block.isConnected) showToast(error.message); // not after a Session switch
+        return;
+      } finally {
+        block.removeAttribute('aria-busy');
+      }
+    }
+    if (!body.textContent.trim()) return;
+    toggle.classList.toggle('open');
+    body.style.display = body.style.display === 'block' ? 'none' : 'block';
   };
 
   window.renderSystemEvent = function (msg) {

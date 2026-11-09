@@ -775,6 +775,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
   function resultText(result) {
     if (!result) return '';
     const c = result.content;
+    if (c == null) return ''; // a history page leaves truncated bodies out
     if (typeof c === 'string') return c;
     if (Array.isArray(c)) return c.map(b => b.text || '').join('');
     return JSON.stringify(c);
@@ -873,18 +874,22 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
     if (!node) return;
-    if (header.hasAttribute('data-edit-details')
-      && !toolDetailsSource(node.dataset.toolId)?.full) {
-      return window.loadToolDetailsMore(header, true);
-    }
-    const collapsed = !node.classList.contains('tool-details-collapsed');
+    // A body the history page left out is loaded first; the member opens once it arrives.
+    const unloaded = (member) => member.querySelector(':scope > .tool-header')?.hasAttribute('data-edit-details')
+      && !toolDetailsSource(member.dataset.toolId)?.full;
+    const collapsed = !unloaded(node) && !node.classList.contains('tool-details-collapsed');
     const groupId = node.dataset.toolDetailsGroup;
     const root = node.closest('.messages') || document;
     const members = groupId
       ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
         .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
       : [node];
+    const loads = [];
     for (const member of members) {
+      if (!collapsed && unloaded(member)) {
+        loads.push(window.loadToolDetailsMore(member.querySelector(':scope > .tool-header'), true));
+        continue;
+      }
       window.setToolDetailsCollapsed(member, collapsed);
       if (!collapsed) {
         Promise.resolve(window.initializeToolDetails?.(member))
@@ -894,6 +899,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (groupId) {
       window.setToolRunGroupCollapsed?.(groupId, collapsed, root);
     }
+    return Promise.all(loads);
   };
 
   window.loadToolDetailsMore = async function (button, edit = false) {
@@ -972,6 +978,9 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     const editRemote = name === 'Edit' && !toolResult?.is_error
       && (source?.toolUse.truncated === true || source?.toolResult?.truncated === true);
     const editPending = editRemote && !source?.full;
+    // A history page carries no truncated tool body: expanding loads it first, as Edit does
+    // (data-edit-details marks every such header).
+    const remoteDetails = editRemote || (toolResult?.truncated === true && !Object.hasOwn(toolResult, 'content'));
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
     const detailPolicy = window.getToolDetailPolicy(runtime);
     const requestedDetailsCollapsed = detailPolicy.enabled && !!options.collapsed;
@@ -1030,7 +1039,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
     const headerAttrs = detailsEnabled
       ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"${truncated ? ' data-tool-preview="true"' : ''}
-        ${editRemote ? 'data-edit-details="true"' : ''}
+        ${remoteDetails ? 'data-edit-details="true"' : ''}
         onclick="toggleToolDetails(this)"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDetails(this)}"`
       : info.expandDesc
