@@ -226,7 +226,7 @@ import { showToast } from './toast.js';
       try {
         body.textContent = await loadThinking(block.dataset.thinkingRef);
       } catch (error) {
-        showToast(error.message);
+        if (block.isConnected) showToast(error.message); // not after a Session switch
         return;
       } finally {
         block.removeAttribute('aria-busy');
