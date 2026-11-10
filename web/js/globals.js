@@ -97,14 +97,17 @@ async function loadViewerLibs() {
   return _libsPromise;
 }
 
-// A page from the previous deploy requests chunks that no longer exist: reload once to get
-// the current index.html, but not again within 10s so a real outage cannot loop.
-window.addEventListener('vite:preloadError', (event) => {
-  let last = 0;
-  try { last = Number(sessionStorage.getItem('baton-preload-reload')) || 0; } catch (e) {}
-  if (Date.now() - last < 10000) return;
-  try { sessionStorage.setItem('baton-preload-reload', String(Date.now())); } catch (e) { return; }
-  event.preventDefault();
+// A page from the previous deploy requests chunks that no longer exist. Reload only when the
+// server's index.html no longer references this page's entry script (so not when offline, nor for
+// a chunk failing on the current build), and once per entry.
+window.addEventListener('vite:preloadError', async () => {
+  const entry = document.querySelector('script[type="module"][src*="assets/"]')?.getAttribute('src').split('/').pop();
+  try {
+    if (!entry || sessionStorage.getItem('baton-preload-reload') === entry) return;
+    const response = await fetch(location.pathname, { cache: 'no-store' });
+    if (!response.ok || (await response.text()).includes(entry)) return;
+    sessionStorage.setItem('baton-preload-reload', entry);
+  } catch (e) { return; }
   window.location.reload();
 });
 
