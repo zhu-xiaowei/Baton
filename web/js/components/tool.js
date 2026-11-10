@@ -869,20 +869,6 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     }
   };
 
-  // Re-renders a tool node but keeps its header element (only its attributes follow the new render):
-  // replacing the header under the tap makes Safari paint the row without it for a frame.
-  function renderToolBody(node, html) {
-    const header = node.querySelector(':scope > .tool-header');
-    const fresh = document.createElement('div');
-    fresh.innerHTML = html;
-    const next = fresh.querySelector(':scope > .tool-header');
-    if (!header || !next) return node.replaceChildren(...fresh.childNodes);
-    for (const { name } of [...header.attributes]) if (name !== 'aria-busy' && !next.hasAttribute(name)) header.removeAttribute(name);
-    for (const { name, value } of [...next.attributes]) header.setAttribute(name, value);
-    next.replaceWith(header);
-    node.replaceChildren(...fresh.childNodes);
-  }
-
   window.toggleToolDetails = async function (header) {
     const selection = window.getSelection?.();
     if (selection?.toString()) return;
@@ -925,7 +911,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device || !node.isConnected) return;
       for (const member of previews) {
         const preview = toolDetailsSource(member.dataset.toolId)?.preview;
-        if (preview) renderToolBody(member, window.renderToolNode(preview.toolUse, preview.toolResult, state.appState.runtime, { collapsed: true }));
+        if (preview) member.innerHTML = window.renderToolNode(preview.toolUse, preview.toolResult, state.appState.runtime, { collapsed: true });
       }
       window.markToolRunGroups?.(root);
     }
@@ -971,12 +957,12 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       const source = toolDetailsSource(toolId);
       if (!source?.full) return;
       const collapsed = edit || node.classList.contains('tool-details-collapsed');
-      renderToolBody(node, window.renderToolNode(
+      node.innerHTML = window.renderToolNode(
         source.toolUse, source.toolResult, state.appState.runtime, { collapsed },
-      ));
+      );
       window.setToolDetailsCollapsed(node, collapsed);
       window.markToolRunGroups?.(node.closest('.messages') || document);
-      if (edit && !node.contains(button)) { // the node was replaced while loading
+      if (edit) {
         button.removeAttribute('aria-busy');
         button = node.querySelector(':scope > .tool-header');
         button.setAttribute('aria-busy', 'true');
