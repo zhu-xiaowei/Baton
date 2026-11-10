@@ -21,7 +21,8 @@ test('a running turn survives a foreground refresh, a gap and a late join', asyn
     const user = { uuid: turnId.slice(5), nativeId: `live:user:${turnId}`, type: 'user', content: 'q', timestamp: new Date().toISOString() };
     const events = [{ action: 'stream_turn_start' }, { action: 'messages', messages: [user] }, { action: 'stream_block_start', kind: 'text' },
       ...Array.from({ length: 20 }, (_, i) => ({ action: 'stream_delta', chunk: `w${i} ` }))]
-      .map((event, seq) => ({ ...event, sessionId, turnId, seq }));
+      // Claude turns also carry the execution order (a regular send is an execution of one turn).
+      .map((event, seq) => ({ ...event, sessionId, turnId, seq, executionId: turnId, executionSeq: seq, consumedInputIds: seq > 1 ? [turnId] : [] }));
     h.setApiHandler(async () => structuredClone(await history(user)));
     return { sessionId, events, push: (list) => list.forEach((e) => h.bridge.push(structuredClone(e))) };
   }
@@ -55,5 +56,20 @@ test('a running turn survives a foreground refresh, a gap and a late join', asyn
   await loading;
   await h.tick(250);
   assert.deepEqual([once('w0 '), once('w19 ')], [1, 1], 'a page opened mid-turn shows the turn from its start');
+
+  // Reopening the Session on screen (a notification tap): the snapshot resets the turn, the replay rebuilds it.
+  t = await start(running);
+  t.push(t.events.slice(0, 10));
+  await h.tick(150);
+  h.document.getElementById('content').innerHTML = '<div class="skeleton-messages"></div>';
+  h.state.wsAllMessages = [];
+  h.window.startWs(t.sessionId);
+  const reopening = h.window.loadLatestMessages(t.sessionId);
+  await h.tick(20);
+  h.bridge.push({ action: 'turn_replay', sessionId: t.sessionId, events: structuredClone(t.events.slice(0, 14)) });
+  await reopening;
+  t.push(t.events.slice(14));
+  await h.tick(300);
+  assert.deepEqual([once('w0 '), once('w10 '), once('w19 ')], [1, 1, 1], 'reopening mid-turn rebuilds the turn');
   h.window.close();
 });

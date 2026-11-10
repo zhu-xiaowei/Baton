@@ -718,6 +718,9 @@ function routeTurnEvent(message) {
     barrier.capture(message);
     return;
   }
+  // A replayed event the execution order already passed goes on to the turn queue, which skips it
+  // unless a snapshot reset that queue.
+  if (message._replay && message.executionId && _executionEvents.passed(message)) message = { ...message, _executionOrdered: true };
   if (message.executionId && Number.isInteger(message.executionSeq) && !message._executionOrdered) {
     for (var event of _executionEvents.push(message)) routeTurnEvent(event);
     scheduleExecutionRecovery(message);
@@ -777,6 +780,7 @@ function scheduleExecutionRecovery(message) {
   var timer = setTimeout(async function () {
     try {
       if (state.wsSessionId !== message.sessionId) return;
+      bridge.subscribe(_wsDevice, message.sessionId); // its replay fills the gap during the load
       var result = await loadLatestMessages(message.sessionId, { preserveLive: true });
       if (!result?.ok || state.wsSessionId !== message.sessionId) return;
       for (var event of _executionEvents.recover(id)) routeTurnEvent(event);

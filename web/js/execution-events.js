@@ -25,6 +25,12 @@ export class ExecutionEventQueue {
     return ready;
   }
 
+  // Already passed in execution order (a snapshot may have reset the turn queue since).
+  passed(event) {
+    const execution = this.executions.get(event.executionId);
+    return !!execution && event.executionSeq < execution.next;
+  }
+
   hasGap(id) {
     const execution = this.executions.get(id);
     return !!execution?.pending.size;
