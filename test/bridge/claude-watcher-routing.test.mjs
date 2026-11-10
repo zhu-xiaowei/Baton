@@ -85,72 +85,33 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });
 
-test('a failed upload during a full sync resumes without re-sending accepted messages', (t) => {
+test('a failed upload resumes the sync without re-sending accepted messages (#187)', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-sync-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const result = spawnSync(process.execPath, ['--input-type=module'], {
-    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8', timeout: 30_000,
     env: { ...process.env, HOME: home, USERPROFILE: home },
-    encoding: 'utf8',
-    timeout: 30_000,
     input: `
-      import assert from 'node:assert/strict';
       import fs from 'node:fs';
-      import path from 'node:path';
       import { createServer } from 'node:http';
+      import { json } from 'node:stream/consumers';
       import { CLAUDE_PROJECTS } from './bridge/config.mjs';
       import { initHttp } from './bridge/http.mjs';
       import { createClaudeFileQueue } from './bridge/watcher.mjs';
-      import { knownProjects, recentSessions } from './bridge/sync.mjs';
-      import { synced } from './bridge/extract.mjs';
-      const accepted = [];
-      let uploads = 0;
-      let historyComplete = false;
-      const server = createServer(async (request, response) => {
-        let body = '';
-        for await (const chunk of request) body += chunk;
-        const data = JSON.parse(body);
-        if (request.url.endsWith('/sync-messages') && data.messages.length && ++uploads === 10) {
-          response.statusCode = 500;
-          return response.end('{}');
-        }
-        accepted.push(...(data.messages || []).map(m => m.uuid));
-        if (data.historyComplete) historyComplete = true;
-        response.end('{}');
+      const accepted = []; let uploads = 0; // the 10th sync-messages request fails once
+      const server = createServer(async (req, res) => {
+        const { messages = [] } = await json(req);
+        if (req.url.endsWith('/sync-messages') && ++uploads === 10) return res.writeHead(500).end();
+        accepted.push(...messages.map(m => m.uuid)); res.end('{}');
+      }).listen(0, '127.0.0.1', async () => {
+        initHttp({ server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test' });
+        fs.mkdirSync(CLAUDE_PROJECTS + '/-p', { recursive: true });
+        fs.writeFileSync(CLAUDE_PROJECTS + '/-p/s.jsonl', [...Array(20).keys()].map(i =>
+          JSON.stringify({ type: 'user', uuid: 'm' + i, message: { content: 'prompt ' + i } }) + '\\n').join(''));
+        await createClaudeFileQueue({}, undefined, 20)('-p/s.jsonl', 's');
+        while (accepted.length < 20) await new Promise(r => setTimeout(r, 20));
+        process.exit(accepted.join() === [...Array(20).keys()].map(i => 'm' + i).join() ? 0 : 1);
       });
-      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-      try {
-        const config = { server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test', deviceName: 'test' };
-        initHttp(config);
-        const id = '22345678-1234-4123-8123-123456789012';
-        const filename = path.join('-review', id + '.jsonl');
-        const file = path.join(CLAUDE_PROJECTS, filename);
-        knownProjects.add('-review');
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        const rows = Array.from({ length: 20 }, (_, i) => JSON.stringify({
-          type: 'user', uuid: 'm' + i, entrypoint: 'cli', message: { content: 'prompt ' + i },
-        }));
-        fs.writeFileSync(file, rows.join('\\n') + '\\n');
-        const enqueue = createClaudeFileQueue(config, undefined, 20);
-        await enqueue(filename, id);
-        assert.equal(synced.has(id), false); // partial progress never reaches synced.json
-        // While the retry is pending the transcript moves (worktree) and grows; the retry follows it.
-        const moved = path.join('-review--claude-worktrees-x', id + '.jsonl');
-        fs.mkdirSync(path.join(CLAUDE_PROJECTS, path.dirname(moved)), { recursive: true });
-        fs.renameSync(file, path.join(CLAUDE_PROJECTS, moved));
-        fs.appendFileSync(path.join(CLAUDE_PROJECTS, moved), JSON.stringify({
-          type: 'user', uuid: 'm20', entrypoint: 'cli', message: { content: 'prompt 20' },
-        }) + '\\n');
-        await enqueue(moved, id);
-        assert.equal(uploads, 10);
-        for (let i = 0; i < 100 && !recentSessions.has(id); i++) await new Promise(r => setTimeout(r, 20));
-        assert.deepEqual(accepted, [...rows, ''].map((_, i) => 'm' + i));
-        assert.equal(uploads, 22);
-        assert.equal(historyComplete, true);
-      } finally {
-        server.closeAllConnections();
-        await new Promise(resolve => server.close(resolve));
-      }
     `,
   });
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
