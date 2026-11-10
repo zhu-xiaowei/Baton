@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extractCodexMessages } from './codex-extract.mjs';
-import { sendTextFrames } from './project/ws-frames.mjs';
-import { compactToolFields, stripToolResultBase64, toolResultStats } from './tool-preview.mjs';
+import { compactToolFields, stripToolResultBase64, toolPreview, toolResultStats } from './tool-preview.mjs';
 
 // History pages leave thinking text out; it is fetched like a tool, under this id.
 function thinkingDetailId(messageUuid, blockIndex) {
@@ -49,22 +48,27 @@ export function readToolIndex(filePath, nativeSessionId, runtime) {
   return tools;
 }
 
-export function readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, index) {
+// With `preview`, each tool is cut to its 500-character preview, as in a history row.
+export function readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, index, preview) {
   const tools = index || readToolIndex(filePath, nativeSessionId, runtime);
   const details = toolUseIds.map(id => tools.get(id));
   if (details.some(entry => !entry?.toolUse)) {
     throw new Error('Original tool details are not available yet.');
   }
-  return { details };
+  if (!preview) return { details };
+  return { details: details.map(({ toolUse, toolResult }) => {
+    const [use, result] = toolPreview({ content: [toolUse, ...(toolResult ? [toolResult] : [])] }).content;
+    return { toolUse: use, toolResult: result || null };
+  }) };
 }
 
 export function createToolDetailsReader(readIndex = readToolIndex) {
   let cached;
-  return (filePath, nativeSessionId, runtime, toolUseIds) => {
+  return (filePath, nativeSessionId, runtime, toolUseIds, preview) => {
     const stat = fs.statSync(filePath);
     const key = JSON.stringify([filePath, nativeSessionId, runtime, stat.size, stat.mtimeMs, stat.ctimeMs]);
     if (cached?.key !== key) cached = { key, index: readIndex(filePath, nativeSessionId, runtime) };
-    return readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, cached.index);
+    return readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, cached.index, preview);
   };
 }
 
@@ -72,7 +76,7 @@ let readerWorker;
 let requestSequence = 0;
 const pending = new Map();
 
-export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUseIds) {
+export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUseIds, preview) {
   if (!readerWorker) {
     const worker = readerWorker = new Worker(new URL('./tool-details-worker.mjs', import.meta.url));
     const fail = error => {
@@ -97,23 +101,16 @@ export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUse
   return new Promise((resolve, reject) => {
     const id = ++requestSequence;
     pending.set(id, { resolve, reject });
-    readerWorker.postMessage({ id, filePath, nativeSessionId, runtime, toolUseIds });
+    readerWorker.postMessage({ id, filePath, nativeSessionId, runtime, toolUseIds, preview });
   });
 }
 
-export async function handleToolDetails(message, { adapter, identity, send }) {
-  const envelope = {
-    action: 'tool_details',
-    requestId: message.requestId,
-    replyConnectionId: message.replyConnectionId,
-    sessionId: identity.sessionId,
-  };
-  try {
-    const filePath = adapter.findSessionFile(identity.nativeSessionId);
-    if (!filePath) throw new Error('Original session file is unavailable.');
-    const details = await readToolDetailsAsync(filePath, identity.nativeSessionId, identity.runtime, message.toolUseIds);
-    sendTextFrames({ ...envelope, ok: true }, JSON.stringify(details), send);
-  } catch (error) {
-    send({ ...envelope, ok: false, error: error.message });
-  }
+// The `tool_details` direct RPC: full tool bodies (or, with `preview`, their previews) and thinking
+// text from the original transcript. `resolve` maps a Session id to its file, as for `history`.
+export async function toolDetails({ sessionId, toolUseIds, preview } = {}, resolve) {
+  if (!Array.isArray(toolUseIds) || !toolUseIds.length || toolUseIds.length > 128
+    || toolUseIds.some((id) => typeof id !== 'string' || !id || id.length > 512)) throw new Error('invalid toolUseIds');
+  const target = resolve(String(sessionId || ''));
+  if (!target) throw new Error('Original session file is unavailable.');
+  return readToolDetailsAsync(target.file, target.nativeSessionId, target.runtime, toolUseIds, !!preview);
 }

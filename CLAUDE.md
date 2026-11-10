@@ -309,8 +309,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Block-level `truncated` means on-demand tool content, independently of transport
   truncation/recovery. A final structured input event replaces any incomplete
   streamed JSON preview when its block stops. `tool_details` reads original JSONL
-  in a worker with a single-file, file-version-keyed tool index, then replies only
-  to the requesting client using the existing text-frame protocol. The frontend
+  in a worker with a single-file, file-version-keyed tool index and answers over the
+  v2 direct RPC (`preview: true` returns the 500-character previews history pages omit). The frontend
   caches complete details per device/session/tool; missing expected output is
   retryable. Failed detail loads expand the available local preview. See
   `docs/tool-preview.md` for the rendering and rollout contract.

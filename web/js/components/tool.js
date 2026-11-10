@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { layoutPixels } from '../page-zoom.js';
 import { loadingSpinner } from './loading.js';
-import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
+import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSource } from '../tool-details.js';
 
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
@@ -606,8 +606,10 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
+    // A deleted file has no text on either side: the result says what happened.
+    const outcome = !oldStr && !newStr && resultText(result).trim() ? grid([['OUT', esc(resultText(result))]]) : '';
 
-    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml,
+    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml || outcome,
       status: /^Created\b/i.test(resultText(result).trim()) ? 'Created' : '' };
   }
 
@@ -869,7 +871,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     }
   };
 
-  window.toggleToolDetails = function (header) {
+  window.toggleToolDetails = async function (header) {
     const selection = window.getSelection?.();
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
@@ -884,6 +886,37 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
         .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
       : [node];
+    // Bodies the history page left out come first as previews, all in one request: only the clicked
+    // row shows the spinner, and the rows open once the previews are here. Edit loads its diff.
+    const previews = collapsed ? [] : members.filter((member) => unloaded(member)
+      && toolDetailsSource(member.dataset.toolId)?.toolUse?.name !== 'Edit');
+    if (previews.length) {
+      if (header.getAttribute('aria-busy') === 'true') return;
+      const requestedSession = state.wsSessionId;
+      const requestedDevice = state.appState.device;
+      const indicator = document.createElement('span');
+      indicator.className = 'tool-detail-loading';
+      indicator.innerHTML = loadingSpinner({ size: 'small' });
+      header.setAttribute('aria-busy', 'true');
+      header.append(indicator);
+      node.querySelector('.tool-detail-error')?.remove();
+      try {
+        await loadToolPreviews(previews.map((member) => member.dataset.toolId));
+      } catch (error) {
+        header.insertAdjacentHTML('afterend', '<div class="tool-detail-error">'
+          + esc(error.message || 'Unable to load details. Click to retry.') + '</div>');
+        return;
+      } finally {
+        header.removeAttribute('aria-busy');
+        indicator.remove();
+      }
+      if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device || !node.isConnected) return;
+      for (const member of previews) {
+        const source = toolDetailsSource(member.dataset.toolId);
+        if (source?.preview) member.innerHTML = window.renderToolNode(source.toolUse, source.toolResult, state.appState.runtime, { collapsed: true });
+      }
+      window.markToolRunGroups?.(root);
+    }
     const loads = [];
     for (const member of members) {
       if (!collapsed && unloaded(member)) {
@@ -918,7 +951,11 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     else button.innerHTML = indicator.innerHTML;
     node.querySelector('.tool-detail-error')?.remove();
     try {
-      await loadToolDetails(toolId);
+      // An Edit draws its diff right after loading: fetching the viewer meanwhile takes the card from
+      // collapsed to its diff without frames in between (Safari painted one of them wrong).
+      const file = edit ? toolDetailsSource(toolId)?.toolUse?.input?.file_path : '';
+      await Promise.all([loadToolDetails(toolId), edit && window.loadDiffViewer?.()?.catch(() => {}),
+        file && window.loadHljsLanguage?.(detectLang(file))?.catch(() => {})]);
       if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device) return;
       node = Array.from(document.querySelectorAll('.messages [data-tool-id]'))
         .find((member) => member.dataset.toolId === toolId);
@@ -940,10 +977,13 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       await window.initializeToolDetails?.(node);
       if (edit) window.setToolDetailsCollapsed(node, false);
       window.clampOverflow?.(node);
-      const body = node.querySelector('.tool-body-content');
-      const more = body?.querySelector('.clamp-btn');
-      if (more) window.toggleExpand?.(more.parentElement);
-      else body?.classList.add('open');
+      // Opening an Edit shows its diff at the collapsed height like any tool; Show more opens it fully.
+      if (!edit) {
+        const body = node.querySelector('.tool-body-content');
+        const more = body?.querySelector('.clamp-btn');
+        if (more) window.toggleExpand?.(more.parentElement);
+        else body?.classList.add('open');
+      }
     } catch (error) {
       if (node?.isConnected && requestedSession === state.wsSessionId
         && requestedDevice === state.appState.device) {

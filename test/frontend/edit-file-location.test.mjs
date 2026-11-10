@@ -16,7 +16,7 @@ const vite = await createTestServer({
   server: { middlewareMode: true }, appType: 'custom',
 });
 const { state } = await vite.ssrLoadModule('/js/state.js');
-const { observeToolDetails, loadToolDetails, toolDetailsSource } = await vite.ssrLoadModule('/js/tool-details.js');
+const { configureToolDetails, observeToolDetails, loadToolDetails, toolDetailsSource } = await vite.ssrLoadModule('/js/tool-details.js');
 const { handleWsRpcMessage } = await vite.ssrLoadModule('/js/ws-rpc.js');
 const { openFile, closeFileViewer } = await vite.ssrLoadModule('/js/project/file-viewer.js');
 
@@ -29,6 +29,7 @@ test.beforeEach(() => {
   state.appState = { device: 'Mac', session: state.wsSessionId, project: { hash: 'project' } };
   state.wsAllMessages = [];
   sent = [];
+  configureToolDetails((device, method, params) => new Promise((resolve) => sent.push({ action: method, ...params, resolve })));
   window.wsSendReliable = payload => {
     sent.push(payload);
     if (payload.action === 'project_files') queueMicrotask(() => handleWsRpcMessage({
@@ -46,15 +47,12 @@ async function loadEdit() {
   state.wsAllMessages = [{ type: 'assistant', content: [preview] }];
   observeToolDetails(preview, null);
   const loading = loadToolDetails('edit');
-  handleWsRpcMessage({
-    action: 'tool_details', requestId: sent.at(-1).requestId, ok: true,
-    sequence: 0, complete: true, content: JSON.stringify({ details: [{
+  sent.at(-1).resolve({ details: [{
       toolUse: { ...preview, truncated: false, input: {
         file_path: '/file.js', old_string: 'const value = 1;',
         new_string: 'const value = 2;\nconst ready = true;',
       } }, toolResult: null,
-    }] }),
-  });
+    }] });
   await loading;
 }
 

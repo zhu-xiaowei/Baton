@@ -71,7 +71,7 @@ import { sessionIndex } from './session-index.mjs';
 import { historyService } from './history-service.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
 import { createProjectDirectory } from './project-path.mjs';
-import { handleToolDetails } from './tool-details.mjs';
+import { toolDetails } from './tool-details.mjs';
 
 let _ws = null;
 let _checkUpdate = null;
@@ -759,6 +759,7 @@ function connect() {
         sessions: params => sessionIndex.sessions(params),
         history: params => historyService.history(params),
         threads: params => historyService.threads(params),
+        tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });
@@ -890,13 +891,6 @@ async function handleMessage(msg) {
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
-    case 'tool_details': {
-      const identity = parseStorageSessionId(msg.sessionId);
-      await handleToolDetails(msg, {
-        identity, adapter: getRuntimeAdapter(identity.runtime), send: wsSend,
-      });
-      break;
-    }
     case 'send_message':
       if (_clientTurnAcks.has(msg.turnId)) {
         wsSend({
