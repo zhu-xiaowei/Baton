@@ -90,9 +90,23 @@ async function loadViewerLibs() {
       import('./render.js'),
       import('./ws.js'),
     ]);
-  })();
+  })().catch((error) => {
+    _libsPromise = null;
+    throw error;
+  });
   return _libsPromise;
 }
+
+// A page from the previous deploy requests chunks that no longer exist: reload once to get
+// the current index.html, but not again within 10s so a real outage cannot loop.
+window.addEventListener('vite:preloadError', (event) => {
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('baton-preload-reload')) || 0; } catch (e) {}
+  if (Date.now() - last < 10000) return;
+  try { sessionStorage.setItem('baton-preload-reload', String(Date.now())); } catch (e) { return; }
+  event.preventDefault();
+  window.location.reload();
+});
 
 window.loadViewerLibs = loadViewerLibs;
 window.loadDiffViewer = loadDiffViewer;

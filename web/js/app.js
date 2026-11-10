@@ -2001,7 +2001,12 @@ async function loadMessages(sessionId, preview, options) {
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
   showInputBar(true);
-  await window.loadViewerLibs();
+  try {
+    await window.loadViewerLibs();
+  } catch (e) {
+    if (_navVersion === myNav) content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+    return;
+  }
   if (_navVersion !== myNav) return;
   updateSendBtn();
 

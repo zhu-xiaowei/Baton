@@ -111,9 +111,22 @@ async def install_with_token(request: Request, t: str = "", name: str = Query(No
 # Serve web static files (landing, viewer, setup).
 # html=True maps "/" to index.html and lets the SPA shortcut script handle
 # ?t= / ?key= → landing.html without a server-side redirect (preserves query).
+class WebFiles(StaticFiles):
+    # Hashed assets never change; everything else (HTML included) must revalidate, or a
+    # stale cached index.html requests chunks the next deploy deleted.
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            if response.status_code in (200, 304):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 if os.path.isdir(WEB_DIR):
-    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    app.mount("/", WebFiles(directory=WEB_DIR, html=True), name="web")
 
 
 if __name__ == "__main__":
