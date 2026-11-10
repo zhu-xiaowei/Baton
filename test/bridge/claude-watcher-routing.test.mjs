@@ -84,6 +84,38 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });
 
+test('a failed upload resumes the sync without re-sending accepted messages (#187)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-sync-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8', timeout: 30_000,
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    input: `
+      import fs from 'node:fs';
+      import { createServer } from 'node:http';
+      import { json } from 'node:stream/consumers';
+      import { CLAUDE_PROJECTS } from './bridge/config.mjs';
+      import { initHttp } from './bridge/http.mjs';
+      import { createClaudeFileQueue } from './bridge/watcher.mjs';
+      const accepted = []; let uploads = 0; // the 10th sync-messages request fails once
+      const server = createServer(async (req, res) => {
+        const { messages = [] } = await json(req);
+        if (req.url.endsWith('/sync-messages') && ++uploads === 10) return res.writeHead(500).end();
+        accepted.push(...messages.map(m => m.uuid)); res.end('{}');
+      }).listen(0, '127.0.0.1', async () => {
+        initHttp({ server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test' });
+        fs.mkdirSync(CLAUDE_PROJECTS + '/-p', { recursive: true });
+        fs.writeFileSync(CLAUDE_PROJECTS + '/-p/s.jsonl', [...Array(20).keys()].map(i =>
+          JSON.stringify({ type: 'user', uuid: 'm' + i, message: { content: 'prompt ' + i } }) + '\\n').join(''));
+        await createClaudeFileQueue({}, undefined, 20)('-p/s.jsonl', 's');
+        while (accepted.length < 20) await new Promise(r => setTimeout(r, 20));
+        process.exit(accepted.join() === [...Array(20).keys()].map(i => 'm' + i).join() ? 0 : 1);
+      });
+    `,
+  });
+  assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
+});
+
 test('parent file updates share one queue while child delivery stays independent', async () => {
   let release;
   const blocked = new Promise(resolve => { release = resolve; });

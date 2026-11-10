@@ -48,10 +48,12 @@ const RANGE_CHUNK_SIZE = 64 * 1024;
 const WHOLE_FILE_LIMIT = 8 * 1024 * 1024;
 const RANGE_CACHE_LIMIT = 16 * 1024 * 1024;
 const rangeCache = new Map();
+const readingPositions = new Map();
 let rangeCacheBytes = 0;
 
 export function clearPdfRangeCache(prefix) {
   if (!prefix) return;
+  for (const key of readingPositions.keys()) if (key.startsWith(prefix)) readingPositions.delete(key);
   for (const [id, entry] of rangeCache) {
     if (!id.startsWith(prefix)) continue;
     rangeCache.delete(id);
@@ -206,7 +208,18 @@ export async function mountPdfPreview(body, url, size, signal, cacheKey, { data,
     fitWidth = true;
     viewer.currentScaleValue = 'page-width';
   };
-  eventBus.on('pagesinit', fit);
+  const savedPosition = cacheKey && readingPositions.get(cacheKey);
+  eventBus.on('updateviewarea', ({ location }) => {
+    if (!disposed && cacheKey) readingPositions.set(cacheKey, location);
+    if (readingPositions.size > 50) readingPositions.delete(readingPositions.keys().next().value);
+  });
+  eventBus.on('pagesinit', () => {
+    fit();
+    if (savedPosition) viewer.scrollPageIntoView({
+      pageNumber: savedPosition.pageNumber,
+      destArray: [null, { name: 'XYZ' }, savedPosition.left, savedPosition.top, null],
+    });
+  });
   const resizeObserver = new ResizeObserver(() => {
     if (fitWidth) fit();
   });

@@ -43,6 +43,7 @@ import {
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
 const _lastActivitySyncAt = new Map();
+const _firstSyncs = new Map(); // sessionId → line an interrupted first sync resumes from
 // Preserve child changes that arrive while the first parent POST is in flight.
 const _subagentParents = new Map();
 const CLAUDE_INTERRUPT_TEXTS = new Set([
@@ -138,7 +139,15 @@ export function preferPendingInteraction(status, detail) {
 export function createClaudeFileQueue(config, readFile = readAndSend, retryMs = 1000) {
   const busy = new Map();
   const retries = new Map();
+  const failures = new Map();
   function enqueue(filename, sessionId) {
+    // A scheduled retry reads to EOF anyway; file events must not bypass its backoff,
+    // but the transcript may have moved (worktree), so the retry reads the latest path.
+    const retry = retries.get(sessionId);
+    if (retry) {
+      retry.filename = filename;
+      return;
+    }
     const existing = busy.get(sessionId);
     if (existing) {
       existing.pending = true;
@@ -147,32 +156,33 @@ export function createClaudeFileQueue(config, readFile = readAndSend, retryMs = 
     const state = { pending: false };
     busy.set(sessionId, state);
     state.promise = processClaudeLoop(
-      config, busy, retries, filename, sessionId, readFile, enqueue, retryMs,
+      config, busy, retries, failures, filename, sessionId, readFile, enqueue, retryMs,
     );
     return state.promise;
   }
   return enqueue;
 }
 
-async function processClaudeLoop(config, busy, retries, filename, sessionId, readFile, enqueue, retryMs) {
+async function processClaudeLoop(config, busy, retries, failures, filename, sessionId, readFile, enqueue, retryMs) {
   const state = busy.get(sessionId);
   try {
     do {
       state.pending = false;
       await readFile(config, filename, sessionId, enqueue);
     } while (state.pending);
-    clearTimeout(retries.get(sessionId));
-    retries.delete(sessionId);
+    failures.delete(sessionId);
   } catch (error) {
     console.error(`[watcher] Claude ${sessionId.slice(0, 8)}: ${error.message}`);
-    if (!retries.has(sessionId)) {
-      const timer = setTimeout(() => {
-        retries.delete(sessionId);
-        enqueue(filename, sessionId);
-      }, retryMs);
-      timer.unref();
-      retries.set(sessionId, timer);
-    }
+    const failed = failures.get(sessionId) || 0;
+    failures.set(sessionId, failed + 1);
+    const delay = Math.min(retryMs * 2 ** failed, 60_000) * (0.5 + Math.random() / 2);
+    const retry = { filename };
+    retry.timer = setTimeout(() => {
+      retries.delete(sessionId);
+      enqueue(retry.filename, sessionId);
+    }, delay);
+    retry.timer.unref();
+    retries.set(sessionId, retry);
   }
   busy.delete(sessionId);
 }
@@ -260,9 +270,11 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-  const lastLine = recentSessions.has(sessionId) ? (synced.get(sessionId) ?? 0) : 0;
+  const resumeAt = _firstSyncs.get(sessionId);
+  const lastLine = resumeAt ?? (recentSessions.has(sessionId) ? (synced.get(sessionId) ?? 0) : 0);
   const parentUpdate = _subagentParents.get(sessionId) || 0;
-  if (lines.length <= lastLine && recentSessions.has(sessionId) && !parentUpdate) return;
+  if (lines.length <= lastLine && recentSessions.has(sessionId) && !parentUpdate
+    && resumeAt === undefined) return;
 
   const metadata = getSessionMetadata(filePath, { includeFirstPromptLine: true });
   if (!metadata.preview && _subagentParents.has(sessionId)) metadata.preview = 'New session';
@@ -275,8 +287,13 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   let gotNewTitle = false;
   let gotActivity = false;
   let lastStatus = null; // track status from parsed entries directly
+  const firstSync = lastLine === 0 || resumeAt !== undefined;
+  // A failed pass resumes from here. A first sync keeps it in memory only: a persisted
+  // partial watermark would make the next startup skip the rest of the history.
+  const progress = firstSync ? _firstSyncs : synced;
 
   for (let i = lastLine; i < lines.length; i++) {
+    progress.set(sessionId, i);
     if (!lines[i].trim()) { lastParsedLine = i + 1; continue; }
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
@@ -318,7 +335,8 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
-  if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
+  progress.set(sessionId, lastParsedLine);
+  if (firstSync) await uploadMessages(sessionId, [], { historyComplete: true });
 
   const forceActivity = !!parentUpdate
     || (gotActivity && activitySyncDue(_lastActivitySyncAt, sessionId));
@@ -331,6 +349,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const poolOwned = poolOwns(sessionId);
     if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
       synced.set(sessionId, lastParsedLine);
+      _firstSyncs.delete(sessionId);
       return;
     }
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
@@ -359,20 +378,26 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     );
   }
   synced.set(sessionId, lastParsedLine);
+  _firstSyncs.delete(sessionId);
   if (_subagentParents.get(sessionId) === parentUpdate) _subagentParents.delete(sessionId);
 }
 
 async function readAndSendSubagent(config, filename, filePath, sessionId, enqueue) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.at(-1) === '') lines.pop();
-  const lastLine = synced.get(sessionId) ?? 0;
+  const resumeAt = _firstSyncs.get(sessionId);
+  const lastLine = resumeAt ?? synced.get(sessionId) ?? 0;
   const meta = readClaudeSubagentMeta(filePath);
-  if (!lines.length || (lines.length <= lastLine && (lastKnownStatus.get(sessionId) === 'completed'
-    || (meta.finished !== true && !claudeSubagentEnded(filePath, meta))))) return;
+  if (!lines.length || (lines.length <= lastLine && resumeAt === undefined
+    && (lastKnownStatus.get(sessionId) === 'completed'
+      || (meta.finished !== true && !claudeSubagentEnded(filePath, meta))))) return;
   const rootId = parseClaudeSubagentSessionId(sessionId)?.parentSessionId;
   let lastParsedLine = lastLine;
   let lastStatus = null;
+  const firstSync = lastLine === 0 || resumeAt !== undefined;
+  const progress = firstSync ? _firstSyncs : synced;
   for (let i = lastLine; i < lines.length; i++) {
+    progress.set(sessionId, i);
     if (!lines[i].trim()) {
       lastParsedLine = i + 1;
       continue;
@@ -390,8 +415,10 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
     message.orderKey = nativeOrderKey(i);
     await deliverRealtimeMessages(sessionId, [message]);
   }
-  if (lastLine === 0) await uploadMessages(sessionId, [], { historyComplete: true });
+  progress.set(sessionId, lastParsedLine);
+  if (firstSync) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
+  _firstSyncs.delete(sessionId);
 
   const parts = String(filename).split(path.sep);
   const subagentIndex = parts.indexOf('subagents');
