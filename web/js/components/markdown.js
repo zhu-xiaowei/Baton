@@ -153,7 +153,7 @@
         return stop < 0 ? false : Object.getPrototypeOf(this).url.call(this, src.slice(0, stop));
       },
       emStrong: function (src) {
-        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=\p{Script=Han})/u.exec(src);
+        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=[\p{L}\p{N}])/u.exec(src);
         if (!match) return false;
         return {
           type: 'strong', raw: match[0], text: match[1],
