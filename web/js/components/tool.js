@@ -606,8 +606,10 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
+    // A deleted file has no text on either side: the result says what happened.
+    const outcome = !oldStr && !newStr && resultText(result).trim() ? grid([['OUT', esc(resultText(result))]]) : '';
 
-    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml,
+    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml || outcome,
       status: /^Created\b/i.test(resultText(result).trim()) ? 'Created' : '' };
   }
 
