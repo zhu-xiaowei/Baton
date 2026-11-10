@@ -149,3 +149,15 @@ def test_new_roles_are_data_api_only(monkeypatch):
         event["requestContext"]["domainName"] = "data.execute-api.ap-northeast-1.amazonaws.com"
         assert bridge_ws._handle_connect(event, "c2")["statusCode"] == 200
     assert {item["role"] for item in puts} == {"app_data", "bridge_data"}
+
+
+def test_bridge_gets_its_own_credentials_and_apps_cannot_ask(world):
+    table, query, post, sent, sts = world
+    args = dict(table=table, query=query, post=post, sts=sts)
+    assert direct_rpc_ws.handle_direct_rpc({"op": "credentials"}, table.records["bridge-a"], "bridge-a",
+        "https://control/v1", **args)["statusCode"] == 200
+    _, target, reply = sent[-1]
+    assert target == "bridge-a" and reply["type"] == "credentials" and reply["endpoint"] == DATA
+    assert reply["region"] == "ap-northeast-1" and reply["credentials"]["sessionToken"] == "TOKEN"
+    assert direct_rpc_ws.handle_direct_rpc({"op": "credentials"}, table.records["app-a"], "app-a", DATA,
+        **args)["statusCode"] == 403

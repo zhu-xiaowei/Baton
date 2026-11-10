@@ -176,8 +176,31 @@ export async function makeHarness(options = {}) {
   let apiHandler = async () => apiResponse;
   G('api', (...args) => apiHandler(...args));
 
-  const ws = await import(path.join(ROOT, 'web/js/ws.js'));
+  // The direct App ⇄ Bridge transport: requests and subscriptions are recorded on the test's
+  // `state.ws` like any other frame ({ action: method, ...params }); tests answer through `bridge`.
+  const bridge = { requests: [], pings: [], push: null, resync: null, online: null };
+  const record = (frame) => w.__state?.ws?.send?.(JSON.stringify(frame));
+  w.__directTransport = {
+    request(device, method, params = {}, options = {}) {
+      const call = { device, method, params, options };
+      call.promise = new Promise((resolve, reject) => { call.resolve = resolve; call.reject = reject; });
+      bridge.requests.push(call);
+      record({ action: method, ...params, device });
+      return call.promise;
+    },
+    subscribe(device, sessionId) { record({ action: 'subscribe', sessionId, device }); },
+    unsubscribe(device, sessionId) { record({ action: 'unsubscribe', sessionId, device }); },
+    onPush(listener) { bridge.push = listener; },
+    onResync(listener) { bridge.resync = listener; },
+    onDeviceOnline(listener) { bridge.online = listener; },
+    ping() { return new Promise((resolve) => bridge.pings.push(resolve)); },
+  };
+  // The Bridge's receipt for a send (rpc_ack).
+  bridge.accept = (turnId) => bridge.requests.findLast((call) => call.method === 'send_message' && call.params.turnId === turnId)
+    ?.options.onAccepted?.();
   const { state } = await import(path.join(ROOT, 'web/js/state.js'));
+  w.__state = state;
+  const ws = await import(path.join(ROOT, 'web/js/ws.js'));
   const hooks = w.__wsTest;
   if (!hooks) throw new Error('__wsTest hooks missing — is the __APEEK_TEST__ block present in ws.js?');
 
@@ -188,6 +211,7 @@ export async function makeHarness(options = {}) {
   return {
     state,
     ws,
+    bridge,
     hooks,
     window: w,
     document: w.document,

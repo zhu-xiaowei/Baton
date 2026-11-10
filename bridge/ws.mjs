@@ -54,7 +54,9 @@ import {
   assertTurnEventEnvelope,
   isPromptUserMessage,
   LiveTurnStream,
+  OPTIONAL_TURN_EVENT_ACTIONS,
   prepareAuthoritativeMessage,
+  STREAM_EVENT_ACTIONS,
   shouldCreateFinalInterrupt,
   shouldSendImmediateInterrupt,
 } from './live-turn-stream.mjs';
@@ -65,8 +67,7 @@ import {
   commandCatalogReadyPayload,
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
-import { RealtimeSender } from './realtime-direct.mjs';
-import { DirectRpcBridge } from './direct-rpc.mjs';
+import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { historyService } from './history-service.mjs';
 import { handleSessionRename, renameNativeSession } from './session-rename.mjs';
@@ -76,7 +77,6 @@ import { toolDetails } from './tool-details.mjs';
 let _ws = null;
 let _checkUpdate = null;
 let _onSuperseded = null;
-let _realtime = null;
 let _directRpc = null;
 let _config = null;
 let _reconnectTimer = null;
@@ -110,7 +110,11 @@ const _commandCatalogCache = new CommandCatalogCache();
 const _clientTurnOrder = new ClientTurnOrder();
 const _clientTurnsInFlight = new Set();
 const _clientTurnAcks = new Map();
-const _turnPayloadRecovery = new Set();
+const _sendRequests = new Map(); // turnId → requests waiting for that turn's send_message_result
+const _subscribers = new SessionSubscribers();
+// Changes when the Bridge restarts: every subscription is gone and the App reloads its history.
+const BRIDGE_EPOCH = crypto.randomUUID();
+const SESSION_EVENTS = new Set([...STREAM_EVENT_ACTIONS, ...OPTIONAL_TURN_EVENT_ACTIONS]);
 const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 let _projectFilesModule = null;
@@ -239,7 +243,6 @@ export async function shutdownInteractions() {
       else socket.terminate();
     });
   }
-  _realtime?.dispose();
   _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
   _previewBridge?.dispose();
@@ -493,7 +496,9 @@ function permissionObservationCallbacks(sessionId, identity) {
   };
 }
 
-async function handleRevealPermission(sessionId) {
+// Sends a Session's waiting prompt to its subscribers again. `observe` also lets the runtime
+// adopt approvals that are waiting outside this Bridge (Codex); a lease renewal skips that.
+async function handleRevealPermission(sessionId, observe = true) {
   if (!sessionId) return;
   const pending = _pendingControl.current(sessionId);
   if (pending) {
@@ -508,6 +513,7 @@ async function handleRevealPermission(sessionId) {
     sendPermissionRequest(sessionId, pending);
     return;
   }
+  if (!observe) return;
   const identity = parseStorageSessionId(sessionId);
   const adapter = getRuntimeAdapter(identity.runtime);
   if (typeof adapter.interaction?.observePermissions !== 'function') return;
@@ -646,19 +652,28 @@ export function wsSend(data) {
       _clientTurnAcks.delete(_clientTurnAcks.keys().next().value);
     }
   }
+  if (data?.action === 'send_message_result' && _sendRequests.has(data.turnId)) {
+    const { action, ...result } = data;
+    settleSendRequests(result);
+    return true;
+  }
+  if (data?.sessionId && SESSION_EVENTS.has(data.action)) {
+    // Session events are pushed to the Apps subscribed to them, never truncated. Only the rows
+    // DynamoDB still stores continue to the server below.
+    const { deliveryId, noCache, ...event } = prepareWsPayload(data, null, Infinity);
+    _directRpc?.publish(event);
+    if (data.action !== 'messages' || noCache) return true;
+  }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
-    const outgoing = prepareWsPayload(data, _turnPayloadRecovery);
+    const outgoing = fitWsPayload(data);
     assertTurnEventEnvelope(outgoing);
     const payload = JSON.stringify(outgoing);
     if (Buffer.byteLength(payload) > WS_FRAME_LIMIT) {
       console.error(`[ws] oversized ${data.action || 'event'} could not be compacted`);
       return false;
     }
-    if (!_realtime?.enqueue(outgoing)) _ws.send(payload);
-    if (data.action === 'stream_end' && data.turnId) {
-      _turnPayloadRecovery.delete(data.turnId);
-    }
+    _ws.send(payload);
     return true;
   } catch {
     return false;
@@ -721,7 +736,7 @@ function connect() {
   resetConnection();
   const wsUrl = _config.wsUrl;
 
-  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&realtime=1&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
+  const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
@@ -749,21 +764,35 @@ function connect() {
       socket.send(payload);
       return true;
     };
-    _realtime = new RealtimeSender({ send, fallback: event => send(JSON.stringify(event)) });
     _directRpc = new DirectRpcBridge({
       key: _config.apiKey,
       sendControl: message => send(JSON.stringify(message)),
+      subscribers: _subscribers,
       handlers: {
         home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
-        history: params => historyService.history(params),
+        // Subscribing here, before the file is read, leaves no gap between the page and the pushes.
+        history: (params, caller) => {
+          if (params.subscribe) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate);
+          return historyService.history(params);
+        },
+        subscribe: (params, caller) => {
+          if (params.replaces) _subscribers.remove(params.sessionId, params.replaces); // the caller's connection before it reconnected
+          _subscribers.add(params.sessionId, caller.replyTo, caller.deflate);
+          handleRevealPermission(params.sessionId, !params.renew).catch(error => console.error(`[ws] permission reveal failed: ${error.message}`));
+          return { epoch: BRIDGE_EPOCH };
+        },
+        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
+        send_message: (params, caller) => requestSendMessage(params, caller),
+        interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
+        permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
         threads: params => historyService.threads(params),
         tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });
-    _realtime.start();
+    _directRpc.start();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
     _pingTimer = setInterval(probeConnection, PING_INTERVAL);
@@ -844,8 +873,6 @@ function resetConnection() {
     socket.on('error', () => {});
     socket.terminate();
   }
-  _realtime?.dispose();
-  _realtime = null;
   _directRpc?.dispose();
   _directRpc = null;
   _terminalRemote?.closeAll();
@@ -867,10 +894,6 @@ function scheduleReconnect() {
 }
 
 async function handleMessage(msg) {
-  if (_realtime?.handle(msg)) {
-    if (msg.type === 'credentials') _directRpc?.onCredentials(_realtime.authorization);
-    return;
-  }
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
     case 'rename_session':
@@ -891,78 +914,8 @@ async function handleMessage(msg) {
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
-    case 'send_message':
-      if (_clientTurnAcks.has(msg.turnId)) {
-        wsSend({
-          ..._clientTurnAcks.get(msg.turnId),
-          ...(msg.replyConnectionId
-            ? { replyConnectionId: msg.replyConnectionId }
-            : {}),
-        });
-        break;
-      }
-      if (_clientTurnsInFlight.has(msg.turnId)) {
-        break;
-      }
-      _clientTurnsInFlight.add(msg.turnId);
-      try {
-        await _clientTurnOrder.run(msg, () => handleSendMessage(
-          msg.sessionId,
-          msg.text,
-          msg.projectHash,
-          msg.requestId,
-          msg.asAgent,
-          msg.turnId,
-          msg.runtime,
-          msg.takeover,
-          msg.expectedWriterPid,
-          msg.replyConnectionId,
-        ));
-      } catch (error) {
-        if (error?.code !== 'previous_turn_missing') throw error;
-        wsSend({
-          action: 'send_message_result',
-          sessionId: msg.sessionId,
-          requestId: msg.requestId,
-          turnId: msg.turnId,
-          ok: false,
-          error: 'Previous message did not reach the Bridge.',
-          errorCode: error.code,
-          ...(msg.replyConnectionId
-            ? { replyConnectionId: msg.replyConnectionId }
-            : {}),
-        });
-      } finally {
-        _clientTurnsInFlight.delete(msg.turnId);
-      }
-      break;
-    case 'permission_reply':
-      handlePermissionReply(msg);
-      break;
-    case 'reveal_permission':
-      await handleRevealPermission(msg.sessionId);
-      break;
     case 'create_project':
       await handleCreateProject(msg.projectPath, msg.asAgent);
-      break;
-    case 'interrupt':
-      {
-        const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
-        const adapter = getRuntimeAdapter(identity.runtime);
-        if (adapter.features.interrupt) {
-          let liveInterrupt = false;
-          if (msg.turnId && shouldSendImmediateInterrupt(identity.runtime)) {
-            liveInterrupt = _activeTurns.get(identity.sessionId, msg.turnId)
-              ?.sendInterrupt() || false;
-          }
-          if (identity.runtime === 'claude' && liveInterrupt) {
-            registerClaudeInterruptTurn(identity.sessionId, msg.turnId);
-          }
-          await (adapter.interaction?.interrupt
-            ? adapter.interaction.interrupt(identity.nativeSessionId)
-            : _pool.interrupt(identity.nativeSessionId));
-        }
-      }
       break;
     case 'request_file':
       await (await projectFilesModule()).handleLegacyFileRequest(msg, { send: wsSend });
@@ -1009,6 +962,53 @@ async function handleMessage(msg) {
   }
 }
 
+// A direct `send_message` request. Its reply is the turn's send_message_result, which wsSend hands
+// back; a repeated turnId gets the stored result and never starts a second turn.
+function requestSendMessage(msg, caller) {
+  if (!msg.turnId || !msg.text || (!msg.sessionId && !msg.projectHash)) throw new Error('Invalid message.');
+  if (msg.sessionId) _subscribers.add(msg.sessionId, caller.replyTo, caller.deflate);
+  return new Promise((resolve) => {
+    _sendRequests.set(msg.turnId, [...(_sendRequests.get(msg.turnId) || []), { resolve, ...caller }]);
+    if (_clientTurnAcks.has(msg.turnId)) return void wsSend({ ..._clientTurnAcks.get(msg.turnId) });
+    if (_clientTurnsInFlight.has(msg.turnId)) return;
+    _clientTurnsInFlight.add(msg.turnId);
+    _clientTurnOrder.run(msg, () => handleSendMessage(msg.sessionId, msg.text, msg.projectHash, msg.requestId,
+      msg.asAgent, msg.turnId, msg.runtime, msg.takeover, msg.expectedWriterPid))
+      .catch((error) => {
+        const missing = error?.code === 'previous_turn_missing';
+        console.error(`[ws] send failed: ${error.message}`);
+        // Not through wsSend: an unexpected failure must not be stored as this turn's result.
+        settleSendRequests({ sessionId: msg.sessionId, requestId: msg.requestId, turnId: msg.turnId, ok: false,
+          error: missing ? 'Previous message did not reach the Bridge.' : error.message,
+          ...(missing ? { errorCode: error.code } : {}) });
+      })
+      .finally(() => _clientTurnsInFlight.delete(msg.turnId));
+  });
+}
+
+function settleSendRequests(result) {
+  for (const request of _sendRequests.get(result.turnId) || []) {
+    // The sender watches the Session it sent to; for a new Session this is its first subscription.
+    if (result.ok && result.sessionId) _subscribers.add(result.sessionId, request.replyTo, request.deflate);
+    request.resolve(result);
+  }
+  _sendRequests.delete(result.turnId);
+}
+
+async function handleInterrupt(msg) {
+  const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
+  const adapter = getRuntimeAdapter(identity.runtime);
+  if (!adapter.features.interrupt) return;
+  let liveInterrupt = false;
+  if (msg.turnId && shouldSendImmediateInterrupt(identity.runtime)) {
+    liveInterrupt = _activeTurns.get(identity.sessionId, msg.turnId)?.sendInterrupt() || false;
+  }
+  if (identity.runtime === 'claude' && liveInterrupt) registerClaudeInterruptTurn(identity.sessionId, msg.turnId);
+  await (adapter.interaction?.interrupt
+    ? adapter.interaction.interrupt(identity.nativeSessionId)
+    : _pool.interrupt(identity.nativeSessionId));
+}
+
 async function handleSyncSession(sessionId, runtime, nativeSessionId) {
   const identity = parseStorageSessionId(sessionId, runtime);
   if (nativeSessionId) identity.nativeSessionId = nativeSessionId;
@@ -1051,7 +1051,6 @@ async function handleSendMessage(
   runtime,
   takeover,
   expectedWriterPid,
-  replyConnectionId,
 ) {
   if (!text) return;
   if (!sessionId && !projectHash) return;
@@ -1069,7 +1068,6 @@ async function handleSendMessage(
         : `${adapter.displayName} session creation is unavailable.`,
       requestId,
       turnId,
-      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
     return;
   }
@@ -1084,7 +1082,6 @@ async function handleSendMessage(
     wsSend({
       action: 'send_message_result', ok: false, sessionId, requestId, turnId,
       error: error.message,
-      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
     return;
   }
@@ -1100,7 +1097,6 @@ async function handleSendMessage(
       wsSend({
         action: 'send_message_result', ok: false, sessionId, requestId, turnId,
         error: error.message,
-        ...(replyConnectionId ? { replyConnectionId } : {}),
       });
       return;
     }
@@ -1121,7 +1117,6 @@ async function handleSendMessage(
             error: error.message,
             requestId,
             turnId,
-            ...(replyConnectionId ? { replyConnectionId } : {}),
           });
           return;
         }
@@ -1138,7 +1133,6 @@ async function handleSendMessage(
             takeover: !!takeover,
             expectedWriterPid,
             reservedTurnId,
-            replyConnectionId,
           },
         );
         return;
@@ -1152,7 +1146,6 @@ async function handleSendMessage(
             : `/${command.name} requires an existing Codex session.`,
           requestId,
           turnId,
-          ...(replyConnectionId ? { replyConnectionId } : {}),
         });
         return;
       }
@@ -1176,7 +1169,6 @@ async function handleSendMessage(
         turnId,
         projectHash,
         reservedTurnId,
-        replyConnectionId,
       );
       return;
     }
@@ -1195,7 +1187,6 @@ async function handleSendMessage(
           takeover: !!takeover,
           expectedWriterPid,
           reservedTurnId,
-          replyConnectionId,
         },
       )
       : await handleHeadlessSend(
@@ -1204,7 +1195,6 @@ async function handleSendMessage(
         turnId,
         projectHash,
         reservedTurnId,
-        replyConnectionId,
       );
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', turnId });
@@ -1220,7 +1210,6 @@ async function handleSendMessage(
       error: 'Project path not found.',
       requestId,
       turnId,
-      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
     return;
   }
@@ -1235,7 +1224,6 @@ async function handleSendMessage(
       error: r.error,
       requestId,
       turnId,
-      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
   } else if (adapter.interaction?.create) {
     await newAdapterSession(
@@ -1244,7 +1232,6 @@ async function handleSendMessage(
       routedText,
       requestId,
       turnId,
-      replyConnectionId,
     );
   } else {
     await newRegularSession(
@@ -1252,7 +1239,6 @@ async function handleSendMessage(
       routedText,
       requestId,
       turnId,
-      replyConnectionId,
     );
   }
 }
@@ -1295,7 +1281,6 @@ export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {})
     sessionId,
     turnId,
     goalContinuation: options.goalContinuation,
-    replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
     onSegment: (id, segment) => {
       segmentIds.add(id);
@@ -1459,7 +1444,6 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
         nativeSessionId: identity.nativeSessionId,
         syncStatus: identity.runtime === 'codex',
         userInitiated: true,
-        replyConnectionId: sendOptions.replyConnectionId,
         ...(identity.runtime === 'claude' ? { userText: text } : {}),
       },
     );
@@ -1520,7 +1504,6 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
         syncStatus: false,
         userInitiated: true,
         steer: false,
-        replyConnectionId: options.replyConnectionId,
       },
     );
     const result = await adapter.interaction.runCommand({
@@ -1567,7 +1550,6 @@ async function handleClaudeCommand(
   turnId,
   projectHash,
   reservedTurnId = null,
-  replyConnectionId = '',
 ) {
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
   if (!cwd) cwd = cwdForSession(identity.nativeSessionId);
@@ -1650,7 +1632,7 @@ async function handleClaudeCommand(
       liveTurnId,
       cwd,
       ack,
-      { userInitiated: true, steer: false, userText: command.text, replyConnectionId },
+      { userInitiated: true, steer: false, userText: command.text },
     );
     // CC emits the same synthetic assistant row and result text for synchronous
     // local commands. commandOutput below is the single rendered source.
@@ -1700,7 +1682,6 @@ async function newAdapterSession(
   text,
   requestId,
   turnId,
-  replyConnectionId,
 ) {
   const liveTurnId = turnId || newTurnId();
   let callbacks = null;
@@ -1715,7 +1696,6 @@ async function newAdapterSession(
       error,
       requestId,
       turnId: liveTurnId,
-      ...(replyConnectionId ? { replyConnectionId } : {}),
     });
   };
   try {
@@ -1736,7 +1716,6 @@ async function newAdapterSession(
           nativeSessionId,
           syncStatus: false,
           userInitiated: true,
-          replyConnectionId,
         });
         ack(true, sessionId);
         return callbacks;
@@ -1755,7 +1734,6 @@ async function handleHeadlessSend(
   turnId,
   projectHash,
   reservedTurnId = null,
-  replyConnectionId = '',
 ) {
   // cwd from projectHash (works even if jsonl was deleted); fall back to jsonl reverse-lookup.
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
@@ -1792,7 +1770,7 @@ async function handleHeadlessSend(
       liveTurnId,
       cwd,
       ack,
-      { userInitiated: true, userText: text, replyConnectionId },
+      { userInitiated: true, userText: text },
     );
     let res = await _pool.send(sessionId, text, {
       cwd,
@@ -1826,28 +1804,25 @@ async function newRegularSession(
   text,
   requestId,
   turnId,
-  replyConnectionId,
 ) {
   const sessionId = crypto.randomUUID();
   _sentPrompts.set(sessionId, text);
   sessionIndex.notePrompt(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);
-  // The server routes sequenced events directly to this originating connection,
-  // so the result and early stream frames may safely arrive in either order.
+  // The result subscribes the sender to the new Session before its first frame is produced.
   wsSend({
     action: 'send_message_result',
     sessionId,
     ok: true,
     requestId,
     turnId: liveTurnId,
-    ...(replyConnectionId ? { replyConnectionId } : {}),
   });
   const cb = createStreamCallbacks(
     sessionId,
     liveTurnId,
     cwd,
     () => {},
-    { userInitiated: true, userText: text, replyConnectionId },
+    { userInitiated: true, userText: text },
   );
   try {
     await _pool.send(sessionId, text, {

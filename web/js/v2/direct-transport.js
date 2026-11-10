@@ -1,6 +1,7 @@
-// v2 App ⇄ Bridge direct channel over one `app_data` socket. Callers only use
-// request(device, method, params, { onSlow }); credentials, whoami, routing, resend, retry and
-// timeout are handled here by a single reconcile() pass that runs on every event.
+// v2 App ⇄ Bridge direct channel over one `app_data` socket. Callers use
+// request(device, method, params, { onSlow, ack, onAccepted }), subscribe()/unsubscribe() and
+// onPush(); credentials, whoami, routing, resend, retry, timeout and resubscription are handled
+// here, requests by a single reconcile() pass that runs on every event.
 // One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
 import { createHeaderSigner } from '../../../bridge/terminal-direct-protocol.mjs';
@@ -13,6 +14,12 @@ const DEADLINE_MS = 12000;
 const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
 const PROBE_MS = 1000;
+// A request this long without any inbound frame pings the socket (rebuilt after the same wait
+// without an answer); a request that asked for a receipt and has none is sent again.
+const STALL_MS = 3000;
+const ACKED_DEADLINE_MS = 60000; // the Bridge has the request; its work may take this long
+const RENEW_MS = 5 * 60000;      // credentials with less than this left are renewed before signing
+const PING = '{"action":"realtime_ping"}';
 // After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
 // foregrounding or a route update connect again.
 const MAX_RETRIES = 3;
@@ -25,6 +32,7 @@ const routes = new Map();     // device → { online, dataId, version }
 let rpc = null;               // { endpoint, region, credentials }
 let socket = null;
 let connectionId = '';
+let lastId = '';                // the latest connection id, kept across a drop
 let dataUrl = '';
 let retryTimer = null;
 let retries = 0;              // consecutive drops since the last whoami
@@ -34,6 +42,15 @@ let lastInboundAt = 0;
 let probeTimer = null;
 const pending = new Map();    // requestId → request state
 const assembler = new RpcAssembler();
+const pushes = new RpcAssembler(64);
+let pushQueue = Promise.resolve(); // pushes are decoded and delivered in arrival order
+const pushListeners = new Set();
+const resyncListeners = new Set();
+const subscriptions = new Map(); // `device|sessionId` → { device, sessionId, inflight }
+const epochs = new Map();        // device → the Bridge process its last subscribe reply came from
+const pongWaiters = [];
+let replacedId = '';           // this App's previous connection, which the Bridge may still push to
+let devicesAt = 0;
 let routesKnown = false;      // true once /devices answered since the socket last dropped
 let devicesInflight = null;
 
@@ -84,7 +101,11 @@ function applyRpc(next, { persist = true } = {}) {
     try { localStorage.setItem(storageKey(), JSON.stringify({ rpc: next })); } catch {}
   }
   reconcile();
-  if (persist) for (const device of cameOnline) for (const listener of onlineListeners) listener(device);
+  if (!persist) return;
+  for (const device of cameOnline) {
+    for (const listener of onlineListeners) listener(device);
+    resubscribe(device);
+  }
 }
 
 // Pages learn when a device's Bridge joins (or rejoins) and can be asked again.
@@ -106,13 +127,67 @@ export function cachedOnlineDevices() {
   return [...routes].filter(([, route]) => route.online).map(([device]) => device);
 }
 
+// Session events pushed by a Bridge this App subscribed to.
+export function onPush(listener) {
+  pushListeners.add(listener);
+}
+
+// Pushes may have been missed (reconnect, a Bridge that restarted): the page reloads what it shows.
+export function onResync(listener) {
+  resyncListeners.add(listener);
+}
+
+function resync(device) {
+  for (const listener of resyncListeners) listener(device);
+}
+
+// The Bridge keeps a subscription for 150 s; it is renewed on every ping tick and made again
+// after a reconnect, when the device returns and when the page is shown again.
+export function subscribe(device, sessionId) {
+  const key = device + '|' + sessionId;
+  if (!subscriptions.has(key)) subscriptions.set(key, { device, sessionId, inflight: false });
+  sendSubscribe(subscriptions.get(key), false);
+}
+
+export function unsubscribe(device, sessionId) {
+  if (subscriptions.delete(device + '|' + sessionId)) leave(device, sessionId);
+}
+
+function leave(device, sessionId) {
+  if (connectionId && routes.get(device)?.online) request(device, 'unsubscribe', { sessionId }).catch(() => {});
+}
+
+function sendSubscribe(entry, renew) {
+  if (entry.inflight || document.visibilityState !== 'visible') return;
+  entry.inflight = true;
+  const params = { sessionId: entry.sessionId, ...(renew ? { renew: true } : replacedId ? { replaces: replacedId } : {}) };
+  request(entry.device, 'subscribe', params).then((reply) => {
+    const known = epochs.get(entry.device);
+    epochs.set(entry.device, reply.epoch);
+    if (known && known !== reply.epoch) resync(entry.device);
+  }, () => {}).finally(() => { entry.inflight = false; });
+}
+
+function resubscribe(device) {
+  for (const entry of subscriptions.values()) if (!device || entry.device === device) sendSubscribe(entry, false);
+}
+
+// Resolves at the socket's next pong: everything posted to it before has arrived by then.
+export function ping() {
+  return new Promise((resolve) => {
+    pongWaiters.push(resolve);
+    if (socket?.readyState === WebSocket.OPEN) socket.send(PING);
+  });
+}
+
 // A socket idle past the ping interval may have been dropped by a NAT without a close event:
 // ping it and rebuild it if nothing arrives within a second. whoami then resends pending requests.
-function probe() {
+// `stalled`: a request is waiting on a silent socket, so ping now and allow a slow network.
+function probe(stalled) {
   const ws = socket;
-  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer || performance.now() - lastInboundAt < PING_MS) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer || (!stalled && performance.now() - lastInboundAt < PING_MS)) return;
   const sentAt = performance.now();
-  ws.send('{"action":"realtime_ping"}');
+  ws.send(PING);
   probeTimer = setTimeout(() => {
     probeTimer = null;
     if (socket !== ws || lastInboundAt >= sentAt) return;
@@ -122,11 +197,20 @@ function probe() {
     connectionId = '';
     clearInterval(pingTimer);
     connect();
-  }, PROBE_MS);
+  }, stalled ? STALL_MS : PROBE_MS);
 }
 
+// A hidden page leaves its Sessions at once so the Bridge stops pushing; shown again it rejoins.
 if (typeof document !== 'undefined' && document.addEventListener) {
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') probe(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') {
+      for (const entry of subscriptions.values()) leave(entry.device, entry.sessionId);
+      return;
+    }
+    if (subscriptions.size) connect();
+    else probe();
+    resubscribe();
+  });
 }
 
 // The server is reached through its CloudFront domain, which also serves /data.
@@ -147,8 +231,17 @@ export function connect() {
     // Without an id nothing can be addressed to this socket; rebuild it rather than wait for a drop.
     setTimeout(() => { if (socket === ws && !connectionId) ws.close(); }, 5000);
     clearInterval(pingTimer);
+    // One keepalive while visible: the subscription renewal (an end-to-end check through the
+    // Bridge) when a Session is open, otherwise the gateway ping.
     pingTimer = setInterval(() => {
-      if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) ws.send('{"action":"realtime_ping"}');
+      if (document.visibilityState !== 'visible' || ws.readyState !== WebSocket.OPEN) return;
+      let renewed = false;
+      for (const entry of subscriptions.values()) {
+        if (!routes.get(entry.device)?.online) continue;
+        sendSubscribe(entry, true);
+        renewed = true;
+      }
+      if (!renewed) ws.send(PING);
     }, PING_MS);
   };
   ws.onmessage = (event) => { lastInboundAt = performance.now(); receive(ws, event.data); };
@@ -159,8 +252,10 @@ export function connect() {
     clearInterval(pingTimer);
     // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
     routesKnown = false;
-    if (retryTimer || retries > MAX_RETRIES) return;
-    const delay = retries++ ? Math.random() * RETRY_JITTER_MS : 0;
+    // Past the quick retries, keep trying only while a visible page still needs the socket.
+    const needed = document.visibilityState === 'visible' && (pending.size || subscriptions.size);
+    if (retryTimer || (retries > MAX_RETRIES && !needed)) return;
+    const delay = !retries++ ? 0 : Math.random() * RETRY_JITTER_MS + (retries > MAX_RETRIES ? 5000 : 0);
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
 }
@@ -169,11 +264,35 @@ function receive(ws, text) {
   let frame;
   try { frame = JSON.parse(text); } catch { return; }
   if (frame.action === 'whoami' && frame.connectionId) {
-    connectionId = frame.connectionId;
+    const reconnected = !!lastId;
+    replacedId = lastId;
+    connectionId = lastId = frame.connectionId;
     retries = 0;
     timing('whoami', performance.now() - ws.__whoamiAt);
     for (const request of pending.values()) request.attemptVersion = null;
     reconcile();
+    resubscribe();
+    if (reconnected) resync();
+    return;
+  }
+  if (frame.action === 'realtime_pong') {
+    for (const done of pongWaiters.splice(0)) done();
+    return;
+  }
+  if (frame.kind === 'push') {
+    const part = pushes.add(frame);
+    if (part?.payload) {
+      pushQueue = pushQueue.then(() => decodeRpcPayload(part.payload, inflate))
+        .then((event) => { for (const listener of pushListeners) listener(event); }).catch(() => {});
+    }
+    return;
+  }
+  if (frame.kind === 'rpc_ack') {
+    const request = pending.get(frame.requestId);
+    if (request && !request.acked) {
+      request.acked = true;
+      try { request.onAccepted?.(); } catch {}
+    }
     return;
   }
   if (frame.action === 'direct_rpc' && frame.type === 'bridges') {
@@ -200,12 +319,14 @@ async function send(key, request, route, missing) {
   request.attemptVersion = route.version;
   request.sentAt = performance.now();
   request.firstSentAt ??= request.sentAt;
-  const body = rpcRequest({ requestId: key, method: request.method, params: request.params, replyTo: connectionId, missing });
+  const body = rpcRequest({ requestId: key, method: request.method, params: request.params, replyTo: connectionId, missing,
+    ack: request.ack });
   if (!CAN_INFLATE) body.accept = [];
   try {
-    const sign = createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
-      target: route.dataId, action: 'terminal_direct_data' });
-    socket.send(await sign(JSON.stringify(body)));
+    // One signer per route (a route is replaced when its Bridge or the credentials change).
+    route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
+      target: route.dataId, action: 'rpc' });
+    socket.send(await route.sign(JSON.stringify(body), undefined, { method: request.method }));
   } catch {
     request.attemptVersion = null;
   }
@@ -216,14 +337,21 @@ function reconcile() {
   for (const [key, request] of pending) {
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
-    if (now - request.createdAt > DEADLINE_MS) { finish(key, request, { reason: 'timeout' }); continue; }
+    if (now - request.createdAt > (request.acked ? ACKED_DEADLINE_MS : DEADLINE_MS)) { finish(key, request, { reason: 'timeout' }); continue; }
     if (!request.slow && now - request.createdAt > SLOW_MS) {
       request.slow = true;
       try { request.onSlow?.(); } catch {}
     }
     if (!route?.online || !connectionId || !rpc?.credentials || socket?.readyState !== WebSocket.OPEN) continue;
+    // Credentials are renewed on demand, right before signing; expired ones wait for the new ones.
+    const left = rpc.credentials.expiresAt * 1000 - Date.now();
+    if (left < RENEW_MS && !devicesInflight && now - devicesAt > STALL_MS) devices().catch(() => {});
+    if (left < 5000) continue;
+    const stalled = request.attemptVersion === route.version && now - request.sentAt > STALL_MS;
+    if (stalled && lastInboundAt < request.sentAt) probe(true);
     // A new route or connection needs the whole reply again; a stall only what is missing.
     if (request.attemptVersion !== route.version) send(key, request, route);
+    else if (request.ack && !request.acked) { if (stalled) send(key, request, route); }
     else if (!request.retried && now - request.firstSentAt
       > (request.firstSentAt - request.createdAt > SLOW_MS - LATE_RESEND_MS ? LATE_RESEND_MS : SLOW_MS)) {
       request.retried = true;
@@ -237,6 +365,7 @@ function reconcile() {
 
 // GET /devices; its routes reach pending requests at once. Concurrent callers share one request.
 export function devices() {
+  devicesAt = performance.now();
   devicesInflight ||= (async () => {
     const response = await fetch(state.SERVER + '/api/bridge/devices', { headers: { 'x-api-key': state.KEY } });
     if (response.status === 401 || response.status === 403) window.logout?.();
@@ -248,14 +377,16 @@ export function devices() {
   return devicesInflight;
 }
 
-export function request(device, method, params = {}, { onSlow } = {}) {
+// `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once, and the request may then
+// take ACKED_DEADLINE_MS.
+export function request(device, method, params = {}, { onSlow, ack, onAccepted } = {}) {
   restore();
   connect();
   // A page opened without the home (reload, link) still learns current routes and credentials.
   if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
-    pending.set(key, { device, method, params, resolve, reject, onSlow, createdAt: performance.now(),
+    pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, onAccepted, acked: false, createdAt: performance.now(),
       attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });
@@ -263,6 +394,9 @@ export function request(device, method, params = {}, { onSlow } = {}) {
 
 export function resetDirectTransport() {
   routes.clear();
+  subscriptions.clear();
+  epochs.clear();
+  lastId = replacedId = '';
   rpc = null;
   routesKnown = false;
   restored = true;

@@ -7,7 +7,6 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { once } from 'node:events';
 
 import { SleepGapMonitor } from '../../bridge/sleep-gap-monitor.mjs';
-import { RealtimeSender } from '../../bridge/realtime-direct.mjs';
 import { DirectRpcBridge } from '../../bridge/direct-rpc.mjs';
 
 function harness() {
@@ -122,7 +121,7 @@ function connectionHarness(options = {}) {
     ping(data) { this.pingData = data; }
   }
   const context = vm.createContext({
-    WebSocket: options.live ? WebSocket : FakeSocket, SleepGapMonitor, RealtimeSender, DirectRpcBridge,
+    WebSocket: options.live ? WebSocket : FakeSocket, SleepGapMonitor, DirectRpcBridge, _subscribers: null,
     sessionIndex: { home: () => ({}), projects: () => ({}), sessions: () => ({}) }, runtimeAdapters: [],
     console: { log() {}, error() {} }, process: { platform: process.platform }, BRIDGE_VERSION: 'test',
     _terminalRemote: null, _sharedTerminals: null, _previewBridge: null,

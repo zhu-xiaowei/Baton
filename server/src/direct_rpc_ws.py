@@ -31,12 +31,10 @@ def _ticket_key(token):
     return "RPCJOIN#" + hashlib.sha256(token.encode()).hexdigest()
 
 
-def issue_app_credentials(account_id, data_ids, sts=None):
-    """API Gateway authorizes @connections on the route template (`@connections/{connectionId}`),
-    not on the connection id, so credentials cannot be narrowed to single sockets; they carry the
-    same data-API scope the Bridge already gets. Cross-account isolation is a phase-2 item."""
-    if not data_ids:
-        return None
+def issue_credentials(account_id, sts=None):
+    """Data-API credentials for an App or a Bridge. API Gateway authorizes @connections on the
+    route template (`@connections/{connectionId}`), not on the connection id, so they cannot be
+    narrowed to single sockets. Cross-account isolation is a phase-2 item."""
     cached = _credential_cache.get(account_id)
     if cached and cached["expiresAt"] - time.time() > CREDENTIAL_REUSE_MARGIN:
         return cached
@@ -55,13 +53,12 @@ def issue_app_credentials(account_id, data_ids, sts=None):
 
 
 def rpc_info(account_id, query, sts=None):
-    """Bridges an App can address directly, plus data-API credentials (see issue_app_credentials)."""
+    """Bridges an App can address directly, plus data-API credentials (see issue_credentials)."""
     bridges = [{"device": bridge.get("deviceName", ""), "dataId": bridge["rpcDataId"]}
                for bridge in query(account_id, "bridge") if bridge.get("rpcDataId")]
     info = {"bridges": bridges, "endpoint": data_endpoint()}
-    credentials = issue_app_credentials(account_id, [bridge["dataId"] for bridge in bridges], sts)
-    if credentials:
-        info["credentials"] = credentials
+    if bridges:
+        info["credentials"] = issue_credentials(account_id, sts)
     return info
 
 
@@ -78,6 +75,10 @@ def handle_direct_rpc(body, conn, connection_id, endpoint, *, table, query, post
     operation = body.get("op")
     role = conn.get("role")
     account_id = conn.get("accountId", "")
+    if operation == "credentials" and role == "bridge":
+        post(endpoint, connection_id, {"action": "direct_rpc", "type": "credentials", "endpoint": data_endpoint(),
+            "region": os.environ["AWS_REGION"], "credentials": issue_credentials(account_id, sts)})
+        return {"statusCode": 200}
     if operation == "bridge_token" and role == "bridge" and conn.get("deviceName"):
         token = secrets.token_hex(32)
         table.put_item(Item={"connectionId": _ticket_key(token), "accountId": account_id, "role": "rpc_join",

@@ -43,7 +43,7 @@ test('send again reuses the turnId; one bubble after receipt; input cleared', as
   h.window.sendMessage();
   const ids = sendTurnIds(sent);
   assert.equal(ids.length, 1);
-  h.hooks.handleWsMessage({ action: 'send_message_received', turnId: ids[0] });
+  h.bridge.accept(ids[0]);
   await h.tick(10);
   assert.equal(h.document.querySelectorAll('.messages .msg-user').length, 1);
   assert.equal(visibleUsers(h).length, 1);
@@ -62,20 +62,16 @@ test('late echo after rollback clears the composer and shows one bubble', async 
 });
 
 
-test('missing receipt probes the socket and a rebuilt socket resends the same turn', async () => {
+test('a send that failed before its receipt is sent again with the same turn when the Bridge is back', async () => {
   const { h, input, sent } = await setup('codex:v4');
-  const dead = h.state.ws;
   input.value = 'hello v4';
   h.window.sendMessage();
-  await h.tick(150);
-  assert.ok(sent.some(m => m.action === 'heartbeat'));
-  assert.notEqual(h.state.ws, dead);
-  const fresh = [];
-  h.state.ws.readyState = WebSocket.OPEN;
-  h.state.ws.send = (p) => fresh.push(JSON.parse(p));
-  h.state.ws.onopen();
-  const resent = fresh.filter(m => m.action === 'send_message' && m.turnId === sent[0].turnId);
-  assert.equal(resent.length, 1);
+  h.bridge.requests.at(-1).reject(new Error('timeout'));
+  await h.tick(0);
+  h.bridge.resync('D');
+  const sends = sent.filter(m => m.action === 'send_message');
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].turnId, sends[0].turnId);
 });
 
 test('receipt after the bubble node was replaced still clears the composer', async () => {
@@ -83,7 +79,7 @@ test('receipt after the bubble node was replaced still clears the composer', asy
   input.value = 'hello v5';
   h.window.sendMessage();
   h.document.getElementById(sent[0].turnId).remove();
-  h.hooks.handleWsMessage({ action: 'send_message_received', turnId: sent[0].turnId });
+  h.bridge.accept(sent[0].turnId);
   await h.tick(10);
   assert.equal(input.value, '');
 });

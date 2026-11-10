@@ -317,18 +317,45 @@ Device names and online state; everything else on the home page comes from each 
 
 ---
 
-### Bridge RPC (App → Bridge over the `app_data` socket)
+### Direct channel (App ⇄ Bridge over the `app_data` / `bridge_data` sockets)
 
-`request(device, method, params)` in `web/js/v2/direct-transport.js`; frames, chunking and
-compression are in `bridge/direct-rpc-protocol.mjs`. The Bridge answers from
-`bridge/session-index.mjs` (`docs/v2-step2-lists-plan.md`).
+`request(device, method, params)`, `subscribe()` and `onPush()` in `web/js/v2/direct-transport.js`;
+frames, chunking and compression are in `bridge/direct-rpc-protocol.mjs`; the Bridge side is
+`bridge/direct-rpc.mjs`. Lists are answered from `bridge/session-index.mjs`
+(`docs/v2-step2-lists-plan.md`); real time is `docs/v2-step3b-realtime-plan.md`.
+
+A signed frame is `{action, method | event, target, body, date, token, authorization}`. The data
+API routes `action` (`rpc` for requests and replies, `push` for Session events) to an HTTP
+integration that posts `body` to the `target` connection, without Lambda; `method` / `event` only
+make the operation readable. Bodies:
+
+| `kind` | Fields | Direction |
+|---|---|---|
+| `rpc` | `method, requestId, params, replyTo, accept, ack?, missing?` | App → Bridge |
+| `rpc_ack` | `requestId` (sent on arrival when the request has `ack`) | Bridge → App |
+| `rpc_result` | `method, requestId, ok, chunk, enc, data` or `error` | Bridge → App |
+| `push` | `event, sessionId, id, chunk, enc, data` | Bridge → subscribed Apps |
+
+Replies and pushes above 1 KB are deflated and split into chunks reassembled by `requestId` / `id`.
 
 | Method | Params | Answer |
 |---|---|---|
 | `home` | `revision?` | `{ revision, notModified?, device, sessions, recentProjects }` |
 | `projects` | `limit?` (50, ≤100), `cursor?` | `{ projects, hasMore, nextCursor }` |
 | `sessions` | `project`, `limit?`, `cursor?` | `{ sessions, hasMore, nextCursor }` |
+| `history` | `sessionId, before?, after?, epoch?, limit?, subscribe?` | a page (`docs/v2-step3-session-plan.md`); `subscribe` also registers the caller before the file is read |
+| `threads`, `tool_details` | see `docs/v2-step3-session-plan.md` | |
+| `subscribe` | `sessionId, renew?, replaces?` | `{ epoch }`; the Session's waiting permission prompt is pushed again |
+| `unsubscribe` | `sessionId` | `{}` |
+| `send_message` | the `send_message` payload below, without `device` | the `send_message_result` fields below; sent with `ack` |
+| `interrupt` | `sessionId, turnId?, runtime?` | `{ ok }` |
+| `permission_reply` | the `permission_reply` payload below | `{ ok }` |
 | `ping` | — | `{ bridgeVersion, runtimes }` |
+
+A subscription is a 150 s lease (renewed every 60 s, dropped by `unsubscribe` or when the page is
+hidden). Only subscribers receive pushes: `stream_*`, `messages`, `permission_request`,
+`permission_resolved`, with the payloads described under WebSocket API. `epoch` changes when the
+Bridge restarts.
 
 Project rows: `projectHash, projectName, projectPath, sessionCount, runningCount,
 needsInputCount, lastActive`. Session rows: `sessionId, preview, lastActive, size, model, status,
@@ -514,21 +541,26 @@ send/streaming/interrupt and runtime-specific permission handling through its ap
 
 ---
 
+Session events, sends, interrupts and permission replies no longer use this socket: they travel
+on the direct channel above (requests `subscribe`, `send_message`, `interrupt`,
+`permission_reply`; pushes for `stream_*`, `messages`, `permission_*`). Their payloads are still
+described below. The Bridge keeps sending the `messages` rows that DynamoDB stores.
+
 ### App → Server
 
 #### subscribe
 
-Subscribe to real-time messages for a session.
+Records the viewer of a Session for the notification worker's "being viewed" check.
 
 ```json
-{ "action": "subscribe", "sessionId": "a1ca0870-xxxx" }
+{ "action": "subscribe", "sessionId": "ROOT#a1ca0870-xxxx" }
 ```
 
 **Server handling**:
 1. Record subscription in DDB Subscriptions table
 
-The operation is fire-and-forget. The server does not acknowledge it and does not request an
-active-turn replay. If a window joins after the current turn has started, the frontend either
+The operation is fire-and-forget. Session events are subscribed on the Bridge (direct channel).
+If a window joins after the current turn has started, the frontend either
 resumes from `seq=1`, resumes at the next complete `stream_block_start`, or uses the complete
 deduplicated authority carried by `stream_end`.
 
@@ -551,25 +583,6 @@ Cancel subscription.
 ```
 
 **Server handling**: Delete corresponding record in Subscriptions table
-
----
-
-#### reveal_permission
-
-Restore only the current pending permission after entering or reconnecting to a Session.
-
-```json
-{
-  "action": "reveal_permission",
-  "sessionId": "codex:thread-id",
-  "device": "MacBook-Pro"
-}
-```
-
-The Server persists the requesting connection's Session subscription before forwarding this action
-to the selected Bridge. The Bridge either resends its current pending permission or, for a
-TUI-owned Codex thread, attaches a permission-only observer to the managed app-server. This action
-does not replay messages, stream frames, or tool nodes.
 
 ---
 

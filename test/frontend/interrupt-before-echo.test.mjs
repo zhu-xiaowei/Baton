@@ -39,7 +39,7 @@ test('quick stop keeps Interrupted below its prompt with the production renderer
         const turnId = sent.at(-1).turnId;
         const bubble = h.document.getElementById(turnId);
         const event = (action, extra = {}) => h.hooks.handleWsMessage({ action, sessionId, turnId, ...extra });
-        event('send_message_received');
+        h.bridge.accept(turnId);
         event('stream_turn_start', { seq: 0 });
         h.window.onSendBtnClick();
         assert.equal(sent.at(-1).action, 'interrupt');

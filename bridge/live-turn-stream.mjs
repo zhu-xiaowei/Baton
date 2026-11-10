@@ -112,7 +112,6 @@ export class LiveTurnStream {
   constructor(options) {
     this.sessionId = options.sessionId;
     this.turnId = options.turnId;
-    this.replyConnectionId = options.replyConnectionId || '';
     this.goalContinuation = options.goalContinuation === true;
     this.send = options.send;
     this.started = false;
@@ -282,9 +281,6 @@ export class LiveTurnStream {
       sessionId: this.sessionId,
       turnId: this.turnId,
       ...(this.goalContinuation ? { goalContinuation: true } : {}),
-      ...(this.replyConnectionId
-        ? { replyConnectionId: this.replyConnectionId }
-        : {}),
     };
   }
 
