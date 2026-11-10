@@ -1,0 +1,59 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { makeHarness, resetSession } from './harness.mjs';
+
+// A turn streaming while the page refreshes or misses frames keeps what it showed; the Bridge's
+// replay of the running turn fills what was missed.
+test('a running turn survives a foreground refresh, a gap and a late join', async () => {
+  const h = await makeHarness();
+  globalThis.showWsBanner = h.window.showWsBanner = () => {};
+  const shown = () => (h.document.getElementById('content').textContent || '').replace(/\s+/g, ' ');
+  const once = (word) => shown().split(word).length - 1;
+  let n = 0;
+  async function start(history) {
+    const sessionId = 'claude-' + ++n;
+    h.state.ws = { readyState: 1, send() {}, close() {} };
+    h.window.disconnectWs();
+    resetSession(h, { sessionId });
+    h.state.appState.runtime = 'claude';
+    h.state.ws = { readyState: 1, send() {}, close() {} };
+    const turnId = `sent-00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const user = { uuid: turnId.slice(5), nativeId: `live:user:${turnId}`, type: 'user', content: 'q', timestamp: new Date().toISOString() };
+    const events = [{ action: 'stream_turn_start' }, { action: 'messages', messages: [user] }, { action: 'stream_block_start', kind: 'text' },
+      ...Array.from({ length: 20 }, (_, i) => ({ action: 'stream_delta', chunk: `w${i} ` }))]
+      .map((event, seq) => ({ ...event, sessionId, turnId, seq }));
+    h.setApiHandler(async () => structuredClone(await history(user)));
+    return { sessionId, events, push: (list) => list.forEach((e) => h.bridge.push(structuredClone(e))) };
+  }
+  const running = (user) => ({ messages: [user], status: 'running', hasMore: false });
+
+  let t = await start(running);
+  t.push(t.events.slice(0, 13));
+  await h.tick(150);
+  h.window.resumeSessionForeground();
+  await h.tick(150);
+  t.push(t.events.slice(13));
+  await h.tick(250);
+  assert.deepEqual([once('w0 '), once('w19 ')], [1, 1], 'the foreground refresh keeps the streamed text');
+
+  t = await start(running);
+  t.push(t.events.slice(0, 8));
+  await h.tick(150);
+  h.window.resumeSessionForeground();
+  await h.tick(100);
+  h.bridge.push({ action: 'turn_replay', sessionId: t.sessionId, events: structuredClone(t.events.slice(0, 18)) });
+  t.push(t.events.slice(18));
+  await h.tick(250);
+  assert.deepEqual([once('w0 '), once('w10 '), once('w19 ')], [1, 1, 1], 'the replay fills the frames missed while hidden');
+
+  let release;
+  t = await start((user) => new Promise((resolve) => { release = () => resolve(running(user)); }));
+  const loading = h.window.loadLatestMessages(t.sessionId);
+  await h.tick(20);
+  h.bridge.push({ action: 'turn_replay', sessionId: t.sessionId, events: structuredClone(t.events) });
+  release();
+  await loading;
+  await h.tick(250);
+  assert.deepEqual([once('w0 '), once('w19 ')], [1, 1], 'a page opened mid-turn shows the turn from its start');
+  h.window.close();
+});

@@ -514,7 +514,10 @@ function checkTurnGap() {
   if (_turnEventQueue.missingSeq(watch.turnId) !== watch.seq) return clearTurnGapWatch();
   if (watch.fenced) {
     clearTurnGapWatch();
-    refreshSessionMessages();
+    // The subscribe replays the turn after this snapshot (the load holds it), so the turn is rebuilt
+    // whole; without a replay it resumes at the next block.
+    bridge.subscribe(_wsDevice, state.wsSessionId);
+    refreshSessionMessages({ keepLive: false });
   } else if (Date.now() - watch.since < TURN_GAP_GIVE_UP_MS) {
     // No pong yet: either still in flight (slow network) or a dead socket the ping timeout rebuilds.
     watch.timer = setTimeout(checkTurnGap, Math.min(1000, TURN_GAP_MIN_MS));
@@ -583,7 +586,11 @@ function resyncSession(device) {
   else if (_historyFetchBarriers.current(state.wsSessionId)) subscribeSession(state.wsSessionId);
   else refreshSessionMessages();
 }
-bridge.onPush(handleWsMessage);
+// A replay is a running turn from its start, sent on (re)subscribing; events already applied are ignored.
+bridge.onPush(function (event) {
+  if (event.action === 'turn_replay') event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
+  else handleWsMessage(event);
+});
 bridge.onResync(resyncSession);
 
 // Until the history is in sync again, content events would land after a gap; the next load brings them.
@@ -2047,6 +2054,7 @@ async function loadLatestMessages(sessionId, options = {}) {
   // fresh: a request started before suspension may never settle — replace it.
   if (active && !(options.fresh && active.state === 'open')) {
     if (options.preserveLive) active.preserveLive = true;
+    if (options.keepLive) active.keepLive = true;
     if (options.preservePending) active.preservePending = true;
     return active.promise;
   }
@@ -2059,6 +2067,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     if (active.preserveLive) options = { ...options, preserveLive: true };
   }
   barrier.preserveLive = !!options.preserveLive;
+  barrier.keepLive = !!options.keepLive || !!active?.keepLive;
   barrier.preservePending = !!options.preservePending;
   barrier.promise = (async function () {
     subscribeSession(sessionId);
@@ -2075,7 +2084,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError && barrier.preserveLive) {
+      if (!restError && (barrier.preserveLive || (barrier.keepLive && data.status !== 'completed'))) {
         commitMessages(data.messages || [], { liveStateChanged: true });
         if (data.status === 'completed' && !hasOutstandingTurns()) state.wsRunning = false;
         if (!state.wsOldestTimestamp) {
@@ -2289,10 +2298,13 @@ async function loadOlderMessages(sessionId) {
   }
 }
 
+// While a turn streams, a refresh keeps what is on screen: the history does not hold the block
+// being written yet (once the Session is completed it does, and the snapshot replaces it).
 async function refreshSessionMessages(options) {
   if (!state.wsSessionId) return null;
   try {
-    return await loadLatestMessages(state.wsSessionId, { preservePending: true, ...options });
+    return await loadLatestMessages(state.wsSessionId, { preservePending: true,
+      keepLive: _streamCoordinator.activeTurnIds().length > 0, ...options });
   } catch (error) {
     return null;
   }

@@ -115,6 +115,35 @@ const _subscribers = new SessionSubscribers();
 // Changes when the Bridge restarts: every subscription is gone and the App reloads its history.
 const BRIDGE_EPOCH = crypto.randomUUID();
 const SESSION_EVENTS = new Set([...STREAM_EVENT_ACTIONS, ...OPTIONAL_TURN_EVENT_ACTIONS]);
+// The events of each running turn, so a (re)subscribing App gets the turn from its start instead of
+// waiting for the next block. sessionId → Map(turnId → { events, bytes }); a turn over the limit is
+// not replayed (the App then waits for its next block, as before).
+const _liveTurns = new Map();
+const REPLAY_LIMIT = 1024 * 1024;
+
+function rememberTurnEvent(event) {
+  if (!event.turnId || !Number.isInteger(event.seq)) return;
+  let turns = _liveTurns.get(event.sessionId);
+  if (event.action === 'stream_end') {
+    turns?.delete(event.turnId);
+    if (turns && !turns.size) _liveTurns.delete(event.sessionId);
+    return;
+  }
+  if (!turns) {
+    _liveTurns.set(event.sessionId, turns = new Map());
+    if (_liveTurns.size > 64) _liveTurns.delete(_liveTurns.keys().next().value);
+  }
+  let turn = turns.get(event.turnId);
+  if (!turn) turns.set(event.turnId, turn = { events: [], bytes: 0 });
+  if (turn.bytes > REPLAY_LIMIT) return;
+  turn.bytes += JSON.stringify(event).length;
+  turn.events = turn.bytes > REPLAY_LIMIT ? [] : [...turn.events, event];
+}
+
+function replayTurns(sessionId, caller) {
+  const events = [...(_liveTurns.get(sessionId)?.values() || [])].flatMap((turn) => turn.events);
+  if (events.length) _directRpc?.publish({ action: 'turn_replay', sessionId, events }, [[caller.replyTo, { deflate: caller.deflate }]]);
+}
 const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 let _projectFilesModule = null;
@@ -635,6 +664,7 @@ export function wsSend(data) {
     const { deliveryId, noCache, ...event } = data;
     // A turn end without its messages tells the App to reload the history.
     if (event.action === 'stream_end' && !event.messages?.length) event.recoveryRequired = true;
+    rememberTurnEvent(event);
     _directRpc?.publish(event);
     if (data.action !== 'messages' || noCache) return true;
   }
@@ -755,6 +785,7 @@ function connect() {
           if (params.replaces) _subscribers.remove(params.sessionId, params.replaces); // the caller's connection before it reconnected
           _subscribers.add(params.sessionId, caller.replyTo, caller.deflate);
           handleRevealPermission(params.sessionId, !params.renew).catch(error => console.error(`[ws] permission reveal failed: ${error.message}`));
+          if (!params.renew) replayTurns(params.sessionId, caller);
           return { epoch: BRIDGE_EPOCH };
         },
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },

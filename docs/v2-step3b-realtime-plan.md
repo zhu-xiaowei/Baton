@@ -86,6 +86,19 @@ queue or confirm pushes. A lost one shows as a turn `seq` gap or is covered by t
   sender to the Session (for a new Session, when its id is created), which is how a first turn
   reaches its sender; there is no other delivery rule.
 
+### Catching up on a running turn
+
+- The Bridge keeps the events of each running turn (dropped at `stream_end`; a turn over 1 MB is
+  not kept). A `subscribe` (not a renewal) answers with one `turn_replay {sessionId, events}` push
+  to that connection, chunked and deflated like any push. The App skips the events it already has,
+  so a page that was hidden, lost frames or opened mid-turn shows the turn from its start at once.
+- While a turn streams, a history refresh merges new rows instead of replacing the timeline (the
+  transcript does not hold the block being written yet). Once the Session is completed, the
+  snapshot replaces the partial row as before. A lost frame refreshes with a snapshot and
+  resubscribes; the replay rebuilds the turn, and without one it resumes at the next block.
+- Before this, returning to the foreground mid-stream cleared the streamed text until the turn
+  ended (also on `feat/v2`, where nothing was lost: the refresh replaced the live row).
+
 ### What is pushed
 
 - `stream_*`, `messages` (live turn rows and watcher rows), `permission_request`,

@@ -45,6 +45,8 @@ export class TurnEventQueue {
       };
       this.turns.set(event.turnId, turn);
     }
+    // A replayed event this page already has (applied, held or skipped) is not compared again.
+    if (event._replay && (event.seq < turn.nextSeq || turn.pending.has(event.seq))) return [];
     if (event.seq < turn.nextSeq) {
       if (turn.resumeFloor != null && event.seq < turn.resumeFloor) {
         var skipped = turn.skipped.get(event.seq);

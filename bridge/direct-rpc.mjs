@@ -214,8 +214,8 @@ export class DirectRpcBridge {
 
   // Pushes are best effort: with no subscriber, no socket or a backlog the event is dropped, and
   // the App recovers from the turn's seq gap or its next history request.
-  publish(event) {
-    const targets = this.subscribers.targets(event.sessionId);
+  // `targets` (default: the Session's subscribers) is [[connectionId, { deflate }]].
+  publish(event, targets = this.subscribers.targets(event.sessionId)) {
     if (!targets.length || this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > MAX_BUFFERED) return;
     const id = randomUUID();
     const label = { event: event.action };
