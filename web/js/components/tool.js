@@ -951,7 +951,11 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     else button.innerHTML = indicator.innerHTML;
     node.querySelector('.tool-detail-error')?.remove();
     try {
-      await loadToolDetails(toolId);
+      // An Edit draws its diff right after loading: fetching the viewer meanwhile takes the card from
+      // collapsed to its diff without frames in between (Safari painted one of them wrong).
+      const file = edit ? toolDetailsSource(toolId)?.toolUse?.input?.file_path : '';
+      await Promise.all([loadToolDetails(toolId), edit && window.loadDiffViewer?.()?.catch(() => {}),
+        file && window.loadHljsLanguage?.(detectLang(file))?.catch(() => {})]);
       if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device) return;
       node = Array.from(document.querySelectorAll('.messages [data-tool-id]'))
         .find((member) => member.dataset.toolId === toolId);
