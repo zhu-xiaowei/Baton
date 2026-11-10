@@ -183,8 +183,8 @@ function resubscribe(device) {
 // Resolves at the socket's next pong: everything posted to it before has arrived by then.
 export function ping() {
   return new Promise((resolve) => {
-    pongWaiters.push(resolve);
-    if (socket?.readyState === WebSocket.OPEN) socket.send(PING);
+    // One ping in flight answers every waiter.
+    if (pongWaiters.push(resolve) === 1 && socket?.readyState === WebSocket.OPEN) socket.send(PING);
   });
 }
 
@@ -283,6 +283,7 @@ function receive(ws, text) {
     reconcile();
     resubscribe();
     if (reconnected) resync();
+    if (pongWaiters.length) ws.send(PING); // the ping they wait for went down with the old socket
     return;
   }
   if (frame.action === 'realtime_pong') {
