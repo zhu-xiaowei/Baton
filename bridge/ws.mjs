@@ -759,7 +759,7 @@ function connect() {
         sessions: params => sessionIndex.sessions(params),
         history: params => historyService.history(params),
         threads: params => historyService.threads(params),
-        tool_details: params => toolDetails(params, { identityOf: parseStorageSessionId, adapterOf: getRuntimeAdapter }),
+        tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });

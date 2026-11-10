@@ -7,10 +7,9 @@ import { createToolDetailsReader, readToolIndex, readToolDetails, readToolDetail
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
 import { toolPreview } from '../../bridge/tool-preview.mjs';
 import { findClaudeSubagentFile } from '../../bridge/claude-subagent.mjs';
-import { parseStorageSessionId } from '../../bridge/session-identity.mjs';
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
-const claudeAt = (file) => ({ identityOf: parseStorageSessionId, adapterOf: () => ({ findSessionFile: () => file }) });
+const claudeAt = (file) => () => (file ? { file, runtime: 'claude', nativeSessionId: SESSION } : null); // the history service's resolve
 
 test('Claude details preserve full input/output; previews cut each field', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-details-'));
@@ -23,14 +22,14 @@ test('Claude details preserve full input/output; previews cut each field', async
     JSON.stringify({ message: { content: [{ type: 'tool_use', id: 'two', name: 'Read', input: { file_path: '/file' } }] } }),
   ].join('\n'));
   try {
-    const data = await toolDetails({ sessionId: SESSION, toolUseIds: ['one', 'two'] }, claudeAt(file));
+    const preview = await toolDetails({ sessionId: SESSION, toolUseIds: ['one'], preview: true }, claudeAt(file));
+    const data = await toolDetails({ sessionId: SESSION, toolUseIds: ['one', 'two'] }, claudeAt(file)); // after the preview: the index keeps full bodies
     assert.equal(data.details[0].toolUse.input.command, input);
     assert.equal(data.details[0].toolUse.input.cmd, undefined);
     assert.equal(data.details[0].toolResult.content, output);
     assert.deepEqual(data.details[0].toolResult.codexCommandActions, [{ type: 'unknown' }]);
     assert.deepEqual(data.details[0].toolResult._agentMeta, { totalDurationMs: 12, totalToolUseCount: 2 });
     assert.equal(data.details[1].toolResult, null);
-    const preview = await toolDetails({ sessionId: SESSION, toolUseIds: ['one'], preview: true }, claudeAt(file));
     const { toolUse, toolResult } = preview.details[0];
     assert.ok(toolUse.truncated && toolResult.truncated, 'previews are marked truncated');
     for (const [cut, full] of [[toolUse.input.command, input], [toolResult.content, output]]) {
@@ -57,9 +56,6 @@ test('Codex details reuse stable normalized tool IDs from the native rollout', (
 test('bad requests and missing original data are rejected', async () => {
   const none = claudeAt(null);
   await assert.rejects(toolDetails({ sessionId: SESSION, toolUseIds: ['one'] }, none), /unavailable/);
-  for (const sessionId of ['', '../x', `${SESSION}:subagent:../../x`, `codex:${SESSION}:subagent:agent-a`]) {
-    await assert.rejects(toolDetails({ sessionId, toolUseIds: ['one'] }, none), /invalid session/, sessionId);
-  }
   for (const toolUseIds of [[], 'one', [1], ['x'.repeat(513)], Array(129).fill('a')]) {
     await assert.rejects(toolDetails({ sessionId: SESSION, toolUseIds }, none), /invalid toolUseIds/);
   }
@@ -75,9 +71,8 @@ test('Claude subagent details use the original child-session file', async () => 
     message: { content: [{ type: 'tool_use', id: 'child-tool', name: 'Read', input: { file_path: '/child.js' } }] },
   }) + '\n');
   try {
-    const details = await toolDetails({ sessionId: session, toolUseIds: ['child-tool'] }, {
-      identityOf: parseStorageSessionId, adapterOf: () => ({ findSessionFile: id => findClaudeSubagentFile(id, directory) }),
-    });
+    const details = await toolDetails({ sessionId: session, toolUseIds: ['child-tool'] },
+      (id) => ({ file: findClaudeSubagentFile(id, directory), runtime: 'claude', nativeSessionId: id }));
     assert.equal(details.details[0].toolUse.input.file_path, '/child.js');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

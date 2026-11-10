@@ -68,8 +68,8 @@ invalidate the index. This is not an incremental parser.
 It returns `{ details: [{ toolUse, toolResult }] }`; the direct RPC chunks, compresses and
 resends the reply.
 
-The browser keeps the preview visible while loading and assembles all frames before
-rendering the full details. It caches details for the
+The browser keeps the preview visible while loading and renders the full details when
+the reply arrives. It caches details for the
 current device/session and reuses them while their preview data is unchanged.
 If an expected tool result is not persisted yet, the response is not cached as
 complete and can be retried. Input-only tools can load before a result exists;

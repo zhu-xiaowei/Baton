@@ -912,8 +912,8 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       }
       if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device || !node.isConnected) return;
       for (const member of previews) {
-        const preview = toolDetailsSource(member.dataset.toolId)?.preview;
-        if (preview) member.innerHTML = window.renderToolNode(preview.toolUse, preview.toolResult, state.appState.runtime, { collapsed: true });
+        const source = toolDetailsSource(member.dataset.toolId);
+        if (source?.preview) member.innerHTML = window.renderToolNode(source.toolUse, source.toolResult, state.appState.runtime, { collapsed: true });
       }
       window.markToolRunGroups?.(root);
     }

@@ -117,6 +117,10 @@ test('a group without bodies loads its previews in one request, then Show more l
   complete(sent[1], [{ toolUse: { ...tools[1].toolUse, truncated: false }, toolResult: { ...tools[1].toolResult, truncated: false, content: 'p2 full' } }]);
   await loading;
   assert.match(tools[1].node.textContent, /p2 full/);
+  // A timeline re-render passes the history page's own objects again: both caches must survive it.
+  const again = (tool) => window.renderToolNode(tool.toolUse, tool.toolResult, 'claude', { collapsed: true });
+  assert.match(again(tools[0]), /p1 preview/);
+  assert.match(again(tools[1]), /p2 full/);
   window.toggleToolDetails(tools[0].node.querySelector('.tool-header'));
   await window.toggleToolDetails(tools[0].node.querySelector('.tool-header'));
   assert.equal(sent.length, 2, 'previews stay cached');
