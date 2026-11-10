@@ -336,7 +336,9 @@ make the operation readable. Bodies:
 | `rpc_result` | `method, requestId, ok, chunk, enc, data` or `error` | Bridge → App |
 | `push` | `event, sessionId, id, chunk, enc, data` | Bridge → subscribed Apps |
 
-Replies and pushes above 1 KB are deflated and split into chunks reassembled by `requestId` / `id`.
+Replies and pushes above 1 KB are deflated and split into chunks reassembled by `requestId` / `id`;
+a request whose params do not fit one frame is sent as `rpc` chunks (`chunk, enc, data` instead of
+`params`) the same way.
 
 | Method | Params | Answer |
 |---|---|---|

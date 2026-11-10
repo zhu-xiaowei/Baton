@@ -105,6 +105,15 @@ test('receipts, a dead socket and expiring credentials', async () => {
   assert.ok(bridgeCredentials.ms < 1000);
 });
 
+test('a long message is sent as compressed chunks and arrives whole', async () => {
+  // About 200 000 characters that barely compress (hashes), with quotes, backslashes and CJK.
+  const text = Array.from({ length: 3000 }, (_, i) => `日志 "${createHash('sha256').update(String(i)).digest('hex')}" \\\n`).join('');
+  const [result, lost] = await Promise.all([run({ ack: true, text }), run({ ack: true, text, dropRequests: 1 })]);
+  assert.deepEqual([result.value, result.computed], [{ length: text.length }, 1]);
+  assert.ok(result.requests > 1, 'several frames');
+  assert.deepEqual([lost.value, lost.computed], [{ length: text.length }, 1], 'a lost chunk is sent again');
+});
+
 test('pushes reach subscribers only, whole, and follow a reconnect', async () => {
   const result = await run({ push: true });
   assert.equal(result.unsubscribed, 0, 'nothing is sent for a Session nobody watches');

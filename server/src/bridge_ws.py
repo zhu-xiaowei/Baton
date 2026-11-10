@@ -229,53 +229,6 @@ def _post_to_connection(endpoint, connection_id, data):
         return False
 
 
-def _log_turn_delivery(event, body, **fields):
-    print("[turn-delivery] " + json.dumps({
-        "event": event,
-        "sessionId": body.get("sessionId", ""),
-        "turnId": body.get("turnId", ""),
-        "seq": body.get("seq"),
-        "action": body.get("action", ""),
-        **fields,
-    }, separators=(",", ":")))
-
-
-def _turn_event_targets(body, account_id, bridge_connection_id):
-    session_id = body.get("sessionId", "")
-    targets = set()
-    subs = _subscriptions_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-        ConsistentRead=True,
-    ).get("Items", [])
-    for sub in subs:
-        connection_id = sub.get("connectionId", "")
-        if connection_id and connection_id != bridge_connection_id:
-            targets.add(connection_id)
-
-    return targets
-
-
-def _relay_turn_event(body, account_id, bridge_connection_id, endpoint):
-    payload = {
-        key: value for key, value in body.items()
-        if key not in ("deliveryId", "noCache")
-    }
-    targets = _turn_event_targets(body, account_id, bridge_connection_id)
-    gone = 0
-    for connection_id in targets:
-        if _post_to_connection(endpoint, connection_id, payload) is False:
-            gone += 1
-
-    if gone or body.get("action") == "stream_end":
-        _log_turn_delivery(
-            "relayed",
-            body,
-            targets=len(targets),
-            gone=gone,
-        )
-    return payload
-
-
 def handler(event, context):
     _init()
     route = event.get("requestContext", {}).get("routeKey", "")
@@ -535,14 +488,6 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "delete_files_result":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action in ("file_ready", "file_progress"):
-        if role == "bridge":
-            return _handle_bridge_relay(
-                body,
-                account_id,
-                connection_id,
-                endpoint,
-            )
     elif action == "list_commands":
         if role == "app":
             return _handle_send_to_bridge(
@@ -605,20 +550,12 @@ def _handle_message(event, connection_id, endpoint):
 
 
 def _handle_subscribe(body, connection_id, account_id, endpoint):
-    """App subscribes to a session."""
+    """The App's viewer row (`ROOT#<root>`) for the notification worker's "being viewed" check."""
     session_id = body.get("sessionId", "")
     if not session_id:
         return {"statusCode": 400}
 
     _persist_subscription(session_id, connection_id, account_id)
-    root_session_id = body.get("rootSessionId", "")
-    if root_session_id:
-        _persist_subscription(
-            _root_subscription_id(root_session_id),
-            connection_id,
-            account_id,
-        )
-
     return {"statusCode": 200}
 
 
@@ -643,18 +580,11 @@ def _handle_unsubscribe(body, connection_id, account_id=None, endpoint=None):
         "sessionId": session_id,
         "connectionId": connection_id,
     })
-    root_session_id = body.get("rootSessionId", "")
-    if root_session_id:
-        _subscriptions_table.delete_item(Key={
-            "sessionId": _root_subscription_id(root_session_id),
-            "connectionId": connection_id,
-        })
-
     return {"statusCode": 200}
 
 
 def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
-    """Bridge pushes new messages — relay to subscribed apps + write DDB."""
+    """Bridge rows DynamoDB stores; Apps get them from the Bridge directly."""
     session_id = body.get("sessionId", "")
     messages = body.get("messages", [])
     compact_placeholder = (
@@ -666,29 +596,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     if not session_id or (not messages and not compact_placeholder):
         return {"statusCode": 400}
 
-    # 1. Relay to subscribed apps (priority — low latency).
-    if body.get("turnId") and body.get("seq") is not None:
-        _relay_turn_event(
-            {**body, "action": "messages"},
-            account_id,
-            bridge_connection_id,
-            endpoint,
-        )
-    else:
-        subs = _subscriptions_table.query(
-            KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-            ConsistentRead=True,
-        ).get("Items", [])
-        for sub in subs:
-            cid = sub.get("connectionId", "")
-            if cid and cid != bridge_connection_id:
-                _post_to_connection(endpoint, cid, {
-                    "action": "messages",
-                    "sessionId": session_id,
-                    "messages": messages,
-                })
-
-    # 2. Write to DDB (cache) with one retry.
+    # Write to DDB (cache) with one retry.
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
     # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
     # caching the truncated version here would clobber it.
@@ -737,7 +645,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
             # deterministic rows through the HTTP fallback before advancing.
             return {"statusCode": 500}
 
-    # 3. Ack back to bridge so it can advance synced position
+    # Ack back to bridge so it can advance synced position
     ack = {
         "action": "messages_ack",
         "sessionId": session_id,
@@ -765,17 +673,6 @@ def _handle_sync_complete(body, account_id, endpoint):
             "status": body.get("status", "ok"),
             "count": body.get("count", 0),
         })
-
-    return {"statusCode": 200}
-
-
-def _handle_bridge_relay(body, account_id, bridge_connection_id, endpoint):
-    """Bridge pushes a notification (e.g. permission_request) — relay to subscribed apps."""
-    session_id = body.get("sessionId", "")
-    if not session_id:
-        return {"statusCode": 400}
-
-    _relay_turn_event(body, account_id, bridge_connection_id, endpoint)
 
     return {"statusCode": 200}
 

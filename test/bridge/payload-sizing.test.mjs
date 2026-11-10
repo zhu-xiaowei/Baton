@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { truncateToBytes } from '../../bridge/extract.mjs';
-import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
-import { fitWsPayload, prepareWsPayload } from '../../bridge/ws.mjs';
+import { fitWsPayload } from '../../bridge/ws.mjs';
 
 function toolMessage(input, output) {
   return {
@@ -72,42 +71,6 @@ test('oversized messages events keep compact tool IN and OUT on the wire', () =>
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) <= 7000);
 });
 
-test('oversized turn events keep their seq and preserve compact messages', () => {
-  const sent = [];
-  const turn = new LiveTurnStream({
-    sessionId: 'session-1',
-    turnId: 'turn-1',
-    send(event) {
-      sent.push(fitWsPayload(event, 1000));
-    },
-  });
-  const fullMessage = {
-    uuid: 'message-1',
-    nativeId: 'native-1',
-    type: 'assistant',
-    content: [{ type: 'text', text: 'x'.repeat(4000) }],
-  };
-
-  turn.sendAuthoritative(fullMessage, { noCache: true });
-  turn.sendEnd();
-
-  assert.deepEqual(sent.map((event) => [event.action, event.seq]), [
-    ['stream_turn_start', 0],
-    ['messages', 1],
-    ['stream_end', 2],
-  ]);
-  assert.equal(sent[1].messages.length, 1);
-  assert.equal(sent[1].messages[0].uuid, fullMessage.uuid);
-  assert.equal(sent[1].messages[0].nativeId, fullMessage.nativeId);
-  assert.match(sent[1].messages[0].content[0].text, /truncated/);
-  assert.equal(sent[1].truncated, true);
-  assert.equal(sent[1].noCache, true);
-  assert.equal(sent[2].messages, undefined);
-  assert.equal(sent[2].recoveryRequired, undefined);
-  assert.ok(sent.every((event) =>
-    Buffer.byteLength(JSON.stringify(event)) <= 1000));
-});
-
 test('messages fall back to an empty placeholder only when structure cannot fit', () => {
   const compact = fitWsPayload({
     action: 'messages',
@@ -124,65 +87,4 @@ test('messages fall back to an empty placeholder only when structure cannot fit'
 
   assert.deepEqual(compact.messages, []);
   assert.equal(compact.truncated, true);
-});
-
-test('only an empty messages placeholder marks its turn for REST recovery', () => {
-  const recoveryTurns = new Set();
-  const compactMessage = prepareWsPayload({
-    action: 'messages',
-    sessionId: 'session-1',
-    turnId: 'turn-compact',
-    seq: 1,
-    messages: [{
-      uuid: 'message-compact',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'x'.repeat(4000) }],
-    }],
-  }, recoveryTurns, 1000);
-  assert.equal(compactMessage.messages.length, 1);
-  assert.equal(recoveryTurns.has('turn-compact'), false);
-
-  const compactEnd = prepareWsPayload({
-    action: 'stream_end',
-    sessionId: 'session-1',
-    turnId: 'turn-compact',
-    seq: 2,
-    messages: [{
-      uuid: 'message-compact',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'x'.repeat(4000) }],
-    }],
-  }, recoveryTurns, 1000);
-  assert.equal(compactEnd.messages, undefined);
-  assert.equal(compactEnd.recoveryRequired, true);
-
-  const emptyMessage = prepareWsPayload({
-    action: 'messages',
-    sessionId: 'session-1',
-    turnId: 'turn-empty',
-    seq: 1,
-    messages: [{
-      uuid: 'message-empty',
-      nativeId: 'native-empty',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'x'.repeat(4000) }],
-    }],
-  }, recoveryTurns, 120);
-  assert.deepEqual(emptyMessage.messages, []);
-  assert.equal(recoveryTurns.has('turn-empty'), true);
-
-  const recoveryEnd = prepareWsPayload({
-    action: 'stream_end',
-    sessionId: 'session-1',
-    turnId: 'turn-empty',
-    seq: 2,
-    messages: [{
-      uuid: 'message-empty',
-      nativeId: 'native-empty',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'x'.repeat(4000) }],
-    }],
-  }, recoveryTurns, 120);
-  assert.equal(recoveryEnd.messages, undefined);
-  assert.equal(recoveryEnd.recoveryRequired, true);
 });

@@ -32,6 +32,19 @@ export function rpcRequest({ requestId, method, params = {}, replyTo, missing, a
   return frame;
 }
 
+// A request whose params do not fit one frame (a long message) is sent as chunks of its params,
+// encoded like a reply. `deflate` may return a Promise (browser streams).
+export async function rpcRequestFrames(request, deflate) {
+  const { params, ...head } = request;
+  if (JSON.stringify(params).length <= JSON_CHUNK_CHARS) return [request];
+  const json = JSON.stringify(params);
+  const packed = deflate ? { enc: 'deflate-b64', data: toBase64(await deflate(encoder.encode(json))) } : { enc: 'json', data: json };
+  const size = packed.enc === 'json' ? JSON_CHUNK_CHARS : CHUNK_CHARS;
+  const count = Math.ceil(packed.data.length / size);
+  return Array.from({ length: count }, (_, index) => ({ ...head, chunk: { index, count }, enc: packed.enc,
+    data: packed.data.slice(index * size, (index + 1) * size) }));
+}
+
 export function isRpcRequest(frame) {
   return frame?.v === RPC_VERSION && frame.kind === 'rpc' && typeof frame.requestId === 'string'
     && typeof frame.method === 'string' && typeof frame.replyTo === 'string';

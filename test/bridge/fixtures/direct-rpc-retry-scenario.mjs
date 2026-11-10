@@ -35,7 +35,7 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
     },
   };
   const bridge = new DirectRpcBridge({ key: 'key', handlers: {
-    work: async () => { log.computed++; await new Promise((r) => setTimeout(r, computeMs)); return result; },
+    work: async (params) => { log.computed++; await new Promise((r) => setTimeout(r, computeMs)); return params.text ? { length: params.text.length } : result; },
     subscribe: (params, caller) => {
       log.subscribes.push({ to: caller.replyTo, renew: !!params.renew });
       if (params.replaces) bridge.subscribers.remove(params.sessionId, params.replaces);
@@ -87,7 +87,7 @@ async function run(options) {
   if (!options.coldStart) await transport.devices(); // a cold start learns routes from the request itself
   const started = performance.now();
   if (options.push) return pushScenario(env, transport);
-  const promise = transport.request('dev', 'work', {}, { ack: options.ack,
+  const promise = transport.request('dev', 'work', options.text ? { text: options.text } : {}, { ack: options.ack,
     onSlow: () => { env.log.slowAt = performance.now() - started; },
     onAccepted: () => { env.log.acceptedAt = performance.now() - started; } });
   if (options.reconnectAt) setTimeout(env.reconnect, options.reconnectAt);

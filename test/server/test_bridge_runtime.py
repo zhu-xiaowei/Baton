@@ -1287,37 +1287,6 @@ def test_subscribe_only_persists_the_connection(monkeypatch):
     assert "requestId" not in events[0][1]
 
 
-def test_subscribe_and_unsubscribe_track_the_root_session(monkeypatch):
-    events = []
-
-    class SubscriptionTable:
-        def put_item(self, Item):
-            events.append(("put", Item["sessionId"], Item["connectionId"]))
-
-        def delete_item(self, Key):
-            events.append(("delete", Key["sessionId"], Key["connectionId"]))
-
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
-    body = {
-        "sessionId": "codex:child",
-        "rootSessionId": "codex:root",
-    }
-
-    assert bridge_ws._handle_subscribe(
-        body,
-        "app-1",
-        "account-1",
-        "https://example.test/v1",
-    ) == {"statusCode": 200}
-    assert bridge_ws._handle_unsubscribe(body, "app-1") == {"statusCode": 200}
-    assert events == [
-        ("put", "codex:child", "app-1"),
-        ("put", "ROOT#codex:root", "app-1"),
-        ("delete", "codex:child", "app-1"),
-        ("delete", "ROOT#codex:root", "app-1"),
-    ]
-
-
 def test_subscribe_write_failure_propagates(monkeypatch):
     class SubscriptionTable:
         def put_item(self, Item):
@@ -1541,54 +1510,6 @@ def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch
         assert sent == []
 
 
-def test_bridge_messages_preserve_turn_sequence(monkeypatch):
-    class SubscriptionTable:
-        def query(self, **_):
-            return {"Items": [{"connectionId": "app-1"}]}
-
-    sent = []
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
-    monkeypatch.setattr(
-        bridge_ws,
-        "_post_to_connection",
-        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
-    )
-
-    message = {
-        "uuid": "m1",
-        "type": "assistant",
-        "content": "answer",
-        "timestamp": "2026-08-15T11:16:22.458Z",
-    }
-    response = bridge_ws._handle_bridge_messages(
-        {
-            "sessionId": "codex:test",
-            "turnId": "turn-1",
-            "seq": 3,
-            "messages": [message],
-            "noCache": True,
-        },
-        "bridge-1",
-        "account-1",
-        "https://example.test/v1",
-    )
-
-    assert response == {"statusCode": 200}
-    assert sent == [
-        ("app-1", {
-                "action": "messages",
-                "sessionId": "codex:test",
-                "turnId": "turn-1",
-                "seq": 3,
-                "messages": [message],
-        }),
-        ("bridge-1", {
-            "action": "messages_ack",
-            "sessionId": "codex:test",
-        }),
-    ]
-
-
 def test_bridge_message_cache_persists_only_message_fields(monkeypatch):
     class SubscriptionTable:
         def query(self, **_):
@@ -1661,17 +1582,8 @@ def test_bridge_messages_echoes_delivery_id_only_to_bridge_ack(monkeypatch):
     )
 
     assert response == {"statusCode": 200}
+    # Apps get the row from the Bridge; the server only stores it and acknowledges.
     assert sent == [
-        ("app-1", {
-            "action": "messages",
-            "sessionId": "codex:test",
-            "messages": [{
-                "uuid": "m1",
-                "type": "assistant",
-                "content": "hello",
-                "timestamp": "2026-08-12T00:00:00.000Z",
-            }],
-        }),
         ("bridge-1", {
             "action": "messages_ack",
             "sessionId": "codex:test",
@@ -1700,48 +1612,3 @@ def test_post_to_connection_uses_compact_utf8_json(monkeypatch):
         "app-1",
         '{"action":"stream_delta","chunk":"中文"}'.encode(),
     )]
-
-
-def test_compact_messages_placeholder_keeps_turn_sequence(monkeypatch):
-    class SubscriptionTable:
-        def query(self, **_):
-            return {"Items": [{"connectionId": "app-1"}]}
-
-    sent = []
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
-    monkeypatch.setattr(
-        bridge_ws,
-        "_post_to_connection",
-        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
-    )
-
-    response = bridge_ws._handle_bridge_messages(
-        {
-            "action": "messages",
-            "sessionId": "codex:test",
-            "turnId": "turn-1",
-            "seq": 12,
-            "messages": [],
-            "truncated": True,
-            "noCache": True,
-        },
-        "bridge-1",
-        "account-1",
-        "https://example.test/v1",
-    )
-
-    assert response == {"statusCode": 200}
-    assert sent == [
-        ("app-1", {
-            "action": "messages",
-            "sessionId": "codex:test",
-            "turnId": "turn-1",
-            "seq": 12,
-            "messages": [],
-            "truncated": True,
-        }),
-        ("bridge-1", {
-            "action": "messages_ack",
-            "sessionId": "codex:test",
-        }),
-    ]

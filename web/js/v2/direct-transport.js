@@ -5,7 +5,7 @@
 // One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
 import { createHeaderSigner } from '../../../bridge/terminal-direct-protocol.mjs';
-import { RpcAssembler, decodeRpcPayload, rpcRequest } from '../../../bridge/direct-rpc-protocol.mjs';
+import { RpcAssembler, decodeRpcPayload, rpcRequest, rpcRequestFrames } from '../../../bridge/direct-rpc-protocol.mjs';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
 // chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
@@ -26,6 +26,9 @@ const MAX_RETRIES = 3;
 const RETRY_JITTER_MS = 2000;
 const CAN_INFLATE = typeof DecompressionStream === 'function' && (() => {
   try { new DecompressionStream('deflate-raw'); return true; } catch { return false; }
+})();
+const CAN_DEFLATE = typeof CompressionStream === 'function' && (() => {
+  try { new CompressionStream('deflate-raw'); return true; } catch { return false; }
 })();
 
 const routes = new Map();     // device → { online, dataId, version }
@@ -64,6 +67,11 @@ function uuid() {
 
 async function inflate(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function deflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -252,9 +260,11 @@ export function connect() {
     clearInterval(pingTimer);
     // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
     routesKnown = false;
-    // Past the quick retries, keep trying only while a visible page still needs the socket.
-    const needed = document.visibilityState === 'visible' && (pending.size || subscriptions.size);
-    if (retryTimer || (retries > MAX_RETRIES && !needed)) return;
+    // A hidden page reconnects only for a request in flight; showing it reconnects. Past the
+    // quick retries, keep trying only while a visible page still needs the socket.
+    const visible = document.visibilityState === 'visible';
+    const needed = visible && (pending.size || subscriptions.size);
+    if (retryTimer || (!visible && !pending.size) || (retries > MAX_RETRIES && !needed)) return;
     const delay = !retries++ ? 0 : Math.random() * RETRY_JITTER_MS + (retries > MAX_RETRIES ? 5000 : 0);
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
@@ -326,9 +336,13 @@ async function send(key, request, route, missing) {
     // One signer per route (a route is replaced when its Bridge or the credentials change).
     route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
       target: route.dataId, action: 'rpc' });
-    socket.send(await route.sign(JSON.stringify(body), undefined, { method: request.method }));
-  } catch {
+    request.frames ||= await rpcRequestFrames(body, CAN_DEFLATE ? deflate : null);
+    const frames = request.frames.map((frame) => ({ ...frame, replyTo: connectionId, ...(missing?.length ? { missing } : {}) }));
+    for (const frame of frames) socket.send(await route.sign(JSON.stringify(frame), undefined, { method: request.method }));
+  } catch (error) {
     request.attemptVersion = null;
+    // Too large even in chunks: fail now instead of signing it again until the deadline.
+    if (/exceeds/.test(error?.message || '')) finish(key, request, { reason: 'too_large' });
   }
 }
 

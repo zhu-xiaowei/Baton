@@ -452,16 +452,6 @@ function connectWs(_, projectHash) {
   state.ws.onerror = function () {};
 }
 
-function recoverSubscribedSession() {
-  if (!state.wsSessionId) return false;
-  if (_historyFetchBarriers.current(state.wsSessionId)) {
-    subscribeSession(state.wsSessionId);
-  } else {
-    refreshSessionMessages();
-  }
-  return true;
-}
-
 function resumeSessionForeground() {
   if (!state.appState.session || !state.WS_URL) return false;
   refreshSessionMessages({ fresh: true });
@@ -577,17 +567,21 @@ function sendToBridge(pending, extra) {
   }).then(function (result) {
     pending.sending = false;
     dispatchWsMessage({ ...result, action: 'send_message_result' });
-  }, function () {
+  }, function (error) {
     pending.sending = false; // offline or timed out: resent on resync, else the send timeout decides
+    if (error?.message === 'too_large') resolvePending(pending, false, 'Message is too long.');
   });
 }
 
-// Pushes may have been missed (reconnect, Bridge restart): reload what is shown and send again.
+// Pushes may have been missed (reconnect, Bridge restart, device back): send again what has no
+// receipt (a New Session page has no Session id yet) and reload what is shown.
 function resyncSession(device) {
-  if (!state.wsSessionId || (device && device !== state.appState.device)) return;
+  if (device && device !== state.appState.device) return;
   resendUnreceiptedSends();
+  if (!state.wsSessionId) return;
   if (state.wsHistoryPhase === 'offline' || state.wsHistoryPhase === 'stale') window.retrySessionHistory();
-  else recoverSubscribedSession();
+  else if (_historyFetchBarriers.current(state.wsSessionId)) subscribeSession(state.wsSessionId);
+  else refreshSessionMessages();
 }
 bridge.onPush(handleWsMessage);
 bridge.onResync(resyncSession);
@@ -2243,8 +2237,8 @@ window.retrySessionHistory = function () {
 // The open Session reloads by itself when its offline device comes back.
 bridge.onDeviceOnline(function (device) {
   if (state.deviceOnlineMap[device] === false) state.deviceOnlineMap[device] = true;
-  if (device !== state.appState.device || !state.wsSessionId) return;
-  if (typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+  if (device !== state.appState.device) return;
+  if (state.wsSessionId && typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
   resyncSession(device);
 });
 

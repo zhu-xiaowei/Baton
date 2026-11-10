@@ -61,6 +61,11 @@ queue or confirm pushes. A lost one shows as a turn `seq` gap or is covered by t
 - Measured with real credentials (Node 20): a 60-character delta is one 1.8 KB frame and 0.2 ms to
   sign; a 115 KB message is one 5.3 KB frame; a 667 KB `stream_end` is three frames (largest
   21 KB) and 5 ms. Without deflate the largest frame is 16 KB. The limit is 28 KiB.
+- Requests whose params exceed one frame (a long message) are sent the same way: deflated params in
+  chunks, assembled on the Bridge before the handler runs (at most 64 chunks, about 1.2 MB
+  compressed). A request that still cannot be signed fails at once (`too_large`).
+- Watcher rows over 32 KB still reach the push path as the transport-truncated copy that DynamoDB
+  needs today; the App drops them and the history brings the row. This goes with stage 3.
 
 ### Subscriptions (Bridge)
 
@@ -128,7 +133,8 @@ queue or confirm pushes. A lost one shows as a turn `seq` gap or is covered by t
   silently dead socket goes unnoticed while the user just watches (about a minute).
 - Hidden page: the App unsubscribes at once and stops the tick, so the Bridge stops pushing (the
   lease is the fallback when the unsubscribe cannot be sent); the gateway closes the idle socket
-  after 10 minutes. Foregrounding reconnects, subscribes and refreshes, as it already does.
+  after 10 minutes, and a hidden page reconnects only for a request in flight. Foregrounding
+  reconnects, subscribes and refreshes, as it already does.
 - A `seq` gap pings this socket; the pong plus 3 s means the frame is lost (was: both v1 sockets).
 - The v1 control socket keeps its own ping until stage 2 removes it.
 

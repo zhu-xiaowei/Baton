@@ -502,7 +502,7 @@ async function handleRevealPermission(sessionId, observe = true) {
   if (!sessionId) return;
   const pending = _pendingControl.current(sessionId);
   if (pending) {
-    if (pending.syncStatus) {
+    if (pending.syncStatus && observe) {
       syncInteractionStatus(
         sessionId,
         'needs_input',
@@ -600,39 +600,11 @@ export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
     }
     return empty;
   }
-  if (data?.action === 'stream_end') {
-    const { messages: _messages, ...compact } = data;
-    return compact;
-  }
   const compact = truncateToBytes(data, frameLimit - 64);
   return {
     ...compact,
     truncated: true,
   };
-}
-
-export function prepareWsPayload(data, recoveryTurns, frameLimit = WS_FRAME_LIMIT) {
-  const recovery = recoveryTurns || new Set();
-  const source = data?.action === 'stream_end'
-    && data.turnId
-    && recovery.has(data.turnId)
-    ? { ...data, recoveryRequired: true }
-    : data;
-  let outgoing = fitWsPayload(source, frameLimit);
-  if (data?.action === 'stream_end'
-    && (!Array.isArray(outgoing?.messages) || outgoing.messages.length === 0)) {
-    outgoing = { ...outgoing, recoveryRequired: true };
-  }
-  if (data?.action === 'messages'
-    && data.turnId
-    && Array.isArray(data.messages)
-    && data.messages.length
-    && outgoing?.truncated === true
-    && Array.isArray(outgoing.messages)
-    && outgoing.messages.length === 0) {
-    recovery.add(data.turnId);
-  }
-  return outgoing;
 }
 
 export function shouldCacheClientTurnAck(data) {
@@ -660,7 +632,9 @@ export function wsSend(data) {
   if (data?.sessionId && SESSION_EVENTS.has(data.action)) {
     // Session events are pushed to the Apps subscribed to them, never truncated. Only the rows
     // DynamoDB still stores continue to the server below.
-    const { deliveryId, noCache, ...event } = prepareWsPayload(data, null, Infinity);
+    const { deliveryId, noCache, ...event } = data;
+    // A turn end without its messages tells the App to reload the history.
+    if (event.action === 'stream_end' && !event.messages?.length) event.recoveryRequired = true;
     _directRpc?.publish(event);
     if (data.action !== 'messages' || noCache) return true;
   }

@@ -3,9 +3,9 @@
 // events to the connections subscribed to them.
 import { randomUUID } from 'crypto';
 import WebSocket from 'ws';
-import { deflateRawSync } from 'zlib';
+import { deflateRawSync, inflateRawSync } from 'zlib';
 import { createHeaderSigner } from './terminal-direct-protocol.mjs';
-import { isRpcRequest, pushFrames, rpcAckFrame, rpcErrorFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
+import { RpcAssembler, decodeRpcPayload, isRpcRequest, pushFrames, rpcAckFrame, rpcErrorFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
 
 const MAX_CONCURRENT = 4;
 // A resend reuses its requestId: it gets the stored reply (or the reply still being computed).
@@ -16,6 +16,7 @@ const PONG_TIMEOUT_MS = 10_000;
 const LEASE_MS = 150_000;
 const RENEW_MS = 5 * 60_000;
 const MAX_BUFFERED = 1024 * 1024;
+const MAX_REQUEST_CHUNKS = 64; // about 1.2 MB of compressed params
 
 // Which App connections watch which Session. Nothing tells the Bridge that an App socket closed,
 // so a subscription is a lease the App renews; only these connections receive pushes.
@@ -59,6 +60,7 @@ export class DirectRpcBridge {
     this.queue = [];
     this.signers = new Map();
     this.replies = new Map(); // requestId → { replyTo, frames, at }
+    this.requestParts = new RpcAssembler(32);
     this.active = true;
   }
 
@@ -141,6 +143,23 @@ export class DirectRpcBridge {
     }
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
     if (!isRpcRequest(frame)) return;
+    if (frame.chunk) return void this.receiveChunk(frame);
+    this.accept(frame);
+  }
+
+  // Chunks of a long request; the request is handled once all of them arrived.
+  async receiveChunk(frame) {
+    if (this.replies.has(frame.requestId)) return frame.chunk.index === 0 ? this.accept(frame) : undefined; // a resend: reply once
+    if (!(frame.chunk.count <= MAX_REQUEST_CHUNKS)) return this.deliver([rpcErrorFrame(frame.requestId, 'too_large', frame.method)], frame.replyTo, { method: frame.method });
+    const part = this.requestParts.add({ ...frame, kind: 'rpc_result' });
+    if (!part?.payload) return;
+    const { chunk, enc, data, ...head } = frame;
+    let params;
+    try { params = await decodeRpcPayload(part.payload, inflateRawSync); } catch { return; }
+    this.accept({ ...head, params });
+  }
+
+  accept(frame) {
     const label = { method: frame.method };
     if (frame.ack) void this.deliver([rpcAckFrame(frame.requestId)], frame.replyTo, label);
     const known = this.replies.get(frame.requestId);

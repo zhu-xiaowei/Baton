@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('foreground and unexpected reconnects share recovery while navigation starts fresh', async () => {
+test('foreground keeps the control socket, navigation starts fresh, and a new control socket restores only the viewer row', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: 'codex:foreground-ws' });
   h.state.WS_URL = 'wss://example.test/ws';
