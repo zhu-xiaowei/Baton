@@ -55,6 +55,3 @@ claude-code-source-code/
 
 # Release binaries
 release/
-
-# Generated from the pinned PDF.js dependency
-/web/public/pdfjs/

@@ -11,6 +11,21 @@ The file viewer has one Download action and no separate Share button. It works f
 
 The web/server/Bridge changes require their respective deployment/update. The native download plugin requires rebuilding and updating each app binary; a server-only deployment cannot add a native plugin to an installed app.
 
+## PDF preview cache
+
+PDF.js stays on the existing pinned version and is not bundled with the app.
+Opening the first PDF downloads its engine, worker and viewer styles from the
+CDN. These assets are stored in IndexedDB by their versioned URLs and reused
+across page/app restarts without contacting the CDN. Fonts and CMaps are
+downloaded and cached only when a document needs them. Clearing application
+data, browser storage eviction or changing the pinned version requires another
+download. If persistent storage is unavailable, online previews still work.
+
+Closing and reopening the same cached PDF restores its page, position and zoom.
+Reading positions stay in memory for up to 50 files and are cleared with the
+corresponding file cache; they do not survive a page/app restart. Each open
+preview owns its PDF worker and releases it on close.
+
 ## S3 upload acceleration
 
 `server/install.sh` already enables acceleration on the deployment bucket by default and passes `FileUploadAcceleration=true` to the stack, which sets `S3_UPLOAD_ACCELERATE=true` in Lambda. Setting `S3_UPLOAD_ACCELERATE=false` when running the installer opts out. Signed uploads retain a standard regional URL fallback if acceleration is unavailable. Acceleration may incur additional transfer charges and may take time to become available after enabling it.
