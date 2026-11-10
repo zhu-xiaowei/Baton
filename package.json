@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "license": "MIT",
   "scripts": {
@@ -14,7 +14,7 @@
     "test:codex:e2e": "node test/codex/phase2/e2e.mjs --run",
     "test:codex:stress": "node test/codex/phase2/parcel-stress.mjs --run",
     "test:frontend": "node --test test/frontend/*.test.mjs",
-    "test:server": "python3 -m pytest test/server",
+    "test:server": "python3 -m pytest test/server && node --test test/push-relay/*.test.mjs",
     "test:packaging": "node --test test/packaging/*.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -27,16 +27,20 @@
     "release:ios:cloud": "node scripts/release-ios-cloud.mjs",
     "build:mac": "./scripts/release-mac.sh",
     "build:windows": "./scripts/release-windows.sh",
+    "build:linux": "tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb",
     "package": "bash scripts/package-all.sh",
     "package:android": "node scripts/package-cloud.mjs --platform android",
     "package:macos": "node scripts/package-cloud.mjs --platform macos",
     "package:windows": "node scripts/package-cloud.mjs --platform windows",
+    "package:linux": "node scripts/package-cloud.mjs --platform linux",
     "package:dev:android": "node scripts/package-cloud.mjs --dev --platform android",
     "package:dev:ios": "node scripts/package-cloud.mjs --dev --platform ios",
     "package:dev:macos": "node scripts/package-cloud.mjs --dev --platform macos",
-    "package:dev:windows": "node scripts/package-cloud.mjs --dev --platform windows"
+    "package:dev:windows": "node scripts/package-cloud.mjs --dev --platform windows",
+    "package:dev:linux": "node scripts/package-cloud.mjs --dev --platform linux"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
     "@tauri-apps/plugin-opener": "^2.2.6",
     "@xterm/addon-fit": "0.12.0-beta.301",

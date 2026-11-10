@@ -44,6 +44,11 @@ builds to the internal **Test** group; confirm that state before saying testers
 can install the build. If group assignment fails after upload, report the
 existing build instead of starting another release.
 
+If creating an Xcode Cloud run returns an unexplained HTTP 500, first remind
+the user to check for an updated Apple Developer Program License Agreement
+awaiting acceptance. Follow the agreement check in
+`.claude/commands/testflight.md` before further start attempts.
+
 Wait until the TestFlight upload finishes, App Store Connect marks the build
 `VALID`, and the internal **Test** group is `IN_BETA_TESTING`. Only then
 automatically create or reuse a PR from the existing

@@ -9,6 +9,8 @@
   // Set only while renderMdDocument parses. Baton's own markup (inline handlers, KaTeX styles)
   // is parked here so the sanitizer only sees the document's Markdown and raw HTML.
   var _documentSlots = null;
+  var _chatCode = false;
+  var _streaming = false;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -93,10 +95,23 @@
   function jsonHtml(value) {
     var code = JSON.stringify(value, null, 2);
     try {
-      return '<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>';
+      return codeBlock('<pre><code class="hljs">' + hljs.highlight(code, { language: 'json' }).value + '</code></pre>', 'json', true);
     } catch (e) {
-      return '<pre><code>' + escHtml(code) + '</code></pre>';
+      return codeBlock('<pre><code>' + escHtml(code) + '</code></pre>', 'json', true);
     }
+  }
+
+  function codeBlock(html, language, chat = _chatCode) {
+    if (!chat || _documentSlots || !window.copyButtonHtml) return html;
+    return '<div class="code-block"><div class="code-block-head"><span class="code-language">'
+      + escHtml(hljs.getLanguage(language)?.name || language || '') + '</span>'
+      + window.copyButtonHtml('code') + '</div>' + html + '</div>';
+  }
+
+  function chatMarkdown(text) {
+    var previous = _chatCode;
+    _chatCode = true;
+    try { return window.renderMd(text); } finally { _chatCode = previous; }
   }
 
   function mermaidCodeHtml(code) {
@@ -109,6 +124,7 @@
     return '<div class="mermaid-head">'
       + '<button class="mermaid-tab active" onclick="toggleMermaidView(this,\'diagram\')">diagram</button>'
       + '<button class="mermaid-tab" onclick="toggleMermaidView(this,\'code\')">code</button>'
+      + (window.copyButtonHtml?.('mermaid') || '')
       + '<button class="mermaid-zoom" title="Fullscreen" onclick="openMermaidFullscreen(this)" aria-label="Fullscreen">'
       + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>'
       + '</button>'
@@ -130,6 +146,12 @@
 
   marked.use({
     tokenizer: {
+      // GFM autolinks run to the next space. Like VS Code, CJK punctuation also ends the link.
+      url: function (src) {
+        if (!/^(?:https?:\/\/|www\.)/i.test(src)) return false;
+        var stop = src.search(/[、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]/);
+        return stop < 0 ? false : Object.getPrototypeOf(this).url.call(this, src.slice(0, stop));
+      },
       emStrong: function (src) {
         var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=\p{Script=Han})/u.exec(src);
         if (!match) return false;
@@ -137,6 +159,11 @@
           type: 'strong', raw: match[0], text: match[1],
           tokens: this.lexer.inlineTokens(match[1]),
         };
+      },
+      del: function (src) {
+        // Require explicit ~~ delimiters; single tildes are common in approximations.
+        if (!src.startsWith('~~')) return;
+        return false;
       },
     },
     renderer: {
@@ -159,7 +186,7 @@
           return trusted('<div class="mermaid-block">' + window.mermaidInnerHtml(code) + '</div>');
         }
         // GitHub renders ```math fences as display math.
-        if (_documentSlots && lang.toLowerCase() === 'math' && window.katexHtml) {
+        if (lang.toLowerCase() === 'math' && window.katexHtml) {
           return trusted(window.katexHtml(code.trim(), true));
         }
         var html;
@@ -169,11 +196,11 @@
         // Unlabeled code stays plain; an unloaded language is highlighted once it loads.
         if (html == null && lang && !hljs.getLanguage(lang) && window.loadHljsLanguage) {
           window.loadHljsLanguage(lang);
-          return trusted('<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
-            + escHtml(code) + '</code></pre>');
+          return trusted(codeBlock('<pre><code class="hljs" data-hljs-language="' + escHtml(lang.toLowerCase()).replace(/"/g, '&quot;') + '">'
+            + escHtml(code) + '</code></pre>', lang));
         }
         if (html == null) html = escHtml(code);
-        return trusted('<pre><code class="hljs">' + html + '</code></pre>');
+        return trusted(codeBlock('<pre><code class="hljs">' + html + '</code></pre>', lang));
       },
     },
   });
@@ -223,19 +250,56 @@
     },
     renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, true)) : t.raw; },
   };
+  var mathClosers = new WeakMap();
+  // Dollar delimiters hug plain inline text and cannot close before a digit.
+  function isMath(lexer, src, m) {
+    return !/^\s|\s$/.test(m[1]) && !/[\d$]/.test(src[m[0].length] || '')
+      && !lexer.inlineTokens(m[1]).some(function (token) { return token.type !== 'text' && token.type !== 'escape'; });
+  }
   var mathInline = {
     name: 'mathInline', level: 'inline',
     start: function (src) { var m = src.match(/\$|\\\(/); return m ? m.index : undefined; },
-    tokenizer: function (src) {
-      var m = /^\$([^\$\n]+?)\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
-      if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim() };
+    tokenizer: function (src, output) {
+      // GitHub's $`...`$ syntax protects TeX that overlaps with Markdown syntax.
+      var explicit = /^\$`([^`\r\n]+)`\$/.exec(src) || /^\\\(([\s\S]+?)\\\)/.exec(src);
+      if (explicit) return { type: 'mathInline', raw: explicit[0], text: explicit[1].trim() };
+      // Like GitHub, a complete `$$...$$` inside a paragraph is inline math.
+      var display = /^\$\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$\$/.exec(src);
+      if (display && isMath(this.lexer, src, display)) return { type: 'mathInline', raw: display[0], text: display[1] };
+      // An incomplete display delimiter must not reopen at its second dollar.
+      var dollars = /^\${2,}/.exec(src);
+      if (dollars) return { type: 'text', raw: dollars[0], text: dollars[0] };
+      if (mathClosers.get(output)?.has(src.length)) return { type: 'text', raw: '$', text: '$' };
+      var m = /^\$((?:\\[^\r\n]|[^\\$\r\n])+?)\$/.exec(src);
+      if (!m) return;
+      if (isMath(this.lexer, src, m)) return { type: 'mathInline', raw: m[0], text: m[1] };
+      // Let Marked parse rejected spans unchanged, but do not reuse their closing
+      // delimiter as an opener. A following letter/digit/backtick may start new math.
+      if (!/[\p{L}\p{N}\\`]/u.test(src[m[0].length] || '')) {
+        if (!mathClosers.has(output)) mathClosers.set(output, new Set());
+        mathClosers.get(output).add(src.length - m[0].length + 1);
+      }
     },
-    renderer: function (t) { return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw; },
+    renderer: function (t) {
+      return window.katexHtml ? trusted(window.katexHtml(t.text, false)) : t.raw;
+    },
   };
+  // A closing fence repeats the opening character at least as many times.
+  function fenceClosed(raw) {
+    var open = /^ {0,3}(`{3,}|~{3,})/.exec(raw)[1];
+    var lines = raw.replace(/\n+$/, '').split('\n');
+    return lines.length > 1 && new RegExp('^ {0,3}' + open[0] + '{' + open.length + ',}[ \\t]*$').test(lines[lines.length - 1]);
+  }
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
     tokenizer: {
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
+      // A streaming math fence stays code until its closing fence arrives.
+      fences: function (src) {
+        var token = Object.getPrototypeOf(this).fences.call(this, src);
+        if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
+        return token;
+      },
     },
     extensions: [mathBlock, mathInline],
   });
@@ -273,7 +337,7 @@
     }
     nodes.forEach(function (node) {
       var text = node.textContent;
-      var pattern = /(?:http:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?!\d)(?:[/?#][^\s<>"`\\]*)?/gi;
+      var pattern = /(?:http:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?!\d)(?:[/?#][^\s<>"`\\、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]*)?/gi;
       var fragment = document.createDocumentFragment();
       var offset = 0;
       var match;
@@ -306,9 +370,39 @@
 
   window.linkifyPreviewAddresses = linkifyPreviewAddresses;
 
+  // Shared by chat and sanitized project documents.
+  window.decorateMarkdown = function (root) {
+    var alerts = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+    root.querySelectorAll('blockquote').forEach(function (quote) {
+      var first = quote.firstElementChild;
+      var text = first?.tagName === 'P' ? first.firstChild : null;
+      var match = text?.nodeType === 3 && /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i.exec(text.data);
+      if (!match) return;
+      text.data = text.data.slice(match[0].length);
+      if (!text.data.trim()) text.remove();
+      if (first.firstChild?.tagName === 'BR') first.firstChild.remove();
+      if (!first.childNodes.length) first.remove();
+      var kind = match[1].toUpperCase();
+      var alert = root.ownerDocument.createElement('div');
+      alert.className = 'markdown-alert markdown-alert-' + kind.toLowerCase();
+      var title = root.ownerDocument.createElement('p');
+      title.className = 'markdown-alert-title';
+      title.textContent = alerts[kind];
+      alert.append(title, ...quote.childNodes);
+      quote.replaceWith(alert);
+    });
+  };
+
   window.renderMd = function (text) {
     if (!text || !text.trim()) return '';
-    return linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    var html = linkifyPreviewAddresses(rewriteFileLinks(marked.parse(text)));
+    if (/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.test(html)) {
+      var template = document.createElement('template');
+      template.innerHTML = html;
+      window.decorateMarkdown(template.content);
+      html = template.innerHTML;
+    }
+    return html;
   };
 
   // Project files render like GitHub: raw HTML is kept and soft line breaks are not <br>.
@@ -331,9 +425,9 @@
 
   window.renderAssistantText = function (text) {
     var json = standaloneJson(text);
-    if (json == null) return window.renderMd(text);
+    if (json == null) return chatMarkdown(text);
     var review = reviewMarkdown(json);
-    return review ? window.renderMd(review) : jsonHtml(json);
+    return review ? chatMarkdown(review) : jsonHtml(json);
   };
 
   // Split streamed text at ```mermaid fences (counts even while unclosed) → [{type:'text'|'mermaid', text}].
@@ -390,8 +484,13 @@
     host.replaceChildren(template.content);
   }
 
-  // Keep decoded images and pending loads alive while streamed text changes around them.
   window.renderStreamMd = function (host, text) {
+    _streaming = true;
+    try { renderStream(host, text); } finally { _streaming = false; }
+  };
+
+  // Keep decoded images and pending loads alive while streamed text changes around them.
+  function renderStream(host, text) {
     var segs = splitMermaid(text || '');
     if ((text || '').includes('visualize')) {
       segs = segs.flatMap(function (segment) {
@@ -411,14 +510,14 @@
     }
     var hasPersistentBlocks = false;
     for (var i = 0; i < segs.length; i++) if (segs[i].type !== 'text') { hasPersistentBlocks = true; break; }
-    if (!hasPersistentBlocks) { updateMarkdownHtml(host, window.renderMd(text)); return; }
+    if (!hasPersistentBlocks) { updateMarkdownHtml(host, chatMarkdown(text)); return; }
 
     var children = host.childNodes;
     for (var s = 0; s < segs.length; s++) {
       var seg = segs[s];
       var node = children[s];
       if (seg.type === 'text') {
-        var html = window.renderMd(seg.text);
+        var html = chatMarkdown(seg.text);
         if (!node || node.nodeType !== 1 || node.className !== 'md-seg') { // insert/replace a text wrapper
           var w = document.createElement('div');
           w.className = 'md-seg'; w.innerHTML = html; w.dataset.h = html;
@@ -446,5 +545,5 @@
       }
     }
     while (host.childNodes.length > segs.length) host.removeChild(host.lastChild); // drop trailing stale nodes
-  };
+  }
 })();

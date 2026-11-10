@@ -1,0 +1,12 @@
+[package]
+name = "tauri-plugin-push"
+version = "0.1.0"
+description = "Baton session alerts: iOS APNs registration, Android background polling service"
+edition = "2021"
+links = "tauri-plugin-push"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"

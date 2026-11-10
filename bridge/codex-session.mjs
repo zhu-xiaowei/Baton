@@ -31,6 +31,44 @@ function walkJsonl(dir, files, errors) {
   }
 }
 
+export async function discoverCodexHistory(options = {}) {
+  const files = [];
+  async function walk(dir, home) {
+    try {
+      for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+        const filePath = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(filePath, home);
+        else if (entry.isFile() && codexSessionIdFromPath(filePath)) files.push({ filePath, home });
+      }
+    } catch {} // An unreadable directory must not prevent deleting other history.
+  }
+  await Promise.all((options.codexHomes || resolveCodexHomes()).flatMap((home) =>
+    ['sessions', 'archived_sessions'].map((name) => walk(path.join(home, name), home)),
+  ));
+  async function readHead(file) {
+    const result = { ...file, id: codexSessionIdFromPath(file.filePath) };
+    try {
+      const chunks = [];
+      for await (const chunk of fs.createReadStream(file.filePath, { highWaterMark: 4096 })) {
+        const newline = chunk.indexOf(10);
+        chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+        if (newline >= 0) break;
+      }
+      const row = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
+        result.cwd = row.payload?.cwd;
+        result.parentId = row.payload?.parent_thread_id;
+      }
+    } catch {} // Still allow an explicit session deletion by its filename ID.
+    return result;
+  }
+  const history = [];
+  for (let i = 0; i < files.length; i += 16) {
+    history.push(...await Promise.all(files.slice(i, i + 16).map(readHead)));
+  }
+  return history;
+}
+
 function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';

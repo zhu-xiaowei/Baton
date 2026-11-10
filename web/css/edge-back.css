@@ -4,7 +4,7 @@
   z-index: 300;
   display: flex;
   flex-direction: column;
-  background: #0d1117;
+  background: var(--canvas);
   pointer-events: none;
   overflow: hidden;
 }
@@ -34,7 +34,7 @@
 }
 
 body.edge-back-active > #content {
-  background: #0d1117;
+  background: var(--canvas);
   overflow: hidden;
 }
 
@@ -50,7 +50,7 @@ body.edge-back-active .si-track {
   z-index: 302;
   width: 1px;
   pointer-events: none;
-  box-shadow: -8px 0 20px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-edge);
 }
 
 body.edge-back-settling .edge-back-foreground,

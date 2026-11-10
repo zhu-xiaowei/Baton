@@ -226,3 +226,20 @@ def test_template_direct_route_targets_data_api_without_expanding_iam():
     assert "CredentialsArn" not in integration
     role = resources["TerminalDirectRole"]["Properties"]["Policies"][0]["PolicyDocument"]
     assert "${TerminalDirectApi}" in role["Statement"][0]["Resource"]["Fn::Sub"]
+
+
+def test_template_answers_realtime_ping_in_api_gateway_on_both_sockets():
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "server", "template", "Baton.template")) as source:
+        resources = json.load(source)["Resources"]
+    for prefix, api in (("Ws", "WsApi"), ("TerminalDirect", "TerminalDirectApi")):
+        integration = resources[prefix + "PingIntegration"]["Properties"]
+        assert integration["IntegrationType"] == "MOCK" and integration["ApiId"] == {"Ref": api}
+        response = resources[prefix + "PingIntegrationResponse"]["Properties"]
+        assert json.loads(response["ResponseTemplates"]["$default"]) == {"action": "realtime_pong"}
+        route = resources[prefix + "PingRoute"]["Properties"]
+        assert route["RouteKey"] == "realtime_ping" and route["RouteResponseSelectionExpression"] == "$default"
+        assert resources[prefix + "PingRouteResponse"]["Properties"]["RouteId"] == {"Ref": prefix + "PingRoute"}
+    # Existing keepalives keep their routes: bridge heartbeat needs Lambda, preview uses "ping".
+    keys = {resource["Properties"].get("RouteKey") for resource in resources.values()
+            if resource["Type"] == "AWS::ApiGatewayV2::Route"}
+    assert "heartbeat" not in keys and "ping" not in keys

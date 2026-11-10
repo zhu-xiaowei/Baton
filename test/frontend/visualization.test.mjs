@@ -11,6 +11,8 @@ const iconRuntime = createVisualizationIconRuntime(fs.readFileSync(
 ));
 
 const markdown = fs.readFileSync(new URL('../../web/js/components/markdown.js', import.meta.url), 'utf8');
+const zoomHelpers = fs.readFileSync(new URL('../../web/js/page-zoom.js', import.meta.url), 'utf8')
+  .replace(/^export /gm, '');
 const viewer = fs.readFileSync(new URL('../../web/js/components/visualization.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const sessionId = '01a0ad28-6fcc-7d73-a895-423b4f1dfa03';
@@ -87,7 +89,7 @@ function setup(t, request = async () => ({ content: '<style>body{color:red}</sty
   window.loadVisualizationIcons = async () => iconRuntime;
   configure(window);
   window.eval(markdown);
-  window.eval(viewer);
+  window.eval(zoomHelpers + '\n' + viewer);
   t.after(() => window.close());
   return window;
 }

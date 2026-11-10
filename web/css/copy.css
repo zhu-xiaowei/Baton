@@ -1,0 +1,84 @@
+.copy-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.copy-action svg { pointer-events: none; flex-shrink: 0; }
+.copy-action.copied { color: var(--success); }
+.copy-action.copy-failed { color: var(--syntax-red); }
+.copy-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.copy-action[aria-busy="true"] { cursor: progress; }
+.copy-action:active { background: transparent; color: var(--text-primary); }
+.copy-action.mermaid-copy { width: 26px; height: 24px; }
+
+.assistant-text .code-block {
+  position: relative;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.code-block-head {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 1px 5px 0 12px;
+}
+.code-block-head .code-copy { background: var(--surface); }
+.code-language {
+  display: none;
+  color: var(--text-secondary);
+  font: 11px/1.5 'SF Mono', 'Fira Code', monospace;
+}
+.assistant-text .code-block > pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.assistant-text .code-block > pre > code {
+  padding: 0;
+}
+.assistant-text.copy-tail, .assistant-text p.copy-tail { display: flow-root; }
+/* flow-root would drop the list marker. */
+.assistant-text li.copy-tail::after { content: ''; display: block; clear: both; }
+.copy-tail > .response-copy { float: right; width: 28px; height: 24px; margin-left: 8px; font: inherit; align-items: baseline; }
+/* A block, not a left float, so it cannot slide back into the last line. */
+.copy-tail.copy-wrapped > .response-copy { float: none; display: flex; justify-content: flex-start; height: 26px; margin-left: 0; align-items: flex-end; }
+.copy-tail.copy-wrapped > .response-copy svg { transform: none; }
+/* The invisible text shares the paragraph baseline; compensate for the SVG's bottom inset. */
+.response-copy::before { content: '\200b'; }
+.response-copy svg { transform: translateY(1.5px); }
+.msg-user[data-message-actions] .msg-meta {
+  min-height: 26px;
+  margin: 3px -5px -5px 0;
+  gap: 8px;
+}
+.msg-user[data-message-actions] .msg-meta .msg-time { margin: 0 auto 0 0; }
+.msg-user .message-copy { width: 28px; height: 28px; order: 1; }
+
+/* Copy feedback changes only the glyph and color; hover never leaves a background. */
+@media (hover: hover) and (pointer: fine) {
+  .copy-action:hover, .mermaid-head .mermaid-zoom:hover { color: var(--text-primary); background: transparent; }
+  .copy-action.copied:hover { color: var(--success); }
+  .copy-action.copy-failed:hover { color: var(--syntax-red); }
+}
+@media (pointer: coarse) {
+  .copy-action { position: relative; }
+  .code-copy::after, .message-copy::after { content: ''; position: absolute; inset: -6px; }
+  .code-block-head { min-height: 40px; padding-top: 3px; padding-bottom: 3px; }
+}

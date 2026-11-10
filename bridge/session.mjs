@@ -15,8 +15,9 @@ import { attachmentPreviewText } from './attachments.mjs';
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
 const claudeHistoryCache = new Map();
 const DEFAULT_CLAUDE_HISTORY = path.join(path.dirname(CLAUDE_PROJECTS), 'history.jsonl');
+const CLAUDE_SESSIONS = path.join(path.dirname(CLAUDE_PROJECTS), 'sessions');
 
-function previewText(value) {
+export function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}…` : text;
@@ -290,6 +291,8 @@ export function statusFromEntry(entry) {
     const sr = entry.message.stop_reason;
     if (sr === null) return 'running'; // streaming
     if (sr === 'tool_use') return 'running';
+    // A thinking row already carries the message's end_turn while its reply is still coming.
+    if (content?.length === 1 && /^(redacted_)?thinking$/.test(content[0].type)) return 'running';
     if (sr === 'end_turn' || sr === 'max_tokens' || sr === 'stop_sequence') return 'completed';
   }
   if (t === 'user') {
@@ -299,15 +302,14 @@ export function statusFromEntry(entry) {
       // [Request interrupted by user] or [Request interrupted by user for tool use]
       if (c.length === 1 && c[0].type === 'text'
         && c[0].text.startsWith('[Request interrupted by user')) return 'completed';
-      // tool_result with is_error=true only (user interrupted during tool execution)
-      if (c.every(b => b.type === 'tool_result') && c.every(b => b.is_error)) return 'completed';
     }
     if (typeof c === 'string') {
       const cs = c.trim();
       // Command finished → completed; noise & /clear (no reply) → skip; other
       // <command-name> falls through to 'running' (awaiting a reply).
       if (/^<local-command-stdout>/.test(cs)) return 'completed';
-      if (/^<(?:local-command-caveat|task-notification|system-reminder)/.test(cs)) return null;
+      // A background task's <task-notification> starts a new turn when CC is idle.
+      if (/^<(?:local-command-caveat|system-reminder)/.test(cs)) return null;
       if (/^<command-name>\/?clear<\/command-name>/.test(cs)) return null;
     }
     return 'running';
@@ -366,6 +368,9 @@ function readStatusFromFile(filePath) {
  * Watcher uses statusFromEntry() directly with already-parsed data.
  */
 export function getSessionStatus(sessionId, filePath, runningInfo) {
+  const live = runningInfo.liveStatuses?.get(sessionId);
+  if (live) return live;
+
   const metadataOnly = process.platform === 'win32'
     || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'));
 
@@ -404,6 +409,7 @@ export function sessionIdFromProcessArgs(line) {
 export function getRunningInfo() {
   const projects = new Set();
   const sessions = new Set();
+  const pids = new Set();
 
   if (process.platform === 'win32' || (IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/'))) {
     return { projects, sessions };
@@ -416,6 +422,7 @@ export function getRunningInfo() {
       const parts = line.trim().split(/\s+/);
       const pid = parts[1];
       if (!pid || isNaN(pid)) continue;
+      pids.add(pid);
 
       const sid = sessionIdFromProcessArgs(line);
       if (sid) sessions.add(sid);
@@ -433,7 +440,39 @@ export function getRunningInfo() {
     sessions.add(sid);
   }
 
-  return { projects, sessions };
+  return { projects, sessions, liveStatuses: readLiveSessionStatuses(pids) };
+}
+
+const LIVE_STATUS = { busy: 'running', waiting: 'needs_input', idle: 'completed', shell: 'completed' };
+
+// CC keeps ~/.claude/sessions/<pid>.json at its own busy/waiting/idle state (terminal
+// since 2.1.119, SDK/VS Code since 2.1.269). A killed process leaves its record behind,
+// so only records of a listed claude pid count, and on Linux only the same process start.
+export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
+  const statuses = new Map();
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return statuses; }
+  for (const file of files) {
+    const pid = /^(\d+)\.json$/.exec(file)?.[1];
+    if (!pid || !claudePids.has(pid)) continue;
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      const status = LIVE_STATUS[record.status];
+      if (!record.sessionId || !status) continue;
+      if (process.platform === 'linux' && record.procStart !== undefined
+        && processStartTime(pid) !== String(record.procStart)) continue;
+      if (status !== 'completed' || !statuses.has(record.sessionId)) {
+        statuses.set(record.sessionId, status);
+      }
+    } catch {}
+  }
+  return statuses;
+}
+
+// Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.
+function processStartTime(pid) {
+  const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
 }
 
 // A session that cd's into a git worktree gets its jsonl moved to a separate

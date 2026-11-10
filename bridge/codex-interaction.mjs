@@ -407,6 +407,8 @@ export class CodexInteraction {
         submissions: new Map(),
         submitting: 0,
         sendLock: Promise.resolve(),
+        goalCallbacks: null,
+        goalUpdating: 0,
       };
       this.sessions.set(nativeSessionId, session);
     } else if (storageSessionId) {
@@ -559,8 +561,34 @@ export class CodexInteraction {
     return { active: false };
   }
 
+  // An active Goal keeps the connection: closing it stops stdio continuations and
+  // leaves managed ones without a live stream.
+  #goalStatusChanged(session, status) {
+    if (status === 'active' || session.goalUpdating) return;
+    session.goalCallbacks = null;
+    this.#drainOrRelease(session);
+  }
+
+  // Codex clears the old Goal before setting a new one, so the reply decides; callbacks are
+  // registered first because the first continuation can start before it.
+  async #updateGoal(session, method, params, goalCallbacks = null, client = session.client) {
+    if (params.status === 'active') session.goalCallbacks = goalCallbacks;
+    session.goalUpdating++;
+    let response;
+    try {
+      response = await client.request(method, params);
+    } catch (error) {
+      session.goalUpdating--;
+      if (params.status === 'active') this.#goalStatusChanged(session, null);
+      throw error;
+    }
+    session.goalUpdating--;
+    this.#goalStatusChanged(session, response?.goal?.status || params.status);
+    return response;
+  }
+
   async #release(session) {
-    if (session.active || session.submitting) return;
+    if (session.active || session.submitting || session.goalCallbacks) return;
     if (session.releasePromise) return session.releasePromise;
     const client = session.client;
     if (!client) return;
@@ -697,7 +725,7 @@ export class CodexInteraction {
         });
         session.active = observed;
         if (!threadLoaded) {
-          this.#presentGoalResume(session, client, observed, goal, callbacks, false);
+          this.#presentGoalResume(session, client, observed, goal, callbacks, false, options.goalCallbacks);
           return { active: true, loaded: false };
         }
         let result;
@@ -719,7 +747,7 @@ export class CodexInteraction {
         session.subscribedGeneration = client.generation;
         const threadActive = result?.thread?.status?.type === 'active';
         if (!actualControlRequestSeen && !threadActive && goalResumable) {
-          this.#presentGoalResume(session, client, observed, goal, callbacks, true);
+          this.#presentGoalResume(session, client, observed, goal, callbacks, true, options.goalCallbacks);
           return { active: true, loaded: true };
         }
         if (result?.thread?.status?.type === 'active') {
@@ -738,7 +766,7 @@ export class CodexInteraction {
     return operation;
   }
 
-  #presentGoalResume(session, client, observed, goal, callbacks, loaded) {
+  #presentGoalResume(session, client, observed, goal, callbacks, loaded, goalCallbacks) {
     const requestId = [
       'codex',
       session.nativeSessionId,
@@ -751,6 +779,7 @@ export class CodexInteraction {
       client,
       goal,
       loaded,
+      goalCallbacks,
     });
     callbacks.onControlRequest?.({
       request_id: requestId,
@@ -808,10 +837,15 @@ export class CodexInteraction {
         session.subscribedGeneration = pending.client.generation;
         pending.loaded = true;
       }
-      await pending.client.request('thread/goal/set', {
+      if (pending.goalCallbacks) {
+        // Continuations stream through goalCallbacks, not the permission-only observer.
+        session.goalCallbacks = pending.goalCallbacks;
+        this.#releaseIdleGoalObservation(pending);
+      }
+      await this.#updateGoal(session, 'thread/goal/set', {
         threadId: nativeSessionId,
         status: 'active',
-      });
+      }, pending.goalCallbacks, pending.client);
       const timer = setTimeout(() => {
         this.#releaseIdleGoalObservation(pending);
       }, 3000);
@@ -1071,7 +1105,11 @@ export class CodexInteraction {
       await this.#resume(session, options);
       const name = options.name;
       const args = String(options.args || '').trim();
-      if (name === 'review' || name === 'compact' || (name === 'plan' && args)) {
+      const planSwitch = name === 'plan' && /^(on|off)$/i.test(args);
+      if (name === 'plan' && session.active) {
+        throw new Error('/plan is disabled while a task is in progress.');
+      }
+      if (name === 'review' || name === 'compact' || (name === 'plan' && args && !planSwitch)) {
         if (name === 'compact' && args) throw new Error('Usage: /compact');
         if (session.active) {
           throw new Error(`/${name} is disabled while a task is in progress.`);
@@ -1102,7 +1140,7 @@ export class CodexInteraction {
               threadId: session.nativeSessionId,
             });
           } else {
-            await this.#setPlanMode(session);
+            await this.#setCollaborationMode(session, 'plan');
             await this.#startTurn(session, turn);
           }
           return { streaming: true };
@@ -1114,6 +1152,8 @@ export class CodexInteraction {
         }
       }
 
+      // Counted as in flight: a notification it causes (archive clears the Goal) must not release the client.
+      session.submitting++;
       try {
         switch (name) {
           case 'model':
@@ -1166,11 +1206,10 @@ export class CodexInteraction {
             await this.#openDesktopThread(session);
             return { output: 'Opened this session in the Codex Desktop app.' };
           case 'plan':
-            if (args) throw new Error('Usage: /plan [prompt]');
-            await this.#setPlanMode(session);
-            return { output: 'Switched to Plan mode.' };
+            await this.#setCollaborationMode(session, args.toLowerCase() === 'off' ? 'default' : 'plan');
+            return { output: args.toLowerCase() === 'off' ? 'Switched to Normal mode.' : 'Switched to Plan mode.' };
           case 'goal':
-            return { output: await this.#goalOutput(session, args) };
+            return { output: await this.#goalOutput(session, args, options.goalCallbacks) };
           case 'agent':
           case 'subagents':
             if (!args) throw new Error(`Usage: /${name} <thread-id>`);
@@ -1214,6 +1253,7 @@ export class CodexInteraction {
             throw new Error(`Unsupported Codex command: /${name}`);
         }
       } finally {
+        session.submitting--;
         await this.#release(session);
       }
     });
@@ -1403,13 +1443,13 @@ export class CodexInteraction {
     };
   }
 
-  async #setPlanMode(session) {
+  async #setCollaborationMode(session, mode) {
     const model = session.model;
     if (!model) throw new Error('Codex did not report the current model.');
     await session.client.request('thread/settings/update', {
       threadId: session.nativeSessionId,
       collaborationMode: {
-        mode: 'plan',
+        mode,
         settings: {
           model,
           reasoning_effort: null,
@@ -1419,7 +1459,7 @@ export class CodexInteraction {
     });
   }
 
-  async #goalOutput(session, args) {
+  async #goalOutput(session, args, goalCallbacks) {
     const lower = args.toLowerCase();
     if (!args) {
       const response = await session.client.request('thread/goal/get', {
@@ -1437,24 +1477,24 @@ export class CodexInteraction {
       ].join('\n');
     }
     if (lower === 'clear') {
-      await session.client.request('thread/goal/clear', {
+      await this.#updateGoal(session, 'thread/goal/clear', {
         threadId: session.nativeSessionId,
       });
       return 'Thread goal cleared.';
     }
     if (lower === 'pause' || lower === 'resume') {
       const status = lower === 'pause' ? 'paused' : 'active';
-      await session.client.request('thread/goal/set', {
+      await this.#updateGoal(session, 'thread/goal/set', {
         threadId: session.nativeSessionId,
         status,
-      });
+      }, goalCallbacks);
       return `Thread goal is now **${status}**.`;
     }
-    await session.client.request('thread/goal/set', {
+    await this.#updateGoal(session, 'thread/goal/set', {
       threadId: session.nativeSessionId,
       objective: args,
       status: 'active',
-    });
+    }, goalCallbacks);
     return `Thread goal set to: ${args}`;
   }
 
@@ -1792,6 +1832,23 @@ export class CodexInteraction {
 
   #onNotification(session, client, { method, params }) {
     if (session.client !== client) return;
+    if (method === 'thread/goal/updated' || method === 'thread/goal/cleared') {
+      if (params?.threadId === session.nativeSessionId) {
+        this.#goalStatusChanged(session, params.goal?.status);
+      }
+      return;
+    }
+    if (method === 'turn/started' && !session.active && session.goalCallbacks) {
+      const turnId = params?.turn?.id || params?.turnId;
+      if (turnId) {
+        session.active = this.#prepareTurn(session, {
+          streamId: turnId,
+          text: '',
+          callbacks: session.goalCallbacks(turnId),
+          external: true,
+        });
+      }
+    }
     if (method === 'skills/changed') {
       session.skills = null;
       return;
@@ -2195,6 +2252,7 @@ export class CodexInteraction {
     if (session.client !== client || session.releasingClient === client) return;
     session.client = null;
     session.subscribedGeneration = 0;
+    session.goalCallbacks = null;
     const turn = session.active;
     if (turn) {
       this.turns.delete(this.#turnKey(session.nativeSessionId, turn.turnId));

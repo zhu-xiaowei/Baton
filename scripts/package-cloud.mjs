@@ -15,12 +15,14 @@ const releaseTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },
   { platform: 'macos', label: 'macOS', artifact: 'Baton-macOS', file: 'Baton.dmg', job: 'macOS notarized DMG' },
   { platform: 'windows', label: 'Windows', artifact: 'Baton-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+  { platform: 'linux', label: 'Linux', artifact: 'Baton-Linux', file: 'Baton.deb', job: 'Linux DEB' },
 ];
 const devTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-dev-Android', file: 'Baton.apk', job: 'Android APK' },
   { platform: 'ios', label: 'iOS', artifact: 'Baton-dev-iOS', file: 'Baton.ipa', job: 'iOS unsigned IPA' },
   { platform: 'macos', label: 'macOS', artifact: 'Baton-dev-macOS', file: 'Baton.dmg', job: 'macOS dev DMG' },
   { platform: 'windows', label: 'Windows', artifact: 'Baton-dev-Windows', file: 'Baton.exe', job: 'Windows NSIS' },
+  { platform: 'linux', label: 'Linux', artifact: 'Baton-dev-Linux', file: 'Baton.deb', job: 'Linux DEB' },
 ];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -56,11 +58,11 @@ const dryRun = args.includes('--dry-run');
 const devMode = args.includes('--dev');
 const selection = args.filter((arg) => arg !== '--dry-run' && arg !== '--dev');
 const platform = selection.length === 2 && selection[0] === '--platform'
-  && ['android', 'ios', 'macos', 'windows'].includes(selection[1]) ? selection[1] : null;
+  && ['android', 'ios', 'macos', 'windows', 'linux'].includes(selection[1]) ? selection[1] : null;
 if ((selection.length && !platform) || (devMode && !platform) || (platform === 'ios' && !devMode)
   || args.filter((arg) => arg === '--dry-run').length > 1
   || args.filter((arg) => arg === '--dev').length > 1) {
-  die('Usage: node scripts/package-cloud.mjs [--platform android|macos|windows] [--dry-run] | --dev --platform android|ios|macos|windows [--dry-run]');
+  die('Usage: node scripts/package-cloud.mjs [--platform android|macos|windows|linux] [--dry-run] | --dev --platform android|ios|macos|windows|linux [--dry-run]');
 }
 const targets = devMode ? [devTargets.find((target) => target.platform === platform)]
   : platform ? [releaseTargets.find((target) => target.platform === platform)] : releaseTargets;
@@ -148,7 +150,9 @@ const results = [];
 try {
   for (const target of targets) {
     const output = path.join(destination, target.file);
+    const checksumFile = target.platform === 'linux' ? `${target.file}.sha256` : null;
     fs.rmSync(output, { force: true });
+    if (checksumFile) fs.rmSync(path.join(destination, checksumFile), { force: true });
     const job = detail.jobs?.find((candidate) => candidate.name === target.job);
     if (job?.conclusion !== 'success') {
       results.push(`${target.label}: BUILD FAILED (${job?.conclusion || 'job missing'})`);
@@ -160,8 +164,15 @@ try {
       gh(['run', 'download', String(run.databaseId), '--name', target.artifact, '--dir', extract]);
       const source = path.join(extract, target.file);
       if (!fs.existsSync(source) || !fs.statSync(source).size) throw new Error(`${target.file} missing or empty`);
+      if (checksumFile) {
+        const checksum = fs.readFileSync(path.join(extract, checksumFile), 'utf8').trim();
+        const hash = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+        if (checksum !== `${hash}  ${target.file}`) throw new Error(`${target.file} SHA-256 verification failed`);
+      }
       fs.copyFileSync(source, output);
+      if (checksumFile) fs.copyFileSync(path.join(extract, checksumFile), path.join(destination, checksumFile));
       results.push(`${target.label}: ${path.relative(root, output)} (${humanSize(fs.statSync(output).size)})`);
+      if (checksumFile) results.push(`SHA-256 verified: ${path.relative(root, path.join(destination, checksumFile))}`);
     } catch (error) {
       results.push(`${target.label}: artifact download failed (${error.message})`);
     }

@@ -108,3 +108,54 @@ test('clearing removes a sent draft and rekey moves an unsent draft', async () =
   await controller.clear();
   assert.equal(await store.get(fields('session-real')), null);
 });
+
+test('uploaded attachments are saved, restored and moved with the draft', async () => {
+  const backend = memoryBackend();
+  const store = createComposerDraftStore(backend);
+  const file = { kind: 'file', name: 'spec.pdf', key: 'f.pdf' };
+  const image = { name: 'shot.png', key: 'i.jpg', dataUrl: 'data:image/jpeg;base64,AAAA' };
+  let input = { text: '', attachments: [] };
+  const controller = createComposerDraftController(store, {
+    readInput: () => input,
+    applyInput: (text, attachments) => { input = { text, attachments }; },
+    debounceMs: 5,
+  });
+
+  await controller.activate(fields('__new__'));
+  input = { text: '', attachments: [file] };
+  controller.sync();
+  await tick(10);
+  assert.deepEqual((await store.get(fields('__new__'))).attachments, [file]);
+
+  input = { text: 'look', attachments: [file, image] };
+  await controller.rekey(fields('session-a'));
+
+  await controller.activate(fields('session-b'));
+  assert.deepEqual(input, { text: '', attachments: [] });
+
+  await controller.activate(fields('session-a'));
+  assert.deepEqual(input, { text: 'look', attachments: [file, image] });
+});
+
+test('a late restore never replaces an attachment still uploading', async () => {
+  let resolveRead;
+  let input = { text: '', attachments: [] };
+  const store = {
+    get: () => new Promise((resolve) => { resolveRead = resolve; }),
+    put: async () => {},
+    delete: async () => {},
+  };
+  const controller = createComposerDraftController(store, {
+    readInput: () => input,
+    applyInput: (text, attachments) => { input = { text, attachments }; },
+    debounceMs: 5,
+  });
+
+  const activation = controller.activate(fields('session-a'));
+  await tick();
+  input = { text: '', attachments: [], pending: true };
+  resolveRead({ text: 'older' });
+  await activation;
+
+  assert.equal(input.pending, true);
+});

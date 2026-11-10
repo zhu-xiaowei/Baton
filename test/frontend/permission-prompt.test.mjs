@@ -438,7 +438,7 @@ test('expanding the typed answer keeps the permission prompt at the bottom', () 
   assert.equal(content.scrollTop, content.scrollHeight);
 });
 
-test('Claude plan and prompt dismissal keep their legacy reply values', () => {
+test('Claude plan approval uses allow and prompt dismissal keeps deny', () => {
   reset();
   window.showPermissionPrompt({
     sessionId: 'claude-session',
@@ -449,8 +449,8 @@ test('Claude plan and prompt dismissal keep their legacy reply values', () => {
     input: {},
   });
   window.handlePermissionOption(document.querySelectorAll('.permission-btn')[0]);
-  assert.equal(sent[0].decision, 'answer');
-  assert.equal(sent[0].answerText, 'Approved, proceed with the plan.');
+  assert.equal(sent[0].decision, 'allow');
+  assert.equal(sent[0].answerText, undefined);
 
   reset();
   window.showPermissionPrompt({

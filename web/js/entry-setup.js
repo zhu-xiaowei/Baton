@@ -1,3 +1,4 @@
+import { mountThemeSettings } from './theme.js';
 // Entry for setup.html — install command + Start URL QR
 import { state } from './state.js';
 import './api.js';
@@ -5,6 +6,15 @@ import { mountBackButton } from './components/back-button.js';
 import { attachPageEdgeBackGesture } from './edge-back.js';
 import '../css/back-button.css';
 import qrcode from 'qrcode-generator';
+import { initSystemBack } from './system-back.js';
+import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
+import { mountTextSizeSettings } from './text-size-settings.js';
+import { initPageZoomShortcuts } from './page-zoom.js';
+
+initMacosTabs();
+initPageZoomShortcuts();
+setNativeTabTitle('Settings');
 
 (function () {
   // Auth guard: handle ?key= URL param, redirect if missing key
@@ -14,6 +24,10 @@ import qrcode from 'qrcode-generator';
     history.replaceState(null, '', location.pathname);
   }
   if (!state.KEY) { location.replace('landing.html'); return; }
+  mountTextSizeSettings();
+  mountNotificationSettings();
+  void initMobileNotifications();
+  mountThemeSettings();
 
   function leaveSetup() {
     if (!(window.isTauri || window.__TAURI_INTERNALS__)) {
@@ -29,17 +43,25 @@ import qrcode from 'qrcode-generator';
   }
 
   mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
+  initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
-  // Step 1: Install command — full text, single Copy button.
-  // Key is shown in plain text; user is already authenticated to view this page.
+  // Steps 1-3 share one 10-minute token, so the install command, Start URL and QR code never
+  // carry the API key. Only an older server without tokens (404/405) falls back to the key.
   var cmdEl = document.getElementById('installCmdText');
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
+  var token = '';
+  var legacy = false;
 
   function renderInstallCommand() {
     var windows = platform === 'windows';
-    cmdEl.textContent = windows
-      ? "irm -Headers @{'x-api-key'='" + state.KEY + "'} '" + state.SERVER + "/api/install?platform=windows' | iex"
-      : 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
+    if (token) {
+      var url = state.SERVER + '/auth/install?t=' + token;
+      cmdEl.textContent = windows ? "irm '" + url + "&platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
+    } else if (legacy) {
+      cmdEl.textContent = windows
+        ? "irm -Headers @{'x-api-key'='" + state.KEY + "'} '" + state.SERVER + "/api/install?platform=windows' | iex"
+        : 'curl -sL -H "x-api-key: ' + state.KEY + '" "' + state.SERVER + '/api/install" | bash';
+    }
     document.getElementById('installHint').textContent = windows
       ? 'Run this command in PowerShell with Node.js installed.'
       : 'Run this command on macOS or Linux with Node.js installed.';
@@ -52,35 +74,56 @@ import qrcode from 'qrcode-generator';
     platform = value;
     renderInstallCommand();
   };
-  renderInstallCommand();
 
-  // Step 2: Start URL — same single-URL format the install.sh prints, but
-  // backed by the permanent API key (so the QR doesn't expire). Browsers
-  // and the native app both accept ?t= and ?key= via the landing page.
-  var startUrl = state.SERVER + '/?key=' + encodeURIComponent(state.KEY);
-  document.getElementById('qrUrl').textContent = startUrl;
+  function drawQr(startUrl) {
+    var qr = qrcode(0, 'M');
+    qr.addData(startUrl);
+    qr.make();
 
-  var qr = qrcode(0, 'M');
-  qr.addData(startUrl);
-  qr.make();
-
-  var canvas = document.getElementById('qrCanvas');
-  var size = 200;
-  var cellSize = size / qr.getModuleCount();
-  canvas.width = size;
-  canvas.height = size;
-  var ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = '#000000';
-  for (var r = 0; r < qr.getModuleCount(); r++) {
-    for (var c = 0; c < qr.getModuleCount(); c++) {
-      if (qr.isDark(r, c)) {
-        ctx.fillRect(c * cellSize, r * cellSize, cellSize + 0.5, cellSize + 0.5);
+    var canvas = document.getElementById('qrCanvas');
+    var size = 200;
+    var cellSize = size / qr.getModuleCount();
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#000000';
+    for (var r = 0; r < qr.getModuleCount(); r++) {
+      for (var c = 0; c < qr.getModuleCount(); c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect(c * cellSize, r * cellSize, cellSize + 0.5, cellSize + 0.5);
+        }
       }
     }
+    canvas.parentElement.classList.add('ready');
   }
-  canvas.parentElement.classList.add('ready');
+
+  async function refreshToken() {
+    var expiry = '';
+    try {
+      var result = await apiPost('/api/auth/start-token');
+      token = result.token;
+      expiry = 'Valid for ' + Math.round(result.expiresIn / 60) + ' minutes.';
+    } catch (e) {
+      token = '';
+      legacy = /^40[45] /.test(e.message);
+      if (!legacy) expiry = 'Could not create a link. Reopen this page to try again.';
+    }
+    document.querySelectorAll('.token-expiry').forEach(function (el) { el.textContent = expiry; });
+    renderInstallCommand();
+    if (!token && !legacy) {
+      cmdEl.textContent = 'Could not create an install command.';
+      document.getElementById('qrUrl').textContent = 'Could not create a Start URL.';
+      document.getElementById('qrCanvas').parentElement.classList.remove('ready');
+      return;
+    }
+    var startUrl = token ? state.SERVER + '/?t=' + token : state.SERVER + '/?key=' + encodeURIComponent(state.KEY);
+    document.getElementById('qrUrl').textContent = startUrl;
+    drawQr(startUrl);
+  }
+  renderInstallCommand();
+  refreshToken();
 
   function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(function () {
@@ -103,9 +146,16 @@ import qrcode from 'qrcode-generator';
     verEl.textContent = 'v' + __APP_VERSION__;
     verEl.style.display = 'block';
 
-    // On iOS, use the build number from the installed app bundle so the
-    // display always matches the archive that produced this app.
-    if (window.__TAURI_INTERNALS__) {
+    // Native shells show the installed package's version and build number.
+    var harmony = window.harmonyBridge;
+    if (harmony && typeof harmony.appVersion === 'function') {
+      try {
+        var installed = JSON.parse(harmony.appVersion());
+        if (installed.versionCode) {
+          verEl.textContent = 'v' + (installed.versionName || __APP_VERSION__) + ' (' + installed.versionCode + ')';
+        }
+      } catch (_) {}
+    } else if (window.__TAURI_INTERNALS__) {
       import('@tauri-apps/api/core').then(function (core) {
         return core.invoke('ios_build_number');
       }).then(function (buildNumber) {

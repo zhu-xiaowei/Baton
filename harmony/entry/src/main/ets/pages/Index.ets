@@ -1,0 +1,200 @@
+import { webview } from '@kit.ArkWeb';
+import { common } from '@kit.AbilityKit';
+import { resourceManager } from '@kit.LocalizationKit';
+import { NativeBridge } from '../bridge/NativeBridge';
+
+// rawfile is served over app:// (registered in EntryAbility): ES modules do not run from resource://.
+const ENTRY: string = 'app://local/landing.html';
+// Only the bundled pages may reach the bridge, not the Remote preview iframe.
+const BRIDGE_PERMISSION: string =
+  '{"javascriptProxyPermission":{"urlPermissionList":[{"scheme":"app","host":"local","port":"","path":""}]}}';
+
+function mimeFor(path: string): string {
+  const i: number = path.lastIndexOf('.');
+  const ext: string = i >= 0 ? path.substring(i + 1).toLowerCase() : '';
+  switch (ext) {
+    case 'html':
+    case 'htm': return 'text/html';
+    case 'js':
+    case 'mjs': return 'application/javascript';
+    case 'css': return 'text/css';
+    case 'json':
+    case 'map': return 'application/json';
+    case 'svg': return 'image/svg+xml';
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'ico': return 'image/x-icon';
+    case 'woff2': return 'font/woff2';
+    case 'woff': return 'font/woff';
+    case 'ttf': return 'font/ttf';
+    case 'wasm': return 'application/wasm';
+    default: return 'application/octet-stream';
+  }
+}
+
+function isTextMime(mime: string): boolean {
+  return mime.startsWith('text/')
+    || mime === 'application/javascript'
+    || mime === 'application/json'
+    || mime === 'image/svg+xml';
+}
+
+@Entry
+@Component
+struct Index {
+  private controller: webview.WebviewController = new webview.WebviewController();
+  private nativeBridge: NativeBridge = new NativeBridge();
+  private schemeHandler: webview.WebSchemeHandler = new webview.WebSchemeHandler();
+  private resMgr: resourceManager.ResourceManager | null = null;
+  @State loading: boolean = true;
+  @State failed: boolean = false;
+  @StorageProp('baton.canvas') canvas: string = '#0D1117';
+
+  aboutToAppear(): void {
+    const ctx: common.Context = getContext(this);
+    this.nativeBridge.attach(this.controller, ctx);
+    this.resMgr = ctx.resourceManager;
+
+    // Serve app://local/<path> from resources/rawfile with correct MIME + CORS.
+    this.schemeHandler.onRequestStart(
+      (request: webview.WebSchemeHandlerRequest, resourceHandler: webview.WebResourceHandler): boolean => {
+        let path: string = request.getRequestUrl().replace(/^app:\/\/[^/]*\//, '');
+        const q: number = path.indexOf('?');
+        if (q >= 0) { path = path.substring(0, q); }
+        const h: number = path.indexOf('#');
+        if (h >= 0) { path = path.substring(0, h); }
+        if (path.length === 0) { path = 'landing.html'; }
+        path = decodeURIComponent(path);
+
+        const resp: webview.WebSchemeHandlerResponse = new webview.WebSchemeHandlerResponse();
+        resp.setHeaderByName('Access-Control-Allow-Origin', '*', false);
+        try {
+          const data: Uint8Array = this.resMgr!.getRawFileContentSync(path);
+          const mime: string = mimeFor(path);
+          resp.setStatus(200);
+          resp.setStatusText('OK');
+          resp.setMimeType(mime);
+          if (isTextMime(mime)) { resp.setEncoding('utf-8'); }
+          resourceHandler.didReceiveResponse(resp);
+          resourceHandler.didReceiveResponseBody(data.buffer as ArrayBuffer);
+          resourceHandler.didFinish();
+        } catch (e) {
+          resp.setStatus(404);
+          resp.setStatusText('Not Found');
+          resp.setMimeType('text/plain');
+          resourceHandler.didReceiveResponse(resp);
+          resourceHandler.didFinish();
+        }
+        return true;
+      }
+    );
+  }
+
+  aboutToDisappear(): void {
+    this.nativeBridge.release();
+  }
+
+  // ArkWeb shows no dialog for alert/confirm without these handlers (Remote preview pages);
+  // confirm() would silently return false.
+  private showJsAlert(message: string, result: JsResult): boolean {
+    this.getUIContext().showAlertDialog({
+      message: message,
+      autoCancel: false,
+      confirm: { value: $r('app.string.dialog_ok'), action: () => { result.handleConfirm(); } },
+      cancel: () => { result.handleConfirm(); }
+    });
+    return true;
+  }
+
+  private showJsConfirm(message: string, result: JsResult): boolean {
+    this.getUIContext().showAlertDialog({
+      message: message,
+      primaryButton: { value: $r('app.string.dialog_cancel'), action: () => { result.handleCancel(); } },
+      secondaryButton: { value: $r('app.string.dialog_ok'), action: () => { result.handleConfirm(); } },
+      cancel: () => { result.handleCancel(); }
+    });
+    return true;
+  }
+
+  // Back gesture goes to the page's in-app navigation (web/js/system-back.js),
+  // like Android. Web history is never used: it would return to landing.html.
+  // A page without the hook, or one already at its root, backgrounds the app.
+  onBackPress(): boolean {
+    this.controller.runJavaScript('window.__batonSystemBack ? String(window.__batonSystemBack()) : "none"')
+      .then((result: string) => {
+        if (result.replace(/"/g, '') !== 'true') { this.moveToBackground(); }
+      })
+      .catch(() => { this.moveToBackground(); });
+    return true;
+  }
+
+  private moveToBackground(): void {
+    (getContext(this) as common.UIAbilityContext).moveAbilityToBackground().catch(() => {});
+  }
+
+  build() {
+    Stack() {
+      Web({ src: ENTRY, controller: this.controller })
+        .onControllerAttached(() => {
+          // Remote DevTools is enabled in EntryAbility.onCreate (before kernel init).
+          // Must be registered before the first app:// request is served.
+          this.controller.setWebSchemeHandler('app', this.schemeHandler);
+        })
+        .domStorageAccess(true)     // localStorage: _ak/_as auth + nav cache
+        .javaScriptAccess(true)
+        .databaseAccess(true)
+        .fileAccess(true)
+        .imageAccess(true)
+        .onlineImageAccess(true)
+        // The secure app:// page embeds the http://127.0.0.1 Remote preview iframe.
+        .mixedMode(MixedMode.All)
+        // prefers-color-scheme follows the system for the System theme; pages are never force-darkened.
+        .darkMode(WebDarkMode.Auto)
+        .forceDarkAccess(false)
+        .backgroundColor(this.canvas)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+        // Declarative, because registerJavaScriptProxy objects appear only after a reload.
+        .javaScriptProxy({
+          object: this.nativeBridge,
+          name: 'harmonyBridge',
+          methodList: NativeBridge.METHODS,
+          controller: this.controller,
+          permission: BRIDGE_PERMISSION
+        })
+        .width('100%')
+        .height('100%')
+        .onPageBegin(() => { this.loading = true; this.failed = false; })
+        .onPageEnd(() => { this.loading = false; })
+        .onAlert((e) => this.showJsAlert(e.message, e.result))
+        .onConfirm((e) => this.showJsConfirm(e.message, e.result))
+        .onErrorReceive((e) => {
+          if (e && e.request && e.request.isMainFrame()) {
+            this.loading = false;
+            this.failed = true;
+          }
+        })
+
+      if (this.loading && !this.failed) {
+        LoadingProgress().width(48).height(48)
+      }
+
+      if (this.failed) {
+        Column({ space: 12 }) {
+          Text($r('app.string.load_failed'))
+          Button($r('app.string.retry')).onClick(() => {
+            this.failed = false;
+            this.loading = true;
+            this.controller.loadUrl(ENTRY);
+          })
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.canvas)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+  }
+}

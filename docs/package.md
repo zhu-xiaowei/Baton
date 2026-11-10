@@ -1,10 +1,52 @@
 # Release packages
 
-Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. The command collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, and `Baton.exe`. iOS releases use the separate TestFlight workflow.
+Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`. iOS releases use the separate TestFlight workflow.
 
-On macOS the command uses the local Android, macOS, and Windows build scripts. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
+On macOS the command uses the local Android, macOS, and Windows build scripts, then builds Linux through GitHub Actions. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
 The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight. The macOS desktop DMG is a Tauri bundle, so the packaging workflow builds it on a macOS GitHub runner with a Developer ID certificate. The existing App Store Connect API key authenticates notarization. Tauri signs and notarizes the app, then removes its staging copy when bundling the DMG. The release script separately notarizes and staples the DMG, mounts it, and verifies the app's signature and ticket before uploading.
+
+## Prepare a versioned release
+
+Use a branch such as `release/1.1.0` to prepare the version bump and release
+notes. Keep these application versions in sync:
+
+| Location | Field |
+| --- | --- |
+| `package.json`, `package-lock.json` | Package version; both the top-level and root-package versions in the lockfile. Also supplies the frontend version, installer output directory, and deployed server/Bridge version prefix. |
+| `bridge/package.json`, `bridge/package-lock.json` | Bridge package version; both locations in its lockfile. |
+| `src-tauri/tauri.conf.json` | Native application version; Tauri derives Android `versionName` and `versionCode` from it. |
+| `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` | Version of the `baton` package only; dependency and plugin versions are independent. |
+| `src-tauri/gen/apple/project.yml` | `CFBundleShortVersionString` for both the app and `NotificationService`. |
+| `src-tauri/gen/apple/baton_iOS/Info.plist`, `src-tauri/gen/apple/NotificationService/Info.plist` | Matching `CFBundleShortVersionString` values. |
+| `harmony/AppScope/app.json5` | `versionName` and a monotonically increasing `versionCode` (`1001000` for `1.1.0`). |
+| `harmony/entry/oh-package.json5` | Entry module package version. |
+
+Keep the iOS `CFBundleVersion` values identical in both targets and their
+plists. The TestFlight scripts increment the build number when publishing;
+changing the marketing version does not reset it. Do not edit the Android
+Gradle fallback values or `bridge/version.mjs`: Tauri writes the Android
+properties during the build, and `server/install.sh` generates the deployed
+Bridge version as `<package.json version>-<git hash>`.
+
+Update the download links and feature descriptions in all three root READMEs,
+and prepare English GitHub Release notes with changes and upgrade instructions.
+Upload `Baton.deb` and `Baton.deb.sha256` alongside the other installers so the
+Linux download links in all three READMEs resolve to published release assets.
+Draft notes can be kept locally in `docs/releases/<version>.md`.
+Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
+and decode the generated image to verify that it points to the new release.
+Keep previous release notes, protocol examples, test fixtures, and dependency
+versions unchanged.
+
+Before packaging, merge the release preparation into `main` and wait for
+production CI to pass for the exact commit being packaged. The versioned
+`release/<version>` branch has no production-CI exemption. Package the resulting
+`main` commit with `npm run package`, then publish the `v<version>` GitHub release
+with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`
+from `release/<version>/`. The README
+download links become available once those assets are published. iOS uses the
+separate TestFlight workflow; HarmonyOS requires its own DevEco build.
 
 ## GitHub Actions setup
 
@@ -44,6 +86,7 @@ From any clean branch pushed to GitHub, choose a single release package:
 npm run package:android
 npm run package:macos
 npm run package:windows
+npm run package:linux
 ```
 
 For a development test package, use:
@@ -53,10 +96,13 @@ npm run package:dev:android  # disposable-key APK
 npm run package:dev:ios      # unsigned IPA
 npm run package:dev:macos    # unsigned DMG
 npm run package:dev:windows  # unsigned NSIS installer
+npm run package:dev:linux    # unsigned x86_64 DEB
 ```
 
-`npm run package` and `$package` still build the original three release
-installers. There is no `package:ios`: signed iOS releases use the existing
+`npm run package` and `$package` build all four release installers.
+The macOS path builds Android, macOS, and Windows locally, then invokes the
+Linux runner and includes its result in the summary.
+There is no `package:ios`: signed iOS releases use the existing
 TestFlight flow. The `dev` packages are installable test builds, not live
 development servers. The Android dev APK uses a disposable signing key, so
 it may require removing a previously installed Baton app.
@@ -67,4 +113,16 @@ Release packages go to `release/<version>/`; dev packages go to the ignored
 `release/dev/<first 12 characters of SHA>/`. Use
 `node scripts/package-cloud.mjs --dev --platform ios --dry-run` to check a
 selection without starting a build. The manual **Package** workflow offers
-the same selections and defaults to the three release packages.
+the same selections and defaults to the four release packages.
+
+## Linux desktop package
+
+Linux currently targets **Ubuntu 24.04 x86_64**. Use `npm run package:linux`
+or `npm run package:dev:linux` for cloud builds. `npm run build:linux` also
+works locally with Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux).
+
+The `Baton-Linux` (or `Baton-dev-Linux`) artifact contains `Baton.deb` and
+`Baton.deb.sha256`; the packaging command verifies the checksum before keeping
+the download. Publish both files. Users can verify them with
+`sha256sum --check Baton.deb.sha256` and install with `sudo apt install ./Baton.deb`.
+The package is unsigned and needs no signing secrets.

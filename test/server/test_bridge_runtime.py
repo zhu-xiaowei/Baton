@@ -555,11 +555,11 @@ def test_delete_session_deletes_all_nested_children_only(monkeypatch):
         "sk": "SESS#Linux#-repo#root",
         "sessionId": "root",
     }, {
-        "sk": "SESS#Linux#-repo#child-a",
+        "sk": "SESS#Linux#-child-project#child-a",
         "sessionId": "child-a",
         "parentSessionId": "root",
     }, {
-        "sk": "SESS#Linux#-repo#grandchild",
+        "sk": "SESS#Linux#-grandchild-project#grandchild",
         "sessionId": "grandchild",
         "parentSessionId": "child-a",
     }, {
@@ -581,8 +581,8 @@ def test_delete_session_deletes_all_nested_children_only(monkeypatch):
 
     assert {item["sk"] for item in sessions.deleted} == {
         "SESS#Linux#-repo#root",
-        "SESS#Linux#-repo#child-a",
-        "SESS#Linux#-repo#grandchild",
+        "SESS#Linux#-child-project#child-a",
+        "SESS#Linux#-grandchild-project#grandchild",
     }
     assert result["deletedSessions"] == 3
 
@@ -696,6 +696,7 @@ def test_child_status_summary_updates_root_active_status_and_counters(monkeypatc
         if update["Key"]["sk"] == "SESS#Linux#-repo#codex:parent"
     )
     values = root_update["ExpressionAttributeValues"]
+    assert "REMOVE localIdleSec" in root_update["UpdateExpression"]
     assert values[":count"] == 1
     assert values[":running"] == 1
     assert values[":needs"] == 0
@@ -1431,6 +1432,9 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
         "<key>PATH</key><string>$NODE_DIR:/opt/homebrew/bin:"
         "/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
     ) in script
+    # The key lives only in config.json, readable by this user alone.
+    assert "--key" not in script and "ExecStart=$NODE $DIR/bridge.mjs\n" in script
+    assert "fs.chmodSync(p,0o600)" in script
 
 
 def test_bridge_connection_persists_running_version(monkeypatch):

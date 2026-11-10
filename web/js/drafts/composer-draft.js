@@ -14,12 +14,32 @@ function inputElement() {
   return document.getElementById('msg-input');
 }
 
-function applyInput(text) {
+// Only uploaded attachments are drafted: their key sends them, and dataUrl previews images.
+function readAttachments() {
+  return state.stagedImages.filter(function (entry) {
+    return entry.uploaded && entry.key;
+  }).map(function (entry) {
+    return entry.kind === 'file'
+      ? { kind: 'file', name: entry.name, key: entry.key }
+      : { name: entry.name, key: entry.key, dataUrl: entry.dataUrl };
+  });
+}
+
+function applyAttachments(attachments) {
+  state.stagedImages.forEach(function (entry) { entry.controller?.abort(); });
+  state.stagedImages = (attachments || []).map(function (item) {
+    return Object.assign({}, item, { uploaded: true });
+  });
+  window.renderStagedImages?.();
+}
+
+function applyInput(text, attachments) {
   var input = inputElement();
   if (!input) return;
   input.value = text;
   input.style.height = 'auto';
   if (text) input.style.height = input.scrollHeight + 'px';
+  applyAttachments(attachments);
   var EventConstructor = input.ownerDocument?.defaultView?.Event || globalThis.Event;
   input.dispatchEvent(new EventConstructor('input', { bubbles: true }));
   if (typeof window.updateSendBtn === 'function') {
@@ -38,7 +58,12 @@ function draftFields(sessionId) {
 
 const controller = createComposerDraftController(store, {
   readInput: function () {
-    return inputElement()?.value || '';
+    var attachments = readAttachments();
+    return {
+      text: inputElement()?.value || '',
+      attachments: attachments,
+      pending: state.stagedImages.length > attachments.length,
+    };
   },
   applyInput: applyInput,
 });

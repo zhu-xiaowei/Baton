@@ -31,6 +31,7 @@ export async function makeHarness(options = {}) {
       value: options.userAgent,
     });
   }
+  if (options.nativeMobile) w.__BATON_NATIVE_MOBILE__ = true;
   let visualViewport = null;
   if (options.visualViewport) {
     const listeners = new Map();

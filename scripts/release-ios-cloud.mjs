@@ -17,6 +17,8 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const BUNDLE_ID = 'com.batonai.app';
 const PROJECT_YML = 'src-tauri/gen/apple/project.yml';
 const INFO_PLIST = 'src-tauri/gen/apple/baton_iOS/Info.plist';
+// App Store Connect rejects an extension whose versions differ from the app's.
+const EXTENSION_PLIST = 'src-tauri/gen/apple/NotificationService/Info.plist';
 const POLL_MS = 30_000;
 const TIMEOUT_MS = 90 * 60_000;
 
@@ -90,11 +92,20 @@ const projectPath = path.join(ROOT, PROJECT_YML);
 const plistPath = path.join(ROOT, INFO_PLIST);
 const project = fs.readFileSync(projectPath, 'utf8');
 const plist = fs.readFileSync(plistPath, 'utf8');
+const extensionPath = path.join(ROOT, EXTENSION_PLIST);
+const extensionPlist = fs.readFileSync(extensionPath, 'utf8');
 const marketingVersion = project.match(/^\s*CFBundleShortVersionString: (\d+\.\d+\.\d+)\s*$/m)?.[1];
 const plistMarketingVersion = plist.match(/<key>CFBundleShortVersionString<\/key>\s*<string>(\d+\.\d+\.\d+)<\/string>/)?.[1];
 const projectBuild = project.match(/^\s*CFBundleVersion: "(\d+)"\s*$/m)?.[1];
 const plistBuild = plist.match(/<key>CFBundleVersion<\/key>\s*<string>(\d+)<\/string>/)?.[1];
-if (!marketingVersion || marketingVersion !== plistMarketingVersion || !projectBuild || projectBuild !== plistBuild) die(`${PROJECT_YML} and ${INFO_PLIST} must have the same marketing version and numeric build number`);
+const projectVersions = new Set([...project.matchAll(/^\s*CFBundleShortVersionString: (\S+)\s*$/gm)].map((m) => m[1]));
+const projectBuilds = new Set([...project.matchAll(/^\s*CFBundleVersion: "(\d+)"\s*$/gm)].map((m) => m[1]));
+const extensionVersion = extensionPlist.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+const extensionBuild = extensionPlist.match(/<key>CFBundleVersion<\/key>\s*<string>(\d+)<\/string>/)?.[1];
+if (!marketingVersion || marketingVersion !== plistMarketingVersion || marketingVersion !== extensionVersion || projectVersions.size !== 1
+  || !projectBuild || projectBuild !== plistBuild || projectBuild !== extensionBuild || projectBuilds.size !== 1) {
+  die(`${PROJECT_YML}, ${INFO_PLIST} and ${EXTENSION_PLIST} must have the same marketing version and numeric build number`);
+}
 const configuredBuild = Number(projectBuild);
 if (!Number.isSafeInteger(configuredBuild)) die('Configured build number is too large');
 if (JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri/tauri.conf.json'), 'utf8')).version !== marketingVersion) die('Tauri and Xcode marketing versions differ');
@@ -141,9 +152,11 @@ if (dryRun) {
   process.exit(0);
 }
 if (needsBump) {
-  fs.writeFileSync(projectPath, project.replace(/^(\s*CFBundleVersion: ")\d+("\s*)$/m, (_, before, after) => `${before}${releaseBuild}${after}`));
-  fs.writeFileSync(plistPath, plist.replace(/(<key>CFBundleVersion<\/key>\s*<string>)\d+(<\/string>)/, (_, before, after) => `${before}${releaseBuild}${after}`));
-  git('add', '--', PROJECT_YML, INFO_PLIST);
+  const bump = (text) => text.replace(/(<key>CFBundleVersion<\/key>\s*<string>)\d+(<\/string>)/, (_, before, after) => `${before}${releaseBuild}${after}`);
+  fs.writeFileSync(projectPath, project.replace(/^(\s*CFBundleVersion: ")\d+("\s*)$/gm, (_, before, after) => `${before}${releaseBuild}${after}`));
+  fs.writeFileSync(plistPath, bump(plist));
+  fs.writeFileSync(extensionPath, bump(extensionPlist));
+  git('add', '--', PROJECT_YML, INFO_PLIST, EXTENSION_PLIST);
   git('commit', '-m', `chore(ios): bump build number to ${releaseBuild}`);
   releaseHead = git('rev-parse', 'HEAD');
   console.log(`==> Prepared ${marketingVersion} (${releaseBuild}) in ${releaseHead.slice(0, 7)}`);

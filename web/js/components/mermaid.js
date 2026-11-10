@@ -4,6 +4,7 @@
   var MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs';
 
   var _mermaidPromise = null;
+  var _themeGeneration = 0;
   var _renderSeq = 0;                  // unique id per render() — mermaid needs distinct ids
   var _pending = Object.create(null);  // stable key → source currently being rendered (in-flight guard)
   var _svgCache = Object.create(null); // trimmed source → rendered SVG string (survives node swaps)
@@ -71,7 +72,7 @@
       var mermaid = mod.default || mod;
       mermaid.initialize({
         startOnLoad: false,
-        theme: 'dark',
+        theme: document.documentElement.dataset.theme === 'light' ? 'neutral' : 'dark',
         securityLevel: 'loose',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       });
@@ -207,7 +208,7 @@
       var key = stableKey(block);
       if (_pending[key] === code) continue;                 // a render for this source is already in flight
       _pending[key] = code;
-      todo.push({ block: block, code: code, key: key });
+      todo.push({ block: block, code: code, key: key, generation: _themeGeneration });
     }
     if (!todo.length) return;
 
@@ -218,6 +219,7 @@
         mermaid.parse(t.code, { suppressErrors: true }).then(function (ok) {
           if (!ok) { markFailed(t.block, t.code); return; } // parse failed — if final code, mark failed
           return renderResilient(mermaid, renderId, t.code).then(function (res) {
+            if (t.generation !== _themeGeneration) return;
             cacheSvg(t.code, res.svg); // remember by source so a later node swap restores it sync
             var srcEl = t.block.querySelector('.mermaid-src');
             var box = t.block.querySelector('.mermaid-svg');
@@ -227,16 +229,31 @@
             box.innerHTML = res.svg;
             var svg = box.firstElementChild;
             if (svg) svg.setAttribute('data-mcode', t.code); // tag so unchanged frames become a no-op
+            if (_fs && _fs.code === t.code && svg) _fs.svg.innerHTML = svg.innerHTML;
             clearTimeout(_failTimers[t.key]);                // a good render cancels any pending fail switch
             t.block.classList.remove('mermaid-failed');
             t.block.classList.add('rendered');
             limitLiveSvgs(t.block);
           });
         }).catch(function () { markFailed(t.block, t.code); })
-          .then(function () { if (_pending[t.key] === t.code) delete _pending[t.key]; });
+          .then(function () { if (t.generation === _themeGeneration && _pending[t.key] === t.code) delete _pending[t.key]; });
       });
     }).catch(function () { /* CDN unavailable → placeholder stays (code tab still works) */ });
   };
+
+  window.addEventListener('themechange', function () {
+    _themeGeneration++;
+    _mermaidPromise = null;
+    _pending = Object.create(null);
+    _svgCache = Object.create(null);
+    _svgCacheKeys = [];
+    document.querySelectorAll('.mermaid-block').forEach(function (block) {
+      var box = block.querySelector('.mermaid-svg');
+      if (box) box.innerHTML = '';
+      block.classList.remove('rendered');
+    });
+    window.renderMermaidBlocks(document);
+  });
 
   // Toggle a block between diagram and source view (tab buttons in the header).
   window.toggleMermaidView = function (btn, mode) {
@@ -246,6 +263,57 @@
     block.querySelectorAll('.mermaid-tab').forEach(function (t) { t.classList.remove('active'); });
     btn.classList.add('active');
   };
+
+  // ---- Fullscreen download: the whole diagram (not the current zoom) as a PNG ----
+  function svgToPng(svg, view) {
+    var clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('viewBox', [view.x, view.y, view.w, view.h].join(' '));
+    clone.setAttribute('width', view.w);
+    clone.setAttribute('height', view.h);
+    clone.removeAttribute('style');
+    // 2x like Swift Chat, capped by the side and area limits of mobile canvases.
+    var scale = Math.min(2, 8192 / view.w, 8192 / view.h, Math.sqrt(16e6 / (view.w * view.h)));
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(view.w * scale));
+        canvas.height = Math.max(1, Math.round(view.h * scale));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#0d1117';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        try {
+          canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('Could not create the image')); }, 'image/png');
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error('Could not create the image')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+    });
+  }
+
+  function downloadDiagram(btn, svg, view) {
+    Promise.all([
+      import('./download-button.js'), import('./toast.js'), import('../project/download.js'),
+    ]).then(function (mods) {
+      var setState = mods[0].setDownloadButtonState;
+      if (btn.disabled) return;
+      setState(btn, 'busy');
+      return svgToPng(svg, view).then(function (blob) {
+        return mods[2].saveGeneratedFile(blob, 'mermaid-diagram.png');
+      }).then(function (result) {
+        setState(btn, result && result.status === 'cancelled' ? 'idle' : 'done');
+      }, function (error) {
+        setState(btn, 'failed');
+        mods[1].showToast(mods[2].downloadFailure(error));
+      });
+    }, function () {
+      // A chunk could not load (e.g. offline web): flash the failed colour instead of doing nothing.
+      btn.classList.add('is-failed');
+      setTimeout(function () { btn.classList.remove('is-failed'); }, 1500);
+    });
+  }
 
   // ---- Fullscreen viewer: vector viewBox zoom + rubber-band pan ----
   // CSS transforms can promote the whole SVG to a cached WebKit bitmap. Updating viewBox
@@ -511,6 +579,7 @@
       '<button class="mermaid-fs-close" aria-label="Close">'
       + '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
       + '</button>'
+      + '<button type="button" class="file-download-action mermaid-fs-download" title="Download image" aria-label="Download image"></button>'
       + '<div class="mermaid-fs-stage">' + svgHtml + '</div>';
     document.body.appendChild(overlay);
     _fsEdgeBack.activate();
@@ -524,6 +593,7 @@
     fullSvg.removeAttribute('transform');
 
     _fs = {
+      code: code.trim(),
       overlay: overlay,
       stage: stage,
       svg: fullSvg,
@@ -542,6 +612,9 @@
     window.addEventListener('resize', _fs.onResize = function () { fsResize(); });
 
     overlay.querySelector('.mermaid-fs-close').addEventListener('click', closeMermaidFullscreen);
+    var downloadBtn = overlay.querySelector('.mermaid-fs-download');
+    import('./download-button.js').then(function (m) { m.setDownloadButtonState(downloadBtn); }, function () {});
+    downloadBtn.addEventListener('click', function () { downloadDiagram(downloadBtn, fullSvg, fsCopyView(base)); });
     overlay.addEventListener('click', function (e) { if (e.target === overlay) closeMermaidFullscreen(); });
 
     // Wheel / trackpad-pinch zoom, anchored at the cursor.

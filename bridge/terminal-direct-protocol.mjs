@@ -4,7 +4,7 @@ const MAX_FRAME = 28 * 1024;
 const CONNECTION = /^[A-Za-z0-9_+=.-]{1,256}$/;
 const INPUT_TYPES = new Set(['open', 'input', 'resize', 'heartbeat', 'close']);
 const OUTPUT_TYPES = new Set(['ready', 'output', 'ack', 'error', 'resized', 'exit', 'closed']);
-const SHARED_INPUT_TYPES = new Set(['open', 'input', 'resize', 'heartbeat', 'detach', 'render_ack', 'create_session', 'select_session', 'close_session']);
+const SHARED_INPUT_TYPES = new Set(['open', 'input', 'resize', 'heartbeat', 'detach', 'render_ack', 'theme', 'create_session', 'select_session', 'close_session']);
 const SHARED_OUTPUT_TYPES = new Set(['ready', 'snapshot', 'synced', 'output', 'ack', 'error', 'resized', 'exit', 'peers', 'sessions', 'session_result']);
 
 function emit(target, type, fields = {}) {

@@ -47,9 +47,16 @@ export function turnTimeline(container, turnId) {
   };
 }
 
-export function attachTimelineTurn(container, turn) {
+export function attachTimelineTurn(container, turn, allowUnanchored = false) {
   var timeline = turnTimeline(container, turn.dataset.turnId || '');
-  if (!timeline.anchor && container.querySelector(':scope > .msg-user')) return false;
+  if (!timeline.anchor && container.querySelector(':scope > .msg-user')) {
+    if (!allowUnanchored && turn.dataset.unanchoredTurn !== 'true') return false;
+    turn.dataset.unanchoredTurn = 'true';
+    if (turn.parentElement !== container) {
+      container.insertBefore(turn, container.querySelector(':scope > #permission-prompt'));
+    }
+    return true;
+  }
   var segment = turn.dataset.timelineSegment || '';
   var boundaryIndex = timeline.rows.findIndex(element =>
     element.classList.contains('msg-system-event')

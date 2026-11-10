@@ -11,6 +11,7 @@ import {
 import { ClaudePool } from '../../bridge/headless.mjs';
 import {
   getSessionStatus,
+  readLiveSessionStatuses,
   resolveAgentMetadata,
   sessionIdFromProcessArgs,
   statusFromEntry,
@@ -211,6 +212,39 @@ test('process args identify both resumed and Bridge-created sessions', () => {
   try {
     assert.equal(getSessionStatus(created, fixture.filePath, runningInfo), 'running');
   } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a live CC session record decides the status of its session', () => {
+  const sessionId = '49494949-4949-4494-8494-494949494949';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-cc-sessions-'));
+  const fixture = sessionFixture(sessionId, 'running');
+  const pid = String(process.pid);
+  const read = (fields, claudePids = [pid]) => {
+    fs.writeFileSync(path.join(dir, `${pid}.json`), JSON.stringify({ pid: process.pid, sessionId, ...fields }));
+    return readLiveSessionStatuses(new Set(claudePids), dir).get(sessionId);
+  };
+  try {
+    assert.equal(read({ status: 'busy' }), 'running');
+    assert.equal(read({ status: 'waiting' }), 'needs_input');
+    assert.equal(read({ status: 'idle' }), 'completed');
+    // A killed process leaves its record behind.
+    assert.equal(read({ status: 'busy' }, []), undefined);
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync('/proc/self/stat', 'utf8');
+      const procStart = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+      assert.equal(read({ status: 'busy', procStart }), 'running');
+      assert.equal(read({ status: 'busy', procStart: '1' }), undefined);
+    }
+
+    // The record wins over a tail that still reads as running; without one the tail decides.
+    const runningInfo = { projects: new Set([fixture.project]), sessions: new Set([sessionId]) };
+    const liveStatuses = new Map([[sessionId, 'completed']]);
+    assert.equal(getSessionStatus(sessionId, fixture.filePath, { ...runningInfo, liveStatuses }), 'completed');
+    assert.equal(getSessionStatus(sessionId, fixture.filePath, runningInfo), 'running');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
@@ -452,7 +486,93 @@ test('forked skills appear before the parent prompt and publish their initial hi
   }
 });
 
-test('finished metadata completes a child without changing live-parent process semantics', () => {
+test('an interrupted subagent no longer pins its root to running', () => {
+  const parentId = '68686868-6868-4686-8686-686868686868';
+  const fixture = sessionFixture(parentId);
+  try {
+    const childFile = path.join(path.dirname(fixture.filePath), parentId, 'subagents', 'agent-stale.jsonl');
+    fs.mkdirSync(path.dirname(childFile), { recursive: true });
+    writeRows(childFile, [{
+      type: 'assistant',
+      message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] },
+    }]);
+    fs.utimesSync(childFile, new Date(0), new Date(0));
+
+    // An unrelated CC process in the folder must not keep historical children running.
+    const sessions = discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set() },
+      daemonMeta: new Map(),
+    }).sessions;
+    assert.equal(sessions.find((session) => session.parentSessionId).status, 'completed');
+
+    // checkStopped must send re-derived counts; the server keeps omitted ones.
+    const result = claudeRuntime.inspectActiveSession({
+      sessionId: parentId,
+      nativeSessionId: parentId,
+      deviceName: 'test-device',
+      projectHash: fixture.project,
+      status: 'running',
+    }, {
+      daemonMeta: new Map(),
+      daemonRunning: new Set(),
+      poolOwns: () => false,
+      runningInfo: noProcesses(),
+      lastKnownStatus: new Map(),
+      findSessionFile: () => fixture.filePath,
+    });
+    assert.equal(result.session.runningAgentCount, 0);
+    assert.equal(result.session.activeStatus, 'completed');
+    assert.deepEqual(result.extraSessions.map((session) => session.status), ['completed']);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('the spawner transcript settles a stopped child until it is resumed', () => {
+  const parentId = '69696969-6969-4696-8696-696969696969';
+  const fixture = sessionFixture(parentId, 'running');
+  try {
+    const childFile = path.join(path.dirname(fixture.filePath), parentId, 'subagents', 'agent-a455389ab6231e651.jsonl');
+    fs.mkdirSync(path.dirname(childFile), { recursive: true });
+    // TaskStop flushes one more tool_use that never runs.
+    writeRows(childFile, [{
+      type: 'assistant',
+      message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] },
+    }]);
+    fs.utimesSync(childFile, new Date(0), new Date(0));
+    const child = () => discoverClaudeSessions({
+      claudeProjectsRoot: fixture.root,
+      runningInfo: { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
+      daemonMeta: new Map(),
+    }).sessions.find(session => session.parentSessionId);
+    const append = row => fs.appendFileSync(fixture.filePath, `${JSON.stringify(row)}\n`);
+    const notification = {
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>\n<status>stopped</status>',
+    };
+    // Tool output quoting a notification is not one.
+    append({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: '<task-notification>\n<task-id>a455389ab6231e651</task-id>' }] },
+    });
+    assert.equal(child().status, 'running');
+    append(notification);
+    assert.equal(child().status, 'completed');
+    append({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: '{"success":true,"resumedAgentId":"a455389ab6231e651"}' }] },
+    });
+    assert.equal(child().status, 'running');
+    append(notification);
+    assert.equal(child().status, 'completed');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('finished metadata completes a child whatever the parent process state', () => {
   const parentId = '67676767-2222-4222-8222-676767676767';
   const fixture = sessionFixture(parentId);
   try {
@@ -466,23 +586,21 @@ test('finished metadata completes a child without changing live-parent process s
       type: 'user',
       message: { content: [{ type: 'tool_result', content: 'Waiting for background work' }] },
     }]);
-    // A long Bash/model request can be silent well past both freshness windows.
     fs.utimesSync(childFile, new Date(0), new Date(0));
     const metaFile = childFile.replace('.jsonl', '.meta.json');
     const processStates = [
       { projects: new Set([fixture.project]), sessions: new Set([parentId]) },
       { projects: new Set([fixture.project]), sessions: new Set() },
     ];
-    for (const finished of [false, true]) {
-      fs.writeFileSync(metaFile, JSON.stringify({ finished }));
-      for (const runningInfo of processStates) {
-        const sessions = discoverClaudeSessions({
-          claudeProjectsRoot: fixture.root, runningInfo, daemonMeta: new Map(),
-        }).sessions;
-        assert.equal(sessions.find(session => session.id === parentId).status, 'completed');
-        const child = sessions.find(session => session.agentPath === 'agent-background');
-        assert.equal(child.status, finished ? 'completed' : 'running');
-      }
+    // CC only ever writes finished:true.
+    fs.writeFileSync(metaFile, JSON.stringify({ finished: true }));
+    for (const runningInfo of processStates) {
+      const sessions = discoverClaudeSessions({
+        claudeProjectsRoot: fixture.root, runningInfo, daemonMeta: new Map(),
+      }).sessions;
+      assert.equal(sessions.find(session => session.id === parentId).status, 'completed');
+      const child = sessions.find(session => session.agentPath === 'agent-background');
+      assert.equal(child.status, 'completed');
     }
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -697,6 +815,20 @@ test('terminal interaction tools are needs_input while ordinary tools keep runni
       },
     }), expected);
   }
+});
+
+test('a background task notification starts a turn instead of reading as the last end_turn', () => {
+  assert.equal(statusFromEntry({
+    type: 'user',
+    message: { content: '<task-notification>\n<task-id>a7f37595419</task-id>\n<status>completed</status>' },
+  }), 'running');
+});
+
+test('a failed tool or a thinking row does not end the turn', () => {
+  for (const entry of [
+    { type: 'user', message: { content: [{ type: 'tool_result', is_error: true }] } },
+    { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'thinking' }] } },
+  ]) assert.equal(statusFromEntry(entry), 'running');
 });
 
 test('idle pooled process no longer owns session status', () => {

@@ -56,9 +56,9 @@ function graphSvg(row, metrics, head, height, end) {
   });
   var color = LANE_COLORS[row.color];
   var node = row.commit.parents.length > 1
-    ? '<circle cx="' + x + '" cy="' + NODE_Y + '" r="3.5" fill="#0d1117" stroke="' + color + '" stroke-width="2"/>'
+    ? '<circle cx="' + x + '" cy="' + NODE_Y + '" r="3.5" fill="var(--canvas)" stroke="' + color + '" stroke-width="2"/>'
     : '<circle cx="' + x + '" cy="' + NODE_Y + '" r="4" fill="' + color + '"/>';
-  if (head) node = '<circle cx="' + x + '" cy="' + NODE_Y + '" r="6" fill="#0d1117" stroke="' + color + '" stroke-width="2"/>'
+  if (head) node = '<circle cx="' + x + '" cy="' + NODE_Y + '" r="6" fill="var(--canvas)" stroke="' + color + '" stroke-width="2"/>'
     + '<circle cx="' + x + '" cy="' + NODE_Y + '" r="2.5" fill="' + color + '"/>';
   return '<svg class="git-graph-svg" width="' + metrics.width + '" height="' + height + '" aria-hidden="true">'
     + paths + node + '</svg>';

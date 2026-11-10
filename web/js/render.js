@@ -124,7 +124,7 @@ import { systemEventId } from './timeline.js';
     }
     if (!Array.isArray(msg.content)) {
       const text = typeof msg.content === 'string' ? msg.content : '';
-      if (text) items.push({ type: 'text', html: renderAssistantText(text) });
+      if (text) items.push({ type: 'text', messageText: text, html: renderAssistantText(text) });
       return items;
     }
 
@@ -177,7 +177,7 @@ import { systemEventId } from './timeline.js';
         });
       } else if (block.type === 'image' && block.key) {
         flush();
-        items.push({ type: 'text', html: `<div class="img-placeholder" data-key="${block.key}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="#8b949e" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>` });
+        items.push({ type: 'text', html: `<div class="img-placeholder" data-key="${block.key}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(var(--spinner-rgb), 0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-secondary)" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>` });
       }
     }
     flush();
@@ -186,7 +186,7 @@ import { systemEventId } from './timeline.js';
       if (!textBuf.length) return;
       const joined = textBuf.join('\n');
       textBuf = [];
-      items.push({ type: 'text', html: renderAssistantText(joined) });
+      items.push({ type: 'text', messageText: joined, html: renderAssistantText(joined) });
     }
     return items;
   }
@@ -233,7 +233,8 @@ import { systemEventId } from './timeline.js';
     const processAttr = item.codexProcessId ? ` data-codex-process="${escapeAttribute(item.codexProcessId)}"` : '';
     const planAttr = item.codexPlan ? ' data-codex-plan="1"' : '';
     const tsAttr = timestamp ? ` data-ts="${escapeAttribute(timestamp)}"` : '';
-    return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${planAttr}${tsAttr}>${item.html}</div>`;
+    const textAttr = item.messageText ? ` data-message-text="${escapeAttribute(item.messageText).replace(/\r/g, '&#13;')}"` : '';
+    return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${planAttr}${tsAttr}${textAttr}>${item.html}</div>`;
   }
 
   const METADATA_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
@@ -301,7 +302,7 @@ import { systemEventId } from './timeline.js';
         if (summary) {
           turnItems.push({
             type: 'text',
-            html: summary,
+            ...summary,
             messageId: msg.uuid || '',
             nativeId: msg.nativeId || '',
             turnId: msg.turnId || '',

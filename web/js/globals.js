@@ -65,7 +65,7 @@ async function loadViewerLibs() {
       import('marked'),
       import('highlight.js/lib/common'),
       import('anser'),
-      import('highlight.js/styles/vs2015.css'),
+      import('../css/syntax.css'),
     ]);
     window.marked = markedMod.marked;
     window.hljs = hljsMod.default;

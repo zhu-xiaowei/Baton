@@ -5,7 +5,7 @@
   align-items: center;
   gap: 8px;
 }
-.preview-heading { flex-shrink: 0; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #30363d; color: #e6edf3; }
+.preview-heading { flex-shrink: 0; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
 .preview-panel.bottom-sheet-panel .preview-heading { margin-bottom: 12px; padding-bottom: 12px; }
 .preview-heading-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .preview-title { flex: 0 0 auto; font-size: 16px; white-space: nowrap; }
@@ -16,18 +16,18 @@
   flex: 1;
   min-width: 0;
   padding: 10px;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--canvas);
+  color: var(--text-primary);
   font: inherit;
 }
 .preview-form button, .preview-actions button {
   padding: 9px 12px;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #21262d;
-  color: #e6edf3;
+  background: var(--surface-raised);
+  color: var(--text-primary);
   font: inherit;
   cursor: pointer;
 }
@@ -49,7 +49,7 @@
 }
 .preview-actions svg { width: 18px; height: 18px; flex-shrink: 0; }
 .preview-panel button:disabled { opacity: .4; cursor: default; }
-.preview-form-error { color: #f85149; font-size: 13px; }
+.preview-form-error { color: var(--danger); font-size: 13px; }
 .preview-list-labels, .preview-endpoints {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -58,18 +58,18 @@
 .preview-list-labels {
   margin-top: 16px;
   padding-right: 120px;
-  color: #9da7b3;
+  color: var(--text-subtle);
   font-size: 13px;
   font-weight: 500;
 }
-.preview-connection { padding: 10px 0; border-bottom: 1px solid #30363d; }
+.preview-connection { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .preview-endpoints { flex: 1; min-width: 0; }
 .preview-endpoints code { font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.preview-remote.unavailable { color: #f85149; }
-.preview-local { color: #58a6ff; }
+.preview-remote.unavailable { color: var(--danger); }
+.preview-local { color: var(--accent); }
 
 @media (hover: hover) {
-  .preview-actions button:not(:disabled):hover { background: #30363d; }
+  .preview-actions button:not(:disabled):hover { background: var(--border); }
 }
 @media (min-width: 601px) {
   .preview-panel.bottom-sheet-panel { width: 90%; max-width: 680px; padding: 18px 20px; }

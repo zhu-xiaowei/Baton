@@ -1,5 +1,7 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
+import { layoutPixels } from './page-zoom.js';
+import { copyButtonHtml, refreshMessageCopy } from './copy.js';
 import { attachmentPreviewText, attachmentRef, fileAttachmentHtml } from './components/attachment.js';
 import {
   clearComposerDraft,
@@ -40,6 +42,7 @@ import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
 import { ExecutionEventQueue } from './execution-events.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+var _vpBaseWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
 var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
@@ -55,6 +58,7 @@ var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
 var _queuedTurnIds = new Set();
 var _activeExecutionIds = new Set();
+var _goalContinuationIds = new Set();
 var _executionEvents = new ExecutionEventQueue();
 var _executionRecoveryTimers = new Map();
 var _wsReconnectTimer = null;
@@ -81,8 +85,24 @@ var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
 // A send on a socket silent this long probes it, so a dead socket is rebuilt within the send window.
 var WS_SEND_STALE_MS = 15000;
 var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
+// Periodic ping on both channels: keeps API Gateway's 10-minute idle timer away and finds dead sockets.
+var WS_PING_INTERVAL_MS = 25000;
+var WS_PING_TIMEOUT_MS = 15000;
+// A seq gap that outlives a ping round-trip on every channel and this floor is treated as a lost frame;
+// the floor covers server-side reordering, a misjudgment costs one REST refresh.
+var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
+var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
+// A running turn silent this long is checked against REST in case its tail frames were lost.
+var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
 var _wsProbeTimer = null;
+var _wsPingTimer = null;
 var _wsLastInboundAt = 0;
+var _controlPongAt = 0;
+// Stacks with the realtime_ping route answer it in API Gateway; older ones only answer heartbeat via Lambda.
+var _controlPingRoute = false;
+var _turnGapWatch = null;
+var _lastTurnEventAt = 0;
+var _silentTurnCheckAt = 0;
 var _bottomFollowFrame = null;
 var _pendingBottomFollow = null;
 
@@ -124,6 +144,12 @@ function followBottomAfterLayout() {
 if (window.visualViewport && _isMobile) {
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
+    // A native page zoom or rotation changes viewport units, unlike a keyboard.
+    if (vv.width !== _vpBaseWidth) {
+      _vpBaseWidth = vv.width;
+      _vpBaseHeight = Math.max(vv.height, window.innerHeight);
+      _lastMobileViewportHeight = vv.height;
+    }
     var previousHeight = _lastMobileViewportHeight;
     var viewportShrinking = vv.height < previousHeight;
     var viewportGrowing = vv.height > previousHeight;
@@ -145,17 +171,20 @@ if (window.visualViewport && _isMobile) {
     }
     if (viewportGrowing) _followKeyboardOpen = false;
     _mobileKeyboardOpen = kbUp;
-    if (keyboardClosing && state.stickBottom) {
+    if (keyboardClosing && state.stickBottom && state.appState.session && state.appState.session !== '__new__') {
+      var sessionId = state.appState.session;
       requestAnimationFrame(function () {
         requestAnimationFrame(function () {
-          if (!state.stickBottom) return;
+          if (!state.stickBottom || state.appState.session !== sessionId) return;
           var currentContent = document.getElementById('content');
           if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
         });
       });
     }
     var chromeHeight = 0;
-    if (_isIOS && kbUp
+    // The centered new-session layout already follows the viewport height.
+    // Hiding chrome at the keyboard threshold would make its hero jump.
+    if (_isIOS && kbUp && !document.body.classList.contains('new-session')
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
@@ -165,8 +194,8 @@ if (window.visualViewport && _isMobile) {
       }
     }
     document.body.style.bottom = 'auto';
-    document.body.style.top = (_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (vv.height + chromeHeight) + 'px';
+    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
+    document.body.style.height = (layoutPixels(vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     if (_isIOS) {
       var bar = document.getElementById('input-bar');
@@ -185,6 +214,7 @@ if (window.visualViewport && _isMobile) {
     }
   };
   window.visualViewport.addEventListener('resize', syncMobileViewport);
+  window.addEventListener('baton-page-zoom-change', syncMobileViewport);
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
@@ -222,6 +252,7 @@ if (_isMobile) {
     if (!input?.matches('#msg-input, #gitStatusPage:not([hidden]) .git-commit-input')
       || !_mobileKeyboardOpen
       || event.target === input
+      || event.target.closest?.('.copy-action')
       || (input.id === 'msg-input' && event.target.closest?.('#input-bar'))) {
       return;
     }
@@ -261,6 +292,10 @@ function extractFirstPromptFromMsg(msg) {
   for (var j = 0; j < texts.length; j++) {
     var t = attachmentPreviewText(texts[j]).replace(/\n/g, ' ').trim();
     if (!t) continue;
+    // Same as bridge/session.mjs commandPrompt(): a command row is the first prompt.
+    var cmd = /<command-name>\s*\/?([^<]+?)\s*<\/command-name>/.exec(t);
+    var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
+    if (cmd) return ('/' + cmd[1] + ' ' + (args ? args[1] : '')).trim();
     var bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return '! ' + bash[1].trim();
     if (SKIP_FIRST_PROMPT.test(t)) continue;
@@ -295,14 +330,14 @@ function updateTitleFromMessages() {
       if (fp) firstUser = fp;
     }
   }
-  var tier = customTitle ? 4 : aiTitle ? 3 : lastPrompt ? 2 : firstUser ? 1 : 0;
+  var tier = customTitle ? 4 : aiTitle ? 3 : firstUser ? 2 : lastPrompt ? 1 : 0;
   if (state._titleRename?.sessionId === state.appState.session) {
     if (customTitle !== state._titleRename.name) return;
     state._titleRename = null;
   }
   if (tier === 0) return;
   if (tier < (state._titleTier || 0)) return;
-  var title = attachmentPreviewText(customTitle || aiTitle || lastPrompt || firstUser);
+  var title = attachmentPreviewText(customTitle || aiTitle || firstUser || lastPrompt);
   if (title === state.appState.sessionPreview) return;
   state.appState.sessionPreview = title;
   if (state.activeThreadId === state.rootSessionId) {
@@ -382,6 +417,7 @@ function connectWs(_, projectHash) {
   _realtimeReceiver?.dispose();
   _realtimeReceiver = null;
   state.wsRealtimeStatusText = '';
+  _controlPingRoute = false;
   state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
 
   state.ws.onopen = function () {
@@ -402,6 +438,11 @@ function connectWs(_, projectHash) {
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
     _realtimeReceiver.start();
+    wsSend({ action: 'realtime_ping' });
+    if (!_wsPingTimer) {
+      _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
+      _wsPingTimer?.unref?.();
+    }
   };
 
   state.ws.onmessage = function (e) {
@@ -470,17 +511,86 @@ function probeWsLiveness(timeoutMs) {
     state.ws = null;
     connectWs();
   }, timeoutMs || WS_PROBE_TIMEOUT_MS);
-  wsSend({ action: 'heartbeat' });
+  sendControlPing();
+}
+
+function sendControlPing() {
+  wsSend({ action: _controlPingRoute ? 'realtime_ping' : 'heartbeat' });
 }
 
 // A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
-function probeSocketForSend() {
+function probeSocketForSend(timeoutMs) {
   if (_wsProbeTimer || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeWsLiveness(WS_SEND_PROBE_TIMEOUT_MS);
+  probeWsLiveness(timeoutMs || WS_SEND_PROBE_TIMEOUT_MS);
 }
 
 function probeSocketIfStale() {
   if (_wsLastInboundAt && Date.now() - _wsLastInboundAt > WS_SEND_STALE_MS) probeSocketForSend();
+}
+
+function pingWsChannels() {
+  if (document.hidden || !state.wsSessionId || state.ws?.readyState !== WebSocket.OPEN) return;
+  probeSocketForSend(WS_PING_TIMEOUT_MS);
+  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  checkSilentTurn();
+}
+
+function clearTurnGapWatch() {
+  clearTimeout(_turnGapWatch?.timer);
+  _turnGapWatch = null;
+}
+
+function watchTurnGap(turnId) {
+  var missing = _turnEventQueue.missingSeq(turnId);
+  if (_turnGapWatch?.turnId === turnId && _turnGapWatch.seq !== missing) clearTurnGapWatch();
+  if (missing == null || _turnGapWatch) return;
+  _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
+  // A pong proves its socket is alive and has delivered what was already posted to it, over the
+  // same client link; it does not bound when the server posts the missing frame.
+  sendControlPing();
+  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);
+}
+
+function checkTurnGap() {
+  var watch = _turnGapWatch;
+  if (!watch) return;
+  if (_turnEventQueue.missingSeq(watch.turnId) !== watch.seq) return clearTurnGapWatch();
+  var fenced = _controlPongAt > watch.since
+    && (!_realtimeReceiver?.lastPongAt || _realtimeReceiver.lastPongAt > watch.since);
+  if (fenced) {
+    clearTurnGapWatch();
+    refreshSessionMessages();
+  } else if (Date.now() - watch.since < TURN_GAP_GIVE_UP_MS) {
+    // No pong yet: either still in flight (slow network) or a dead socket the ping timeout rebuilds.
+    watch.timer = setTimeout(checkTurnGap, Math.min(1000, TURN_GAP_MIN_MS));
+  } else {
+    clearTurnGapWatch();
+  }
+}
+
+// A lost tail (including stream_end) leaves no gap to see; REST status settles the turn instead.
+function checkSilentTurn() {
+  var turnIds = _streamCoordinator.activeTurnIds();
+  var now = Date.now();
+  if (!turnIds.length || _turnGapWatch || document.getElementById('permission-prompt')
+    || now - Math.max(_lastTurnEventAt, _silentTurnCheckAt) < SILENT_TURN_MS) return false;
+  _silentTurnCheckAt = now;
+  var sessionId = state.wsSessionId;
+  return refreshSessionMessages({ preserveLive: true }).then(function (result) {
+    if (result?.status !== 'completed' || state.wsSessionId !== sessionId
+      || Date.now() - _lastTurnEventAt < SILENT_TURN_MS) return;
+    // A completed Session has no running execution, so its lost stream_end ends that too.
+    _activeExecutionIds.clear();
+    for (var turnId of turnIds) {
+      _streamCoordinator.settleTurn(turnId);
+      _turnEventQueue.closeTurn(turnId);
+      settlePendingAtTurnEnd(turnId, {});
+    }
+    drainStrictStreamOperations();
+    applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
+    updateSendBtn();
+  });
 }
 
 // Sends are idempotent by turnId; a rebuilt socket carries every send the Server has not receipted.
@@ -599,6 +709,10 @@ function drainPreAdoptionTurnEvents(sessionId, turnId) {
 
 function routeTurnEvent(message) {
   if (bufferPreAdoptionTurnEvent(message)) return;
+  if (message.goalContinuation === true && message.sessionId === state.wsSessionId) {
+    _goalContinuationIds.add(message.turnId);
+  }
+  if (isStrictTurnEvent(message)) _lastTurnEventAt = Date.now();
   var barrier = _historyFetchBarriers.current(message.sessionId);
   if (barrier && message.sessionId === barrier.sessionId
     && (isStrictTurnEvent(message) || message.action === 'messages')) {
@@ -645,6 +759,7 @@ function routeTurnEvent(message) {
   } else if (_turnEventQueue.isResumeCandidate(message.turnId)) {
     resumeLateJoinAtCheckpoint(message.turnId);
   }
+  watchTurnGap(message.turnId);
   if (isControlEvent(message)
     && !_handledControlEvents.has(strictEventKey(message))) {
     scheduleControlEventFallback(message);
@@ -748,7 +863,7 @@ function handleGappedTurnCompletion(completion) {
 function resumeLateJoinAtCheckpoint(turnId) {
   var recovery = _turnEventQueue.resumeAtNextCheckpoint(turnId);
   if (!recovery) return false;
-  if (!document.querySelector('[data-anchor="' + turnId + '"]')) {
+  if (!_goalContinuationIds.has(turnId) && !document.querySelector('[data-anchor="' + turnId + '"]')) {
     var hasLoadedUser = !!document.querySelector('.messages > .msg-user');
     console.warn(
       hasLoadedUser
@@ -805,6 +920,15 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
+    } else if (msg.action === 'heartbeat' || msg.action === 'realtime_pong') {
+      if (msg.action === 'realtime_pong') _controlPingRoute = true;
+      _controlPongAt = Date.now();
+    } else if (msg.action === 'notify_check') {
+      // Someone looking at this session right now: no push to any device.
+      if (document.visibilityState === 'visible' && document.hasFocus()
+        && msg.rootSessionId === state.wsRootSessionId) {
+        wsSend({ action: 'notify_seen', rootSessionId: msg.rootSessionId, eventId: msg.eventId });
+      }
     } else if (msg.action === 'send_message_received') {
       var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
       acceptPendingReceipt(receivedPending);
@@ -876,7 +1000,8 @@ function dispatchWsMessage(msg) {
           pending.sessionId = msg.sessionId;
         }
         state.appState.session = msg.sessionId;
-        state.appState.sessionPreview = 'New Session';
+        state.appState.sessionPreview = pending?.text?.trim() || 'New Session';
+        if (pending?.text?.trim()) state._titleTier = 2;
         state.rootSessionId = msg.sessionId;
         state.rootSessionPreview = state.appState.sessionPreview;
         state.activeThreadId = msg.sessionId;
@@ -963,7 +1088,10 @@ function dispatchWsMessage(msg) {
       if (isStrictTurnEvent(msg)) handleStrictTurnEnd(msg);
     } else if (msg.action === 'delete_files_result') {
       var r = window._deleteFilesResolvers && window._deleteFilesResolvers[msg.requestId];
-      if (r) { delete window._deleteFilesResolvers[msg.requestId]; r(msg); }
+      if (r) {
+        if (!msg.pending) delete window._deleteFilesResolvers[msg.requestId];
+        r(msg);
+      }
     } else if (msg.action === 'create_project_result') {
       if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
         state._pendingCreatePath = null;
@@ -1023,8 +1151,8 @@ function getStrictStreamRenderer() {
         ? document.querySelector('[data-anchor="' + turnId + '"]:not([hidden])')
         : null;
     },
-    canAppendWithoutAnchor: function (container) {
-      return !container?.querySelector(':scope > .msg-user');
+    canAppendWithoutAnchor: function (container, turnId) {
+      return _goalContinuationIds.has(turnId) || !container?.querySelector(':scope > .msg-user');
     },
     renderMarkdown: function (element, text) {
       if (window.renderStreamMd) window.renderStreamMd(element, text);
@@ -1339,6 +1467,7 @@ function handleStrictTurnEnd(message) {
   }
   _streamCoordinator.endTurn(message);
   drainStrictStreamOperations();
+  _goalContinuationIds.delete(message.turnId);
   _turnEventQueue.closeTurn(message.turnId);
   _queuedTurnIds.delete(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
@@ -1529,14 +1658,21 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   _checkpointResumedTurns.clear();
   _queuedTurnIds.clear();
   _activeExecutionIds.clear();
-  _executionEvents.reset();
-  for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
-  _executionRecoveryTimers.clear();
+  _goalContinuationIds.clear();
+  // A snapshot refresh keeps execution order: frames after it continue the same executionSeq.
+  if (!keepHistoryRequest) {
+    _executionEvents.reset();
+    for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
+    _executionRecoveryTimers.clear();
+    _lastTurnEventAt = 0;
+    _silentTurnCheckAt = 0;
+  }
   _turnSendOrder.clear();
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
   for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
   _gappedEndTimers.clear();
+  clearTurnGapWatch();
   _suppressTurnEndRecovery = false;
   _handledControlEvents.clear();
   _controlRequestState.clear();
@@ -1563,6 +1699,7 @@ function selectWsSession(sessionId) {
   resetStreamSessionState();
   state.wsSessionId = sessionId;
   state.wsRootSessionId = rootSessionId;
+  window.setOpenNotificationSession?.(rootSessionId);
 }
 
 function subscribeSession(sessionId) {
@@ -1591,6 +1728,7 @@ function adoptNewSession(sessionId) {
   }
   state.wsSessionId = sessionId;
   state.wsRootSessionId = state.rootSessionId || sessionId;
+  window.setOpenNotificationSession?.(state.wsRootSessionId);
   wsSend({
     action: 'subscribe',
     sessionId: sessionId,
@@ -1641,6 +1779,8 @@ function disconnectWs() {
   state.wsRealtimeStatusText = '';
   _wsConnectionGeneration++;
   clearWsProbe();
+  clearInterval(_wsPingTimer);
+  _wsPingTimer = null;
   if (window.resetCommandRequest) window.resetCommandRequest();
   if (_wsReconnectTimer) {
     clearTimeout(_wsReconnectTimer);
@@ -1653,6 +1793,7 @@ function disconnectWs() {
   }
   state.wsSessionId = null;
   state.wsRootSessionId = null;
+  window.setOpenNotificationSession?.('');
   state.wsRunning = false;
   window.resetToolDetails?.();
   resetStreamSessionState();
@@ -2251,7 +2392,7 @@ function handleCodexClientCommand(text, input) {
   return true;
 }
 
-// Textarea: Enter sends, Shift+Enter newline, auto-grow, toggle send/stop button
+// Textarea: mobile Enter/desktop Shift+Enter newline, desktop Enter sends, auto-grow.
 var _stopSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/></svg>';
 var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
 function updateSendBtn(options) {
@@ -2259,6 +2400,9 @@ function updateSendBtn(options) {
   var btn = document.getElementById('send-btn');
   var input = document.getElementById('msg-input');
   var waitingReceipt = !!pendingReceipt();
+  if (refreshMessageCopy(document.querySelector('.messages'), { running: state.wsRunning || waitingReceipt })) {
+    followBottomAfterLayout();
+  }
   var textLen = input.value.trim().length;
   var agentCb = document.getElementById('newAsAgent');
   var isNewAgent = state.appState.session === '__new__' && agentCb && agentCb.checked;
@@ -2347,6 +2491,8 @@ function interruptSession() {
 var restoreScrollFrame = null;
 (function () {
   var el = document.getElementById('msg-input');
+  // The HarmonyOS shell's tablet UA omits "Mobile", so the UA test below misses it.
+  if (window.__BATON_NATIVE_MOBILE__) el.setAttribute('enterkeyhint', 'enter');
   function resizeInputPreservingMessages() {
     var content = document.getElementById('content');
     var preserveScroll = content
@@ -2359,8 +2505,8 @@ var restoreScrollFrame = null;
     );
 
     el.style.height = 'auto';
-    var measuredHeight = el.scrollHeight;
-    if (measuredHeight > 0) el.style.height = measuredHeight + 'px';
+    // Integer line heights keep scrollHeight exact at page zoom; extra height would push the text above the buttons' centre.
+    if (el.scrollHeight > 0) el.style.height = el.scrollHeight + 'px';
 
     if (!preserveScroll) return;
     var restoreScroll = function () {
@@ -2378,6 +2524,8 @@ var restoreScrollFrame = null;
     // IME composition: Enter confirms the candidate, not a send. Sending here
     // clears the input, then compositionend re-fills it → duplicate send + leftover text.
     if (e.isComposing || e.keyCode === 229) return;
+    // Mobile return inserts a newline; sending uses the explicit button.
+    if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.__BATON_NATIVE_MOBILE__) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
   el.addEventListener('input', function () {
@@ -2386,6 +2534,12 @@ var restoreScrollFrame = null;
     // spinner through the existing no-argument updateSendBtn() calls.
     updateSendBtn({ skipSpinner: true });
   });
+  window.addEventListener('resize', function () {
+    if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) {
+      requestAnimationFrame(resizeInputPreservingMessages);
+    }
+  });
+  if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) resizeInputPreservingMessages();
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
 // that own Esc (slash popup handles it in capture phase; file/image viewers
@@ -2462,14 +2616,15 @@ function doSend(fullText, displayText, images) {
   if (container) {
     var imgHtml = images.map(function (img) {
       if (img.kind === 'file') return fileAttachmentHtml(img);
-      return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" onclick="viewImage(this.src)" /></div>';
+      return '<div class="img-placeholder loaded"><img src="' + img.dataUrl + '" data-key="' + esc(img.key) + '" onclick="viewImage(this.src, this)" /></div>';
     }).join('');
     var attachHtml = imgHtml ? '<div class="msg-attachments">' + imgHtml + '</div>' : '';
     // data-anchor is the durable placement id: survives echo promotion (unlike data-pending) so the reply lands here.
     container.insertAdjacentHTML('beforeend',
-      '<div class="msg-user" hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
+      '<div class="msg-user"' + (displayText ? ' data-message-actions' : '') + ' hidden id="' + msgId + '" data-pending="1" data-anchor="' + msgId + '">' + attachHtml
       + '<div class="msg-text" onclick="toggleExpand(this)">' + esc(displayText) + '</div>'
-      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
+      + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span>'
+      + (displayText ? copyButtonHtml('message') : '') + '</div></div>');
   }
   updateSendBtn();
   wsSendReliable(sendPayload);
@@ -2583,7 +2738,7 @@ function pendingStatus(pending, text, color) {
   var status = el && el.querySelector('.sending-status');
   if (!status) return;
   status.textContent = text;
-  status.style.color = color || '#d29922';
+  status.style.color = color || 'var(--warning)';
 }
 
 function handleCodexSendConflict(pending, msg) {
@@ -2799,7 +2954,7 @@ function markPendingTime(pending) {
   var status = el.querySelector('.sending-status');
   if (status) {
     status.textContent = sentAt.toLocaleTimeString();
-    status.style.color = '#6e7681';
+    status.style.color = 'var(--text-muted)';
   }
 }
 
@@ -2821,7 +2976,7 @@ function markPendingFailed(pending, error) {
   if (!status) return;
   var label = error ? esc(error) : 'Not delivered';
   status.innerHTML = label + ' · <span class="send-retry" onclick="retryPendingSend(\'' + pending.id + '\')">Retry</span>';
-  status.style.color = '#f85149';
+  status.style.color = 'var(--danger)';
 }
 
 // Timeout reconciliation: only acts if the bubble is still pending (ack/dedup
@@ -2963,6 +3118,7 @@ Object.assign(window, {
 if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
   window.__wsTest = {
     handleWsMessage: handleWsMessage,
+    checkSilentTurn: checkSilentTurn,
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
     commitMessages: commitMessages,

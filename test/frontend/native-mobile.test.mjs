@@ -13,8 +13,11 @@ function detectNativeMobile({
   userAgent = '',
   platform = '',
   maxTouchPoints = 0,
+  protocol = 'https:',
 } = {}) {
   const classes = new Set();
+  const window = { location: { protocol } };
+  if (tauri) window.__TAURI_INTERNALS__ = {};
   const context = {
     navigator: { userAgent, platform, maxTouchPoints },
     document: {
@@ -27,15 +30,18 @@ function detectNativeMobile({
         },
       },
     },
-    window: tauri ? { __TAURI_INTERNALS__: {} } : {},
+    window,
   };
 
   vm.runInNewContext(detectorSource, context);
   return {
-    classApplied: classes.has('native-mobile'),
+    classApplied: classes.has('native-mobile-app'),
     flag: context.window.__BATON_NATIVE_MOBILE__,
   };
 }
+
+const HARMONY_UA = 'Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko)'
+  + ' Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1 Mobile';
 
 test('native mobile detection requires Tauri and a mobile operating system', () => {
   const cases = [
@@ -76,6 +82,45 @@ test('native mobile detection requires Tauri and a mobile operating system', () 
     assert.equal(result.classApplied, scenario.expected, scenario.name);
     assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
   }
+});
+
+test('the HarmonyOS shell counts as native mobile even without Tauri internals', () => {
+  const cases = [
+    {
+      name: 'ArkWeb serving the bundled page from app://',
+      input: { userAgent: HARMONY_UA, protocol: 'app:' },
+      expected: true,
+    },
+    {
+      name: 'HarmonyOS system browser visiting the served site',
+      input: { userAgent: HARMONY_UA, protocol: 'https:' },
+      expected: false,
+    },
+    {
+      name: 'shell scheme alone, without a recognizable user agent',
+      input: { userAgent: 'Mozilla/5.0 (Phone)', protocol: 'app:' },
+      expected: true,
+    },
+    {
+      name: 'desktop browser with a file origin',
+      input: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', protocol: 'file:' },
+      expected: false,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const result = detectNativeMobile(scenario.input);
+    assert.equal(result.classApplied, scenario.expected, scenario.name);
+    assert.equal(result.flag, scenario.expected, `${scenario.name} global flag`);
+  }
+});
+
+test('the terminal key bar and joystick only need the native mobile flag', () => {
+  const terminal = readFileSync(new URL('../../web/js/terminal.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../../web/css/terminal.css', import.meta.url), 'utf8');
+
+  assert.match(terminal, /if \(window\.__BATON_NATIVE_MOBILE__\) \{\s*current\.mobileControls = attachTerminalKeybar\(/);
+  assert.match(css, /html\.native-mobile \.keyboard-open \.project-terminal-keybar \{/);
 });
 
 test('all entry pages run mobile detection before their first style block', () => {
@@ -120,7 +165,7 @@ test('short iOS browse lists reserve horizontal drags for edge-back navigation',
 
   assert.match(
     css,
-    /html\.native-mobile body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
+    /html\.native-mobile-app body\.browse-view #content\s*\{[^}]*overflow-y:\s*scroll;[^}]*touch-action:\s*pan-y;/s,
   );
 });
 
@@ -134,19 +179,19 @@ test('native landscape hides navigation chrome and applies live content safe are
 
   assert.match(
     css,
-    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile \.top-bar,\s*html\.native-mobile \.breadcrumb\s*\{\s*display:\s*none !important;/s,
+    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile-app \.top-bar,\s*html\.native-mobile-app \.breadcrumb\s*\{\s*display:\s*none !important;/s,
   );
   assert.match(
     css,
-    /html\.native-mobile #content,\s*html\.native-mobile \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
+    /html\.native-mobile-app #content,\s*html\.native-mobile-app \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
+    /html\.native-mobile-app \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
   );
   assert.match(
     css,
-    /html\.native-mobile \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
+    /html\.native-mobile-app \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
   );
   assert.match(app, /function scheduleScrollBtnPosition\(\)/);
   assert.match(app, /addEventListener\('orientationchange', scheduleScrollBtnPosition\)/);

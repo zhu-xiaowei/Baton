@@ -1,5 +1,6 @@
 // App state, routing, page loading
 import { state } from './state.js';
+import { layoutPixels } from './page-zoom.js';
 import {
   invalidateListCache,
   migrateLegacyListCache,
@@ -24,11 +25,15 @@ import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { attachmentPreviewText } from './components/attachment.js';
 import { loadingSpinner, setButtonLoading } from './components/loading.js';
 import { updateWsStatusIndicator } from './components/ws-status.js';
+import { setNativeTabTitle } from './macos-tabs.js';
 import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
-import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { saveHomeTerminalView, savedHomeTerminal, saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { homeProject } from './project/home.js';
+import { showToast } from './components/toast.js';
 import { parsePreviewTarget } from './preview-link.js';
+import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
@@ -142,7 +147,7 @@ function waitForListPointer() {
 function selectBox(id) {
   var on = state.selected.has(id);
   return '<span class="sel-box' + (on ? ' on' : '') + '" data-selid="' + esc(id) + '">'
-    + (on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '')
+    + (on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="var(--on-accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '')
     + '</span>';
 }
 
@@ -192,7 +197,7 @@ function toggleSelected(id) {
   var box = document.querySelector('.list.select-mode .item[data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"] .sel-box');
   if (box) {
     box.classList.toggle('on', on);
-    box.innerHTML = on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
+    box.innerHTML = on ? '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M13 4L6 11l-3-3" stroke="var(--on-accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
   }
   updateBreadcrumb(); // refresh the Delete count only
 }
@@ -209,7 +214,8 @@ function detachLongPress(container) {
 // slow click cannot become an edit action. Moving, scrolling, dragging, or
 // leaving cancels it.
 // In select mode a click toggles the item (capture handler beats the baked nav onclick).
-function attachLongPress(container, type) {
+// With onLongPress (home device cards) the hold calls it instead of entering select mode.
+function attachLongPress(container, type, onLongPress) {
   detachLongPress(container);
   var timer = null, sx = 0, sy = 0, targetId = null, activePointerId = null;
   var gestureVersion = 0, justLongPressed = false;
@@ -231,10 +237,10 @@ function attachLongPress(container, type) {
     if (state.selectMode || e.isPrimary === false) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (e.target.closest && e.target.closest('button, input, textarea, select, [role="button"], [contenteditable="true"]')) return;
-    var item = e.target.closest && e.target.closest('.item[data-id]');
+    var item = e.target.closest && e.target.closest(onLongPress ? '.device-card[data-name]' : '.item[data-id]');
     if (!item) return;
     var pressVersion = gestureVersion;
-    var pressId = item.getAttribute('data-id');
+    var pressId = item.getAttribute(onLongPress ? 'data-name' : 'data-id');
     var pointerId = e.pointerId;
     sx = e.clientX; sy = e.clientY; targetId = pressId; activePointerId = pointerId;
     timer = setTimeout(function () {
@@ -244,7 +250,8 @@ function attachLongPress(container, type) {
           || state.selectMode) return;
       timer = null;
       justLongPressed = true;
-      enterSelectMode(type, pressId);
+      if (onLongPress) onLongPress(pressId);
+      else enterSelectMode(type, pressId);
     }, LONG_PRESS_MS);
   };
   var onPointerMove = function (e) {
@@ -253,6 +260,10 @@ function attachLongPress(container, type) {
     if ((dx * dx) + (dy * dy) > LONG_PRESS_MOVE_PX * LONG_PRESS_MOVE_PX) clear();
   };
   var onClick = function (e) {
+    if (onLongPress) {
+      if (justLongPressed) { justLongPressed = false; e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
     if (!state.selectMode) return;
     e.preventDefault(); e.stopPropagation(); // beat the item's baked navigation onclick
     // The pointerup after a long-press fires a click; swallow it (selection already made).
@@ -425,7 +436,20 @@ function displayDeviceName(deviceName) {
     || deviceName;
 }
 
+function nativeTabTitle() {
+  var app = state.appState;
+  if (app.session === '__new__') return 'New Session';
+  if (app.session) {
+    return attachmentPreviewText(state.rootSessionPreview || app.sessionPreview
+      || shortSessionId(state.rootSessionId || app.session, '', app.runtime));
+  }
+  if (app.project) return app.project.name;
+  if (app.device) return displayDeviceName(app.device);
+  return 'Baton';
+}
+
 function updateBreadcrumb() {
+  setNativeTabTitle(nativeTabTitle());
   if (_navPointer && _navPointer.target.closest('#breadcrumb')) {
     _breadcrumbUpdatePending = true;
     return;
@@ -472,11 +496,15 @@ function updateBreadcrumb() {
     topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
+    var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
+      + ' aria-label="Home files" title="Home files">' + FOLDER_ICON_SVG + '</button>';
+    var homeTerminalButton = '<button class="project-files-entry project-terminal-entry" type="button" onclick="openHomeTerminalPage(this)"'
+      + ' aria-label="Home terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>';
     var previewButton = '<button class="project-files-entry" type="button" onclick="openPreviewPortPrompt()"'
       + ' aria-label="Remote preview" title="Remote preview">'
-      + '<svg style="width:26px;height:26px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
       + '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>';
-    topRight.innerHTML = previewButton
+    topRight.innerHTML = homeFilesButton + previewButton + homeTerminalButton
       + '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
@@ -537,11 +565,50 @@ function openProjectTerminalPage() {
   return opening;
 }
 
+let homeOpening = null;
+
+// Home tools open only while the project list of the same device is still showing.
+function withHomeProject(open, button) {
+  const device = state.appState.device;
+  if (!device || state.appState.project || homeOpening) return homeOpening;
+  button?.setAttribute('aria-busy', 'true');
+  homeOpening = homeProject(device).then(project => {
+    if (state.appState.device === device && !state.appState.project) return open(device, project);
+  }).catch(error => showToast(error.message === 'project not found'
+    ? 'Update this device’s Bridge to browse files.' : `Home folder unavailable: ${error.message}`))
+    .finally(() => {
+      homeOpening = null;
+      button?.removeAttribute('aria-busy');
+    });
+  return homeOpening;
+}
+
+function openHomeFilesPage(button) {
+  return withHomeProject((device, project) => window.openHomeFiles?.(project), button);
+}
+
+function openHomeTerminal(device, projectHash) {
+  const opening = openProjectTerminal({ device, projectHash, projectName: '~' });
+  saveNav();
+  saveHomeTerminalView(device, projectHash);
+  return opening;
+}
+
+function openHomeTerminalPage(button) {
+  return withHomeProject((device, project) => {
+    // Resolving home needed the control socket; the terminal uses its own.
+    if (!state.wsSessionId) disconnectWs();
+    return openHomeTerminal(device, project.hash);
+  }, button);
+}
+
 function updateBreadcrumbTruncation(nav) {
   if (!nav) return;
   nav.classList.remove('is-truncated');
   if (nav.classList.contains('expanded')) return;
-  nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth);
+  // Zoom can round the two integer measurements in opposite directions.
+  var tolerance = document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled ? 1 : 0;
+  nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth + tolerance);
 }
 
 function toggleBreadcrumbExpand(nav) {
@@ -1054,7 +1121,7 @@ function restoreListPosition(content, scrollTop, anchor) {
   for (var i = 0; i < items.length; i++) {
     if (items[i].getAttribute('data-id') !== anchor.id) continue;
     var top = content.getBoundingClientRect().top;
-    content.scrollTop += items[i].getBoundingClientRect().top - top - anchor.offset;
+    content.scrollTop += layoutPixels(items[i].getBoundingClientRect().top - top - anchor.offset);
     return;
   }
 }
@@ -1252,6 +1319,20 @@ function openSession(el) {
   loadMessages(el.dataset.sid, el.dataset.preview);
 }
 
+async function openNotificationSession(target) {
+  window.closeProjectTerminal?.({ keepAlive: false });
+  state.appState = {
+    device: target.device,
+    project: { hash: target.projectHash, name: target.projectName || target.projectHash },
+    session: null,
+    sessionPreview: '',
+    runtime: sessionRuntime(target.sessionId),
+  };
+  return loadMessages(target.sessionId, target.sessionTitle || '', {
+    rootSessionId: target.rootSessionId || target.sessionId,
+  });
+}
+
 function shortModel(m) {
   return (m || 'unknown').replace(/^claude-/, '');
 }
@@ -1282,6 +1363,7 @@ async function loadDevices() {
   updateBreadcrumb();
   if (window.__homeLoadPromise) document.getElementById('top-right').classList.add('syncing');
   saveNav();
+  attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteModal);
 
   // The inline shell starts the cold-load run before app.js arrives. Reuse it
   // instead of launching a second request/render pipeline.
@@ -1580,9 +1662,17 @@ async function submitNewProject() {
 }
 
 var _deleteCountdownTimer = null;
+var _deviceToDelete = null;
+
+function showDeleteFilesOption(show) {
+  document.querySelector('#deleteModal .delete-toggle').style.display = show ? '' : 'none';
+  document.getElementById('deleteHint').style.display = show ? '' : 'none';
+}
 
 function openDeleteModal() {
   if (!state.selected.size) return;
+  _deviceToDelete = null;
+  showDeleteFilesOption(true);
   var modal = document.getElementById('deleteModal');
   var n = state.selected.size;
   var isProject = state.selectType === 'project';
@@ -1604,33 +1694,73 @@ function resetDeleteBtn() {
   btn.textContent = 'Delete';
 }
 
-// Checking "delete original data" arms a 5s countdown before Delete is clickable (guards misfires).
+// A 5s countdown before the confirm button is clickable (guards misfires).
+function armDeleteCountdown(label) {
+  var btn = document.getElementById('deleteConfirmBtn');
+  var left = 5;
+  btn.disabled = true; btn.textContent = label + ' (' + left + ')';
+  _deleteCountdownTimer = setInterval(function () {
+    left--;
+    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = label; }
+    else btn.textContent = label + ' (' + left + ')';
+  }, 1000);
+}
+
+// Checking "delete original data" arms the countdown.
 function onDeleteFilesToggle() {
   var btn = document.getElementById('deleteConfirmBtn');
   if (btn.getAttribute('aria-busy') === 'true') return;
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
-  var left = 5;
-  btn.disabled = true; btn.textContent = 'Delete (' + left + ')';
-  _deleteCountdownTimer = setInterval(function () {
-    left--;
-    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = 'Delete'; }
-    else btn.textContent = 'Delete (' + left + ')';
-  }, 1000);
+  armDeleteCountdown('Delete');
 }
 
 function closeDeleteModal() {
   resetDeleteBtn();
+  _deviceToDelete = null;
   hideCenteredModal(document.getElementById('deleteModal'));
 }
 
-// Single delete entry point: ① delete DDB rows (REST, authoritative) then, if opted
-// in, ② ask the bridge to delete on-disk jsonl and await its result. Returns the
-// combined { ddb, files } outcome so the caller has the final status in one place.
+// Removing a device deletes its records and makes its Bridge uninstall itself; files stay.
+function openDeviceDeleteModal(device) {
+  _deviceToDelete = device;
+  var name = (window.__deviceDisplayNames || {})[device] || device;
+  document.getElementById('deleteModalTitle').textContent = 'Remove ' + name + '?';
+  document.getElementById('deleteModalDesc').textContent = 'This removes the device with all its project and session records. '
+    + 'Its Bridge stops and no longer starts automatically; files on the device are kept. To add it again, run a new install command from Setup.';
+  document.getElementById('deleteFilesCb').checked = false;
+  showDeleteFilesOption(false);
+  var err = document.getElementById('deleteError'); if (err) err.textContent = '';
+  resetDeleteBtn();
+  armDeleteCountdown('Remove');
+  showCenteredModal(document.getElementById('deleteModal'));
+}
+
+async function submitDeviceDelete(btn) {
+  var device = _deviceToDelete;
+  setButtonLoading(btn, 'Removing');
+  try {
+    await apiPost('/api/bridge/delete-device', { deviceName: device });
+  } catch (e) {
+    var err = document.getElementById('deleteError'); if (err) err.textContent = 'Remove failed: ' + e.message;
+    setButtonLoading(btn);
+    btn.textContent = 'Remove';
+    return;
+  }
+  closeDeleteModal();
+  localStorage.removeItem('apeek_home_cache');
+  invalidatePagedList('projects:' + device);
+  document.querySelectorAll('.device-card[data-name]').forEach(function (card) {
+    if (card.dataset.name === device) card.remove();
+  });
+  loadDevices();
+}
+
+// Confirm original-file deletion before removing list records, so an active
+// session or failed device deletion remains visible and can be retried.
 async function performDelete(device, isProject, ids, deleteFiles) {
   var body = { deviceName: device };
   if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
-  await apiPost('/api/bridge/delete', body);
   var filesResult = null;
   if (deleteFiles) {
     await window.loadViewerLibs(); // ensure WS is connected before relying on it
@@ -1638,18 +1768,39 @@ async function performDelete(device, isProject, ids, deleteFiles) {
       var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       window._deleteFilesResolvers = window._deleteFilesResolvers || {};
       var done = false;
-      var finish = function (r) { if (done) return; done = true; delete window._deleteFilesResolvers[reqId]; resolve(r); };
+      var timer;
+      var armTimeout = function () {
+        clearTimeout(timer);
+        timer = setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
+      };
+      var finish = function (r) {
+        if (done) return;
+        if (r.pending) { armTimeout(); return; }
+        done = true;
+        clearTimeout(timer);
+        delete window._deleteFilesResolvers[reqId];
+        resolve(r);
+      };
       window._deleteFilesResolvers[reqId] = finish;
-      ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
-      setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
+      armTimeout();
+      try {
+        ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId, progress: true }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
+      } catch (error) { finish({ ok: false, error: error.message }); }
     });
+    if (!filesResult.ok) {
+      throw new Error(filesResult.timeout
+        ? 'The device stopped confirming file deletion. Check the connection and retry.'
+        : filesResult.error || 'Some original files could not be deleted.');
+    }
   }
+  await apiPost('/api/bridge/delete', body);
   return { ddb: true, files: filesResult };
 }
 
 async function submitDelete() {
   var btn = document.getElementById('deleteConfirmBtn');
   if (btn.disabled) return;
+  if (_deviceToDelete) return submitDeviceDelete(btn);
   var ids = Array.from(state.selected);
   if (!ids.length) return;
   var device = state.appState.device || '';
@@ -1657,9 +1808,8 @@ async function submitDelete() {
   var isProject = state.selectType === 'project';
   if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   setButtonLoading(btn, 'Deleting');
-  var result;
   try {
-    result = await performDelete(device, isProject, ids, deleteFiles);
+    await performDelete(device, isProject, ids, deleteFiles);
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Delete failed: ' + e.message;
     setButtonLoading(btn);
@@ -1682,10 +1832,6 @@ async function submitDelete() {
   } else {
     invalidatePagedList('sessions:' + state.appState.device + ':' + state.appState.project.hash);
     loadSessions(state.appState.device, state.appState.project.hash, state.appState.project.name);
-  }
-  // DDB rows are gone (list already refreshed); warn if the bridge never confirmed the disk delete.
-  if (deleteFiles && result.files && result.files.timeout) {
-    showStats('Removed from list; device did not confirm file deletion (bridge offline?)');
   }
 }
 
@@ -1801,7 +1947,7 @@ async function startNewSession(projectHash) {
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
   if (bar && bar.parentElement !== content) content.appendChild(bar);
-  // HTML ships with a stop-icon as #send-btn placeholder; sync to disabled-send for empty input
+  // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
   connectWs(null, projectHash);
 }
@@ -1846,7 +1992,7 @@ async function loadMessages(sessionId, preview, options) {
   state.appState.runtime = sessionRuntime(sessionId, state.appState.runtime);
   markCurrentRoute(state.appState);
   state.stickBottom = true; // open a session pinned to the latest message
-  // List preview = bridge's getPreview (custom > ai > lastPrompt > firstUser); treat as ai-title tier floor.
+  // List preview = bridge's getPreview (custom > ai > summary > firstUser > lastPrompt); treat as ai-title tier floor.
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = false;
   updateBreadcrumb();
@@ -2104,7 +2250,7 @@ async function loadOlderAndPrepend() {
     return item.node.isConnected && item.node.getBoundingClientRect().height > 0;
   });
   var anchor = saved && saved.node;
-  if (anchor) content.scrollTop += anchor.getBoundingClientRect().top - saved.top;
+  if (anchor) content.scrollTop += layoutPixels(anchor.getBoundingClientRect().top - saved.top);
 
   if (_pinRo) { _pinRo.disconnect(); _pinRo = null; }
   clearTimeout(_pinRoTimer);
@@ -2115,7 +2261,7 @@ async function loadOlderAndPrepend() {
       if (Math.abs(content.scrollTop - lastSet) > 2) { _pinRo.disconnect(); _pinRo = null; return; }
       var delta = anchor.getBoundingClientRect().top - pinTop;
       if (delta) {
-        content.scrollTop += delta;
+        content.scrollTop += layoutPixels(delta);
         lastSet = content.scrollTop;
         pinTop = anchor.getBoundingClientRect().top;
       }
@@ -2124,6 +2270,9 @@ async function loadOlderAndPrepend() {
     _pinRoTimer = setTimeout(function () { if (_pinRo) { _pinRo.disconnect(); _pinRo = null; } }, 800);
   }
 }
+
+// The inline shell may already show home; other lists replace this with their own long-press.
+attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteModal);
 
 // Auto-connect + restore last session
 (function () {
@@ -2184,17 +2333,19 @@ async function loadOlderAndPrepend() {
   if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
     openGitStatusPage({ restoring: true });
   }
-  if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
+  var homeTerminalHash = savedHomeTerminal(state.appState);
+  if (homeTerminalHash) openHomeTerminal(state.appState.device, homeTerminalHash);
+  else if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();
 
-// In Tauri (WKWebView/WebView2) target=_blank can't open a tab, so external links
-// would navigate the webview itself. Intercept and hand off to the system browser
-// via plugin-opener (scoped to http/https in capabilities). Real browsers keep
-// target=_blank and open a tab natively.
+// In a native shell (WKWebView/WebView2/ArkWeb) target=_blank can't open a tab,
+// so external links would navigate the webview itself. Intercept and hand off to
+// the system browser (plugin-opener, scoped to http/https in capabilities, or the
+// HarmonyOS bridge). Real browsers keep target=_blank and open a tab natively.
 document.addEventListener('click', function (e) {
   var a = e.target.closest && e.target.closest('a.ext-link');
   if (!a || !a.href) return;
-  if (!(window.isTauri || window.__TAURI_INTERNALS__)) return;
+  if (!previewNativeAvailable()) return;
   if (state.appState.device && parsePreviewTarget(a.href)) {
     e.preventDefault();
     void import('./preview.js').then(module => module.openPreviewLink(a.href, state.appState.device))
@@ -2202,7 +2353,7 @@ document.addEventListener('click', function (e) {
     return;
   }
   e.preventDefault();
-  import('@tauri-apps/plugin-opener').then(function (m) { m.openUrl(a.href); }).catch(function () {});
+  openExternalLink(a.href).catch(function () {});
 });
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
@@ -2212,7 +2363,7 @@ Object.assign(window, {
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   openSessionRename, applySessionTitle,
   openPreviewPortPrompt,
-  showInputBar, saveNav, navigateUp, openActiveSession, openSession, shortModel,
+  showInputBar, saveNav, navigateUp, openActiveSession, openSession, openNotificationSession, shortModel,
   loadDevices, loadProjects, loadSessions,
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
@@ -2222,6 +2373,8 @@ Object.assign(window, {
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
+  openHomeFilesPage,
+  openHomeTerminalPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
   maybeLoadOlderAndPrepend,
 });

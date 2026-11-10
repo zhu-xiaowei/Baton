@@ -1,3 +1,5 @@
+import { layoutPixels } from '../page-zoom.js';
+
 const centeredModals = new WeakMap();
 
 export function showCenteredModal(modal) {
@@ -15,10 +17,10 @@ export function showCenteredModal(modal) {
   function syncViewport() {
     viewportFrame = null;
     Object.assign(modal.style, {
-      top: (viewport?.offsetTop || 0) + 'px',
-      left: (viewport?.offsetLeft || 0) + 'px',
-      width: (viewport?.width || window.innerWidth) + 'px',
-      height: (viewport?.height || window.innerHeight) + 'px',
+      top: layoutPixels(viewport?.offsetTop || 0) + 'px',
+      left: layoutPixels(viewport?.offsetLeft || 0) + 'px',
+      width: layoutPixels(viewport?.width || window.innerWidth) + 'px',
+      height: layoutPixels(viewport?.height || window.innerHeight) + 'px',
       right: 'auto',
       bottom: 'auto',
     });

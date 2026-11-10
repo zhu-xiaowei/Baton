@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
 import { PreviewDataChannel } from '../../bridge/preview-protocol.mjs';
 
 const CHUNK_BYTES = 16 * 1024;
@@ -27,10 +26,22 @@ function waitForOpen(socket) {
   });
 }
 
+// The local listener rejects a taken port as `port-in-use:` + `baton`, `app:<pid>:<name>` or nothing.
+function portInUseError(error, port) {
+  const match = /^port-in-use:(baton|app:(\d+):([\s\S]*))?$/.exec(String(error?.message ?? error));
+  if (!match) return null;
+  const owner = match[1] === 'baton' ? 'baton' : match[3] || '';
+  const result = new Error(`Port ${port} is in use by ${owner === 'baton' ? 'another Baton preview' : owner || 'another app'}`);
+  result.portInUse = owner;
+  result.pid = match[2];
+  return result;
+}
+
 export class PreviewTunnel {
-  constructor({ device, target, wsUrl, key, onStatus, onTraffic }) {
+  constructor({ device, target, wsUrl, key, mode = 'strict', onStatus, onTraffic }) {
     this.device = device;
     this.target = target;
+    this.mode = mode;
     this.wsUrl = wsUrl;
     this.key = key;
     this.onStatus = onStatus;
@@ -145,6 +156,9 @@ export class PreviewTunnel {
         ['preview-socket-bytes', event => this.nativeBytes(event.payload)],
         ['preview-socket-fin', event => this.nativeFin(event.payload)],
         ['preview-socket-close', event => this.nativeClose(event.payload)],
+        ['preview-listener-closed', event => {
+          if (event.payload.tunnelId === this.localId) this.fail('Preview failed: local port closed');
+        }],
       ]) {
         const unlisten = await listen(name, handler);
         if (this.closed) {
@@ -155,7 +169,7 @@ export class PreviewTunnel {
       }
       await (nativeReset ??= invoke('preview_reset').catch(() => {}));
       this.localOrigin = await invoke('preview_start', {
-        tunnelId: this.localId, preferredPort: this.target.port,
+        tunnelId: this.localId, preferredPort: this.target.port, mode: this.mode,
       });
       if (this.closed) {
         await invoke('preview_stop', { tunnelId: this.localId }).catch(() => {});
@@ -167,7 +181,7 @@ export class PreviewTunnel {
       return url;
     } catch (error) {
       await this.close();
-      throw error;
+      throw portInUseError(error, this.target.port) || error;
     }
   }
 

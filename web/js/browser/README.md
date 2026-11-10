@@ -7,7 +7,9 @@ The preview uses the default persistent website store and a dark initial
 canvas. Closing hides the retained view; destroying the page removes it.
 The host continues to own the preview tunnel. The macOS implementation shares
 the same commands and state events, with instances owned by their host window.
-Android, Windows, Linux, and ordinary browser sessions keep the iframe implementation.
+Android, HarmonyOS, Windows, Linux, and ordinary browser sessions keep the iframe
+implementation; on HarmonyOS the loopback listener behind that frame is the ArkTS
+preview bridge rather than the Rust proxy.
 Host document navigation also disposes native previews. Native start/finish events
 restore the toolbar after retries or slow loads; policy-interrupted navigations
 do not replace a valid page with an error. Unsupported app/file schemes are blocked.

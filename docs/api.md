@@ -6,8 +6,9 @@
 
 **Authentication**: API and WS endpoints require an API Key
 - REST: `x-api-key` header
-- WS: query string `?apiKey=xxx` on connection
-- Exception: `POST /auth/exchange-token` is outside `/api/` and exchanges a short-lived token for the API key
+- WS: query string `?apiKey=xxx` on connection; `$connect` returns 401 unless it is the deployment key
+- Exception: `POST /auth/exchange-token` and `GET /auth/install` are outside `/api/` and accept a
+  short-lived token instead of the key
 
 **accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
 
@@ -264,14 +265,29 @@ Returns independently deployable app and Bridge versions. Bridge auto-update com
 
 ### POST /auth/exchange-token
 
-Exchanges a short-lived setup token for the API key. This route is intentionally outside `/api/`
-and does not require the API key header.
+Exchanges a setup token for the API key. This route is intentionally outside `/api/` and does not
+require the API key header. Tokens stay valid until they expire (install.sh: 12h, Setup: 10 min),
+so a Start URL and its QR code can sign in several devices; an expired token, or one issued for a
+key that has since been rotated, returns 401.
 
 ```json
-{ "token": "one-time-token" }
+{ "token": "32-hex-token" }
 ```
 
 Response: `{ "apiKey": "..." }`.
+
+### POST /api/auth/start-token
+
+Returns `{ "token": "…", "expiresIn": 600 }` for Setup's Start URL (`/?t=`), QR code and install
+command. `GET /auth/install?t=<token>[&platform=windows][&name=…]` returns the same script as
+`/api/install` (with `Cache-Control: no-store`), or 403 with a script that prints the error and exits.
+
+### POST /api/bridge/delete-device
+
+`{ "deviceName": "MyMac" }` → `{ "ok": true, "deletedSessions": N }`. Sends
+`{ "action": "device_removed" }` to the device's Bridge sockets and closes them, then deletes its
+`DEV#`/`PROJ#`/`SESS#` rows (message rows expire via TTL). The Bridge removes its autostart entry and
+`config.json` and exits; session files on the device are kept. A new install command adds it back.
 
 ---
 
@@ -696,7 +712,7 @@ Return a short-lived presigned **GET** URL so the browser `<video>` element stre
 
 ### Office attachment previews (no server endpoint)
 
-Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.88.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the same presigned `previewUrl` from `GET /file-url/{key}`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls`, OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
+Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, legacy `.doc/.ppt/.xls`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.89.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the same presigned `previewUrl` from `GET /file-url/{key}`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls` go through the experimental [@silurus/ooxml-legacy-office](https://www.npmjs.com/package/@silurus/ooxml-legacy-office) readers (pinned to the same version) into the same viewers; content they cannot represent (including encrypted files) is rejected and shows the download note. OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
 
 Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no `file-url` request and no download; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
 

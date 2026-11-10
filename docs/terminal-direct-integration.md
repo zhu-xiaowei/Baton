@@ -89,7 +89,7 @@ with no promise of treating a whole command as a cross-device mutually exclusive
    each attachment exclusively owns its own two data-side connections, and one app control connection binds at most one attachment at a time. Each attachment has its own join token, STS, and HMAC key.
 4. The data business action is `terminal_shared, v1`, the outer layer is still `terminal_direct_frame`, continuing the Header-signed HTTP integration.
    `terminalId` is the page attachment ID; the `sessionId` delivered by the Bridge is the shared PTY identifier.
-5. Input events: open, input, resize, heartbeat, render_ack, detach, create_session, select_session, close_session;
+5. Input events: open, input, resize, heartbeat, render_ack, theme, detach, create_session, select_session, close_session;
    output events: ready, snapshot, synced, output, resized, peers, exit, error, ack, sessions, session_result.
    Business frames are bound to device, projectHash, terminalId; Shell input is additionally bound to sessionId and epoch.
 6. Each page has its own `clientSeq` / `eventSeq`. ACK's eventSeq is 0 and does not participate in output ordering; input sending does not wait for per-character ACK.
@@ -97,10 +97,13 @@ with no promise of treating a whole command as a cross-device mutually exclusive
 7. When the server closes an attachment, it only releases that ID from the Bridge's set and does not clean up other pages. A Bridge control disconnect closes these
    data connections, but the local PTY and screen mirror are kept; after the main control connection recovers, pages re-attach to the same project.
 8. The standalone `terminal_poc` validation entry is unchanged; project pages do not use its "kill PTY on disconnect" semantics.
-9. `open` may pass `sessionId`; management events carry `requestId`, select/close carry the target `sessionId`,
+9. The Bridge answers OSC 10/11/12 color queries itself (TUIs such as Codex read them once at startup), using the
+   `light`/`dark` theme the most recent page sent in `open.theme` or a `theme` event; default dark. `ready` carries
+   `themeUpdates: true`, and pages send `theme` events only then, because older Bridges reject unknown frame types.
+10. `open` may pass `sessionId`; management events carry `requestId`, select/close carry the target `sessionId`,
    and create carries cols/rows. The Bridge only allows access to sessions under the authenticated project's normalized directory, and processes in page clientSeq order.
    Creation/capacity checks for the same project complete synchronously, so even with multiple racing pages a 6th cannot be created.
-10. `sessions` broadcasts `{limit:5,sessions:[{id,name,exited}]}`; `session_result` returns
+11. `sessions` broadcasts `{limit:5,sessions:[{id,name,exited}]}`; `session_result` returns
     `{requestId,error?}`. Switching reuses the original data channel and resends the snapshot; a project always keeps at least one terminal.
     No old/new version compatibility or capability negotiation; frontend and Bridge must be updated together; the reset event of the project shared terminal is removed.
     Cloud authentication, data integration, IAM, and per-frame signing are all unchanged.

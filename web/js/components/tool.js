@@ -1,4 +1,5 @@
 import { state } from '../state.js';
+import { layoutPixels } from '../page-zoom.js';
 import { loadingSpinner } from './loading.js';
 import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
 
@@ -217,8 +218,8 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     str = String(str);
     if (str.indexOf('\x1b') === -1) return esc(str);
     if (!window.Anser) return esc(str);
-    // use_classes: emit `ansi-*` class names instead of inline RGB, so our dark
-    // theme controls the palette (CC's default colours/dim are invisible on #0d1117).
+    // use_classes: emit `ansi-*` class names instead of inline RGB, so our theme
+    // controls the palette (CC's default colours/dim are unreadable on our backgrounds).
     return window.Anser.ansiToHtml(window.Anser.escapeForHtml(str), { use_classes: true });
   }
   window.ansiHtml = ansiHtml;
@@ -302,7 +303,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         + highlighted
         + '</div>'
       : highlighted;
-    return `<div class="tool-value clamp read-value" onclick="toggleExpand(this)">${code}</div>`;
+    return `<div class="tool-value clamp read-value">${code}</div>`;
   }
 
   function parseReadSource(text) {
@@ -460,8 +461,8 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         staging = document.createElement('div');
         staging.className = 'diff-container diff-render-staging';
         const targetWidth = Math.ceil(
-          element.getBoundingClientRect().width
-          || element.closest('.tool-body')?.getBoundingClientRect().width
+          layoutPixels(element.getBoundingClientRect().width
+            || element.closest('.tool-body')?.getBoundingClientRect().width || 0)
           || content?.clientWidth
           || 720,
         );
@@ -474,7 +475,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
           stickyFileHeaders: false,
           outputFormat: 'line-by-line',
           matching: 'lines',
-          colorScheme: 'dark',
+          colorScheme: document.documentElement.dataset.theme || 'dark',
           highlight: true,
         });
         ui.draw();
@@ -617,7 +618,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       name: 'Write',
       desc: file,
       fileLink: input.file_path || '',
-      body: result != null ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${esc(resultText(result))}</div>` : '',
+      body: result != null ? `<div class="tool-value clamp">${esc(resultText(result))}</div>` : '',
     };
   }
 
@@ -639,7 +640,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     return {
       name,
       desc,
-      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(resultText(result))}</div>` : '',
+      body: result != null && resultText(result).trim() ? `<div class="tool-value clamp">${ansiHtml(resultText(result))}</div>` : '',
     };
   }
 
@@ -936,10 +937,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       const body = node.querySelector('.tool-body-content');
       const more = body?.querySelector('.clamp-btn');
       if (more) window.toggleExpand?.(more.parentElement);
-      else if (body) {
-        body.classList.add('open');
-        body.querySelectorAll('.read-value').forEach((value) => value.classList.add('expanded'));
-      }
+      else body?.classList.add('open');
     } catch (error) {
       if (node?.isConnected && requestedSession === state.wsSessionId
         && requestedDevice === state.appState.device) {
@@ -949,7 +947,6 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
         else {
           const body = button.closest('.tool-body-content');
           body?.classList.add('open');
-          body?.querySelectorAll('.read-value').forEach(value => value.classList.add('expanded'));
           button.insertAdjacentHTML('beforebegin', errorHtml);
         }
       }

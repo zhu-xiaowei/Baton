@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="push_running">Baton is running in the background</string>
+  <string name="push_status_channel">Background</string>
+  <string name="push_alert_channel">Session updates</string>
+</resources>

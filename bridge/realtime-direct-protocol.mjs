@@ -2,6 +2,9 @@ import { verifyFrame } from './terminal-direct-protocol.mjs';
 import { STREAM_EVENT_ACTIONS, OPTIONAL_TURN_EVENT_ACTIONS } from './live-turn-stream.mjs';
 
 const encoder = new TextEncoder();
+// API Gateway answers this route itself (MOCK integration in the stack template).
+export const REALTIME_PING = JSON.stringify({ action: 'realtime_ping' });
+export const REALTIME_PONG = JSON.stringify({ action: 'realtime_pong' });
 
 export function isRealtimeEvent(event) {
   return !!event?.sessionId && !!event?.turnId && Number.isInteger(event.seq) && event.seq >= 0
@@ -60,7 +63,14 @@ export class RealtimeReceiver {
             controlId: message.controlId, bindingId: this.bindingId, joinToken: message.joinToken }));
         };
         socket.onmessage = event => {
-          if (generation === this.generation) this.accept(event.data);
+          if (generation !== this.generation) return;
+          clearTimeout(this.pingTimer);
+          this.pingTimer = null;
+          if (event.data === REALTIME_PONG) {
+            this.lastPongAt = Date.now();
+            return;
+          }
+          this.accept(event.data);
         };
         socket.onerror = () => {};
         socket.onclose = () => {
@@ -87,6 +97,21 @@ export class RealtimeReceiver {
       if (message.type === 'closed') this.retry = setTimeout(() => this.start(), 3000);
       this.setStatus(message.type === 'closed' ? 'reconnecting' : 'fallback');
     }
+    return true;
+  }
+
+  // The data socket only receives, so API Gateway's idle timer needs this; the gateway answers
+  // without Lambda. Once it has answered (older stacks never do), a missing reply means a dead socket.
+  ping(timeoutMs) {
+    if (!this.socket || !this.frameKey || this.pingTimer) return false;
+    const socket = this.socket;
+    if (this.lastPongAt) {
+      this.pingTimer = setTimeout(() => {
+        this.pingTimer = null;
+        if (this.socket === socket) socket.onclose?.();
+      }, timeoutMs);
+    }
+    try { socket.send(REALTIME_PING); } catch {}
     return true;
   }
 
@@ -129,6 +154,9 @@ export class RealtimeReceiver {
     this.generation++;
     clearTimeout(this.timeout);
     clearTimeout(this.retry);
+    clearTimeout(this.pingTimer);
+    this.pingTimer = null;
+    this.lastPongAt = 0;
     if (this.socket) {
       this.socket.onclose = null;
       this.socket.onmessage = null;

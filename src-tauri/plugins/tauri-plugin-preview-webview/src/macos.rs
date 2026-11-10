@@ -1,6 +1,6 @@
 use std::{
   cell::{Cell, RefCell},
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   ffi::c_void,
   ptr,
 };
@@ -292,6 +292,7 @@ struct Entry {
   host: Retained<WKWebView>,
   view: Retained<PreviewView>,
   observer: Retained<PreviewObserver>,
+  wanted: Cell<bool>,
 }
 
 impl Drop for Entry {
@@ -308,6 +309,29 @@ impl Drop for Entry {
 
 thread_local! {
   static ENTRIES: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
+  static BACKGROUND: Cell<u32> = const { Cell::new(0x0d1117) };
+  // Hosts in a background tab: their previews are siblings of the tab webview, so hiding
+  // the tab alone would leave them drawn over the selected tab.
+  static HIDDEN_OWNERS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+pub fn set_appearance<R: Runtime>(app: &tauri::AppHandle<R>, _light: bool, canvas: &str) {
+  let Ok(rgb) = u32::from_str_radix(canvas.trim_start_matches('#'), 16) else { return };
+  let _ = app.run_on_main_thread(move || {
+    BACKGROUND.set(rgb);
+    ENTRIES.with(|entries| {
+      for entry in entries.borrow().values() {
+        unsafe {
+          if !entry.view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) { continue; }
+          entry.view.setUnderPageBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(
+            f64::from((rgb >> 16) & 255) / 255.0,
+            f64::from((rgb >> 8) & 255) / 255.0,
+            f64::from(rgb & 255) / 255.0, 1.0,
+          )));
+        }
+      }
+    });
+  });
 }
 
 async fn on_view<R: Runtime>(
@@ -375,10 +399,11 @@ pub async fn create<R: Runtime>(
       view.setHidden(true);
       view.setAllowsBackForwardNavigationGestures(true);
       if view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) {
+        let rgb = BACKGROUND.get();
         view.setUnderPageBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(
-          13.0 / 255.0,
-          17.0 / 255.0,
-          23.0 / 255.0,
+          f64::from((rgb >> 16) & 255) / 255.0,
+          f64::from((rgb >> 8) & 255) / 255.0,
+          f64::from(rgb & 255) / 255.0,
           1.0,
         )));
       }
@@ -394,6 +419,7 @@ pub async fn create<R: Runtime>(
             host,
             view,
             observer,
+            wanted: Cell::new(false),
           },
         )
       });
@@ -508,9 +534,9 @@ pub async fn layout<R: Runtime>(webview: Webview<R>, id: String, bounds: Bounds)
         .view
         .setFrame(entry.host.convertRect_toView(rect, Some(&parent)));
       entry.view.ivars().interactive.set(bounds.interactive);
-      entry
-        .view
-        .setHidden(!bounds.visible || right <= left || height <= 0.0);
+      entry.wanted.set(bounds.visible && right > left && height > 0.0);
+      let hidden = HIDDEN_OWNERS.with(|owners| owners.borrow().contains(&entry.owner));
+      entry.view.setHidden(hidden || !entry.wanted.get());
       Ok(())
     })
   })
@@ -548,12 +574,36 @@ fn remove_entries(matches: impl Fn(&Entry) -> bool) {
   drop(removed);
 }
 
+// Not with_webview: it holds the host's lock, and dropping a Channel evals into the host.
 pub fn clear_host<R: Runtime>(webview: &Webview<R>) {
   let owner = webview.label().to_string();
-  let _ = webview.with_webview(move |_| remove_entries(|entry| entry.owner == owner));
+  let _ = webview.run_on_main_thread(move || remove_entries(|entry| entry.owner == owner));
 }
 
 pub fn close_window<R: Runtime>(app: &tauri::AppHandle<R>, window: &str) {
   let window = window.to_string();
   let _ = app.run_on_main_thread(move || remove_entries(|entry| entry.window == window));
+}
+
+pub fn set_owner_visible<R: Runtime>(app: &tauri::AppHandle<R>, owner: &str, visible: bool) {
+  let owner = owner.to_string();
+  let _ = app.run_on_main_thread(move || {
+    HIDDEN_OWNERS.with(|owners| {
+      let mut owners = owners.borrow_mut();
+      if visible { owners.remove(&owner); } else { owners.insert(owner.clone()); }
+    });
+    ENTRIES.with(|entries| {
+      for entry in entries.borrow().values().filter(|entry| entry.owner == owner) {
+        entry.view.setHidden(!visible || !entry.wanted.get());
+      }
+    });
+  });
+}
+
+pub fn release_owner<R: Runtime>(app: &tauri::AppHandle<R>, owner: &str) {
+  let owner = owner.to_string();
+  let _ = app.run_on_main_thread(move || {
+    HIDDEN_OWNERS.with(|owners| owners.borrow_mut().remove(&owner));
+    remove_entries(|entry| entry.owner == owner);
+  });
 }

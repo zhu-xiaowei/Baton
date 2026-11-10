@@ -7,6 +7,27 @@ export function composerDraftKey(fields) {
   ]);
 }
 
+// Input reads may return plain text or { text, attachments }.
+function normalizeDraft(value) {
+  if (value && typeof value === 'object') {
+    return {
+      text: String(value.text || ''),
+      attachments: Array.isArray(value.attachments) ? value.attachments : [],
+    };
+  }
+  return { text: String(value || ''), attachments: [] };
+}
+
+function isEmptyDraft(draft) {
+  return !draft.text && !draft.attachments.length;
+}
+
+// Attachment keys identify content, so comparing them avoids serializing image data.
+function draftSignature(draft) {
+  if (!draft.attachments.length) return draft.text;
+  return draft.text + '\0' + draft.attachments.map(function (item) { return item.key; }).join('\0');
+}
+
 export function createComposerDraftStore(backend, options) {
   options = options || {};
   var now = options.now || Date.now;
@@ -15,16 +36,18 @@ export function createComposerDraftStore(backend, options) {
     return backend.get(composerDraftKey(fields));
   }
 
-  async function put(fields, text) {
+  async function put(fields, value) {
+    var draft = normalizeDraft(value);
     var record = {
       key: composerDraftKey(fields),
       server: fields.server || '',
       device: fields.device || '',
       projectHash: fields.projectHash || '',
       sessionId: fields.sessionId || '',
-      text: String(text || ''),
+      text: draft.text,
       updatedAt: now(),
     };
+    if (draft.attachments.length) record.attachments = draft.attachments;
     await backend.put(record);
     return record;
   }
@@ -60,10 +83,10 @@ export function createComposerDraftController(store, options) {
     return result;
   }
 
-  function persist(fields, text) {
+  function persist(fields, draft) {
     if (!fields || !fields.sessionId) return Promise.resolve();
     return enqueue(function () {
-      return text ? store.put(fields, text) : store.delete(fields);
+      return isEmptyDraft(draft) ? store.delete(fields) : store.put(fields, draft);
     });
   }
 
@@ -77,21 +100,22 @@ export function createComposerDraftController(store, options) {
     cancelScheduledWrite();
     if (!activeFields) return writeChain;
     var fields = activeFields;
-    var text = String(readInput() || '');
-    lastText = text;
-    return persist(fields, text);
+    var draft = normalizeDraft(readInput());
+    lastText = draftSignature(draft);
+    return persist(fields, draft);
   }
 
   function sync() {
     if (!activeFields) return;
-    var text = String(readInput() || '');
-    if (text === lastText) return;
-    lastText = text;
+    var draft = normalizeDraft(readInput());
+    var signature = draftSignature(draft);
+    if (signature === lastText) return;
+    lastText = signature;
     cancelScheduledWrite();
     var fields = activeFields;
     timer = schedule(function () {
       timer = null;
-      persist(fields, text);
+      persist(fields, draft);
     }, debounceMs);
   }
 
@@ -105,16 +129,19 @@ export function createComposerDraftController(store, options) {
     activeFields = nextFields;
     activeKey = nextKey;
     lastText = '';
-    applyInput('');
+    applyInput('', []);
     if (!restore || !nextFields.sessionId) return null;
 
     await previousSave.catch(function () {});
     var record = await store.get(nextFields).catch(function () { return null; });
     if (activation !== generation || activeKey !== nextKey) return null;
-    if (lastText || String(readInput() || '')) return null;
-    if (!record || !record.text) return null;
-    lastText = record.text;
-    applyInput(record.text);
+    var current = readInput();
+    if (lastText || current?.pending || !isEmptyDraft(normalizeDraft(current))) return null;
+    if (!record) return null;
+    var draft = normalizeDraft(record);
+    if (isEmptyDraft(draft)) return null;
+    lastText = draftSignature(draft);
+    applyInput(draft.text, draft.attachments);
     return record;
   }
 
@@ -122,7 +149,7 @@ export function createComposerDraftController(store, options) {
     cancelScheduledWrite();
     if (!activeFields) return Promise.resolve();
     lastText = '';
-    return persist(activeFields, '');
+    return persist(activeFields, normalizeDraft(''));
   }
 
   function deactivate(deactivateOptions) {
@@ -132,7 +159,7 @@ export function createComposerDraftController(store, options) {
     activeFields = null;
     activeKey = '';
     lastText = '';
-    if (deactivateOptions.clearInput !== false) applyInput('');
+    if (deactivateOptions.clearInput !== false) applyInput('', []);
     return saved;
   }
 
@@ -141,17 +168,17 @@ export function createComposerDraftController(store, options) {
     var oldFields = activeFields;
     var nextFields = Object.assign({}, fields);
     var nextKey = composerDraftKey(nextFields);
-    var text = String(readInput() || '');
+    var draft = normalizeDraft(readInput());
     generation++;
     activeFields = nextFields;
     activeKey = nextKey;
-    lastText = text;
+    lastText = draftSignature(draft);
     return enqueue(async function () {
       if (oldFields && composerDraftKey(oldFields) !== nextKey) {
         await store.delete(oldFields);
       }
-      if (text) await store.put(nextFields, text);
-      else await store.delete(nextFields);
+      if (isEmptyDraft(draft)) await store.delete(nextFields);
+      else await store.put(nextFields, draft);
     });
   }
 

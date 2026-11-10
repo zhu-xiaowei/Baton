@@ -10,7 +10,7 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #8b949e;
+  color: var(--text-secondary);
   cursor: pointer;
   appearance: none;
   -webkit-tap-highlight-color: transparent;
@@ -32,14 +32,14 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .back-button:hover {
-    color: #e6edf3;
-    background: #21262d;
+    color: var(--text-primary);
+    background: var(--surface-raised);
   }
 }
 .back-button:active,
 .back-button.edge-back-tap-active {
-  color: #e6edf3;
-  background: #21262d;
+  color: var(--text-primary);
+  background: var(--surface-raised);
 }
 @media (hover: none), (pointer: coarse) {
   .back-button:active,

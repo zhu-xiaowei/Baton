@@ -16,7 +16,7 @@ import {
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT } from './config.mjs';
+import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -53,6 +53,7 @@ import {
 } from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
 import { ActiveTurnRegistry } from './active-turn-registry.mjs';
+import { batonSessions } from './presence.mjs';
 import { LiveExecutionStream } from './live-execution-stream.mjs';
 import {
   assertTurnEventEnvelope,
@@ -96,8 +97,14 @@ const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
 const CONNECT_TIMEOUT = 5_000;
 
-// onExit only fires when a process exits during an active turn.
-const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 'completed') });
+// onExit only fires when a process exits during an active turn or with prompts unanswered.
+const _pool = new ClaudePool({
+  onExit: (sessionId, hadPrompts) => {
+    if (hadPrompts) clearPendingControls(sessionId);
+    syncPoolStatus(sessionId, 'completed');
+  },
+  onControlRequest: (sessionId, req) => queuePermissionRequest(sessionId, req),
+});
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
@@ -326,9 +333,13 @@ function commandCatalog(runtime, cwd, fallbackDir = cwd, options = {}) {
   );
 }
 
+// First prompt of Sessions created here, until their transcript names them.
+const _sentPrompts = new Map();
+
 // Push an interaction-owned session's status to DDB.
 function syncInteractionStatus(sessionId, status, detail, runtimeHint, options = {}) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
+  batonSessions.add(identity.nativeSessionId);
   const key = identity.sessionId;
   const previous = _statusSyncs.get(key) || Promise.resolve();
   const next = previous.then(async () => {
@@ -354,8 +365,9 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         status,
         detail,
         identity.runtime,
-        { isNew },
+        { isNew, sentPrompt: _sentPrompts.get(key) },
       );
+      if (status === 'completed') _sentPrompts.delete(key);
       if (isNew && !knownProjects.has(normalizedProjectHash)) {
         knownProjects.add(normalizedProjectHash);
         await reconcile(_config);
@@ -509,6 +521,7 @@ async function handleRevealPermission(sessionId) {
     sessionId: identity.sessionId,
     nativeSessionId: identity.nativeSessionId,
     callbacks: permissionObservationCallbacks(identity.sessionId, identity),
+    goalCallbacks: goalContinuationCallbacks(identity),
   });
 }
 
@@ -955,7 +968,7 @@ async function handleMessage(msg) {
       await (await gitStatusModule()).handleGitStatusMessage(msg, { send: wsSend });
       break;
     case 'delete_files':
-      handleDeleteFiles(msg);
+      await handleDeleteFiles(msg);
       break;
     case 'list_commands':
       await handleListCommands(msg);
@@ -967,8 +980,12 @@ async function handleMessage(msg) {
       _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
       break;
     }
+    case 'device_removed':
+      uninstallBridge();
+      console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');
+      // falls through: stop exactly like a replaced Bridge
     case 'bridge_replaced':
-      console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
+      if (msg.action === 'bridge_replaced') console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
       _config = null;
       clearTimeout(_reconnectTimer);
       _reconnectTimer = null;
@@ -1033,6 +1050,7 @@ async function handleSendMessage(
   if (!text) return;
   if (!sessionId && !projectHash) return;
   const identity = parseStorageSessionId(sessionId || '', runtime);
+  if (sessionId) batonSessions.add(identity.nativeSessionId);
   const adapter = getRuntimeAdapter(identity.runtime);
   const allowed = sessionId ? adapter.features.send : adapter.features.create;
   if (!allowed) {
@@ -1255,7 +1273,7 @@ function resolveTurnId(sessionId, requestedTurnId = '') {
 }
 
 // Create one strictly identified live turn before the runtime can emit frames.
-function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
+export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
   const steer = options.userInitiated && options.steer !== false;
   const existing = steer && _liveExecutions.get(sessionId);
   if (existing && !existing.liveTurn.isEnded()) {
@@ -1263,10 +1281,14 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     return existing;
   }
   const segmentIds = new Set([turnId]);
-  const Stream = steer ? LiveExecutionStream : LiveTurnStream;
+  // A Goal continuation has no input of its own, but a message sent during it
+  // is steered into the same Codex turn, so it must join this execution.
+  const execution = steer || options.goalContinuation === true;
+  const Stream = execution ? LiveExecutionStream : LiveTurnStream;
   const liveTurn = new Stream({
     sessionId,
     turnId,
+    goalContinuation: options.goalContinuation,
     replyConnectionId: options.replyConnectionId,
     send: wsSendWhenConnected,
     onSegment: (id, segment) => {
@@ -1385,8 +1407,17 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     if (liveTurn.isEnded()) discardTurn();
   });
   callbacks.discardTurn = discardTurn;
-  if (steer) _liveExecutions.set(sessionId, callbacks);
+  if (execution) _liveExecutions.set(sessionId, callbacks);
   return callbacks;
+}
+
+// Codex Goal continuations start without a user prompt; each gets its own live turn.
+function goalContinuationCallbacks(identity, cwd = '') {
+  return (turnId) => createStreamCallbacks(identity.sessionId, turnId, cwd, () => {}, {
+    runtime: 'codex',
+    nativeSessionId: identity.nativeSessionId,
+    goalContinuation: true,
+  });
 }
 
 async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = {}) {
@@ -1494,6 +1525,7 @@ async function handleCodexCommand(adapter, identity, command, turnId, options = 
       args: command.args,
       cwd: options.cwd || '',
       callbacks,
+      goalCallbacks: goalContinuationCallbacks(identity, options.cwd || ''),
       takeover: options.takeover,
       expectedWriterPid: options.expectedWriterPid,
     });
@@ -1791,6 +1823,7 @@ async function newRegularSession(
   replyConnectionId,
 ) {
   const sessionId = crypto.randomUUID();
+  _sentPrompts.set(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);
   // The server routes sequenced events directly to this originating connection,
   // so the result and early stream frames may safely arrive in either order.
@@ -1889,29 +1922,64 @@ async function handleCreateProject(rawPath, asAgent) {
   }
 }
 
-// Delete on-disk jsonl for sessions/projects (opt-in; DDB rows already removed via REST).
-// Only touches paths inside CLAUDE_PROJECTS — never the user's real project/code dir.
-function handleDeleteFiles(msg) {
+// Delete original runtime history when requested by the app.
+export async function handleDeleteFiles(msg, {
+  context = { watermarks: synced, pool: _pool },
+  adapters = runtimeAdapters,
+  send = wsSend,
+} = {}) {
   let skippedReadOnly = 0;
   let deletedSessions = 0;
-  for (const sid of msg.sessionIds || []) {
-    const identity = parseStorageSessionId(sid);
-    const adapter = getRuntimeAdapter(identity.runtime);
-    if (!adapter.features.deleteHistory) {
-      skippedReadOnly++;
-      continue;
-    }
-    if (adapter.deleteSessionHistory(identity.nativeSessionId, { watermarks: synced })) {
-      deletedSessions++;
+  let deletedProjects = 0;
+  const errors = [];
+  context.codexDeleteClients = new Map();
+  const progress = msg.progress ? setInterval(() => {
+    try { send({ action: 'delete_files_result', requestId: msg.requestId, pending: true }); } catch {}
+  }, 2000) : null;
+  async function remove(adapter, method, id) {
+    try {
+      if (!adapter) throw new Error('Unknown session runtime');
+      if (!adapter.features.deleteHistory) {
+        skippedReadOnly++;
+        return false;
+      }
+      if (!await adapter[method](id, context)) throw new Error('History files could not be deleted');
+      return true;
+    } catch (error) {
+      errors.push(`${adapter?.runtime || 'unknown'}: ${error.message}`);
+      return false;
     }
   }
-  for (const ph of msg.projectHashes || []) {
-    for (const adapter of runtimeAdapters) {
-      if (adapter.features.deleteHistory) adapter.deleteProjectHistory(ph);
+  try {
+    for (const sid of msg.sessionIds || []) {
+      const identity = parseStorageSessionId(sid);
+      const adapter = adapters.find((item) => item.runtime === identity.runtime);
+      if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
     }
+    for (const ph of msg.projectHashes || []) {
+      let ok = true;
+      for (const adapter of adapters) {
+        if (!await remove(adapter, 'deleteProjectHistory', ph)) ok = false;
+      }
+      if (ok) deletedProjects++;
+    }
+  } catch (error) {
+    errors.push(error.message);
+  } finally {
+    if (progress) clearInterval(progress);
+    await Promise.allSettled([...context.codexDeleteClients.values()].map(({ client }) =>
+      Promise.resolve().then(() => client.stop()),
+    ));
   }
-  console.log(`[ws] deleted files: ${deletedSessions} sessions, ${(msg.projectHashes || []).length} projects`);
-  wsSend({ action: 'delete_files_result', requestId: msg.requestId, ok: true, skippedReadOnly });
+  const result = {
+    action: 'delete_files_result', requestId: msg.requestId,
+    ok: errors.length === 0 && skippedReadOnly === 0,
+    skippedReadOnly, deletedSessions, deletedProjects, errors,
+    ...(errors.length ? { error: errors.join('; ') } : {}),
+  };
+  console.log(`[ws] deleted files: ${result.deletedSessions} sessions, ${result.deletedProjects} projects, ${result.errors.length} errors`);
+  send(result);
+  return result;
 }
 
 async function handleListCommands(msg) {
@@ -2020,8 +2088,8 @@ async function downloadBridgeImage(key) {
   } catch { return null; }
 }
 
-// App answered permission_request. Claude uses allow/deny; Codex preserves its native
-// approval decision; ask/plan use deny with answerText (CC's only answer channel).
+// App answered permission_request. Claude plans use native approval; questions
+// and plan feedback use deny+answerText. Codex preserves its native decision.
 function handlePermissionReply(msg) {
   const {
     sessionId, requestId, decision, answerText, approvalResponse,
@@ -2050,8 +2118,12 @@ function handlePermissionReply(msg) {
           : 'The user denied this tool call through Baton.',
       });
     }
+  } else if (decision === 'allow'
+    && (pending.toolName === 'ExitPlanMode' || pending.toolName === 'exit_plan_mode')) {
+    // Execute ExitPlanMode so Claude restores the pre-plan permission mode.
+    replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input });
   } else if (pending.requiresInteraction) {
-    // ask/plan answer → deny+message (CC renders it as the OUT); cancel → deny+interrupt (CC stops, no reply).
+    // ask/plan feedback → deny+message; cancel → deny+interrupt.
     if (decision === 'answer' && answerText) {
       replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: answerText });
     } else {

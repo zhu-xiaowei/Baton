@@ -143,6 +143,17 @@ export class TurnEventQueue {
       || event?.action === 'permission_request';
   }
 
+  // The first missing seq of a started turn; a held stream_end is left to the gapped-end path.
+  missingSeq(turnId) {
+    var turn = this.turns.get(turnId);
+    if (!turn || turn.nextSeq === 0 || !turn.pending.size
+      || turn.pending.has(turn.nextSeq)) return null;
+    for (var event of turn.pending.values()) {
+      if (event.action === 'stream_end') return null;
+    }
+    return turn.nextSeq;
+  }
+
   isLateJoinCandidate(turnId) {
     var turn = this.turns.get(turnId);
     if (!turn || turn.nextSeq !== 0 || turn.pending.has(0)) return false;
@@ -1010,8 +1021,9 @@ export class StreamingDomRenderer {
 
   insertTurn(container, turn, turnId) {
     var anchor = this.findAnchor(turnId);
-    if (!anchor && !this.canAppendWithoutAnchor(container, turnId)) return false;
-    return attachTimelineTurn(container, turn);
+    var allowUnanchored = !anchor && this.canAppendWithoutAnchor(container, turnId);
+    if (!anchor && !allowUnanchored) return false;
+    return attachTimelineTurn(container, turn, allowUnanchored);
   }
 
   attachTurnToAnchor(turnId) {
@@ -1284,6 +1296,7 @@ export class StreamingDomRenderer {
       this.refreshThinking();
       return;
     }
+    view.element.dataset.messageText = text;
     this.renderMarkdown(view.element, text);
   }
 

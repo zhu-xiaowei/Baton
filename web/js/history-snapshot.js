@@ -1,3 +1,5 @@
+import { layoutPixels } from './page-zoom.js';
+
 const METADATA_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
 
 const LIVE_PROMPT_PREFIXES = ['live:user:', 'codex:user:'];
@@ -82,7 +84,7 @@ export function restoreHistoryViewport(content, viewport) {
     .find(element => viewportKey(element) === viewport.key);
   content.scrollTop = viewport.scrollTop;
   if (anchor) {
-    content.scrollTop += anchor.getBoundingClientRect().top
-      - content.getBoundingClientRect().top - viewport.offset;
+    content.scrollTop += layoutPixels(anchor.getBoundingClientRect().top
+      - content.getBoundingClientRect().top - viewport.offset);
   }
 }

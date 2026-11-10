@@ -35,6 +35,8 @@ class HeadlessProc {
     this.ready = false;         // system/init seen
     this.busy = false;          // a turn is generating
     this.dead = false;
+    this.backgroundTasks = 0;   // background agents/Bash; CC keeps running them after a turn
+    this.reportsInputIds = false;
     this.inputs = new Map();
     this._heldReplies = [];     // synthetic replies waiting for their prompt replay
     this.lastActiveAt = 0;      // set via Date-free ticker (pool.now)
@@ -44,6 +46,7 @@ class HeadlessProc {
     this._blockId = -1;
     this._framer = new StreamFramer((frame) => this._emitFrame(frame));
     this._pendingCtl = new Map(); // outbound control_request id → {resolve,reject,timer}
+    this.unanswered = new Set();  // inbound control_request ids CC still waits on
     this.noPersistence = !!options.noPersistence;
     this.bare = !!options.bare;
   }
@@ -90,6 +93,13 @@ class HeadlessProc {
     let o;
     try { o = JSON.parse(line); } catch { return; }
     const t = o.type;
+
+    if (t === 'system' && o.subtype === 'background_tasks_changed') {
+      this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
+      // The turn CC starts when a task ends counts from here, not from the last pool turn.
+      this.pool._touch(this);
+      return;
+    }
 
     if (t === 'system' && o.subtype === 'init') {
       if (o.session_id) this.sessionId = o.session_id;
@@ -162,7 +172,10 @@ class HeadlessProc {
 
     // Permission / user-interaction request
     if (t === 'control_request') {
-      this._cb?.onControlRequest?.(o);
+      if (o.request_id) this.unanswered.add(o.request_id);
+      // Background agents and turns CC starts itself ask outside any pool turn.
+      if (this._cb?.onControlRequest) this._cb.onControlRequest(o);
+      else this.pool._onControlRequest?.(this.sessionId, o);
       return;
     }
 
@@ -170,8 +183,11 @@ class HeadlessProc {
     if (t === 'result') {
       this._framer.finish();
       this._flushHeldReplies();
+      // Turns CC starts itself omit user_message_uuids; CC without the field never sends it.
+      if (Array.isArray(o.user_message_uuids)) this.reportsInputIds = true;
       const consumed = Array.isArray(o.user_message_uuids)
         ? o.user_message_uuids
+        : this.reportsInputIds ? []
         : [...this.inputs.keys()].filter((uuid) => !this.inputs.get(uuid).consumed).slice(0, 1);
       const consumedInputIds = [];
       for (const uuid of consumed) {
@@ -221,7 +237,10 @@ class HeadlessProc {
     this.dead = true;
     this._framer.cancel();
     this.pool._remove(this.key, this);
-    if (this.sessionId && wasBusy) this.pool._onExit?.(this.sessionId);
+    // Unanswered requests die with the process, so their prompts must go too.
+    if (this.sessionId && (wasBusy || this.unanswered.size)) {
+      this.pool._onExit?.(this.sessionId, this.unanswered.size > 0);
+    }
     const cb = this._cb; this._cb = null;
     cb?.onError?.(this.streamId, { code, detail });
     const waiters = this._initWaiters; this._initWaiters = [];
@@ -324,7 +343,8 @@ export class ClaudePool {
     this.env = opts.env || null;
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
-    this._onExit = opts.onExit || null;  // (sessionId) => void, fired when a proc leaves the pool
+    this._onExit = opts.onExit || null;  // (sessionId, hadPrompts) => void, a busy or prompting proc exited
+    this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
     if (this._reaper.unref) this._reaper.unref();
   }
@@ -476,8 +496,10 @@ export class ClaudePool {
     const proc = this.procs.get(key);
     if (!proc || proc.dead) return false;
     const env = { type: 'control_response', response: { request_id: requestId, subtype: 'success', response: payload } };
-    try { proc.stdin.write(JSON.stringify(env) + '\n'); return true; }
+    try { proc.stdin.write(JSON.stringify(env) + '\n'); }
     catch { return false; }
+    proc.unanswered.delete(requestId);
+    return true;
   }
 
   async interrupt(key) {
@@ -495,7 +517,8 @@ export class ClaudePool {
   reapIdle() {
     const now = Date.now();
     for (const [key, proc] of this.procs) {
-      if (proc.busy || proc.dead) continue;
+      // A prompt can wait for the user as long as a busy turn can.
+      if (proc.busy || proc.dead || proc.backgroundTasks || proc.unanswered.size) continue;
       if (proc.lastActiveAt && now - proc.lastActiveAt >= this.idleTtl) {
         proc.shutdown();
         this.procs.delete(key);
@@ -506,7 +529,7 @@ export class ClaudePool {
   _evictLru() {
     let victim = null;
     for (const proc of this.procs.values()) {
-      if (proc.busy || proc.dead) continue;
+      if (proc.busy || proc.dead || proc.backgroundTasks || proc.unanswered.size) continue;
       if (!victim || proc.lastActiveAt < victim.lastActiveAt) victim = proc;
     }
     if (victim) { victim.shutdown(); this.procs.delete(victim.key); }

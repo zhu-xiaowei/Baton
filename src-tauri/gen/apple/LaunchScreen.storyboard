@@ -23,19 +23,19 @@
                                     <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Baton" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="tbtitle">
                                         <rect key="frame" x="38" y="71" width="86" height="21"/>
                                         <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="17"/>
-                                        <color key="textColor" red="0.90196078431372551" green="0.92941176470588238" blue="0.95294117647058818" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                        <color key="textColor" name="Launch1"/>
                                         <nil key="highlightedColor"/>
                                     </label>
                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="tbgear">
-                                        <rect key="frame" x="352" y="70" width="22" height="22"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                        <rect key="frame" x="352" y="70" width="22" height="22"/><color key="backgroundColor" name="Launch2"/>
                                         <constraints><constraint firstAttribute="width" constant="22" id="tbg-w"/><constraint firstAttribute="height" constant="22" id="tbg-h"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="11"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes>
                                     </view>
                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="tbborder">
-                                        <rect key="frame" x="0.0" y="102" width="393" height="1"/><color key="backgroundColor" red="0.18823529411764706" green="0.21176470588235294" blue="0.23921568627450981" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                        <rect key="frame" x="0.0" y="102" width="393" height="1"/><color key="backgroundColor" name="Launch3"/>
                                         <constraints><constraint firstAttribute="height" constant="1" id="tbb-h"/></constraints>
                                     </view>
                                 </subviews>
-                                <color key="backgroundColor" red="0.08627450980392157" green="0.10588235294117647" blue="0.13333333333333333" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                <color key="backgroundColor" name="Launch4"/>
                                 <constraints>
                                     <constraint firstItem="tbemoji" firstAttribute="leading" secondItem="topbar" secondAttribute="leading" constant="12" id="tbe-l"/>
                                     <constraint firstItem="tbemoji" firstAttribute="centerY" secondItem="topbar" secondAttribute="bottom" constant="-21.6666666667" id="tbe-cy"/>
@@ -48,10 +48,10 @@
                                     <constraint firstItem="tbborder" firstAttribute="bottom" secondItem="topbar" secondAttribute="bottom" id="tbb-b"/>
                                 </constraints>
                             </view>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="ACTIVE SESSIONS" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="titleActive"><rect key="frame" x="12" y="119" width="130" height="17"/><fontDescription key="fontDescription" type="system" weight="semibold" pointSize="14"/><color key="textColor" red="0.34509803921568627" green="0.65098039215686276" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><nil key="highlightedColor"/></label>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="ACTIVE SESSIONS" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="titleActive"><rect key="frame" x="12" y="119" width="130" height="17"/><fontDescription key="fontDescription" type="system" weight="semibold" pointSize="14"/><color key="textColor" name="Launch5"/><nil key="highlightedColor"/></label>
                             <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" spacing="8" translatesAutoresizingMaskIntoConstraints="NO" id="cardsStack">
                                 <rect key="frame" x="8" y="148" width="386" height="206"/>
-                                <subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1"><rect key="frame" x="0" y="0" width="386" height="99"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1i"><rect key="frame" x="1" y="1" width="384" height="97"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib1"><rect key="frame" x="0" y="0" width="145" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib1h"/><constraint firstItem="c1ib1" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.4" constant="-9.6" id="c1ib1w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib2"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib2h"/><constraint firstItem="c1ib2" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c1ib2w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib3"><rect key="frame" x="0" y="0" width="288" height="14"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="14" id="c1ib3h"/><constraint firstItem="c1ib3" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.8" constant="-19.2" id="c1ib3w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib4"><rect key="frame" x="0" y="0" width="86" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib4h"/><constraint firstItem="c1ib4" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.24" constant="-5.76" id="c1ib4w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib5"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib5h"/><constraint firstItem="c1ib5" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c1ib5w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" red="0.08627450980392157" green="0.10588235294117647" blue="0.13333333333333333" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstItem="c1ib1" firstAttribute="leading" secondItem="c1i" secondAttribute="leading" constant="12" id="c1ib1l"/>
+                                <subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1"><rect key="frame" x="0" y="0" width="386" height="99"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1i"><rect key="frame" x="1" y="1" width="384" height="97"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib1"><rect key="frame" x="0" y="0" width="145" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib1h"/><constraint firstItem="c1ib1" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.4" constant="-9.6" id="c1ib1w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib2"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib2h"/><constraint firstItem="c1ib2" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c1ib2w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib3"><rect key="frame" x="0" y="0" width="288" height="14"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="14" id="c1ib3h"/><constraint firstItem="c1ib3" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.8" constant="-19.2" id="c1ib3w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib4"><rect key="frame" x="0" y="0" width="86" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib4h"/><constraint firstItem="c1ib4" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.24" constant="-5.76" id="c1ib4w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c1ib5"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c1ib5h"/><constraint firstItem="c1ib5" firstAttribute="width" secondItem="c1i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c1ib5w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" name="Launch4"/><constraints><constraint firstItem="c1ib1" firstAttribute="leading" secondItem="c1i" secondAttribute="leading" constant="12" id="c1ib1l"/>
         <constraint firstItem="c1ib1" firstAttribute="top" secondItem="c1i" secondAttribute="top" constant="16.5" id="c1ib1t"/>
         <constraint firstAttribute="trailing" secondItem="c1ib2" secondAttribute="trailing" constant="12" id="c1ib2r"/>
         <constraint firstItem="c1ib2" firstAttribute="centerY" secondItem="c1ib1" secondAttribute="centerY" id="c1ib2cy"/>
@@ -60,11 +60,11 @@
         <constraint firstItem="c1ib4" firstAttribute="leading" secondItem="c1i" secondAttribute="leading" constant="12" id="c1ib4l"/>
         <constraint firstItem="c1ib4" firstAttribute="top" secondItem="c1ib3" secondAttribute="bottom" constant="13" id="c1ib4t"/>
         <constraint firstAttribute="trailing" secondItem="c1ib5" secondAttribute="trailing" constant="12" id="c1ib5r"/>
-        <constraint firstItem="c1ib5" firstAttribute="centerY" secondItem="c1ib4" secondAttribute="centerY" id="c1ib5cy"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="7"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" red="0.18823529411764706" green="0.21176470588235294" blue="0.23921568627450981" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="99" id="c1h"/>
+        <constraint firstItem="c1ib5" firstAttribute="centerY" secondItem="c1ib4" secondAttribute="centerY" id="c1ib5cy"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="7"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" name="Launch3"/><constraints><constraint firstAttribute="height" constant="99" id="c1h"/>
         <constraint firstItem="c1i" firstAttribute="leading" secondItem="c1" secondAttribute="leading" constant="1" id="c1il"/>
         <constraint firstItem="c1i" firstAttribute="top" secondItem="c1" secondAttribute="top" constant="1" id="c1it"/>
         <constraint firstAttribute="trailing" secondItem="c1i" secondAttribute="trailing" constant="1" id="c1ir"/>
-        <constraint firstAttribute="bottom" secondItem="c1i" secondAttribute="bottom" constant="1" id="c1ib"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="8"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2"><rect key="frame" x="0" y="0" width="386" height="99"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2i"><rect key="frame" x="1" y="1" width="384" height="97"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib1"><rect key="frame" x="0" y="0" width="145" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib1h"/><constraint firstItem="c2ib1" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.4" constant="-9.6" id="c2ib1w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib2"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib2h"/><constraint firstItem="c2ib2" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c2ib2w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib3"><rect key="frame" x="0" y="0" width="288" height="14"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="14" id="c2ib3h"/><constraint firstItem="c2ib3" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.8" constant="-19.2" id="c2ib3w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib4"><rect key="frame" x="0" y="0" width="86" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib4h"/><constraint firstItem="c2ib4" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.24" constant="-5.76" id="c2ib4w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib5"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.1803921568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib5h"/><constraint firstItem="c2ib5" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c2ib5w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" red="0.08627450980392157" green="0.10588235294117647" blue="0.13333333333333333" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstItem="c2ib1" firstAttribute="leading" secondItem="c2i" secondAttribute="leading" constant="12" id="c2ib1l"/>
+        <constraint firstAttribute="bottom" secondItem="c1i" secondAttribute="bottom" constant="1" id="c1ib"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="8"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2"><rect key="frame" x="0" y="0" width="386" height="99"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2i"><rect key="frame" x="1" y="1" width="384" height="97"/><subviews><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib1"><rect key="frame" x="0" y="0" width="145" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib1h"/><constraint firstItem="c2ib1" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.4" constant="-9.6" id="c2ib1w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib2"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib2h"/><constraint firstItem="c2ib2" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c2ib2w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib3"><rect key="frame" x="0" y="0" width="288" height="14"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="14" id="c2ib3h"/><constraint firstItem="c2ib3" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.8" constant="-19.2" id="c2ib3w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib4"><rect key="frame" x="0" y="0" width="86" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib4h"/><constraint firstItem="c2ib4" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.24" constant="-5.76" id="c2ib4w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view><view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="c2ib5"><rect key="frame" x="0" y="0" width="58" height="12"/><color key="backgroundColor" name="Launch2"/><constraints><constraint firstAttribute="height" constant="12" id="c2ib5h"/><constraint firstItem="c2ib5" firstAttribute="width" secondItem="c2i" secondAttribute="width" multiplier="0.16" constant="-3.84" id="c2ib5w"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="4"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" name="Launch4"/><constraints><constraint firstItem="c2ib1" firstAttribute="leading" secondItem="c2i" secondAttribute="leading" constant="12" id="c2ib1l"/>
         <constraint firstItem="c2ib1" firstAttribute="top" secondItem="c2i" secondAttribute="top" constant="16.5" id="c2ib1t"/>
         <constraint firstAttribute="trailing" secondItem="c2ib2" secondAttribute="trailing" constant="12" id="c2ib2r"/>
         <constraint firstItem="c2ib2" firstAttribute="centerY" secondItem="c2ib1" secondAttribute="centerY" id="c2ib2cy"/>
@@ -73,7 +73,7 @@
         <constraint firstItem="c2ib4" firstAttribute="leading" secondItem="c2i" secondAttribute="leading" constant="12" id="c2ib4l"/>
         <constraint firstItem="c2ib4" firstAttribute="top" secondItem="c2ib3" secondAttribute="bottom" constant="13" id="c2ib4t"/>
         <constraint firstAttribute="trailing" secondItem="c2ib5" secondAttribute="trailing" constant="12" id="c2ib5r"/>
-        <constraint firstItem="c2ib5" firstAttribute="centerY" secondItem="c2ib4" secondAttribute="centerY" id="c2ib5cy"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="7"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" red="0.18823529411764706" green="0.21176470588235294" blue="0.23921568627450981" alpha="1" colorSpace="custom" customColorSpace="sRGB"/><constraints><constraint firstAttribute="height" constant="99" id="c2h"/>
+        <constraint firstItem="c2ib5" firstAttribute="centerY" secondItem="c2ib4" secondAttribute="centerY" id="c2ib5cy"/></constraints><userDefinedRuntimeAttributes><userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius"><real key="value" value="7"/></userDefinedRuntimeAttribute></userDefinedRuntimeAttributes></view></subviews><color key="backgroundColor" name="Launch3"/><constraints><constraint firstAttribute="height" constant="99" id="c2h"/>
         <constraint firstItem="c2i" firstAttribute="leading" secondItem="c2" secondAttribute="leading" constant="1" id="c2il"/>
         <constraint firstItem="c2i" firstAttribute="top" secondItem="c2" secondAttribute="top" constant="1" id="c2it"/>
         <constraint firstAttribute="trailing" secondItem="c2i" secondAttribute="trailing" constant="1" id="c2ir"/>
@@ -82,7 +82,7 @@
                             <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="RECENT PROJECTS" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="titleRecent">
                                 <rect key="frame" x="12" y="367" width="150" height="17" />
                                 <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="14" />
-                                <color key="textColor" red="0.34509803921568627" green="0.6509803921568628" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                <color key="textColor" name="Launch5"/>
                                 <nil key="highlightedColor" />
                             </label>
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentProject" clipsSubviews="YES">
@@ -96,7 +96,7 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentProjectHeaderBar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="140.4" height="12" />
-                                                        <color key="backgroundColor" red="0.18823529411764706" green="0.21176470588235294" blue="0.23921568627450981" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch3"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -107,7 +107,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch6"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentProjectHeader-height" />
                                                     <constraint firstItem="recentProjectHeaderBar" firstAttribute="leading" secondItem="recentProjectHeader" secondAttribute="leading" constant="12" id="recentProjectHeaderBar-leading" />
@@ -120,14 +120,14 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession1Divider">
                                                         <rect key="frame" x="0" y="0" width="375" height="1" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <constraints>
                                                             <constraint firstAttribute="height" constant="1" id="recentSession1-divider-height" />
                                                         </constraints>
                                                     </view>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession1Bar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="184.2" height="12" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -138,7 +138,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch7"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentSession1-height" />
                                                     <constraint firstItem="recentSession1Divider" firstAttribute="leading" secondItem="recentSession1" secondAttribute="leading" id="recentSession1-divider-leading" />
@@ -154,14 +154,14 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession2Divider">
                                                         <rect key="frame" x="0" y="0" width="375" height="1" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <constraints>
                                                             <constraint firstAttribute="height" constant="1" id="recentSession2-divider-height" />
                                                         </constraints>
                                                     </view>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession2Bar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="122.80000000000001" height="12" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -172,7 +172,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch7"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentSession2-height" />
                                                     <constraint firstItem="recentSession2Divider" firstAttribute="leading" secondItem="recentSession2" secondAttribute="leading" id="recentSession2-divider-leading" />
@@ -188,14 +188,14 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession3Divider">
                                                         <rect key="frame" x="0" y="0" width="375" height="1" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <constraints>
                                                             <constraint firstAttribute="height" constant="1" id="recentSession3-divider-height" />
                                                         </constraints>
                                                     </view>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession3Bar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="245.60000000000002" height="12" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -206,7 +206,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch7"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentSession3-height" />
                                                     <constraint firstItem="recentSession3Divider" firstAttribute="leading" secondItem="recentSession3" secondAttribute="leading" id="recentSession3-divider-leading" />
@@ -222,14 +222,14 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession4Divider">
                                                         <rect key="frame" x="0" y="0" width="375" height="1" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <constraints>
                                                             <constraint firstAttribute="height" constant="1" id="recentSession4-divider-height" />
                                                         </constraints>
                                                     </view>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession4Bar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="184.2" height="12" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -240,7 +240,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch7"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentSession4-height" />
                                                     <constraint firstItem="recentSession4Divider" firstAttribute="leading" secondItem="recentSession4" secondAttribute="leading" id="recentSession4-divider-leading" />
@@ -256,14 +256,14 @@
                                                 <subviews>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession5Divider">
                                                         <rect key="frame" x="0" y="0" width="375" height="1" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <constraints>
                                                             <constraint firstAttribute="height" constant="1" id="recentSession5-divider-height" />
                                                         </constraints>
                                                     </view>
                                                     <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="recentSession5Bar" clipsSubviews="YES">
                                                         <rect key="frame" x="0" y="0" width="122.80000000000001" height="12" />
-                                                        <color key="backgroundColor" red="0.12941176470588237" green="0.14901960784313725" blue="0.17647058823529413" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                        <color key="backgroundColor" name="Launch6"/>
                                                         <userDefinedRuntimeAttributes>
                                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                                 <real key="value" value="4" />
@@ -274,7 +274,7 @@
                                                         </constraints>
                                                     </view>
                                                 </subviews>
-                                                <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                                <color key="backgroundColor" name="Launch7"/>
                                                 <constraints>
                                                     <constraint firstAttribute="height" constant="44" id="recentSession5-height" />
                                                     <constraint firstItem="recentSession5Divider" firstAttribute="leading" secondItem="recentSession5" secondAttribute="leading" id="recentSession5-divider-leading" />
@@ -286,7 +286,7 @@
                                                 </constraints>
                                             </view>
                                         </subviews>
-                                        <color key="backgroundColor" red="0.050980392156862744" green="0.06666666666666667" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                        <color key="backgroundColor" name="Launch7"/>
                                         <userDefinedRuntimeAttributes>
                                             <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                                 <real key="value" value="7" />
@@ -314,7 +314,7 @@
                                         </constraints>
                                     </view>
                                 </subviews>
-                                <color key="backgroundColor" red="0.18823529411764706" green="0.21176470588235294" blue="0.23921568627450981" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
+                                <color key="backgroundColor" name="Launch3"/>
                                 <userDefinedRuntimeAttributes>
                                     <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
                                         <real key="value" value="8" />
@@ -330,7 +330,7 @@
                             </view>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="vDu-zF-Fre"/>
-                        <color key="backgroundColor" red="0.050980392156862744" green="0.0666666666666666" blue="0.09019607843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" name="Launch8"/>
                         <constraints>
                             <constraint firstItem="topbar" firstAttribute="leading" secondItem="5EZ-qb-Rvc" secondAttribute="leading" id="tb-l"/>
                             <constraint firstAttribute="trailing" secondItem="topbar" secondAttribute="trailing" id="tb-tr"/>
@@ -355,5 +355,29 @@
     </scenes>
     <resources>
         <image name="BatonLogo" width="20" height="20"/>
+        <namedColor name="Launch1">
+            <color red="0.121568627" green="0.137254902" blue="0.156862745" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch2">
+            <color red="0.917647059" green="0.933333333" blue="0.949019608" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch3">
+            <color red="0.815686275" green="0.843137255" blue="0.870588235" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch4">
+            <color red="0.964705882" green="0.972549020" blue="0.980392157" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch5">
+            <color red="0.035294118" green="0.411764706" blue="0.854901961" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch6">
+            <color red="0.901960784" green="0.917647059" blue="0.937254902" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch7">
+            <color red="1.000000000" green="1.000000000" blue="1.000000000" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+        <namedColor name="Launch8">
+            <color red="1.000000000" green="1.000000000" blue="1.000000000" alpha="1.000" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
     </resources>
 </document>

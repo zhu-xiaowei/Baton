@@ -1,0 +1,18 @@
+# DevEco / hvigor build artifacts
+/build/
+/entry/build/
+/oh_modules/
+/entry/oh_modules/
+.hvigor/
+.cxx/
+/local.properties
+
+# Signing material — never commit
+*.p12
+*.cer
+*.p7b
+/signing/
+
+# Bundled web frontend (produced by sync-web.sh); keep the dir, not its contents
+/entry/src/main/resources/rawfile/*
+!/entry/src/main/resources/rawfile/.gitkeep

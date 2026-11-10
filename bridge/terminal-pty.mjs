@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { userInfo } from 'node:os';
 import pty from 'node-pty';
+import { batonTtys } from './presence.mjs';
 
 export const MAX_FRAME_BYTES = 28 * 1024;
 let windowsShell = null;
@@ -46,10 +47,16 @@ export function spawnTerminal({ shell, shellArgs, cwd, cols, rows }) {
   for (const key of ['HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR']) {
     if (process.env[key]) environment[key] = process.env[key];
   }
-  return pty.spawn(shell, shellArgs, {
+  const terminal = pty.spawn(shell, shellArgs, {
     name: 'xterm-256color', cwd, cols, rows, encoding: null,
     env: { ...environment, SHELL: shell, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
   });
+  const tty = terminal.ptsName;
+  if (tty) {
+    batonTtys.add(tty);
+    terminal.onExit(() => batonTtys.delete(tty));
+  }
+  return terminal;
 }
 
 // ConPTY only emits utf8 strings and throws asynchronously on kill(signal);

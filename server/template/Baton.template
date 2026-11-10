@@ -1,5 +1,10 @@
 {
   "Parameters": {
+    "PushRelayUrl": {
+      "Type": "String",
+      "Default": "https://ufjcq2zgxykwk3thi3n7yf3hea0ifpzn.lambda-url.ap-northeast-1.on.aws/",
+      "Description": "Shared APNs relay (push-relay/) that sends iOS alerts; empty disables iOS push"
+    },
     "FileUploadAcceleration": {
       "Type": "String",
       "Default": "false",
@@ -22,6 +27,15 @@
       "Type": "String",
       "Description": "App version (semantic-githash), drives bridge auto-update",
       "Default": "dev"
+    },
+    "AccountId": {
+      "Type": "String",
+      "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
+      "Default": ""
+    },
+    "ApiKeyName": {
+      "Type": "String",
+      "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
     }
   },
   "Resources": {
@@ -76,6 +90,11 @@
                 },
                 {
                   "Effect": "Allow",
+                  "Action": "apigateway:GET",
+                  "Resource": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}::/apikeys" }
+                },
+                {
+                  "Effect": "Allow",
                   "Action": [
                     "s3:PutObject",
                     "s3:GetObject"
@@ -103,7 +122,10 @@
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
-            "APP_VERSION": { "Ref": "AppVersion" }
+            "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" },
+            "APP_VERSION": { "Ref": "AppVersion" },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
+            "ACCOUNT_ID": { "Ref": "AccountId" }
           }
         },
         "MemorySize": 1024,
@@ -341,7 +363,7 @@
     "ApiKey": {
       "Type": "AWS::ApiGateway::ApiKey",
       "Properties": {
-        "Name": { "Fn::Sub": "${AWS::StackName}-api-key" },
+        "Name": { "Ref": "ApiKeyName" },
         "Enabled": true,
         "StageKeys": [
           { "RestApiId": { "Ref": "RestApi" }, "StageName": "v1" }
@@ -525,6 +547,60 @@
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
     },
+    "WsPingIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "WsPingIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "WsPingIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
+      }
+    },
+    "WsPingRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["WsPingIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${WsPingIntegration}" }
+      }
+    },
+    "WsPingRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "WsApi" }, "RouteId": { "Ref": "WsPingRoute" }, "RouteResponseKey": "$default" }
+    },
+    "TerminalDirectPingIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "TerminalDirectPingIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationId": { "Ref": "TerminalDirectPingIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
+      }
+    },
+    "TerminalDirectPingRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["TerminalDirectPingIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${TerminalDirectPingIntegration}" }
+      }
+    },
+    "TerminalDirectPingRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "TerminalDirectPingRoute" }, "RouteResponseKey": "$default" }
+    },
     "WsStage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
@@ -550,6 +626,8 @@
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
+            "API_KEY_NAME": { "Ref": "ApiKeyName" },
+            "ACCOUNT_ID": { "Ref": "AccountId" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
             "REALTIME_DIRECT_ENABLED": "1",
@@ -600,6 +678,11 @@
                 "Effect": "Allow",
                 "Action": "execute-api:ManageConnections",
                 "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "apigateway:GET",
+                "Resource": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}::/apikeys" }
               }
             ]
           }
@@ -673,6 +756,7 @@
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
         "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-sessions" },
+        "StreamSpecification": { "StreamViewType": "NEW_AND_OLD_IMAGES" },
         "BillingMode": "PAY_PER_REQUEST",
         "AttributeDefinitions": [
           { "AttributeName": "accountId", "AttributeType": "S" },
@@ -730,6 +814,99 @@
           { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
+      }
+    },
+    "NotificationRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }],
+        "Policies": [{
+          "PolicyName": "NotificationDelivery",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query"],
+                "Resource": { "Fn::GetAtt": ["SystemTable", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:GetItem", "dynamodb:Query"],
+                "Resource": { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
+                "Resource": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "dynamodb:Query",
+                "Resource": { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
+                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:lambda:*:*:function:*-apns" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": "execute-api:ManageConnections",
+                "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "NotificationLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/aws/lambda/${AWS::StackName}-notifications" },
+        "RetentionInDays": 7
+      }
+    },
+    "NotificationWorker": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Architectures": ["arm64"],
+        "Runtime": "python3.12",
+        "Handler": "notification_worker.handler",
+        "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
+        "Role": { "Fn::GetAtt": ["NotificationRole", "Arn"] },
+        "MemorySize": 128,
+        "Timeout": 120,
+        "LoggingConfig": {
+          "LogFormat": "JSON",
+          "LogGroup": { "Ref": "NotificationLogs" },
+          "ApplicationLogLevel": "WARN",
+          "SystemLogLevel": "WARN"
+        },
+        "Environment": { "Variables": {
+          "SYSTEM_TABLE": { "Ref": "SystemTable" },
+          "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+          "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
+          "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+          "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" }
+        } }
+      }
+    },
+    "SessionNotificationEvents": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] },
+        "FunctionName": { "Ref": "NotificationWorker" },
+        "StartingPosition": "LATEST",
+        "BatchSize": 10,
+        "MaximumRetryAttempts": 3,
+        "MaximumRecordAgeInSeconds": 900,
+        "FunctionResponseTypes": ["ReportBatchItemFailures"],
+        "FilterCriteria": { "Filters": [{ "Pattern": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"entityType\":{\"S\":[\"session\"]},\"activeStatus\":{\"S\":[\"needs_input\",{\"prefix\":\"done#\"}]}}}}" }] }
       }
     },
     "SystemTable": {

@@ -85,6 +85,38 @@ test('watcher queue exposes delayed content and repairs header-only changes', (t
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });
 
+test('a failed upload resumes the sync without re-sending accepted messages (#187)', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-sync-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8', timeout: 30_000,
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    input: `
+      import fs from 'node:fs';
+      import { createServer } from 'node:http';
+      import { json } from 'node:stream/consumers';
+      import { CLAUDE_PROJECTS } from './bridge/config.mjs';
+      import { initHttp } from './bridge/http.mjs';
+      import { createClaudeFileQueue } from './bridge/watcher.mjs';
+      const accepted = []; let uploads = 0; // the 10th sync-messages request fails once
+      const server = createServer(async (req, res) => {
+        const { messages = [] } = await json(req);
+        if (req.url.endsWith('/sync-messages') && ++uploads === 10) return res.writeHead(500).end();
+        accepted.push(...messages.map(m => m.uuid)); res.end('{}');
+      }).listen(0, '127.0.0.1', async () => {
+        initHttp({ server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test' });
+        fs.mkdirSync(CLAUDE_PROJECTS + '/-p', { recursive: true });
+        fs.writeFileSync(CLAUDE_PROJECTS + '/-p/s.jsonl', [...Array(20).keys()].map(i =>
+          JSON.stringify({ type: 'user', uuid: 'm' + i, message: { content: 'prompt ' + i } }) + '\\n').join(''));
+        await createClaudeFileQueue({}, undefined, 20)('-p/s.jsonl', 's');
+        while (accepted.length < 20) await new Promise(r => setTimeout(r, 20));
+        process.exit(accepted.join() === [...Array(20).keys()].map(i => 'm' + i).join() ? 0 : 1);
+      });
+    `,
+  });
+  assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
+});
+
 test('parent file updates share one queue while child delivery stays independent', async () => {
   let release;
   const blocked = new Promise(resolve => { release = resolve; });
@@ -180,7 +212,65 @@ test('metadata-only completion reaches the watcher and retries before marking th
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
 });
 
-test('failed parent updates retry without waiting for another file event', { timeout: 2000 }, async (t) => {
+test('a stop recorded in the parent settles a child whose file no longer changes', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-stopped-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8', timeout: 15_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { createServer } from 'node:http';
+      import { CLAUDE_PROJECTS } from './bridge/config.mjs';
+      import { initHttp } from './bridge/http.mjs';
+      import { synced } from './bridge/extract.mjs';
+      import { createClaudeFileQueue } from './bridge/watcher.mjs';
+      import { lastKnownStatus, recentSessions, knownProjects } from './bridge/sync.mjs';
+      const parent = 'parent', child = parent + ':subagent:agent-a1b2c3';
+      const accepted = [];
+      const server = createServer(async (request, response) => {
+        let raw = ''; for await (const chunk of request) raw += chunk;
+        if (request.url.endsWith('/sync-sessions')) accepted.push(JSON.parse(raw));
+        response.end('{}');
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const config = { server: 'http://127.0.0.1:' + server.address().port, apiKey: 'test', deviceName: 'test' };
+        initHttp(config);
+        const parentRelative = path.join('-repo', parent + '.jsonl');
+        const parentFile = path.join(CLAUDE_PROJECTS, parentRelative);
+        const childFile = path.join(CLAUDE_PROJECTS, '-repo', parent, 'subagents', 'agent-a1b2c3.jsonl');
+        fs.mkdirSync(path.dirname(childFile), { recursive: true });
+        fs.writeFileSync(parentFile, JSON.stringify({ type: 'user', uuid: 'u1', message: { content: 'Run it' } }) + '\\n');
+        fs.writeFileSync(childFile, JSON.stringify({ type: 'assistant', message: { stop_reason: 'tool_use', content: [] } }) + '\\n');
+        fs.utimesSync(childFile, new Date(0), new Date(0));
+        synced.set(parent, 1); synced.set(child, 1);
+        recentSessions.add(parent); recentSessions.add(child); knownProjects.add('-repo');
+        lastKnownStatus.set(parent, 'running'); lastKnownStatus.set(child, 'running');
+        fs.appendFileSync(parentFile, JSON.stringify({
+          type: 'queue-operation', operation: 'enqueue',
+          content: '<task-notification><task-id>a1b2c3</task-id><status>stopped</status>',
+        }) + '\\n');
+        await createClaudeFileQueue(config)(parentRelative, parent);
+        const deadline = Date.now() + 5000;
+        while (lastKnownStatus.get(child) !== 'completed' && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.equal(lastKnownStatus.get(child), 'completed');
+        assert.equal(accepted.find(body => body.sessions[0].id === child).sessions[0].status, 'completed');
+      } finally {
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+    `,
+  });
+  assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
+});
+
+test('failed parent updates retry without waiting for another file event',{ timeout: 2000 }, async (t) => {
   t.mock.method(console, 'error', () => {});
   let attempts = 0;
   let delivered = 0;

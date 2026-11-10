@@ -20,6 +20,23 @@ export function saveTerminalView(appState, storage) {
   } catch {}
 }
 
+export function saveHomeTerminalView(device, projectHash, storage) {
+  try {
+    (storage || globalThis.sessionStorage).setItem(TERMINAL_VIEW_KEY, JSON.stringify({
+      device, projectHash, session: null, home: true,
+    }));
+  } catch {}
+}
+
+export function savedHomeTerminal(appState, storage) {
+  let saved = null;
+  try {
+    saved = JSON.parse((storage || globalThis.sessionStorage).getItem(TERMINAL_VIEW_KEY) || 'null');
+  } catch {}
+  return saved?.home && appState?.device && !appState.project && saved.device === appState.device
+    ? saved.projectHash : null;
+}
+
 export function shouldRestoreTerminal(appState, storage) {
   let saved;
   try {
@@ -28,7 +45,7 @@ export function shouldRestoreTerminal(appState, storage) {
     clearTerminalView(storage);
     return false;
   }
-  const matches = !!saved && !!appState?.device && !!appState.project?.hash
+  const matches = !!saved && !saved.home && !!appState?.device && !!appState.project?.hash
     && saved.device === appState.device
     && saved.projectHash === appState.project.hash
     && saved.session === (appState.session || null)

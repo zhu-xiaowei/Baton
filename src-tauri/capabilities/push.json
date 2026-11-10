@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "push",
+  "description": "Session alerts: iOS APNs, Android background service",
+  "platforms": ["iOS", "android"],
+  "windows": ["main"],
+  "permissions": ["push:default"]
+}

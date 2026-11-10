@@ -19,6 +19,14 @@ function temporaryCodexHome(t) {
   return home;
 }
 
+test('mobile Plan command explains the explicit exit without changing the TUI catalog', () => {
+  const mobile = CODEX_MOBILE_COMMANDS.find(command => command.name === 'plan');
+  assert.match(mobile.description, /\/plan off/);
+  assert.equal(mobile.argumentHint, '[on|off|prompt]');
+  assert.equal(CODEX_TUI_COMMANDS.find(command => command.name === 'plan').description,
+    'switch to Plan mode');
+});
+
 test('Codex mobile catalog is the exact supported TUI-order intersection', () => {
   assert.equal(CODEX_TUI_COMMANDS.length, 44);
   assert.deepEqual(CODEX_TUI_COMMANDS.slice(0, 8).map((command) => command.name), [

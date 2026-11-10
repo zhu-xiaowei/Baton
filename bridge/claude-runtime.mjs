@@ -13,6 +13,7 @@ import {
   getSessionMetadata,
   getSessionStatus,
   normalizeProjectHash,
+  previewText,
   readClaudeFirstPrompts,
   readableProjectName,
 } from './session.mjs';
@@ -96,11 +97,7 @@ export function discoverClaudeSessions(options = {}) {
         _filePath: filePath,
         _lineCount: metadata.lineCount,
       };
-      const children = discoverClaudeSubagents(projectDir, session, {
-        now: options.now,
-        parentRunning: runningInfo.sessions.has(nativeSessionId)
-          || (runningInfo.projects.has(project) && runningInfo.sessions.size === 0),
-      });
+      const children = discoverClaudeSubagents(projectDir, session, { now: options.now });
       if (!metadata.preview && !children.length) continue;
       if (!metadata.preview) session._provisional = true;
       sessions.push(session, ...children);
@@ -127,6 +124,16 @@ export function discoverClaudeSessions(options = {}) {
       skipped: {},
     },
   };
+}
+
+// sync-sessions keeps a root's stored child counts when they are omitted, so a
+// settling root re-derives them from disk and carries its children along.
+function refreshClaudeSubagents(session, filePath) {
+  if (parseClaudeSubagentSessionId(session.nativeSessionId)) return [];
+  const children = filePath ? discoverClaudeSubagents(path.dirname(filePath), session) : [];
+  for (const child of children) trackAgentSession(child);
+  trackAgentSession(session);
+  return children;
 }
 
 async function syncClaudeMessages(session, context, startLine) {
@@ -184,6 +191,21 @@ export function removeClaudeSessionHistoryFiles(
   return fileDeleted && childrenDeleted;
 }
 
+function claudeHistoryDirectories(projectsRoot, projectHash, context) {
+  const directories = context.claudeHistoryDirectories ||= !fs.existsSync(projectsRoot) ? []
+    : fs.readdirSync(projectsRoot).filter((name) =>
+      fs.lstatSync(path.join(projectsRoot, name)).isDirectory(),
+    ).map((name) => path.join(projectsRoot, name));
+  return projectHash ? directories.filter((dir) =>
+    normalizeProjectHash(path.basename(dir)) === normalizeProjectHash(projectHash),
+  ) : directories;
+}
+
+function validHistoryKey(value) {
+  return typeof value === 'string' && !!value
+    && value !== '.' && !value.includes('..') && !/[\\/\0]/.test(value);
+}
+
 export const claudeRuntime = defineRuntimeAdapter({
   runtime: 'claude',
   displayName: 'Claude',
@@ -231,15 +253,36 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   deleteSessionHistory(nativeSessionId, context = {}) {
-    if (parseClaudeSubagentSessionId(nativeSessionId)) return false;
-    const filePath = findClaudeSessionFile(nativeSessionId);
-    if (!filePath) return false;
-    return removeClaudeSessionHistoryFiles(filePath, nativeSessionId, context);
+    if (!validHistoryKey(nativeSessionId) || parseClaudeSubagentSessionId(nativeSessionId)) return false;
+    if (this.ownsLiveSession(nativeSessionId, context)) throw new Error('Close the active Claude session before deleting its history.');
+    const projectsRoot = context.projectsRoot || CLAUDE_PROJECTS;
+    let ok = true;
+    // The same session can have copies in the main project and its worktrees.
+    for (const dir of claudeHistoryDirectories(projectsRoot, '', context)) {
+      if (!removeClaudeSessionHistoryFiles(
+        path.join(dir, `${nativeSessionId}.jsonl`), nativeSessionId, { ...context, projectsRoot },
+      )) ok = false;
+    }
+    return ok;
   },
 
-  deleteProjectHistory(projectHash) {
-    if (!projectHash || projectHash.includes('/') || projectHash.includes('..')) return false;
-    return removeInsideRoot(path.join(CLAUDE_PROJECTS, projectHash), CLAUDE_PROJECTS);
+  deleteProjectHistory(projectHash, context = {}) {
+    if (!validHistoryKey(projectHash)) return false;
+    const projectsRoot = context.projectsRoot || CLAUDE_PROJECTS;
+    const directories = claudeHistoryDirectories(projectsRoot, projectHash, context);
+    for (const dir of directories) {
+      if (!fs.existsSync(dir)) continue;
+      for (const file of fs.readdirSync(dir)) {
+        if (file.endsWith('.jsonl') && this.ownsLiveSession(file.slice(0, -6), context)) {
+          throw new Error('Close the active Claude sessions before deleting this project.');
+        }
+      }
+    }
+    let ok = true;
+    for (const dir of directories) {
+      if (!removeInsideRoot(dir, projectsRoot)) ok = false;
+    }
+    return ok;
   },
 
   ownsLiveSession(nativeSessionId, context = {}) {
@@ -293,8 +336,10 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
+    const children = refreshClaudeSubagents(session, gone ? '' : filePath);
     return {
       session,
+      extraSessions: children,
       statusDelta: {
         deviceName: active.deviceName,
         projectHash,
@@ -323,7 +368,8 @@ export const claudeRuntime = defineRuntimeAdapter({
       projectName,
       lastActive,
       size: stat.size,
-      preview: metadata.preview,
+      // A forked Skill writes no user row until it finishes; show the sent prompt meanwhile.
+      preview: metadata.preview || previewText(context.sentPrompt),
       model: metadata.model,
       status: newStatus,
     };

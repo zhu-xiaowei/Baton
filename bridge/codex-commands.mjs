@@ -78,7 +78,12 @@ const MOBILE_COMMAND_BEHAVIOR = Object.freeze({
   app: { behavior: 'send' },
   init: { behavior: 'send' },
   compact: { behavior: 'send' },
-  plan: { behavior: 'send', inlineArgs: true },
+  plan: {
+    behavior: 'send',
+    inlineArgs: true,
+    description: 'enter Plan mode; use /plan off to return to Normal mode',
+    argumentHint: '[on|off|prompt]',
+  },
   goal: {
     behavior: 'compose',
     inlineArgs: true,

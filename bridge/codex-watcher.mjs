@@ -18,6 +18,7 @@ import {
 import { codexLiveSource } from './codex-live.mjs';
 import { countJsonlLines, synced, uploadMessages } from './extract.mjs';
 import { postRequired } from './http.mjs';
+import { batonSessions, localIdleSec } from './presence.mjs';
 import {
   clearLiveMessage,
   liveMessageRoute,
@@ -778,6 +779,10 @@ export class CodexWatcher {
     } : null;
     const agentCountUpdates = trackAgentSession(session);
     const { _filePath, _lineCount, ...publicSession } = session;
+    if (previousStatus === 'running' && session.status !== 'running'
+      && !session.parentSessionId && !batonSessions.has(session.nativeSessionId)) {
+      publicSession.localIdleSec = await localIdleSec();
+    }
     await this.postFn('/api/bridge/sync-sessions', {
       deviceName: this.config.deviceName,
       os: process.platform,

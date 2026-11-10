@@ -7,5 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="baton_background">#0d1117</color>
+    <color name="baton_background">#ffffff</color>
+    <color name="baton_surface">#f6f8fa</color>
+    <color name="baton_splash_glyph">#1f2328</color>
 </resources>
