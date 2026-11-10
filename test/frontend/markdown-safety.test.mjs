@@ -75,6 +75,10 @@ test('Chinese labels ending in punctuation stay bold during streaming', () => {
 
   host.innerHTML = window.renderMd('前文 **注意！**请检查');
   assert.equal(host.querySelector('strong')?.textContent, '注意！');
+  host.innerHTML = window.renderMd('**最值得记住的区别：**CCV 提供补丁');
+  assert.equal(host.querySelector('strong')?.textContent, '最值得记住的区别：');
+  host.innerHTML = window.renderMd('**温度：**30 度');
+  assert.equal(host.querySelector('strong')?.textContent, '温度：');
   window.close();
 });
 
@@ -96,6 +100,8 @@ test('Chinese label compatibility preserves Markdown boundaries and HTML escapin
     '**部署状态：** 云端已部署',
     '**部署状态**：云端已部署',
     '**Status:**deployed',
+    '**Status:**CCV',
+    '**部署状态：**，云端已部署',
     String.raw`\*\*部署状态：\*\*云端已部署`,
     '`**部署状态：**云端已部署`',
     '***粗体和斜体***',
