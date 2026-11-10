@@ -102,6 +102,7 @@ test('a failed upload during a full sync resumes without re-sending accepted mes
       import { initHttp } from './bridge/http.mjs';
       import { createClaudeFileQueue } from './bridge/watcher.mjs';
       import { knownProjects, recentSessions } from './bridge/sync.mjs';
+      import { synced } from './bridge/extract.mjs';
       const accepted = [];
       let uploads = 0;
       let historyComplete = false;
@@ -132,11 +133,19 @@ test('a failed upload during a full sync resumes without re-sending accepted mes
         fs.writeFileSync(file, rows.join('\\n') + '\\n');
         const enqueue = createClaudeFileQueue(config, undefined, 20);
         await enqueue(filename, id);
-        await enqueue(filename, id); // a file event while the retry is pending is deferred to it
+        assert.equal(synced.has(id), false); // partial progress never reaches synced.json
+        // While the retry is pending the transcript moves (worktree) and grows; the retry follows it.
+        const moved = path.join('-review--claude-worktrees-x', id + '.jsonl');
+        fs.mkdirSync(path.join(CLAUDE_PROJECTS, path.dirname(moved)), { recursive: true });
+        fs.renameSync(file, path.join(CLAUDE_PROJECTS, moved));
+        fs.appendFileSync(path.join(CLAUDE_PROJECTS, moved), JSON.stringify({
+          type: 'user', uuid: 'm20', entrypoint: 'cli', message: { content: 'prompt 20' },
+        }) + '\\n');
+        await enqueue(moved, id);
         assert.equal(uploads, 10);
         for (let i = 0; i < 100 && !recentSessions.has(id); i++) await new Promise(r => setTimeout(r, 20));
-        assert.deepEqual(accepted, rows.map((_, i) => 'm' + i));
-        assert.equal(uploads, 21);
+        assert.deepEqual(accepted, [...rows, ''].map((_, i) => 'm' + i));
+        assert.equal(uploads, 22);
         assert.equal(historyComplete, true);
       } finally {
         server.closeAllConnections();
