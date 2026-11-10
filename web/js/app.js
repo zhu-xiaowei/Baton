@@ -2001,6 +2001,7 @@ async function loadMessages(sessionId, preview, options) {
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
   showInputBar(true);
+  saveNav(); // before the await: a stale-chunk reload must come back to this Session
   try {
     await window.loadViewerLibs();
   } catch (e) {
