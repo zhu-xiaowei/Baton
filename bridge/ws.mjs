@@ -64,6 +64,7 @@ import {
 import { SessionAckQueue } from './session-ack-queue.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
+import { configureNotifier } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -822,6 +823,7 @@ function connect() {
           return { ...await historyService.history(params), bridgeEpoch: BRIDGE_EPOCH };
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
+        notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
@@ -1006,6 +1008,22 @@ function publishTitle(reply) {
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;
+
+// "Being viewed": a page showing the root answers `notify_check` with `notify_seen` while it is
+// visible and focused. A suspended iOS page keeps its subscription but cannot answer.
+const NOTIFY_VIEW_WAIT_MS = 3000;
+const _notifyChecks = new Map(); // eventId → settle
+function viewedOnApp(rootSessionId, eventId) {
+  const targets = _subscribers.targets(rootSessionId, { root: true });
+  if (!targets.length || !_directRpc) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const settle = (seen) => { clearTimeout(timer); _notifyChecks.delete(eventId); resolve(seen); };
+    const timer = setTimeout(() => settle(false), NOTIFY_VIEW_WAIT_MS);
+    _notifyChecks.set(eventId, settle);
+    _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
+  });
+}
+configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp });
 
 // A root's child counts changed: the pages showing that root refresh their thread list.
 onAgentCountUpdates((updates) => {

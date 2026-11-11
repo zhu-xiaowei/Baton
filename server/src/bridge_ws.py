@@ -1,5 +1,5 @@
 """
-WebSocket handler for Baton — manages connections, subscriptions, and message relay.
+WebSocket handler for Baton — manages connections and message relay.
 Deployed as a standalone Lambda (not in Docker), invoked by WebSocket API Gateway.
 """
 
@@ -21,7 +21,6 @@ _DATA_ROLES = ("terminal_data", "preview_data", "app_data", "bridge_data")
 
 _ddb = None
 _connections_table = None
-_subscriptions_table = None
 _messages_table = None
 _apigw = None
 _apigw_endpoint = None
@@ -34,13 +33,6 @@ _STRICT_STREAM_ACTIONS = {
     "stream_block_stop",
     "stream_end",
 }
-
-_ROOT_SUBSCRIPTION_PREFIX = "ROOT#"
-
-
-def _root_subscription_id(root_session_id):
-    return f"{_ROOT_SUBSCRIPTION_PREFIX}{root_session_id}"
-
 
 def _requires_turn_sequence(body):
     action = body.get("action", "")
@@ -61,11 +53,10 @@ def _has_valid_turn_sequence(body):
 
 
 def _init():
-    global _ddb, _connections_table, _subscriptions_table, _messages_table
+    global _ddb, _connections_table, _messages_table
     if _ddb is None:
         _ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-west-2"))
         _connections_table = _ddb.Table(os.environ["CONNECTIONS_TABLE"])
-        _subscriptions_table = _ddb.Table(os.environ["SUBSCRIPTIONS_TABLE"])
         _messages_table = _ddb.Table(os.environ.get("BRIDGE_MESSAGES_TABLE", ""))
 
 
@@ -312,7 +303,7 @@ def _disconnect_terminal_data(endpoint, connection_id):
 
 
 def _handle_disconnect(connection_id, endpoint=None):
-    """Remove connection + any subscriptions."""
+    """Remove the connection and tell its peers."""
     try:
         connection = (_connections_table.get_item(Key={"connectionId": connection_id},
             ConsistentRead=True).get("Item") if endpoint else None)
@@ -339,26 +330,6 @@ def _handle_disconnect(connection_id, endpoint=None):
             post=_post_to_connection)
     except Exception:
         print("Direct RPC disconnect notification failed")
-
-    # Clean up subscriptions via connectionId-index GSI (vs Scan over the whole table).
-    try:
-        from boto3.dynamodb.conditions import Key
-        kwargs = {
-            "IndexName": "connectionId-index",
-            "KeyConditionExpression": Key("connectionId").eq(connection_id),
-        }
-        resp = _subscriptions_table.query(**kwargs)
-        items = resp.get("Items", [])
-        while "LastEvaluatedKey" in resp:
-            resp = _subscriptions_table.query(ExclusiveStartKey=resp["LastEvaluatedKey"], **kwargs)
-            items.extend(resp.get("Items", []))
-        for item in items:
-            _subscriptions_table.delete_item(Key={
-                "sessionId": item["sessionId"],
-                "connectionId": connection_id,
-            })
-    except Exception:
-        pass
 
     return {"statusCode": 200}
 
@@ -420,23 +391,6 @@ def _handle_message(event, connection_id, endpoint):
             post_to_connection=_post_to_connection,
             connections_table=_connections_table,
         )
-    elif action == "subscribe":
-        return _handle_subscribe(body, connection_id, account_id, endpoint)
-    elif action == "unsubscribe":
-        return _handle_unsubscribe(body, connection_id, account_id, endpoint)
-    elif action == "notify_seen":
-        # Marks only the caller's own subscription, which the notification worker polls.
-        try:
-            _subscriptions_table.update_item(
-                Key={"sessionId": _root_subscription_id(body.get("rootSessionId", "")),
-                     "connectionId": connection_id},
-                UpdateExpression="SET seenEvent = :event",
-                ConditionExpression="attribute_exists(connectionId)",
-                ExpressionAttributeValues={":event": str(body.get("eventId", ""))[:64]},
-            )
-        except ClientError:
-            pass
-        return {"statusCode": 200}
     elif action == "messages":
         if role == "bridge":
             return _handle_bridge_messages(body, connection_id, account_id, endpoint)
@@ -472,40 +426,6 @@ def _handle_message(event, connection_id, endpoint):
         _post_to_connection(endpoint, connection_id, response)
         return {"statusCode": 200}
 
-    return {"statusCode": 200}
-
-
-def _handle_subscribe(body, connection_id, account_id, endpoint):
-    """The App's viewer row (`ROOT#<root>`) for the notification worker's "being viewed" check."""
-    session_id = body.get("sessionId", "")
-    if not session_id:
-        return {"statusCode": 400}
-
-    _persist_subscription(session_id, connection_id, account_id)
-    return {"statusCode": 200}
-
-
-def _persist_subscription(session_id, connection_id, account_id):
-    item = {
-        "sessionId": session_id,
-        "connectionId": connection_id,
-        "accountId": account_id,
-        "subscribedAt": int(time.time()),
-        "ttl": int(time.time()) + 86400,
-    }
-    _subscriptions_table.put_item(Item=item)
-
-
-def _handle_unsubscribe(body, connection_id, account_id=None, endpoint=None):
-    """App unsubscribes from a session."""
-    session_id = body.get("sessionId", "")
-    if not session_id:
-        return {"statusCode": 400}
-
-    _subscriptions_table.delete_item(Key={
-        "sessionId": session_id,
-        "connectionId": connection_id,
-    })
     return {"statusCode": 200}
 
 

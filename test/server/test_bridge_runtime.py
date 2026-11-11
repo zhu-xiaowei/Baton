@@ -1073,65 +1073,6 @@ def test_bridge_recovery_complete_broadcasts_to_apps(monkeypatch):
     ]
 
 
-def test_subscribe_only_persists_the_connection(monkeypatch):
-    events = []
-
-    class SubscriptionTable:
-        def put_item(self, Item):
-            events.append(("put", Item))
-
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
-    monkeypatch.setattr(
-        bridge_ws,
-        "_post_to_connection",
-        lambda endpoint, connection_id, data: events.append(("send", connection_id, data)),
-    )
-    response = bridge_ws._handle_subscribe(
-        {
-            "sessionId": "codex:thread-1",
-        },
-        "app-1",
-        "account-1",
-        "https://example.test/v1",
-    )
-
-    assert response == {"statusCode": 200}
-    assert len(events) == 1
-    assert events[0][0] == "put"
-    assert events[0][1]["sessionId"] == "codex:thread-1"
-    assert events[0][1]["connectionId"] == "app-1"
-    assert events[0][1]["accountId"] == "account-1"
-    assert "requestId" not in events[0][1]
-
-
-def test_subscribe_write_failure_propagates(monkeypatch):
-    class SubscriptionTable:
-        def put_item(self, Item):
-            raise RuntimeError("write failed")
-
-    sent = []
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
-    monkeypatch.setattr(
-        bridge_ws,
-        "_post_to_connection",
-        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
-    )
-
-    try:
-        bridge_ws._handle_subscribe(
-            {
-                "sessionId": "codex:thread-1",
-            },
-            "app-1",
-            "account-1",
-            "https://example.test/v1",
-        )
-        assert False, "subscription write failure must propagate"
-    except RuntimeError as error:
-        assert str(error) == "write failed"
-    assert sent == []
-
-
 def test_turn_event_validation_requires_turn_id_and_seq():
     for action in (
         "stream_turn_start",
@@ -1169,15 +1110,10 @@ def test_turn_event_validation_requires_turn_id_and_seq():
 
 
 def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch):
-    class SubscriptionTable:
-        def query(self, **_):
-            return {"Items": []}
-
     class FailingMessagesTable:
         def batch_writer(self):
             raise RuntimeError("ddb unavailable")
 
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
     sent = []
     monkeypatch.setattr(
         bridge_ws,
@@ -1207,13 +1143,8 @@ def test_bridge_messages_do_not_ack_unavailable_or_failed_ddb_writes(monkeypatch
 
 
 def test_bridge_message_cache_persists_only_message_fields(monkeypatch):
-    class SubscriptionTable:
-        def query(self, **_):
-            return {"Items": []}
-
     messages = FakeTable()
     sent = []
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
     monkeypatch.setattr(bridge_ws, "_messages_table", messages)
     monkeypatch.setattr(
         bridge_ws,
@@ -1248,12 +1179,7 @@ def test_bridge_message_cache_persists_only_message_fields(monkeypatch):
 
 
 def test_bridge_messages_echoes_delivery_id_only_to_bridge_ack(monkeypatch):
-    class SubscriptionTable:
-        def query(self, **_):
-            return {"Items": [{"connectionId": "app-1"}]}
-
     sent = []
-    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
     monkeypatch.setattr(bridge_ws, "_messages_table", FakeTable())
     monkeypatch.setattr(
         bridge_ws,

@@ -408,7 +408,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_worker.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi

@@ -1,3 +1,5 @@
+import { observeSessions } from './notify.mjs';
+
 let _config;
 
 export function initHttp(config) {
@@ -13,6 +15,7 @@ export async function get(endpoint) {
 }
 
 export async function post(endpoint, data, options = {}) {
+  if (endpoint === '/api/bridge/sync-sessions') observeSessions(data); // alerts follow the rows, delivered or not
   try {
     const res = await fetch(`${_config.server}${endpoint}`, {
       method: 'POST',
