@@ -141,7 +141,11 @@ def notification(old, new, event_id):
         if before == after and old.get("agentDetail", "") == new.get("agentDetail", ""):
             return None
         action, detail = "Needs input", text_summary(new.get("agentDetail", ""))
-    elif after == "completed" and before == "running":
+    # A held Done is also due once its agents are gone without a running write in between
+    # (the process exited with the Bridge, or a report-back turn was read in one batch).
+    elif after == "completed" and (before == "running" or (old.get("backgroundAgents") and before == after)):
+        if new.get("backgroundAgents"):
+            return None  # CC reports back as its background agents end; the last report alerts.
         action, detail = "Done", completion_summary(new)
         if detail is None:
             return None  # The user stopped it, or CC's next turn will alert.

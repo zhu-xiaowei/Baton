@@ -6,7 +6,7 @@ import {
   getRuntimeAdapter,
   runtimeAdapters,
 } from './runtime-registry.mjs';
-import { pendingInteractionDetail, poolOwns } from './ws.mjs';
+import { heldForAgents, pendingInteractionDetail, poolAwaitsAgents, poolOwns } from './ws.mjs';
 import { rebuildAgentCounts } from './agent-counts.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
@@ -282,6 +282,7 @@ export async function checkStopped(config) {
       statusContexts.set(adapter.runtime, adapter.createStatusContext({
         lastKnownStatus,
         poolOwns,
+        poolAwaitsAgents,
       }));
     }
     const result = adapter.inspectActiveSession({
@@ -289,6 +290,7 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
+    if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
     updates.push(result.session, ...(result.extraSessions || []));
     statusDeltas.push(result.statusDelta);
   }
