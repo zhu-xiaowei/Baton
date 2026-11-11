@@ -322,7 +322,7 @@ the Edit and its error result are kept.
 ### 8.2 ViewImage
 
 Codex `ViewImage` is the agent viewing a local image, not the user sending an image. The Bridge keeps the local path and does not
-upload base64 during initialization. When the user clicks, the existing `request_file` flow is reused: the Bridge uploads to S3 on demand,
+upload base64 during initialization. When the user clicks, the existing `project_files` read is reused: the Bridge uploads to S3 on demand,
 and the existing preview component displays it.
 
 Assistant Markdown images use the same on-demand file transport. Project images load through

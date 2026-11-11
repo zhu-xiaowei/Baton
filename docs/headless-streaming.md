@@ -166,7 +166,7 @@ Persisted: CC writes jsonl (history is read from it on demand)
   committed; correct DOM is not deleted or rebuilt.
 - On interrupt, the runtime first completes the authoritative OUT of unfinished tools, then sends a single Interrupted, and finally sends
   `stream_end{error:"interrupted"}`. Web does not synthesize compatibility nodes from the error.
-- Other headless failures: `stream_end{error}` → read-only fallback; after reconnect, `bufferAndFetch` rebuilds from the Bridge
+- Other headless failures: `stream_end{error}` → read-only fallback; after reconnect, the history load rebuilds from the Bridge
   `history` reply and uses the Session status in the same reply to settle the spinner.
 
 ## 3.5 Process Lifecycle (on-demand start + idle reaping, derived from litter ClaudePool)

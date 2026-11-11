@@ -206,7 +206,6 @@ Bridge → App (push): { action: "messages", sessionId: "abc", messages: [...] }
 ### Heartbeat
 
 ```
-App → Server:  { action: "heartbeat" }
 Bridge → Server:  { action: "heartbeat" }
 Server → Bridge:  { action: "heartbeat", ts: 1789900000, bridgeVersion: "1.0.0-abcdef0" }
 (Bridge: every 4 minutes)
@@ -216,7 +215,7 @@ Server → Bridge:  { action: "heartbeat", ts: 1789900000, bridgeVersion: "1.0.0
 
 ```
 Existing session:
-App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "...", device: "MacBook-Pro" }
+App → Bridge (rpc):  send_message { sessionId: "abc", text: "...", turnId: "..." }
 Bridge: _pool.send(sessionId) → headless `claude -p --resume <id>` over kept-open stdin (spawns if none)
         → stream_delta/stream_end (preview) + authoritative `messages` rows
 
@@ -235,28 +234,24 @@ The bridge writes one JSON line per message to the session's headless process st
 ### Create project
 
 ```
-App → Server → Bridge:  { action: "create_project", projectPath: "workspace/x", device: "MacBook-Pro" }
-Bridge: mkdir -p → derive projectHash → seed project metadata → return result
-Bridge → Server → App:  { action: "create_project_result", ok: true, projectHash: "...", projectName: "x", projectPath: "workspace/x" }
+App → Bridge (rpc):  create_project { projectPath: "workspace/x" }
+Bridge: mkdir -p → derive projectHash → reply
+Bridge → App:  { ok: true, projectHash: "...", projectName: "x", projectPath: "workspace/x" }
 ```
 
 ### View a project file (click-to-sync)
 
 ```
-App → Server → Bridge:  { action: "request_file", path: "bridge/ws.mjs", sessionId: "abc",
-                          projectHash: "xxx", device: "MacBook-Pro", requestId: "..." }
-Bridge: resolve path (relative → projectHashToPath), stat, dedup by key (LRU 1000), then by type:
-  text  → read ≤5MB (truncate + drop partial last line) → POST /upload-file  (S3 files/{key})
-  image → ≤10MB whole file (else "image too large")     → POST /upload-image (S3 images/{key})
-  video → ≤5GB; ack file_progress, then POST /video-prepare (HEAD dedup) →
-          stream file to presigned PUT URL, direct to S3 (never through Lambda) (S3 videos/{key})
-Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId: "abc",
-                          key: "<sha>.ext", path: "/abs/path", size: N, truncated: false, image: false }
-App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
-     image → GET /api/bridge/image-url/{key} → signed S3 URL → reuse the image overlay (viewImage)
-     video → GET /api/bridge/video-url/{key} (presigned, no-store, ~50min app cache) → <video> streams from S3
-     (text/image content travels via REST/S3, never over WS — avoids the ~31KB frame budget;
-      video bytes stream browser↔S3 directly, bypassing the Lambda 6MB payload limit)
+App → Bridge (rpc):  project_files { operation: "read", projectHash: "xxx", path: "bridge/ws.mjs" }
+Bridge (bridge/project/files.mjs): resolve inside the project, stat, then by type:
+  text  ≤300KB → the content in the reply's frames
+  text  >300KB → first 1MB (partial last line dropped) → POST /upload-file (S3 files/{key})
+  image ≤10MB  → POST /file-prepare → presigned PUT straight to S3 (attachments/, content-hash key)
+  video ≤5GB   → POST /video-prepare (HEAD dedup) → stream to a presigned PUT (S3 videos/{key})
+Bridge → App:  { ok, key, path, size, truncated, image?, video?, text frames? }
+App: text  → inline frames, or GET /api/bridge/file/{key}
+     image → GET /api/bridge/file-url/{key} → signed S3 URL (cached in IndexedDB)
+     video → GET /api/bridge/video-url/{key} → <video> streams from S3 (Range/seek)
 ```
 
 ### Slash commands (autocomplete)
@@ -266,7 +261,7 @@ commands with the same descriptions and argument hints. Continuing to type
 filters by prefix; ↑↓ navigates; commands with options open a second-level picker.
 
 ```
-App → Server → Bridge:  { action: "list_commands", projectHash: "xxx", device: "MacBook-Pro", knownRevision: "...", requestId: "cmds_..." }
+App → Bridge (rpc):  list_commands { projectHash: "xxx", runtime, known: "<fingerprint>" }
 Bridge → Claude `-p` control_request `{subtype:"initialize"}` with
          `--no-session-persistence`
 Claude → Bridge: runtime-filtered `commands`, `models`, aliases, descriptions,

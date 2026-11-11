@@ -313,7 +313,7 @@ Whichever of the history reply and WS arrives first must not cause duplicate nod
 
 ### 10.3 Status Authority on Initial Load
 
-`bufferAndFetch` records whether the following lifecycle events were actually applied during the history request:
+The history barrier (`loadLatestMessages` in `ws.js`) records whether the following lifecycle events were actually applied during the history request:
 
 - `stream_turn_start`: running
 - `stream_end`: computed from the remaining outstanding turns

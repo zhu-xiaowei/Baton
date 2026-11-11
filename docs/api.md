@@ -19,6 +19,32 @@
 
 ---
 
+## Lambda Requests Outside WebSocket
+
+Every REST call the API Lambda serves, by caller (Session data never goes through it).
+
+| Caller | Request | When |
+|---|---|---|
+| Bridge | `GET /api/bridge/config` | Startup (retried every 5 s while `wsUrl` is missing) |
+| Bridge | `GET /api/version`, `GET /api/install` | Version check at startup / reconnect / heartbeat version change; install script only when updating |
+| Bridge | `POST /api/bridge/upload-image` | A message row contains an image (compressed, once per image per run) |
+| Bridge | `GET /api/bridge/image-url/{key}`, `GET /api/bridge/file-url/{key}` | Downloading an image or attachment the App sent |
+| Bridge | `POST /api/bridge/file-prepare`, `POST /api/bridge/upload-file`, `POST /api/bridge/video-prepare` | `project_files` read/download of an image, text over 300 KB, a video or a download |
+| Bridge | `POST /api/notifications/events` | Each alert |
+| App | `GET /api/bridge/devices` | Home load / refresh (names, online, direct-channel routes and credentials) |
+| App | `GET /api/bridge/config` | Sign-in, preview, terminal |
+| App | `POST /auth/exchange-token`, `POST /api/auth/start-token` | Sign-in with a Start URL; Setup page |
+| App | `POST /api/bridge/delete-device` | Removing a device |
+| App | `POST /api/bridge/upload-image`, `POST /api/bridge/file-prepare` | Sending an image / attachment (bytes go straight to S3) |
+| App | `GET /api/bridge/image-url`, `file-url`, `file`, `video-url` | Showing an attachment or file (none on an IndexedDB cache hit) |
+| App | `/api/notifications/config`, `POST /devices`, `POST /devices/remove`, `GET /event` | Push registration; alert text |
+| iOS extension | `GET /api/notifications/event` | Each push |
+| Android service | `GET /api/notifications/events` | Polling, 5 s foreground / 15 s background |
+| Install script | `GET /auth/install?t=…`, `GET /api/bridge/device-name/validate` | Installing a Bridge |
+| Browser | `/`, `/index.html`, `/assets/*` | Page loads (CloudFront → the same Lambda) |
+
+`GET /api/health` has no caller.
+
 ## REST API — Bridge → Server
 
 ### POST /api/bridge/upload-image
