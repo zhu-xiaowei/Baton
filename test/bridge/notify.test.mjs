@@ -37,6 +37,9 @@ test('status changes alert as the server worker did', async () => {
   // A child waiting for input makes its root need input.
   assert.ok(await alertFor(ROW, { ...ROW, needsInputAgentCount: 1 }));
   assert.match((await alertFor(ROW, { ...DONE, preview: '' })).title, /Session session/);
+  // Cut by characters: half an emoji makes the server reject the alert.
+  pages([user('go'), text('a'.repeat(239) + '😀 tail')]);
+  assert.ok((await alertFor(ROW, DONE)).body.endsWith('a😀'));
 });
 
 test('the Done text waits for the final reply and skips interrupted or reported-back turns', async () => {

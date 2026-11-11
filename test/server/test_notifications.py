@@ -40,7 +40,7 @@ def test_an_alert_is_stored_then_pushed_to_the_accounts_live_devices(monkeypatch
     monkeypatch.setenv("PUSH_RELAY_URL", "https://relay.example")
     sent = []
 
-    def relay(request):
+    def relay(request, deadline=None):
         sent.append(request)
         return {"status": 200} if request["token"] == "a" * 64 else {"status": 410, "reason": "Unregistered"}
 
@@ -54,7 +54,7 @@ def test_an_alert_is_stored_then_pushed_to_the_accounts_live_devices(monkeypatch
     assert table.rows[feed[0]]["event"]["accountId"] == "account"
     assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
     # The relay being down still answers: the feed row is there for Android.
-    monkeypatch.setattr(notifications, "relay", lambda request: 1 / 0)
+    monkeypatch.setattr(notifications, "relay", lambda request, deadline=None: 1 / 0)
     assert notifications.post_event(notifications.Alert(**ALERT), None) == {"ok": True}
 
 
@@ -67,6 +67,8 @@ def test_relay_signs_reuses_its_connection_and_retries_throttling_with_jitter(mo
         get_credentials=lambda: Credentials("AKIDEXAMPLE", "secret", "token")))
 
     class Connection:
+        sock = None
+
         def __init__(self, host, timeout):
             opened.append(host)
 

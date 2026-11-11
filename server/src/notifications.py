@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 # Reused while this instance is warm: a new client or TLS handshake costs tens to hundreds of ms.
 _session = boto3.Session()
 _relay = None
+# API Gateway answers at 29 s; past this the feed row (already written) is enough for Android.
+RELAY_BUDGET_SEC = 20
 
 router = APIRouter(prefix="/api/notifications")
 
@@ -138,11 +140,12 @@ def post_event(alert: Alert, request: Request):
     if not _relay_configured():
         return {"ok": True}
     # One partition for every account: a token re-registered by another account overwrites its row.
+    deadline = now + RELAY_BUDGET_SEC
     devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
     for device in devices.get("Items", []):
         if device.get("accountId") == account and int(device.get("ttl", 0)) > now:
             try:
-                send_apns(table, event_id, device)
+                send_apns(table, event_id, device, deadline)
             except Exception:
                 # The feed row is written: Android still gets it. The relay is down, so skip the rest.
                 logger.exception("Push relay unavailable; iOS alert dropped")
@@ -150,9 +153,9 @@ def post_event(alert: Alert, request: Request):
     return {"ok": True}
 
 
-def send_apns(table, event_id, device):
+def send_apns(table, event_id, device, deadline=None):
     environment, token = device["sk"].split(":", 1)
-    result = relay({"token": token, "environment": environment, "id": event_id})
+    result = relay({"token": token, "environment": environment, "id": event_id}, deadline)
     if result.get("status") == 200:
         return
     if result.get("reason") in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "TopicDisallowed"):
@@ -170,13 +173,15 @@ def _signed_headers(url, body):
     return dict(request.headers)
 
 
-def _post(url, body):
+def _post(url, body, timeout=15):
     """POST on the kept-alive relay connection; one fresh retry if it was dropped while frozen."""
     global _relay
     target = urllib.parse.urlparse(url)
     for fresh in (False, True):
         if _relay is None:
-            _relay = http.client.HTTPSConnection(target.hostname, timeout=15)
+            _relay = http.client.HTTPSConnection(target.hostname, timeout=timeout)
+        elif _relay.sock:
+            _relay.sock.settimeout(timeout)
         try:
             _relay.request("POST", target.path or "/", body=body, headers=_signed_headers(url, body))
             response = _relay.getresponse()
@@ -188,17 +193,21 @@ def _post(url, body):
                 raise
 
 
-def relay(request, attempts=4):
+def relay(request, deadline=None, attempts=4):
     """POST one alert to the shared APNs relay (push-relay/); it returns APNs' status and reason."""
     url = os.environ["PUSH_RELAY_URL"]
     body = json.dumps(request).encode()
+    deadline = deadline or time.time() + RELAY_BUDGET_SEC
     for attempt in range(attempts):
         if attempt:
             # The relay rejects (429) rather than queues past its concurrency; full jitter
             # (0-2, 0-4, 0-8 s) spreads stacks retrying at the same moment.
-            time.sleep(random.uniform(0, 2 ** attempt))
+            time.sleep(min(random.uniform(0, 2 ** attempt), max(0, deadline - time.time())))
+        left = deadline - time.time()
+        if left <= 0:
+            break
         try:
-            status, data = _post(url, body)
+            status, data = _post(url, body, left / 2)  # _post may reconnect once
         except (OSError, http.client.HTTPException):
             continue
         if status == 200:

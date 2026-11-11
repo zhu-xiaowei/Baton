@@ -22,6 +22,9 @@ export function configureNotifier(next) {
   deps = { ...deps, ...next };
 }
 
+// By characters, not UTF-16 units: half an emoji is rejected by the server and the alert is lost.
+const clip = (text, length) => Array.from(text).slice(0, length).join('');
+
 const storageId = (s) => {
   const native = String(s.nativeSessionId || s.id || '').replace(/^codex:/, '');
   return s.runtime === 'codex' ? `codex:${native}` : native;
@@ -75,7 +78,7 @@ function textSummary(content) {
     content = content.filter((block) => block?.type === 'text').map((block) => String(block.text ?? '')).join(' ');
   }
   if (typeof content !== 'string') return '';
-  return content.replace(/^#{1,6}\s+|`|\*\*/gm, '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  return clip(content.replace(/^#{1,6}\s+|`|\*\*/gm, '').replace(/\s+/g, ' ').trim(), 240);
 }
 
 const hasBlocks = (content) => {
@@ -139,8 +142,8 @@ export async function alertFor(old, row) {
     return null;
   }
   const folder = String(row.projectName || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
-  const project = (folder || row.project).slice(0, 80);
-  const title = String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 120)
+  const project = clip(folder || row.project, 80);
+  const title = clip(String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' '), 120)
     || `Session ${row.sessionId.replace(/^codex:/, '').slice(0, 8)}`;
   return {
     eventId: createHash('sha256').update(randomUUID()).digest('hex'),
