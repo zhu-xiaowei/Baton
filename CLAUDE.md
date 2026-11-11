@@ -182,8 +182,11 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
-    Every turn end is `completed`, background tasks or not; each report-back turn CC starts
-    alerts again; alerts stack per session (iOS thread, Android group). A `control_request`
+    A turn end stays `running` while `background_tasks_changed` lists a background agent
+    (`local_agent`) or a task one started (`parent_task_id`), and `poolOwnsStatus` keeps the
+    watcher/`checkStopped` off it; the report-back turn after the last one ends `completed`.
+    Background Bash alone does not hold it, so each Bash report-back turn alerts again;
+    alerts stack per session (iOS thread, Android group). A `control_request`
     outside a pool turn (a background agent, or a turn CC started itself) goes to the pool's
     `onControlRequest`, so it still reaches the app as `needs_input` instead of blocking CC forever.
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()` (startup sync +
@@ -193,7 +196,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     on Linux, the same `procStart` (killed processes leave records behind; Windows skips it).
     Without a record, it and the watcher's `statusFromEntry()` read the jsonl tail `stop_reason`
     (`tool_use`/null → running; structured `AskUserQuestion`/`ExitPlanMode` → `needs_input`;
-    `end_turn`/interrupt/no-process → `completed`).
+    `end_turn`/interrupt/no-process → `completed`). A watched `end_turn` stays `running` while
+    the record is still `busy` (CC waits for background agents; background Bash alone reads `shell`).
   - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
     `--json` working/blocked/done → running/needs_input/completed. Inactive historical
     `--all` entries preserve agent identity only; status falls back to process + jsonl.

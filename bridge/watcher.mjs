@@ -24,6 +24,7 @@ import {
   headlessRoute,
   pendingInteractionDetail,
   poolOwns,
+  poolOwnsStatus,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
@@ -344,7 +345,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
-    const poolOwned = poolOwns(sessionId);
+    const poolOwned = poolOwnsStatus(sessionId);
     if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
       synced.set(sessionId, lastParsedLine);
       _firstSyncs.delete(sessionId);
@@ -356,6 +357,8 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
+      // A terminal turn has ended, but CC stays busy until its background agents report back.
+      : lastStatus === 'completed' && getRunningInfo().liveStatuses?.get(sessionId) === 'running' ? 'running'
       : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
     const effective = preferPendingInteraction(
       resolvedStatus,

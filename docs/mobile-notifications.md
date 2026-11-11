@@ -27,8 +27,10 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
 1. **Trigger.** Bridge writes every approval as `needs_input` + `agentDetail`, so
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
-   `needs_input`, and on a new `agentDetail` while waiting. Every turn end counts,
-   including the turns CC starts to report a finished background task; once one has
+   `needs_input`, and on a new `agentDetail` while waiting. A Claude session stays
+   `running` until its background agents have all reported back, so only the last
+   report-back turn alerts. Background Bash does not hold it: each turn CC starts to
+   report a finished Bash task alerts; once one has
    started (its `<task-notification>` is the newest row), only its own end alerts. Every
    alert is kept and stacked per session (iOS thread, Android group + summary).
    Android clears a session's stack when the app opens it: a tap cancels only the
