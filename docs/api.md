@@ -25,114 +25,21 @@ Every REST call the API Lambda serves, by caller (Session data never goes throug
 
 | Caller | Request | When |
 |---|---|---|
-| Bridge | `GET /api/bridge/config` | Startup (retried every 5 s while `wsUrl` is missing) |
 | Bridge | `GET /api/version`, `GET /api/install` | Version check at startup / reconnect / heartbeat version change; install script only when updating |
-| Bridge | `POST /api/bridge/upload-image` | A message row contains an image (compressed, once per image per run) |
-| Bridge | `GET /api/bridge/image-url/{key}`, `GET /api/bridge/file-url/{key}` | Downloading an image or attachment the App sent |
-| Bridge | `POST /api/bridge/file-prepare`, `POST /api/bridge/upload-file`, `POST /api/bridge/video-prepare` | `project_files` read/download of an image, text over 300 KB, a video or a download |
 | Bridge | `POST /api/notifications/events` | Each alert |
-| App | `GET /api/bridge/devices` | Home load / refresh (names, online, direct-channel routes and credentials) |
-| App | `GET /api/bridge/config` | Sign-in, preview, terminal |
+| App | `GET /api/bridge/devices` | Home load / refresh, credential renewal, WS address (names, online, direct-channel routes, credentials, storage) |
 | App | `POST /auth/exchange-token`, `POST /api/auth/start-token` | Sign-in with a Start URL; Setup page |
 | App | `POST /api/bridge/delete-device` | Removing a device |
-| App | `POST /api/bridge/upload-image`, `POST /api/bridge/file-prepare` | Sending an image / attachment (bytes go straight to S3) |
-| App | `GET /api/bridge/image-url`, `file-url`, `file`, `video-url` | Showing an attachment or file (none on an IndexedDB cache hit) |
 | App | `/api/notifications/config`, `POST /devices`, `POST /devices/remove`, `GET /event` | Push registration; alert text |
 | iOS extension | `GET /api/notifications/event` | Each push |
 | Android service | `GET /api/notifications/events` | Polling, 5 s foreground / 15 s background |
 | Install script | `GET /auth/install?t=…`, `GET /api/bridge/device-name/validate` | Installing a Bridge |
 | Browser | `/`, `/index.html`, `/assets/*` | Page loads (CloudFront → the same Lambda) |
 
-`GET /api/health` has no caller.
-
-## REST API — Bridge → Server
-
-### POST /api/bridge/upload-image
-
-Bridge uploads a compressed image to S3.
-
-**Request**
-```json
-{
-  "key": "903158ab6d09b5657c3529f3e4c9e5f8.jpg",
-  "data": "<base64 encoded JPEG>"
-}
-```
-
-**Response** `200`
-```json
-{ "key": "903158ab6d09b5657c3529f3e4c9e5f8.jpg", "size": 45321 }
-```
-
-**S3 storage path**: `images/{key}` (e.g. `images/903158ab6d09b5657c3529f3e4c9e5f8.jpg`)
-
----
-
-### POST /api/bridge/upload-file
-
-Bridge uploads a project **text** file to S3, in response to a `project_files` `read`. Used to let the app view the actual source of a file referenced by a Read/Edit/Write tool node. (Image files reuse `POST /upload-image` instead.)
-
-**Request**
-```json
-{
-  "key": "5f3a9c1b2d4e6f80.ts",
-  "data": "<base64 encoded file content>"
-}
-```
-
-**Response** `200`
-```json
-{ "key": "5f3a9c1b2d4e6f80.ts", "size": 18342 }
-```
-
-**S3 storage path**: `files/{key}`
-
-**Notes**:
-- `key` = `sha256(absPath + "#" + mtimeMs + "#" + size)[:16]` + original file extension, where `mtimeMs` is the file's modification time in milliseconds and `size` is the **full** file size (not the post-truncation size). An edited file (changed mtime/size) produces a fresh key, so the app's per-key cache and the bridge's uploaded-set never serve stale content. `truncated` is a field of the read result, not part of the key.
-- Content is base64-encoded (handles arbitrary bytes / UTF-8 uniformly), same as `upload-image`.
-
----
-
-### POST /api/bridge/video-prepare
-
-Videos are too large to base64 through Lambda (API Gateway's ~6 MB payload limit), so the bridge **streams them directly to S3** via a presigned PUT URL instead of using `upload-file`. This endpoint decides whether an upload is needed and, if so, hands out the presigned URL.
-
-**Request**
-```json
-{ "key": "1a2b3c4d5e6f7a8b.mp4" }
-```
-
-**Logic**: `HEAD videos/{key}` in S3.
-- **Exists** → `{ "exists": true, "key": "..." }` — bridge skips the upload (dedup by content-hash key survives bridge restarts, unlike the in-memory uploaded-set).
-- **Missing** → generate a presigned **PUT** URL (`ExpiresIn=900`) signed with `ContentType`.
-
-**Response** `200`
-```json
-{ "exists": false, "key": "1a2b3c4d5e6f7a8b.mp4", "url": "https://...s3...", "contentType": "video/mp4" }
-```
-
-**Notes**:
-- `key` uses the same `sha256(absPath#mtimeMs#size)[:16] + ext` formula as `upload-file`.
-- Bridge PUTs with `fs.createReadStream` + `fetch(url, { duplex: 'half', headers: { 'Content-Type', 'Content-Length' } })` → flat memory regardless of file size. The signed `ContentType` must match the header sent.
-- Video extensions: `.mp4 .m4v .mov .webm .mkv .avi`. Cap: 5 GB (`error: "video too large"`).
-- **S3 storage path**: `videos/{key}`.
-
----
+Files never go through Lambda. App and Bridge exchange them through the account's S3 transfer area
+`t/<accountId>/<key>` and sign every S3 request themselves (see "File transfer area" below).
 
 ## REST API — General
-
-### GET /api/health
-
-Connectivity check, called by app on startup.
-
-**Query**: none
-
-**Response** `200`
-```json
-{ "status": "ok", "version": "dev" }
-```
-
----
 
 ### GET /api/version
 
@@ -173,21 +80,6 @@ was offline reappears when it next connects; a new install command also adds it 
 
 ---
 
-### GET /api/bridge/config
-
-Returns server configuration for bridge/app auto-discovery of WS URL, etc.
-
-**Query**: none
-
-**Response** `200`
-```json
-{
-  "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1"
-}
-```
-
----
-
 ### GET /api/bridge/install
 
 Generates a Bridge install script, used by the setup page. It configures launchd on macOS,
@@ -206,8 +98,9 @@ systemd user service on Linux, or Task Scheduler on native Windows.
 **Script logic**:
 1. Download bridge.tar.gz (S3 presigned URL, valid 1h)
 2. npm install
-3. Write launchd plist / systemd service / Windows scheduled task configuration
-4. Start service
+3. Write `~/.baton-bridge/config.json` (`server`, `wsUrl`, `apiKey`, device names)
+4. Write launchd plist / systemd service / Windows scheduled task configuration
+5. Start service
 
 ---
 
@@ -218,12 +111,15 @@ systemd user service on Linux, or Task Scheduler on native Windows.
 Device names and online state from the device rows in SystemTable, which the WS `$connect` handler
 writes after a Bridge claims its device name (the control-socket URL carries `&name=<display>&os=<platform>`).
 Everything else on the home page comes from each Bridge. `rpc` addresses the joined Bridges directly
-(`docs/v2-step1-home-plan.md`).
+(`docs/v2-step1-home-plan.md`). `wsUrl` is the control socket (stored as `state.WS_URL` /
+localStorage `_wsurl`). `rpc.credentials` and `rpc.storage` are always present, also with no Bridge
+online; the App calls `/devices` again when the credentials have less than 5 minutes left.
 
 ```json
-{ "protocol": 2,
+{ "protocol": 2, "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1",
   "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "os": "darwin", "online": true }],
-  "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }] } }
+  "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }],
+    "storage": { "bucket": "…", "region": "ap-northeast-1", "accountId": "<16 hex>", "accelerate": true } } }
 ```
 
 ---
@@ -295,68 +191,42 @@ the effective root-plus-agents status. `api.js` calls them through `bridgeHome`,
 
 ---
 
-### GET /api/bridge/image-url/{key}
-
-Get a one-hour signed S3 URL. The browser or Bridge downloads image bytes directly from S3.
-
-**Path params**:
-| Param | Description |
-|-------|-------------|
-| `key` | Image filename, e.g. `903158ab.jpg` |
-
-**Query**: `attachment=true` selects account-scoped `attachments/{account}/{key}` storage;
-otherwise the key refers to a previously uploaded image in `images/{key}`.
-
-**Response** `200`: `{ "url": "https://..." }`, with `Cache-Control: no-store`.
-
-**Notes**:
-- The signed response overrides the image MIME type and uses inline disposition.
-- Invalid keys return `400`; missing objects return `404` from S3 when downloaded.
-- This replaces the removed `/image/{key}` Base64 download endpoint; clients must be updated together.
-
----
-
-### GET /api/bridge/file/{key}
-
-Get a synced project file's content (proxied from S3).
-
-**Path params**:
-| Param | Description |
-|-------|-------------|
-| `key` | File key as returned by a `project_files` `read`, e.g. `5f3a9c1b2d4e6f80.ts` |
-
-**Logic**: Read from S3 `files/{key}` and return.
-
-**Response** `200`: file content as `text/plain; charset=utf-8`
-
-**Notes**:
-- App fetches the file body via this endpoint (REST, gzip-compressed, outside the WebSocket ~31 KB frame budget), then renders it with highlight.js in the file viewer
-- The viewer caches by `key`; since the key embeds mtime+size, an edited file is re-fetched automatically
-- `404` if key not found
-
----
-
-### GET /api/bridge/video-url/{key}
-
-Return a short-lived presigned **GET** URL so the browser `<video>` element streams `videos/{key}` **directly from S3** (with HTTP Range/seek), bypassing the Lambda 6 MB limit. HEADs the object first; `404` if missing.
-
-**Response** `200`: `{ "url": "https://...s3...?X-Amz-..." }` (`ExpiresIn=3600`)
-
-**Notes**:
-- Response carries **`Cache-Control: no-store`** — critical. CloudFront's default GET cache is 1 day, but the presigned URL expires in 1h; without `no-store` the CDN would serve a stale/expired signature (→ S3 `403 Request has expired`). Content-addressed endpoints (`/file`, `/image`) are safe to cache; only this signature-returning endpoint must not be.
-- App caches the returned URL in memory (`state.videoUrlCache`) for ~50 min (10 min safety margin under the 1h expiry) so re-opening the same video skips the round-trip. This front-end cache is separate from and complementary to the CDN `no-store`.
-
----
-
 ### Office attachment previews (no server endpoint)
 
-Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, legacy `.doc/.ppt/.xls`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.89.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the same presigned `previewUrl` from `GET /file-url/{key}`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls` go through the experimental [@silurus/ooxml-legacy-office](https://www.npmjs.com/package/@silurus/ooxml-legacy-office) readers (pinned to the same version) into the same viewers; content they cannot represent (including encrypted files) is rejected and shows the download note. OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
+Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, legacy `.doc/.ppt/.xls`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.89.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the signed `previewUrl` from `transfer.fileInfo(key)`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls` go through the experimental [@silurus/ooxml-legacy-office](https://www.npmjs.com/package/@silurus/ooxml-legacy-office) readers (pinned to the same version) into the same viewers; content they cannot represent (including encrypted files) is rejected and shows the download note. OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
 
-Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no `file-url` request and no download; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
+Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no S3 request; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
 
-### Attachment content IDs (`POST /file-prepare`, `GET /file-url/{key}`)
+### File transfer area (no server endpoint)
 
-The app and Bridge send `contentHash`: the SHA-256 of the whole file (64 hex). The key becomes its first 32 hex digits plus the extension. The server HEADs that object in the account's prefix with `ChecksumMode=ENABLED`: only when S3's stored `ChecksumSHA256` equals the hash and the size matches is the response `{ "key", "exists": true }` with no upload URL, and the client treats the file as uploaded. If the object is missing, both presigned PUT URLs are signed with `ChecksumSHA256` and `headers` carries `x-amz-checksum-sha256`; S3 rejects any other bytes with `400 BadDigest`, so a content key always holds its content (Bridge then reports the file as changed and does not retry the fallback). Any other object at that key keeps a random key and is never overwritten. Requests without `contentHash` keep random keys; clients send exactly the returned headers. `GET /file-url/{key}?name=` overrides the stored file name (used for the title and `Content-Disposition`), because identical content uploaded under another name shares one object.
+Files between the App and its Bridges travel through `t/<accountId>/<key>` in the attachment
+bucket. It is a transfer channel, not storage: a lifecycle rule empties it after 7 days
+(`server/install.sh`; the pre-v2 prefixes `images/`, `files/`, `videos/`, `attachments/` expire after
+1 day), and the Bridge can upload any object again from its own disk.
+
+Both sides sign their own requests (SigV4 query authentication, presigned URLs only) in
+`bridge/transfer-store.mjs`, which the App imports too. Credentials are the direct-channel STS
+credentials (1 h, reused by the server while more than 10 minutes are left); their session policy
+adds `s3:GetObject` / `s3:PutObject` on `t/<accountId>/*` only. `storage` =
+`{bucket, region, accountId, accelerate}` comes with them: the App gets both from `/devices`, the
+Bridge from the `direct_rpc` `credentials` message on its control socket, and each renews them on
+demand. A URL never outlives its credentials (at most 1 h). The bucket's CORS exposes
+`x-amz-checksum-sha256`, `x-amz-meta-filename` and `x-amz-meta-content-type`.
+
+`transfer` operations: `head`, `prepareUpload`, `uploadUrl`, `put`, `url` (inline with the type
+the key implies, or a download under a name), `fileInfo` (`{key, name, size, contentType, url,
+previewUrl, previewType}`) and `text`.
+
+Attachment content IDs (`prepareUpload`): the App and Bridge compute `contentHash`, the SHA-256 of
+the whole file. The key becomes its first 32 hex digits plus the extension. A HEAD with
+`x-amz-checksum-mode: ENABLED` finds an existing object; only when its `ChecksumSHA256` equals the
+hash and the size matches is the result `{ key, exists: true }` and nothing is uploaded. A missing
+object gets a PUT URL signed with `x-amz-checksum-sha256` (an accelerated URL plus a standard
+`fallbackUrl` when acceleration is on); S3 rejects any other bytes with `400 BadDigest`, so a content
+key always holds its content (Bridge then reports the file as changed and does not retry the
+fallback). Any other object at that key, or no hash, gets a random key. Clients send exactly the
+returned `headers`. `fileInfo(key, name)` uses the caller's name for the title and
+`Content-Disposition`, because identical content uploaded under another name shares one object.
 
 ---
 
@@ -916,10 +786,3 @@ The standalone writer termination flow remains only as the explicit fallback for
 message send that cannot share a daemon. New-Session creation is supported; local history deletion
 remains disabled by Codex runtime capabilities. Project directory creation is runtime-neutral.
 See [codex.md](codex.md) for validation.
-
-### Image & file endpoints have no account isolation
-
-Legacy `GET /api/bridge/image-url/{key}` (without `attachment=true`), `GET /api/bridge/file/{key}`,
-and `GET /api/bridge/video-url/{key}` do not verify object ownership. They rely on unguessable
-hash keys. `POST /upload-image`, `POST /upload-file`, and `POST /video-prepare` likewise use
-legacy storage. New project image uploads and `image-url?attachment=true` use account-scoped attachments.

@@ -472,7 +472,7 @@ single responder and handoff mechanism must be redesigned; do not simply wire bo
 
 ### 10.1 REST
 
-The first version adds no "execute command" HTTP endpoint. Reuse `/api/bridge/config` to get the WS address, and reuse the device and
+The first version adds no "execute command" HTTP endpoint. Reuse `/api/bridge/devices` (`wsUrl`) to get the WS address, and reuse the device and
 project lists. Terminal capability is confirmed via terminal/probe on the selected device, not inferred from a global server version number.
 
 Capabilities include at least: enabled, backend=`pty`, protocols, platform, bridgeInstanceId, available features,

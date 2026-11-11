@@ -72,7 +72,7 @@ and computes Device/Project aggregates once. The steps below describe the Claude
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
-- **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
+- **WS connection** → `wsUrl` from `~/.baton-bridge/config.json` (written by the install script; `--ws` for manual runs; missing → exit asking to reinstall), auto-reconnect on disconnect
 
 ### Bridge connection recovery
 
@@ -170,7 +170,9 @@ All require `x-api-key` header.
 
 ### Bridge → Server
 
-Attachment uploads only (`/upload-image`, `/upload-file`, `/file-prepare`, `/video-prepare`), see docs/api.md.
+Only `/api/version`, `/api/install` (updates) and `/api/notifications/events` (alerts). Files go
+through the account's S3 transfer area `t/<accountId>/<key>`, signed by the Bridge itself
+(`bridge/transfer-store.mjs`, see "File transfer area" in docs/api.md).
 
 ### App → Server
 
@@ -245,13 +247,14 @@ Bridge → App:  { ok: true, projectHash: "...", projectName: "x", projectPath: 
 App → Bridge (rpc):  project_files { operation: "read", projectHash: "xxx", path: "bridge/ws.mjs" }
 Bridge (bridge/project/files.mjs): resolve inside the project, stat, then by type:
   text  ≤300KB → the content in the reply's frames
-  text  >300KB → first 1MB (partial last line dropped) → POST /upload-file (S3 files/{key})
-  image ≤10MB  → POST /file-prepare → presigned PUT straight to S3 (attachments/, content-hash key)
-  video ≤5GB   → POST /video-prepare (HEAD dedup) → stream to a presigned PUT (S3 videos/{key})
+  text  >300KB → first 1MB (partial last line dropped) → signed PUT to t/<accountId>/<key>
+  image ≤10MB  → transfer.prepareUpload (content-hash key, HEAD dedup) → signed PUT
+  video ≤5GB   → HEAD, then a streamed signed PUT when missing
 Bridge → App:  { ok, key, path, size, truncated, image?, video?, text frames? }
-App: text  → inline frames, or GET /api/bridge/file/{key}
-     image → GET /api/bridge/file-url/{key} → signed S3 URL (cached in IndexedDB)
-     video → GET /api/bridge/video-url/{key} → <video> streams from S3 (Range/seek)
+App: text  → inline frames, or transfer.text(key) (signed GET)
+     image → transfer.fileInfo(key) → signed URL (cached in IndexedDB)
+     video → transfer.url(key) → <video> streams from S3 (Range/seek); re-signed at the
+             current position when playback errors
 ```
 
 ### Slash commands (autocomplete)
@@ -345,13 +348,13 @@ baton/
 │   ├── session-index.mjs   # Home/project/session lists for the direct channel
 │   ├── history-service.mjs # History pages and threads from local JSONL
 │   ├── direct-rpc.mjs      # Direct-channel requests and subscriber pushes
+│   ├── transfer-store.mjs  # Signed S3 requests to the transfer area (Bridge and App)
 │   ├── watcher.mjs         # fs.watch → read → push to subscribers
 │   └── ws.mjs              # Control socket, rpc handlers, send/permission/interrupt
 ├── server/
 │   ├── src/
 │   │   ├── main.py         # FastAPI entry
-│   │   ├── bridge_sync.py  # delete-device, upload-image, upload-file, file-prepare, video-prepare, image/file-url
-│   │   ├── bridge_read.py  # GET config/devices/device-name/install/file/video-url
+│   │   ├── bridge_read.py  # devices, delete-device, device-name/validate, install
 │   │   ├── devices.py      # Device rows in SystemTable
 │   │   └── bridge_ws.py    # WS control socket ($connect/$disconnect/$default)
 │   ├── template/Baton.template

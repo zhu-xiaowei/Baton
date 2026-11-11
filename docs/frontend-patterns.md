@@ -29,9 +29,8 @@ Keyboard detection baseline: `_vpBaseHeight = visualViewport.height` (snapshot a
 localStorage: _ak (btoa API key), _as (server URL)
 ```
 
-1. `initConnection()`: GET `/api/health` to verify connectivity
-2. GET `/api/bridge/config` to get `wsUrl` (WebSocket endpoint)
-3. All REST requests include `x-api-key` header
+1. Sign-in calls GET `/api/bridge/devices`, which checks the key and returns `wsUrl` (stored as `_wsurl`)
+2. All REST requests include `x-api-key` header
 
 ## 2. Navigation & State Restore
 
@@ -347,7 +346,7 @@ wsSend({
 
 ### Sending Images
 ```
-Select/paste image → compress (720p JPEG) → upload to S3 → get key
+Select/paste image → compress (≤1280px JPEG) → signed PUT to the S3 transfer area → key
 On send: text + '\n![](baton-bridge:key)'
 Bridge receives → download from S3 → replace with local path → CC Read tool reads it
 ```
@@ -355,8 +354,8 @@ Bridge receives → download from S3 → replace with local path → CC Read too
 ### Displaying Images
 ```
 Image block { type: 'image', key } in message → render as .img-placeholder[data-key]
-IntersectionObserver (rootMargin 200px) → GET /api/bridge/image-url/:key → download directly from the signed S3 URL
-Signed URL cache (max 200, refreshed before its one-hour expiry)
+IntersectionObserver (rootMargin 200px) → IndexedDB hit, or download from a locally signed S3 URL (transfer.url) and store it
+Blob URL memory map (max 200)
 ```
 
 ## 13. User Message XML Tag Filtering
