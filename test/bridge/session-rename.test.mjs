@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { handleSessionRename, renameNativeSession } from '../../bridge/session-rename.mjs';
+import { renameNativeSession } from '../../bridge/session-rename.mjs';
 
 const sessionId = '22222222-2222-4222-8222-222222222222';
 const request = { sessionId, projectHash: 'project', name: ' New title ', requestId: 'request' };
@@ -54,27 +54,4 @@ test('Codex rename uses only thread/name/set against the owning home and closes 
   });
   await assert.rejects(renameNativeSession({ ...request, sessionId: `codex:${sessionId}`, projectHash: '-tmp-baton-codex-target' }, options), /native failure/);
   assert.equal(stopped, 2);
-});
-
-test('rename acknowledges native success separately from cloud sync and never syncs native failures', async () => {
-  for (const failure of ['none', 'cloud', 'native']) {
-    const sent = [], posted = [];
-    await handleSessionRename(request, {
-      deviceName: 'Mac', send: message => sent.push(message),
-      rename: async () => {
-        if (failure === 'native') throw new Error('Native unavailable');
-        return { sessionId, runtime: 'claude', name: 'New title' };
-      },
-      post: async (...args) => { posted.push(args); return { ok: failure !== 'cloud' }; },
-    });
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].ok, failure !== 'native');
-    if (failure === 'native') assert.equal(posted.length, 0);
-    else {
-      assert.equal(sent[0].synced, failure !== 'cloud');
-      assert.deepEqual(posted[0], ['/api/bridge/session-title', {
-        deviceName: 'Mac', projectHash: 'project', sessionId, name: 'New title',
-      }]);
-    }
-  }
 });

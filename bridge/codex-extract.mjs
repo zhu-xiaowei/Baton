@@ -1000,19 +1000,3 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     releaseOwnershipKeys: Array.from(releaseOwnershipKeys),
   };
 }
-
-export async function syncCodexMessages(filePath, nativeSessionId, storageSessionId, options) {
-  const watermarks = options.watermarks;
-  const startLine = options.startLine ?? watermarks.get(storageSessionId) ?? 0;
-  const extracted = extractCodexMessages(filePath, nativeSessionId, { startLine });
-  if (extracted.messages.length > 0 || startLine === 0) {
-    await options.uploader(storageSessionId, extracted.messages, {
-      runtime: 'codex',
-      nativeSessionId,
-      historyComplete: startLine === 0,
-    });
-  }
-  // Commit only after upload so deterministic rows can be retried.
-  watermarks.set(storageSessionId, extracted.nextLine);
-  return extracted;
-}

@@ -1,5 +1,4 @@
-// Mobile alerts, decided here from the Session rows this Bridge reports (`sync-sessions`): the rules
-// the server's notification worker applied to the stored row before and after each write. The
+// Mobile alerts, decided here from the Session rows this Bridge reports (`reportSessions`). The
 // server only stores the event for Android and the iOS extension and pushes it through the relay.
 import { createHash, randomUUID } from 'crypto';
 
@@ -14,7 +13,7 @@ let deps = {
   viewed: async () => false,              // (rootSessionId, eventId) → a page shows it now (waits up to 3 s)
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
-const rows = new Map();  // `device|project|sessionId` → the last row, as the server stored it
+const rows = new Map();  // `device|project|sessionId` → the last reported row
 const queue = new Map(); // sessionId → { alert, at }: alerts the server did not take yet
 let retryTimer = null;
 
@@ -36,8 +35,8 @@ function effectiveStatus(row) {
   return 'completed';
 }
 
-// A `sync-sessions` body: every row replaces the stored one; child counts and the thread root carry
-// over when omitted, and count updates change a stored root only.
+// A `reportSessions` body: every row replaces the known one; child counts and the thread root carry
+// over when omitted, and count updates change a known root only.
 export function observeSessions(body) {
   const device = body?.deviceName || '';
   const changes = [];

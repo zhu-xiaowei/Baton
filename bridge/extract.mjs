@@ -1,52 +1,13 @@
 import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import { post, postRequired } from './http.mjs';
-import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
-import { stripToolResultBase64, toolPreview, toolPreviews } from './tool-preview.mjs';
+import { post } from './http.mjs';
+import { VALID_TYPES } from './config.mjs';
+import { stripToolResultBase64 } from './tool-preview.mjs';
 
-// Track sync position: sessionId → line number (the watcher's per-session read watermark).
+// sessionId → next line the watcher reads; startup sets it to the end of every known file.
 export const synced = new Map();
 
-// Persist `synced` to disk so a restart resumes each session's watermark instead of
-// reading from line 0 (which re-pushes whole histories). Runtime keeps the Map hot; we
-// only flush on exit + a low-frequency interval (crash fallback), never per-set.
-const SYNCED_PATH = path.join(BRIDGE_HOME, 'synced.json');
-export function decodeSyncedState(value) {
-  const version = value?.version;
-  const source = version === 2 && value?.watermarks && typeof value.watermarks === 'object'
-    ? value.watermarks
-    : value;
-  const result = new Map();
-  if (!source || typeof source !== 'object') return result;
-  for (const [key, raw] of Object.entries(source)) {
-    if (typeof raw !== 'number') continue;
-    // Replay one legacy Claude line to avoid the old trailing-newline offset.
-    const line = version === 2 || key.startsWith('codex:') ? raw : Math.max(0, raw - 1);
-    result.set(key, line);
-  }
-  return result;
-}
-
-export function loadSynced() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8'));
-    if (saved.historyVersion !== 2) return;
-    const restored = decodeSyncedState(saved);
-    for (const [key, line] of restored) synced.set(key, line);
-    console.log(`[synced] restored ${synced.size} session watermarks`);
-  } catch {} // missing/corrupt → start empty (handleHeadlessSend baselines on demand)
-}
-export function saveSynced() {
-  try {
-    fs.writeFileSync(SYNCED_PATH, JSON.stringify({
-      version: 2,
-      historyVersion: 2,
-      watermarks: Object.fromEntries(synced),
-    }));
-  } catch {}
-}
 // jsonl line count matching the watcher's convention (drop a single trailing empty line).
 export function countJsonlLines(filePath) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
@@ -54,54 +15,8 @@ export function countJsonlLines(filePath) {
   return lines.length;
 }
 
-const TRUNC_MARK = '\n…[truncated]';
-
-// Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
+// Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
-
-// Walk a message and collect every string field, with a setter to replace it.
-// Used to shrink oversized messages by trimming the longest strings first
-// (tool results, large text/diff blocks) while keeping JSON structure intact.
-function collectStrings(node, out) {
-  if (typeof node !== 'object' || node === null) return;
-  for (const k of Object.keys(node)) {
-    const v = node[k];
-    if (typeof v === 'string') {
-      out.push({ get: () => node[k], set: (s) => { node[k] = s; } });
-    } else if (typeof v === 'object' && v !== null) {
-      collectStrings(v, out);
-    }
-  }
-}
-
-// Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
-// preserving tool previews before applying the transport's hard limit.
-export function truncateToBytes(msg, maxBytes) {
-  if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
-  const clone = structuredClone(toolPreview(msg));
-  if (Buffer.byteLength(JSON.stringify(clone)) <= maxBytes) return clone;
-  const fields = [];
-  collectStrings(clone, fields);
-  // Trim longest-first; loop until it fits or no further reduction is possible.
-  // Guard scales with field count: a message with many large strings may need
-  // one pass per field to collapse them all.
-  const maxIters = fields.length + 16;
-  for (let guard = 0; guard < maxIters; guard++) {
-    const over = Buffer.byteLength(JSON.stringify(clone)) - maxBytes;
-    if (over <= 0) break;
-    fields.sort((a, b) => b.get().length - a.get().length);
-    const target = fields[0];
-    const cur = target.get();
-    if (!cur || cur.length <= TRUNC_MARK.length) break; // nothing left to trim
-    // `over` is in bytes; convert to a char count using this string's own
-    // bytes-per-char density so multibyte (CJK/emoji) text isn't over-trimmed.
-    const bpc = Buffer.byteLength(cur) / cur.length;
-    const dropChars = Math.ceil(over / bpc) + TRUNC_MARK.length + 16;
-    const keep = Math.max(0, cur.length - dropChars);
-    target.set(cur.slice(0, keep) + TRUNC_MARK);
-  }
-  return clone;
-}
 
 // History pages are read again and again: each image is compressed and uploaded once per run.
 const IMAGE_MEMO_LIMIT = 500;
@@ -140,7 +55,7 @@ export async function extractForApp(msg) {
   msg = normalizeClaudeQueuedInput(msg);
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
-    // Content-addressed uuid so re-syncing overwrites one DDB item instead of accumulating (was Date.now()).
+    // Content-addressed uuid: every read of the same title yields the same row.
     const hash = crypto.createHash('sha1').update(`${msg.type}|${msg.sessionId || ''}|${content}`).digest('hex').slice(0, 16);
     return { uuid: `${msg.type}_${hash}`, type: msg.type, content, timestamp: META_EPOCH_TS };
   }
@@ -241,65 +156,4 @@ export function claudeMessageLine(msg, metaUuids) {
     return null;
   }
   return msg;
-}
-
-export async function extractClaudeMessages(filePath, sessionId, options = {}) {
-  const watermarks = options.watermarks || synced;
-  const startLine = options.startLine ?? watermarks.get(sessionId) ?? 0;
-  if (!fs.existsSync(filePath)) return { messages: [], nextLine: startLine };
-  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-  if (lines.at(-1) === '') lines.pop();
-  const newMsgs = [];
-  const metaUuids = new Set();
-  const metaIdx = {}; // type → index in newMsgs (keep only latest per type)
-
-  for (let i = Math.min(startLine, lines.length); i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    let msg;
-    try { msg = JSON.parse(lines[i]); } catch { continue; }
-    msg = claudeMessageLine(msg, metaUuids);
-    if (!msg) continue;
-    const extracted = await extractForApp(msg);
-    if (!extracted.uuid) continue;
-    extracted.orderKey = nativeOrderKey(i);
-    if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
-      if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
-      else { metaIdx[extracted.type] = newMsgs.length; newMsgs.push(extracted); }
-      continue;
-    }
-    newMsgs.push(extracted);
-  }
-
-  return { messages: newMsgs, nextLine: lines.length };
-}
-
-export async function uploadMessages(sessionId, messages, options = {}) {
-  if (messages.length === 0 && !options.historyComplete) return;
-  let batch = [];
-  let batchSize = 0;
-  const identity = {
-    ...(options.runtime ? { runtime: options.runtime } : {}),
-    ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
-  };
-
-  for (const raw of toolPreviews(messages)) {
-    // Cap every message before WS fallback or initial sync reaches DDB.
-    const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
-    const msgJson = JSON.stringify(msg);
-    const msgBytes = Buffer.byteLength(msgJson);
-    if (batchSize + msgBytes > MAX_POST_BYTES && batch.length > 0) {
-      await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
-      await new Promise(r => setTimeout(r, 200));
-      batch = [];
-      batchSize = 0;
-    }
-    batch.push(msg);
-    batchSize += msgBytes;
-  }
-  if (batch.length > 0) {
-    await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
-  }
-  if (options.historyComplete) {
-    await postRequired('/api/bridge/sync-messages', { sessionId, messages: [], historyComplete: true, ...identity });
-  }
 }

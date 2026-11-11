@@ -14,7 +14,6 @@ import {
 import {
   extractCodexMessages,
   parseApplyPatchInput,
-  syncCodexMessages,
 } from '../../../bridge/codex-extract.mjs';
 import {
   codexCompletedLiveMessages,
@@ -1552,29 +1551,6 @@ test('incremental extraction rebuilds pairing state before the watermark', () =>
   assert.equal(first.type, 'user');
   assert.equal(first.content[0].type, 'tool_result');
   assert.ok(first.content[0].tool_use_id);
-});
-
-test('Codex watermark advances only after a successful upload', async () => {
-  const watermarks = new Map([['codex:test', 0]]);
-  await assert.rejects(
-    syncCodexMessages(FIXTURE, SESSION_ID, 'codex:test', {
-      watermarks,
-      uploader: async () => { throw new Error('upload failed'); },
-    }),
-    /upload failed/,
-  );
-  assert.equal(watermarks.get('codex:test'), 0);
-
-  let uploaded;
-  const result = await syncCodexMessages(FIXTURE, SESSION_ID, 'codex:test', {
-    watermarks,
-    uploader: async (_sessionId, messages, identity) => {
-      uploaded = { messages, identity };
-    },
-  });
-  assert.deepEqual(uploaded.messages, result.messages);
-  assert.deepEqual(uploaded.identity, { runtime: 'codex', nativeSessionId: SESSION_ID, historyComplete: true });
-  assert.equal(watermarks.get('codex:test'), result.nextLine);
 });
 
 test('late patch metadata overwrites the fallback output instead of duplicating it', () => {

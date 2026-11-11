@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Baton Bridge — syncs supported local agent runtimes to the server.
+ * Baton Bridge — serves local agent runtimes to the App over the direct channel.
  *
  * Config: ~/.baton-bridge/config.json
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
@@ -17,8 +17,7 @@ import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
-import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
-import { loadSynced, saveSynced } from './extract.mjs';
+import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   cleanupStagedBridge,
@@ -33,7 +32,7 @@ if (!releaseInstanceLock) {
   console.log('[init] another Bridge instance is already running; exiting');
   process.exit(0);
 }
-process.on('exit', () => { try { saveSynced(); } finally { releaseInstanceLock(); } });
+process.on('exit', () => releaseInstanceLock());
 let shuttingDown = false;
 let updateInProgress = false;
 let nextUpdateCheckAt = 0;
@@ -52,8 +51,6 @@ const CONFIG = loadConfig();
 if (removeServiceKeyArgs()) console.log('[init] removed the key from the service definition');
 cleanupStagedBridge(BRIDGE_HOME);
 initHttp(CONFIG);
-loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
-setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
 
 const serverConfig = await fetchServerConfig(CONFIG);
 if (serverConfig.wsUrl) { CONFIG.wsUrl = serverConfig.wsUrl; saveConfig(CONFIG); }
@@ -79,23 +76,12 @@ if (CONFIG.wsUrl) {
     }
   }, 5000);
 }
-// Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
-// --skip-init only skips replaying historical messages — metadata is cheap and required
-// for the periodic checkStopped() to detect disappeared CC processes.
 sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
-// Lists are answered from this index; it must not wait for the DDB sync below.
-sessionIndex.warm().catch((error) => console.error(`[session-index] warm failed: ${error.message}`));
-const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
-if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
-if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {
-  wsSendWhenConnected({
-    action: 'bridge_recovery_complete',
-    deviceName: CONFIG.deviceName,
-    count: initialSync.messageCount,
-  });
-}
-checkStopped(CONFIG); // run once on boot — pool is empty after restart, so settle just-orphaned running rows now
+const warmed = sessionIndex.warm().catch((error) => console.error(`[session-index] warm failed: ${error.message}`));
+const initialSync = syncSessions(CONFIG);
+// Once the index knows every root, settle the rows left running by the previous process.
+warmed.then(() => checkStopped(CONFIG));
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
 // Compare the immutable package version; config.json is user state.

@@ -217,10 +217,7 @@ export class LiveTurnStream {
         this.authoritativeMessages.set(key, structuredClone(message));
       }
     }
-    return this.#createEvent('messages', {
-      messages,
-      ...(options.noCache ? { noCache: true } : {}),
-    });
+    return this.#createEvent('messages', { messages });
   }
 
   sendAuthoritative(message, options = {}) {
@@ -237,16 +234,13 @@ export class LiveTurnStream {
     if (typeof text !== 'string' || !text.trim()) return false;
     return this.sendAuthoritative(
       createTransientUserMessage(this.turnId, text, timestamp),
-      { noCache: true, includeInEnd: false },
+      { includeInEnd: false },
     );
   }
 
   #sendInterrupt(timestamp) {
     if (this.ended || this.interruptSent) return false;
-    return this.sendAuthoritative(
-      createInterruptMessage(this.turnId, timestamp),
-      { noCache: true },
-    );
+    return this.sendAuthoritative(createInterruptMessage(this.turnId, timestamp));
   }
 
   sendInterrupt(timestamp) {

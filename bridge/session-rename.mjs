@@ -60,7 +60,7 @@ export async function renameNativeSession(message, options = {}) {
   return { sessionId: identity.sessionId, runtime: identity.runtime, name };
 }
 
-export async function handleSessionRename(message, { deviceName, post, send, rename = renameNativeSession }) {
+export async function handleSessionRename(message, { deviceName, send, rename = renameNativeSession }) {
   const reply = {
     action: 'rename_session',
     requestId: message.requestId,
@@ -69,15 +69,7 @@ export async function handleSessionRename(message, { deviceName, post, send, ren
     device: deviceName,
   };
   try {
-    const result = await rename(message);
-    let synced = false;
-    try {
-      const response = await post('/api/bridge/session-title', {
-        deviceName, projectHash: message.projectHash, sessionId: result.sessionId, name: result.name,
-      });
-      synced = !!response?.ok;
-    } catch {}
-    send({ ...reply, ...result, ok: true, synced });
+    send({ ...reply, ...(await rename(message)), ok: true });
   } catch (error) {
     send({ ...reply, ok: false, error: error.message || 'Could not rename session.' });
   }

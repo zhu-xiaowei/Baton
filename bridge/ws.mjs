@@ -5,7 +5,8 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { uploadMessages, extractForApp, truncateToBytes, synced, countJsonlLines } from './extract.mjs';
+import { extractForApp, synced, countJsonlLines } from './extract.mjs';
+import { toolPreviews } from './tool-preview.mjs';
 import {
   projectHashToPath,
   getDaemonRunningSessionIds,
@@ -61,7 +62,6 @@ import {
   shouldCreateFinalInterrupt,
   shouldSendImmediateInterrupt,
 } from './live-turn-stream.mjs';
-import { SessionAckQueue } from './session-ack-queue.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
 import { configureNotifier } from './notify.mjs';
@@ -400,7 +400,7 @@ function commandCatalog(runtime, cwd, fallbackDir = cwd, options = {}) {
 // First prompt of Sessions created here, until their transcript names them.
 const _sentPrompts = new Map();
 
-// Push an interaction-owned session's status to DDB.
+// Report an interaction-owned session's status.
 function syncInteractionStatus(sessionId, status, detail, runtimeHint, options = {}) {
   const identity = parseStorageSessionId(sessionId, runtimeHint);
   batonSessions.add(identity.nativeSessionId);
@@ -636,41 +636,6 @@ export function initWs(config, options = {}) {
   connect();
 }
 
-export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
-  if (Buffer.byteLength(JSON.stringify(data)) <= frameLimit) return data;
-  if (data?.action === 'messages') {
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    const empty = {
-      ...data,
-      messages: [],
-      truncated: true,
-    };
-    const available = frameLimit - Buffer.byteLength(JSON.stringify(empty));
-    if (messages.length && available > 0) {
-      const perMessage = Math.max(
-        256,
-        Math.floor((available - Math.max(0, messages.length - 1)) / messages.length),
-      );
-      const compact = {
-        ...data,
-        messages: messages.map((message) => (
-          truncateToBytes(message, perMessage)
-        )),
-        truncated: true,
-      };
-      if (Buffer.byteLength(JSON.stringify(compact)) <= frameLimit) {
-        return compact;
-      }
-    }
-    return empty;
-  }
-  const compact = truncateToBytes(data, frameLimit - 64);
-  return {
-    ...compact,
-    truncated: true,
-  };
-}
-
 export function shouldCacheClientTurnAck(data) {
   return data?.action === 'send_message_result'
     && !!data.turnId
@@ -694,22 +659,16 @@ export function wsSend(data) {
     return true;
   }
   if (data?.sessionId && SESSION_EVENTS.has(data.action)) {
-    // Session events are pushed to the Apps subscribed to them, never truncated. Only the rows
-    // DynamoDB still stores continue to the server below.
-    const { deliveryId, noCache, ...event } = data;
-    // A turn end without its messages tells the App to reload the history.
-    if (event.action === 'stream_end' && !event.messages?.length) event.recoveryRequired = true;
-    rememberTurnEvent(event);
-    _directRpc?.publish(event);
-    if (data.action !== 'messages' || noCache) return true;
+    // Session events go to the Apps subscribed to them, never through the server.
+    rememberTurnEvent(data);
+    _directRpc?.publish(data);
+    return true;
   }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
-    const outgoing = fitWsPayload(data);
-    assertTurnEventEnvelope(outgoing);
-    const payload = JSON.stringify(outgoing);
+    const payload = JSON.stringify(data);
     if (Buffer.byteLength(payload) > WS_FRAME_LIMIT) {
-      console.error(`[ws] oversized ${data.action || 'event'} could not be compacted`);
+      console.error(`[ws] dropped oversized ${data.action || 'event'}`);
       return false;
     }
     _ws.send(payload);
@@ -725,18 +684,9 @@ export function wsSendWhenConnected(data) {
   return false;
 }
 
-// Each session keeps one persistence request in flight. The delivery id keeps
-// a late ack for a timed-out request from confirming the next request.
-const _messageAckQueue = new SessionAckQueue({ send: wsSend });
-
-export function wsSendWithAck(data, timeout = 5000) {
-  return _messageAckQueue.enqueue(data, timeout);
-}
-
-export function createTurnMessagesEvent(sessionId, turnId, messages) {
-  const liveTurn = _activeTurns.get(sessionId, turnId);
-  if (!liveTurn || !Array.isArray(messages) || !messages.length) return null;
-  return liveTurn.createMessagesEvent(messages);
+// Rows read from a transcript, pushed to the Session's subscribers.
+export function publishMessages(sessionId, messages) {
+  if (messages.length) wsSend({ action: 'messages', sessionId, messages: toolPreviews(messages) });
 }
 
 function probeConnection() {
@@ -777,6 +727,7 @@ function connect() {
 
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
     + `&device=${encodeURIComponent(_config.deviceName)}`
+    + `&name=${encodeURIComponent(_config.deviceDisplayName || _config.deviceName)}&os=${process.platform}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
     + '&terminal=2&terminalStartup=1&preview=1';
@@ -841,7 +792,7 @@ function connect() {
           return collectFrames((send) => handleGitStatusMessage({ ...params, action: 'git_status' }, { send }), caller);
         },
         rename_session: (params, caller) => collectFrames((send) => handleSessionRename(params, {
-          deviceName: _config.deviceName, post, send: (reply) => { send(reply); if (reply.ok) publishTitle(reply); },
+          deviceName: _config.deviceName, send: (reply) => { send(reply); if (reply.ok) publishTitle(reply); },
           rename: message => renameNativeSession(message, { claudePool: _pool }),
         }), caller),
         create_project: params => createProject(params.projectPath, params.asAgent),
@@ -962,13 +913,6 @@ async function handleMessage(msg) {
     case 'terminal_poc':
       await handleTerminalPocMessage(msg);
       break;
-    case 'sync_session':
-      await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
-      break;
-    case 'messages_ack': {
-      _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
-      break;
-    }
     case 'device_removed':
       uninstallBridge();
       console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');
@@ -1080,38 +1024,6 @@ async function handleInterrupt(msg) {
   await (adapter.interaction?.interrupt
     ? adapter.interaction.interrupt(identity.nativeSessionId)
     : _pool.interrupt(identity.nativeSessionId));
-}
-
-async function handleSyncSession(sessionId, runtime, nativeSessionId) {
-  const identity = parseStorageSessionId(sessionId, runtime);
-  if (nativeSessionId) identity.nativeSessionId = nativeSessionId;
-  const adapter = getRuntimeAdapter(identity.runtime);
-  console.log(`[ws] sync_session: ${identity.runtime}:${identity.nativeSessionId.slice(0, 8)}`);
-  const filePath = adapter.findSessionFile(identity.nativeSessionId);
-  if (!filePath) {
-    // Fresh pool session whose jsonl hasn't landed yet → ok/empty, not not_found (which wipes the live view).
-    if (adapter.ownsLiveSession?.(identity.nativeSessionId, { pool: _pool })) {
-      wsSend({ action: 'sync_complete', sessionId, status: 'ok', count: 0 });
-      return;
-    }
-    console.log(`[ws] session ${sessionId.slice(0, 8)} not found locally`);
-    wsSend({ action: 'sync_complete', sessionId, status: 'not_found' });
-    return;
-  }
-
-  const { messages } = await adapter.syncAllMessages({
-    runtime: identity.runtime,
-    nativeSessionId: identity.nativeSessionId,
-    _filePath: filePath,
-  }, {
-    storageSessionId: identity.sessionId,
-    watermarks: synced,
-    uploader: uploadMessages,
-  });
-  if (messages.length > 0) {
-    console.log(`[ws] synced ${messages.length} messages for ${identity.runtime}:${identity.nativeSessionId.slice(0, 8)}`);
-  }
-  wsSend({ action: 'sync_complete', sessionId: identity.sessionId, status: 'ok', count: messages.length });
 }
 
 async function handleSendMessage(
@@ -1389,7 +1301,7 @@ export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {})
     } else {
       markHeadlessPushed(msg.uuid);
     }
-    liveTurn.sendAuthoritative(msg, { noCache: true });
+    liveTurn.sendAuthoritative(msg);
   };
   const enqueue = (operation) => {
     authorityQueue = authorityQueue
@@ -1418,7 +1330,7 @@ export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {})
     onBlockStop: (sid, blockId) => {
       enqueue(() => liveTurn.sendBlockStop({ blockId }));
     },
-    // Full authoritative row; noCache so watcher owns DDB persistence. App dedupes by uuid.
+    // Full authoritative row; the watcher skips its JSONL copy. App dedupes by uuid.
     onMessage: (sid, raw, meta = {}) => enqueue(() => publishAuthority(raw, meta)),
     onInputConsumed: (ids) => enqueue(() => liveTurn.consumeInputs?.(ids)),
     onResult: (sid, result) => {
@@ -1815,7 +1727,7 @@ async function handleHeadlessSend(
   // Deleted/never-existed project dir → recreate so headless can spawn there (cheap: microseconds).
   try { if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }); } catch {}
 
-  // Baseline synced to the current jsonl length before this turn appends — else an old session with no synced entry gets its whole history re-pushed by the watcher (flicker). App already has history via REST.
+  // Baseline synced to the current jsonl length before this turn appends — else a session the watcher has not seen yet gets its whole history re-pushed (flicker). The App reads history itself.
   if (!synced.has(sessionId)) {
     const fp = _claudeRuntime.findSessionFile(sessionId);
     if (fp) { try { synced.set(sessionId, countJsonlLines(fp)); } catch {} }

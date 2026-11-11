@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { countJsonlLines } from './extract.mjs';
-import { syncCodexMessages } from './codex-extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
   discoverCodexHistory,
@@ -143,40 +142,9 @@ export const codexRuntime = defineRuntimeAdapter({
     return codexInteraction.owns(nativeSessionId);
   },
 
-  shouldSkipInitial(session) {
-    // Internal Guardian/compact/review threads are catalogued only so a full
-    // sync can overwrite older rows that were mistakenly exposed as agents.
-    return session.threadKind === 'internal';
-  },
-
   baselineToEnd(session, context) {
     const lineCount = session._lineCount ?? countJsonlLines(session._filePath);
     context.watermarks.set(context.storageSessionId, lineCount);
-  },
-
-  syncInitialMessages(session, context) {
-    return syncCodexMessages(
-      session._filePath,
-      session.nativeSessionId,
-      context.storageSessionId,
-      {
-        watermarks: context.watermarks,
-        uploader: context.uploader,
-      },
-    );
-  },
-
-  syncAllMessages(session, context) {
-    return syncCodexMessages(
-      session._filePath,
-      session.nativeSessionId,
-      context.storageSessionId,
-      {
-        startLine: 0,
-        watermarks: context.watermarks,
-        uploader: context.uploader,
-      },
-    );
   },
 
   createStatusContext(context = {}) {
@@ -236,13 +204,6 @@ export const codexRuntime = defineRuntimeAdapter({
     if (!session) return;
     session.status = newStatus;
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
-    const agentCountUpdates = trackAgentSession(session);
-    await context.postFn('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: [publicSession(session)],
-      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-    });
-    context.lastKnownStatus.set(sessionId, newStatus);
+    context.report(config, [session], { agentCountUpdates: trackAgentSession(session) });
   },
 });

@@ -2,9 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compactToolFields, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
-import { uploadMessages } from '../../bridge/extract.mjs';
-import { initHttp } from '../../bridge/http.mjs';
-import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
 
 function message() {
   return {
@@ -52,22 +49,6 @@ test('preview preserves arbitrary JSON keys as data', () => {
   assert.equal(Object.hasOwn(preview.content[0].input, '__proto__'), true);
   assert.equal(preview.content[0].input.__proto__.text.length, 500);
   assert.equal(Object.getPrototypeOf(preview.content[0].input), Object.prototype);
-});
-
-test('HTTP synchronization always writes previews even below the item size limit', async () => {
-  initHttp({ server: 'https://test.invalid', apiKey: 'test' });
-  const previous = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (_url, options) => {
-    calls.push(JSON.parse(options.body));
-    return { ok: true };
-  };
-  try {
-    await uploadMessages('session', [message()]);
-    assert.equal(calls[0].messages[0].content[2].truncated, true);
-    assert.equal(calls[0].messages[0].content[2].input.command, '🙂'.repeat(500));
-    assert.deepEqual(calls[0].messages[0].toolUseResult, { totalDurationMs: 123 });
-  } finally { globalThis.fetch = previous; }
 });
 
 test('stream input keeps sequence continuity and terminal previews do not trigger transport recovery', () => {
@@ -225,41 +206,4 @@ test('command compaction removes only duplicates and unused action commands', ()
   assert.deepEqual(compactToolFields(result), {
     ...result, codexCommandActions: [{ type: 'read', path: '/src/file.js', name: 'file.js' }],
   });
-});
-
-test('HTTP and realtime delivery omit redundant command copies without creating truncation', async () => {
-  const messages = [{
-    uuid: 'use', type: 'assistant', content: [{
-      type: 'tool_use', id: 'bash', name: 'Bash',
-      input: { command: 'echo ok', cmd: 'echo ok', codexCommandActions: [{ type: 'unknown', cmd: 'x'.repeat(2000) }] },
-    }],
-  }, {
-    uuid: 'result', type: 'user', content: [{
-      type: 'tool_result', tool_use_id: 'bash', content: 'ok',
-      codexCommandActions: [{ type: 'unknown', cmd: 'x'.repeat(2000) }],
-    }],
-  }];
-  const expected = toolPreviews(messages);
-  assert.equal(expected[0].content[0].truncated, undefined);
-  assert.equal(expected[1].content[0].truncated, undefined);
-  assert.equal(expected[0].content[0].input.cmd, undefined);
-  assert.deepEqual(expected[1].content[0].codexCommandActions, [{ type: 'unknown' }]);
-  const previous = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (_url, options) => { requests.push(JSON.parse(options.body)); return { ok: true }; };
-  try {
-    initHttp({ server: 'https://test.invalid', apiKey: 'test' });
-    await uploadMessages('session', messages);
-    assert.deepEqual(requests[0].messages, expected);
-  } finally { globalThis.fetch = previous; }
-  const sent = [];
-  await deliverRealtimeMessages('session', messages, {
-    wsSendWithAckFn: async event => { sent.push(event); return true; },
-    uploadMessagesFn: async () => { throw new Error('Unexpected fallback'); },
-  });
-  assert.deepEqual(sent[0].messages, expected);
-  const stream = new LiveTurnStream({ sessionId: 'session', turnId: 'compact', send: event => sent.push(event) });
-  messages.forEach(message => stream.sendAuthoritative(message));
-  stream.sendEnd();
-  assert.deepEqual(sent.at(-1).messages, expected);
 });

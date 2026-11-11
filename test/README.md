@@ -15,12 +15,6 @@ Run the local suites with:
 npm test
 ```
 
-The live Codex/AWS E2E test is intentionally separate:
-
-```bash
-npm run test:codex:e2e
-```
-
 The cross-platform-scale watcher stress test is also explicit:
 
 ```bash
