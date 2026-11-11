@@ -52,7 +52,6 @@ for (const runtime of ['claude', 'codex']) {
       request.resolve({
         messages: hasEcho ? [user] : [],
         hasMore: false,
-        needSync: !hasEcho,
         status: 'completed',
       });
       await loading;

@@ -81,7 +81,7 @@ export class HistoryService {
     return { ...(await this.pages.history(file, params)), status };
   }
 
-  // The former /session-threads answer: the root, then its subagents depth-first, newest first.
+  // The thread list: the root, then its subagents depth-first, newest first.
   async threads(params = {}) {
     await this.index.readyPromise;
     const sessionId = String(params.sessionId || '');

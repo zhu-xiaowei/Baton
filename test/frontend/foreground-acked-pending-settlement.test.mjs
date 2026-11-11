@@ -42,7 +42,6 @@ test('completed recovery replaces the old pending bubble with REST history', asy
       },
     ],
     hasMore: false,
-    needSync: false,
     status: 'completed',
   });
 

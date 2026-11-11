@@ -21,8 +21,6 @@ Bucket acceleration being Enabled is necessary but not sufficient: the deployed 
 
 ```sh
 node --test test/frontend/attachments.test.mjs test/frontend/file-download.test.mjs test/bridge/project-files.test.mjs
-python3 -m pytest test/server/test_project_files_ws.py
-node test/browser/attachments-chrome.mjs
 rustc --edition=2021 --test test/native/file-download.rs -o /tmp/baton-file-download-tests && /tmp/baton-file-download-tests
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios-sim

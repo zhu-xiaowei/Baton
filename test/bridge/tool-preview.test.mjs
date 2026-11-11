@@ -147,7 +147,6 @@ test('Edit stream sends no code while preserving sequence and terminal summaries
   const inputs = sent.filter(event => event.action === 'stream_tool_input');
   assert.ok(inputs.filter(event => !event.replaceInput).every(event => event.chunk === '' && event.previewTruncated));
   assert.deepEqual(JSON.parse(inputs.find(event => event.replaceInput).chunk), { file_path: '/file.js' });
-  assert.equal(sent.at(-1).recoveryRequired, undefined);
 });
 
 test('unused result metadata is omitted without changing complete OUT content', () => {

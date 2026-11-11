@@ -25,20 +25,20 @@ function claudeTurn(sessionId, turnId) {
   });
   const events = [
     e('stream_turn_start'),
-    e('messages', { messages: [user], noCache: true }),
+    e('messages', { messages: [user] }),
     e('stream_block_start', { kind: 'text' }),
     e('stream_delta', { chunk: 'FIRST-TEXT' }),
     e('stream_block_stop'),
-    e('messages', { messages: [first], noCache: true }),
+    e('messages', { messages: [first] }),
     e('stream_block_start', { kind: 'tool_use', name: 'Bash' }),
     e('stream_tool_input', { chunk: '{"command":"ls"}' }),
     e('stream_block_stop'),
-    e('messages', { messages: [tool], noCache: true }),
-    e('messages', { messages: [result], noCache: true }),
+    e('messages', { messages: [tool] }),
+    e('messages', { messages: [result] }),
     e('stream_block_start', { kind: 'text' }),
     e('stream_delta', { chunk: 'SUMMARY' }),
     e('stream_block_stop'),
-    e('messages', { messages: [summary], noCache: true }),
+    e('messages', { messages: [summary] }),
   ];
   const end = e('stream_end', { messages: [first, tool, result, summary] });
   const { nativeId, ...persistedUser } = user;
@@ -98,12 +98,12 @@ test('a frame lost mid-turn is recovered once a pong proves it is not in flight'
   assert.equal(h.state.wsRunning, false);
 });
 
-test('REST recovery after a gapped turn keeps the first reply above the summary', async () => {
+test('history recovery after a gapped turn keeps the first reply above the summary', async () => {
   const turn = start('compact-session', 'sent-00000000-0000-4000-8000-000000000002');
   setRest(async () => ({ messages: turn.ddb, status: 'completed', hasMore: false }));
   send(turn.events.filter(event => event.seq !== 7));
   const { messages, ...compactEnd } = turn.end;
-  send([{ ...compactEnd, recoveryRequired: true }]);
+  send([compactEnd]);
   await h.tick(1200);
   assertOrdered();
 });
