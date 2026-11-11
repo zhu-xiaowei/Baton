@@ -4,7 +4,6 @@ Deployed as a standalone Lambda (not in Docker), invoked by WebSocket API Gatewa
 """
 
 import json
-from message_history import message_key
 import os
 import time
 import hashlib
@@ -12,6 +11,7 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 import api_key as deployment_key
+import devices
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
@@ -21,43 +21,14 @@ _DATA_ROLES = ("terminal_data", "preview_data", "app_data", "bridge_data")
 
 _ddb = None
 _connections_table = None
-_messages_table = None
 _apigw = None
 _apigw_endpoint = None
 
-_STRICT_STREAM_ACTIONS = {
-    "stream_turn_start",
-    "stream_block_start",
-    "stream_delta",
-    "stream_tool_input",
-    "stream_block_stop",
-    "stream_end",
-}
-
-def _requires_turn_sequence(body):
-    action = body.get("action", "")
-    return action in _STRICT_STREAM_ACTIONS or (
-        action in ("messages", "permission_request", "permission_resolved")
-        and "turnId" in body
-    )
-
-
-def _has_valid_turn_sequence(body):
-    return (
-        bool(body.get("sessionId"))
-        and bool(body.get("turnId"))
-        and isinstance(body.get("seq"), int)
-        and not isinstance(body.get("seq"), bool)
-        and body["seq"] >= 0
-    )
-
-
 def _init():
-    global _ddb, _connections_table, _messages_table
+    global _ddb, _connections_table
     if _ddb is None:
         _ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-west-2"))
         _connections_table = _ddb.Table(os.environ["CONNECTIONS_TABLE"])
-        _messages_table = _ddb.Table(os.environ.get("BRIDGE_MESSAGES_TABLE", ""))
 
 
 def _apigw_client(endpoint):
@@ -70,12 +41,6 @@ def _apigw_client(endpoint):
 
 def _account_id(api_key):
     return deployment_key.account_id(api_key)
-
-
-def _runtime_session_fields(session_id):
-    if session_id.startswith("codex:"):
-        return {"runtime": "codex", "nativeSessionId": session_id[len("codex:"):]}
-    return {"runtime": "claude", "nativeSessionId": session_id}
 
 
 def _bridge_owner_key(account_id, device):
@@ -289,8 +254,10 @@ def _handle_connect(event, connection_id):
     if role in _DATA_ROLES:
         item["terminalDataEndpoint"] = connected_endpoint
     _connections_table.put_item(Item=item)
-    if item.get("bridgeOwner") and not _claim_bridge_connection(item, context, connected_endpoint):
-        return {"statusCode": 409}
+    if item.get("bridgeOwner"):
+        if not _claim_bridge_connection(item, context, connected_endpoint):
+            return {"statusCode": 409}
+        devices.put_device(account_id, device, qs.get("name", ""), qs.get("os", ""))
 
     return {"statusCode": 200}
 
@@ -379,9 +346,6 @@ def _handle_message(event, connection_id, endpoint):
             query=_query_connections, post=_post_to_connection)
     if role in _DATA_ROLES:
         return {"statusCode": 403}
-    if role == "bridge" and _requires_turn_sequence(body) \
-            and not _has_valid_turn_sequence(body):
-        return {"statusCode": 400}
 
     if action == "terminal_poc":
         return handle_terminal_poc(
@@ -391,15 +355,6 @@ def _handle_message(event, connection_id, endpoint):
             post_to_connection=_post_to_connection,
             connections_table=_connections_table,
         )
-    elif action == "messages":
-        if role == "bridge":
-            return _handle_bridge_messages(body, connection_id, account_id, endpoint)
-    elif action == "sync_complete":
-        if role == "bridge":
-            return _handle_sync_complete(body, account_id, endpoint)
-    elif action == "bridge_recovery_complete":
-        if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "heartbeat":
         # Update TTL
         ttl = int(time.time()) + 86400
@@ -429,107 +384,6 @@ def _handle_message(event, connection_id, endpoint):
     return {"statusCode": 200}
 
 
-def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
-    """Bridge rows DynamoDB stores; Apps get them from the Bridge directly."""
-    session_id = body.get("sessionId", "")
-    messages = body.get("messages", [])
-    compact_placeholder = (
-        body.get("truncated") is True
-        and bool(body.get("turnId"))
-        and body.get("seq") is not None
-        and messages == []
-    )
-    if not session_id or (not messages and not compact_placeholder):
-        return {"statusCode": 400}
-
-    # Write to DDB (cache) with one retry.
-    # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
-    # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
-    # caching the truncated version here would clobber it.
-    if messages and not body.get("noCache"):
-        if not _messages_table:
-            return {"statusCode": 500}
-        persisted = False
-        for attempt in range(2):
-            try:
-                from datetime import datetime
-                with _messages_table.batch_writer() as batch:
-                    for msg in messages:
-                        uuid = msg.get("uuid", "")
-                        if not uuid:
-                            continue
-                        timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
-                        item = {
-                            **message_key(session_id, msg, timestamp),
-                            "uuid": uuid,
-                            "type": msg.get("type", ""),
-                            "content": json.dumps(
-                                msg.get("content", ""),
-                                ensure_ascii=False,
-                            ),
-                            "timestamp": timestamp,
-                            "ttl": int(time.time()) + 90 * 86400,  # 90-day expiry (matches sync_messages)
-                        }
-                        if msg.get("nativeId"):
-                            item["nativeId"] = msg["nativeId"]
-                        if msg.get("orderKey"):
-                            item["orderKey"] = msg["orderKey"]
-                        if msg.get("stopReason"):
-                            item["stopReason"] = msg["stopReason"]
-                        if msg.get("toolUseResult"):
-                            item["toolUseResult"] = json.dumps(msg["toolUseResult"], ensure_ascii=False)
-                        batch.put_item(Item=item)
-                persisted = True
-                break
-            except Exception as e:
-                if attempt == 0:
-                    print(f"DDB write error (retrying): {e}")
-                else:
-                    print(f"DDB write error (gave up): {e}")
-        if not persisted:
-            # Do not ack: the Bridge will time out and persist the same
-            # deterministic rows through the HTTP fallback before advancing.
-            return {"statusCode": 500}
-
-    # Ack back to bridge so it can advance synced position
-    ack = {
-        "action": "messages_ack",
-        "sessionId": session_id,
-    }
-    if body.get("deliveryId"):
-        ack["deliveryId"] = body["deliveryId"]
-    _post_to_connection(endpoint, bridge_connection_id, ack)
-
-    return {"statusCode": 200}
-
-
-def _handle_sync_complete(body, account_id, endpoint):
-    """Bridge completed on-demand sync — broadcast to account apps.
-    Not subscription-based: the app's subscribe may not have landed in DDB yet
-    (sync_complete can return within the WS handshake window), which would drop
-    the message and leave the app on the skeleton forever."""
-    session_id = body.get("sessionId", "")
-    if not session_id:
-        return {"statusCode": 400}
-
-    for item in _query_connections(account_id, "app"):
-        _post_to_connection(endpoint, item["connectionId"], {
-            "action": "sync_complete",
-            "sessionId": session_id,
-            "status": body.get("status", "ok"),
-            "count": body.get("count", 0),
-        })
-
-    return {"statusCode": 200}
-
-
-def _handle_bridge_broadcast(body, account_id, bridge_connection_id, endpoint):
-    """Bridge sends a result — broadcast to all app connections for this account."""
-    for item in _query_connections(account_id, "app"):
-        _post_to_connection(endpoint, item["connectionId"], body)
-    return {"statusCode": 200}
-
-
 def disconnect_removed_bridge(account_id, endpoint, device):
     """Tell every Bridge socket of a removed device to uninstall itself, then close it."""
     _init()
@@ -549,17 +403,3 @@ def disconnect_removed_bridge(account_id, endpoint, device):
         if "LastEvaluatedKey" not in response:
             return
         kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-
-
-def notify_bridge_sync(session_id, account_id, endpoint, device=None):
-    """Called by REST API to trigger bridge sync via WS. Sends sync_session only to
-    the matching device's bridge (if device given), else all bridges."""
-    _init()
-    for item in _query_connections(account_id, "bridge"):
-        if device and item.get("deviceName", "") != device:
-            continue
-        _post_to_connection(endpoint, item["connectionId"], {
-            "action": "sync_session",
-            "sessionId": session_id,
-            **_runtime_session_fields(session_id),
-        })

@@ -73,9 +73,6 @@
                     "dynamodb:BatchWriteItem"
                   ],
                   "Resource": [
-                    { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
-                    { "Fn::Sub": "${BridgeSessionsTable.Arn}/index/*" },
-                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
                     { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
                     { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
                     { "Fn::GetAtt": ["SystemTable", "Arn"] }
@@ -117,8 +114,6 @@
         "Code": { "ImageUri": { "Ref": "ContainerImageUri" } },
         "Environment": {
           "Variables": {
-            "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
-            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
             "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
@@ -546,33 +541,6 @@
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
     },
-    "WsPingIntegration": {
-      "Type": "AWS::ApiGatewayV2::Integration",
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "MOCK",
-        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
-      }
-    },
-    "WsPingIntegrationResponse": {
-      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "WsPingIntegration" },
-        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
-        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
-      }
-    },
-    "WsPingRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "DependsOn": ["WsPingIntegrationResponse"],
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
-        "Target": { "Fn::Sub": "integrations/${WsPingIntegration}" }
-      }
-    },
-    "WsPingRouteResponse": {
-      "Type": "AWS::ApiGatewayV2::RouteResponse",
-      "Properties": { "ApiId": { "Ref": "WsApi" }, "RouteId": { "Ref": "WsPingRoute" }, "RouteResponseKey": "$default" }
-    },
     "TerminalDirectPingIntegration": {
       "Type": "AWS::ApiGatewayV2::Integration",
       "Properties": {
@@ -649,7 +617,7 @@
         "Environment": {
           "Variables": {
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
-            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "SYSTEM_TABLE": { "Ref": "SystemTable" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
@@ -693,7 +661,7 @@
                 "Resource": [
                   { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
                   { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
-                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                  { "Fn::GetAtt": ["SystemTable", "Arn"] }
                 ]
               },
               {
@@ -745,59 +713,6 @@
             ],
             "Projection": { "ProjectionType": "INCLUDE", "NonKeyAttributes": ["deviceName"] }
           }
-        ],
-        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "BridgeSessionsTable": {
-      "Type": "AWS::DynamoDB::Table",
-      "Properties": {
-        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-sessions" },
-        "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
-          { "AttributeName": "accountId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" },
-          { "AttributeName": "activeStatus", "AttributeType": "S" },
-          { "AttributeName": "threadRootPk", "AttributeType": "S" },
-          { "AttributeName": "threadRootSk", "AttributeType": "S" }
-        ],
-        "KeySchema": [
-          { "AttributeName": "accountId", "KeyType": "HASH" },
-          { "AttributeName": "sk", "KeyType": "RANGE" }
-        ],
-        "GlobalSecondaryIndexes": [
-          {
-            "IndexName": "accountId-activeStatus-index",
-            "KeySchema": [
-              { "AttributeName": "accountId", "KeyType": "HASH" },
-              { "AttributeName": "activeStatus", "KeyType": "RANGE" }
-            ],
-            "Projection": { "ProjectionType": "ALL" }
-          },
-          {
-            "IndexName": "threadRootPk-threadRootSk-index",
-            "KeySchema": [
-              { "AttributeName": "threadRootPk", "KeyType": "HASH" },
-              { "AttributeName": "threadRootSk", "KeyType": "RANGE" }
-            ],
-            "Projection": { "ProjectionType": "ALL" }
-          }
-        ],
-        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "BridgeMessagesTable": {
-      "Type": "AWS::DynamoDB::Table",
-      "Properties": {
-        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-messages" },
-        "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
-          { "AttributeName": "sessionId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" }
-        ],
-        "KeySchema": [
-          { "AttributeName": "sessionId", "KeyType": "HASH" },
-          { "AttributeName": "sk", "KeyType": "RANGE" }
         ],
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }

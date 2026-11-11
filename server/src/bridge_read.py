@@ -1,200 +1,32 @@
 """
-Bridge read routes — app reads session metadata and messages from DDB.
+Bridge read routes — device list, install scripts and stored files.
 Usage: app.include_router(read_router) in main.py
 """
 
-from fastapi import APIRouter, HTTPException, Request, Query, Response
-from fastapi.responses import JSONResponse
-from boto3.dynamodb.conditions import Key
-import asyncio
-from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Request, Query, Response
 import json
 import os
 import re
-from message_history import history_partition
 import api_key as deployment_key
+import devices
 
 read_router = APIRouter(prefix="/api/bridge")
 
-_ddb = None
-_sessions_table = None
-_messages_table = None
-_connections_table = None
-THREAD_ROOT_INDEX_NAME = "threadRootPk-threadRootSk-index"
-NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
 PROTOCOL_VERSION = 2
-MESSAGE_READ_ATTRIBUTES = {
-    f"#m{index}": name
-    for index, name in enumerate((
-        "sk", "uuid", "type", "content", "timestamp",
-        "nativeId", "orderKey", "stopReason", "toolUseResult",
-    ))
-}
-MESSAGE_READ_PROJECTION = ", ".join(MESSAGE_READ_ATTRIBUTES)
-ACTIVE_HOME_ATTRIBUTE_NAMES = {
-    "#sid": "sessionId",
-    "#preview": "preview",
-    "#status": "status",
-    "#active": "activeStatus",
-    "#device": "deviceName",
-    "#project": "projectHash",
-    "#project_name": "projectName",
-    "#last": "lastActive",
-    "#agents": "agentCount",
-    "#running_agents": "runningAgentCount",
-    "#waiting_agents": "needsInputAgentCount",
-    "#is_agent": "isAgent",
-    "#agent_name": "agentName",
-    "#agent_detail": "agentDetail",
-    "#parent": "parentSessionId",
-}
-ACTIVE_HOME_PROJECTION = ", ".join(ACTIVE_HOME_ATTRIBUTE_NAMES)
+_connections_table = None
 
 
-
-def _tables():
-    global _ddb, _sessions_table, _messages_table, _connections_table
-    if _ddb is None:
+def _connections():
+    global _connections_table
+    if _connections_table is None and os.environ.get("CONNECTIONS_TABLE"):
         import boto3
-        _ddb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-        _sessions_table = _ddb.Table(os.environ["BRIDGE_SESSIONS_TABLE"])
-        _messages_table = _ddb.Table(os.environ["BRIDGE_MESSAGES_TABLE"])
-        conn_name = os.environ.get("CONNECTIONS_TABLE")
-        if conn_name:
-            _connections_table = _ddb.Table(conn_name)
-    return _sessions_table, _messages_table
+        _connections_table = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1")) \
+            .Table(os.environ["CONNECTIONS_TABLE"])
+    return _connections_table
 
 
 def _account_id(request: Request) -> str:
     return deployment_key.account_id(request.headers.get("x-api-key", ""))
-
-
-def _runtime_fields(item):
-    runtime = "codex" if item.get("runtime") == "codex" else "claude"
-    session_id = item.get("sessionId", "")
-    native_id = item.get("nativeSessionId", "")
-    if not native_id:
-        native_id = session_id[len("codex:"):] if runtime == "codex" and session_id.startswith("codex:") else session_id
-    return {
-        "runtime": runtime,
-        "nativeSessionId": native_id,
-    }
-
-
-def _thread_fields(item):
-    fields = {
-        "threadKind": item.get("threadKind", "main"),
-        "canSend": item.get("canSend", True),
-    }
-    if item.get("parentSessionId"):
-        fields.update({
-            "parentSessionId": item["parentSessionId"],
-            "agentRole": item.get("agentRole", ""),
-            "agentPath": item.get("agentPath", ""),
-            "agentDepth": item.get("agentDepth", 1),
-        })
-    return fields
-
-
-def _query_all(table, **kwargs):
-    """Query DDB with automatic pagination."""
-    items = []
-    response = table.query(**kwargs)
-    items.extend(response.get("Items", []))
-    while "LastEvaluatedKey" in response:
-        response = table.query(ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
-        items.extend(response.get("Items", []))
-    return items
-
-
-def _parse_timestamp(value):
-    if not value:
-        return None
-    try:
-        text = str(value)
-        if text.endswith("Z"):
-            text = f"{text[:-1]}+00:00"
-        parsed = datetime.fromisoformat(text)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
-
-
-def _public_active_status(item):
-    value = item.get("activeStatus", "")
-    if value in ("running", "needs_input"):
-        return value
-    if str(value).startswith("done#"):
-        return "completed"
-    if item.get("status") == "needs_input" or int(item.get("needsInputAgentCount", 0) or 0) > 0:
-        return "needs_input"
-    if item.get("status") == "running" or int(item.get("runningAgentCount", 0) or 0) > 0:
-        return "running"
-    return "completed"
-
-
-def _active_session_visible(item, online_devices, now=None):
-    status = _public_active_status(item)
-    if status not in ("running", "needs_input"):
-        return False
-    if online_devices is not None and item.get("deviceName", "") not in online_devices:
-        return False
-    if status != "needs_input":
-        return True
-
-    status_time = _parse_timestamp(item.get("lastActive"))
-    if status_time is None:
-        return True
-    current_time = now or datetime.now(timezone.utc)
-    return status_time >= current_time - NEEDS_INPUT_ACTIVE_WINDOW
-
-
-def _online_bridge_devices(account_id):
-    if _connections_table is None:
-        return None
-    try:
-        from bridge_ws import _query_connections
-        rows = _query_connections(account_id, "bridge", table=_connections_table)
-        return {row.get("deviceName", "") for row in rows if row.get("deviceName")}
-    except Exception:
-        return None
-
-
-def _thread_root_pk(account_id, device, project, root_session_id):
-    return f"{account_id}#THREAD#{device}#{project}#{root_session_id}"
-
-
-def _ordered_thread_items(items, root_session_id):
-    roots = [item for item in items if item.get("sessionId") == root_session_id]
-    children_by_parent = {}
-    for item in items:
-        if item.get("threadKind", "main") != "subagent":
-            continue
-        parent_id = item.get("parentSessionId", "")
-        if parent_id:
-            children_by_parent.setdefault(parent_id, []).append(item)
-
-    descendants = []
-    seen = {root_session_id}
-
-    def append_children(parent_id):
-        children = sorted(
-            children_by_parent.get(parent_id, []),
-            key=lambda item: (item.get("lastActive", ""), item.get("sessionId", "")),
-            reverse=True,
-        )
-        for child in children:
-            child_id = child.get("sessionId", "")
-            if not child_id or child_id in seen:
-                continue
-            seen.add(child_id)
-            descendants.append(child)
-            append_children(child_id)
-
-    append_children(root_session_id)
-    return roots + descendants
 
 
 @read_router.get("/config")
@@ -205,327 +37,34 @@ async def get_config():
     return {"wsUrl": ws_url}
 
 
-@read_router.get("/active-sessions")
-async def get_active_sessions(request: Request):
-    """Active root sessions; the Bridge's checkStopped settles the stale ones (M2 removes it)."""
-    sessions_table, _ = _tables()
-    account_id = _account_id(request)
-    loop = asyncio.get_running_loop()
-    active_items, online_devices = await asyncio.gather(
-        loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"),
-            ProjectionExpression=ACTIVE_HOME_PROJECTION,
-            ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES)),
-        loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
-    )
-    sessions = []
-    for item in active_items:
-        if item.get("parentSessionId") or not _active_session_visible(item, online_devices):
-            continue
-        pn = item.get("projectName", "")
-        session = {
-            "sessionId": item.get("sessionId", ""),
-            "preview": item.get("preview", ""),
-            "deviceName": item.get("deviceName", ""),
-            "projectHash": item.get("projectHash", ""),
-            "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
-            "lastActive": item.get("lastActive", ""),
-            "agentCount": item.get("agentCount", 0),
-            "status": _public_active_status(item),
-        }
-        if item.get("isAgent"):
-            session["isAgent"] = True
-            session["agentName"] = item.get("agentName", "")
-        if item.get("status") == "needs_input" and item.get("agentDetail"):
-            session["agentDetail"] = item.get("agentDetail", "")
-        sessions.append(session)
-    sessions.sort(key=lambda x: x["lastActive"], reverse=True)
-    return {"sessions": sessions}
-
-
 @read_router.get("/devices")
 async def get_devices(request: Request):
-    """v2: names and online state only; counts come from each Bridge. `rpc` addresses the
+    """Names and online state only; counts come from each Bridge. `rpc` addresses the
     joined Bridges directly (see direct_rpc_ws)."""
-    sessions_table, _ = _tables()
     account_id = _account_id(request)
-    items = _query_all(
-        sessions_table,
-        KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with("DEV#"),
-        ProjectionExpression="#device, #display, #os",
-        ExpressionAttributeNames={"#device": "deviceName", "#display": "deviceDisplayName", "#os": "os"},
-    )
+    items = devices.list_devices(account_id)
+    connections = _connections()
     bridges = []
-    if _connections_table is not None:
+    if connections is not None:
         from bridge_ws import _query_connections
         try:
-            bridges = _query_connections(account_id, "bridge", table=_connections_table)
+            bridges = _query_connections(account_id, "bridge", table=connections)
         except Exception as error:
             print(f"bridge connections unavailable: {error}")
     online_devices = {row.get("deviceName", "") for row in bridges}
-    devices = [{
+    result = {"protocol": PROTOCOL_VERSION, "devices": [{
         "deviceName": item["deviceName"],
         "deviceDisplayName": item.get("deviceDisplayName") or item["deviceName"],
         "os": item.get("os", ""),
         "online": item["deviceName"] in online_devices,
-    } for item in items if item.get("deviceName")]
-    result = {"protocol": PROTOCOL_VERSION, "devices": devices}
-    if _connections_table is not None:
+    } for item in items if item.get("deviceName")]}
+    if connections is not None:
         from direct_rpc_ws import rpc_info
         try:
             result["rpc"] = rpc_info(account_id, lambda account, role, device="": bridges)
         except Exception as error:
             print(f"rpc credentials unavailable: {error}")
     return result
-
-
-@read_router.get("/session-threads")
-async def get_session_threads(
-    request: Request,
-    device: str = Query(...),
-    project: str = Query(...),
-    session: str = Query(...),
-):
-    sessions_table, _ = _tables()
-    account_id = _account_id(request)
-    items = []
-    try:
-        items = _query_all(
-            sessions_table,
-            IndexName=THREAD_ROOT_INDEX_NAME,
-            KeyConditionExpression=Key("threadRootPk").eq(
-                _thread_root_pk(account_id, device, project, session)
-            ),
-        )
-    except Exception:
-        items = []
-
-    ordered_items = _ordered_thread_items(items, session)
-    root_item = ordered_items[0] if ordered_items else None
-    expected_count = int(root_item.get("agentCount", 0)) if root_item else 0
-    if not root_item or len(ordered_items) - 1 < expected_count:
-        project_items = _query_all(
-            sessions_table,
-            KeyConditionExpression=Key("accountId").eq(account_id)
-            & Key("sk").begins_with(f"SESS#{device}#{project}#"),
-        )
-        ordered_items = _ordered_thread_items(project_items, session)
-
-    def to_thread(item):
-        thread = {
-            "sessionId": item.get("sessionId", ""),
-            "preview": item.get("preview", ""),
-            "status": item.get("status", "completed"),
-            "lastActive": item.get("lastActive", ""),
-            "size": item.get("size", 0),
-            "agentName": item.get("agentName", ""),
-            "agentRole": item.get("agentRole", ""),
-            **_runtime_fields(item),
-            **_thread_fields(item),
-        }
-        return thread
-
-    threads = [to_thread(item) for item in ordered_items]
-    return {"rootSessionId": session, "threads": threads}
-
-
-def _parse_messages(items):
-    """Convert DDB items to message dicts."""
-    messages = []
-    for item in items:
-        content = item.get("content", "")
-        try:
-            content = json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "thinking":
-                    block.pop("signature", None)
-        msg = {
-            "uuid": item.get("uuid", ""),
-            "type": item.get("type", ""),
-            "content": content,
-            "timestamp": item.get("timestamp", ""),
-        }
-        if item.get("nativeId"):
-            msg["nativeId"] = item["nativeId"]
-        if item.get("orderKey"):
-            msg["orderKey"] = item["orderKey"]
-        if item.get("stopReason"):
-            msg["stopReason"] = item["stopReason"]
-        tur = item.get("toolUseResult", "")
-        if tur:
-            try:
-                msg["toolUseResult"] = json.loads(tur)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        messages.append(msg)
-    return messages
-
-
-def _message_session_status(request, sessions_table, session, device, project):
-    if not device or not project:
-        return ""
-    try:
-        item = sessions_table.get_item(
-            Key={
-                "accountId": _account_id(request),
-                "sk": f"SESS#{device}#{project}#{session}",
-            },
-            ConsistentRead=True,
-        ).get("Item", {})
-    except Exception as error:
-        print(f"message status read error: {error}")
-        return ""
-    status = item.get("status", "")
-    return status if status in ("running", "needs_input", "completed") else ""
-
-
-# Lambda invoke-response hard limit is 6MB (measured on the base64-encoded body
-# the Lambda Web Adapter produces). base64 inflates ~33% and gzip barely helps
-# image-heavy pages, so we cap the *uncompressed* JSON well under that: 4MB of
-# JSON → ~5.3MB after base64, safely below 6MB even if gzip does nothing.
-MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-
-
-def _trim_to_budget(messages):
-    """Keep the newest messages within the Lambda response budget."""
-    total, kept = 0, []
-    for m in messages:
-        size = len(str(m.get("content", ""))) + len(str(m.get("toolUseResult", "")))
-        if kept and total + size > MAX_RESPONSE_BYTES:
-            return kept, True
-        kept.append(m)
-        total += size
-    return kept, False
-
-
-def _query_page(table, limit, **kwargs):
-    """Query DDB with a limit, returning (items, has_more)."""
-    items = []
-    response = table.query(Limit=limit, **kwargs)
-    items.extend(response.get("Items", []))
-    has_more = "LastEvaluatedKey" in response
-    if len(items) >= limit:
-        return items[:limit], True
-    while "LastEvaluatedKey" in response and len(items) < limit:
-        remaining = limit - len(items)
-        response = table.query(Limit=remaining, ExclusiveStartKey=response["LastEvaluatedKey"], **kwargs)
-        items.extend(response.get("Items", []))
-    return items[:limit], "LastEvaluatedKey" in response or len(items) > limit
-
-
-@read_router.get("/messages")
-async def get_messages(
-    request: Request,
-    session: str = Query(...),
-    after: str = Query(None),
-    before: str = Query(None),
-    device: str = Query(None),
-    limit: int = Query(None),
-    project: str = Query(None),
-):
-    sessions_table, messages_table = _tables()
-    status_future = None
-    if device and project:
-        status_future = asyncio.get_running_loop().run_in_executor(
-            None, _message_session_status, request,
-            sessions_table, session, device, project,
-        )
-    partition = history_partition(messages_table, session)
-    ordered = partition != session
-    history_reset = bool(before and (before.startswith("O2#") != ordered))
-    if history_reset:
-        before = None
-
-    async def with_status(payload):
-        status = await status_future if status_future else ""
-        if status:
-            payload["status"] = status
-        if history_reset:
-            payload["historyReset"] = True
-        return JSONResponse(payload)
-
-    if after:
-        if ordered and not after.startswith("O2#"):
-            return await with_status({"messages": [], "hasMore": False, "needSync": False, "historyReset": True})
-        # Forward query: used by WS reconnect recovery
-        items = _query_all(
-            messages_table,
-            KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").gt(f"{after}#\xff"),
-            ProjectionExpression=MESSAGE_READ_PROJECTION,
-            ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
-        )
-        messages = _parse_messages(items)
-        return await with_status({
-            "messages": messages,
-            "hasMore": False,
-            "needSync": False,
-        })
-
-    page_limit = min(limit, 500) if limit else 200
-
-    if before:
-        # Reverse query: fetch messages before the opaque DDB sort-key cursor.
-        items, has_more = _query_page(
-            messages_table,
-            page_limit,
-            KeyConditionExpression=Key("sessionId").eq(partition) & Key("sk").lt(f"{before}"),
-            ScanIndexForward=False,
-            ProjectionExpression=MESSAGE_READ_PROJECTION,
-            ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
-        )
-        # items are newest-first; trim the older tail that overflows the 6MB
-        # response cap, keeping the newest messages closest to `before`.
-        messages = _parse_messages(items)
-        messages, trimmed = _trim_to_budget(messages)
-        oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
-        messages.reverse()
-        return await with_status({
-            "messages": messages,
-            "hasMore": has_more or trimmed,
-            "oldestTimestamp": oldest_cursor,
-            "needSync": False,
-        })
-
-    # Default: fetch latest N messages (reverse scan, then flip).
-    # ConsistentRead=True closes the eventual-consistency window after a bridge
-    # sync write — without it, the second /messages call after sync_complete
-    # can briefly miss rows that the bridge just wrote.
-    items, has_more = _query_page(
-        messages_table,
-        page_limit,
-        KeyConditionExpression=Key("sessionId").eq(partition),
-        ScanIndexForward=False,
-        ConsistentRead=True,
-        ProjectionExpression=MESSAGE_READ_PROJECTION,
-        ExpressionAttributeNames=MESSAGE_READ_ATTRIBUTES,
-    )
-    # items are newest-first; trim the older tail that overflows the 6MB cap.
-    messages = _parse_messages(items)
-    messages, trimmed = _trim_to_budget(messages)
-    has_more = has_more or trimmed
-    oldest_cursor = items[len(messages) - 1].get("sk", "") if messages else ""
-    messages.reverse()
-
-    need_sync = len(messages) == 0 or not ordered
-    if need_sync:
-        try:
-            account_id = _account_id(request)
-            ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
-            if ws_endpoint:
-                from bridge_ws import notify_bridge_sync
-                notify_bridge_sync(session, account_id, ws_endpoint, device)
-        except Exception as e:
-            print(f"needSync trigger error: {e}")
-
-    return await with_status({
-        "messages": messages,
-        "hasMore": has_more,
-        "oldestTimestamp": oldest_cursor,
-        "needSync": need_sync,
-    })
 
 
 def _powershell_literal(value):
@@ -576,12 +115,7 @@ async def validate_device_name(
     mode: str = Query("identity"),
     current: str = Query(""),
 ):
-    sessions_table, _ = _tables()
-    items = _query_all(
-        sessions_table,
-        KeyConditionExpression=Key("accountId").eq(_account_id(request)) & Key("sk").begins_with("DEV#"),
-        ProjectionExpression="deviceName, deviceDisplayName",
-    )
+    items = devices.list_devices(_account_id(request))
     normalized, error = _check_device_name(items, name, mode, current)
     return {"ok": not error, "name": normalized, "error": error}
 
@@ -903,8 +437,6 @@ def install_script(request: Request, api_key: str, name, platform: str):
     s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     url = s3.generate_presigned_url("get_object",
         Params={"Bucket": bucket, "Key": "install/bridge.tar.gz"}, ExpiresIn=3600)
-    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
-    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
     # Use x-forwarded headers from API GW if available
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", "")

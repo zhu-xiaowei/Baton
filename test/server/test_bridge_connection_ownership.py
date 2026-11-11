@@ -41,6 +41,10 @@ class ConnectionTable:
         return {'Attributes': previous}
 
 
+def online(account):
+    return {row.get('deviceName') for row in bridge_ws._query_connections(account, 'bridge')}
+
+
 @pytest.fixture
 def connections(monkeypatch):
     table = ConnectionTable()
@@ -80,7 +84,7 @@ def test_handover_fences_old_handshakes_and_old_installations(connections):
     account = bridge_ws._account_id('key')
     assert [row['connectionId'] for row in bridge_ws._query_connections(account, 'bridge')] == ['new']
     assert connections.retired == [('old', True), ('old', True)]
-    assert bridge_read._online_bridge_devices(account) == {'Mac'}
+    assert online(account) == {'Mac'}
 
 
 def test_routing_uses_current_owner_despite_stale_or_empty_index(connections):
@@ -96,13 +100,13 @@ def test_routing_uses_current_owner_despite_stale_or_empty_index(connections):
     assert [row['connectionId'] for row in rows] == ['new']
     connections.index_rows = None
     connections.rows.pop(connections.rows['new']['bridgeOwner'])
-    assert bridge_read._online_bridge_devices(account) == set()
+    assert online(account) == set()
 
 
 def test_online_lease_matches_four_minute_heartbeat(connections, monkeypatch):
     connect('new', 1000)
     account = bridge_ws._account_id('key')
     monkeypatch.setattr(bridge_ws.time, 'time', lambda: 1_800_000_241)
-    assert bridge_read._online_bridge_devices(account) == {'Mac'}
+    assert online(account) == {'Mac'}
     monkeypatch.setattr(bridge_ws.time, 'time', lambda: 1_800_000_246)
-    assert bridge_read._online_bridge_devices(account) == set()
+    assert online(account) == set()
