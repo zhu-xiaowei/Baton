@@ -9,7 +9,8 @@ function terminalConfiguration(server, key) {
   }
   if (configuration?.server === server && configuration.key === key) return configuration.promise;
   const current = configuration = { server, key };
-  current.promise = fetch(`${server}/api/bridge/config`, {
+  // /devices carries the control socket's address.
+  current.promise = fetch(`${server}/api/bridge/devices`, {
     headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000),
   }).then(response => {
     if (!response.ok) throw new Error(`Remote config failed: HTTP ${response.status}`);

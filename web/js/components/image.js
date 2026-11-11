@@ -8,6 +8,7 @@ import { contentHash } from './content-hash.js';
 import { progressRingHtml, setProgressRingPercent } from './progress-ring.js';
 import { syncComposerDraft } from '../drafts/composer-draft.js';
 import { openAttachmentPicker } from './attachment-picker.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -100,7 +101,7 @@ async function uploadStagedFile(entry) {
     if (entry.size > FILE_MAX_BYTES) throw new Error('File exceeds the 512 MB limit');
     const hash = await contentHash(entry.file, entry.controller.signal);
     if (!state.stagedImages.includes(entry)) return;
-    const prepared = await window.apiPost('/api/bridge/file-prepare', {
+    const prepared = await transfer.prepareUpload({
       name: entry.name, size: entry.size, contentType: entry.file.type || 'application/octet-stream',
       contentHash: hash,
     });
@@ -160,7 +161,8 @@ function stageImageFile(file) {
       renderStagedImages();
 
       // Upload immediately
-      apiPost('/api/bridge/upload-image', { key: key, data: base64 })
+      fetch(dataUrl).then(function (response) { return response.blob(); })
+        .then(function (blob) { return transfer.put(key, blob, { contentType: 'image/jpeg' }); })
         .then(function () {
           entry.uploaded = true;
           renderStagedImages();

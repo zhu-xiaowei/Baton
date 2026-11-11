@@ -31,10 +31,29 @@ def _ticket_key(token):
     return "RPCJOIN#" + hashlib.sha256(token.encode()).hexdigest()
 
 
+def storage_info(account_id):
+    """Where this account's files travel: t/<accountId>/ in the attachment bucket (see transfer-store.mjs)."""
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket or not re.fullmatch(r"[0-9a-f]{16}", account_id):
+        return None
+    return {"bucket": bucket, "region": os.environ["AWS_REGION"], "accountId": account_id,
+            "accelerate": os.environ.get("S3_UPLOAD_ACCELERATE", "false").lower() == "true"}
+
+
+def session_policy(account_id, role_arn, region):
+    """The data API, plus reading and writing this account's transfer prefix only."""
+    policy = callback_policy(data_endpoint(), role_arn, region)
+    storage = storage_info(account_id)
+    if storage:
+        partition = role_arn.split(":")[1]
+        policy["Statement"].append({"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+            "Resource": f"arn:{partition}:s3:::{storage['bucket']}/t/{account_id}/*"})
+    return policy
+
+
 def issue_credentials(account_id, sts=None):
-    """Data-API credentials for an App or a Bridge. API Gateway authorizes @connections on the
-    route template (`@connections/{connectionId}`), not on the connection id, so they cannot be
-    narrowed to single sockets. Cross-account isolation is a phase-2 item."""
+    """Credentials for an App or a Bridge of one account: the data API (API Gateway authorizes
+    @connections on the route template, not per socket) and the account's transfer prefix."""
     cached = _credential_cache.get(account_id)
     if cached and cached["expiresAt"] - time.time() > CREDENTIAL_REUSE_MARGIN:
         return cached
@@ -42,7 +61,7 @@ def issue_credentials(account_id, sts=None):
     role_arn = os.environ["TERMINAL_DIRECT_ROLE_ARN"]
     sts = sts or boto3.client("sts", region_name=region)
     result = sts.assume_role(RoleArn=role_arn, RoleSessionName="rpc-" + uuid.uuid4().hex[:20],
-        DurationSeconds=CREDENTIAL_SECONDS, Policy=json.dumps(callback_policy(data_endpoint(), role_arn, region)))
+        DurationSeconds=CREDENTIAL_SECONDS, Policy=json.dumps(session_policy(account_id, role_arn, region)))
     credentials = result["Credentials"]
     value = {"accessKeyId": credentials["AccessKeyId"], "secretAccessKey": credentials["SecretAccessKey"],
         "sessionToken": credentials["SessionToken"], "expiresAt": int(credentials["Expiration"].timestamp())}
@@ -56,10 +75,8 @@ def rpc_info(account_id, query, sts=None):
     """Bridges an App can address directly, plus data-API credentials (see issue_credentials)."""
     bridges = [{"device": bridge.get("deviceName", ""), "dataId": bridge["rpcDataId"]}
                for bridge in query(account_id, "bridge") if bridge.get("rpcDataId")]
-    info = {"bridges": bridges, "endpoint": data_endpoint()}
-    if bridges:
-        info["credentials"] = issue_credentials(account_id, sts)
-    return info
+    return {"bridges": bridges, "endpoint": data_endpoint(), "credentials": issue_credentials(account_id, sts),
+            "storage": storage_info(account_id)}
 
 
 def notify_apps(account_id, query, post, sts=None):
@@ -77,7 +94,8 @@ def handle_direct_rpc(body, conn, connection_id, endpoint, *, table, query, post
     account_id = conn.get("accountId", "")
     if operation == "credentials" and role == "bridge":
         post(endpoint, connection_id, {"action": "direct_rpc", "type": "credentials", "endpoint": data_endpoint(),
-            "region": os.environ["AWS_REGION"], "credentials": issue_credentials(account_id, sts)})
+            "region": os.environ["AWS_REGION"], "credentials": issue_credentials(account_id, sts),
+            "storage": storage_info(account_id)})
         return {"statusCode": 200}
     if operation == "bridge_token" and role == "bridge" and conn.get("deviceName"):
         token = secrets.token_hex(32)

@@ -34,6 +34,7 @@ function parseArgs() {
     if (args[i] === '--server' && args[i + 1]) parsed.server = args[++i];
     else if (args[i] === '--key' && args[i + 1]) parsed.apiKey = args[++i];
     else if (args[i] === '--name' && args[i + 1]) parsed.deviceName = args[++i];
+    else if (args[i] === '--ws' && args[i + 1]) parsed.wsUrl = args[++i];
   }
   return parsed;
 }
@@ -60,7 +61,7 @@ export function loadConfig() {
       deviceName,
       deviceDisplayName: existing?.deviceDisplayName || deviceName,
       bridgeId: existing?.bridgeId,
-      wsUrl: existing?.server === cliArgs.server ? existing?.wsUrl : undefined,
+      wsUrl: cliArgs.wsUrl || (existing?.server === cliArgs.server ? existing?.wsUrl : undefined),
     };
     saveConfig(config);
     console.log(`Config saved to ${CONFIG_PATH}`);
@@ -71,7 +72,7 @@ export function loadConfig() {
       saveConfig(config);
     }
   } else {
-    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');
+    console.error('Usage: node bridge.mjs --server URL --key API_KEY --ws WSS_URL [--name DEVICE_NAME]');
     process.exit(1);
   }
   if (!/^[a-f0-9]{32}$/.test(config.bridgeId || '')) {
@@ -123,17 +124,4 @@ export function uninstallBridge({ platform = process.platform, home = os.homedir
     run('schtasks', ['/Delete', '/TN', 'Baton Presence', '/F']);
   }
   fs.rmSync(path.join(home, '.baton-bridge', 'config.json'), { force: true });
-}
-
-export async function fetchServerConfig(config) {
-  try {
-    const res = await fetch(`${config.server}/api/bridge/config`, {
-      headers: { 'x-api-key': config.apiKey },
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.ok) return await res.json();
-  } catch (err) {
-    console.error(`Failed to fetch server config: ${err.message}`);
-  }
-  return {};
 }

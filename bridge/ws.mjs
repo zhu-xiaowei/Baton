@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { resolveBridgeAttachments } from './attachments.mjs';
+import { setTransferAccess, transfer } from './transfer-store.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -968,6 +969,10 @@ function viewedOnApp(rootSessionId, eventId) {
   });
 }
 configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp });
+setTransferAccess(() => {
+  if (!_directRpc) throw new Error('File storage is unavailable');
+  return _directRpc.storageAccess();
+});
 
 // A root's child counts changed: the pages showing that root refresh their thread list.
 onAgentCountUpdates((updates) => {
@@ -1062,7 +1067,7 @@ async function handleSendMessage(
 
   let resolved;
   try {
-    resolved = await resolveBridgeImages(await resolveBridgeAttachments(text, _config));
+    resolved = await resolveBridgeImages(await resolveBridgeAttachments(text));
   } catch (error) {
     wsSend({
       action: 'send_message_result', ok: false, sessionId, requestId, turnId,
@@ -1979,11 +1984,7 @@ async function downloadBridgeImage(key) {
     const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
-    const metadata = await fetch(`${_config.server}/api/bridge/image-url/${encodeURIComponent(key)}`,
-      { headers: { 'x-api-key': _config.apiKey } });
-    if (!metadata.ok) return null;
-    const { url } = await metadata.json();
-    const res = await fetch(url);
+    const res = await fetch(await transfer.url(key));
     if (!res.ok) return null;
     fs.writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
     return localPath;

@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, fetchServerConfig, removeServiceKeyArgs, saveConfig } from './config.mjs';
+import { loadConfig, removeServiceKeyArgs } from './config.mjs';
 import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
@@ -36,11 +36,9 @@ process.on('exit', () => releaseInstanceLock());
 let shuttingDown = false;
 let updateInProgress = false;
 let nextUpdateCheckAt = 0;
-let wsConfigRetry = null;
 async function shutdownBridge(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  clearInterval(wsConfigRetry);
   await shutdownInteractions();
   process.exit(exitCode);
 }
@@ -52,30 +50,17 @@ if (removeServiceKeyArgs()) console.log('[init] removed the key from the service
 cleanupStagedBridge(BRIDGE_HOME);
 initHttp(CONFIG);
 
-const serverConfig = await fetchServerConfig(CONFIG);
-if (serverConfig.wsUrl) { CONFIG.wsUrl = serverConfig.wsUrl; saveConfig(CONFIG); }
-
 console.log('Baton Bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
-if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
+console.log(`  ws:       ${CONFIG.wsUrl || '-'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
-if (CONFIG.wsUrl) {
-  initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
-} else {
-  console.log('[ws] wsUrl not available, will retry every 5 seconds');
-  wsConfigRetry = setInterval(async () => {
-    const sc = await fetchServerConfig(CONFIG);
-    if (shuttingDown) return;
-    if (sc.wsUrl) {
-      CONFIG.wsUrl = sc.wsUrl;
-      saveConfig(CONFIG);
-      clearInterval(wsConfigRetry);
-      initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
-    }
-  }, 5000);
+if (!CONFIG.wsUrl) {
+  console.error('[ws] config.json has no wsUrl; run the install command from Setup again');
+  process.exit(1);
 }
+initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
 const warmed = sessionIndex.warm().catch((error) => console.error(`[session-index] warm failed: ${error.message}`));

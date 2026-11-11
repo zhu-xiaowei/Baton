@@ -2,6 +2,7 @@ import { state } from '../state.js';
 import { layoutPixels } from '../page-zoom.js';
 import { requestProjectFiles } from '../project/rpc.js';
 import { loadVisualizationIcons } from './visualization-icons.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 const previews = new WeakMap();
 const documents = new Map();
@@ -255,7 +256,7 @@ async function fetchDocument(filePath, current, reload) {
     }
     let content = response.content;
     if (!content && response.key && response.size > 0) {
-      content = await window.apiText('/api/bridge/file/' + encodeURIComponent(response.key));
+      content = await transfer.text(response.key);
     }
     if (typeof content !== 'string') throw new Error('Preview content is unavailable.');
     if (new TextEncoder().encode(content).length > maxBytes || content.includes('\0')) {

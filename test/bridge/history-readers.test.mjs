@@ -222,11 +222,12 @@ test('an image is compressed and uploaded once, however often its page is read',
     rows.push({ type: 'user', uuid: `i${i}`, timestamp: '2026-11-01T00:00:00.000Z', message: { role: 'user', content: [await image(color), { type: 'text', text: `look ${i}` }] } });
   }
   fs.writeFileSync(file, json(rows).join('\n') + '\n');
-  (await import('../../bridge/http.mjs')).initHttp({ server: 'https://baton.test', apiKey: 'k' });
-  const realFetch = globalThis.fetch;
+  const { transfer } = await import('../../bridge/transfer-store.mjs');
+  const real = { head: transfer.head, put: transfer.put };
   let uploads = 0;
   let ok = false;
-  globalThis.fetch = async (url) => { if (String(url).endsWith('/upload-image')) uploads++; return { ok, text: async () => '' }; };
+  transfer.head = async () => null;
+  transfer.put = async () => { uploads++; if (!ok) throw new Error('offline'); };
   try {
     const reader = new ClaudeHistoryReader(file);
     reader.update();
@@ -236,7 +237,7 @@ test('an image is compressed and uploaded once, however often its page is read',
     for (let i = 0; i < 3; i++) await reader.page({ limit: 50 });
     assert.equal(uploads, 5, 'then each distinct image is uploaded once');
   } finally {
-    globalThis.fetch = realFetch;
+    Object.assign(transfer, real);
   }
 });
 

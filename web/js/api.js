@@ -14,6 +14,7 @@ import { currentProjectHash, relativeProjectImagePath } from './project/project-
 import { expandedHome, loadHomeV2 } from './v2/home.js';
 import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
+import { transfer } from '../../bridge/transfer-store.mjs';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -209,8 +210,7 @@ async function getImageUrl(key, attachment = false) {
     var blob = await cachedAttachmentBlob(storeKey);
     var file = null;
     if (!blob) {
-      file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
-        attachment ? { attachment: 'true' } : undefined);
+      file = { url: await transfer.url(key) };
       blob = await fetch(file.url).then(function (response) { return response.ok ? response.blob() : null; })
         .catch(function () { return null; });
       if (!blob) {

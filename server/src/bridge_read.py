@@ -1,10 +1,10 @@
 """
-Bridge read routes — device list, install scripts and stored files.
+Bridge routes — device list and removal, install scripts.
 Usage: app.include_router(read_router) in main.py
 """
 
 from fastapi import APIRouter, Request, Query, Response
-import json
+from pydantic import BaseModel, Field
 import os
 import re
 import api_key as deployment_key
@@ -29,12 +29,29 @@ def _account_id(request: Request) -> str:
     return deployment_key.account_id(request.headers.get("x-api-key", ""))
 
 
-@read_router.get("/config")
-async def get_config():
-    """Return server configuration (WS URL etc.) for bridge/app auto-discovery."""
-    ws_endpoint = os.environ.get("WS_API_ENDPOINT", "")
-    ws_url = ws_endpoint.replace("https://", "wss://") if ws_endpoint else ""
-    return {"wsUrl": ws_url}
+def _ws_url():
+    """The control socket: the Bridge keeps it in config.json, the App gets it with /devices."""
+    endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    return endpoint.replace("https://", "wss://") if endpoint else ""
+
+
+class DeleteDeviceRequest(BaseModel):
+    deviceName: str = Field(min_length=1)
+
+
+@read_router.post("/delete-device")
+async def delete_device(req: DeleteDeviceRequest, raw: Request):
+    """Remove a device: its Bridge is told to uninstall itself and disconnected, then its row goes."""
+    account_id = _account_id(raw)
+    endpoint = os.environ.get("WS_API_ENDPOINT", "")
+    if endpoint:
+        try:
+            from bridge_ws import disconnect_removed_bridge
+            disconnect_removed_bridge(account_id, endpoint, req.deviceName)
+        except Exception as e:
+            print(f"removed bridge disconnect failed: {e}")
+    devices.delete_device(account_id, req.deviceName)
+    return {"ok": True}
 
 
 @read_router.get("/devices")
@@ -52,7 +69,7 @@ async def get_devices(request: Request):
         except Exception as error:
             print(f"bridge connections unavailable: {error}")
     online_devices = {row.get("deviceName", "") for row in bridges}
-    result = {"protocol": PROTOCOL_VERSION, "devices": [{
+    result = {"protocol": PROTOCOL_VERSION, "wsUrl": _ws_url(), "devices": [{
         "deviceName": item["deviceName"],
         "deviceDisplayName": item.get("deviceDisplayName") or item["deviceName"],
         "os": item.get("os", ""),
@@ -186,6 +203,7 @@ fi"""
 def _windows_install_script(url, server, api_key, name):
     package = _powershell_literal(url)
     server_value = _powershell_literal(server)
+    ws_value = _powershell_literal(_ws_url())
     key_value = _powershell_literal(api_key)
     name_value = _powershell_literal(name)
     validation_uri = _powershell_literal(f"{server}/api/bridge/device-name/validate")
@@ -334,7 +352,7 @@ def _windows_install_script(url, server, api_key, name):
         "  }",
         "} finally { Pop-Location }",
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
-        f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
+        f"$config = @{{ server = {server_value}; wsUrl = {ws_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
         "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
         "$utf8 = New-Object System.Text.UTF8Encoding($false)",
         "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
@@ -475,11 +493,11 @@ def install_script(request: Request, api_key: str, name, platform: str):
         '    node verify-dependencies.mjs\n'
         '}\n'
         'install_bridge_dependencies || { sleep 2; install_bridge_dependencies; }\n'
-        f'BATON_SERVER={_shell_literal(server)} BATON_API_KEY={_shell_literal(api_key)} '
+        f'BATON_SERVER={_shell_literal(server)} BATON_WS_URL={_shell_literal(_ws_url())} BATON_API_KEY={_shell_literal(api_key)} '
         'BATON_DEVICE_NAME="$NAME" BATON_DEVICE_DISPLAY_NAME="$DEVICE_DISPLAY_NAME" '
         'node -e \'const fs=require("fs");const p=process.argv[1];'
         'let existing={};try{existing=JSON.parse(fs.readFileSync(p,"utf8"));}catch{}'
-        'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
+        'const config={server:process.env.BATON_SERVER,wsUrl:process.env.BATON_WS_URL,apiKey:process.env.BATON_API_KEY,'
         'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
         'if(existing.bridgeId)config.bridgeId=existing.bridgeId;'
         'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n'
@@ -567,44 +585,3 @@ def install_script(request: Request, api_key: str, name, platform: str):
         'fi\n'
     )
     return Response(content=script, media_type="text/plain")
-
-
-@read_router.get("/file/{key}")
-async def get_file(key: str):
-    import boto3
-    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
-    if not bucket:
-        return Response(status_code=500, content="BRIDGE_IMAGES_BUCKET not configured")
-    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    try:
-        obj = s3.get_object(Bucket=bucket, Key=f"files/{key}")
-        body = obj["Body"].read()
-        return Response(content=body, media_type="text/plain; charset=utf-8")
-    except s3.exceptions.NoSuchKey:
-        return Response(status_code=404, content="Not found")
-    except Exception as e:
-        return Response(status_code=404, content=f"Not found: {e}")
-
-
-@read_router.get("/video-url/{key}")
-async def get_video_url(key: str):
-    """Return a short-lived presigned GET URL so the browser <video> element streams
-    videos/{key} directly from S3 (with Range/seek), bypassing the Lambda 6MB limit."""
-    import boto3
-    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
-    if not bucket:
-        return Response(status_code=500, content="BRIDGE_IMAGES_BUCKET not configured")
-    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    try:
-        s3.head_object(Bucket=bucket, Key=f"videos/{key}")
-    except Exception:
-        return Response(status_code=404, content="Not found")
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket, "Key": f"videos/{key}"},
-        ExpiresIn=3600,
-    )
-    # Must NOT be cached by CloudFront — the presigned URL expires in 1h, but the
-    # CDN's default GET cache is 1 day, which would serve a stale/expired signature.
-    return Response(content=json.dumps({"url": url}), media_type="application/json",
-                    headers={"Cache-Control": "no-store"})

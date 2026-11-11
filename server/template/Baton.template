@@ -95,11 +95,8 @@
                 },
                 {
                   "Effect": "Allow",
-                  "Action": [
-                    "s3:PutObject",
-                    "s3:GetObject"
-                  ],
-                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/*" }
+                  "Action": "s3:GetObject",
+                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/install/*" }
                 }
               ]
             }
@@ -472,6 +469,9 @@
           "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
             "Effect": "Allow", "Action": "execute-api:ManageConnections",
             "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/v1/POST/@connections/*" }
+          }, {
+            "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+            "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${ImagesBucketName}/t/*" }
           }] }
         }]
       }
@@ -618,6 +618,8 @@
           "Variables": {
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
+            "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },

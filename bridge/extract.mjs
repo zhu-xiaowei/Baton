@@ -1,7 +1,7 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import { post } from './http.mjs';
+import { transfer } from './transfer-store.mjs';
 import { VALID_TYPES } from './config.mjs';
 import { stripToolResultBase64 } from './tool-preview.mjs';
 
@@ -18,22 +18,25 @@ export function countJsonlLines(filePath) {
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
 
-// History pages are read again and again: each image is compressed and uploaded once per run.
+// History pages are read again and again: each image is compressed and uploaded once a day
+// (transfer objects live 7 days).
 const IMAGE_MEMO_LIMIT = 500;
-const imageKeys = new Map(); // sha1(base64) → Promise<key>
+const IMAGE_MEMO_MS = 86400_000;
+const imageKeys = new Map(); // sha1(base64) → { job: Promise<key>, at }
 
 function processImage(base64Data) {
   const id = crypto.createHash('sha1').update(base64Data).digest('hex');
-  let job = imageKeys.get(id);
-  if (!job) {
+  let entry = imageKeys.get(id);
+  if (!entry || Date.now() - entry.at > IMAGE_MEMO_MS) {
+    imageKeys.delete(id);
     if (imageKeys.size >= IMAGE_MEMO_LIMIT) imageKeys.delete(imageKeys.keys().next().value);
-    job = compressAndUpload(base64Data).then(({ key, ok }) => {
+    entry = { at: Date.now(), job: compressAndUpload(base64Data).then(({ key, ok }) => {
       if (!ok) imageKeys.delete(id); // tried again next time
       return key;
-    }, (error) => { imageKeys.delete(id); throw error; });
-    imageKeys.set(id, job);
+    }, (error) => { imageKeys.delete(id); throw error; }) };
+    imageKeys.set(id, entry);
   }
-  return job;
+  return entry.job;
 }
 
 async function compressAndUpload(base64Data) {
@@ -47,8 +50,12 @@ async function compressAndUpload(base64Data) {
   const hash = crypto.createHash('md5').update(hashInput).digest('hex');
   const key = `${hash}.jpg`;
 
-  const res = await post('/api/bridge/upload-image', { key, data: compressed.toString('base64') });
-  return { key, ok: !!res?.ok };
+  try {
+    if (!await transfer.head(key)) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
+    return { key, ok: true };
+  } catch {
+    return { key, ok: false };
+  }
 }
 
 export async function extractForApp(msg) {

@@ -110,6 +110,13 @@ export class DirectRpcBridge {
     return this.auth;
   }
 
+  // The account's S3 transfer area with the same credentials (see transfer-store.mjs).
+  async storageAccess() {
+    const auth = await this.authorization();
+    if (!auth?.storage) throw new Error('File storage is unavailable');
+    return { ...auth.storage, credentials: auth.credentials };
+  }
+
   requestToken() {
     if (!this.active) return;
     this.pending = true;
@@ -124,7 +131,8 @@ export class DirectRpcBridge {
     if (message?.action !== 'direct_rpc') return false;
     if (message.type === 'credentials') {
       if (message.credentials) {
-        this.auth = { endpoint: message.endpoint, region: message.region, credentials: message.credentials };
+        this.auth = { endpoint: message.endpoint, region: message.region, credentials: message.credentials,
+          storage: message.storage || null };
         this.signers.clear();
       }
       this.credentialsArrived?.();
