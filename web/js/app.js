@@ -1653,17 +1653,28 @@ async function submitNewProject() {
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
   setButtonLoading(btn, 'Creating');
+  var result;
   try {
     await window.loadViewerLibs();
     if (state._pendingCreatePath !== projectPath) return;
-    ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+    result = await window.bridgeRequest('create_project', { projectPath: projectPath });
   } catch (error) {
-    if (state._pendingCreatePath !== projectPath) return;
-    state._pendingCreatePath = null;
-    input.disabled = false;
-    setButtonLoading(btn);
-    err.textContent = error.message || 'Could not create project.';
+    result = { ok: false, error: error.message === 'offline' ? 'The device is offline.' : error.message || 'Could not create project.' };
   }
+  if (state._pendingCreatePath !== projectPath) return;
+  state._pendingCreatePath = null;
+  if (result.ok) {
+    closeNewProjectModal();
+    // An empty project is in no list yet: go straight to its new-session input, named by the
+    // reply (else the hash's last segment, …-test3 → test3).
+    var name = result.projectName || (result.projectHash || '').split('-').filter(Boolean).pop() || result.projectHash;
+    state.appState.project = { hash: result.projectHash, name: name };
+    startNewSession(result.projectHash);
+    return;
+  }
+  input.disabled = false;
+  setButtonLoading(btn);
+  err.textContent = result.error || 'Could not create project.';
 }
 
 var _deleteCountdownTimer = null;
@@ -1749,30 +1760,15 @@ async function submitDeviceDelete(btn) {
 async function performDelete(device, isProject, ids) {
   var body = { deviceName: device };
   if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
-  await window.loadViewerLibs(); // ensure WS is connected before relying on it
-  var filesResult = await new Promise(function (resolve) {
-    var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-    window._deleteFilesResolvers = window._deleteFilesResolvers || {};
-    var done = false;
-    var timer;
-    var armTimeout = function () {
-      clearTimeout(timer);
-      timer = setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
-    };
-    var finish = function (r) {
-      if (done) return;
-      if (r.pending) { armTimeout(); return; }
-      done = true;
-      clearTimeout(timer);
-      delete window._deleteFilesResolvers[reqId];
-      resolve(r);
-    };
-    window._deleteFilesResolvers[reqId] = finish;
-    armTimeout();
-    try {
-      ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId, progress: true }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
-    } catch (error) { finish({ ok: false, error: error.message }); }
-  });
+  await window.loadViewerLibs();
+  // The Bridge reports progress while it deletes; the last frame is the outcome.
+  var filesResult;
+  try {
+    var reply = await window.bridgeRequest('delete_files', isProject ? { projectHashes: ids } : { sessionIds: ids }, device);
+    filesResult = (reply.frames || []).at(-1) || { ok: false };
+  } catch (error) {
+    filesResult = { ok: false, timeout: error.message === 'timeout', error: error.message === 'offline' ? 'The device is offline.' : error.message };
+  }
   if (!filesResult.ok) {
     throw new Error(filesResult.timeout
       ? 'The device stopped confirming file deletion. Check the connection and retry.'
@@ -1933,7 +1929,7 @@ async function startNewSession(projectHash) {
   if (bar && bar.parentElement !== content) content.appendChild(bar);
   // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
-  connectWs(null, projectHash);
+  newSessionRequest(projectHash);
 }
 
 // ---- Messages ----

@@ -6,7 +6,7 @@ import test from 'node:test';
 import { handleSessionRename, renameNativeSession } from '../../bridge/session-rename.mjs';
 
 const sessionId = '22222222-2222-4222-8222-222222222222';
-const request = { sessionId, projectHash: 'project', name: ' New title ', requestId: 'request', replyConnectionId: 'app' };
+const request = { sessionId, projectHash: 'project', name: ' New title ', requestId: 'request' };
 
 test('rename validates names and project ownership before calling the existing Claude pool', async context => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-rename-'));
@@ -68,7 +68,6 @@ test('rename acknowledges native success separately from cloud sync and never sy
       post: async (...args) => { posted.push(args); return { ok: failure !== 'cloud' }; },
     });
     assert.equal(sent.length, 1);
-    assert.equal(sent[0].replyConnectionId, 'app');
     assert.equal(sent[0].ok, failure !== 'native');
     if (failure === 'native') assert.equal(posted.length, 0);
     else {

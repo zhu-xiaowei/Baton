@@ -48,12 +48,6 @@ test('new Claude session stream_end settles the first optimistic send from termi
       deviceName: 'D',
     },
     {
-      action: 'sync_complete',
-      sessionId,
-      status: 'ok',
-      count: 0,
-    },
-    {
       action: 'stream_block_start',
       sessionId,
       turnId,

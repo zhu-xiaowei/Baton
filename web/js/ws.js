@@ -37,7 +37,6 @@ import {
   StreamingDomRenderer,
   TurnEventQueue,
 } from './streaming.js';
-import { handleWsRpcMessage } from './ws-rpc.js';
 import { showToast } from './components/toast.js';
 import * as directTransport from './v2/direct-transport.js';
 import { ExecutionEventQueue } from './execution-events.js';
@@ -55,7 +54,6 @@ var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
 // Session events, sends and subscriptions use the direct App ⇄ Bridge channel.
 var bridge = (window.__APEEK_TEST__ && window.__directTransport) || directTransport;
 var _wsDevice = ''; // where the open Session is subscribed
-var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
 var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
@@ -65,9 +63,6 @@ var _activeExecutionIds = new Set();
 var _goalContinuationIds = new Set();
 var _executionEvents = new ExecutionEventQueue();
 var _executionRecoveryTimers = new Map();
-var _wsReconnectTimer = null;
-var _wsConfigRequest = null;
-var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
 var _suppressTurnEndRecovery = false;
@@ -83,21 +78,12 @@ var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var MESSAGE_PAGE_SIZE = 200;
 // iOS can suspend a fetch forever; a hung history request would hold the barrier open.
 var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
-// iOS background sockets can stay OPEN with no traffic; no reply in time → reconnect.
-var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
-// Periodic ping of the control socket: keeps API Gateway's 10-minute idle timer away and finds a dead socket.
-var WS_PING_INTERVAL_MS = 25000;
-var WS_PING_TIMEOUT_MS = 15000;
 // A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
 // frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
 // A running turn silent this long is checked against REST in case its tail frames were lost.
 var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
-var _wsProbeTimer = null;
-var _wsPingTimer = null;
-// Stacks with the realtime_ping route answer it in API Gateway; older ones only answer heartbeat via Lambda.
-var _controlPingRoute = false;
 var _turnGapWatch = null;
 var _lastTurnEventAt = 0;
 var _silentTurnCheckAt = 0;
@@ -374,123 +360,23 @@ function showEmptyMessages() {
   updateSendBtn();
 }
 
-function connectWs(_, projectHash) {
-  clearWsProbe();
-  if (_wsReconnectTimer) {
-    clearTimeout(_wsReconnectTimer);
-    _wsReconnectTimer = null;
-  }
-  if (projectHash) {
-    state.wsProjectHash = projectHash;
-    state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  }
-  if (!state.WS_URL) {
-    // First launch + no cached _wsurl: one config request owns the eventual
-    // connection. Concurrent callers (page setup + a fast first send) share it.
-    var generation = _wsConnectionGeneration;
-    if (_wsConfigRequest?.generation === generation) return;
-    var request = { generation: generation, promise: null };
-    _wsConfigRequest = request;
-    request.promise = api('/api/bridge/config').then(function (cfg) {
-      if (generation !== _wsConnectionGeneration) return;
-      if (cfg.wsUrl) {
-        state.WS_URL = cfg.wsUrl;
-        localStorage.setItem('_wsurl', cfg.wsUrl);
-        connectWs();
-      }
-    }).catch(function () {}).finally(function () {
-      if (_wsConfigRequest === request) _wsConfigRequest = null;
-    });
-    return;
-  }
-  if (state.ws
-    && (state.ws.readyState === WebSocket.OPEN
-      || state.ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-  if (state.ws) {
-    state.ws.onclose = null;
-    state.ws.onmessage = null;
-    state.ws.close();
-    state.ws = null;
-  }
-  _controlPingRoute = false;
-  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app');
-
-  state.ws.onopen = function () {
-    setWsStatus('connected');
-    subscribeViewer();
-    var queued = _wsSendQueue;
-    _wsSendQueue = [];
-    for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
-    if (window.prefetchCommands) window.prefetchCommands();
-    window.refreshGitStatusOnReconnect?.();
-    wsSend({ action: 'realtime_ping' });
-    if (!_wsPingTimer) {
-      _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
-      _wsPingTimer?.unref?.();
-    }
-  };
-
-  state.ws.onmessage = function (e) {
-    clearWsProbe();
-    handleWsMessage(JSON.parse(e.data));
-  };
-
-  state.ws.onclose = function () {
-    if (window.resetCommandRequest) window.resetCommandRequest();
-    setWsStatus('disconnected');
-    if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
-      setWsStatus('reconnecting');
-      _wsReconnectTimer = setTimeout(function () {
-        _wsReconnectTimer = null;
-        if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) connectWs();
-      }, 3000);
-    }
-  };
-
-  state.ws.onerror = function () {};
+// A New Session page: the request id its first send carries, so its reply is adopted here.
+function newSessionRequest(projectHash) {
+  state.wsProjectHash = projectHash;
+  state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
+// The direct transport probes its socket when the page is shown; this reloads what was missed.
 function resumeSessionForeground() {
-  if (!state.appState.session || !state.WS_URL) return false;
+  if (!state.appState.session) return false;
   refreshSessionMessages({ fresh: true });
-  if (state.ws?.readyState === WebSocket.OPEN) probeWsLiveness();
-  else if (state.ws?.readyState !== WebSocket.CONNECTING) connectWs();
   return true;
 }
 
-function clearWsProbe() {
-  if (!_wsProbeTimer) return;
-  clearTimeout(_wsProbeTimer);
-  _wsProbeTimer = null;
-}
-
-// Any inbound frame proves the socket is alive; the server answers app heartbeats.
-function probeWsLiveness(timeoutMs) {
-  clearWsProbe();
-  var socket = state.ws;
-  _wsProbeTimer = setTimeout(function () {
-    _wsProbeTimer = null;
-    if (state.ws !== socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.onclose = null;
-    socket.onmessage = null;
-    try { socket.close(); } catch (error) {}
-    state.ws = null;
-    connectWs();
-  }, timeoutMs || WS_PROBE_TIMEOUT_MS);
-  sendControlPing();
-}
-
-function sendControlPing() {
-  wsSend({ action: _controlPingRoute ? 'realtime_ping' : 'heartbeat' });
-}
-
-function pingWsChannels() {
-  if (document.hidden || !state.wsSessionId) return;
-  if (!_wsProbeTimer && state.ws?.readyState === WebSocket.OPEN) probeWsLiveness(WS_PING_TIMEOUT_MS);
-  checkSilentTurn();
-}
+// A running turn whose tail (stream_end included) was lost is settled from the history status.
+setInterval(function () {
+  if (!document.hidden && state.wsSessionId) checkSilentTurn();
+}, 25000)?.unref?.();
 
 function clearTurnGapWatch() {
   clearTimeout(_turnGapWatch?.timer);
@@ -591,7 +477,10 @@ bridge.onPush(function (event) {
   if (event.action === 'turn_replay') event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
   else handleWsMessage(event);
 });
-bridge.onResync(resyncSession);
+bridge.onResync(function (device) {
+  resyncSession(device);
+  window.refreshGitStatusOnReconnect?.();
+});
 
 // Until the history is in sync again, content events would land after a gap; the next load brings them.
 var STALE_DROPPED = new Set(['messages', 'stream_turn_start', 'stream_block_start', 'stream_delta', 'stream_tool_input',
@@ -923,14 +812,6 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
-    } else if (msg.action === 'realtime_pong') {
-      _controlPingRoute = true;
-    } else if (msg.action === 'notify_check') {
-      // Someone looking at this session right now: no push to any device.
-      if (document.visibilityState === 'visible' && document.hasFocus()
-        && msg.rootSessionId === state.wsRootSessionId) {
-        wsSend({ action: 'notify_seen', rootSessionId: msg.rootSessionId, eventId: msg.eventId });
-      }
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -1014,29 +895,9 @@ function dispatchWsMessage(msg) {
         rekeyComposerDraft(msg.sessionId);
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
-        var loading = loadLatestMessages(msg.sessionId, { preserveLive: true });
+        loadLatestMessages(msg.sessionId, { preserveLive: true }).catch(function () {});
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
-        loading.then(function () {
-          if (state.wsSessionId === msg.sessionId) {
-            state._syncedOnce = msg.sessionId;
-          }
-        }).catch(function () {});
       }
-    } else if (msg.action === 'sync_complete') {
-      if (msg.sessionId !== state.wsSessionId) return;
-      // No real messages (not_found / synced 0) → clear skeleton, don't hang.
-      if (msg.status === 'not_found' || msg.count === 0) {
-        var hasLocalMessages = state.pendingSentMessages.length > 0
-          || state.wsAllMessages.length > 0
-          || !!document.querySelector('.messages:not(.skeleton-messages) .msg-user');
-        if (!hasLocalMessages) showEmptyMessages();
-        return;
-      }
-      if (state._syncedOnce === msg.sessionId) return;
-      state._syncedOnce = msg.sessionId;
-      // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
-      // and re-triggers needSync, causing a render-loop with title flicker.
-      loadLatestMessages(msg.sessionId).catch(function () {});
     } else if (msg.action === 'session_threads_changed') {
       if (msg.deviceName && msg.deviceName !== state.appState.device) return;
       var rootChange = (msg.roots || []).find(function (root) {
@@ -1048,25 +909,8 @@ function dispatchWsMessage(msg) {
         expected: rootChange,
         delays: [150, 900, 2200],
       });
-    } else if (msg.action === 'bridge_recovery_complete') {
-      if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
-      queueAgentThreadRefresh({ delays: [150, 1000] });
-      refreshSessionMessages();
     } else if (msg.action === 'session_title_changed') {
       window.applySessionTitle?.(msg);
-    } else if (msg.action === 'rename_session') {
-      if (msg.ok) window.applySessionTitle?.(msg);
-      handleWsRpcMessage(msg);
-    } else if (msg.action === 'project_files' || msg.action === 'git_status') {
-      handleWsRpcMessage(msg);
-    } else if (msg.action === 'file_ready') {
-      if (window.handleFileReady) window.handleFileReady(msg);
-    } else if (msg.action === 'file_progress') {
-      if (window.handleFileProgress) window.handleFileProgress(msg);
-    } else if (msg.action === 'command_catalog_ready') {
-      if (window.handleCommandCatalogReady) window.handleCommandCatalogReady(msg);
-    } else if (msg.action === 'command_options') {
-      if (window.handleCommandOptions) window.handleCommandOptions(msg);
     } else if (msg.action === 'stream_turn_start') {
       if (isStrictTurnEvent(msg)) handleStrictTurnStart(msg);
     } else if (msg.action === 'stream_delta') {
@@ -1079,35 +923,6 @@ function dispatchWsMessage(msg) {
       if (isStrictTurnEvent(msg)) handleStrictFrame(msg, 'stop');
     } else if (msg.action === 'stream_end') {
       if (isStrictTurnEvent(msg)) handleStrictTurnEnd(msg);
-    } else if (msg.action === 'delete_files_result') {
-      var r = window._deleteFilesResolvers && window._deleteFilesResolvers[msg.requestId];
-      if (r) {
-        if (!msg.pending) delete window._deleteFilesResolvers[msg.requestId];
-        r(msg);
-      }
-    } else if (msg.action === 'create_project_result') {
-      if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
-        state._pendingCreatePath = null;
-        if (msg.ok) {
-          closeNewProjectModal();
-          // Empty project isn't in the list yet (no session) — go straight to its
-          // new-session input; the first message creates the session + PROJ#/SESS#.
-          // Set project so the breadcrumb shows its name (we arrive from device level, not the list).
-          // Fallback to the hash's trailing segment (…-test3 → test3) if projectName is absent.
-          var pname = msg.projectName || (msg.projectHash || '').split('-').filter(Boolean).pop() || msg.projectHash;
-          state.appState.project = { hash: msg.projectHash, name: pname };
-          startNewSession(msg.projectHash);
-        } else {
-          disconnectWs();
-          // Show error in modal, reset button
-          var err = document.getElementById('newProjectError');
-          var input = document.getElementById('newProjectInput');
-          var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
-          if (err) err.textContent = msg.error || 'Unknown error';
-          if (input) input.disabled = false;
-          setButtonLoading(btn);
-        }
-      }
     }
 }
 
@@ -1692,21 +1507,13 @@ function selectWsSession(sessionId) {
 function leaveSession() {
   if (!state.wsSessionId) return;
   bridge.unsubscribe(_wsDevice, state.wsSessionId);
-  wsSend({ action: 'unsubscribe', sessionId: 'ROOT#' + (state.wsRootSessionId || state.wsSessionId) });
 }
 
 // Session events come from the Bridge; a waiting permission prompt is pushed again on every
-// subscription.
+// subscription. The history load that follows carries the subscription (`quiet`).
 function joinSession(sessionId) {
   _wsDevice = state.appState.device || '';
-  bridge.subscribe(_wsDevice, sessionId);
-  subscribeViewer();
-}
-
-// Until notifications move to the Bridge, the server's "being viewed" check reads this row.
-function subscribeViewer() {
-  if (!state.wsSessionId) return;
-  wsSend({ action: 'subscribe', sessionId: 'ROOT#' + (state.wsRootSessionId || state.wsSessionId) });
+  bridge.subscribe(_wsDevice, sessionId, { root: state.wsRootSessionId || sessionId, quiet: true });
 }
 
 function subscribeSession(sessionId) {
@@ -1724,45 +1531,15 @@ function adoptNewSession(sessionId) {
   joinSession(sessionId);
 }
 
-function wsSend(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(data));
-  }
-}
-
-// Non-OPEN → queue + reconnect (onopen flushes); use for user actions that must not drop.
-function wsSendReliable(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(data));
-    return;
-  }
-  _wsSendQueue.push(data);
-  if (!state.ws || state.ws.readyState === WebSocket.CLOSING || state.ws.readyState === WebSocket.CLOSED) {
-    connectWs();
-  }
-}
-
 function setWsStatus(status) {
   state.wsStatusText = status;
   updateWsStatusIndicator();
 }
 
+// Leaves the open Session (navigation); the name is historical.
 function disconnectWs() {
   leaveSession();
-  _wsConnectionGeneration++;
-  clearWsProbe();
-  clearInterval(_wsPingTimer);
-  _wsPingTimer = null;
   if (window.resetCommandRequest) window.resetCommandRequest();
-  if (_wsReconnectTimer) {
-    clearTimeout(_wsReconnectTimer);
-    _wsReconnectTimer = null;
-  }
-  if (state.ws) {
-    state.ws.onclose = null;
-    state.ws.close();
-    state.ws = null;
-  }
   state.wsSessionId = null;
   state.wsRootSessionId = null;
   window.setOpenNotificationSession?.('');
@@ -1771,10 +1548,6 @@ function disconnectWs() {
   resetStreamSessionState();
   updateSpinner();
   setWsStatus('');
-}
-
-function ensureWsAndSend(data) {
-  wsSendReliable(data);
 }
 
 var _latestTurnId = '';
@@ -1890,12 +1663,7 @@ function markTurnAdjacency(container) {
 window.markTurnAdjacency = markTurnAdjacency;
 
 function startWs(sessionId) {
-  state._syncedOnce = null;
-  if (!state.ws) {
-    selectWsSession(sessionId);
-    connectWs();
-  }
-  else subscribeSession(sessionId);
+  subscribeSession(sessionId);
   // Prefetch slash commands. When ws already exists this sends now; on a fresh
   // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
   if (window.prefetchCommands) window.prefetchCommands();
@@ -3115,13 +2883,15 @@ function promoteEchoedBubble(pending, msg) {
 Object.assign(window, {
   updateTitleFromMessages,
   syncMobileViewport,
-  connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
+  newSessionRequest, subscribeSession, setWsStatus, disconnectWs,
   resumeSessionForeground,
   startWs, loadLatestMessages, loadOlderMessages, refreshSessionMessages,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   retryPendingSend, isInheritedAgentContext,
-  bridgeRequest: function (method, params) { return bridge.request(state.appState.device || '', method, params); },
+  // A direct request to the open device's Bridge (`device` overrides it); requests that may take a
+  // while (rename, Git writes, deletes) are kept alive by the Bridge's progress frames.
+  bridgeRequest: function (method, params, device) { return bridge.request(device || state.appState.device || '', method, params); },
 });
 
 // Test-only hook for replaying the real WS dispatcher.
@@ -3132,5 +2902,6 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
     commitMessages: commitMessages,
+    resyncSession: resyncSession,
   };
 }

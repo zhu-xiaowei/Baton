@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { request as requestBridge } from './v2/direct-transport.js';
+import { readToolDetail, toolDetailCacheAvailable, writeToolDetail } from './cache/tool-details-cache.js';
 
 let sessionId = null;
 let deviceName = null;
@@ -50,7 +51,10 @@ export async function loadToolDetails(toolId) {
   if (entry.pending) return entry.pending;
   const requestedSession = sessionId;
   const requestedDevice = deviceName;
-  entry.pending = send(requestedDevice, 'tool_details', {
+  const cacheKey = [state.SERVER, state.KEY, requestedDevice, requestedSession, toolId].join('|');
+  // Only finished bodies are kept: a tool with its result, or thinking text.
+  const finished = (full) => !!full && (!!full.toolResult || toolId.startsWith('thinking:'));
+  const fetchFull = () => send(requestedDevice, 'tool_details', {
     sessionId: requestedSession,
     toolUseIds: [toolId],
   }).then((response) => {
@@ -59,6 +63,12 @@ export async function loadToolDetails(toolId) {
     if (entry.toolResult && !full.toolResult) {
       throw new Error('Tool output is not available yet. Click to retry.');
     }
+    if (finished(full)) writeToolDetail(cacheKey, full);
+    return full;
+  });
+  entry.pending = (toolDetailCacheAvailable
+    ? readToolDetail(cacheKey).then((cached) => (finished(cached) ? cached : fetchFull()))
+    : fetchFull()).then((full) => {
     if (state.wsSessionId === requestedSession && state.appState.device === requestedDevice) {
       if (entries.get(toolId) !== entry) throw new Error('Tool changed while loading. Click to retry.');
       entry.full = full;

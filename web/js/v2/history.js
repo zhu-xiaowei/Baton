@@ -1,7 +1,7 @@
 // Session history from the Bridge (`history` RPC) through the IndexedDB cache. Both calls answer in
 // the former /messages shape, so the Session view keeps its merge and render logic.
 import { state } from '../state.js';
-import { request as requestBridge } from './direct-transport.js';
+import { request as requestBridge, subscribed } from './direct-transport.js';
 import { createHistoryCache } from './history-cache.js';
 
 const PAGE = 200;
@@ -36,11 +36,13 @@ function shown(entry) {
 // Latest page: only what is newer than the cache's stable cursor is asked for. `onSlow(page | null)`
 // runs once at 6 s with the cached page (null without one); the promise still settles later. When the
 // Bridge fails, a cached page is returned with `failed` instead of an error.
-// `subscribe` also registers the caller for the Session's pushes, before the Bridge reads the file.
-export async function loadLatestHistory({ device, sessionId, subscribe, onSlow: notify }) {
+// `subscribe` also registers the caller for the Session's pushes (under the thread `root`), before
+// the Bridge reads the file.
+export async function loadLatestHistory({ device, sessionId, subscribe, root, onSlow: notify }) {
   const entry = await session(device, sessionId);
   const cursor = entry.stable;
-  const params = { sessionId, ...(cursor ? { after: cursor, epoch: entry.epoch } : {}), ...(subscribe ? { subscribe: true } : {}) };
+  const params = { sessionId, ...(cursor ? { after: cursor, epoch: entry.epoch } : {}),
+    ...(subscribe ? { subscribe: true, ...(root ? { rootSessionId: root } : {}) } : {}) };
   const cachedPage = () => {
     const { rows, more } = shown(entry);
     return rows.length ? { messages: rows, hasMore: more, oldestTimestamp: rows[0].orderKey } : null;
@@ -55,6 +57,7 @@ export async function loadLatestHistory({ device, sessionId, subscribe, onSlow: 
     if (!page) throw error;
     return { ...page, status: '', titles: [], failed: error.message };
   }
+  if (reply.bridgeEpoch) subscribed(device, sessionId, reply.bridgeEpoch);
   if (!cursor || reply.historyReset) {
     entry.reset();
     entry.append(reply.messages, { atStart: !reply.hasMore });

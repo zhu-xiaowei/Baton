@@ -82,10 +82,9 @@ function loadCurrentContext() {
   _checkedAt = cached.checkedAt;
 }
 
-// Fire a fresh scan request to the bridge (response → handleCommandCatalogReady).
+// Ask the Bridge for the catalog (it rescans; `knownRevision` gets `notModified`).
 function prefetchCommands() {
-  var send = window.wsSendReliable || window.wsSend;
-  if (!send) return;
+  if (typeof window.bridgeRequest !== 'function') return;
   loadCurrentContext();
   var key = cacheKey();
   if (_requestPending && _requestContextKey === key) return;
@@ -93,14 +92,15 @@ function prefetchCommands() {
   _latestRequestId = 'cmds_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   _requestPending = true;
   _requestContextKey = key;
-  send({
-    action: 'list_commands',
-    projectHash: projectHash(),
-    device: state.appState.device || '',
-    runtime: runtime(),
-    knownRevision: _revision,
-    requestId: _latestRequestId,
-  });
+  var requestId = _latestRequestId;
+  var asked = { projectHash: projectHash(), device: state.appState.device || '', runtime: runtime() };
+  window.bridgeRequest('list_commands', { projectHash: asked.projectHash, runtime: asked.runtime, knownRevision: _revision })
+    .then(function (reply) { applyCommandCatalog({ ...reply, ...asked, requestId: requestId }); })
+    .catch(function () {
+      if (requestId !== _latestRequestId) return;
+      _requestPending = false;
+      _requestContextKey = '';
+    });
 }
 
 function applyCommandCatalog(msg) {
@@ -131,39 +131,6 @@ function applyCommandCatalog(msg) {
   if (changed && currentQuery() !== null && (_mode === 'commands' || _mode === 'skills')) {
     applyFilter(selectedName);
   }
-}
-
-function handleCommandCatalogReady(msg) {
-  if (_latestRequestId && msg.requestId !== _latestRequestId) return;
-  var currentRuntime = runtime();
-  if (currentRuntime === 'codex' && msg.runtime !== 'codex') return;
-  if (currentRuntime !== 'codex' && msg.runtime && msg.runtime !== currentRuntime) return;
-  if (msg.device && msg.device !== (state.appState.device || '')) return;
-  if (msg.projectHash && msg.projectHash !== projectHash()) return;
-  if (msg.notModified || !msg.catalogRef) {
-    applyCommandCatalog(msg);
-    return;
-  }
-  var requestId = msg.requestId;
-  var requestContextKey = cacheKey();
-  if (typeof window.api !== 'function') {
-    _requestPending = false;
-    _requestContextKey = '';
-    return;
-  }
-  window.api('/api/bridge/command-catalog/' + encodeURIComponent(msg.catalogRef))
-    .then(function (catalog) {
-      if (requestId !== _latestRequestId || requestContextKey !== cacheKey()) return;
-      applyCommandCatalog(Object.assign({}, msg, catalog, {
-        requestId: requestId,
-        notModified: false,
-      }));
-    })
-    .catch(function () {
-      if (requestId !== _latestRequestId || requestContextKey !== cacheKey()) return;
-      _requestPending = false;
-      _requestContextKey = '';
-    });
 }
 
 function resetCommandRequest() {
@@ -354,8 +321,7 @@ async function selectCommand(i) {
 }
 
 function requestCommandOptions(item) {
-  var send = window.wsSendReliable || window.wsSend;
-  if (!send) return;
+  if (typeof window.bridgeRequest !== 'function') return;
   _mode = 'options';
   _parentCommand = item;
   _selected = 0;
@@ -368,15 +334,12 @@ function requestCommandOptions(item) {
   renderPopup();
   _latestOptionsRequestId = 'cmdopts_' + Date.now() + '_'
     + Math.random().toString(36).slice(2);
-  send({
-    action: 'list_command_options',
-    projectHash: projectHash(),
-    device: state.appState.device || '',
-    runtime: runtime(),
-    sessionId: state.wsSessionId || '',
-    commandName: item.name,
-    requestId: _latestOptionsRequestId,
-  });
+  var asked = { projectHash: projectHash(), device: state.appState.device || '', runtime: runtime(),
+    sessionId: state.wsSessionId || '', commandName: item.name, requestId: _latestOptionsRequestId };
+  window.bridgeRequest('list_command_options', { projectHash: asked.projectHash, runtime: asked.runtime,
+    sessionId: asked.sessionId, commandName: asked.commandName })
+    .then(function (reply) { handleCommandOptions({ ...reply, ...asked }); })
+    .catch(function (error) { handleCommandOptions({ ...asked, options: [], error: error.message }); });
 }
 
 function handleCommandOptions(msg) {
@@ -518,9 +481,6 @@ function onKeydown(e) {
 
 Object.assign(window, {
   prefetchCommands: prefetchCommands,
-  applyCommandCatalog: applyCommandCatalog,
-  handleCommandCatalogReady: handleCommandCatalogReady,
-  handleCommandOptions: handleCommandOptions,
   resetCommandRequest: resetCommandRequest,
   closeSlashPopup: closePopup,
 });

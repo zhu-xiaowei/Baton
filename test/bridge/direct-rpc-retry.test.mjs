@@ -124,3 +124,28 @@ test('pushes reach subscribers only, whole, and follow a reconnect', async () =>
   assert.deepEqual(result.resyncs, ['all', 'dev'], 'the page reloads after a reconnect and when the Bridge restarted');
   assert.equal(result.sentAfterLeave, 0, 'and nothing after it left');
 });
+
+test('a long request lives on progress frames; an unchanged read answers "not modified"; waiting requests are not queued', async () => {
+  const long = await run({ computeMs: 20000 });
+  assert.deepEqual(long.value, { ok: 1 }, 'a 20 s request without a receipt survives on progress frames');
+
+  const sent = [];
+  let gate;
+  const bridge = new DirectRpcBridge({ key: 'key', sendControl: () => true,
+    limited: (frame) => frame.method === 'read',
+    handlers: { read: async () => ({ rows: [1, 2] }), wait: () => new Promise((resolve) => { gate = resolve; }) } });
+  bridge.auth = { endpoint: ENDPOINT, region: 'ap-northeast-1', credentials: credentials() };
+  const socket = { readyState: 1, bufferedAmount: 0, send: (text) => sent.push(JSON.parse(JSON.parse(text).body)) };
+  bridge.socket = socket;
+  const ask = (requestId, method, params = {}) => bridge.receive(socket, JSON.stringify({ v: 2, kind: 'rpc', requestId, method, params, replyTo: 'app=', accept: [] }));
+  const reply = (requestId) => JSON.parse(sent.find((frame) => frame.requestId === requestId && frame.kind === 'rpc_result').data);
+  for (let i = 0; i < 8; i++) ask('w' + i, 'wait');
+  ask('r1', 'read', { known: '' });
+  await new Promise((r) => setTimeout(r, 100));
+  const first = reply('r1');
+  assert.deepEqual(first.rows, [1, 2], 'eight waiting requests do not hold a read back');
+  ask('r2', 'read', { known: first.fingerprint });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(reply('r2'), { notModified: true, fingerprint: first.fingerprint });
+  gate();
+});

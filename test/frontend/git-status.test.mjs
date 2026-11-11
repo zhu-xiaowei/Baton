@@ -18,17 +18,16 @@ import {
   saveGitStatusView,
   shouldRestoreGitStatus,
 } from '../../web/js/git/view-state.js';
-import { handleWsRpcMessage } from '../../web/js/ws-rpc.js';
+import { mockBridgeFrames } from './bridge-frames-mock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 test('Git RPC assembles out-of-order grouped snapshot frames', async () => {
-  var payload;
-  globalThis.window = {
-    wsSendReliable(value) { payload = value; },
-  };
+  var bridge = mockBridgeFrames();
   state.appState.device = 'Mac';
   var pending = requestGit('status', { projectHash: 'project' });
+  var payload = bridge.requests[0];
+  var handleWsRpcMessage = bridge.answer;
   handleWsRpcMessage({
     action: 'git_status',
     operation: 'status',
@@ -54,7 +53,6 @@ test('Git RPC assembles out-of-order grouped snapshot frames', async () => {
   var result = await pending;
   assert.equal(result.groups.staged[0].path, 'a.js');
   assert.equal(result.groups.changes[0].path, 'b.js');
-  delete globalThis.window;
 });
 
 test('Git renderer hides empty optional sections and always shows Changes', () => {
@@ -257,7 +255,7 @@ test('Git Diff and Code mode survive refresh for the same session', () => {
   assert.match(diff, /export function restoreGitDiffView\(\)/);
   assert.match(diff, /clearGitDiffView\(\);\s*if \(!current\) return false;\s*return closeFileViewer\(\)/);
   assert.match(diff, /if \(closeOptions\.refresh !== false && state\.gitStatusOpen\) window\.refreshGitStatus\?\.\(\)/);
-  assert.match(status, /window\.connectWs\(\);\s*restoreGitDiffView\(\);\s*refreshGitStatus\(\)/);
+  assert.match(status, /if \(!state\.gitStatusOpen\) return;\s*restoreGitDiffView\(\);\s*refreshGitStatus\(\)/);
   assert.match(status, /state\.gitStatusOpen = false;\s*closeGitDiff\(\);\s*clearGitStatusView\(\)/);
 });
 

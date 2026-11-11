@@ -429,13 +429,14 @@ test('legacy Office formats open in the matching viewer through the companion re
 });
 
 test('a project PDF is uploaded through the download operation, then previewed as an attachment', async () => {
-  const { handleProjectFilesMessage } = await vite.ssrLoadModule('/js/project/rpc.js');
+  const { configureWsRpc } = await vite.ssrLoadModule('/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
   const pdfKey = 'b'.repeat(32) + '.pdf';
   const sent = [];
-  window.wsSendReliable = payload => {
+  const bridge = mockBridgeFrames(configureWsRpc, [], payload => {
     sent.push(payload);
-    queueMicrotask(() => handleProjectFilesMessage({ action: 'project_files', requestId: payload.requestId, ok: true, key: pdfKey }));
-  };
+    queueMicrotask(() => bridge.answer({ action: 'project_files', requestId: payload.requestId, ok: true, key: pdfKey }));
+  });
   const metadata = [];
   window.api = async path => { metadata.push(path); return { name: 'spec.pdf', size: 20, previewType: 'application/pdf', previewUrl: 'https://bucket.test/spec.pdf' }; };
   try {
@@ -446,7 +447,7 @@ test('a project PDF is uploaded through the download operation, then previewed a
     assert.deepEqual(metadata, ['/api/bridge/file-url/' + pdfKey + '?name=spec.pdf']);
     assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/spec.pdf');
   } finally {
-    delete window.wsSendReliable;
+    configureWsRpc();
     window.closeFileViewer();
   }
 });

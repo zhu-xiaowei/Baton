@@ -63,7 +63,7 @@ export function openSessionRename(sessionId) {
     input.disabled = cancel.disabled = confirm.disabled = true;
     setButtonLoading(confirm, 'Saving');
     try {
-      if (typeof window.wsSendReliable !== 'function') await window.loadViewerLibs();
+      if (typeof window.bridgeRequest !== 'function') await window.loadViewerLibs();
       const result = await requestWsRpc({ action: 'rename_session', ...target, name }, { timeout: 30000 });
       window.applySessionTitle({ ...target, name: result.name });
       busy = false;

@@ -7,73 +7,43 @@ const source = fs.readFileSync(new URL('../../web/js/app.js', import.meta.url), 
 const start = source.indexOf('async function performDelete(');
 const end = source.indexOf('// New-session hero', start);
 
-function harness() {
-  const timers = new Map();
+function harness(answer) {
   const writes = [];
-  let now = 0;
-  let sequence = 0;
-  let request;
+  const requests = [];
   const context = {
-    window: { loadViewerLibs: async () => {} },
-    apiPost: async (...args) => { writes.push(args); },
-    ensureWsAndSend: (message) => { request = message; },
-    setTimeout: (callback, delay) => {
-      const id = ++sequence;
-      timers.set(id, { callback, at: now + delay });
-      return id;
+    window: {
+      loadViewerLibs: async () => {},
+      bridgeRequest: async (...args) => { requests.push(args); return answer(); },
     },
-    clearTimeout: (id) => timers.delete(id),
+    apiPost: async (...args) => { writes.push(args); },
     _deviceToDelete: null,
   };
   vm.runInNewContext(source.slice(start, end), context);
-  return {
-    context, writes,
-    reply: (result) => context.window._deleteFilesResolvers[request.requestId](result),
-    get request() { return request; },
-    advance(ms) {
-      now += ms;
-      for (const [id, timer] of timers) {
-        if (timer.at <= now) { timers.delete(id); timer.callback(); }
-      }
-    },
-  };
+  return { context, writes, requests };
 }
 
-for (const success of [false, true]) {
-  test(`progress retains late ${success ? 'success' : 'errors'} and defers deleting list records`, async () => {
-    const h = harness();
+// List records go only after the Bridge confirms the files are gone.
+for (const [name, answer, failure] of [
+  ['success', async () => ({ frames: [{ pending: true }, { ok: true }] }), null],
+  ['failure', async () => ({ frames: [{ ok: false, error: 'Native database deletion failed' }] }), /Native database deletion failed/],
+  ['timeout', async () => { throw new Error('timeout'); }, /device stopped confirming/],
+]) {
+  test(`delete ${name} decides whether list records are deleted`, async () => {
+    const h = harness(answer);
     const operation = h.context.performDelete('device', true, ['project']);
-    await new Promise(setImmediate);
-    assert.equal(h.request.progress, true);
-    for (let i = 0; i < 6; i++) {
-      h.advance(5000);
-      h.reply({ pending: true });
-    }
-    assert.equal(h.writes.length, 0);
-    h.reply({ ok: success, error: 'Native database deletion failed' });
-    if (success) {
-      assert.equal((await operation).ddb, true);
-      assert.equal(h.writes.length, 1);
-    } else {
-      await assert.rejects(operation, /Native database deletion failed/);
+    if (failure) {
+      await assert.rejects(operation, failure);
       assert.equal(h.writes.length, 0);
+    } else {
+      assert.equal((await operation).ddb, true);
+      assert.equal(JSON.stringify(h.writes), JSON.stringify([['/api/bridge/delete', { deviceName: 'device', projectHashes: ['project'] }]]));
     }
-    assert.equal(Object.keys(h.context.window._deleteFilesResolvers).length, 0);
+    assert.equal(JSON.stringify(h.requests[0].slice(0, 2)), JSON.stringify(['delete_files', { projectHashes: ['project'] }]));
   });
 }
 
-test('a silent or disconnected bridge times out without deleting list records', async () => {
-  const h = harness();
-  const operation = h.context.performDelete('device', false, ['session']);
-  await new Promise(setImmediate);
-  h.advance(8000);
-  await assert.rejects(operation, /device stopped confirming/);
-  assert.equal(h.writes.length, 0);
-  assert.equal(Object.keys(h.context.window._deleteFilesResolvers).length, 0);
-});
-
 test('failed file deletion stays visible in the modal', async () => {
-  const h = harness();
+  const h = harness(async () => ({ frames: [{ ok: false, error: 'Session is active' }] }));
   const error = { textContent: '' };
   let closed = false;
   Object.assign(h.context, {
@@ -83,10 +53,7 @@ test('failed file deletion stays visible in the modal', async () => {
     setButtonLoading() {},
     closeDeleteModal: () => { closed = true; },
   });
-  const operation = h.context.submitDelete();
-  await new Promise(setImmediate);
-  h.reply({ ok: false, error: 'Session is active' });
-  await operation;
+  await h.context.submitDelete();
   assert.match(error.textContent, /Session is active/);
   assert.equal(closed, false);
   assert.equal(h.writes.length, 0);
