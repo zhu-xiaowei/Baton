@@ -88,7 +88,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   const dockerfile = read('server/src/Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
-  assert.match(dockerfile, /^COPY project\/ project\/$/m);
+  assert.doesNotMatch(dockerfile, /^COPY project\//m); // the WebSocket relays for files, Git and rename are gone
   assert.match(dockerfile, /^COPY .*preview_tunnel_ws\.py .*\.\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });

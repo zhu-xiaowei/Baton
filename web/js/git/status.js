@@ -227,7 +227,6 @@ export function openGitStatus(options) {
   window.loadViewerLibs().then(async function () {
     await hydratePromise;
     if (!state.gitStatusOpen) return;
-    window.connectWs();
     restoreGitDiffView();
     refreshGitStatus();
   });

@@ -362,7 +362,6 @@ export async function openProjectFilesPath(path) {
   }
   await viewerPromise;
   if (!state.projectFilesOpen || version !== navigationVersion) return;
-  window.connectWs();
   try {
     var entries = await loadDirectory(version, {
       path: currentPath,
@@ -403,7 +402,6 @@ export async function refreshProjectFiles() {
   try {
     await window.loadViewerLibs();
     if (!state.projectFilesOpen || version !== navigationVersion) return false;
-    window.connectWs();
     var entries = await loadDirectory(version, {
       path: path,
       deferRender: true,

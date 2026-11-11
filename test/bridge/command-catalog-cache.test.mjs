@@ -4,7 +4,6 @@ import {
   COMMAND_DESCRIPTION_MAX_BYTES,
   CommandCatalogCache,
   commandCatalogPayload,
-  commandCatalogReadyPayload,
   normalizeCommandCatalog,
 } from '../../bridge/command-catalog-cache.mjs';
 
@@ -257,24 +256,6 @@ test('forced command catalog refresh bypasses a fresh bridge cache entry', async
 
   assert.equal(loads, 2);
   assert.notEqual(first.revision, refreshed.revision);
-});
-
-test('command catalog ready payload never includes catalog content', () => {
-  const payload = {
-    ...commandCatalogPayload({
-      catalog: catalog(),
-      revision: 'revision-1',
-      stale: false,
-      refreshed: true,
-    }),
-  };
-  assert.deepEqual(commandCatalogReadyPayload(payload, 'catalog-ref'), {
-    revision: 'revision-1',
-    notModified: false,
-    stale: false,
-    error: '',
-    catalogRef: 'catalog-ref',
-  });
 });
 
 test('command catalog invalidation forces the next request to reload', async () => {

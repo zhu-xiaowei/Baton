@@ -9,7 +9,6 @@ export function homeProject(device = state.appState.device) {
   if (!homes.has(key)) {
     homes.set(key, (async () => {
       await window.loadViewerLibs();
-      window.connectWs();
       const response = await requestProjectFiles('browse', { path: '~', device }, { timeout: 10000 });
       if (!response.path) throw new Error('Home folder not found');
       return { hash: response.path.replace(/[^a-zA-Z0-9-]/g, '-'), name: '~' };

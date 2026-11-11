@@ -137,7 +137,8 @@ Done:
 - Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
   `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
   `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
-  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
+  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription;
+  in v2 no App answers it until stage 2b, so only the viewing device's own foreground app suppresses).
   A turn started outside Baton also skips while the user is at that computer: Bridge attaches
   `localIdleSec` (`presence.mjs`: own pty atime, macOS `HIDIdleTime`, Windows Interactive helper
   task) and the worker drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
@@ -369,8 +370,6 @@ POST /api/bridge/delete                     — delete Session rows (Sessions or
 GET  /api/bridge/devices                    — v2: names, online, rpc routes (counts come from each Bridge)
 GET  /api/bridge/active-sessions            — active root Sessions, read by the Bridge's checkStopped (M2 removes it)
 GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
-POST /api/bridge/command-catalog            — bridge stores the full project command catalog in S3
-GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped command catalog
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (sets up always-on service)
@@ -386,20 +385,27 @@ home {revision?}              — devices' counts, active Sessions, 15 recent pr
 projects {limit?, cursor?}    — project list page (same rows as the former REST endpoint)
 sessions {project, limit?, cursor?} — session list page
 history / threads / tool_details — Session view (`docs/v2-step3-session-plan.md`)
-subscribe {sessionId, renew?} / unsubscribe — who receives a Session's pushes (150 s lease)
+subscribe {sessionId, rootSessionId?, renew?} / unsubscribe — who receives a Session's pushes (150 s lease)
 send_message {…}              — reply = send_message_result; `rpc_ack` on arrival is the receipt
 interrupt, permission_reply   — reply {ok}
-push: stream_*, messages, permission_request, permission_resolved — to subscribers only
+list_commands {projectHash, runtime, knownRevision} / list_command_options — catalog in the reply
+project_files / git_status / delete_files — reply {frames} (the handlers' frames, collected)
+rename_session, create_project — reply = the result
+push: stream_*, messages, permission_request, permission_resolved, turn_replay,
+      session_threads_changed (root subscribers), session_title_changed — to subscribers only
 ```
+Shared request rules (`bridge/direct-rpc.mjs`): a request still running after 5 s sends
+`rpc_progress` every 15 s (the App's deadline is 60 s after the last ack/progress); only
+machine-heavy reads (`limitedRequest` in `ws.mjs`) count against 6 at once; a request carrying
+`known` gets `fingerprint` (SHA-256 of the result, 16 hex) or `{notModified, fingerprint}`
+(projects, sessions, threads, file list/browse, Git status/refs/history; `api.js` `requestFresh`,
+`ws-rpc.js`). Tool details are kept in IndexedDB (`cache/tool-details-cache.js`, 20 MB LRU).
 `api.js` maps `/api/bridge/projects|sessions` to these; `direct-transport.js` owns the socket,
 routes (`/devices`), retries, subscriptions and credentials. Frames are `action: rpc | push` with a
 readable `method` / `event`. Full protocol: `docs/api.md`; design: `docs/v2-step3b-realtime-plan.md`.
 
-### WebSocket (v1 control socket; what is left on it until v2 stage 2)
+### WebSocket (Bridge ⇄ server; the App opens no control socket since v2 stage 2a)
 ```
-App → Server:           { action: "subscribe" | "unsubscribe", sessionId: "ROOT#<root>" }  — viewer row for notifications
-App → Server → Bridge:  { action: "list_commands", projectHash, runtime, sessionId?, device, requestId }
-Bridge → Server → App:  { action: "command_catalog_ready", requestId, runtime, device, projectHash, revision, catalogRef? }
 Bridge → Server:        { action: "messages", sessionId, messages }  — rows DynamoDB still stores
 Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
 Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }
@@ -427,8 +433,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   silent for 3s after a request and rebuilds it after 3s more (iOS leaves suspended sockets OPEN
   but dead), and resends everything pending after the new `whoami`; the Bridge ignores a repeated
   `turnId`. A request that failed before its receipt is sent again on resync (socket or device
-  back). The remaining v1 actions (`create_project`, commands, files, Git) still use
-  `wsSendReliable` on the control socket until stage 2. The foreground history refresh is `fresh`:
+  back). The foreground history refresh is `fresh`:
   it replaces a still-open history barrier instead of reusing it, carrying its captured events
   over, because a request started before suspension may never settle.
 - **Pushes are best effort; history is the truth.** The Bridge pushes Session events only to
@@ -465,7 +470,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Multi-image staging + gallery + paste support
 
 ### File / Video Preview (click a file link in a message)
-- Click file link → `openFile()` → WS `request_file` → bridge `handleRequestFile` (`ws.mjs`) reads from disk.
+- Click file link → `openFile()` → direct `project_files {operation:'read'}` → Bridge reads from disk.
 - Text/image: bridge base64s + POSTs to Lambda (`/upload-file` → `files/{key}`, `/upload-image` → `images/{key}`), replies `file_ready {key}`; frontend GETs `/api/bridge/file|image/{key}` (served base64-as-text from S3). Binary text files (NUL byte in first 8KB) → `binary file` error.
 - **Video** (`.mp4/.m4v/.mov/.webm/.mkv/.avi`, ≤5GB): base64-through-Lambda is impossible (API GW 6MB limit), so the bridge **streams the file straight to S3** via a presigned PUT. `POST /video-prepare {key}` → server HEADs `videos/{key}`: exists → `{exists:true}` (skip upload, dedup by content-hash key so it survives bridge restarts), else returns presigned PUT URL → bridge `fs.createReadStream` piped to `fetch(PUT, {duplex:'half'})` (flat memory regardless of size). Bridge replies `file_ready {video:true, key}`; frontend calls `GET /api/bridge/video-url/{key}` for a short-lived presigned GET URL and plays it in a `<video>` element streaming directly from S3 (Range/seek supported). No CloudFront/IAM change — Lambda already has S3 Get/Put; presigning uses those creds.
 - **Markdown documents** render like GitHub (`web/js/components/markdown-document.js`, lazy-loaded): raw HTML is kept and cleaned by bundled DOMPurify with GitHub's allowlist plus `picture/source`; `breaks:false`; `user-content-` heading anchors; `> [!NOTE]` alerts; `#gh-light-mode-only` images hidden and `prefers-color-scheme` fixed to dark. Baton's own markup (code, Mermaid, KaTeX, image placeholders) bypasses the sanitizer as nonce slots. Relative `img src` / `source srcset` / links resolve against the document directory; `/x` resolves like GitHub from the repository root: the nearest folder from the document upward (within the project) whose `.git` Bridge can read, probed only when the document uses `/` paths and cached per folder only on a definite answer; otherwise the project root (derived from the path + project hash). Real absolute paths (under the project/repository root, a common filesystem root such as `/Users/` or `/home/`, or any `/x` in a document outside the project) stay absolute, since agent-written documents use them. Links follow chat semantics: `file.ext:12` / `#L12` open at a line (DOMPurify's URI rule is extended to keep them), other schemes such as `tel:` are left to the browser, and `#user-content-x` and `#x` both reach the heading. SVGs whose own CSS uses `prefers-color-scheme` are fetched (`cache: 'no-store'`, since the `<img>` preload's cached copy lacks CORS headers) and rewritten to dark, because WebKit evaluates it against the OS appearance. Image URLs are kept for the open file, so Code/Preview toggles send no requests; pending images draw nothing until loaded. Markdown/HTML files open in Preview unless a line or tool location is targeted. ```` ```math ```` fences render through the shared KaTeX loader; Mermaid uses the chat component (blocks outside `#content` are observed against the viewport). `:shortcode:` emoji come from `emoji-shortcodes.js`, generated from gemoji by `scripts/generate-emoji-shortcodes.mjs` and loaded only when a document contains one. Folder links (`docs/`, or a link Bridge reports as a directory) open the project file browser when the path is inside the current project. Chat messages still escape raw HTML.

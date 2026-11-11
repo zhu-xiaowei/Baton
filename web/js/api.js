@@ -42,6 +42,7 @@ function clearCachedAccountData() {
   localStorage.removeItem('apeek_home_cache');
   localStorage.removeItem('apeek_v2_home_devices');
   resetDirectTransport();
+  answers.clear();
   localStorage.removeItem('baton-preview-ports');
   localStorage.removeItem('baton-nav'); // legacy location
   sessionStorage.removeItem('baton-nav');
@@ -95,19 +96,35 @@ async function _do(path, params, opts, init) {
 // pages still use REST until they move.
 const BRIDGE_METHODS = { '/api/bridge/projects': 'projects', '/api/bridge/sessions': 'sessions' };
 
+// The last answer to each list request: asked again, the Bridge says "not modified" when it is
+// still current, and this copy is used.
+const answers = new Map();
+export async function requestFresh(device, method, params) {
+  const key = JSON.stringify([state.SERVER, device, method, params]);
+  const known = answers.get(key);
+  const reply = await requestBridge(device, method, { ...params, known: known?.fingerprint || '' });
+  if (reply.notModified && known) return structuredClone(known.value);
+  const { fingerprint, ...value } = reply;
+  answers.delete(key);
+  answers.set(key, { fingerprint, value: structuredClone(value) });
+  if (answers.size > 100) answers.delete(answers.keys().next().value);
+  return value;
+}
+
 async function api(path, params, opts) {
   if (!(opts && (opts.key || opts.server))) {
     if (path === '/api/bridge/active-sessions') return (await (params?.allProjects ? expandedHome() : loadHomeV2())).active;
     if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
-    if (path === '/api/bridge/session-threads') return requestBridge(params.device, 'threads', { sessionId: params.session });
+    if (path === '/api/bridge/session-threads') return requestFresh(params.device, 'threads', { sessionId: params.session });
     if (path === '/api/bridge/messages') {
       const target = { device: params.device, sessionId: params.session };
       return params.before ? loadOlderHistory({ ...target, before: params.before })
-        : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', onSlow: opts?.onSlow });
+        : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', root: state.wsRootSessionId || params.session,
+          onSlow: opts?.onSlow });
     }
     if (BRIDGE_METHODS[path]) {
       const { device, ...rest } = params || {};
-      return requestBridge(device, BRIDGE_METHODS[path], rest);
+      return requestFresh(device, BRIDGE_METHODS[path], rest);
     }
   }
   return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();

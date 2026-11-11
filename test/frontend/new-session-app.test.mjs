@@ -34,7 +34,7 @@ test('New Session switches available runtimes and remembers the last per-device 
     getComputedStyle: window.getComputedStyle,
     requestAnimationFrame: function (fn) { return setTimeout(fn, 0); },
     cancelAnimationFrame: clearTimeout,
-    connectWs: function () {},
+    newSessionRequest: function () {},
     disconnectWs: function () {},
     updateSpinner: function () {},
     updateSendBtn: function () {},
@@ -43,7 +43,7 @@ test('New Session switches available runtimes and remembers the last per-device 
   Object.assign(window, {
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
-    connectWs: globalThis.connectWs,
+    newSessionRequest: globalThis.newSessionRequest,
     disconnectWs: globalThis.disconnectWs,
     updateSpinner: globalThis.updateSpinner,
     updateSendBtn: globalThis.updateSendBtn,

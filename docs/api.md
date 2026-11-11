@@ -148,7 +148,7 @@ Bridge uploads a compressed image to S3.
 
 ### POST /api/bridge/upload-file
 
-Bridge uploads a project **text** file to S3, in response to an app `request_file` (see WS section). Used to let the app view the actual source of a file referenced by a Read/Edit/Write tool node. (Image files take a separate branch and reuse `POST /upload-image` instead — see `request_file`.)
+Bridge uploads a project **text** file to S3, in response to a `project_files` `read`. Used to let the app view the actual source of a file referenced by a Read/Edit/Write tool node. (Image files reuse `POST /upload-image` instead.)
 
 **Request**
 ```json
@@ -166,7 +166,7 @@ Bridge uploads a project **text** file to S3, in response to an app `request_fil
 **S3 storage path**: `files/{key}`
 
 **Notes**:
-- `key` = `sha256(absPath + "#" + mtimeMs + "#" + size)[:16]` + original file extension, where `mtimeMs` is the file's modification time in milliseconds and `size` is the **full** file size (not the post-truncation size). An edited file (changed mtime/size) produces a fresh key, so the app's per-key cache and the bridge's uploaded-set never serve stale content. `truncated` is a `file_ready` field, not part of the key.
+- `key` = `sha256(absPath + "#" + mtimeMs + "#" + size)[:16]` + original file extension, where `mtimeMs` is the file's modification time in milliseconds and `size` is the **full** file size (not the post-truncation size). An edited file (changed mtime/size) produces a fresh key, so the app's per-key cache and the bridge's uploaded-set never serve stale content. `truncated` is a field of the read result, not part of the key.
 - Content is base64-encoded (handles arbitrary bytes / UTF-8 uniformly), same as `upload-image`.
 
 ---
@@ -333,6 +333,7 @@ make the operation readable. Bodies:
 |---|---|---|
 | `rpc` | `method, requestId, params, replyTo, accept, ack?, missing?` | App → Bridge |
 | `rpc_ack` | `requestId` (sent on arrival when the request has `ack`) | Bridge → App |
+| `rpc_progress` | `requestId, progress?` (after 5 s, then every 15 s while the handler runs) | Bridge → App |
 | `rpc_result` | `method, requestId, ok, chunk, enc, data` or `error` | Bridge → App |
 | `push` | `event, sessionId, id, chunk, enc, data` | Bridge → subscribed Apps |
 
@@ -347,16 +348,31 @@ a request whose params do not fit one frame is sent as `rpc` chunks (`chunk, enc
 | `sessions` | `project`, `limit?`, `cursor?` | `{ sessions, hasMore, nextCursor }` |
 | `history` | `sessionId, before?, after?, epoch?, limit?, subscribe?` | a page (`docs/v2-step3-session-plan.md`); `subscribe` also registers the caller before the file is read |
 | `threads`, `tool_details` | see `docs/v2-step3-session-plan.md` | |
-| `subscribe` | `sessionId, renew?, replaces?` | `{ epoch }`; the Session's waiting permission prompt is pushed again |
+| `subscribe` | `sessionId, rootSessionId?, renew?, replaces?` | `{ epoch }`; the Session's waiting permission prompt is pushed again and a running turn replayed (`turn_replay`) |
 | `unsubscribe` | `sessionId` | `{}` |
 | `send_message` | the `send_message` payload below, without `device` | the `send_message_result` fields below; sent with `ack` |
 | `interrupt` | `sessionId, turnId?, runtime?` | `{ ok }` |
 | `permission_reply` | the `permission_reply` payload below | `{ ok }` |
+| `list_commands` | `projectHash, runtime, knownRevision` | the catalog (`commands, skills, revision`) or `{ notModified, revision }` |
+| `list_command_options` | `projectHash, runtime, sessionId, commandName` | `{ commandName, options, error? }` |
+| `project_files`, `git_status` | the payloads below, without `action` / `device` / `requestId` | `{ frames }`: the frames the handler produced, in order |
+| `delete_files` | `sessionIds` or `projectHashes` | `{ frames }`; the last frame is the outcome, earlier ones arrive as `rpc_progress` |
+| `rename_session` | `sessionId, title, runtime?` | the `rename_session` result |
+| `create_project` | `projectPath` | `{ ok, projectHash?, projectName?, error? }` |
 | `ping` | — | `{ bridgeVersion, runtimes }` |
+
+A long handler sends `rpc_progress`; the App's deadline is 60 s after the last ack or progress.
+Machine-heavy reads (history, threads, tool details, file and Git reads) run at most 6 at once;
+everything else runs at once. A request carrying `known` gets `fingerprint` (SHA-256 of the
+result, 16 hex digits) in the reply, or only `{ notModified: true, fingerprint }` when it equals
+`known`; the App sends it for `projects`, `sessions`, `threads`, file `list` / `browse` and Git
+`status` / `refs` / `history`.
 
 A subscription is a 150 s lease (renewed every 60 s, dropped by `unsubscribe` or when the page is
 hidden). Only subscribers receive pushes: `stream_*`, `messages`, `permission_request`,
-`permission_resolved`, with the payloads described under WebSocket API. `epoch` changes when the
+`permission_resolved`, `turn_replay {events}`, `session_title_changed`, and, for connections
+subscribed with that `rootSessionId`, `session_threads_changed {deviceName, roots}`; payloads as
+described under WebSocket API. `epoch` changes when the
 Bridge restarts.
 
 Project rows: `projectHash, projectName, projectPath, sessionCount, runningCount,
@@ -470,7 +486,7 @@ Get a synced project file's content (proxied from S3).
 **Path params**:
 | Param | Description |
 |-------|-------------|
-| `key` | File key as returned by `request_file` → `file_ready`, e.g. `5f3a9c1b2d4e6f80.ts` |
+| `key` | File key as returned by a `project_files` `read`, e.g. `5f3a9c1b2d4e6f80.ts` |
 
 **Logic**: Read from S3 `files/{key}` and return.
 
@@ -543,10 +559,10 @@ send/streaming/interrupt and runtime-specific permission handling through its ap
 
 ---
 
-Session events, sends, interrupts and permission replies no longer use this socket: they travel
-on the direct channel above (requests `subscribe`, `send_message`, `interrupt`,
-`permission_reply`; pushes for `stream_*`, `messages`, `permission_*`). Their payloads are still
-described below. The Bridge keeps sending the `messages` rows that DynamoDB stores.
+Since v2 stage 2a the App opens no control socket: Session events, sends, interrupts,
+permission replies, commands, files, Git, rename, create project and delete all travel on the
+direct channel above. Their payloads are still described below; `notify_seen` has no sender until
+stage 2b. The Bridge keeps sending the `messages` rows that DynamoDB stores.
 
 ### App → Server
 
@@ -781,49 +797,6 @@ operations still require `projectHash`.
 
 ---
 
-#### request_file
-
-Ask the bridge to read a project file from the device's local disk and upload it to S3, so the app can view its actual content (highlighted) when the user clicks a file reference in a Read/Edit/Write tool node or an inline file link.
-
-```json
-{
-  "action": "request_file",
-  "path": "bridge/ws.mjs",
-  "sessionId": "a1ca0870-xxxx",
-  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
-  "device": "MacBook-Pro",
-  "requestId": "file_xyz789"
-}
-```
-
-**Fields**:
-| Field | Required | Description |
-|-------|----------|-------------|
-| `path` | Yes | File path. Absolute, or relative to the session's project directory |
-| `projectHash` | No | Used to resolve relative `path` against the project's real directory (`projectHashToPath`) |
-| `sessionId` | Yes | Used to scope the `file_ready` reply to subscribers of this session |
-| `device` | Yes | Target device (routing) |
-| `requestId` | Yes | Client-generated id, echoed back in `file_ready` to match the open viewer |
-
-**Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
-
-**Bridge handling**:
-1. Resolve `path` (relative → join with `projectHashToPath(projectHash)`)
-2. `stat` the file (mtime + size only — **no read yet**); reject directories
-3. Decide type by extension: video (`.mp4 .m4v .mov .webm .mkv .avi`), image (`.png .jpg .jpeg .gif .webp .bmp .svg .ico .avif`), else text
-4. Compute `key` from the stat (see key formula under `POST /upload-file`)
-5. **Dedup**: if `key` is already in the bridge's in-memory uploaded-set → skip read + upload, reply `file_ready` immediately (videos dedup via S3 HEAD in `video-prepare` instead)
-6. Read + upload:
-   - **Video**: reject if larger than **5 GB** (`error: "video too large"`). Send an immediate `file_progress` ack (see below), then `POST /api/bridge/video-prepare` → stream the file to the presigned PUT URL (or skip if it already exists). Reply `file_ready` with `video: true`
-   - **Text**: read up to **1 MB** (larger → read first 1 MB, drop the partial last line, set `truncated: true`; the viewer's Download fetches the full file); reject if a NUL byte appears in the first 8 KB (`error: "binary file"`); `POST /api/bridge/upload-file`
-   - **Image**: reject if larger than **10 MB** (`error: "image too large"` — never truncate image bytes); otherwise read the **whole** file and `POST /api/bridge/upload-image` (reuses the image endpoint + `GET /image/{key}` retrieval)
-7. Add `key` to the uploaded-set (text/image), reply `file_ready` via WS (no path restriction beyond OS permissions — matches Claude Code's own Read scope)
-
-**Caching & dedup** (no separate mtime tracking needed — the key *is* the version):
-- Because `key` embeds `mtime + size`, an unchanged file always hashes to the same key and an edited file always hashes to a new one. "Already synced and unchanged" ≡ "this key is already known".
-- **Bridge** keeps a bounded **LRU set of uploaded keys** (cap 1000 keys ≈ ~25 KB; evict oldest on overflow). A hit skips both the disk read and the S3 upload. Memory stays capped; an evicted key just causes one harmless re-upload on next click (S3 PUT is idempotent — same key overwrites identical bytes). The set is in-memory only, so a bridge restart may re-upload each file at most once.
-- **App** stores uploaded text (the `GET /file/{key}` path) in the IndexedDB attachment cache by `key`; a hit skips the download. Since the key changes when the file changes, the cache never serves stale content. Inline text is not cached because it already arrived over WS. Images reuse the shared in-memory `imageCache` (data URLs, cap 200) across inline thumbnails and the preview overlay; videos cache their presigned URL in `state.videoUrlCache` (~50 min). Both are in-memory only — cleared on page refresh.
-
 #### list_commands
 
 Ask the bridge for the slash-command catalog of the active runtime.
@@ -846,7 +819,7 @@ Ask the bridge for the slash-command catalog of the active runtime.
 | `runtime` | Yes | `claude` or `codex`; omitted values retain Claude compatibility |
 | `device` | Yes | Target device (routing) |
 | `knownRevision` | No | Revision already stored by the app; matching responses avoid a catalog upload and REST fetch |
-| `requestId` | Yes | Client-generated id, echoed back in `command_catalog_ready` |
+| `requestId` | Yes | Client-generated id, matches the reply |
 
 **Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
 
@@ -1071,97 +1044,6 @@ fast completion before the app's subscription write becomes visible.
 
 ---
 
-#### file_ready
-
-Bridge has uploaded a requested file to S3 and notifies the app. Sent in response to `request_file`.
-
-```json
-{
-  "action": "file_ready",
-  "requestId": "file_xyz789",
-  "sessionId": "a1ca0870-xxxx",
-  "key": "5f3a9c1b2d4e6f80.ts",
-  "path": "/Users/xiaoweii/workspace/rn/baton/bridge/ws.mjs",
-  "size": 18342,
-  "truncated": false,
-  "image": false
-}
-```
-
-**Fields**:
-| Field | Description |
-|-------|-------------|
-| `requestId` | Echoed from `request_file`, matches the open viewer |
-| `sessionId` | Used by the server to scope forwarding to this session's subscribers |
-| `key` | S3 key. Fetch text via `GET /api/bridge/file/{key}`; resolve images with `GET /api/bridge/image-url/{key}` |
-| `path` | Resolved absolute path (shown in the viewer header) |
-| `size` | Full byte size of the file (not the post-truncation size) |
-| `truncated` | Text only: `true` if the file exceeded 1 MB (first 1 MB synced, partial last line dropped). Always `false` for images |
-| `image` | `true` if the file is an image — the app resolves its signed S3 URL and opens the image viewer |
-| `attachment` | For images, `true` selects account-scoped storage through `image-url?attachment=true`; new project image reads always set this |
-| `video` | `true` if the file is a video — the app fetches `GET /video-url/{key}` and plays it in a `<video>` element streaming directly from S3 |
-| `error` | Present (instead of `key`) when the read failed — `not found`, `is a directory`, `binary file`, `image too large`, `video too large`, `upload failed` |
-
-**Note on syntax highlighting**: the bridge does *not* send a language hint. The app derives the highlight.js language from the file extension (`detectLang(path)`), falling back to `highlightAuto` for unknown extensions and to plain text for files larger than 256 KB (to avoid blocking the UI). Images skip highlighting entirely and reuse the image overlay (`viewImage`), with the `data:` MIME type derived from the key's extension.
-
-#### file_progress
-
-Sent by the bridge **before** a video's (potentially long) S3 upload finishes, so the app stops its `request_file` timeout/retry and shows "Uploading video…" instead of falsely timing out or re-triggering the upload. Forwarded to the session's subscribers like `file_ready`.
-
-```json
-{ "action": "file_progress", "requestId": "file_xyz789", "sessionId": "a1ca0870-xxxx", "video": true }
-```
-
-The app matches by `requestId`, clears the pending timer (keeping `_pendingFileReq` alive so the eventual `file_ready` still matches), and updates the loading label. Only used for videos.
-
-**Server handling**: `_handle_bridge_relay` — forward to all app connections subscribed to `sessionId` (excluding the bridge).
-
----
-
-#### command_catalog_ready
-
-Bridge uploads a changed catalog through `POST /api/bridge/command-catalog`, then replies with a
-small WS notification. Descriptions are hard-truncated to 256 UTF-8 bytes before revision hashing
-and upload, without splitting a Unicode character; visual line clamping remains frontend-only.
-
-```json
-{
-  "action": "command_catalog_ready",
-  "requestId": "cmds_1717300000000",
-  "runtime": "codex",
-  "device": "MacBook-Pro",
-  "projectHash": "-Users-xiaoweii-workspace-rn-baton",
-  "revision": "a1b2c3d4",
-  "notModified": false,
-  "catalogRef": "0123456789abcdef0123456789abcdef"
-}
-```
-
-**Fields**:
-| Field | Description |
-|-------|-------------|
-| `requestId` | Echoed from `list_commands`; stale replies are ignored |
-| `runtime`, `device`, `projectHash` | Echoed project context used to ignore account-wide broadcasts for another view |
-| `revision` | Stable hash of the normalized project catalog |
-| `notModified` | `true` when `knownRevision` matches; `catalogRef` is omitted |
-| `stale` | The Bridge returned its last known catalog because a refresh failed |
-| `error` | Refresh error detail; empty on a normal response |
-| `catalogRef` | Account-scoped stable reference used by `GET /api/bridge/command-catalog/{ref}` |
-
-**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections for the account (not scoped by session). This is deliberate: the new-session view has no `sessionId` subscription, so a session-scoped relay (like `file_ready`) wouldn't reach it. Same pattern as `create_project_result`.
-
-When `notModified` is true, the response is only a small acknowledgement:
-
-```json
-{
-  "action": "command_catalog_ready",
-  "requestId": "cmds_1717300000000",
-  "revision": "a1b2c3d4",
-  "notModified": true,
-  "stale": false
-}
-```
-
 #### list_command_options / command_options
 
 Session-scoped picker options are not stored in the project catalog. Selecting a command marked
@@ -1252,10 +1134,6 @@ Server notifies bridge to sync a specific session's messages to DDB (triggered b
 2. Read and extract messages → POST /sync-messages to write DDB
 3. On completion, send `sync_complete` via WS
 
-All App → Server operational actions are also forwarded to the matching Bridge after `device`
-is removed: `send_message`, `permission_reply`, `interrupt`, `request_file`,
-`delete_files`, `list_commands`, and `create_project`.
-
 ---
 
 ### Server → App (Push)
@@ -1324,47 +1202,7 @@ Notifies app that a session's historical messages have been synced to DDB, app c
 #### streaming and operation results
 
 The server forwards `stream_block_start`, `stream_delta`, `stream_tool_input`,
-`stream_block_stop`, `stream_end`, `file_progress`, and `delete_files_result` using the same
-payloads documented above. Streaming/file progress is subscription-scoped; deletion results are
-account-wide.
-
----
-
-#### file_ready
-
-Server forwards bridge's file-ready notification (only pushed to app connections subscribed to this sessionId). Same payload as the Bridge → Server `file_ready` above. The app matches it by `requestId`, then fetches the content (`GET /file/{key}` for text → highlight.js, `GET /image/{key}` for images → image viewer, or `GET /video-url/{key}` for videos → `<video>` streaming from S3).
-
-```json
-{
-  "action": "file_ready",
-  "requestId": "file_xyz789",
-  "sessionId": "a1ca0870-xxxx",
-  "key": "5f3a9c1b2d4e6f80.ts",
-  "path": "/Users/xiaoweii/workspace/rn/baton/bridge/ws.mjs",
-  "size": 18342,
-  "truncated": false,
-  "image": false
-}
-```
-
----
-
-#### command_catalog_ready
-
-Server broadcasts the Bridge's small ready notification to all app connections under the account.
-The app accepts only the reply matching its latest request and current device/runtime/project,
-fetches the account-scoped catalog through REST, then caches the ordered `{commands, skills}`
-payload under `apeek_cmds:v6:<device>:<runtime>:<projectHash>`.
-
-```json
-{
-  "action": "command_catalog_ready",
-  "requestId": "cmds_1717300000000",
-  "revision": "a1b2c3d4",
-  "catalogRef": "0123456789abcdef0123456789abcdef"
-}
-```
-
+`stream_block_stop` and `stream_end` using the same payloads documented above.
 
 ---
 
@@ -1415,13 +1253,6 @@ Bridge routing queries `Connections.accountId-role-index`. Disconnect cleanup qu
 ### send_message_result broadcast scope
 
 `send_message_result` uses `_handle_bridge_broadcast` to broadcast to **all** app connections under the account, not just the requester. When multiple devices/tabs are open, all apps receive the new session's `sessionId`. Frontend handles this via `appState.session === '__new__'` check — no functional impact.
-
-### device routing strips `device` before forwarding
-
-`_handle_send_to_bridge` rebuilds the payload without `device`, then forwards only to bridge
-connections whose `deviceName` matches. Applies to `send_message`, `permission_reply`,
-`interrupt`, `create_project`, `request_file`, `delete_files`, and
-`list_commands`.
 
 ### Codex
 

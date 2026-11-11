@@ -27,13 +27,14 @@ test('visible folders preload once and a fresh preload opens without another req
     emit() { this.callback(this.targets.map(target => ({ target, isIntersecting: true }))); }
   };
   const { state } = await import('../../web/js/state.js');
-  const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
+  let handleWsRpcMessage;
   const browser = await import('../../web/js/project/browser.js');
   const requests = [];
   const settle = () => new Promise(resolve => setImmediate(resolve));
   window.loadViewerLibs = async () => {};
   window.connectWs = () => {};
-  window.wsSendReliable = request => requests.push(request);
+  handleWsRpcMessage = mockBridgeFrames(undefined, requests).answer;
   state.appState.device = 'Test device';
   state.appState.project = { hash: 'project', name: 'project' };
   function reply(request, entries = []) {

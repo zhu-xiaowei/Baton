@@ -49,9 +49,6 @@ for (const runtime of ['claude', 'codex']) {
         requestId: harness.state.wsRequestId, turnId: pending.id,
       });
       const loading = harness.window.loadLatestMessages(sessionId);
-      harness.hooks.handleWsMessage({
-        action: 'sync_complete', sessionId, status: 'ok', count: hasEcho ? 1 : 0,
-      });
       request.resolve({
         messages: hasEcho ? [user] : [],
         hasMore: false,

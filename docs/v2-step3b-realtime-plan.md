@@ -203,32 +203,94 @@ queue or confirm pushes. A lost one shows as a turn `seq` gap or is covered by t
   (`feat/v2`: no frame sent, failure at 12 s).
 - Not run: WebKit, the native shells, a real one-hour expiry.
 
-## Stage 2. Remaining requests and notifications
+## Stage 2a. The remaining requests and pushes; no v1 control socket
 
-To design when stage 1 is merged.
+Decided 2026-11-11. After it the App opens no v1 control socket (the terminal opens its own for
+its pairing, as it already can). Notifications are stage 2b.
 
-- Requests: `list_commands` (catalog in the reply, no S3 copy), `list_command_options`,
-  `project_files`, `git_status`, `rename_session`, `create_project`, `delete_files`. Slow ones use
-  the `ack` of stage 1. Large file bodies still use S3.
-- Pushes that belong to no open Session: title changed, threads changed (today a side effect of
-  `sync-sessions`). Needs a device-level subscription or a place on the existing one.
-- Notifications: the Bridge emits a notify event on `completed` / `needs_input` with title and
-  text from its own data and today's rules applied locally (interrupted turns, pending task
-  notifications, the 120 s local-idle rule). The viewer check uses the subscriber table (how
-  visibility reaches it is open). The server keeps push devices, the relay call and the event feed
-  (Android polling, the iOS extension's fetch). Events raised while disconnected are queued.
-- "Not modified" for every read (decided 2026-11-10): the Bridge fingerprints a reply, the App
-  sends the fingerprint of its cached answer, and an unchanged answer comes back as a marker
-  (measured: `home` 5.7 KB → 0.2 KB; `projects` 0.8 KB, `sessions` 1.5 KB, `threads` 0.6 KB each
-  time today). One mechanism in the request layer for `home` (replacing its own revision), the
-  lists, `threads`, the command catalog, file listings and Git status. `history` already sends
-  only what is newer than the cursor. `threads` reuses the App's existing thread-list cache
-  (`cachedSessionThreads`), so it only adds the fingerprint (confirmed 2026-11-11).
-- Tool details in IndexedDB (decided 2026-11-10): the content never changes, so no revalidation.
-  Least recently opened evicted first, 20 MB in total, nothing above 10 MB stored, no count limit.
-- Removes: `ws-rpc.js`, the App's v1 control socket and its ping, the `ROOT#` subscription,
-  `notify_check` / `notify_seen`, the command-catalog endpoints, the stream trigger of the
-  notification worker, the Subscriptions table.
+### Shared request behaviour
+
+- **Long requests:** a handler still running after 5 s sends `rpc_progress {requestId, progress?}`
+  every 15 s; each one moves the App's deadline to 60 s after it (as MCP and LSP progress
+  notifications do). Git push and commit (up to 120 s), downloads and video uploads to S3 (up to
+  30 min) and deletes need nothing else; `progress` carries what a page shows (delete counts).
+- **Concurrency:** only the reads that use the machine (history, threads, tool details, file
+  listings and reads, Git status / diff / refs / history / commit files) count, at most 6 at once.
+  Everything that waits (sends, interrupts, permission replies, subscriptions, commits, pushes,
+  uploads, deletes) runs at once. Traffic is the same either way; only waiting time changes.
+- **Not modified:** a request may carry `known: <fingerprint>`; the reply carries `fingerprint`
+  (SHA-256 of the result, 16 hex digits) or, when it equals `known`, only `{notModified: true}`.
+  Used by `projects`, `sessions`, `threads`, file `list` / `browse` and Git status / refs /
+  history. `home` and `list_commands` keep their own revision, which already answers "not
+  modified" without computing the whole result.
+- Replies use the reply codec (deflate, chunks, no size limit). The file and Git handlers keep
+  producing their frames (`bridge/project/ws-frames.mjs`); the Bridge collects them into one
+  result `{frames}` and forwards progress frames as `rpc_progress`, so the App's assemblers stay.
+
+### Requests
+
+| Request | Notes |
+|---|---|
+| `list_commands` | The catalog in the reply; no S3 copy (largest real catalog: 105 commands, 29 KB, 9 KB deflated) |
+| `list_command_options` | Gets a deadline (none today) |
+| `project_files` `list` / `browse` / `read` / `download` | One result; images, videos and downloads still go through S3, kept alive by progress |
+| `git_status` (every operation) | One result; diff paging stays |
+| `rename_session` | The reply carries the new title; the DynamoDB mirror stays until stage 3 |
+| `create_project` | A request id and a deadline (today matched by path, no timeout) |
+| `delete_files` | Progress through `rpc_progress`; the App's `/api/bridge/delete` stays until stage 3 |
+
+`request_file` / `file_ready` / `file_progress` have no sender any more and are deleted.
+
+### Pushes
+
+- **Threads changed:** the Bridge pushes `session_threads_changed {deviceName, roots}` to the
+  connections subscribed under that root when its child counts change. `subscribe` carries the
+  root (`history {subscribe}` too).
+- **Title changed:** the requester gets the title in the reply; the Bridge pushes
+  `session_title_changed` to the Session's and its root's subscribers. List pages see it the next time they load (cheap
+  with "not modified"). Before, the server broadcast it to every page of the account.
+
+### Also in 2a
+
+- Tool details in IndexedDB (decided 2026-11-10): least recently opened evicted first, 20 MB in
+  total, nothing above 10 MB stored, no count limit.
+- `agentDetail` in home and lists from the Bridge's pending prompt.
+- `history {subscribe: true}` does what `subscribe` does on opening (re-push the waiting prompt,
+  replay the running turn, return `epoch`), so opening a Session sends 2 requests instead of 3.
+
+### Accepted until 2b
+
+The server's "being viewed" check (`notify_check` / `notify_seen`) has no App to ask, so while you
+watch a Session on one device another device still gets its push (a foreground iOS / Android app
+still suppresses its own open Session). The Subscriptions table and the notification worker are
+left as they are; 2b removes both checks into one on the Bridge.
+
+### Removed in 2a
+
+- App: the control socket in `ws.js` (connect, probes, 25 s ping, send queue, `ROOT#`,
+  `notify_seen`, `sync_complete`, `bridge_recovery_complete`) and the command catalog's S3
+  download. `ws-rpc.js` stays as the frame assembler, now over `bridge.request`.
+- Bridge: the catalog upload, the legacy file request, the control-socket cases of the moved
+  actions.
+- Server: the `server/src/project/` relays, the relays of `list_commands`,
+  `list_command_options`, `create_project`, `delete_files`, the threads-changed broadcast and the
+  command-catalog endpoints with their S3 code. The `subscribe` / `notify_seen` routes and the
+  Subscriptions table stay for 2b.
+
+## Stage 2b. Notifications from the Bridge
+
+Waits for the open PR on `main` that changes subagent notifications, then `main` merged into
+`feat/v2`; designed then. Settled so far:
+
+- The Bridge emits a notify event on `completed` / `needs_input` with title and text from its own
+  data and today's rules applied locally (interrupted turns, pending task notifications, the 120 s
+  local-idle rule). "Being viewed" is decided on the Bridge from its subscriber table (keyed by
+  root). The server keeps push devices, the relay call and the event feed (Android polling, the
+  iOS extension's fetch).
+- Events raised while the Bridge cannot reach the server are queued: the newest per Session, at
+  most 10, dropped after 10 minutes (as APNs and FCM coalesce per collapse key).
+- Removes: `notify_check` / `notify_seen`, the stream trigger of the notification worker, the
+  Subscriptions table.
 
 ## Stage 3. Delete Session storage in DynamoDB
 

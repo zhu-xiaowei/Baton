@@ -99,16 +99,6 @@ export function commandCatalogPayload(result, knownRevision = '') {
   };
 }
 
-export function commandCatalogReadyPayload(payload, catalogRef = '') {
-  return {
-    revision: payload.revision || '',
-    notModified: !!payload.notModified,
-    stale: !!payload.stale,
-    error: payload.error || '',
-    ...(!payload.notModified && catalogRef ? { catalogRef } : {}),
-  };
-}
-
 export class CommandCatalogCache {
   constructor(options = {}) {
     this.ttlMs = options.ttlMs ?? COMMAND_CATALOG_TTL_MS;

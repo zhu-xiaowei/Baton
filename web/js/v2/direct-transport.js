@@ -17,7 +17,7 @@ const PROBE_MS = 1000;
 // A request this long without any inbound frame pings the socket (rebuilt after the same wait
 // without an answer); a request that asked for a receipt and has none is sent again.
 const STALL_MS = 3000;
-const ACKED_DEADLINE_MS = 60000; // the Bridge has the request; its work may take this long
+const ACKED_DEADLINE_MS = 60000; // after a receipt or progress, the next sign of life may take this long
 const RENEW_MS = 5 * 60000;      // credentials with less than this left are renewed before signing
 const PING = '{"action":"realtime_ping"}';
 // After a drop: reconnect at once, then up to this many retries 0–2 s apart. Later requests,
@@ -150,15 +150,40 @@ function resync(device) {
 }
 
 // The Bridge keeps a subscription for 150 s; it is renewed on every ping tick and made again
-// after a reconnect, when the device returns and when the page is shown again.
-export function subscribe(device, sessionId) {
+// after a reconnect, when the device returns and when the page is shown again. `root` is the thread
+// root the page shows. `quiet`: the history request about to go out subscribes (`subscribed()`
+// reports it); only without that reply is a subscribe sent.
+export function subscribe(device, sessionId, { root = '', quiet = false } = {}) {
   const key = device + '|' + sessionId;
-  if (!subscriptions.has(key)) subscriptions.set(key, { device, sessionId, inflight: false });
-  sendSubscribe(subscriptions.get(key), false);
+  let entry = subscriptions.get(key);
+  if (!entry) subscriptions.set(key, entry = { device, sessionId, root, inflight: false, fallback: null });
+  if (root) entry.root = root;
+  clearTimeout(entry.fallback);
+  entry.fallback = null;
+  if (quiet) entry.fallback = setTimeout(() => { entry.fallback = null; sendSubscribe(entry, false); }, STALL_MS);
+  else sendSubscribe(entry, false);
+}
+
+export function subscribed(device, sessionId, epoch) {
+  const entry = subscriptions.get(device + '|' + sessionId);
+  if (!entry) return;
+  clearTimeout(entry.fallback);
+  entry.fallback = null;
+  noteEpoch(device, epoch);
 }
 
 export function unsubscribe(device, sessionId) {
-  if (subscriptions.delete(device + '|' + sessionId)) leave(device, sessionId);
+  const entry = subscriptions.get(device + '|' + sessionId);
+  if (!entry) return;
+  clearTimeout(entry.fallback);
+  subscriptions.delete(device + '|' + sessionId);
+  leave(device, sessionId);
+}
+
+function noteEpoch(device, epoch) {
+  const known = epochs.get(device);
+  epochs.set(device, epoch);
+  if (known && known !== epoch) resync(device);
 }
 
 function leave(device, sessionId) {
@@ -168,16 +193,15 @@ function leave(device, sessionId) {
 function sendSubscribe(entry, renew) {
   if (entry.inflight || document.visibilityState !== 'visible') return;
   entry.inflight = true;
-  const params = { sessionId: entry.sessionId, ...(renew ? { renew: true } : replacedId ? { replaces: replacedId } : {}) };
-  request(entry.device, 'subscribe', params).then((reply) => {
-    const known = epochs.get(entry.device);
-    epochs.set(entry.device, reply.epoch);
-    if (known && known !== reply.epoch) resync(entry.device);
-  }, () => {}).finally(() => { entry.inflight = false; });
+  const params = { sessionId: entry.sessionId, ...(entry.root ? { rootSessionId: entry.root } : {}),
+    ...(renew ? { renew: true } : replacedId ? { replaces: replacedId } : {}) };
+  request(entry.device, 'subscribe', params).then((reply) => noteEpoch(entry.device, reply.epoch), () => {})
+    .finally(() => { entry.inflight = false; });
 }
 
+// Entries waiting on a history request (`quiet`) are left to it; its fallback covers a failure.
 function resubscribe(device) {
-  for (const entry of subscriptions.values()) if (!device || entry.device === device) sendSubscribe(entry, false);
+  for (const entry of subscriptions.values()) if ((!device || entry.device === device) && !entry.fallback) sendSubscribe(entry, false);
 }
 
 // Resolves at the socket's next pong: everything posted to it before has arrived by then.
@@ -298,11 +322,16 @@ function receive(ws, text) {
     }
     return;
   }
-  if (frame.kind === 'rpc_ack') {
+  if (frame.kind === 'rpc_ack' || frame.kind === 'rpc_progress') {
     const request = pending.get(frame.requestId);
-    if (request && !request.acked) {
+    if (!request) return;
+    request.aliveAt = performance.now();
+    if (!request.acked) {
       request.acked = true;
       try { request.onAccepted?.(); } catch {}
+    }
+    if (frame.kind === 'rpc_progress' && frame.progress !== undefined) {
+      try { request.onProgress?.(frame.progress); } catch {}
     }
     return;
   }
@@ -352,7 +381,7 @@ function reconcile() {
   for (const [key, request] of pending) {
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
-    if (now - request.createdAt > (request.acked ? ACKED_DEADLINE_MS : DEADLINE_MS)) { finish(key, request, { reason: 'timeout' }); continue; }
+    if (request.acked ? now - request.aliveAt > ACKED_DEADLINE_MS : now - request.createdAt > DEADLINE_MS) { finish(key, request, { reason: 'timeout' }); continue; }
     if (!request.slow && now - request.createdAt > SLOW_MS) {
       request.slow = true;
       try { request.onSlow?.(); } catch {}
@@ -392,16 +421,17 @@ export function devices() {
   return devicesInflight;
 }
 
-// `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once, and the request may then
-// take ACKED_DEADLINE_MS.
-export function request(device, method, params = {}, { onSlow, ack, onAccepted } = {}) {
+// `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once. After a receipt or a
+// progress frame (a long request, `onProgress(value)` when it carries one) the request may take
+// ACKED_DEADLINE_MS more from the latest of them.
+export function request(device, method, params = {}, { onSlow, ack, onAccepted, onProgress } = {}) {
   restore();
   connect();
   // A page opened without the home (reload, link) still learns current routes and credentials.
   if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
-    pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, onAccepted, acked: false, createdAt: performance.now(),
+    pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, onAccepted, onProgress, acked: false, aliveAt: 0, createdAt: performance.now(),
       attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });

@@ -458,6 +458,11 @@ export class SessionIndex {
     return name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name;
   }
 
+  // The waiting question: a daemon agent's, else the prompt this Bridge holds (`pendingDetail`).
+  detail(row) {
+    return row.agent?.agentDetail || this.pendingDetail?.(row.sessionId) || '';
+  }
+
   // ---------- answers ----------
   async home(knownRevision) {
     await this.readyPromise;
@@ -479,7 +484,7 @@ export class SessionIndex {
       },
       sessions: active.filter((row) => row.status === 'running' || now - row.ms <= NEEDS_INPUT_WINDOW_MS).map((row) => ({
         ...item(row), projectHash: row.project, projectName: this.projectName(row.project),
-        ...(row.status === 'needs_input' && row.agent?.agentDetail ? { agentDetail: row.agent.agentDetail } : {}),
+        ...(row.status === 'needs_input' && this.detail(row) ? { agentDetail: this.detail(row) } : {}),
       })),
       recentProjects: catalog.projects.slice(0, HOME_PROJECTS).map((project) => ({
         projectHash: project.projectHash, projectName: this.projectName(project.projectHash),
@@ -525,7 +530,7 @@ export class SessionIndex {
         const out = { sessionId: row.sessionId, preview: row.preview, lastActive: new Date(row.ms).toISOString(),
           size: row.rec.size, model: row.rec.state?.model || '', status: row.status, agentCount: row.agentCount };
         if (row.agent) { out.isAgent = true; out.agentName = row.agent.agentName || ''; }
-        if (row.own === 'needs_input' && row.agent?.agentDetail) out.agentDetail = row.agent.agentDetail;
+        if (row.own === 'needs_input' && this.detail(row)) out.agentDetail = this.detail(row);
         return out;
       }),
       hasMore: page.hasMore,

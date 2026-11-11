@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { mockBridgeFrames } from './bridge-frames-mock.mjs';
 import { JSDOM } from 'jsdom';
 import { createTestServer } from './helpers/vite.mjs';
 
@@ -179,17 +180,18 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       input.value = '  New native title  ';
       input.dispatchEvent(new window.Event('input', { bubbles: true }));
       let payload;
-      window.wsSendReliable = message => { payload = message; };
+      const bridge = mockBridgeFrames(rpc.configureWsRpc, [], request => { payload = request; });
+      window.bridgeRequest = () => Promise.reject(new Error('unused')); // the viewer libraries are loaded
       confirm.click();
       assert.equal(confirm.disabled, true);
       assert.equal(payload.sessionId, state.rootSessionId);
       assert.equal(payload.name, 'New native title');
-      rpc.handleWsRpcMessage({ ...payload, ok: false, error: 'Bridge offline.' });
+      bridge.answer({ requestId: payload.requestId, ok: false, error: 'Bridge offline.' });
       await new Promise(resolve => setTimeout(resolve, 0));
       assert.equal(modal.querySelector('.modal-error').textContent, 'Bridge offline.');
       assert.notEqual(state.rootSessionPreview, 'New native title');
       confirm.click();
-      rpc.handleWsRpcMessage({ ...payload, ok: true, synced: true });
+      bridge.answer({ requestId: payload.requestId, sessionId: payload.sessionId, name: payload.name, ok: true, synced: true });
       await new Promise(resolve => setTimeout(resolve, 0));
       assert.equal(document.getElementById('sessionRenameModal'), null);
       assert.equal(state.rootSessionPreview, 'New native title');
@@ -249,7 +251,8 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
         const rpc = await vite.ssrLoadModule('/js/ws-rpc.js');
         const synced = [];
         let operation;
-        window.wsSendReliable = message => {
+        window.bridgeRequest = () => Promise.reject(new Error('unused'));
+        const bridge = mockBridgeFrames(rpc.configureWsRpc, [], message => {
           operation = handleSessionRename({ ...message, replyConnectionId: 'local-app' }, {
             deviceName: 'Mac',
             rename: message => renameNativeSession(message, {
@@ -260,9 +263,9 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
               synced.push(body);
               return { ok: true };
             },
-            send: message => rpc.handleWsRpcMessage(message),
+            send: message => bridge.answer(message),
           });
-        };
+        });
         for (const runtime of ['claude', 'codex']) {
           showSession(runtime);
           const sessionId = runtime === 'claude' ? claudeId : `codex:${codexId}`;

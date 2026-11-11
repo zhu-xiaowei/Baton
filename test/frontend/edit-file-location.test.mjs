@@ -17,7 +17,8 @@ const vite = await createTestServer({
 });
 const { state } = await vite.ssrLoadModule('/js/state.js');
 const { configureToolDetails, observeToolDetails, loadToolDetails, toolDetailsSource } = await vite.ssrLoadModule('/js/tool-details.js');
-const { handleWsRpcMessage } = await vite.ssrLoadModule('/js/ws-rpc.js');
+const { configureWsRpc } = await vite.ssrLoadModule('/js/ws-rpc.js');
+const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
 const { openFile, closeFileViewer } = await vite.ssrLoadModule('/js/project/file-viewer.js');
 
 let sent = [];
@@ -30,14 +31,14 @@ test.beforeEach(() => {
   state.wsAllMessages = [];
   sent = [];
   configureToolDetails((device, method, params) => new Promise((resolve) => sent.push({ action: method, ...params, resolve })));
-  window.wsSendReliable = payload => {
+  const bridge = mockBridgeFrames(configureWsRpc, [], payload => {
     sent.push(payload);
-    if (payload.action === 'project_files') queueMicrotask(() => handleWsRpcMessage({
+    if (payload.action === 'project_files') queueMicrotask(() => bridge.answer({
       action: 'project_files', requestId: payload.requestId, ok: true,
       sequence: 0, complete: true, path: payload.path, key: 'file',
       content: fileText, contentVersion: createHash('sha256').update(fileText).digest('hex'),
     }));
-  };
+  });
 });
 test.afterEach(() => closeFileViewer({ refresh: false }));
 test.after(async () => { await vite.close(); dom.window.close(); });

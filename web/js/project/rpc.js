@@ -1,10 +1,5 @@
 import { state } from '../state.js';
-import {
-  assembleLastFrame,
-  assembleTextFrames,
-  handleWsRpcMessage,
-  requestWsRpc,
-} from '../ws-rpc.js';
+import { assembleLastFrame, assembleTextFrames, requestWsRpc } from '../ws-rpc.js';
 
 export function requestProjectFiles(operation, fields, options) {
   options = options || {};
@@ -20,10 +15,4 @@ export function requestProjectFiles(operation, fields, options) {
     onProgress: options.onProgress,
     assemble: operation === 'read' ? assembleTextFrames : assembleLastFrame,
   });
-}
-
-export function handleProjectFilesMessage(message) {
-  if (!message || message.action !== 'project_files') return false;
-  handleWsRpcMessage(message);
-  return true;
 }

@@ -27,8 +27,8 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
     readyState: 1,
     send(text) { // signed reply → the App connection named in it
       const { target, body } = JSON.parse(text);
-      log.chunksSent++;
       const frame = JSON.parse(body);
+      if (frame.kind === 'rpc_result' || frame.kind === 'push') log.chunksSent++; // not receipts or progress
       if (silent) return;
       if (frame.chunk && dropChunks.includes(frame.chunk.index)) { dropChunks = dropChunks.filter((i) => i !== frame.chunk.index); return; }
       if (appSocket?.id === target && appSocket.readyState === 1) setTimeout(() => appSocket.onmessage?.({ data: body }), 5);
