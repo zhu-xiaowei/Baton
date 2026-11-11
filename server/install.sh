@@ -236,7 +236,7 @@ cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
 cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" \
   "$ROOT_DIR/bridge/preview-protocol.mjs" \
-  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$BUILD_CTX/bridge/"
+  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 
