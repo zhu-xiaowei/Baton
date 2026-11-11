@@ -2,7 +2,7 @@ import { post, postRequired, get } from './http.mjs';
 import { synced, uploadMessages } from './extract.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { pendingInteractionDetail, poolOwns } from './ws.mjs';
+import { heldForAgents, pendingInteractionDetail, poolAwaitsAgents, poolOwns } from './ws.mjs';
 import { rebuildAgentCounts } from './agent-counts.mjs';
 import { ObservedMap } from './observed-map.mjs';
 
@@ -197,6 +197,7 @@ export async function checkStopped(config) {
       statusContexts.set(adapter.runtime, adapter.createStatusContext({
         lastKnownStatus,
         poolOwns,
+        poolAwaitsAgents,
       }));
     }
     const result = adapter.inspectActiveSession({
@@ -204,6 +205,7 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
+    if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
     updates.push(result.session, ...(result.extraSessions || []));
   }
 

@@ -13,6 +13,7 @@ import {
   normalizeProjectHash,
   requireClaudeBin,
   resolveClaudeBin,
+  liveRecordBusy,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
@@ -271,6 +272,17 @@ export async function closeTerminalsForUpdate() {
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
+export function poolAwaitsAgents(sessionId) { return _pool.awaitsAgents(sessionId); }
+// Whether the last root write held its Done for background agents; a released hold is written.
+export const heldForAgents = new Map();
+// Background agents CC will report back on: a pooled process's task list (its record reads
+// idle meanwhile), else CC's own record, which may lag the last row by a moment.
+export async function backgroundAgentsLeft(sessionId) {
+  if (_pool.owns(sessionId)) return _pool.awaitsAgents(sessionId);
+  if (!liveRecordBusy(sessionId)) return false;
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return liveRecordBusy(sessionId);
+}
 
 export async function shutdownInteractions() {
   _config = null;
@@ -406,6 +418,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
     const projectHash = path.basename(path.dirname(filePath));
     const isNew = !!options.registerNew && !recentSessions.has(key);
     if (isNew) recentSessions.add(key);
+    const held = status === 'completed' && poolAwaitsAgents(key);
     try {
       await updateSessionStatus(
         _config,
@@ -415,8 +428,9 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         status,
         detail,
         identity.runtime,
-        { isNew, sentPrompt: _sentPrompts.get(key) },
+        { isNew, sentPrompt: _sentPrompts.get(key), backgroundAgents: held },
       );
+      if (identity.runtime === 'claude') heldForAgents.set(key, held);
       if (status === 'completed') _sentPrompts.delete(key);
     } catch {
       if (isNew) recentSessions.delete(key);

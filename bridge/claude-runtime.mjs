@@ -295,6 +295,7 @@ export const claudeRuntime = defineRuntimeAdapter({
       daemonMeta: getDaemonSessions(),
       daemonRunning: getDaemonRunningSessionIds(),
       poolOwns: context.poolOwns || (() => false),
+      poolAwaitsAgents: context.poolAwaitsAgents,
       lastKnownStatus: context.lastKnownStatus,
       findSessionFile: context.findSessionFile || findSessionFile,
     };
@@ -336,6 +337,8 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
+    // A terminal record reads busy while agents run, so newStatus is running there.
+    if (newStatus === 'completed' && !gone && context.poolAwaitsAgents?.(nativeSessionId)) session.backgroundAgents = true;
     const children = refreshClaudeSubagents(session, gone ? '' : filePath);
     return { session, extraSessions: children };
   },
@@ -369,6 +372,8 @@ export const claudeRuntime = defineRuntimeAdapter({
     session.agentDetail = newStatus === 'needs_input'
       ? (detail !== undefined ? detail : daemon?.agentDetail || '')
       : '';
+    // CC reports back when its background agents end; that turn alerts instead.
+    if (context.backgroundAgents) session.backgroundAgents = true;
     trackAgentSession(session);
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
