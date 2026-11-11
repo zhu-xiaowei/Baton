@@ -77,6 +77,7 @@ def test_delivery_targets_account_devices_and_drops_dead_tokens(monkeypatch):
     monkeypatch.setattr(worker, "relay", relay)
     monkeypatch.setattr(worker, "completion_summary", lambda session: "")
     monkeypatch.setattr(worker, "being_viewed", lambda event: False)
+    monkeypatch.setattr(worker, "follows_done", lambda event: False)
     worker.deliver(worker.notification(SESSION, DONE, "finished"))
     assert sorted(request["environment"] for request in sent) == ["development", "production"]
     # The push carries only the feed row's key; no title, summary or session leaves the stack.
@@ -107,6 +108,28 @@ class Pages:
 
 def assistant(text, stop="end_turn"):
     return {"type": "assistant", "stopReason": stop, "content": json.dumps([{"type": "text", "text": text}])}
+
+
+def test_done_after_an_alerted_done_is_quiet(monkeypatch):
+    monkeypatch.setenv("BRIDGE_MESSAGES_TABLE", "messages")
+    monkeypatch.setenv("SYSTEM_TABLE", "system")
+    report = {"type": "user", "timestamp": "2026-11-11T02:25:00Z", "content": "<task-notification>\n<task-id>a1</task-id>"}
+    prompt = {"type": "user", "timestamp": "2026-11-11T02:23:20.500Z", "content": "Start the agents"}
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([assistant("Agent 1 done."), report, assistant("Started."), prompt]))
+    # Report-back turns CC starts itself are skipped: the user's prompt is the boundary.
+    assert worker.last_prompt_ms(DONE) == 1794363800500
+    table = MemoryTable()
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: table)
+    monkeypatch.setattr(worker, "being_viewed", lambda event: False)
+    monkeypatch.setattr(worker, "completion_summary", lambda session: "Done.")
+    for name, follows in (("first", False), ("report-back", True)):
+        monkeypatch.setattr(worker, "follows_done", lambda event: follows)
+        worker.deliver(worker.notification(SESSION, DONE, name))
+    events = {row["event"]["eventId"]: row["event"] for key, row in table.rows.items() if key[1].startswith("EVENT#")}
+    first, later = (events[worker.hashlib.sha256(name.encode()).hexdigest()] for name in ("first", "report-back"))
+    assert "quiet" not in first and later["quiet"] is True
+    monkeypatch.setattr(worker, "follows_done", lambda event: 1 / 0)
+    worker.deliver(worker.notification(SESSION, WAITING, "ask"))  # Needs input never checks.
 
 
 def test_summary_waits_for_the_final_reply_and_skips_interrupts(monkeypatch):

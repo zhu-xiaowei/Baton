@@ -36,6 +36,12 @@ final class NotificationService: UNNotificationServiceExtension {
         content.threadIdentifier = event["rootSessionId"] as? String ?? ""
         // The app opens the session from these on tap.
         content.userInfo = event.compactMapValues { $0 as? String }.merging(["id": id]) { $1 }
+        // Background work after the first Done: listed, without sound or waking the screen.
+        if event["quiet"] as? Bool == true {
+          content.sound = nil
+          content.userInfo["quiet"] = "1"
+          if #available(iOSApplicationExtension 15.0, *) { content.interruptionLevel = .passive }
+        }
       }
       self?.finish()
     }

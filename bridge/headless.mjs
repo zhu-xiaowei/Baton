@@ -97,8 +97,8 @@ class HeadlessProc {
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       const tasks = Array.isArray(o.tasks) ? o.tasks : [];
       this.backgroundTasks = tasks.length;
-      // Background agents and the tasks they started; CC reports back once they all end.
-      this.backgroundAgents = tasks.filter((task) => task.task_type === 'local_agent' || task.parent_task_id).length;
+      // Agents always end; a Bash task, even one an agent started, may be a server that never does.
+      this.backgroundAgents = tasks.filter((task) => task.task_type === 'local_agent').length;
       // The turn CC starts when a task ends counts from here, not from the last pool turn.
       this.pool._touch(this);
       return;

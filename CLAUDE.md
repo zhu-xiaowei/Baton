@@ -131,6 +131,9 @@ Done:
 
 ### Mobile Notifications: COMPLETE
 - Finished runs and `needs_input` alert as **project · session** + summary; tapping opens the session.
+  Only the first Done after the user's last prompt alerts with sound; later ones (background work
+  reporting back) carry `quiet` and are listed without sound or waking the screen (iOS `.passive`,
+  Android `background-updates` channel). Needs input always alerts.
   One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
@@ -183,9 +186,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
     A turn end stays `running` while `background_tasks_changed` lists a background agent
-    (`local_agent`) or a task one started (`parent_task_id`), and `poolOwnsStatus` keeps the
-    watcher/`checkStopped` off it; the report-back turn after the last one ends `completed`.
-    Background Bash alone does not hold it, so each Bash report-back turn alerts again;
+    (`local_agent`), and `poolOwnsStatus` keeps the watcher/`checkStopped` off it; the
+    report-back turn after the last one ends `completed`. Background Bash, even one an agent
+    started, never holds it (it may be a server), so each Bash report-back turn still alerts;
     alerts stack per session (iOS thread, Android group). A `control_request`
     outside a pool turn (a background agent, or a turn CC started itself) goes to the pool's
     `onControlRequest`, so it still reaches the app as `needs_input` instead of blocking CC forever.
