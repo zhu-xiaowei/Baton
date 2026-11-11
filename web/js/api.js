@@ -103,10 +103,10 @@ export async function requestFresh(device, method, params) {
   const key = JSON.stringify([state.SERVER, device, method, params]);
   const known = answers.get(key);
   const reply = await requestBridge(device, method, { ...params, known: known?.fingerprint || '' });
-  if (reply.notModified && known) return known.value;
+  if (reply.notModified && known) return structuredClone(known.value);
   const { fingerprint, ...value } = reply;
   answers.delete(key);
-  answers.set(key, { fingerprint, value });
+  answers.set(key, { fingerprint, value: structuredClone(value) });
   if (answers.size > 100) answers.delete(answers.keys().next().value);
   return value;
 }

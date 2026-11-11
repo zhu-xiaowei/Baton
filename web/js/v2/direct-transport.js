@@ -199,8 +199,9 @@ function sendSubscribe(entry, renew) {
     .finally(() => { entry.inflight = false; });
 }
 
+// Entries waiting on a history request (`quiet`) are left to it; its fallback covers a failure.
 function resubscribe(device) {
-  for (const entry of subscriptions.values()) if (!device || entry.device === device) sendSubscribe(entry, false);
+  for (const entry of subscriptions.values()) if ((!device || entry.device === device) && !entry.fallback) sendSubscribe(entry, false);
 }
 
 // Resolves at the socket's next pong: everything posted to it before has arrived by then.

@@ -802,8 +802,10 @@ function connect() {
         // read, so nothing falls between the page and the pushes.
         history: async (params, caller) => {
           if (!params.subscribe) return historyService.history(params);
-          const { epoch } = subscribeCaller(params, caller);
-          return { ...await historyService.history(params), bridgeEpoch: epoch };
+          // A refresh of an open page only renews its lease; the replay and prompt are for opening.
+          if (_subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
+          else subscribeCaller(params, caller);
+          return { ...await historyService.history(params), bridgeEpoch: BRIDGE_EPOCH };
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },

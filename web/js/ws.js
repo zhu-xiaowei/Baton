@@ -1664,8 +1664,7 @@ window.markTurnAdjacency = markTurnAdjacency;
 
 function startWs(sessionId) {
   subscribeSession(sessionId);
-  // Prefetch slash commands. When ws already exists this sends now; on a fresh
-  // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
+  // Prefetch slash commands; a failed request is asked again when `/` is typed.
   if (window.prefetchCommands) window.prefetchCommands();
 }
 

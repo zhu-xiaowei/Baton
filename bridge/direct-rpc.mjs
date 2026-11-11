@@ -40,6 +40,10 @@ export class SessionSubscribers {
       root: root || previous?.root || sessionId });
   }
 
+  has(sessionId, connectionId) {
+    return (this.sessions.get(sessionId)?.get(connectionId)?.expires || 0) > Date.now();
+  }
+
   remove(sessionId, connectionId) {
     const targets = this.sessions.get(sessionId);
     if (targets?.delete(connectionId) && !targets.size) this.sessions.delete(sessionId);
@@ -214,16 +218,14 @@ export class DirectRpcBridge {
     if (counted) this.running++;
     const label = { method: frame.method };
     const target = () => this.replies.get(frame.requestId)?.replyTo || frame.replyTo;
-    let lastProgress = Date.now();
     // `progress(value)` lets a handler report what a page shows; silence is covered by the timer.
+    let timer;
+    const wait = (ms) => { clearTimeout(timer); timer = setTimeout(() => progress(), ms); timer.unref?.(); };
     const progress = (value) => {
-      lastProgress = Date.now();
+      wait(PROGRESS_MS);
       void this.deliver([rpcProgressFrame(frame.requestId, value)], target(), label);
     };
-    const timer = setInterval(() => { if (Date.now() - lastProgress >= PROGRESS_MS - 1000) progress(); }, PROGRESS_MS);
-    const first = setTimeout(() => progress(), PROGRESS_AFTER_MS);
-    timer.unref?.();
-    first.unref?.();
+    wait(PROGRESS_AFTER_MS);
     let frames;
     try {
       const handler = this.handlers[frame.method];
@@ -240,8 +242,7 @@ export class DirectRpcBridge {
     } catch (error) {
       frames = [rpcErrorFrame(frame.requestId, error.message, frame.method)];
     } finally {
-      clearInterval(timer);
-      clearTimeout(first);
+      clearTimeout(timer);
     }
     const reply = this.replies.get(frame.requestId);
     if (reply) Object.assign(reply, { frames, at: Date.now() });
