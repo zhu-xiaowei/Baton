@@ -27,7 +27,6 @@ class AlertService : Service() {
     private const val PREFS = "baton-push"
     private const val STATUS_CHANNEL = "background"
     private const val ALERT_CHANNEL = "session-updates"
-    private const val QUIET_CHANNEL = "background-updates"
     private const val STATUS_ID = 1
 
     @Volatile var foreground = false
@@ -155,10 +154,8 @@ class AlertService : Service() {
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
       .putExtra(EXTRA_EVENT, event.toString())
     val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    // Background work after the first Done: listed in the shade, without sound or a banner.
-    val quiet = event.optBoolean("quiet")
     val builder = { requestCode: Int ->
-      NotificationCompat.Builder(this, if (quiet) QUIET_CHANNEL else ALERT_CHANNEL)
+      NotificationCompat.Builder(this, ALERT_CHANNEL)
         .setSmallIcon(R.drawable.ic_push)
         .setSubText(event.optString("projectName"))
         .setContentTitle(event.optString("sessionTitle").ifEmpty { event.optString("title") })
@@ -169,7 +166,7 @@ class AlertService : Service() {
     val notification = builder(id)
       .setContentText(event.optString("body"))
       .setStyle(NotificationCompat.BigTextStyle().bigText(event.optString("body")))
-      .setPriority(if (quiet) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
       .build()
     // The summary only holds the stack; the alert comes from the new child.
     val summary = builder(summaryId)
@@ -202,7 +199,5 @@ class AlertService : Service() {
       STATUS_CHANNEL, getString(R.string.push_status_channel), NotificationManager.IMPORTANCE_MIN))
     manager.createNotificationChannel(NotificationChannel(
       ALERT_CHANNEL, getString(R.string.push_alert_channel), NotificationManager.IMPORTANCE_HIGH))
-    manager.createNotificationChannel(NotificationChannel(
-      QUIET_CHANNEL, getString(R.string.push_quiet_channel), NotificationManager.IMPORTANCE_LOW))
   }
 }

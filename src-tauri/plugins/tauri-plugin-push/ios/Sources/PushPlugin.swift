@@ -146,13 +146,12 @@ private final class PushCoordinator: NSObject, UNUserNotificationCenterDelegate 
   ) {
     // Only called in the foreground: the session already on screen needs no alert.
     let session = notification.request.content.userInfo["rootSessionId"] as? String
-    let quiet = notification.request.content.userInfo["quiet"] as? String == "1"
     if !openSession.isEmpty && session == openSession {
       completion([])
     } else if #available(iOS 14.0, *) {
-      completion(quiet ? [.list] : [.banner, .list, .sound])
+      completion([.banner, .list, .sound])
     } else {
-      completion(quiet ? [] : [.alert, .sound])
+      completion([.alert, .sound])
     }
   }
 

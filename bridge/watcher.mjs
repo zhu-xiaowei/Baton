@@ -23,8 +23,8 @@ import { batonSessions, localIdleSec } from './presence.mjs';
 import {
   headlessRoute,
   pendingInteractionDetail,
+  backgroundTasksLeft,
   poolOwns,
-  poolOwnsStatus,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
@@ -345,7 +345,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
-    const poolOwned = poolOwnsStatus(sessionId);
+    const poolOwned = poolOwns(sessionId);
     if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
       synced.set(sessionId, lastParsedLine);
       _firstSyncs.delete(sessionId);
@@ -357,8 +357,6 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
-      // A terminal turn has ended, but CC stays busy until its background agents report back.
-      : lastStatus === 'completed' && getRunningInfo().liveStatuses?.get(sessionId) === 'running' ? 'running'
       : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
     const effective = preferPendingInteraction(
       resolvedStatus,
@@ -523,6 +521,13 @@ async function postSessionMeta(
   // A turn started outside Baton: let the server skip the alert if the user is at the computer.
   if (oldStatus === 'running' && newStatus !== 'running' && !dm && !batonSessions.has(sessionId)) {
     sessionMeta.localIdleSec = await localIdleSec();
+  }
+  if (newStatus === 'completed') {
+    // CC reports back when its background tasks end; that turn alerts instead. Its record
+    // may still read busy for a moment after the last row, so work left is read again.
+    let pending = backgroundTasksLeft(sessionId);
+    if (pending) pending = await new Promise((resolve) => setTimeout(() => resolve(backgroundTasksLeft(sessionId)), 1000));
+    if (pending) sessionMeta.backgroundTasks = pending;
   }
   trackAgentSession(sessionMeta);
   await postRequired('/api/bridge/sync-sessions', {

@@ -12,10 +12,9 @@ import random
 import re
 import time
 import urllib.parse
-from datetime import datetime
 
 import boto3
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -98,42 +97,6 @@ def _blocks(message):
         return content
 
 
-def last_prompt_ms(session, pages=10):
-    """When the user last wrote to the session, or 0 when it is older than the rows read."""
-    messages = _ddb.Table(os.environ["BRIDGE_MESSAGES_TABLE"])
-    query = {"KeyConditionExpression": Key("sessionId").eq(history_partition(messages, session["sessionId"])),
-             "ScanIndexForward": False, "Limit": 100}
-    for _ in range(pages):
-        result = messages.query(**query)
-        for message in result.get("Items", []):
-            text = text_summary(message.get("content", "")) if message.get("type") == "user" else ""
-            # Report-back turns CC starts itself are not the user's.
-            if text and not text.startswith("<task-notification>") and message.get("timestamp"):
-                return int(datetime.fromisoformat(message["timestamp"].replace("Z", "+00:00")).timestamp() * 1000)
-        if "LastEvaluatedKey" not in result:
-            break
-        query["ExclusiveStartKey"] = result["LastEvaluatedKey"]
-    return 0
-
-
-def follows_done(notice):
-    """A Done already alerted since the user's last prompt: later ones report background work."""
-    table = _ddb.Table(os.environ["SYSTEM_TABLE"])
-    query = {
-        "KeyConditionExpression": Key("pk").eq(f'NOTIFICATIONS#{notice["accountId"]}')
-        & Key("sk").gt(f"EVENT#{last_prompt_ms(notice):016d}"),
-        "FilterExpression": Attr("event.sessionId").eq(notice["sessionId"])
-        & Attr("event.eventId").ne(notice["eventId"]) & Attr("event.body").begins_with("✅"),
-    }
-    while True:
-        result = table.query(**query)
-        if result.get("Items"):
-            return True
-        if "LastEvaluatedKey" not in result:
-            return False
-        query["ExclusiveStartKey"] = result["LastEvaluatedKey"]
-
-
 def being_viewed(event, timeout=2.0):
     """Ask apps subscribed to the session; any visible, focused viewer suppresses the alert.
 
@@ -179,6 +142,8 @@ def notification(old, new, event_id):
             return None
         action, detail = "Needs input", text_summary(new.get("agentDetail", ""))
     elif after == "completed" and before == "running":
+        if new.get("backgroundTasks"):
+            return None  # CC reports back as its background tasks end; the last report alerts.
         action, detail = "Done", completion_summary(new)
         if detail is None:
             return None  # The user stopped it, or CC's next turn will alert.
@@ -208,8 +173,6 @@ def notification(old, new, event_id):
 def deliver(event):
     if being_viewed(event):
         return
-    if event["body"].startswith("✅") and follows_done(event):
-        event["quiet"] = True  # Apps list it without sound or waking the screen.
     table = _ddb.Table(os.environ["SYSTEM_TABLE"])
     now = time.time()
     # The row's key is also the iOS push ID: the push carries nothing else, and the

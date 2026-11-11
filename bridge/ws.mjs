@@ -13,6 +13,7 @@ import {
   normalizeProjectHash,
   requireClaudeBin,
   resolveClaudeBin,
+  liveRecordStatus,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
@@ -219,8 +220,12 @@ export async function closeTerminalsForUpdate() {
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
-// Background agents keep a pooled session running after its turn ends.
-export function poolOwnsStatus(sessionId) { return poolOwns(sessionId) || _pool.awaitsAgents(sessionId); }
+// Background agents/Bash CC will report back on: a pooled process's task list (its record
+// reads idle meanwhile), else CC's own record.
+export function backgroundTasksLeft(sessionId) {
+  if (_pool.owns(sessionId)) return _pool.backgroundTaskCount(sessionId);
+  return ['busy', 'shell'].includes(liveRecordStatus(sessionId)) ? 1 : 0;
+}
 
 export async function shutdownInteractions() {
   _config = null;
@@ -367,7 +372,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         status,
         detail,
         identity.runtime,
-        { isNew, sentPrompt: _sentPrompts.get(key) },
+        { isNew, sentPrompt: _sentPrompts.get(key), backgroundTasks: status === 'completed' ? backgroundTasksLeft(key) : 0 },
       );
       if (status === 'completed') _sentPrompts.delete(key);
       if (isNew && !knownProjects.has(normalizedProjectHash)) {
@@ -1374,8 +1379,7 @@ export function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {})
         if (options.syncStatus !== false) {
           syncInteractionStatus(
             sessionId,
-            _pendingControl.has(sessionId) ? 'needs_input'
-              : liveTurn.isEnded() && !_pool.awaitsAgents(sessionId) ? 'completed' : 'running',
+            _pendingControl.has(sessionId) ? 'needs_input' : liveTurn.isEnded() ? 'completed' : 'running',
             controlDetail(_pendingControl.current(sessionId)),
             options.runtime,
           );

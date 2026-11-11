@@ -6,7 +6,7 @@ import {
   getRuntimeAdapter,
   runtimeAdapters,
 } from './runtime-registry.mjs';
-import { pendingInteractionDetail, poolOwnsStatus } from './ws.mjs';
+import { backgroundTasksLeft, pendingInteractionDetail, poolOwns } from './ws.mjs';
 import { rebuildAgentCounts } from './agent-counts.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
@@ -281,7 +281,8 @@ export async function checkStopped(config) {
     if (!statusContexts.has(adapter.runtime)) {
       statusContexts.set(adapter.runtime, adapter.createStatusContext({
         lastKnownStatus,
-        poolOwns: poolOwnsStatus,
+        poolOwns,
+        backgroundTasksLeft,
       }));
     }
     const result = adapter.inspectActiveSession({

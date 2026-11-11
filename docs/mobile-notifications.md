@@ -27,18 +27,13 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
 1. **Trigger.** Bridge writes every approval as `needs_input` + `agentDetail`, so
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
-   `needs_input`, and on a new `agentDetail` while waiting. A Claude session stays
-   `running` until its background agents have all reported back, so only the last
-   report-back turn alerts. Background Bash, even one an agent started, does not hold
-   it (it may be a server that never ends): each turn CC starts to report a finished
-   Bash task alerts; once one has
-   started (its `<task-notification>` is the newest row), only its own end alerts.
-   Only the first Done after the user's last prompt makes a sound. A later one reports
-   background work, so the worker marks it `quiet` (a ✅ event for the session exists
-   since that prompt, which is the newest user row that is not a `<task-notification>`).
-   iOS lists it as `.passive` without sound; Android posts it on the low-importance
-   `background-updates` channel. Needs input is never quiet; builds that predate
-   `quiet` alert as before. Every
+   `needs_input`, and on a new `agentDetail` while waiting. A Done whose row carries
+   `backgroundTasks` > 0 is skipped: CC reports back as each background agent or Bash task
+   ends (Bash at the latest at its 30-minute background limit), and only the turn after the
+   last one alerts. Bridge counts the pool's task list, or CC's own session record
+   (`busy`/`shell`) for terminal sessions; older Bridges omit the field and alert per turn.
+   Once a report-back turn has
+   started (its `<task-notification>` is the newest row), only its own end alerts. Every
    alert is kept and stacked per session (iOS thread, Android group + summary).
    Android clears a session's stack when the app opens it: a tap cancels only the
    tapped alert, and the summary would otherwise stay on its own.

@@ -469,6 +469,26 @@ export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
   return statuses;
 }
 
+// One session's own record without ps: busy (background agents too), shell (only background
+// Bash left) or idle; null without a live process.
+export function liveRecordStatus(sessionId, dir = CLAUDE_SESSIONS) {
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return null; }
+  for (const file of files) {
+    const pid = /^(\d+)\.json$/.exec(file)?.[1];
+    if (!pid) continue;
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+      if (record.sessionId !== sessionId) continue;
+      process.kill(Number(pid), 0);
+      if (process.platform === 'linux' && record.procStart !== undefined
+        && processStartTime(pid) !== String(record.procStart)) continue;
+      return record.status || null;
+    } catch {}
+  }
+  return null;
+}
+
 // Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.
 function processStartTime(pid) {
   const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
