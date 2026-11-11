@@ -50,7 +50,8 @@ export function createHeaderSigner({ endpoint, region, target, credentials, acti
     || !Number.isSafeInteger(credentials.expiresAt)) throw new Error('Invalid signing authorization');
   let cachedDate;
   let cachedKey;
-  return async (body, now = new Date()) => {
+  // `label` adds clear fields (the operation name) next to `action`; the gateway ignores them.
+  return async (body, now = new Date(), label = {}) => {
     if (now.getTime() >= credentials.expiresAt * 1000 - 2000) throw new Error('Signing authorization expired');
     const stamp = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const date = stamp.slice(0, 8);
@@ -65,7 +66,7 @@ export function createHeaderSigner({ endpoint, region, target, credentials, acti
     const canonical = ['POST', encodePath(path), '', headers, signedHeaders, await digest(body)].join('\n');
     const scope = `${date}/${region}/execute-api/aws4_request`;
     const signature = hex(await hmac(await cachedKey, `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await digest(canonical)}`));
-    const frame = JSON.stringify({ action, target, body, date: stamp,
+    const frame = JSON.stringify({ action, ...label, target, body, date: stamp,
       token: credentials.sessionToken,
       authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` });
     if (encoder.encode(frame).length > MAX_FRAME) throw new Error('Signed frame exceeds 28 KiB');

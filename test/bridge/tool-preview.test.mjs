@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compactToolFields, toolPreview, toolPreviews, toolResultStats } from '../../bridge/tool-preview.mjs';
 import { LiveTurnStream } from '../../bridge/live-turn-stream.mjs';
-import { prepareWsPayload } from '../../bridge/ws.mjs';
 import { uploadMessages } from '../../bridge/extract.mjs';
 import { initHttp } from '../../bridge/http.mjs';
 import { deliverRealtimeMessages } from '../../bridge/realtime-delivery.mjs';
@@ -85,8 +84,9 @@ test('stream input keeps sequence continuity and terminal previews do not trigge
   assert.equal(inputs.map((event) => event.chunk).join(''), 'a'.repeat(400) + 'b'.repeat(100));
   assert.equal(inputs.at(-1).previewTruncated, true);
   assert.deepEqual(sent.map((event) => event.seq), sent.map((_, index) => index));
-  const end = prepareWsPayload(sent.at(-1), new Set());
-  assert.equal(end.recoveryRequired, undefined);
+  // The turn end carries the preview messages as they are pushed (never truncated for transport).
+  const end = sent.at(-1);
+  assert.equal(end.action, 'stream_end');
   assert.equal(end.truncated, undefined);
   assert.equal(end.messages[0].content[2].truncated, true);
 });

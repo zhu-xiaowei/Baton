@@ -110,7 +110,7 @@ Done:
   every shared event and `send_message_result`; the renderer locates the exact anchor without
   `clientId/streamId` binding, text matching, timestamp ownership, or nearest-pending heuristics.
   Authority uses UUID/native ID to confirm or patch nodes inside that same turn.
-- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_permission`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
+- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is pushed again on every Bridge subscription (direct `subscribe`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
 - **New Session / new agent / create project DONE** — regular sessions mint a UUID, acknowledge
   it before spawning headless with `--session-id`, and then stream the first turn. Background
   agents launch through `claude --bg`. Creating a project creates its directory and enters the
@@ -230,7 +230,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     agents and busy pool-owned sessions. Precedence: busy pool-owned > roster-active daemon >
     external/jsonl.
   - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
-  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_permission`.
+  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is pushed again on every Bridge subscription.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
 - Slash commands are runtime-aware. Claude's primary catalog comes from the current CLI's
   no-persistence `initialize` control response, including environment-filtered commands, descriptions,
@@ -315,9 +315,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   retryable. Failed detail loads expand the available local preview. See
   `docs/tool-preview.md` for the rendering and rollout contract.
 - Content blocks preserved: text, image (compressed), document, thinking, tool_use, tool_result
-- App opens session → REST from DDB (instant, <100ms) + WS subscribe for real-time
-- WS subscribe + buffer during REST load → merge/dedup → resolve running state from newer applied
-  WS lifecycle or `/messages.status` → render → subsequent WS direct append
+- App opens session → `history` from the Bridge (IndexedDB cache first) + a direct `subscribe`;
+  `history {subscribe: true}` registers the caller before the file is read
+- Pushes buffer during the history load → merge/dedup → resolve running state from newer applied
+  lifecycle events or the history `status` → render → subsequent pushes append directly
 - A REST snapshot replaces the local tail, except live prompts (`live:user:` Claude,
   `codex:user:` Codex) newer than the snapshot's last non-metadata message and absent from it:
   those `noCache` rows reach DDB only after the JSONL/rollout watcher persists them under the same
@@ -379,26 +380,27 @@ POST /api/bridge/delete-device              — remove a device and make its Bri
 GET  /api/version                           — app and Bridge release versions
 ```
 
-### Bridge RPC (v2, App → Bridge over the `app_data` socket)
+### Direct channel (v2, App ⇄ Bridge over the `app_data` / `bridge_data` sockets, no Lambda per frame)
 ```
 home {revision?}              — devices' counts, active Sessions, 15 recent projects × 5 Sessions
 projects {limit?, cursor?}    — project list page (same rows as the former REST endpoint)
 sessions {project, limit?, cursor?} — session list page
+history / threads / tool_details — Session view (`docs/v2-step3-session-plan.md`)
+subscribe {sessionId, renew?} / unsubscribe — who receives a Session's pushes (150 s lease)
+send_message {…}              — reply = send_message_result; `rpc_ack` on arrival is the receipt
+interrupt, permission_reply   — reply {ok}
+push: stream_*, messages, permission_request, permission_resolved — to subscribers only
 ```
 `api.js` maps `/api/bridge/projects|sessions` to these; `direct-transport.js` owns the socket,
-routes (`/devices`) and retries. Full protocol: `docs/api.md`.
+routes (`/devices`), retries, subscriptions and credentials. Frames are `action: rpc | push` with a
+readable `method` / `event`. Full protocol: `docs/api.md`; design: `docs/v2-step3b-realtime-plan.md`.
 
-### WebSocket (real-time)
+### WebSocket (v1 control socket; what is left on it until v2 stage 2)
 ```
-App → Server:           { action: "subscribe", sessionId }
-App → Server:           { action: "unsubscribe", sessionId }
-App → Server → Bridge:  { action: "send_message", sessionId, text, device }
-                        { action: "send_message", projectHash, runtime, text, device }  — new session
-App → Server → Bridge:  { action: "permission_reply", sessionId, requestId, decision, answerText?, device }
+App → Server:           { action: "subscribe" | "unsubscribe", sessionId: "ROOT#<root>" }  — viewer row for notifications
 App → Server → Bridge:  { action: "list_commands", projectHash, runtime, sessionId?, device, requestId }
-Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
 Bridge → Server → App:  { action: "command_catalog_ready", requestId, runtime, device, projectHash, revision, catalogRef? }
-Server → App:           { action: "messages", sessionId, messages }
+Bridge → Server:        { action: "messages", sessionId, messages }  — rows DynamoDB still stores
 Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
 Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }
 ```
@@ -413,30 +415,33 @@ session, fed over a kept-open stdin. Single-writer per session → no jsonl doub
 Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `docs/headless-streaming.md`.
 
 ### Message Sending
-- Viewer → WS → Server → Bridge → `handleHeadlessSend` → `_pool.send` → CC stdin
+- Viewer → direct `send_message` request → Bridge → `handleHeadlessSend` → `_pool.send` → CC stdin
 - Streaming back: `stream_delta` (typewriter preview) + `stream_end`; full assistant/user
   lines arrive as authoritative `messages` (uuid-deduped against the jsonl copy)
 - Optimistic rendering + dedup + timestamp update
 
 ### Reliable WS Delivery (app side, `web/js/ws.js`)
-- **Sends must survive a dead socket.** User actions (`send_message`/`interrupt`/`create_project`) use `wsSendReliable`, not bare `wsSend` (which drops frames when not OPEN): queues to `_wsSendQueue` (array, ordered) + reconnects, flushed on `onopen` after re-subscribe. iOS suspends the socket in background into a zombie (reads OPEN, frames vanish, no `close`). On foreground (`app.js` `refreshForegroundView` → `resumeSessionForeground`) a non-OPEN socket reconnects; an OPEN one gets a `heartbeat` probe (the server answers app heartbeats) and is rebuilt if no frame arrives within 5s. The foreground history refresh is `fresh`: it replaces a still-open `/messages` barrier instead of reusing it, carrying its captured WS events over, because a request started before suspension may never settle and an open barrier swallows live frames. `/messages` also times out after 20s and takes the existing REST-failure path.
-- **Bridge turn frames must survive reconnect too.** `LiveTurnStream` sends through
-  `wsSendWhenConnected`, which queues frames while the Bridge socket is not OPEN and flushes them
-  in order after reconnect. A frame may not consume a turn `seq` and then disappear.
-- **Lost app frames are recovered, not waited on.** API Gateway closes a WS after 10 minutes with
-  no client→server traffic, and the realtime data socket never sends; frames posted around such
-  closes, or via a gone Lambda target, vanish silently. While a Session is open and visible the app
-  pings both sockets every 25s and rebuilds one with no frame for 15s. The ping is
-  `{action:"realtime_ping"}`, answered `{action:"realtime_pong"}` by a MOCK route on both
-  WebSocket APIs (no Lambda, no DDB); `heartbeat` stays Lambda-routed for the Bridge (TTL,
-  `bridgeVersion`) and `ping` belongs to the preview keepalive. Against a stack without the route,
-  the control socket keeps probing with `heartbeat` and the data socket never times out, so an
-  older stack is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
-  once both pongs have arrived (each socket alive and drained over the client link) and ≥3s
-  passed, the frame is treated as lost and
+- **Sends must survive a dead socket.** A send is a direct request with a receipt (`sendToBridge`
+  in `ws.js`): the Bridge's `rpc_ack` shows the bubble, the reply is the result. The transport
+  (`direct-transport.js`) resends an unreceipted request every 3s, pings a socket that stayed
+  silent for 3s after a request and rebuilds it after 3s more (iOS leaves suspended sockets OPEN
+  but dead), and resends everything pending after the new `whoami`; the Bridge ignores a repeated
+  `turnId`. A request that failed before its receipt is sent again on resync (socket or device
+  back). The remaining v1 actions (`create_project`, commands, files, Git) still use
+  `wsSendReliable` on the control socket until stage 2. The foreground history refresh is `fresh`:
+  it replaces a still-open history barrier instead of reusing it, carrying its captured events
+  over, because a request started before suspension may never settle.
+- **Pushes are best effort; history is the truth.** The Bridge pushes Session events only to
+  subscribed connections and neither queues nor confirms them. After a reconnect, a returning
+  device or a restarted Bridge (`epoch` in the `subscribe` reply) the transport fires `onResync`
+  and the Session reloads `history {after}`. A hidden page unsubscribes at once.
+- **Lost app frames are recovered, not waited on.** One 60s tick while visible: the subscription
+  renewal when a Session is open, else `{action:"realtime_ping"}` (answered by a MOCK route, no
+  Lambda). A turn seq gap pings the direct socket; once its pong has arrived (socket alive and
+  drained over the client link) and ≥3s passed, the frame is treated as lost and
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
   gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
-  REST; `completed` settles it, covering a lost tail or `stream_end`.
+  the history status; `completed` settles it, covering a lost tail or `stream_end`.
 - **History rows rejoin their stream row by message order.** REST/DDB rows carry no `turnId`, so
   untagged assistant rows between a turn's prompt and the next prompt belong to that turn's stream
   row; recovered children are inserted by message order, and class-only matching may reuse only a
@@ -451,7 +456,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Bridge `onControlRequest` (CC's `control_request`, precise — no client-side heuristic) → app `permission_request {kind, requestId, questions?/plan?/input}`. App replies `permission_reply {requestId, decision:allow|deny|answer, answerText?}`.
 - Ordinary tools (Bash/Edit/Write/MCP): allow → `control_response{allow, updatedInput}`; deny → `{deny, message}`. (`defaultMode:bypassPermissions` → CC never asks, no prompt.)
 - AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`** — CC's only answer channel on `--permission-prompt-tool stdio` (a structured `control_response` answer is force-converted to deny, verified CC 2.1.211). Multi-question wizard sends `question → answer` per line. Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
-- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (`reveal_permission` → bridge re-push).
+- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (direct `subscribe` → bridge re-push; a prompt already on screen keeps its state).
 - `web/js/components/permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 
 ### Image Sending

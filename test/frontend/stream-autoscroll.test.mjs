@@ -169,10 +169,7 @@ test('sending a user message restores bottom following without a competing anima
   h.state.stickBottom = false;
 
   h.window.doSend('hello', 'hello', []);
-  h.hooks.handleWsMessage({
-    action: 'send_message_received',
-    turnId: h.state.pendingSentMessages[0].id,
-  });
+  h.bridge.accept(h.state.pendingSentMessages[0].id);
 
   assert.equal(h.state.stickBottom, true);
   assert.equal(content.scrollTop, 1200);
@@ -210,10 +207,7 @@ for (const userScrollAfterSend of [false, true]) {
     input.value = 'hello';
     input.dispatchEvent(new h.window.Event('input'));
     h.window.doSend('hello', 'hello', []);
-    h.hooks.handleWsMessage({
-      action: 'send_message_received',
-      turnId: h.state.pendingSentMessages[0].id,
-    });
+    h.bridge.accept(h.state.pendingSentMessages[0].id);
     assert.equal(content.scrollTop, 900);
     assert.equal(h.state.stickBottom, true);
 

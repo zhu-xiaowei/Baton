@@ -36,10 +36,11 @@ function shown(entry) {
 // Latest page: only what is newer than the cache's stable cursor is asked for. `onSlow(page | null)`
 // runs once at 6 s with the cached page (null without one); the promise still settles later. When the
 // Bridge fails, a cached page is returned with `failed` instead of an error.
-export async function loadLatestHistory({ device, sessionId, onSlow: notify }) {
+// `subscribe` also registers the caller for the Session's pushes, before the Bridge reads the file.
+export async function loadLatestHistory({ device, sessionId, subscribe, onSlow: notify }) {
   const entry = await session(device, sessionId);
   const cursor = entry.stable;
-  const params = cursor ? { sessionId, after: cursor, epoch: entry.epoch } : { sessionId };
+  const params = { sessionId, ...(cursor ? { after: cursor, epoch: entry.epoch } : {}), ...(subscribe ? { subscribe: true } : {}) };
   const cachedPage = () => {
     const { rows, more } = shown(entry);
     return rows.length ? { messages: rows, hasMore: more, oldestTimestamp: rows[0].orderKey } : null;

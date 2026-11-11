@@ -54,7 +54,7 @@ Gateway + Lambda path (`docs/terminal-resident-relay-benchmark.md`).
         │   WsApi + Lambda (control: connect, open,       - auth, per-account routing in memory    │
         │     subscribe, request routing)                 - forwards frames, no storage            │
         │   TerminalDirectApi (data sockets)              - REST: auth, account, attachments       │
-        │   realtime_direct_data: HTTP integration →      DDB: accounts / tokens / push devices    │
+        │   rpc / push routes: HTTP integration →         DDB: accounts / tokens / push devices    │
         │     @connections, no Lambda per frame           S3: encrypted attachments (7-day TTL)    │
         │   DDB: connections, subscriptions, tokens                                                │
         └──────────── ciphertext only ─────────────────────────────────────────────────────────────┘
@@ -70,10 +70,10 @@ release.
   origin, the REST API (`/v1`), with the managed CachingDisabled and AllViewerExceptHostHeader policies.
   Add two behaviours: `/ws` → `WsApi`, `/data` → `TerminalDirectApi`. AllViewerExceptHostHeader already
   forwards the query string (`?apiKey=`) and `Sec-WebSocket-*` headers and keeps API Gateway's own Host.
-- Real-time frames keep the current direct path: Bridge → `realtime_direct_data` route → HTTP integration →
-  `@connections/{id}` on the data API → App data socket. No Lambda runs per frame
-  (`docs/realtime-direct.md`). The integration calls `execute-api` internally, so CloudFront does not
-  affect it.
+- Real-time frames keep the direct path: Bridge → `push` route on the data API → HTTP integration →
+  `@connections/{id}` → App data socket. No Lambda runs per frame
+  (`docs/v2-step3b-realtime-plan.md`). The integration calls `execute-api` internally, so CloudFront
+  does not affect it.
 - Multi-tenant: direct-forwarding credentials cannot be scoped to single connections (section 12,
   item 8), so profile A as built is single-tenant; account isolation needs another mechanism there.
 - New Bridge → App bulk responses (history pages, lists) use the same direct path. Only the App's small
@@ -300,7 +300,7 @@ terminal. Changes are in the data layer plus a few required screens.
   the old connections so every client reconnects to the new origin at once. Running turns survive because
   Bridge queues frames while disconnected (`wsSendWhenConnected`), the App queues user actions
   (`wsSendReliable`) and resumes turns from the next checkpoint, and pending permissions are re-sent on
-  re-subscribe (`reveal_permission`).
+  re-subscribe.
 
 ## 11. Cost model
 
@@ -368,8 +368,8 @@ These are acceptable for a single-tenant self-host stack but must be fixed befor
 8. **Required:** the direct-forwarding STS credentials Bridge receives allow
    `execute-api:ManageConnections` on `…/POST/@connections/*` of the data API (`callback_policy` in
    `server/src/terminal_direct_ws.py`), i.e. any connection on that API, not only the same account's.
-   HMAC/E2EE stops content injection but not bandwidth abuse, and `docs/realtime-direct.md` notes that this
-   cannot support untrusted multi-tenancy. Measured 2026-11-06: per-connection session policies
+   HMAC/E2EE stops content injection but not bandwidth abuse, so this cannot support untrusted
+   multi-tenancy. Measured 2026-11-06: per-connection session policies
    (`…/POST/@connections/<connectionId>`) always deny, because API Gateway authorizes against the route
    template `…/POST/@connections/{connectionId}`. Credentials therefore cannot be narrowed below the whole
    data API, and since phase 1 step 1 the App receives the same scope (`docs/v2-step1-home-plan.md`).

@@ -9,7 +9,7 @@ export function updateWsStatusIndicator() {
   var indicator = document.getElementById('ws-reconnect-indicator');
   var phase = state.appState.session ? state.wsHistoryPhase : '';
   var kind = phase === 'stale' ? 'retry'
-    : (state.wsStatusText === 'reconnecting' || state.wsRealtimeStatusText === 'reconnecting' || phase === 'slow') ? 'loading' : '';
+    : (state.wsStatusText === 'reconnecting' || phase === 'slow') ? 'loading' : '';
   if (indicator && indicator.dataset.kind !== kind) {
     indicator.remove();
     indicator = null;

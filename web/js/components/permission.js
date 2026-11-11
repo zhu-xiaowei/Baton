@@ -35,13 +35,9 @@ function pinPermissionPromptToBottom() {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pin);
 }
 
+// A lost reply leaves the prompt waiting on the Bridge, which pushes it again on the next renewal.
 function reply(payload) {
-  var send = (typeof wsSendReliable === 'function') ? wsSendReliable : wsSend;
-  send(Object.assign({
-    action: 'permission_reply',
-    sessionId: state.wsSessionId,
-    device: state.appState.device || '',
-  }, payload));
+  bridgeRequest('permission_reply', Object.assign({ sessionId: state.wsSessionId }, payload)).catch(function () {});
 }
 
 function resetClaudeState() {
@@ -87,6 +83,8 @@ function showPermissionPrompt(msg) {
   }
   _deferredPrompt = null;
   stopPromptObserver();
+  // The Bridge repeats a waiting prompt on every subscription; one already shown keeps its state.
+  if (_req?.requestId === msg.requestId && document.getElementById('permission-prompt')) return true;
   _req = {
     requestId: msg.requestId,
     kind: msg.kind || 'tool',

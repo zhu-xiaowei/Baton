@@ -65,8 +65,9 @@ Both no-seq `messages` and strict events carrying `turnId + seq` wait in the sam
 while REST is pending. They do not mutate lifecycle state or message DOM until replay. The snapshot
 boundary uses a unique UUID/native ID; live message merging separately handles protocol aliases.
 
-`reveal_permission` is intentionally narrower than message replay. It asks the Bridge to resend only
-the current pending permission state after entering or reconnecting to a Session. Existing CC hook
+A `subscribe` on the Bridge is intentionally narrower than message replay. The Bridge resends only
+the current pending permission state after the App enters or reconnects to a Session (a prompt
+already on screen keeps its state). Existing CC hook
 permissions are returned from the Bridge queue; Codex TUI permissions are discovered by attaching a
 permission-only observer to the managed app-server. No text, tool, or delta history is replayed.
 

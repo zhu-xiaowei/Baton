@@ -82,3 +82,45 @@ test('a resend after the reply went out gets only the missing chunks from the st
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, count * 3 + 2);
 });
+
+test('receipts, a dead socket and expiring credentials', async () => {
+  const [slow, lost, dead, appCredentials, bridgeCredentials] = await Promise.all([
+    run({ ack: true, computeMs: 14000 }),
+    run({ ack: true, dropRequests: 1 }),
+    run({ deadSockets: [1] }),
+    run({ appExpiresIn: 2 }),
+    run({ bridgeExpiresIn: 2 }),
+  ]);
+  assert.deepEqual([slow.value, slow.computed], [{ ok: 1 }, 1], 'a receipted request may take longer than 12 s');
+  assert.ok(slow.acceptedAt < 1000 && slow.ms >= 14000, 'the receipt arrives at once, the result when it is ready');
+
+  assert.deepEqual([lost.value, lost.computed, lost.requests], [{ ok: 1 }, 1, 2], 'a request without its receipt is sent again');
+  assert.ok(lost.acceptedAt >= 3000 && lost.acceptedAt < 4000, 'after 3 s');
+
+  assert.deepEqual([dead.value, dead.computed], [{ ok: 1 }, 1], 'a socket that swallows frames is rebuilt');
+  assert.ok(dead.ms >= 6000 && dead.ms < 7500, '3 s without a frame, then 3 s without a pong');
+
+  assert.deepEqual([appCredentials.value, appCredentials.fetches], [{ ok: 1 }, 2], 'the App renews expiring credentials before signing');
+  assert.deepEqual([bridgeCredentials.value, bridgeCredentials.credentialRequests], [{ ok: 1 }, 1], 'and so does the Bridge');
+  assert.ok(bridgeCredentials.ms < 1000);
+});
+
+test('a long message is sent as compressed chunks and arrives whole', async () => {
+  // About 200 000 characters that barely compress (hashes), with quotes, backslashes and CJK.
+  const text = Array.from({ length: 3000 }, (_, i) => `日志 "${createHash('sha256').update(String(i)).digest('hex')}" \\\n`).join('');
+  const [result, lost] = await Promise.all([run({ ack: true, text }), run({ ack: true, text, dropRequests: 1 })]);
+  assert.deepEqual([result.value, result.computed], [{ length: text.length }, 1]);
+  assert.ok(result.requests > 1, 'several frames');
+  assert.deepEqual([lost.value, lost.computed], [{ length: text.length }, 1], 'a lost chunk is sent again');
+});
+
+test('pushes reach subscribers only, whole, and follow a reconnect', async () => {
+  const result = await run({ push: true });
+  assert.equal(result.unsubscribed, 0, 'nothing is sent for a Session nobody watches');
+  assert.deepEqual(result.first.map((event) => event.seq), [1, 2], 'only the subscribed Session, in order');
+  assert.ok(result.bigIntact, 'a large event arrives complete from several chunks');
+  assert.deepEqual(result.afterReconnect.map((event) => event.seq), [3], 'the new connection is subscribed again');
+  assert.deepEqual(result.subscribes, [{ to: 'app1=', renew: false }, { to: 'app2=', renew: false }]);
+  assert.deepEqual(result.resyncs, ['all', 'dev'], 'the page reloads after a reconnect and when the Bridge restarted');
+  assert.equal(result.sentAfterLeave, 0, 'and nothing after it left');
+});

@@ -83,7 +83,6 @@ The following shared render events must enter the turn sequence:
 The following single-connection or control events do not enter the turn sequence:
 
 - `subscribe`
-- `reveal_permission`
 - `send_message`
 - `send_message_result`
 - `messages_ack`
@@ -296,7 +295,7 @@ Handling rules:
 
 Web first sends `subscribe` while fetching REST history. The two kinds of WS messages are handled separately:
 
-The `reveal_permission` immediately following `subscribe` only restores the current permission state. It does not request or replay a streaming
+Every `subscribe` on the Bridge only restores the current permission state: the waiting prompt is pushed again. It does not request or replay a streaming
 snapshot. CC uses the hook/runtime pending request already stored by Bridge; Codex TUI uses a
 permission-only app-server observation to discover unanswered approvals. Requests that still belong to an unfinished live turn
 are assigned a new unified seq; hook/TUI requests without a live turn are standalone control events without a seq.

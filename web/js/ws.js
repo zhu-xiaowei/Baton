@@ -39,8 +39,7 @@ import {
 } from './streaming.js';
 import { handleWsRpcMessage } from './ws-rpc.js';
 import { showToast } from './components/toast.js';
-import { onDeviceOnline } from './v2/direct-transport.js';
-import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
+import * as directTransport from './v2/direct-transport.js';
 import { ExecutionEventQueue } from './execution-events.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
@@ -53,6 +52,9 @@ var _inputFocusRequestsBottom = false;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
+// Session events, sends and subscriptions use the direct App ⇄ Bridge channel.
+var bridge = (window.__APEEK_TEST__ && window.__directTransport) || directTransport;
+var _wsDevice = ''; // where the open Session is subscribed
 var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
 var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
@@ -65,7 +67,6 @@ var _executionEvents = new ExecutionEventQueue();
 var _executionRecoveryTimers = new Map();
 var _wsReconnectTimer = null;
 var _wsConfigRequest = null;
-var _realtimeReceiver = null;
 var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
@@ -84,22 +85,17 @@ var MESSAGE_PAGE_SIZE = 200;
 var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
 // iOS background sockets can stay OPEN with no traffic; no reply in time → reconnect.
 var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
-// A send on a socket silent this long probes it, so a dead socket is rebuilt within the send window.
-var WS_SEND_STALE_MS = 15000;
-var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
-// Periodic ping on both channels: keeps API Gateway's 10-minute idle timer away and finds dead sockets.
+// Periodic ping of the control socket: keeps API Gateway's 10-minute idle timer away and finds a dead socket.
 var WS_PING_INTERVAL_MS = 25000;
 var WS_PING_TIMEOUT_MS = 15000;
-// A seq gap that outlives a ping round-trip on every channel and this floor is treated as a lost frame;
-// the floor covers server-side reordering, a misjudgment costs one REST refresh.
+// A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
+// frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
 // A running turn silent this long is checked against REST in case its tail frames were lost.
 var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
 var _wsProbeTimer = null;
 var _wsPingTimer = null;
-var _wsLastInboundAt = 0;
-var _controlPongAt = 0;
 // Stacks with the realtime_ping route answer it in API Gateway; older ones only answer heartbeat via Lambda.
 var _controlPingRoute = false;
 var _turnGapWatch = null;
@@ -418,30 +414,17 @@ function connectWs(_, projectHash) {
     state.ws.close();
     state.ws = null;
   }
-  _realtimeReceiver?.dispose();
-  _realtimeReceiver = null;
-  state.wsRealtimeStatusText = '';
   _controlPingRoute = false;
-  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
+  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app');
 
   state.ws.onopen = function () {
-    var receiver = new RealtimeReceiver({
-      control: state.ws, key: state.KEY, receive: handleWsMessage,
-      onStatusChange: function (status) {
-        if (_realtimeReceiver === receiver) setRealtimeStatus(status);
-      },
-    });
-    _realtimeReceiver = receiver;
     setWsStatus('connected');
-    _wsLastInboundAt = Date.now();
-    recoverSubscribedSession();
+    subscribeViewer();
     var queued = _wsSendQueue;
     _wsSendQueue = [];
     for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
-    resendUnreceiptedSends(queued);
     if (window.prefetchCommands) window.prefetchCommands();
     window.refreshGitStatusOnReconnect?.();
-    _realtimeReceiver.start();
     wsSend({ action: 'realtime_ping' });
     if (!_wsPingTimer) {
       _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
@@ -451,16 +434,10 @@ function connectWs(_, projectHash) {
 
   state.ws.onmessage = function (e) {
     clearWsProbe();
-    _wsLastInboundAt = Date.now();
-    var message = JSON.parse(e.data);
-    if (_realtimeReceiver?.handle(message)) return;
-    handleWsMessage(message);
+    handleWsMessage(JSON.parse(e.data));
   };
 
   state.ws.onclose = function () {
-    _realtimeReceiver?.dispose();
-    _realtimeReceiver = null;
-    state.wsRealtimeStatusText = '';
     if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
     if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
@@ -475,24 +452,11 @@ function connectWs(_, projectHash) {
   state.ws.onerror = function () {};
 }
 
-function recoverSubscribedSession() {
-  if (!state.wsSessionId) return false;
-  if (_historyFetchBarriers.current(state.wsSessionId)) {
-    subscribeSession(state.wsSessionId);
-  } else {
-    refreshSessionMessages();
-  }
-  return true;
-}
-
 function resumeSessionForeground() {
   if (!state.appState.session || !state.WS_URL) return false;
-  if (state.ws?.readyState === WebSocket.OPEN) {
-    refreshSessionMessages({ fresh: true });
-    probeWsLiveness();
-  } else if (state.ws?.readyState !== WebSocket.CONNECTING) {
-    connectWs();
-  }
+  refreshSessionMessages({ fresh: true });
+  if (state.ws?.readyState === WebSocket.OPEN) probeWsLiveness();
+  else if (state.ws?.readyState !== WebSocket.CONNECTING) connectWs();
   return true;
 }
 
@@ -522,20 +486,9 @@ function sendControlPing() {
   wsSend({ action: _controlPingRoute ? 'realtime_ping' : 'heartbeat' });
 }
 
-// A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
-function probeSocketForSend(timeoutMs) {
-  if (_wsProbeTimer || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeWsLiveness(timeoutMs || WS_SEND_PROBE_TIMEOUT_MS);
-}
-
-function probeSocketIfStale() {
-  if (_wsLastInboundAt && Date.now() - _wsLastInboundAt > WS_SEND_STALE_MS) probeSocketForSend();
-}
-
 function pingWsChannels() {
-  if (document.hidden || !state.wsSessionId || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeSocketForSend(WS_PING_TIMEOUT_MS);
-  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  if (document.hidden || !state.wsSessionId) return;
+  if (!_wsProbeTimer && state.ws?.readyState === WebSocket.OPEN) probeWsLiveness(WS_PING_TIMEOUT_MS);
   checkSilentTurn();
 }
 
@@ -548,11 +501,10 @@ function watchTurnGap(turnId) {
   var missing = _turnEventQueue.missingSeq(turnId);
   if (_turnGapWatch?.turnId === turnId && _turnGapWatch.seq !== missing) clearTurnGapWatch();
   if (missing == null || _turnGapWatch) return;
-  _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
-  // A pong proves its socket is alive and has delivered what was already posted to it, over the
-  // same client link; it does not bound when the server posts the missing frame.
-  sendControlPing();
-  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  var watch = _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null, fenced: false };
+  // A pong proves the socket is alive and has delivered what was already posted to it, over the
+  // same client link; it does not bound when the missing frame is posted.
+  bridge.ping().then(function () { watch.fenced = true; });
   _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);
 }
 
@@ -560,11 +512,12 @@ function checkTurnGap() {
   var watch = _turnGapWatch;
   if (!watch) return;
   if (_turnEventQueue.missingSeq(watch.turnId) !== watch.seq) return clearTurnGapWatch();
-  var fenced = _controlPongAt > watch.since
-    && (!_realtimeReceiver?.lastPongAt || _realtimeReceiver.lastPongAt > watch.since);
-  if (fenced) {
+  if (watch.fenced) {
     clearTurnGapWatch();
-    refreshSessionMessages();
+    // The subscribe replays the turn after this snapshot (the load holds it), so the turn is rebuilt
+    // whole; without a replay it resumes at the next block.
+    bridge.subscribe(_wsDevice, state.wsSessionId);
+    refreshSessionMessages({ keepLive: false });
   } else if (Date.now() - watch.since < TURN_GAP_GIVE_UP_MS) {
     // No pong yet: either still in flight (slow network) or a dead socket the ping timeout rebuilds.
     watch.timer = setTimeout(checkTurnGap, Math.min(1000, TURN_GAP_MIN_MS));
@@ -597,15 +550,48 @@ function checkSilentTurn() {
   });
 }
 
-// Sends are idempotent by turnId; a rebuilt socket carries every send the Server has not receipted.
-function resendUnreceiptedSends(alreadySent) {
+// Sends are idempotent by turnId; one whose request failed before the Bridge's receipt is sent
+// again when the socket or the device is back.
+function resendUnreceiptedSends() {
   for (var pending of state.pendingSentMessages) {
-    if (pending.serverReceived || pending.delivered || pending.queued
-      || pending.awaitingTakeover || pending.sessionId !== state.wsSessionId
-      || alreadySent.includes(pending.sendPayload)) continue;
-    wsSend(pending.sendPayload);
+    if (pending.serverReceived || pending.delivered || pending.queued || pending.sending
+      || pending.awaitingTakeover || pending.sessionId !== state.wsSessionId) continue;
+    sendToBridge(pending);
   }
 }
+
+// A send is a request to the Bridge: its receipt shows the bubble, its reply is the result.
+function sendToBridge(pending, extra) {
+  var { action, device, ...params } = pending.sendPayload;
+  pending.sending = true;
+  bridge.request(device, 'send_message', { ...params, ...extra }, {
+    ack: true,
+    onAccepted: function () { acceptPendingReceipt(pending); },
+  }).then(function (result) {
+    pending.sending = false;
+    dispatchWsMessage({ ...result, action: 'send_message_result' });
+  }, function (error) {
+    pending.sending = false; // offline or timed out: resent on resync, else the send timeout decides
+    if (error?.message === 'too_large') resolvePending(pending, false, 'Message is too long.');
+  });
+}
+
+// Pushes may have been missed (reconnect, Bridge restart, device back): send again what has no
+// receipt (a New Session page has no Session id yet) and reload what is shown.
+function resyncSession(device) {
+  if (device && device !== state.appState.device) return;
+  resendUnreceiptedSends();
+  if (!state.wsSessionId) return;
+  if (state.wsHistoryPhase === 'offline' || state.wsHistoryPhase === 'stale') window.retrySessionHistory();
+  else if (_historyFetchBarriers.current(state.wsSessionId)) subscribeSession(state.wsSessionId);
+  else refreshSessionMessages();
+}
+// A replay is a running turn from its start, sent on (re)subscribing; events already applied are ignored.
+bridge.onPush(function (event) {
+  if (event.action === 'turn_replay') event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
+  else handleWsMessage(event);
+});
+bridge.onResync(resyncSession);
 
 // Until the history is in sync again, content events would land after a gap; the next load brings them.
 var STALE_DROPPED = new Set(['messages', 'stream_turn_start', 'stream_block_start', 'stream_delta', 'stream_tool_input',
@@ -732,6 +718,9 @@ function routeTurnEvent(message) {
     barrier.capture(message);
     return;
   }
+  // A replayed event the execution order already passed goes on to the turn queue, which skips it
+  // unless a snapshot reset that queue.
+  if (message._replay && message.executionId && _executionEvents.passed(message)) message = { ...message, _executionOrdered: true };
   if (message.executionId && Number.isInteger(message.executionSeq) && !message._executionOrdered) {
     for (var event of _executionEvents.push(message)) routeTurnEvent(event);
     scheduleExecutionRecovery(message);
@@ -791,6 +780,7 @@ function scheduleExecutionRecovery(message) {
   var timer = setTimeout(async function () {
     try {
       if (state.wsSessionId !== message.sessionId) return;
+      bridge.subscribe(_wsDevice, message.sessionId); // its replay fills the gap during the load
       var result = await loadLatestMessages(message.sessionId, { preserveLive: true });
       if (!result?.ok || state.wsSessionId !== message.sessionId) return;
       for (var event of _executionEvents.recover(id)) routeTurnEvent(event);
@@ -933,18 +923,14 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
-    } else if (msg.action === 'heartbeat' || msg.action === 'realtime_pong') {
-      if (msg.action === 'realtime_pong') _controlPingRoute = true;
-      _controlPongAt = Date.now();
+    } else if (msg.action === 'realtime_pong') {
+      _controlPingRoute = true;
     } else if (msg.action === 'notify_check') {
       // Someone looking at this session right now: no push to any device.
       if (document.visibilityState === 'visible' && document.hasFocus()
         && msg.rootSessionId === state.wsRootSessionId) {
         wsSend({ action: 'notify_seen', rootSessionId: msg.rootSessionId, eventId: msg.eventId });
       }
-    } else if (msg.action === 'send_message_received') {
-      var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
-      acceptPendingReceipt(receivedPending);
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -954,11 +940,6 @@ function dispatchWsMessage(msg) {
       if (state.pendingSentMessages.length) {
         var pending = msg.turnId ? findPending(msg.turnId) : null;
         if (pending && msg.ok) acceptPendingReceipt(pending);
-        if (pending && msg.errorCode === 'bridge_offline') {
-          pending.serverReceived = false;
-          schedulePendingTransportRetry(pending);
-          return;
-        }
         if (pending && msg.ok && msg.queued) {
           pending.queued = true;
           applyResolvedLiveActivity(
@@ -1700,13 +1681,7 @@ function selectWsSession(sessionId) {
   var rootSessionId = state.rootSessionId || sessionId || '';
   if (state.wsSessionId === sessionId
     && state.wsRootSessionId === rootSessionId) return;
-  if (state.wsSessionId) {
-    wsSend({
-      action: 'unsubscribe',
-      sessionId: state.wsSessionId,
-      rootSessionId: state.wsRootSessionId || state.wsSessionId,
-    });
-  }
+  leaveSession();
   window.resetToolDetails?.();
   resetStreamSessionState();
   state.wsSessionId = sessionId;
@@ -1714,43 +1689,39 @@ function selectWsSession(sessionId) {
   window.setOpenNotificationSession?.(rootSessionId);
 }
 
+function leaveSession() {
+  if (!state.wsSessionId) return;
+  bridge.unsubscribe(_wsDevice, state.wsSessionId);
+  wsSend({ action: 'unsubscribe', sessionId: 'ROOT#' + (state.wsRootSessionId || state.wsSessionId) });
+}
+
+// Session events come from the Bridge; a waiting permission prompt is pushed again on every
+// subscription.
+function joinSession(sessionId) {
+  _wsDevice = state.appState.device || '';
+  bridge.subscribe(_wsDevice, sessionId);
+  subscribeViewer();
+}
+
+// Until notifications move to the Bridge, the server's "being viewed" check reads this row.
+function subscribeViewer() {
+  if (!state.wsSessionId) return;
+  wsSend({ action: 'subscribe', sessionId: 'ROOT#' + (state.wsRootSessionId || state.wsSessionId) });
+}
+
 function subscribeSession(sessionId) {
   selectWsSession(sessionId);
-  wsSend({
-    action: 'subscribe',
-    sessionId: sessionId,
-    rootSessionId: state.wsRootSessionId || sessionId,
-  });
-  wsSend({
-    action: 'reveal_permission',
-    sessionId: sessionId,
-    device: state.appState.device || '',
-  });
+  joinSession(sessionId);
 }
 
 // The first send creates a native session while its stream is already active.
 // Adopt that server id without resetting the buffer and anchor for the same turn.
 function adoptNewSession(sessionId) {
-  if (state.wsSessionId && state.wsSessionId !== sessionId) {
-    wsSend({
-      action: 'unsubscribe',
-      sessionId: state.wsSessionId,
-      rootSessionId: state.wsRootSessionId || state.wsSessionId,
-    });
-  }
+  if (state.wsSessionId !== sessionId) leaveSession();
   state.wsSessionId = sessionId;
   state.wsRootSessionId = state.rootSessionId || sessionId;
   window.setOpenNotificationSession?.(state.wsRootSessionId);
-  wsSend({
-    action: 'subscribe',
-    sessionId: sessionId,
-    rootSessionId: state.wsRootSessionId,
-  });
-  wsSend({
-    action: 'reveal_permission',
-    sessionId: sessionId,
-    device: state.appState.device || '',
-  });
+  joinSession(sessionId);
 }
 
 function wsSend(data) {
@@ -1776,19 +1747,8 @@ function setWsStatus(status) {
   updateWsStatusIndicator();
 }
 
-function setRealtimeStatus(status) {
-  var previous = state.wsRealtimeStatusText;
-  state.wsRealtimeStatusText = status;
-  updateWsStatusIndicator();
-  if (status !== previous && (previous === 'connected' || previous === 'reconnecting')) {
-    refreshSessionMessages({ preservePending: true });
-  }
-}
-
 function disconnectWs() {
-  _realtimeReceiver?.dispose();
-  _realtimeReceiver = null;
-  state.wsRealtimeStatusText = '';
+  leaveSession();
   _wsConnectionGeneration++;
   clearWsProbe();
   clearInterval(_wsPingTimer);
@@ -2098,6 +2058,7 @@ async function loadLatestMessages(sessionId, options = {}) {
   // fresh: a request started before suspension may never settle — replace it.
   if (active && !(options.fresh && active.state === 'open')) {
     if (options.preserveLive) active.preserveLive = true;
+    if (options.keepLive) active.keepLive = true;
     if (options.preservePending) active.preservePending = true;
     return active.promise;
   }
@@ -2110,6 +2071,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     if (active.preserveLive) options = { ...options, preserveLive: true };
   }
   barrier.preserveLive = !!options.preserveLive;
+  barrier.keepLive = !!options.keepLive || !!active?.keepLive;
   barrier.preservePending = !!options.preservePending;
   barrier.promise = (async function () {
     subscribeSession(sessionId);
@@ -2126,7 +2088,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError && barrier.preserveLive) {
+      if (!restError && (barrier.preserveLive || (barrier.keepLive && data.status !== 'completed'))) {
         commitMessages(data.messages || [], { liveStateChanged: true });
         if (data.status === 'completed' && !hasOutstandingTurns()) state.wsRunning = false;
         if (!state.wsOldestTimestamp) {
@@ -2286,11 +2248,11 @@ window.retrySessionHistory = function () {
 };
 
 // The open Session reloads by itself when its offline device comes back.
-onDeviceOnline(function (device) {
+bridge.onDeviceOnline(function (device) {
   if (state.deviceOnlineMap[device] === false) state.deviceOnlineMap[device] = true;
-  if (device !== state.appState.device || !state.wsSessionId) return;
-  if (state.wsHistoryPhase === 'offline') window.retrySessionHistory();
-  else if (typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+  if (device !== state.appState.device) return;
+  if (state.wsSessionId && typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+  resyncSession(device);
 });
 
 /**
@@ -2340,10 +2302,13 @@ async function loadOlderMessages(sessionId) {
   }
 }
 
+// While a turn streams, a refresh keeps what is on screen: the history does not hold the block
+// being written yet (once the Session is completed it does, and the snapshot replaces it).
 async function refreshSessionMessages(options) {
   if (!state.wsSessionId) return null;
   try {
-    return await loadLatestMessages(state.wsSessionId, { preservePending: true, ...options });
+    return await loadLatestMessages(state.wsSessionId, { preservePending: true,
+      keepLive: _streamCoordinator.activeTurnIds().length > 0, ...options });
   } catch (error) {
     return null;
   }
@@ -2552,12 +2517,10 @@ function interruptSession() {
     return;
   }
   var activeTurnId = activeTurnForInterrupt();
-  wsSendReliable({
-    action: 'interrupt',
+  bridge.request(state.appState.device || '', 'interrupt', {
     sessionId: state.wsSessionId,
-    device: state.appState.device || '',
     ...(activeTurnId ? { turnId: activeTurnId } : {}),
-  });
+  }).catch(function () {});
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
@@ -2684,7 +2647,7 @@ function doSend(fullText, displayText, images) {
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
-  var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false, transportRetries: 0 };
+  var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false };
   pendingSend.inputText = document.getElementById('msg-input').value;
   state.pendingSentMessages.push(pendingSend);
   var container = document.querySelector('.messages');
@@ -2702,9 +2665,7 @@ function doSend(fullText, displayText, images) {
       + (displayText ? copyButtonHtml('message') : '') + '</div></div>');
   }
   updateSendBtn();
-  wsSendReliable(sendPayload);
-  probeSocketIfStale();
-  schedulePendingTransportRetry(pendingSend);
+  sendToBridge(pendingSend);
   scheduleSendTimeout(msgId);
 }
 
@@ -2770,23 +2731,6 @@ function acceptPendingReceipt(pending) {
 // pending bubble within this window, reconcile against the server: the message
 // may well have reached CC and only the ack/echo was lost.
 var SEND_TIMEOUT_MS = 12000;
-var SERVER_RECEIPT_TIMEOUT_MS = window.__APEEK_TEST__ ? 20 : 2000;
-var TRANSPORT_RETRY_LIMIT = Math.ceil(SEND_TIMEOUT_MS / 2000);
-
-// The Server receipt covers only the first hop. Resend the same turnId until
-// the Bridge result arrives; the Bridge replays or ignores duplicates by turnId.
-function schedulePendingTransportRetry(pending) {
-  if (!pending || pending.delivered) return;
-  clearTimeout(pending.transportTimer);
-  pending.transportTimer = setTimeout(function () {
-    if (pending.delivered || pending.queued || pending.awaitingTakeover
-      || pending.transportRetries >= TRANSPORT_RETRY_LIMIT) return;
-    pending.transportRetries++;
-    if (!pending.serverReceived) probeSocketForSend();
-    if (!_wsSendQueue.includes(pending.sendPayload)) wsSendReliable(pending.sendPayload);
-    schedulePendingTransportRetry(pending);
-  }, SERVER_RECEIPT_TIMEOUT_MS);
-}
 
 function scheduleSendTimeout(msgId) {
   var timer = setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
@@ -2801,7 +2745,6 @@ function findPending(msgId) {
 }
 
 function removePending(pending) {
-  clearTimeout(pending?.transportTimer);
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
 }
@@ -2875,10 +2818,7 @@ function confirmCodexTakeover() {
   var cancel = document.getElementById('codexTakeoverCancel');
   setButtonLoading(confirm, 'Taking over');
   if (cancel) cancel.disabled = true;
-  wsSendReliable(Object.assign({}, pending.sendPayload, {
-    takeover: true,
-    expectedWriterPid: writer.pid,
-  }));
+  sendToBridge(pending, { takeover: true, expectedWriterPid: writer.pid });
   scheduleSendTimeout(pending.id);
 }
 
@@ -2886,7 +2826,6 @@ function confirmCodexTakeover() {
 // bubble; its exact turn echo later promotes that same anchor in place.
 // Failure shows "Not delivered · Retry" and stops the spinner.
 function resolvePending(pending, ok, error) {
-  clearTimeout(pending.transportTimer);
   pending.queued = false;
   pending.delivered = true;
   pending.failed = !ok;
@@ -3083,7 +3022,6 @@ async function reconcilePendingSend(msgId) {
 
 // The hidden bubble and pending record stay so a late receipt/echo can still claim the turn.
 function rollbackUnreceiptedSend(pending) {
-  clearTimeout(pending.transportTimer);
   pending.rolledBack = true;
   pending.delivered = true;
   pending.failed = true;
@@ -3142,22 +3080,18 @@ function resendPending(pending) {
   pending.queued = false;
   pending.serverReceived = false;
   pending.turnEnded = false;
-  pending.transportRetries = 0;
   _queuedTurnIds.add(pending.id);
   rememberLatestSend(pending.id, false, pending.seq);
   pendingStatus(pending, 'sending...');
   applyResolvedLiveActivity('running');
   updateSendBtn();
-  wsSendReliable(pending.sendPayload);
-  probeSocketIfStale();
-  schedulePendingTransportRetry(pending);
+  sendToBridge(pending);
   scheduleSendTimeout(pending.id);
 }
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
   acceptPendingReceipt(pending);
-  clearTimeout(pending.transportTimer);
   // The authoritative echo can beat the final send ack. Settle the visible
   // optimistic bubble from its original send time before retiring its pending
   // record, so rapid sends never show ack-arrival order as their timestamps.
@@ -3187,6 +3121,7 @@ Object.assign(window, {
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   retryPendingSend, isInheritedAgentContext,
+  bridgeRequest: function (method, params) { return bridge.request(state.appState.device || '', method, params); },
 });
 
 // Test-only hook for replaying the real WS dispatcher.

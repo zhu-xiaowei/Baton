@@ -18,10 +18,9 @@ from project.session_ws import handle_session_rename
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
-from realtime_direct_ws import RealtimeDirect, enabled as realtime_enabled, handle_realtime_direct
 from direct_rpc_ws import direct_rpc_disconnect, handle_direct_rpc
 
-_DATA_ROLES = ("terminal_data", "realtime_data", "preview_data", "app_data", "bridge_data")
+_DATA_ROLES = ("terminal_data", "preview_data", "app_data", "bridge_data")
 
 _ddb = None
 _connections_table = None
@@ -79,11 +78,6 @@ def _apigw_client(endpoint):
         _apigw = boto3.client("apigatewaymanagementapi", endpoint_url=endpoint)
         _apigw_endpoint = endpoint
     return _apigw
-
-
-def _realtime_service(endpoint):
-    return RealtimeDirect(_connections_table, _query_connections, _post_to_connection,
-        _disconnect_terminal_data, _turn_event_targets, endpoint)
 
 
 def _account_id(api_key):
@@ -235,68 +229,6 @@ def _post_to_connection(endpoint, connection_id, data):
         return False
 
 
-def _log_turn_delivery(event, body, **fields):
-    print("[turn-delivery] " + json.dumps({
-        "event": event,
-        "sessionId": body.get("sessionId", ""),
-        "turnId": body.get("turnId", ""),
-        "seq": body.get("seq"),
-        "action": body.get("action", ""),
-        **fields,
-    }, separators=(",", ":")))
-
-
-def _turn_event_targets(body, account_id, bridge_connection_id):
-    session_id = body.get("sessionId", "")
-    targets = set()
-    subs = _subscriptions_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-        ConsistentRead=True,
-    ).get("Items", [])
-    for sub in subs:
-        connection_id = sub.get("connectionId", "")
-        if connection_id and connection_id != bridge_connection_id:
-            targets.add(connection_id)
-
-    reply_connection_id = body.get("replyConnectionId", "")
-    if reply_connection_id \
-            and reply_connection_id != bridge_connection_id \
-            and reply_connection_id not in targets:
-        reply_connection = _connections_table.get_item(
-            Key={"connectionId": reply_connection_id},
-            ConsistentRead=True,
-        ).get("Item")
-        if reply_connection \
-                and reply_connection.get("role") == "app" \
-                and reply_connection.get("accountId") == account_id:
-            targets.add(reply_connection_id)
-    return targets
-
-
-def _relay_turn_event(body, account_id, bridge_connection_id, endpoint):
-    payload = {
-        key: value for key, value in body.items()
-        if key not in ("replyConnectionId", "deliveryId", "noCache", "directDeliveredTo")
-    }
-    targets = _turn_event_targets(body, account_id, bridge_connection_id)
-    delivered = body.get("directDeliveredTo", [])
-    if isinstance(delivered, list):
-        targets.difference_update(value for value in delivered if isinstance(value, str))
-    gone = 0
-    for connection_id in targets:
-        if _post_to_connection(endpoint, connection_id, payload) is False:
-            gone += 1
-
-    if gone or body.get("action") == "stream_end":
-        _log_turn_delivery(
-            "relayed",
-            body,
-            targets=len(targets),
-            gone=gone,
-        )
-    return payload
-
-
 def handler(event, context):
     _init()
     route = event.get("requestContext", {}).get("routeKey", "")
@@ -338,8 +270,6 @@ def _handle_connect(event, connection_id):
     data_endpoint = os.environ.get("TERMINAL_DIRECT_ENDPOINT")
     if (role in _DATA_ROLES) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
         return {"statusCode": 403}
-    if role == "realtime_data" and not realtime_enabled():
-        return {"statusCode": 403}
 
     account_id = _account_id(api_key)
     ttl = int(time.time()) + 86400  # 24h
@@ -370,8 +300,6 @@ def _handle_connect(event, connection_id):
         item["previewProtocol"] = 1
     if role in _DATA_ROLES:
         item["terminalDataEndpoint"] = connected_endpoint
-    if role in ("app", "bridge") and qs.get("realtime") == "1":
-        item["realtimeVersion"] = 1
     _connections_table.put_item(Item=item)
     if item.get("bridgeOwner") and not _claim_bridge_connection(item, context, connected_endpoint):
         return {"statusCode": 409}
@@ -388,15 +316,6 @@ def _disconnect_terminal_data(endpoint, connection_id):
 
 def _handle_disconnect(connection_id, endpoint=None):
     """Remove connection + any subscriptions."""
-    realtime_connection = None
-    if endpoint and realtime_enabled():
-        try:
-            realtime_connection = _connections_table.get_item(
-                Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
-            _realtime_service(endpoint).close(realtime_connection,
-                publish=not realtime_connection or realtime_connection.get("role") != "app")
-        except Exception:
-            print("Realtime connection cleanup failed")
     try:
         connection = (_connections_table.get_item(Key={"connectionId": connection_id},
             ConsistentRead=True).get("Item") if endpoint else None)
@@ -444,13 +363,6 @@ def _handle_disconnect(connection_id, endpoint=None):
     except Exception:
         pass
 
-    if realtime_connection and realtime_connection.get("role") == "app":
-        try:
-            _realtime_service(endpoint).invalidate(realtime_connection["accountId"],
-                realtime_connection.get("realtimeSessions", set()))
-        except Exception:
-            print("Realtime subscription cleanup notification failed")
-
     return {"statusCode": 200}
 
 
@@ -487,8 +399,6 @@ def _handle_message(event, connection_id, endpoint):
         if (owner or conn.get("bridgeOwner")) and owner.get("activeConnectionId") != connection_id:
             _retire_bridge_connection(connection_id, endpoint, replaced=bool(owner.get("activeConnectionId")))
             return {"statusCode": 200}
-    if action == "realtime_direct":
-        return handle_realtime_direct(body, conn, connection_id, _realtime_service(endpoint))
     if action == "terminal_direct":
         return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
             query=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
@@ -515,20 +425,6 @@ def _handle_message(event, connection_id, endpoint):
         )
     elif action == "subscribe":
         return _handle_subscribe(body, connection_id, account_id, endpoint)
-    elif action == "reveal_permission":
-        if role == "app":
-            session_id = body.get("sessionId", "")
-            if not session_id:
-                return {"statusCode": 400}
-            _persist_subscription(session_id, connection_id, account_id)
-            if realtime_enabled():
-                _realtime_service(endpoint).subscription(connection_id, account_id, session_id)
-            return _handle_send_to_bridge(
-                body,
-                account_id,
-                endpoint,
-                "reveal_permission",
-            )
     elif action == "unsubscribe":
         return _handle_unsubscribe(body, connection_id, account_id, endpoint)
     elif action == "notify_seen":
@@ -553,37 +449,6 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "bridge_recovery_complete":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action in ("permission_request", "permission_resolved"):
-        if role == "bridge":
-            return _handle_bridge_relay(
-                body,
-                account_id,
-                connection_id,
-                endpoint,
-            )
-    elif action == "send_message_result":
-        if role == "bridge":
-            return _handle_send_message_result(
-                body,
-                conn,
-                account_id,
-                connection_id,
-                endpoint,
-            )
-    elif action == "send_message":
-        if role == "app":
-            return _handle_send_message(
-                body,
-                account_id,
-                endpoint,
-                connection_id,
-            )
-    elif action == "permission_reply":
-        if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "permission_reply")
-    elif action == "interrupt":
-        if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "interrupt")
     elif action == "request_file":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
@@ -623,14 +488,6 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "delete_files_result":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action in ("file_ready", "file_progress"):
-        if role == "bridge":
-            return _handle_bridge_relay(
-                body,
-                account_id,
-                connection_id,
-                endpoint,
-            )
     elif action == "list_commands":
         if role == "app":
             return _handle_send_to_bridge(
@@ -655,23 +512,6 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "command_options":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action in (
-        "stream_turn_start",
-        "stream_delta",
-        "stream_tool_input",
-        "stream_block_start",
-        "stream_block_stop",
-        "stream_end",
-    ):
-        # Headless streaming preview — relay to subscribed apps, never write DDB
-        # (authoritative message still lands via the `messages` action).
-        if role == "bridge":
-            return _handle_bridge_relay(
-                body,
-                account_id,
-                connection_id,
-                endpoint,
-            )
     elif action == "create_project":
         if role == "app":
             if not body.get("projectPath"):
@@ -710,23 +550,12 @@ def _handle_message(event, connection_id, endpoint):
 
 
 def _handle_subscribe(body, connection_id, account_id, endpoint):
-    """App subscribes to a session."""
+    """The App's viewer row (`ROOT#<root>`) for the notification worker's "being viewed" check."""
     session_id = body.get("sessionId", "")
     if not session_id:
         return {"statusCode": 400}
 
     _persist_subscription(session_id, connection_id, account_id)
-    root_session_id = body.get("rootSessionId", "")
-    if root_session_id:
-        _persist_subscription(
-            _root_subscription_id(root_session_id),
-            connection_id,
-            account_id,
-        )
-
-    if realtime_enabled():
-        _realtime_service(endpoint).subscription(connection_id, account_id, session_id)
-
     return {"statusCode": 200}
 
 
@@ -751,21 +580,11 @@ def _handle_unsubscribe(body, connection_id, account_id=None, endpoint=None):
         "sessionId": session_id,
         "connectionId": connection_id,
     })
-    root_session_id = body.get("rootSessionId", "")
-    if root_session_id:
-        _subscriptions_table.delete_item(Key={
-            "sessionId": _root_subscription_id(root_session_id),
-            "connectionId": connection_id,
-        })
-
-    if endpoint and realtime_enabled():
-        _realtime_service(endpoint).subscription(connection_id, account_id, session_id, remove=True)
-
     return {"statusCode": 200}
 
 
 def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
-    """Bridge pushes new messages — relay to subscribed apps + write DDB."""
+    """Bridge rows DynamoDB stores; Apps get them from the Bridge directly."""
     session_id = body.get("sessionId", "")
     messages = body.get("messages", [])
     compact_placeholder = (
@@ -777,29 +596,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     if not session_id or (not messages and not compact_placeholder):
         return {"statusCode": 400}
 
-    # 1. Relay to subscribed apps (priority — low latency).
-    if body.get("turnId") and body.get("seq") is not None:
-        _relay_turn_event(
-            {**body, "action": "messages"},
-            account_id,
-            bridge_connection_id,
-            endpoint,
-        )
-    else:
-        subs = _subscriptions_table.query(
-            KeyConditionExpression=boto3.dynamodb.conditions.Key("sessionId").eq(session_id),
-            ConsistentRead=True,
-        ).get("Items", [])
-        for sub in subs:
-            cid = sub.get("connectionId", "")
-            if cid and cid != bridge_connection_id:
-                _post_to_connection(endpoint, cid, {
-                    "action": "messages",
-                    "sessionId": session_id,
-                    "messages": messages,
-                })
-
-    # 2. Write to DDB (cache) with one retry.
+    # Write to DDB (cache) with one retry.
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
     # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
     # caching the truncated version here would clobber it.
@@ -848,7 +645,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
             # deterministic rows through the HTTP fallback before advancing.
             return {"statusCode": 500}
 
-    # 3. Ack back to bridge so it can advance synced position
+    # Ack back to bridge so it can advance synced position
     ack = {
         "action": "messages_ack",
         "sessionId": session_id,
@@ -876,17 +673,6 @@ def _handle_sync_complete(body, account_id, endpoint):
             "status": body.get("status", "ok"),
             "count": body.get("count", 0),
         })
-
-    return {"statusCode": 200}
-
-
-def _handle_bridge_relay(body, account_id, bridge_connection_id, endpoint):
-    """Bridge pushes a notification (e.g. permission_request) — relay to subscribed apps."""
-    session_id = body.get("sessionId", "")
-    if not session_id:
-        return {"statusCode": 400}
-
-    _relay_turn_event(body, account_id, bridge_connection_id, endpoint)
 
     return {"statusCode": 200}
 
@@ -963,65 +749,6 @@ def notify_session_threads_changed(account_id, endpoint, device_name, roots):
     return delivered
 
 
-def _handle_send_message_result(
-    body,
-    bridge_connection,
-    account_id,
-    bridge_connection_id,
-    endpoint,
-):
-    """Subscribe and reply directly to the app that created a new session."""
-    payload = dict(body)
-    reply_connection_id = payload.pop("replyConnectionId", "")
-    if bridge_connection.get("deviceName"):
-        payload["deviceName"] = bridge_connection["deviceName"]
-
-    if not reply_connection_id:
-        return _handle_bridge_broadcast(
-            payload,
-            account_id,
-            bridge_connection_id,
-            endpoint,
-        )
-
-    reply_connection = _connections_table.get_item(
-        Key={"connectionId": reply_connection_id},
-    ).get("Item")
-    if not reply_connection \
-            or reply_connection.get("role") != "app" \
-            or reply_connection.get("accountId") != account_id:
-        return {"statusCode": 200}
-
-    session_id = payload.get("sessionId", "")
-    if payload.get("ok") and session_id:
-        _persist_subscription(session_id, reply_connection_id, account_id)
-    _post_to_connection(endpoint, reply_connection_id, payload)
-    return {"statusCode": 200}
-
-
-def _handle_send_message(body, account_id, endpoint, connection_id=""):
-    """App sends a message to Claude Code via bridge — forward to bridge connection."""
-    session_id = body.get("sessionId", "")
-    project_hash = body.get("projectHash", "")
-    text = body.get("text", "")
-    if (not session_id and not project_hash) or not text:
-        return {"statusCode": 400}
-    payload = dict(body)
-    if connection_id:
-        payload["replyConnectionId"] = connection_id
-        _post_to_connection(endpoint, connection_id, {
-            "action": "send_message_received",
-            "turnId": payload.get("turnId", ""),
-            "requestId": payload.get("requestId", ""),
-        })
-    return _handle_send_to_bridge(
-        payload,
-        account_id,
-        endpoint,
-        "send_message",
-    )
-
-
 def _handle_send_to_bridge(
     body,
     account_id,
@@ -1035,23 +762,10 @@ def _handle_send_to_bridge(
     payload["action"] = action
     if preserve_device and device:
         payload["device"] = device
-    delivered = 0
     for item in _query_connections(account_id, "bridge", device=device):
         if device and item.get("deviceName", "") != device:
             continue
-        if _post_to_connection(endpoint, item["connectionId"], payload) is not False:
-            delivered += 1
-    if action == "send_message" and delivered == 0:
-        reply_connection_id = payload.get("replyConnectionId", "")
-        if reply_connection_id:
-            _post_to_connection(endpoint, reply_connection_id, {
-                "action": "send_message_result",
-                "ok": False,
-                "turnId": payload.get("turnId", ""),
-                "requestId": payload.get("requestId", ""),
-                "error": "Bridge offline — retry when the device reconnects",
-                "errorCode": "bridge_offline",
-            })
+        _post_to_connection(endpoint, item["connectionId"], payload)
     return {"statusCode": 200}
 
 

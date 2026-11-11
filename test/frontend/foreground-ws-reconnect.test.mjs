@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('foreground and unexpected reconnects share recovery while navigation starts fresh', async () => {
+test('foreground keeps the control socket, navigation starts fresh, and a new control socket restores only the viewer row', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: 'codex:foreground-ws' });
   h.state.WS_URL = 'wss://example.test/ws';
@@ -49,10 +49,10 @@ test('foreground and unexpected reconnects share recovery while navigation start
   assert.equal(h.window.resumeSessionForeground(), true);
   assert.equal(oldClosed, 0);
   assert.equal(sockets.length, 0);
-  assert.deepEqual(
-    existingSent.slice(0, 2).map((message) => message.action),
-    ['subscribe', 'reveal_permission'],
-  );
+  assert.deepEqual(existingSent.slice(0, 2), [
+    { action: 'subscribe', sessionId: 'codex:foreground-ws', device: 'D' },
+    { action: 'subscribe', sessionId: 'ROOT#codex:foreground-ws' },
+  ]);
 
   h.window.disconnectWs();
   assert.equal(oldClosed, 1);
@@ -63,10 +63,11 @@ test('foreground and unexpected reconnects share recovery while navigation start
 
   sockets[0].readyState = FakeWebSocket.OPEN;
   sockets[0].onopen();
-  assert.deepEqual(
-    sockets[0].sent.slice(0, 2).map((message) => message.action),
-    ['subscribe', 'reveal_permission'],
-  );
+  // A new control socket only restores the viewer row; Session events are not on it.
+  assert.deepEqual(sockets[0].sent.slice(0, 2), [
+    { action: 'subscribe', sessionId: 'ROOT#codex:foreground-ws' },
+    { action: 'realtime_ping' },
+  ]);
 
   let scheduledReconnect = null;
   const realSetTimeout = globalThis.setTimeout;

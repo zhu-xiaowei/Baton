@@ -1,6 +1,6 @@
 # v2 Phase 1, Step 3: Session View Served by the Bridge
 
-Status: A implemented (2026-11-09), B to be designed. Context: `docs/v2-architecture.md` §5 (protocol,
+Status: A implemented (2026-11-09); B is planned in `docs/v2-step3b-realtime-plan.md`. Context: `docs/v2-architecture.md` §5 (protocol,
 Session sequence) and §9 (Session cache).
 
 The Session view reads history from the Bridge over the `app_data` socket that home and lists use;
@@ -8,7 +8,8 @@ nothing on the view comes from DynamoDB. Rendering and streaming semantics stay.
 running during step 3 so v1 and v2 can be compared on `BatonV2`; deleting them is M2.
 
 - **A. History**: paging, the App's IndexedDB cache, fetch-on-expand details (this document).
-- **B. Real time**: Bridge pushes on `app_data`. A only keeps B unblocked (see the end).
+- **B. Real time**: Bridge pushes on `app_data`, then no Session storage in DynamoDB
+  (`docs/v2-step3b-realtime-plan.md`).
 
 ## Protocol
 

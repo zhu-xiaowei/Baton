@@ -102,7 +102,8 @@ async function api(path, params, opts) {
     if (path === '/api/bridge/session-threads') return requestBridge(params.device, 'threads', { sessionId: params.session });
     if (path === '/api/bridge/messages') {
       const target = { device: params.device, sessionId: params.session };
-      return params.before ? loadOlderHistory({ ...target, before: params.before }) : loadLatestHistory({ ...target, onSlow: opts?.onSlow });
+      return params.before ? loadOlderHistory({ ...target, before: params.before })
+        : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', onSlow: opts?.onSlow });
     }
     if (BRIDGE_METHODS[path]) {
       const { device, ...rest } = params || {};

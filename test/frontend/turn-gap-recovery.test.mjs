@@ -84,7 +84,7 @@ test('a frame lost mid-turn is recovered once a pong proves it is not in flight'
   // The execution queue holds the later frames first and releases them after its own REST.
   await h.tick(650);
   assert.equal(requests, 1, 'a turn gap without a pong is still treated as reordering');
-  send([{ action: 'realtime_pong' }]);
+  for (const pong of h.bridge.pings.splice(0)) pong(); // the direct socket answered
   await h.tick(100);
   assert.equal(requests, 2);
   send(turn.events.filter(event => event.seq >= 11));

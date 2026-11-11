@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('entering an existing session subscribes before requesting pending permission state', async () => {
+test('entering an existing session subscribes on its Bridge and keeps the viewer row on the server', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: '' });
   h.state.rootSessionId = 'codex:thread-root';
@@ -18,15 +18,8 @@ test('entering an existing session subscribes before requesting pending permissi
   h.window.subscribeSession('codex:thread-approval');
 
   assert.deepEqual(sent, [
-    {
-      action: 'subscribe',
-      sessionId: 'codex:thread-approval',
-      rootSessionId: 'codex:thread-root',
-    },
-    {
-      action: 'reveal_permission',
-      sessionId: 'codex:thread-approval',
-      device: 'D',
-    },
+    // The Bridge pushes a waiting permission prompt again on every subscription.
+    { action: 'subscribe', sessionId: 'codex:thread-approval', device: 'D' },
+    { action: 'subscribe', sessionId: 'ROOT#codex:thread-root' },
   ]);
 });
