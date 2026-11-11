@@ -274,6 +274,11 @@ Gateway bills per message, so none of this saves anything today except the last 
   JSON it is 283 bytes; with short per-subscription references for session and turn, 133. The
   clear envelope is redefined by encryption anyway, so it is designed once, then.
 - The SigV4 fields (about 1.5 KB on every frame) disappear on the relay.
+- Subscription renewals (decided 2026-11-11): while a Session is open and visible the App renews
+  its lease every 60 s (about 1.5 KB out, 0.2 KB back; it doubles as the keepalive), only because
+  API Gateway never tells the Bridge that an App socket closed. The relay knows, so it tells the
+  Bridge on a disconnect; renewals, leases and `replaces` then go, and the keepalive is the plain
+  ping. Until then the renewal stays as it is (on API Gateway a ping costs the same two messages).
 - Terminal and preview send base64 inside JSON, uncompressed: binary frames and compression before
   encryption. Measure the traffic by type first (`docs/v2-architecture.md` §13).
 - Terminal output is sent as it arrives; merging a few milliseconds of it into one frame would cut
