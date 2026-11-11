@@ -295,7 +295,7 @@ export const claudeRuntime = defineRuntimeAdapter({
       daemonMeta: getDaemonSessions(),
       daemonRunning: getDaemonRunningSessionIds(),
       poolOwns: context.poolOwns || (() => false),
-      backgroundTasksLeft: context.backgroundTasksLeft,
+      poolAwaitsAgents: context.poolAwaitsAgents,
       lastKnownStatus: context.lastKnownStatus,
       findSessionFile: context.findSessionFile || findSessionFile,
     };
@@ -337,8 +337,8 @@ export const claudeRuntime = defineRuntimeAdapter({
       session.agentName = daemon.agentName;
       session.agentDetail = newStatus === 'needs_input' ? daemon.agentDetail || '' : '';
     }
-    const pending = newStatus === 'completed' && !gone ? context.backgroundTasksLeft?.(nativeSessionId) : 0;
-    if (pending) session.backgroundTasks = pending;
+    // A terminal record reads busy while agents run, so newStatus is running there.
+    if (newStatus === 'completed' && !gone && context.poolAwaitsAgents?.(nativeSessionId)) session.backgroundAgents = true;
     const children = refreshClaudeSubagents(session, gone ? '' : filePath);
     return {
       session,
@@ -383,8 +383,8 @@ export const claudeRuntime = defineRuntimeAdapter({
     session.agentDetail = newStatus === 'needs_input'
       ? (detail !== undefined ? detail : daemon?.agentDetail || '')
       : '';
-    // CC reports back when its background tasks end; that turn alerts instead.
-    if (newStatus === 'completed' && context.backgroundTasks) session.backgroundTasks = context.backgroundTasks;
+    // CC reports back when its background agents end; that turn alerts instead.
+    if (context.backgroundAgents) session.backgroundAgents = true;
     trackAgentSession(session);
     await context.postFn('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,

@@ -23,7 +23,8 @@ import { batonSessions, localIdleSec } from './presence.mjs';
 import {
   headlessRoute,
   pendingInteractionDetail,
-  backgroundTasksLeft,
+  backgroundAgentsLeft,
+  heldForAgents,
   poolOwns,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
@@ -487,7 +488,11 @@ async function postSessionMeta(
   // Skip empty-shell sessions even if process detection briefly marks them running.
   const preview = metadata.preview;
   if (shouldSkipClaudeSession(preview, dm)) return;
-  if (!(statusChanged || isNew || gotNewTitle || forceActivity)) return;
+  // CC reports back when its background agents end; that turn alerts instead. A report-back
+  // turn read in one batch stays completed, so a released hold is written on its own.
+  const held = newStatus === 'completed' && await backgroundAgentsLeft(sessionId);
+  const heldChanged = held !== (heldForAgents.get(sessionId) || false);
+  if (!(statusChanged || isNew || gotNewTitle || forceActivity || heldChanged)) return;
 
   const stat = fs.statSync(filePath);
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
@@ -522,13 +527,7 @@ async function postSessionMeta(
   if (oldStatus === 'running' && newStatus !== 'running' && !dm && !batonSessions.has(sessionId)) {
     sessionMeta.localIdleSec = await localIdleSec();
   }
-  if (newStatus === 'completed') {
-    // CC reports back when its background tasks end; that turn alerts instead. Its record
-    // may still read busy for a moment after the last row, so work left is read again.
-    let pending = backgroundTasksLeft(sessionId);
-    if (pending) pending = await new Promise((resolve) => setTimeout(() => resolve(backgroundTasksLeft(sessionId)), 1000));
-    if (pending) sessionMeta.backgroundTasks = pending;
-  }
+  if (held) sessionMeta.backgroundAgents = true;
   trackAgentSession(sessionMeta);
   await postRequired('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
@@ -537,6 +536,7 @@ async function postSessionMeta(
     ...(statusDelta ? { statusDelta } : {}),
   }, { signal: AbortSignal.timeout(5000) });
   lastKnownStatus.set(sessionId, newStatus);
+  heldForAgents.set(sessionId, held);
   markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
   exposeKnownClaudeSession(filePath, sessionId);

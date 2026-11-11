@@ -450,43 +450,39 @@ const LIVE_STATUS = { busy: 'running', waiting: 'needs_input', idle: 'completed'
 // so only records of a listed claude pid count, and on Linux only the same process start.
 export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
   const statuses = new Map();
-  let files;
-  try { files = fs.readdirSync(dir); } catch { return statuses; }
-  for (const file of files) {
-    const pid = /^(\d+)\.json$/.exec(file)?.[1];
-    if (!pid || !claudePids.has(pid)) continue;
-    try {
-      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-      const status = LIVE_STATUS[record.status];
-      if (!record.sessionId || !status) continue;
-      if (process.platform === 'linux' && record.procStart !== undefined
-        && processStartTime(pid) !== String(record.procStart)) continue;
-      if (status !== 'completed' || !statuses.has(record.sessionId)) {
-        statuses.set(record.sessionId, status);
-      }
-    } catch {}
+  for (const record of liveRecords(dir, (pid) => claudePids.has(pid))) {
+    const status = LIVE_STATUS[record.status];
+    if (!record.sessionId || !status) continue;
+    if (status !== 'completed' || !statuses.has(record.sessionId)) {
+      statuses.set(record.sessionId, status);
+    }
   }
   return statuses;
 }
 
-// One session's own record without ps: busy (background agents too), shell (only background
-// Bash left) or idle; null without a live process.
-export function liveRecordStatus(sessionId, dir = CLAUDE_SESSIONS) {
+// Without ps: CC reads busy while background agents run (shell while only Bash does).
+export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
+  const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
+  for (const record of liveRecords(dir, alive)) {
+    if (record.sessionId === sessionId && record.status === 'busy') return true;
+  }
+  return false;
+}
+
+function* liveRecords(dir, isLive) {
   let files;
-  try { files = fs.readdirSync(dir); } catch { return null; }
+  try { files = fs.readdirSync(dir); } catch { return; }
   for (const file of files) {
     const pid = /^(\d+)\.json$/.exec(file)?.[1];
-    if (!pid) continue;
+    if (!pid || !isLive(pid)) continue;
+    let record;
     try {
-      const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-      if (record.sessionId !== sessionId) continue;
-      process.kill(Number(pid), 0);
+      record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
       if (process.platform === 'linux' && record.procStart !== undefined
         && processStartTime(pid) !== String(record.procStart)) continue;
-      return record.status || null;
-    } catch {}
+    } catch { continue; }
+    yield record;
   }
-  return null;
 }
 
 // Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.

@@ -183,11 +183,13 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
     Every turn end is `completed`, background tasks or not. A `completed` write also carries
-    `backgroundTasks` (`backgroundTasksLeft()`: the pool's task list, else CC's own
-    `~/.claude/sessions` record reading `busy`/`shell`); the worker skips Done while it is > 0,
-    so only the report-back turn after the last task alerts. CC stops background Bash at its
-    30-minute background limit and reports that too, so servers end it as well. Alerts stack per
-    session (iOS thread, Android group). A `control_request`
+    `backgroundAgents` while background agents still run (the pool's `local_agent` tasks, else
+    CC's own `~/.claude/sessions` record reading `busy`, re-read after 1 s); the worker skips
+    that Done, so only the report-back turn after the last agent alerts, and a hold released
+    without a running write in between (`heldForAgents`) alerts the last reply. Background Bash
+    and Monitor never hold it: CC does not mark long-running ones (servers, persistent Monitors),
+    so each Bash report-back turn alerts. Alerts stack per session (iOS thread, Android group).
+    A `control_request`
     outside a pool turn (a background agent, or a turn CC started itself) goes to the pool's
     `onControlRequest`, so it still reaches the app as `needs_input` instead of blocking CC forever.
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()` (startup sync +

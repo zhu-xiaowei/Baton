@@ -28,10 +28,13 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    the stream filter forwards only rows entering `needs_input` or `done#…`.
    `NotificationWorker` alerts on `running → completed`, on entering
    `needs_input`, and on a new `agentDetail` while waiting. A Done whose row carries
-   `backgroundTasks` > 0 is skipped: CC reports back as each background agent or Bash task
-   ends (Bash at the latest at its 30-minute background limit), and only the turn after the
-   last one alerts. Bridge counts the pool's task list, or CC's own session record
-   (`busy`/`shell`) for terminal sessions; older Bridges omit the field and alert per turn.
+   `backgroundAgents` is skipped: CC reports back as each background agent ends, and only
+   the turn after the last one alerts. Bridge reads the pool's `local_agent` tasks, or CC's
+   own session record (`busy`) for terminal sessions. When a held Done is released without a
+   running write (the process exited, or a report-back turn was read in one batch), the last
+   reply alerts. Background Bash and Monitor tasks never hold a Done: a server or persistent
+   Monitor would hold it until CC stops it, or forever. Older Bridges omit the field and
+   alert per turn.
    Once a report-back turn has
    started (its `<task-notification>` is the newest row), only its own end alerts. Every
    alert is kept and stacked per session (iOS thread, Android group + summary).

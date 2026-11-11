@@ -49,7 +49,10 @@ def test_status_transitions(monkeypatch):
     assert worker.notification({}, DONE, "imported") is None
     assert worker.notification(DONE, DONE, "renamed") is None
     assert worker.notification(SESSION, {**DONE, "parentSessionId": "root"}, "child") is None
-    assert worker.notification(SESSION, {**DONE, "backgroundTasks": Decimal(2)}, "work left") is None
+    held = {**DONE, "backgroundAgents": True}
+    assert worker.notification(SESSION, held, "agents left") is None
+    assert worker.notification(held, held, "still held") is None
+    assert worker.notification(held, DONE, "hold released")["body"] == "✅ Done · Fixed it."
     # A turn started outside Baton alerts only when the user has left that computer.
     assert worker.notification(SESSION, {**DONE, "localIdleSec": Decimal(30)}, "local") is None
     assert worker.notification(SESSION, {**WAITING, "localIdleSec": 5}, "local-ask") is None

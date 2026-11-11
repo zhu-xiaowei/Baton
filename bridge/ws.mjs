@@ -13,7 +13,7 @@ import {
   normalizeProjectHash,
   requireClaudeBin,
   resolveClaudeBin,
-  liveRecordStatus,
+  liveRecordBusy,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
@@ -220,11 +220,16 @@ export async function closeTerminalsForUpdate() {
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
-// Background agents/Bash CC will report back on: a pooled process's task list (its record
-// reads idle meanwhile), else CC's own record.
-export function backgroundTasksLeft(sessionId) {
-  if (_pool.owns(sessionId)) return _pool.backgroundTaskCount(sessionId);
-  return ['busy', 'shell'].includes(liveRecordStatus(sessionId)) ? 1 : 0;
+// Background agents CC will report back on: a pooled process's task list (its record reads
+// idle meanwhile), else CC's own record, which may lag the last row by a moment.
+export function poolAwaitsAgents(sessionId) { return _pool.awaitsAgents(sessionId); }
+// Whether the last root write held its Done for background agents; a released hold is written.
+export const heldForAgents = new Map();
+export async function backgroundAgentsLeft(sessionId) {
+  if (_pool.owns(sessionId)) return _pool.awaitsAgents(sessionId);
+  if (!liveRecordBusy(sessionId)) return false;
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return liveRecordBusy(sessionId);
 }
 
 export async function shutdownInteractions() {
@@ -363,6 +368,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
     const normalizedProjectHash = normalizeProjectHash(projectHash);
     const isNew = !!options.registerNew && !recentSessions.has(key);
     if (isNew) recentSessions.add(key);
+    const held = status === 'completed' && _pool.awaitsAgents(key);
     try {
       await updateSessionStatus(
         _config,
@@ -372,8 +378,9 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
         status,
         detail,
         identity.runtime,
-        { isNew, sentPrompt: _sentPrompts.get(key), backgroundTasks: status === 'completed' ? backgroundTasksLeft(key) : 0 },
+        { isNew, sentPrompt: _sentPrompts.get(key), backgroundAgents: held },
       );
+      if (identity.runtime === 'claude') heldForAgents.set(key, held);
       if (status === 'completed') _sentPrompts.delete(key);
       if (isNew && !knownProjects.has(normalizedProjectHash)) {
         knownProjects.add(normalizedProjectHash);
