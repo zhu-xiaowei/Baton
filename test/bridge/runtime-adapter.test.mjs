@@ -9,7 +9,6 @@ import { scanJsonlLines } from '../../bridge/jsonl.mjs';
 import { defineInteractionAdapter } from '../../bridge/interaction-adapter.mjs';
 import { defineRuntimeAdapter } from '../../bridge/runtime-adapter.mjs';
 import {
-  detectRegisteredRuntimeCapabilities,
   getRuntimeAdapter,
   runtimeAdapters,
 } from '../../bridge/runtime-registry.mjs';
@@ -112,34 +111,6 @@ test('Codex stopped polling updates the original project after its worktree disa
 
   assert.equal(result.session.project, oldProject);
   assert.equal(result.session.status, 'completed');
-});
-
-test('capability detection is dispatched through runtime adapters', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-capabilities-'));
-  const claudeProjects = path.join(root, 'claude-projects');
-  const codexHome = path.join(root, 'codex');
-  fs.mkdirSync(claudeProjects);
-  fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
-  try {
-    const capabilities = detectRegisteredRuntimeCapabilities({
-      claude: {
-        claudeProjects,
-        claudeBin: '/fake/claude',
-        skipVersions: true,
-      },
-      codex: {
-        codexHomes: [codexHome],
-        codexBin: '/fake/codex',
-        skipVersions: true,
-      },
-    });
-    assert.equal(capabilities.claude.canCreate, true);
-    assert.equal(capabilities.codex.canRead, true);
-    assert.equal(capabilities.codex.canSend, true);
-    assert.equal(capabilities.codex.canCreate, true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('Codex binary resolution finds an NVM sibling of the running Node executable', () => {

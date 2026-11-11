@@ -16,11 +16,6 @@ import {
 } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import {
-  binaryVersion,
-  existingDirectory,
-  resolveClaudeBinForCapability,
-} from './runtime-capabilities.mjs';
-import {
   discoverClaudeSubagents,
   findClaudeSubagentFile,
   parseClaudeSubagentSessionId,
@@ -199,20 +194,6 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   discover: discoverClaudeSessions,
-  detectCapability(options = {}) {
-    const binary = options.claudeBin === undefined
-      ? resolveClaudeBinForCapability()
-      : options.claudeBin;
-    const historyAvailable = existingDirectory(options.claudeProjects || CLAUDE_PROJECTS);
-    return {
-      installed: !!binary,
-      historyAvailable,
-      canRead: historyAvailable,
-      canCreate: !!binary,
-      canSend: !!binary,
-      version: options.skipVersions ? '' : binaryVersion(binary),
-    };
-  },
   findSessionFile: findClaudeSessionFile,
 
   baselineToEnd(session, context) {

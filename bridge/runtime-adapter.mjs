@@ -1,6 +1,5 @@
 const REQUIRED_METHODS = [
   'discover',
-  'detectCapability',
   'findSessionFile',
   'baselineToEnd',
 ];

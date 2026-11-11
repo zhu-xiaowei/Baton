@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import { countJsonlLines } from './extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
@@ -11,12 +10,7 @@ import {
 } from './codex-session.mjs';
 import { readableProjectName } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
-import {
-  binaryVersion,
-  existingDirectory,
-  resolveCodexBin,
-  resolveCodexHomes,
-} from './runtime-capabilities.mjs';
+import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { projectHashCandidatesFromCwd, storageSessionId } from './session-identity.mjs';
 import { projectCwdFromCwd } from './repository-identity.mjs';
 import { CodexAppServerClient } from './codex-app-server.mjs';
@@ -118,19 +112,6 @@ export const codexRuntime = defineRuntimeAdapter({
   interaction: codexInteraction,
 
   discover: discoverCodexSessions,
-  detectCapability(options = {}) {
-    const homes = options.codexHomes || resolveCodexHomes();
-    const binary = options.codexBin === undefined ? resolveCodexBin() : options.codexBin;
-    const historyAvailable = homes.some((home) => existingDirectory(path.join(home, 'sessions')));
-    return {
-      installed: !!binary,
-      historyAvailable,
-      canRead: historyAvailable,
-      canCreate: !!binary,
-      canSend: !!binary,
-      version: options.skipVersions ? '' : binaryVersion(binary),
-    };
-  },
   findSessionFile: findCodexSessionFile,
   deleteSessionHistory(nativeSessionId, context = {}) {
     return !!nativeSessionId && deleteCodexHistory(nativeSessionId, '', context, (id) => this.ownsLiveSession(id, context));
