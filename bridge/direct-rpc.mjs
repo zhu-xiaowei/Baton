@@ -1,13 +1,18 @@
 // v2 direct channel: the Bridge keeps a `bridge_data` socket on the data API, receives signed App
 // requests on it without Lambda, answers straight to the requester's socket, and pushes Session
 // events to the connections subscribed to them.
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { deflateRawSync, inflateRawSync } from 'zlib';
 import { createHeaderSigner } from './terminal-direct-protocol.mjs';
-import { RpcAssembler, decodeRpcPayload, isRpcRequest, pushFrames, rpcAckFrame, rpcErrorFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
+import { RpcAssembler, decodeRpcPayload, isRpcRequest, pushFrames, rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
 
-const MAX_CONCURRENT = 4;
+// Reads that use the machine (files, Git, transcripts) run at most this many at once; requests that
+// only wait (sends, pushes, uploads) are not counted.
+const MAX_CONCURRENT = 6;
+// A request still running after PROGRESS_AFTER_MS tells the App every PROGRESS_MS that it is.
+const PROGRESS_AFTER_MS = 5000;
+const PROGRESS_MS = 15_000;
 // A resend reuses its requestId: it gets the stored reply (or the reply still being computed).
 const REPLY_TTL_MS = 30_000;
 const MAX_REPLIES = 256;
@@ -25,11 +30,14 @@ export class SessionSubscribers {
     this.sessions = new Map(); // sessionId → Map(connectionId → { expires, deflate })
   }
 
-  add(sessionId, connectionId, deflate) {
+  // `root`: the thread root the page shows, for pushes about the whole thread (titles, children).
+  add(sessionId, connectionId, deflate, root) {
     if (!sessionId || !connectionId) return;
     let targets = this.sessions.get(sessionId);
     if (!targets) this.sessions.set(sessionId, targets = new Map());
-    targets.set(connectionId, { expires: Date.now() + LEASE_MS, deflate: deflate ?? targets.get(connectionId)?.deflate ?? false });
+    const previous = targets.get(connectionId);
+    targets.set(connectionId, { expires: Date.now() + LEASE_MS, deflate: deflate ?? previous?.deflate ?? false,
+      root: root || previous?.root || sessionId });
   }
 
   remove(sessionId, connectionId) {
@@ -37,20 +45,29 @@ export class SessionSubscribers {
     if (targets?.delete(connectionId) && !targets.size) this.sessions.delete(sessionId);
   }
 
-  targets(sessionId, now = Date.now()) {
-    const targets = this.sessions.get(sessionId);
-    if (!targets) return [];
-    for (const [connectionId, entry] of targets) if (entry.expires <= now) targets.delete(connectionId);
-    if (!targets.size) this.sessions.delete(sessionId);
-    return [...targets];
+  // `root`: also the connections watching a thread of that root.
+  targets(sessionId, { root = false } = {}) {
+    const now = Date.now();
+    const found = new Map();
+    for (const [id, targets] of this.sessions) {
+      if (id !== sessionId && !root) continue;
+      for (const [connectionId, entry] of targets) {
+        if (entry.expires <= now) targets.delete(connectionId);
+        else if (id === sessionId || entry.root === sessionId) found.set(connectionId, entry);
+      }
+      if (!targets.size) this.sessions.delete(id);
+    }
+    return [...found];
   }
 }
 
 export class DirectRpcBridge {
-  constructor({ key, sendControl, handlers, subscribers, socketFactory }) {
+  // `limited(frame)`: whether the request counts against MAX_CONCURRENT (default: all do).
+  constructor({ key, sendControl, handlers, subscribers, socketFactory, limited = () => true }) {
     this.key = key;
     this.sendControl = sendControl;
     this.handlers = handlers;
+    this.limited = limited;
     this.subscribers = subscribers || new SessionSubscribers();
     this.socketFactory = socketFactory || ((url) => new WebSocket(url, { handshakeTimeout: 15000, perMessageDeflate: false }));
     this.auth = null;
@@ -170,7 +187,8 @@ export class DirectRpcBridge {
       return;
     }
     this.remember(frame);
-    if (this.running >= MAX_CONCURRENT) this.queue.push(frame);
+    if (!this.limited(frame)) void this.serve(frame, false);
+    else if (this.running >= MAX_CONCURRENT) this.queue.push(frame);
     else void this.serve(frame);
   }
 
@@ -192,21 +210,43 @@ export class DirectRpcBridge {
     this.pongTimer.unref?.();
   }
 
-  async serve(frame) {
-    this.running++;
+  async serve(frame, counted = true) {
+    if (counted) this.running++;
+    const label = { method: frame.method };
+    const target = () => this.replies.get(frame.requestId)?.replyTo || frame.replyTo;
+    let lastProgress = Date.now();
+    // `progress(value)` lets a handler report what a page shows; silence is covered by the timer.
+    const progress = (value) => {
+      lastProgress = Date.now();
+      void this.deliver([rpcProgressFrame(frame.requestId, value)], target(), label);
+    };
+    const timer = setInterval(() => { if (Date.now() - lastProgress >= PROGRESS_MS - 1000) progress(); }, PROGRESS_MS);
+    const first = setTimeout(() => progress(), PROGRESS_AFTER_MS);
+    timer.unref?.();
+    first.unref?.();
     let frames;
     try {
       const handler = this.handlers[frame.method];
       if (!handler) throw new Error('unknown method');
       const deflate = !!frame.accept?.includes('deflate');
-      const result = await handler(frame.params || {}, { replyTo: frame.replyTo, deflate });
+      const params = frame.params || {};
+      let result = await handler(params, { replyTo: frame.replyTo, deflate, progress });
+      // With `known`, an unchanged result is answered by a marker (the App keeps its copy).
+      if (params.known !== undefined && result && typeof result === 'object' && !Array.isArray(result)) {
+        const fingerprint = createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0, 16);
+        result = params.known === fingerprint ? { notModified: true, fingerprint } : { ...result, fingerprint };
+      }
       frames = rpcResultFrames(frame.requestId, result, { deflate: deflate ? deflateRawSync : null, method: frame.method });
     } catch (error) {
       frames = [rpcErrorFrame(frame.requestId, error.message, frame.method)];
+    } finally {
+      clearInterval(timer);
+      clearTimeout(first);
     }
     const reply = this.replies.get(frame.requestId);
     if (reply) Object.assign(reply, { frames, at: Date.now() });
-    await this.deliver(frames, reply?.replyTo || frame.replyTo, { method: frame.method });
+    await this.deliver(frames, target(), label);
+    if (!counted) return;
     this.running--;
     const next = this.queue.shift();
     if (next) void this.serve(next);

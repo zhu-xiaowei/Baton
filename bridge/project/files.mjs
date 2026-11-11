@@ -220,25 +220,7 @@ function responseBase(message, extra = {}) {
   };
 }
 
-function legacyBase(message, extra = {}) {
-  return {
-    action: 'file_ready',
-    requestId: message.requestId,
-    sessionId: message.sessionId,
-    ...extra,
-  };
-}
-
 function sendProgress(message, send, extra) {
-  if (message.legacy) {
-    send({
-      action: 'file_progress',
-      requestId: message.requestId,
-      sessionId: message.sessionId,
-      ...extra,
-    });
-    return;
-  }
   send(responseBase(message, {
     ok: true,
     progress: true,
@@ -257,9 +239,7 @@ async function readProjectFile(message, context) {
   if (stat.isDirectory()) throw new Error('is a directory');
 
   const extension = path.extname(absPath).toLowerCase();
-  const base = message.legacy
-    ? legacyBase(message)
-    : responseBase(message, { ok: true });
+  const base = responseBase(message, { ok: true });
 
   if (VIDEO_EXTENSIONS.has(extension)) {
     if (stat.size > VIDEO_MAX_BYTES) throw new Error('video too large');
@@ -323,16 +303,9 @@ async function readProjectFile(message, context) {
     image: false,
     contentVersion,
   };
-  if (!message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
+  if (stat.size <= TEXT_WS_MAX_BYTES) {
     sendTextFrames(metadata, buffer.toString('utf8'), send);
     return;
-  }
-  if (message.legacy) {
-    const inline = { ...metadata, content: buffer.toString('utf8') };
-    if (Buffer.byteLength(JSON.stringify(inline)) <= INLINE_FRAME_LIMIT) {
-      send(inline);
-      return;
-    }
   }
 
   if (!uploadedFileKeys.has(key)) {
@@ -351,12 +324,6 @@ async function readProjectFile(message, context) {
 
 function errorResponse(message, error) {
   const detail = error?.message || String(error);
-  if (message.legacy) {
-    return legacyBase(message, {
-      error: detail,
-      path: message.path || '',
-    });
-  }
   return responseBase(message, {
     ok: false,
     error: detail,
@@ -410,10 +377,3 @@ export async function handleProjectFilesMessage(message, options = {}) {
   }
 }
 
-export function handleLegacyFileRequest(message, options = {}) {
-  return handleProjectFilesMessage({
-    ...message,
-    operation: 'read',
-    legacy: true,
-  }, options);
-}

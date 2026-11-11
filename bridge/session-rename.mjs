@@ -64,7 +64,6 @@ export async function handleSessionRename(message, { deviceName, post, send, ren
   const reply = {
     action: 'rename_session',
     requestId: message.requestId,
-    replyConnectionId: message.replyConnectionId,
     projectHash: message.projectHash,
     sessionId: message.sessionId,
     device: deviceName,

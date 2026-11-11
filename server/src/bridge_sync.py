@@ -162,17 +162,6 @@ def _active_status_value(status: str, last_active: str) -> str:
     return status if status in ("running", "needs_input") else f"done#{last_active}"
 
 
-def _broadcast_session_thread_changes(account_id: str, device_name: str, roots: List[dict]):
-    endpoint = os.environ.get("WS_API_ENDPOINT", "")
-    if not endpoint or not roots:
-        return
-    try:
-        from bridge_ws import notify_session_threads_changed
-        notify_session_threads_changed(account_id, endpoint, device_name, roots)
-    except Exception as e:
-        print(f"session thread notification failed: {e}")
-
-
 @bridge_router.post("/sync-sessions")
 async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     sessions_table, _ = _tables()
@@ -275,7 +264,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["threadRootSk"] = storage_id
             batch.put_item(Item=item)
 
-    thread_changes = {}
     for update in req.agentCountUpdates or []:
         root_key = {
             "accountId": key_hash,
@@ -318,13 +306,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 ":now": now,
             },
         )
-        thread_changes[(update.project, update.sessionId)] = {
-            "projectHash": update.project,
-            "rootSessionId": update.sessionId,
-            "agentCount": max(0, update.agentCount),
-            "runningAgentCount": running_agent_count,
-            "needsInputAgentCount": needs_input_agent_count,
-        }
 
     # The device row holds only its identity; counts and lists come from the Bridge.
     if req.deviceDisplayName:
@@ -336,12 +317,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                                        ":now": now, **({":os": req.os} if req.os else {})},
         )
 
-    if thread_changes:
-        _broadcast_session_thread_changes(
-            key_hash,
-            req.deviceName,
-            list(thread_changes.values()),
-        )
 
     return {"synced": len(req.sessions)}
 
@@ -646,81 +621,6 @@ async def attachment_url(key: str, request: Request, response: Response, name: s
     response.headers["Cache-Control"] = "no-store"
     return {"key": key, "name": name, "size": obj["ContentLength"], "contentType": content_type,
             "url": url, "previewUrl": preview_url, "previewType": preview_type}
-
-
-COMMAND_DESCRIPTION_MAX_BYTES = 256
-
-
-class CommandCatalogRequest(BaseModel):
-    deviceName: str
-    runtime: str = "claude"
-    projectHash: str = ""
-    revision: str
-    commands: List[dict] = Field(default_factory=list)
-    skills: List[dict] = Field(default_factory=list)
-
-
-def _trim_catalog_descriptions(value):
-    if isinstance(value, list):
-        return [_trim_catalog_descriptions(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    normalized = {}
-    for key, item in value.items():
-        if key == "description" and isinstance(item, str):
-            encoded = item.encode("utf-8")
-            normalized[key] = (
-                encoded[:COMMAND_DESCRIPTION_MAX_BYTES].decode("utf-8", errors="ignore")
-                if len(encoded) > COMMAND_DESCRIPTION_MAX_BYTES
-                else item
-            )
-        else:
-            normalized[key] = _trim_catalog_descriptions(item)
-    return normalized
-
-
-def _command_catalog_ref(account_id: str, device: str, runtime: str, project_hash: str) -> str:
-    context = json.dumps(
-        [account_id, device, runtime, project_hash],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(context.encode()).hexdigest()[:32]
-
-
-@bridge_router.post("/command-catalog")
-async def upload_command_catalog(req: CommandCatalogRequest, raw: Request):
-    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
-    if not bucket:
-        return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
-    account_id = _hash_key(raw.headers.get("x-api-key", ""))
-    catalog_ref = _command_catalog_ref(
-        account_id,
-        req.deviceName,
-        req.runtime,
-        req.projectHash,
-    )
-    catalog = _trim_catalog_descriptions({
-        "device": req.deviceName,
-        "runtime": req.runtime,
-        "projectHash": req.projectHash,
-        "revision": req.revision,
-        "commands": req.commands,
-        "skills": req.skills,
-    })
-    body = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode()
-    _s3_client().put_object(
-        Bucket=bucket,
-        Key=f"command-catalogs/{account_id}/{catalog_ref}.json",
-        Body=body,
-        ContentType="application/json",
-        CacheControl="no-store",
-    )
-    return {
-        "catalogRef": catalog_ref,
-        "revision": req.revision,
-        "size": len(body),
-    }
 
 
 @bridge_router.post("/upload-file")

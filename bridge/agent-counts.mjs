@@ -107,7 +107,19 @@ export function rebuildAgentCounts(sessions) {
   return sessions;
 }
 
+// Called with the count updates of every change (the Bridge pushes them to the pages of that root).
+let countListener = null;
+export function onAgentCountUpdates(listener) {
+  countListener = listener;
+}
+
 export function trackAgentSession(session) {
+  const updates = trackSession(session);
+  if (updates.length) countListener?.(updates);
+  return updates;
+}
+
+function trackSession(session) {
   const sessionId = sessionStorageId(session);
   if (!session.parentSessionId) {
     parentProjects.set(sessionId, session.project || '');

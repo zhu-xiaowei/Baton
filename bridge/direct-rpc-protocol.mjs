@@ -78,6 +78,11 @@ export function rpcAckFrame(requestId) {
   return { v: RPC_VERSION, kind: 'rpc_ack', requestId };
 }
 
+// A long request is still running; `progress` is what the page may show.
+export function rpcProgressFrame(requestId, progress) {
+  return { v: RPC_VERSION, kind: 'rpc_progress', requestId, ...(progress === undefined ? {} : { progress }) };
+}
+
 // A pushed Session event; `event` and `sessionId` stay readable next to the encoded payload.
 export function pushFrames(id, event, { deflate } = {}) {
   return chunkFrames({ kind: 'push', id, event: event.action, sessionId: event.sessionId }, event, deflate);

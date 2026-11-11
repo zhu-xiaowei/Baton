@@ -12,9 +12,6 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 import api_key as deployment_key
-from project.files_ws import handle_project_files
-from project.git_ws import handle_git_status
-from project.session_ws import handle_session_rename
 from terminal_ws import handle_terminal_poc
 from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
@@ -449,77 +446,6 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "bridge_recovery_complete":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action == "request_file":
-        if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
-    elif action == "rename_session":
-        return handle_session_rename(
-            body, role, connection_id, account_id, endpoint,
-            query_connections=_query_connections,
-            post_to_connection=_post_to_connection,
-            connections_table=_connections_table,
-            bridge_device=conn.get("deviceName", ""),
-        )
-    elif action == "project_files":
-        return handle_project_files(
-            body,
-            role,
-            connection_id,
-            account_id,
-            endpoint,
-            query_connections=_query_connections,
-            post_to_connection=_post_to_connection,
-            connections_table=_connections_table,
-        )
-    elif action == "git_status":
-        return handle_git_status(
-            body,
-            role,
-            connection_id,
-            account_id,
-            endpoint,
-            query_connections=_query_connections,
-            post_to_connection=_post_to_connection,
-            connections_table=_connections_table,
-        )
-    elif action == "delete_files":
-        if role == "app":
-            return _handle_send_to_bridge(body, account_id, endpoint, "delete_files")
-    elif action == "delete_files_result":
-        if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action == "list_commands":
-        if role == "app":
-            return _handle_send_to_bridge(
-                body,
-                account_id,
-                endpoint,
-                "list_commands",
-                preserve_device=True,
-            )
-    elif action == "list_command_options":
-        if role == "app":
-            return _handle_send_to_bridge(
-                body,
-                account_id,
-                endpoint,
-                "list_command_options",
-                preserve_device=True,
-            )
-    elif action == "command_catalog_ready":
-        if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action == "command_options":
-        if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
-    elif action == "create_project":
-        if role == "app":
-            if not body.get("projectPath"):
-                return {"statusCode": 400}
-            return _handle_send_to_bridge(body, account_id, endpoint, "create_project")
-    elif action == "create_project_result":
-        if role == "bridge":
-            return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "heartbeat":
         # Update TTL
         ttl = int(time.time()) + 86400
@@ -703,70 +629,6 @@ def disconnect_removed_bridge(account_id, endpoint, device):
         if "LastEvaluatedKey" not in response:
             return
         kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-
-
-def notify_session_threads_changed(account_id, endpoint, device_name, roots):
-    """Push an authoritative thread-cache invalidation after REST persistence."""
-    if not endpoint or not roots:
-        return 0
-    _init()
-    from boto3.dynamodb.conditions import Key
-    roots_by_connection = {}
-    for root in roots:
-        root_session_id = root.get("rootSessionId", "")
-        if not root_session_id:
-            continue
-        kwargs = {
-            "KeyConditionExpression": Key("sessionId").eq(
-                _root_subscription_id(root_session_id)
-            ),
-            "ConsistentRead": True,
-        }
-        response = _subscriptions_table.query(**kwargs)
-        subscriptions = response.get("Items", [])
-        while "LastEvaluatedKey" in response:
-            response = _subscriptions_table.query(
-                ExclusiveStartKey=response["LastEvaluatedKey"],
-                **kwargs,
-            )
-            subscriptions.extend(response.get("Items", []))
-        for subscription in subscriptions:
-            if subscription.get("accountId") != account_id:
-                continue
-            connection_id = subscription.get("connectionId", "")
-            if connection_id:
-                roots_by_connection.setdefault(connection_id, []).append(root)
-
-    delivered = 0
-    for connection_id, subscribed_roots in roots_by_connection.items():
-        payload = {
-            "action": "session_threads_changed",
-            "deviceName": device_name,
-            "roots": subscribed_roots,
-        }
-        if _post_to_connection(endpoint, connection_id, payload):
-            delivered += 1
-    return delivered
-
-
-def _handle_send_to_bridge(
-    body,
-    account_id,
-    endpoint,
-    action,
-    preserve_device=False,
-):
-    """Forward an action to bridge connection(s) for this account. If device is specified, only forward to that device's bridge."""
-    device = body.get("device", "")
-    payload = {k: v for k, v in body.items() if k != "device"}
-    payload["action"] = action
-    if preserve_device and device:
-        payload["device"] = device
-    for item in _query_connections(account_id, "bridge", device=device):
-        if device and item.get("deviceName", "") != device:
-            continue
-        _post_to_connection(endpoint, item["connectionId"], payload)
-    return {"statusCode": 200}
 
 
 def notify_bridge_sync(session_id, account_id, endpoint, device=None):

@@ -61,11 +61,8 @@ import {
   shouldSendImmediateInterrupt,
 } from './live-turn-stream.mjs';
 import { SessionAckQueue } from './session-ack-queue.mjs';
-import {
-  CommandCatalogCache,
-  commandCatalogPayload,
-  commandCatalogReadyPayload,
-} from './command-catalog-cache.mjs';
+import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
+import { onAgentCountUpdates } from './agent-counts.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -138,6 +135,29 @@ function rememberTurnEvent(event) {
   if (turn.bytes > REPLAY_LIMIT) return;
   turn.bytes += JSON.stringify(event).length;
   turn.events = turn.bytes > REPLAY_LIMIT ? [] : [...turn.events, event];
+}
+
+// Which requests count against the Bridge's limit of reads that use the machine at once.
+const READ_METHODS = new Set(['home', 'projects', 'sessions', 'history', 'threads', 'tool_details']);
+const GIT_WRITES = new Set(['stage', 'unstage', 'discard', 'commit', 'push']);
+function limitedRequest(frame) {
+  if (READ_METHODS.has(frame.method)) return true;
+  const operation = frame.params?.operation;
+  if (frame.method === 'git_status') return !GIT_WRITES.has(operation);
+  return frame.method === 'project_files' && operation !== 'download';
+}
+
+// Runs a handler written for the control socket (it calls `send` with reply frames) as a direct
+// request: progress frames go out as `rpc_progress`, the rest is the reply `{ frames }`.
+async function collectFrames(run, caller) {
+  const frames = [];
+  await run((frame) => {
+    const { action, ...rest } = frame;
+    if (rest.progress || rest.pending) caller.progress(rest);
+    else frames.push(rest);
+    return true;
+  });
+  return { frames };
 }
 
 function replayTurns(sessionId, caller) {
@@ -772,28 +792,42 @@ function connect() {
       key: _config.apiKey,
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
+      limited: limitedRequest,
       handlers: {
         home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
         // Subscribing here, before the file is read, leaves no gap between the page and the pushes.
-        history: (params, caller) => {
-          if (params.subscribe) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate);
-          return historyService.history(params);
+        // With `subscribe` this also does what opening with `subscribe` does, before the file is
+        // read, so nothing falls between the page and the pushes.
+        history: async (params, caller) => {
+          if (!params.subscribe) return historyService.history(params);
+          const { epoch } = subscribeCaller(params, caller);
+          return { ...await historyService.history(params), bridgeEpoch: epoch };
         },
-        subscribe: (params, caller) => {
-          if (params.replaces) _subscribers.remove(params.sessionId, params.replaces); // the caller's connection before it reconnected
-          _subscribers.add(params.sessionId, caller.replyTo, caller.deflate);
-          handleRevealPermission(params.sessionId, !params.renew).catch(error => console.error(`[ws] permission reveal failed: ${error.message}`));
-          if (!params.renew) replayTurns(params.sessionId, caller);
-          return { epoch: BRIDGE_EPOCH };
-        },
+        subscribe: (params, caller) => subscribeCaller(params, caller),
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
         threads: params => historyService.threads(params),
         tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
+        list_commands: params => listCommands(params),
+        list_command_options: params => listCommandOptions(params),
+        project_files: async (params, caller) => {
+          const { handleProjectFilesMessage } = await projectFilesModule();
+          return collectFrames((send) => handleProjectFilesMessage({ ...params, action: 'project_files' }, { send }), caller);
+        },
+        git_status: async (params, caller) => {
+          const { handleGitStatusMessage } = await gitStatusModule();
+          return collectFrames((send) => handleGitStatusMessage({ ...params, action: 'git_status' }, { send }), caller);
+        },
+        rename_session: (params, caller) => collectFrames((send) => handleSessionRename(params, {
+          deviceName: _config.deviceName, post, send: (reply) => { send(reply); if (reply.ok) publishTitle(reply); },
+          rename: message => renameNativeSession(message, { claudePool: _pool }),
+        }), caller),
+        create_project: params => createProject(params.projectPath, params.asAgent),
+        delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
       },
     });
@@ -901,12 +935,6 @@ function scheduleReconnect() {
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
-    case 'rename_session':
-      await handleSessionRename(msg, {
-        deviceName: _config.deviceName, post, send: wsSend,
-        rename: message => renameNativeSession(message, { claudePool: _pool }),
-      });
-      break;
     case 'terminal_direct':
       await handleSharedTerminalMessage(msg);
       break;
@@ -918,27 +946,6 @@ async function handleMessage(msg) {
       break;
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
-      break;
-    case 'create_project':
-      await handleCreateProject(msg.projectPath, msg.asAgent);
-      break;
-    case 'request_file':
-      await (await projectFilesModule()).handleLegacyFileRequest(msg, { send: wsSend });
-      break;
-    case 'project_files':
-      await (await projectFilesModule()).handleProjectFilesMessage(msg, { send: wsSend });
-      break;
-    case 'git_status':
-      await (await gitStatusModule()).handleGitStatusMessage(msg, { send: wsSend });
-      break;
-    case 'delete_files':
-      await handleDeleteFiles(msg);
-      break;
-    case 'list_commands':
-      await handleListCommands(msg);
-      break;
-    case 'list_command_options':
-      await handleListCommandOptions(msg);
       break;
     case 'messages_ack': {
       _messageAckQueue.acknowledge(msg.sessionId, msg.deliveryId);
@@ -966,6 +973,33 @@ async function handleMessage(msg) {
       console.log(`[ws] unknown action: ${msg.action}`);
   }
 }
+
+function subscribeCaller(params, caller) {
+  if (params.replaces) _subscribers.remove(params.sessionId, params.replaces); // the caller's connection before it reconnected
+  _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
+  handleRevealPermission(params.sessionId, !params.renew).catch(error => console.error(`[ws] permission reveal failed: ${error.message}`));
+  if (!params.renew) replayTurns(params.sessionId, caller);
+  return { epoch: BRIDGE_EPOCH };
+}
+
+// A renamed Session's title goes to the pages that show it (lists see it on their next load).
+function publishTitle(reply) {
+  const event = { action: 'session_title_changed', sessionId: reply.sessionId, projectHash: reply.projectHash,
+    device: reply.device, name: reply.name };
+  _directRpc?.publish(event, _subscribers.targets(reply.sessionId, { root: true }));
+}
+
+sessionIndex.pendingDetail = pendingInteractionDetail;
+
+// A root's child counts changed: the pages showing that root refresh their thread list.
+onAgentCountUpdates((updates) => {
+  for (const update of updates) {
+    const root = { projectHash: update.project, rootSessionId: update.sessionId, agentCount: Math.max(0, update.agentCount),
+      runningAgentCount: Math.max(0, update.runningAgentCount || 0), needsInputAgentCount: Math.max(0, update.needsInputAgentCount || 0) };
+    _directRpc?.publish({ action: 'session_threads_changed', deviceName: _config?.deviceName || '', roots: [root] },
+      _subscribers.targets(update.sessionId, { root: true }));
+  }
+});
 
 // A direct `send_message` request. Its reply is the turn's send_message_result, which wsSend hands
 // back; a repeated turnId gets the stored result and never starts a second turn.
@@ -1888,16 +1922,13 @@ async function newAgentSession(cwd, text) {
 
 // Create a new project directory and return its projectHash. No session is spawned:
 // the App enters the new-session input, and the first message creates the session.
-async function handleCreateProject(rawPath, asAgent) {
-  if (!rawPath) {
-    wsSend({ action: 'create_project_result', ok: false, error: 'no path provided', projectPath: rawPath });
-    return;
-  }
+function createProject(rawPath, asAgent) {
+  if (!rawPath) return { ok: false, error: 'no path provided', projectPath: rawPath };
   try {
     const { projectHash, projectName } = createProjectDirectory(rawPath);
-    wsSend({ action: 'create_project_result', ok: true, projectHash, projectName, projectPath: rawPath, asAgent: !!asAgent });
+    return { ok: true, projectHash, projectName, projectPath: rawPath, asAgent: !!asAgent };
   } catch (err) {
-    wsSend({ action: 'create_project_result', ok: false, error: err.message, projectPath: rawPath });
+    return { ok: false, error: err.message, projectPath: rawPath };
   }
 }
 
@@ -1962,14 +1993,8 @@ export async function handleDeleteFiles(msg, {
   return result;
 }
 
-async function handleListCommands(msg) {
-  const {
-    projectHash,
-    requestId,
-    knownRevision = '',
-    runtime = 'claude',
-    device = '',
-  } = msg;
+// The catalog in the reply (no S3 copy); `knownRevision` gets `notModified` when it is current.
+async function listCommands({ projectHash, knownRevision = '', runtime = 'claude' }) {
   let result;
   try {
     const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
@@ -1979,49 +2004,10 @@ async function handleListCommands(msg) {
     console.error(`[ws] list_commands failed: ${err.message}`);
     result = null;
   }
-  let payload = commandCatalogPayload(result, knownRevision);
-  let catalogRef = '';
-  if (!payload.notModified && Array.isArray(payload.commands)) {
-    const response = await post('/api/bridge/command-catalog', {
-      deviceName: device || _config?.deviceName || '',
-      runtime,
-      projectHash,
-      revision: payload.revision,
-      commands: payload.commands,
-      skills: Array.isArray(payload.skills) ? payload.skills : [],
-    });
-    if (response?.ok) {
-      try {
-        const uploaded = await response.json();
-        catalogRef = uploaded.catalogRef || '';
-      } catch {}
-    }
-    if (!catalogRef) {
-      payload = {
-        ...payload,
-        error: payload.error || 'Command catalog upload failed',
-      };
-    }
-  }
-  wsSend({
-    action: 'command_catalog_ready',
-    requestId,
-    ...commandCatalogReadyPayload(payload, catalogRef),
-    runtime,
-    device,
-    projectHash,
-  });
+  return commandCatalogPayload(result, knownRevision);
 }
 
-async function handleListCommandOptions(msg) {
-  const {
-    projectHash,
-    requestId,
-    runtime = 'claude',
-    device = '',
-    sessionId = '',
-    commandName = '',
-  } = msg;
+async function listCommandOptions({ projectHash, runtime = 'claude', sessionId = '', commandName = '' }) {
   let options = [];
   let error = '';
   try {
@@ -2039,17 +2025,7 @@ async function handleListCommandOptions(msg) {
     error = err.message;
     console.error(`[ws] list_command_options failed: ${error}`);
   }
-  wsSend({
-    action: 'command_options',
-    requestId,
-    commandName,
-    options,
-    error,
-    runtime,
-    device,
-    projectHash,
-    sessionId,
-  });
+  return { commandName, options, error };
 }
 
 async function downloadBridgeImage(key) {
