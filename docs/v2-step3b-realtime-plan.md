@@ -222,7 +222,8 @@ To design when stage 1 is merged.
   (measured: `home` 5.7 KB → 0.2 KB; `projects` 0.8 KB, `sessions` 1.5 KB, `threads` 0.6 KB each
   time today). One mechanism in the request layer for `home` (replacing its own revision), the
   lists, `threads`, the command catalog, file listings and Git status. `history` already sends
-  only what is newer than the cursor.
+  only what is newer than the cursor. `threads` reuses the App's existing thread-list cache
+  (`cachedSessionThreads`), so it only adds the fingerprint (confirmed 2026-11-11).
 - Tool details in IndexedDB (decided 2026-11-10): the content never changes, so no revalidation.
   Least recently opened evicted first, 20 MB in total, nothing above 10 MB stored, no count limit.
 - Removes: `ws-rpc.js`, the App's v1 control socket and its ping, the `ROOT#` subscription,
