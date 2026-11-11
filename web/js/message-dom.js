@@ -149,7 +149,7 @@ function assistantTurnsShareIdentity(current, expected) {
 
 function matchingStreamTurns(container, streamRow) {
   var turnId = streamRow?.dataset?.turnId || '';
-  // REST/DDB rows carry no turnId; rows between this turn's prompt and the next one are its own.
+  // History rows carry no turnId; rows between this turn's prompt and the next one are its own.
   var timeline = turnId ? turnTimeline(container, turnId) : null;
   var ownRows = timeline?.anchor ? timeline.rows : [];
   return Array.from(container.children).filter(function (element) {

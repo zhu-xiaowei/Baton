@@ -170,7 +170,7 @@ export function mergeMessages(options = {}) {
     var lastMatched = matchedIndexes.length
       ? Math.max.apply(null, matchedIndexes)
       : firstMatched - 1;
-    // Local-only rows (e.g. DDB-only waits) stay right after their previous match.
+    // Local-only rows (e.g. history-only waits) stay right after their previous match.
     var followers = new Map();
     var anchor = null;
     for (var withinMessage of messages.slice(firstMatched, lastMatched + 1)) {

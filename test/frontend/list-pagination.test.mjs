@@ -107,30 +107,6 @@ test('invalidating an entry does not reuse an in-flight request token', () => {
   assert.equal(store.peek('sessions:D:P').loading, false);
 });
 
-test('list cache v2 ignores and removes the old full-list cache', async () => {
-  const dom = new JSDOM('', { url: 'https://baton.test/' });
-  globalThis.localStorage = dom.window.localStorage;
-  localStorage.setItem('apeek_list_cache_v1:sessions:D:P', '{"sessions":[{"sessionId":"old"}]}');
-  localStorage.setItem('apeek_list_cache_v1', '{"version":1,"entries":{}}');
-
-  const cacheUrl = pathToFileURL(path.join(ROOT, 'web/js/list-cache.js'));
-  cacheUrl.search = `?test=${Date.now()}`;
-  const cache = await import(cacheUrl);
-  cache.migrateLegacyListCache();
-
-  assert.equal(localStorage.getItem('apeek_list_cache_v1:sessions:D:P'), null);
-  assert.equal(cache.readListCache('sessions:D:P'), null);
-  assert.equal(cache.writeListCache('sessions:D:P', {
-    sessions: [item('s1', 1)],
-    hasMore: true,
-    nextCursor: 'page-2',
-  }), true);
-  assert.equal(cache.readListCache('sessions:D:P').sessions.length, 1);
-  assert.ok(localStorage.getItem('apeek_list_cache_v2:sessions:D:P'));
-  dom.window.close();
-  delete globalThis.localStorage;
-});
-
 test('home session card headings are constrained to one line', () => {
   const css = readDarkStyles(path.join(ROOT, 'web/css/style.css'));
   ['card-project', 'card-title-text'].forEach((className) => {

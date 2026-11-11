@@ -175,6 +175,11 @@ export async function makeHarness(options = {}) {
   let apiResponse = { messages: [], hasMore: false };
   let apiHandler = async () => apiResponse;
   G('api', (...args) => apiHandler(...args));
+  // Bridge reads answer through the same handler, under the paths the tests already know.
+  G('bridgeHistory', (params, opts) => apiHandler('/api/bridge/messages', params, opts));
+  G('bridgeList', (method, params) => apiHandler('/api/bridge/' + (method === 'threads' ? 'session-threads' : method), params));
+  G('bridgeHome', (params) => apiHandler('/api/bridge/active-sessions', params));
+  G('bridgeDevices', () => apiHandler('/api/bridge/devices'));
 
   // The direct App ⇄ Bridge transport: requests and subscriptions are recorded on the test's
   // `state.ws` like any other frame ({ action: method, ...params }); tests answer through `bridge`.

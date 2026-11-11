@@ -52,6 +52,7 @@ function harness({ cache, fetchData, nativeMobile = false } = {}) {
       if (cache) win.localStorage.setItem('apeek_home_cache', JSON.stringify(cache));
       win.__apiReady = Promise.resolve();
       win.api = async path => { const r = await win.fetch(new URL(path, win.location.href).href); if (!r.ok) throw new Error(String(r.status)); return r.json(); };
+      win.bridgeHome = (p) => win.api('/api/bridge/active-sessions', p); win.bridgeDevices = () => win.api('/api/bridge/devices'); win.bridgeList = (m, p) => win.api('/api/bridge/' + (m === 'threads' ? 'session-threads' : m), p); win.bridgeHistory = (p, o) => win.api('/api/bridge/messages', p, o);
       win.fetch = async url => {
         requests.push(new URL(url).pathname);
         if (fetchData) return fetchData(url);

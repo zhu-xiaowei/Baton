@@ -15,27 +15,6 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('initial and repeated history loads both request the latest 200 messages', async () => {
-  const sessionId = 'history-default-page-size';
-  resetSession(h, { sessionId });
-  const calls = [];
-  h.setApiHandler(async (endpoint, params) => {
-    calls.push({ endpoint, params });
-    return { messages: [], hasMore: false };
-  });
-
-  await h.window.loadLatestMessages(sessionId);
-  await h.window.loadLatestMessages(sessionId);
-
-  assert.deepEqual(calls, [{
-    endpoint: '/api/bridge/messages',
-    params: { session: sessionId, limit: 200, device: 'D', project: '-h' },
-  }, {
-    endpoint: '/api/bridge/messages',
-    params: { session: sessionId, limit: 200, device: 'D', project: '-h' },
-  }]);
-});
-
 test('a failed history load drops buffered events and keeps dropping them until a load succeeds', async () => {
   const sessionId = 'history-rest-failure';
   resetSession(h, { sessionId });

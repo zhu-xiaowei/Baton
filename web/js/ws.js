@@ -75,14 +75,13 @@ var _historyFetchBarriers = new FetchBarrierCoordinator();
 var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
-var MESSAGE_PAGE_SIZE = 200;
 // iOS can suspend a fetch forever; a hung history request would hold the barrier open.
 var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
 // A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
 // frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
-// A running turn silent this long is checked against REST in case its tail frames were lost.
+// A running turn silent this long is checked against the history in case its tail frames were lost.
 var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
 var _turnGapWatch = null;
 var _lastTurnEventAt = 0;
@@ -334,7 +333,7 @@ function updateTitleFromMessages() {
   saveNav();
 }
 
-// Skeleton → empty state + stop spinner, when a synced session has no real messages. Never wipe mid-send/stream: a fresh session has 0 DDB rows but a live bubble on screen.
+// Skeleton → empty state + stop spinner, when a session has no real messages. Never wipe mid-send/stream: a fresh session has no history rows but a live bubble on screen.
 function showEmptyMessages() {
   var content = document.getElementById('content');
   if (state.pendingSentMessages.length || state.wsRunning) {
@@ -412,7 +411,7 @@ function checkTurnGap() {
   }
 }
 
-// A lost tail (including stream_end) leaves no gap to see; REST status settles the turn instead.
+// A lost tail (including stream_end) leaves no gap to see; the history status settles the turn instead.
 function checkSilentTurn() {
   var turnIds = _streamCoordinator.activeTurnIds();
   var now = Date.now();
@@ -746,9 +745,6 @@ function handleGappedTurnCompletion(completion) {
   consumeExecutionInputs(completion.end || {});
   applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
   updateSendBtn();
-  if (turnCompletionNeedsRecovery(completion)) {
-    scheduleTurnEndRecovery(completion.sessionId);
-  }
   return true;
 }
 
@@ -1291,9 +1287,6 @@ function handleStrictTurnEnd(message) {
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
-  if (message.recoveryRequired) {
-    scheduleTurnEndRecovery(message.sessionId);
-  }
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -1326,19 +1319,12 @@ function handleLateJoinCompletion(completion) {
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
-  if (turnCompletionNeedsRecovery(completion)) {
-    scheduleTurnEndRecovery(completion.sessionId);
-  }
 }
 
 function updateExecutionEnd(message) {
   if (!message?.executionId) return;
   if (message.continued === true) _activeExecutionIds.add(message.executionId);
   else _activeExecutionIds.delete(message.executionId);
-}
-
-function turnCompletionNeedsRecovery(completion) {
-  return completion.end?.recoveryRequired === true;
 }
 
 function mergeLateJoinAuthority(completion, completed, terminal) {
@@ -1871,7 +1857,7 @@ async function loadLatestMessages(sessionId, options = {}) {
       } else if (!restError) {
         var snapshot = replaceHistoryTail(state.wsAllMessages,
           dedupeCodexUserMessages(data.messages || []));
-        // The snapshot dropped live rows DDB has not persisted yet (e.g. refresh
+        // The snapshot dropped live rows the transcript does not have yet (e.g. refresh
         // while the final reply is still revealing): re-fetch until it catches up.
         var droppedLive = state.wsAllMessages.some(function (message) {
           return message._strictLifecycle && !snapshot.messages.includes(message)
@@ -1953,20 +1939,15 @@ async function loadLatestMessages(sessionId, options = {}) {
 }
 
 function fetchLatestMessages(sessionId) {
-  var params = { session: sessionId, limit: MESSAGE_PAGE_SIZE };
-  if (state.appState.device) params.device = state.appState.device;
-  if (state.appState.project?.hash) params.project = state.appState.project.hash;
-  var controller = new AbortController();
+  var params = { session: sessionId, device: state.appState.device };
   var timer;
   var timeout = new Promise(function (_, reject) {
     timer = setTimeout(function () {
-      controller.abort();
       reject(new Error('history fetch timeout'));
     }, HISTORY_FETCH_TIMEOUT_MS);
   });
   return Promise.race([
-    api('/api/bridge/messages', params, {
-      signal: controller.signal,
+    bridgeHistory(params, {
       onSlow: function (page) { showCachedHistory(sessionId, page); },
     }),
     timeout,
@@ -2038,10 +2019,9 @@ async function loadOlderMessages(sessionId) {
   var generation = _messagePaginationGeneration;
   state.wsLoadingOlder = true;
   try {
-    var data = await api('/api/bridge/messages', {
+    var data = await bridgeHistory({
       session: sessionId,
       before: state.wsOldestTimestamp,
-      limit: MESSAGE_PAGE_SIZE,
       device: state.appState.device,
     });
     if (data.historyReset) {
@@ -2767,7 +2747,7 @@ function markPendingFailed(pending, error) {
 }
 
 // Timeout reconciliation: only acts if the bubble is still pending (ack/dedup
-// didn't already resolve it). Pulls latest messages from DDB, then either
+// didn't already resolve it). Pulls the latest history, then either
 // self-heals (message arrived, ack/echo was just lost) or flags for retry.
 async function reconcilePendingSend(msgId) {
   var pending = findPending(msgId);

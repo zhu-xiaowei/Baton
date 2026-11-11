@@ -89,10 +89,10 @@
 
   // The home is answered through each Bridge by api.js, which resolves __apiReady when loaded.
   window.__apiReady = window.__apiReady || new Promise(function (resolve) { window.__resolveApiReady = resolve; });
-  var viaApi = function (path) {
-    return window.__apiReady.then(function () { return window.api(path); }).catch(function () { return null; });
+  var viaApi = function (name) {
+    return window.__apiReady.then(function () { return window[name](); }).catch(function () { return null; });
   };
-  window.__preload = { active: viaApi('/api/bridge/active-sessions'), devices: viaApi('/api/bridge/devices') };
+  window.__preload = { active: viaApi('bridgeHome'), devices: viaApi('bridgeDevices') };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';
@@ -116,8 +116,6 @@
     var topRight = document.getElementById('top-right');
     if (!topRight) return;
     topRight.classList.toggle('syncing', syncing);
-    var legacyGear = topRight.querySelector('.top-gear.syncing');
-    if (legacyGear) legacyGear.classList.remove('syncing');
   }
   function stopSync() {
     setSync(false);
@@ -284,7 +282,7 @@
     button.classList.add('recent-projects-loading');
     button.setAttribute('aria-busy', 'true');
     var activePromise = Promise.resolve().then(function () {
-      return window.api('/api/bridge/active-sessions', { allProjects: true });
+      return window.bridgeHome({ allProjects: true });
     }).then(function (data) {
       if (!Array.isArray(data.recentProjects) || data.hasMoreProjects !== false) {
         throw new Error('Incomplete project snapshot');
@@ -318,7 +316,7 @@
     content.__homeNavBound = true;
     content.addEventListener('click', function (e) {
       if (e.target.closest('[data-show-more-projects]')) {
-        if (typeof window.api === 'function') showMoreProjects();
+        if (typeof window.bridgeHome === 'function') showMoreProjects();
         else (window.__navQueue = window.__navQueue || []).push(showMoreProjects);
         return;
       }
