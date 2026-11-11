@@ -220,11 +220,11 @@ export async function closeTerminalsForUpdate() {
 
 // Idle pooled processes do not block terminal-driven status updates.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
-// Background agents CC will report back on: a pooled process's task list (its record reads
-// idle meanwhile), else CC's own record, which may lag the last row by a moment.
 export function poolAwaitsAgents(sessionId) { return _pool.awaitsAgents(sessionId); }
 // Whether the last root write held its Done for background agents; a released hold is written.
 export const heldForAgents = new Map();
+// Background agents CC will report back on: a pooled process's task list (its record reads
+// idle meanwhile), else CC's own record, which may lag the last row by a moment.
 export async function backgroundAgentsLeft(sessionId) {
   if (_pool.owns(sessionId)) return _pool.awaitsAgents(sessionId);
   if (!liveRecordBusy(sessionId)) return false;
@@ -368,7 +368,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
     const normalizedProjectHash = normalizeProjectHash(projectHash);
     const isNew = !!options.registerNew && !recentSessions.has(key);
     if (isNew) recentSessions.add(key);
-    const held = status === 'completed' && _pool.awaitsAgents(key);
+    const held = status === 'completed' && poolAwaitsAgents(key);
     try {
       await updateSessionStatus(
         _config,

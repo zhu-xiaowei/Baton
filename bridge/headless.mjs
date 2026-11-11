@@ -97,7 +97,7 @@ class HeadlessProc {
     if (t === 'system' && o.subtype === 'background_tasks_changed') {
       this.backgroundTasks = Array.isArray(o.tasks) ? o.tasks.length : 0;
       // Agents always end and report back; a Bash task or Monitor may run until CC stops it.
-      this.backgroundAgents = (o.tasks || []).filter((task) => task.task_type === 'local_agent').length;
+      this.backgroundAgents = (o.tasks || []).some((task) => task.task_type === 'local_agent');
       // The turn CC starts when a task ends counts from here, not from the last pool turn.
       this.pool._touch(this);
       return;
@@ -515,7 +515,7 @@ export class ClaudePool {
 
   // Busy turns own status; idle processes may be resumed from a terminal.
   isBusy(key) { const p = this.procs.get(key); return !!p && !p.dead && p.busy; }
-  awaitsAgents(key) { const p = this.procs.get(key); return !!p && !p.dead && p.backgroundAgents > 0; }
+  awaitsAgents(key) { const p = this.procs.get(key); return !!p && !p.dead && !!p.backgroundAgents; }
 
   reapIdle() {
     const now = Date.now();

@@ -463,10 +463,11 @@ export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
 // Without ps: CC reads busy while background agents run (shell while only Bash does).
 export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
   const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
+  let latest;  // a session resumed elsewhere keeps its older process's record
   for (const record of liveRecords(dir, alive)) {
-    if (record.sessionId === sessionId && record.status === 'busy') return true;
+    if (record.sessionId === sessionId && !(latest?.updatedAt > record.updatedAt)) latest = record;
   }
-  return false;
+  return latest?.status === 'busy';
 }
 
 function* liveRecords(dir, isLive) {

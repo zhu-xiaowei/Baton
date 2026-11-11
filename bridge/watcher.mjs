@@ -490,7 +490,8 @@ async function postSessionMeta(
   if (shouldSkipClaudeSession(preview, dm)) return;
   // CC reports back when its background agents end; that turn alerts instead. A report-back
   // turn read in one batch stays completed, so a released hold is written on its own.
-  const held = newStatus === 'completed' && await backgroundAgentsLeft(sessionId);
+  const held = newStatus === 'completed' && (statusChanged || !!heldForAgents.get(sessionId))
+    && await backgroundAgentsLeft(sessionId);
   const heldChanged = held !== (heldForAgents.get(sessionId) || false);
   if (!(statusChanged || isNew || gotNewTitle || forceActivity || heldChanged)) return;
 
