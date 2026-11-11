@@ -82,8 +82,8 @@ release.
 - Frames stay within API Gateway limits: 32 KB per frame (metered per 32 KB), 128 KB per message. Data
   frames, not WebSocket ping/pong control frames, are billed.
 - `ws-handler` runs with 128 MB today. Raise it (512 MB–1 GB) to cut the request hop and cold starts.
-- DDB keeps only connection/subscription rows and auth rows. `BridgeSessions` / `BridgeMessages` are
-  retired after the migration window (section 10).
+- DDB keeps only connection/subscription rows, device rows and auth rows. `BridgeSessions` /
+  `BridgeMessages` are deleted.
 
 ### 3.2 Profile B: CloudFront + EC2 (hosted)
 
@@ -153,10 +153,9 @@ The protocol is transport-agnostic so profile A's Lambda handler and profile B's
   archive module, safety checks and UI, but not its server storage.
 - **Runtimes:** `runtime` is an open string and Bridge reports each runtime's capabilities, so agents added
   later (ACP) need no protocol change.
-- **Oversized authoritative messages:** today the WS copy is truncated and the full copy goes to DDB over
-  HTTP (`realtime-delivery.mjs`). Without DDB, send the truncated copy and let the App fetch the full
-  content from Bridge on demand, as `tool_details` already does. Bulk data is chunked and must not block
-  the stream (keep the control and data sockets separate).
+- **Oversized authoritative messages:** pushes and replies are split into direct-channel chunks
+  (`bridge/direct-rpc-protocol.mjs`), so nothing is truncated; full tool content still comes from
+  `tool_details` on demand. Bulk data must not block the stream (keep the control and data sockets separate).
 - **Paging on Bridge:** a per-file `line → byte offset` index so pages are read backwards from the tail
   without parsing the whole JSONL. Lists are sorted and paged on Bridge. Page sizes stay as they are today.
 - **Compress, then encrypt:** payloads are compressed before encryption (Node `zlib`, browser
@@ -287,15 +286,12 @@ terminal. Changes are in the data layer plus a few required screens.
 
 | Combination | Behaviour |
 |---|---|
-| New App + old self-host stack | Server reports no `protocol: 2` → App uses the v1 REST/DDB path. |
+| New App + old self-host stack | Server reports no `protocol: 2` → App shows "Server update required". |
 | New App + upgraded self-host stack | v2 path. Bridge auto-updates from the same stack. |
 | Existing TestFlight user | Stored `_as` / `_ak` keep working against their own stack. |
 | Moving to hosted | Re-run the install command and scan the QR code it prints; history is read from local JSONL, nothing to migrate. One Bridge connects to one server. |
 
-- Claude Code removes transcripts after `cleanupPeriodDays` (default 30) while `BridgeMessages` keeps 90
-  days. During the migration window a self-host stack keeps `BridgeMessages` read-only as a fallback for
-  Sessions whose JSONL is gone; the fallback is removed once the TTL expires.
-- The v1 path is removed from the App once self-host stacks have upgraded.
+- Superseded: there is no read-only `BridgeMessages` fallback or v1 App path; step 3 deleted both tables.
 - Profile A → B for the hosted service: deploy the relay, verify, switch the CloudFront origin, then close
   the old connections so every client reconnects to the new origin at once. Running turns survive because
   Bridge queues frames while disconnected (`wsSendWhenConnected`), the App queues user actions
@@ -404,8 +400,7 @@ encryption build on the data flow it settles.
 1. **Core: no DDB, everything over WS (profile A, our own stack).** Bridge paging/index and list RPCs,
    session `epoch + seq`, send idempotency, Bridge-owned Session metadata (archive), attachment fallback,
    App IndexedDB cache, prefetch and persistent outbox, capability negotiation with v1 fallback, CloudFront
-   `/ws` and `/data` behaviours. DDB keeps being written during validation so the v1 path stays a fallback;
-   it is retired only after the targets below are met. Validation targets, against v1 as the baseline:
+   `/ws` and `/data` behaviours. Validation targets, against v1 as the baseline:
    scan or open to Session list ≤ 3 s; first open of a Session with and without cache; home load across
    devices; foreground resume; message completeness on a weak network; Bridge CPU and memory with the
    index. Also measure section 13 items 1, 4 and 5 here.

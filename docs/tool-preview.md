@@ -35,10 +35,6 @@ containing the structured preview (including Edit paths), replacing the partial
 JSON prefix. Authority preserves block-level flags. Assistant text and permission
 events are unaffected.
 
-These content flags are separate from the existing event/message-level
-transport `truncated` flag. Existing frame-size protection, `stream_end`,
-`recoveryRequired` and REST recovery behavior are unchanged.
-
 ## Details RPC
 
 The tool header opens the local preview without a request, keeping the same
@@ -76,7 +72,7 @@ complete and can be retried. Input-only tools can load before a result exists;
 the later result invalidates that cache.
 Failed requests expand the available local preview and can be retried. A late response cannot
 update a different session. Details are never sent through the normal history
-write path or persisted back to DynamoDB.
+path or persisted server-side.
 
 Clicking an Edit header requests its full details and shows only a spinner
 at the right of that same row. The body stays collapsed until the existing diff
@@ -90,8 +86,8 @@ with nearby context and highlights their line ranges. File reads include a conte
 hash, so an unchanged version reuses cached ranges and a changed version is
 matched again. Missing or ambiguous blocks are not highlighted. Opening the file
 before loading the Edit does not request its details. These locations and versions
-stay in memory and are never written to DynamoDB.
+stay in memory.
 
-Historical DynamoDB records are not rewritten by this feature. An unavailable
+An unavailable
 Bridge or missing source file leaves the preview readable but prevents loading
 the full details.

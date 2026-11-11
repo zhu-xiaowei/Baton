@@ -19,33 +19,32 @@ your phone or desktop. Claude Code supports viewing and interaction; Codex suppo
 real-time monitoring, and interaction with existing Sessions. Three components:
 
 1. **bridge/** — Node.js script running on macOS/Linux/Windows (always-on, auto-start), normalizes Claude Code and Codex JSONL
-2. **server/** — AWS Lambda (FastAPI) + DynamoDB + WebSocket API GW, relays between bridge and app
+2. **server/** — AWS Lambda (FastAPI) + WebSocket API GW, relays between bridge and app (DynamoDB holds only connection, device, token and notification rows)
 3. **web/ + src-tauri/** — Static HTML/CSS/JS frontend, packaged as native app via Tauri v2 (Android/iOS/Desktop)
 
 Brand name "Baton" is only in user-facing places. Internal code uses generic names so renaming is easy.
 
 ## Core Design Principle
 
-**DynamoDB is the durable browsing cache; WebSocket is the real-time path:**
-- DDB: device/project/session metadata plus normalized message history
-- WS: real-time messages, streaming previews, permissions, and control actions
-- App localStorage: local auth/nav state cache
+**The Bridge's local JSONL is the only source; reads and pushes go over the direct channel:**
+- The App asks each Bridge for lists, history, threads and tool details over the direct RPC channel;
+  the Bridge pushes real-time rows, streaming previews and permissions to subscribers.
+- Nothing about Sessions or messages is stored server-side.
+- The App caches what it has shown in IndexedDB / localStorage (plus local auth/nav state).
 
 ## Current Status
 
 ### Phase 1: COMPLETE ✅
-- bridge.mjs syncs session metadata to DDB via HTTP POST
 - bridge.mjs watches .jsonl files, detects new messages in real-time
 - Deployed to ap-northeast-1 (Baton), verified 300+ sessions
 
 ### Codex Phase 1 + Phase 2: COMPLETE
 - Runtime adapters discover Claude Code and Codex into one Device → Project → Session catalog.
-- Codex metadata and recent/running history sync on Bridge startup; older empty DDB partitions
-  use REST `needSync` → WS `sync_session` → adapter → DDB → `sync_complete`.
+- Codex history is read on demand from the local rollout files.
 - Codex uses `codex:<nativeSessionId>` storage IDs and the existing Claude-compatible project hash.
 - Runtime icons and normalized message/tool rendering are complete.
 - Codex watcher monitors every configured `CODEX_HOME/sessions` root and pushes append-only
-  updates through the same WS ack, HTTP fallback, frame-limit, and watermark semantics as Claude.
+  updates to subscribers with the same watermark semantics as Claude.
 - Codex rollout-only status updates support `running`/`completed`; interaction resume recovers
   daemon-owned approval waits even though the startup catalog cannot infer them from JSONL alone.
 - Codex Phase 3 interaction prefers the managed app-server Unix WebSocket when present and falls
@@ -56,14 +55,13 @@ Brand name "Baton" is only in user-facing places. Internal code uses generic nam
   batch window, while `LiveTurnStream` assigns the turn-level `seq`. The frontend uses
   `TurnEventQueue → StreamCoordinator → StreamingDomRenderer` for ordered consumption,
   authority reconciliation, and progressive reveal.
-- Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
-  rows without rebroadcast and remains the fallback when no live row was observed.
+- Codex user/assistant live rows are pushed immediately; the rollout watcher does not push matching
+  rows again and remains the fallback when no live row was observed.
 - Codex command/file/permissions/MCP approval variants are implemented. Automatic pending-request
   recovery immediately after a Bridge restart, before any send resumes the thread, remains Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification
-- Server REST read endpoints (devices, projects, sessions, messages)
 - WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
 - Bridge WS connection + real-time push
 - Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
@@ -134,8 +132,8 @@ Done:
   One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
-- Bridge decides and words every alert (`bridge/notify.mjs`, from the rows it reports to
-  `sync-sessions`; each approval is `needs_input` + `agentDetail`) and posts it to
+- Bridge decides and words every alert (`bridge/notify.mjs`, from the rows `reportSessions` sees;
+  each approval is `needs_input` + `agentDetail`) and posts it to
   `POST /api/notifications/events`, which stores the feed row and calls the push relay; while the
   server is unreachable it keeps the newest alert per Session (at most 10, 10 minutes). Devices are
   one `PUSH_DEVICE` row per `<environment>:<token>`. Before alerting it skips interrupted turns
@@ -153,9 +151,6 @@ Done:
   CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:
   `docs/mobile-notifications.md`.
 
-### Phase 3: LATER — Production polish
-- Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
-
 ## Deployed Environment
 
 **API URL and API key live in `.env.local` (gitignored). When you need them,
@@ -166,7 +161,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 
 - **Region**: ap-northeast-1
 - **Stack**: Baton
-- **DDB Tables**: `Baton-bridge-sessions`, `Baton-bridge-messages`
+- **DDB Tables**: `Baton-connections`, `Baton-system`
 - **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack Baton`
 
 ## Key Technical Decisions
@@ -182,8 +177,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Session `status`: **three-state** (`running`/`needs_input`/`completed`), one field, no
   parallel `agentState`. Displayed as Running (green) / Needs input (amber) / Done (grey).
   Three sources map into this single enum:
-  - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
-    path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
+  - **busy pool-owned (headless)**: pool lifecycle events report status through `reportSessions`
+    — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
     Every turn end is `completed`, background tasks or not. A `completed` write also carries
     `backgroundAgents` while background agents still run (the pool's `local_agent` tasks, else
@@ -218,12 +213,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     it in a `<task-notification>` rather than a later `resumedAgentId`. Only CC's own rows count
     (`claudeTaskEvent()`: enqueued notifications, notification prompts, `SendMessage` results), not
     tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
-    re-derives the counts on every `checkStopped` pass and sends them, because `sync-sessions`
+    re-derives the counts on every `checkStopped` pass and reports them, because the notifier
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
-  - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the
-    frontend's `statusLabel`/`statusClass` fallback (no migration script; re-derived on next sync).
 - `projectHashToPath()` (in `session.mjs`): reverse hash to real directory path (validates each segment exists)
 - Claude Agents support:
   - Agent identity source is **`claude agents --json --all`**. Its working/blocked/done state
@@ -234,11 +227,11 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     `kind === 'background'`; `kind:"interactive"` entries are not agents.
   - `agentDetail` (the blocked question shown on the card) is the ONE field still read from `jobs/<sid[:8]>/state.json`'s `needs` — `--json`'s `waitingFor` is almost always null.
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds (still used to detect a done-agent resumed as a normal CC session).
-  - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll full-pushes every agent (heals DDB + covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
+  - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll reports every agent (covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
   - Status paths that key off live CC processes (`checkStopped`) skip roster-active daemon
     agents and busy pool-owned sessions. Precedence: busy pool-owned > roster-active daemon >
     external/jsonl.
-  - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
+  - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, which would list one sessionId twice. `normalizeProjectHash()` strips `--claude-worktrees-*` wherever a Session row is built (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
   - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is pushed again on every Bridge subscription.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
 - Slash commands are runtime-aware. Claude's primary catalog comes from the current CLI's
@@ -261,20 +254,23 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Deployed bridge runs from `~/.baton-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.baton-bridge/` + restart service.
 - Auto-update: startup and WebSocket reconnect check `/api/version` once. Existing four-minute heartbeat replies include `bridgeVersion`; only a different non-dev version triggers another check, so normal heartbeats add no REST requests and there is no dedicated update timer. On change, Bridge resolves the S3 package through `/api/install`, stages and validates it, then restarts even with active terminal sessions. Existing terminal/agent processes may be interrupted; they do not defer updates. Checks never overlap and network requests have timeouts. `install.sh` uploads the Bridge package before exposing its version through CloudFormation; both API and WS Lambdas receive `AppVersion`. Bridge WS connections report `bridgeVersion` for fleet verification.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
-- v2 lists (home, projects, sessions) are answered by `session-index.mjs` from memory, warmed at startup
-  before the DDB sync: 2 workers read each JSONL's head and tail only (Codex back to its last turn
+- v2 lists (home, projects, sessions) are answered by `session-index.mjs` from memory, warmed at startup:
+  2 workers read each JSONL's head and tail only (Codex back to its last turn
   start; Claude's last 1 MB, where CC re-stamps titles) (`session-summary.mjs`,
   `docs/v2-step2-lists-plan.md`). Watchers call `touch()`; appends read
   only the new bytes.
-- Initial sync (M1 only, removed in M2): merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2.
-- Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips roster-active daemon agents + busy pool-owned sessions)
-- Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
-- Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
+- Startup: merge all runtime catalogs, report every Session row (`reportSessions` in `sync.mjs`:
+  status cache + notifier, nothing is sent to the server) and set each Session's in-memory cursor
+  to the end of its file; history is read from the files on demand.
+- Periodic check: `checkStopped()` runs once after the session index warms up, then every
+  `CHECK_STOPPED_INTERVAL` (10 min). Candidates are running/needs_input entries in
+  `lastKnownStatus`, matched to session-index roots; disappeared CC processes (`ps aux`) →
+  `completed` (skips roster-active daemon agents + busy pool-owned sessions)
+- Watcher: fs.watch detects jsonl changes → pushes new rows to subscribers; reports metadata only on status change, new session, or ai-title
+- Status cache: `lastKnownStatus` holds the last reported status per Session (`checkStopped` candidates; changes invalidate list answers)
 - Debounce: busy Map per session dedup fs.watch duplicate events
 - Line-number tracking per session (not UUID set), lightweight
 - Images: sharp compress 1280px JPEG (quality=90) → upload S3 via Lambda → store key in message
-- Batching: by byte size (≤4MB/POST), with 200ms delay between batches
-- WS ack: `wsSendWithAck` waits for server `messages_ack` reply (5s timeout), falls back to HTTP POST to DDB if no ack
 
 ### Server
 - FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
@@ -283,7 +279,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   value REST/WS answer 503 rather than guess an account) — the key is
   never stored in a table. Their IAM `apigateway:GET /apikeys` can read every key in the region:
   the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
-- DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
+- `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
   `AccountId` stack parameter (deploy stops if the key cannot be read), and only the current key
   maps to it; any other key still gets its own empty account. `install.sh --rotate-key` skips the
   build and keeps the deployed template and every other parameter, passing only a new
@@ -298,22 +294,21 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - The key lives only in the Bridge's `~/.baton-bridge/config.json` (0600); service definitions no
   longer pass `--key`, and older ones are rewritten at startup.
 - Removing a device (home long-press → `/api/bridge/delete-device`) sends `device_removed` and
-  closes its Bridge sockets, then deletes its DEV#/SESS# rows. The Bridge removes its
+  closes its Bridge sockets, then deletes its device row. The Bridge removes its
   launchd/systemd/Task Scheduler entry and `config.json`, then exits 0 (no restart). A Bridge that is
   offline at the time comes back and re-adds the device; remove it again.
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
 - Bridge install script (`/api/install`): exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility (tmux auto-install removed in Phase 2E)
 
-### Message Flow (WS single path + DDB cache)
-- Claude watcher normally pushes new messages through WS; startup, fallback, oversized authoritative copies, and on-demand history use HTTP
-- Lambda broadcasts ordinary watcher messages and writes their final fields to DDB. Runtime-owned
-  `messages{noCache:true}` are broadcast only; the later JSONL watcher copy owns persistence.
+### Message Flow (Bridge JSONL + direct channel)
+- Watchers push new rows to the Session's subscribers over the direct channel; rows a live turn
+  already pushed are not pushed again when the JSONL copy is written. History is read on demand.
 - Bridge extracts: uuid, parentUuid, type, content, timestamp, toolUseResult
   (drops model/usage/cwd/version). Tool IN/OUT always keeps
   the first 500 Unicode characters per text field, Edit keeps paths and status,
   thinking signatures are omitted, and `toolUseResult` keeps only numeric Agent
   duration/tool-count statistics. Failed Edit results retain their error preview.
-  This same prepared representation is reused for HTTP, WS and live authority;
+  This same prepared representation is reused for history, watcher pushes and live authority;
   a module-local WeakSet skips repeated processing of the same message object.
 - Block-level `truncated` means on-demand tool content, independently of transport
   truncation/recovery. A final structured input event replaces any incomplete
@@ -328,9 +323,9 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   `history {subscribe: true}` registers the caller before the file is read
 - Pushes buffer during the history load → merge/dedup → resolve running state from newer applied
   lifecycle events or the history `status` → render → subsequent pushes append directly
-- A REST snapshot replaces the local tail, except live prompts (`live:user:` Claude,
+- A history snapshot replaces the local tail, except live prompts (`live:user:` Claude,
   `codex:user:` Codex) newer than the snapshot's last non-metadata message and absent from it:
-  those `noCache` rows reach DDB only after the JSONL/rollout watcher persists them under the same
+  those rows reach history only once the JSONL/rollout has them under the same
   identity, so dropping them made the sent message vanish mid-turn. Other live rows are not kept —
   e.g. `live_interrupt_*` persists under its native UUID after a Bridge restart and would
   duplicate (`history-snapshot.js` `replaceHistoryTail`). When a snapshot still drops live rows
@@ -340,44 +335,32 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Claude's live interrupt is sent on ESC, but CC flushes the partial reply after acking it. A
   still-revealing block has no identity yet (`elementOrder` = newest), so an interrupt restored
   into a stream row is always appended last (`message-dom.js`), matching `createBlock`.
-- Server broadcasts to ALL app connections subscribed to a sessionId (multi-device)
+- The Bridge pushes to ALL app connections subscribed to a sessionId (multi-device)
 - See `docs/claude-code-bridge.md` for full protocol and flow diagrams
 
-## DynamoDB Schema
+## DynamoDB Tables
 
-**Single-table design** — `BridgeSessions` holds two entity types keyed by SK prefix. Lists and
-counts come from each Bridge; Session rows stay only for notifications and the Session view (M2
-removes them):
+No Session or message data is stored server-side. DynamoDB holds only routing and account rows:
 
 ```
-BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
-  SK: DEV#<device>                          entityType=device   — one row per device
-      → deviceDisplayName, os                         (identity only)
-  SK: SESS#<device>#<projectHash>#<sid>     entityType=session  — the real session row
-      → status (running/needs_input/completed), preview, model, size, lastActive,
-        runtime, nativeSessionId, modelProvider, clientSource, cliVersion,
-        isAgent, agentName, agentDetail
-  GSI accountId-activeStatus-index (sparse, ProjectionType ALL):
-      activeStatus = "running" | "needs_input"      (active sessions)
-                   | "done#<lastActive>"            (every completed session)
-      → /active-sessions (checkStopped) = between("needs_input","running"); c<n<r so
-        completed/done# are excluded.
-
-BridgeMessages   PK: sessionId    SK: timestamp#uuid
-  Attributes: uuid, type, content (JSON), timestamp, optional stopReason/toolUseResult
-  TTL: 90 days
+<stack>-connections  PK: connectionId — one row per WebSocket connection (role, accountId,
+                     deviceName, …; GSI accountId-role-index) plus per-device Bridge owner rows
+<stack>-system       PK: pk  SK: sk  (TTL: ttl)
+  DEVICE#<accountId> / <deviceName>  — deviceName, deviceDisplayName, os, lastConnected
+                                       (written by WS $connect once a Bridge claims its name)
+  TOKEN / <token>                    — start/install tokens (name the key, never hold it)
+  PUSH_DEVICE / <environment>:<token>, NOTIFICATIONS#<accountId> / <eventId> — notifications
 ```
 
 ## API Summary
 
 ### REST
 ```
-POST /api/bridge/sync-sessions              — bridge uploads session metadata
-POST /api/bridge/sync-messages              — startup/fallback/on-demand message history
-POST /api/bridge/delete                     — delete Session rows (Sessions or whole projects)
-GET  /api/bridge/devices                    — v2: names, online, rpc routes (counts come from each Bridge)
-GET  /api/bridge/active-sessions            — active root Sessions, read by the Bridge's checkStopped (M2 removes it)
-GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
+GET  /api/bridge/config                     — WS URL for auto-discovery
+GET  /api/bridge/devices                    — names, online, rpc routes (counts come from each Bridge)
+GET  /api/bridge/device-name/validate       — install-time device name check
+POST /api/bridge/upload-image | upload-file | file-prepare — attachments to S3
+GET  /api/bridge/image-url/{key} | file-url/{key} | file/{key} — attachment reads
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (sets up always-on service)
@@ -390,7 +373,7 @@ GET  /api/version                           — app and Bridge release versions
 ### Direct channel (v2, App ⇄ Bridge over the `app_data` / `bridge_data` sockets, no Lambda per frame)
 ```
 home {revision?}              — devices' counts, active Sessions, 15 recent projects × 5 Sessions
-projects {limit?, cursor?}    — project list page (same rows as the former REST endpoint)
+projects {limit?, cursor?}    — project list page
 sessions {project, limit?, cursor?} — session list page
 history / threads / tool_details — Session view (`docs/v2-step3-session-plan.md`)
 subscribe {sessionId, rootSessionId?, renew?} / unsubscribe — who receives a Session's pushes (150 s lease)
@@ -408,16 +391,14 @@ machine-heavy reads (`limitedRequest` in `ws.mjs`) count against 6 at once; a re
 `known` gets `fingerprint` (SHA-256 of the result, 16 hex) or `{notModified, fingerprint}`
 (projects, sessions, threads, file list/browse, Git status/refs/history; `api.js` `requestFresh`,
 `ws-rpc.js`). Tool details are kept in IndexedDB (`cache/tool-details-cache.js`, 20 MB LRU).
-`api.js` maps `/api/bridge/projects|sessions` to these; `direct-transport.js` owns the socket,
+`api.js` calls them as `bridgeHome` / `bridgeDevices` / `bridgeList` / `bridgeHistory`; `direct-transport.js` owns the socket,
 routes (`/devices`), retries, subscriptions and credentials. Frames are `action: rpc | push` with a
 readable `method` / `event`. Full protocol: `docs/api.md`; design: `docs/v2-step3b-realtime-plan.md`.
 
 ### WebSocket (Bridge ⇄ server; the App opens no control socket since v2 stage 2a)
-```
-Bridge → Server:        { action: "messages", sessionId, messages }  — rows DynamoDB still stores
-Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
-Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }
-```
+The Bridge's control socket carries only `heartbeat`, `direct_rpc` (data-socket binding),
+`terminal_direct` and `preview_tunnel`; the URL carries `device`, `name` (display) and `os`.
+`device_removed` / `bridge_replaced` are pushed to it. No Session data passes through it.
 
 Full protocol: `docs/api.md`
 
@@ -455,7 +436,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
   gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
   the history status; `completed` settles it, covering a lost tail or `stream_end`.
-- **History rows rejoin their stream row by message order.** REST/DDB rows carry no `turnId`, so
+- **History rows rejoin their stream row by message order.** History rows carry no `turnId`, so
   untagged assistant rows between a turn's prompt and the next prompt belong to that turn's stream
   row; recovered children are inserted by message order, and class-only matching may reuse only a
   stream block without identity (`message-dom.js`).
@@ -652,7 +633,6 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 ## Known Issues / TODO
 
 - **Real-time Edit diff hydration lifecycle**: fixed the intermittent mobile state where an expanded `Edited` card showed only its border until session reload. Diff data now survives DOM replacement under a stable content key, initialization is tracked per element, visible tool nodes hydrate after every timeline mutation, and the registry is cleared at session boundaries. Keep regression coverage for replacement during lazy import, streaming adoption, fallback rendering, and session cleanup.
-- **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (exceeding it drops the connection with code 1009). `realtime-delivery.mjs` checks the envelope size and sends a transport-truncated copy over WS (`truncateToBytes()` in `extract.mjs`, byte-aware, with message-level `truncated: true` and `noCache: true`). HTTP persists the prepared authoritative message with compact tool previews. The server skips DDB writes for `noCache`, so the transport copy cannot overwrite the HTTP version. HTTP also caps each message to `DDB_ITEM_LIMIT` (360KB). These transport limits and `stream_end.recoveryRequired` remain separate from intentional tool previews.
 - **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag. CC ≥ 2.1.269 is matched exactly through its `~/.claude/sessions/<pid>.json` record; older versions (and Windows) fall back to the mtime heuristic (5 min timeout → completed).
 - **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
 - **Concurrent regular-session control**: Claude has no daemon-style stop/lock for a normal terminal or VS Code session. Do not start a Web headless turn while the same regular session is actively generating elsewhere; simultaneous writers can fork the JSONL parent chain. Daemon agents are safe because Web takeover stops the roster worker first.

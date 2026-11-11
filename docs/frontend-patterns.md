@@ -53,23 +53,24 @@ appState = { device, project: { hash, name }, session, sessionPreview }
 loadLatestMessages(sessionId):
   1. Reuse an active request, otherwise open a request-scoped FetchBarrier
   2. Subscribe to the session and reveal current permission state
-  3. GET /api/bridge/messages?session=X&device=D&project=P&limit=200
+  3. Bridge `history` RPC {sessionId, subscribe} (latest page + Session status)
   4. Replace the old tail at the snapshot's first unique message ID
   5. Drop pre-request pending bubbles/previews; retain sends created during loading
-  6. Render the snapshot if needed and resolve REST/message activity
+  6. Render the snapshot if needed and resolve history/message activity
   7. Close the barrier and replay raw WS events through the normal dispatcher
   8. Preserve reading position, or place at the new bottom if following is enabled
 ```
 
 Both no-seq `messages` and strict events carrying `turnId + seq` wait in the same raw-event buffer
-while REST is pending. They do not mutate lifecycle state or message DOM until replay. The snapshot
+while the history request is pending. They do not mutate lifecycle state or message DOM until replay. The snapshot
 boundary uses a unique UUID/native ID; live message merging separately handles protocol aliases.
 
 A `subscribe` on the Bridge is intentionally narrower than message replay. The Bridge resends only
 the current pending permission state after the App enters or reconnects to a Session (a prompt
 already on screen keeps its state). Existing CC hook
 permissions are returned from the Bridge queue; Codex TUI permissions are discovered by attaching a
-permission-only observer to the managed app-server. No text, tool, or delta history is replayed.
+permission-only observer to the managed app-server. A new subscriber also receives the events of
+the Session's active turns so far as one `turn_replay`.
 
 When a window joins an active turn, `seq=0` starts normal streaming and `seq=1 messages(user)` can
 synthesize the payload-free start. If the first available seq is greater than 1, the frontend does
@@ -77,21 +78,16 @@ not display a block whose start is missing. Complete authority renders missed no
 `stream_block_start` resumes streaming, and `stream_end` supplies complete deduplicated authority
 for any remaining nodes. No time-based grace is used to expose partial stream content.
 
-**`needSync` handling**: If DDB has no messages and `needSync=true` (bridge is syncing), show
-loading state. `sync_complete` uses the same latest-200 loader. Buffered complete WS messages may
-also replace the skeleton through normal live rendering after the request finishes.
-
 ## 4. Real-time Message Handling (WS)
 
 ### 4.1 WS Message Types
 
 | action | Direction | Handling |
 |--------|-----------|----------|
-| `messages` | Server → App | New messages arrived, incremental render |
-| `permission_request` | Server → App | Permission confirmation popup (server-side detection) |
-| `send_message_result` | Server → App | Send confirmation + new session's sessionId |
-| `sync_complete` | Server → App | Bridge sync complete; replace a skeleton or reconcile existing message DOM |
-| `interrupt` | App → Server → Bridge | Interrupt current run (equivalent to Ctrl+C) |
+| `messages` | Bridge → App | New messages arrived, incremental render |
+| `permission_request` | Bridge → App | Permission confirmation popup (Bridge `control_request`) |
+| `send_message_result` | Bridge → App | Send confirmation + new session's sessionId |
+| `interrupt` | App → Bridge | Interrupt current run (equivalent to Ctrl+C) |
 
 ### 4.2 Message Classification
 
@@ -122,7 +118,7 @@ Messages use two clearly separated insertion paths:
 
 - An active turn carrying `turnId + seq` is ordered by `TurnEventQueue` and
   inserted below its question by `data-anchor=turnId`.
-- REST history without seq and external TUI/IDE JSONL messages carry `data-ts`
+- History rows without seq and external TUI/IDE JSONL messages carry `data-ts`
   and are inserted into the history timeline by timestamp.
 
 Timestamps only order history for display; they take no part in active-turn
@@ -195,7 +191,7 @@ replace the message list.
 
 ```
 wsRunning updates:
-  initial/recovery REST status   → running=true; needs_input/completed=false
+  initial/recovery history status → running=true; needs_input/completed=false
   stream_turn_start              → true
   stream_end                     → recompute from outstanding turns
   permission_request             → false, while preserving the live turn
@@ -203,10 +199,10 @@ wsRunning updates:
   doSend()                       → true
 ```
 
-Initial loading and recovery both apply REST status through `resolveActivityState`, then replay
+Initial loading and recovery both apply the history status through `resolveActivityState`, then replay
 buffered WS events through the normal dispatcher. Outstanding new sends and terminal history are
 considered before settling the status. `deriveActivityFromMessages` is the shared message-tail
-fallback when there is no REST status; there is no global runtime-status adapter.
+fallback when there is no history status; there is no global runtime-status adapter.
 
 ### Button State Machine
 
@@ -243,7 +239,7 @@ use `loadLatestMessages(sessionId)`:
    If the boundary is missing or ambiguous, replace the entire window.
 5. Drop pre-request optimistic bubbles and previews on success. Retain turn anchors for sends
    created during the request. On failure, keep the existing view.
-6. Apply REST status and replay buffered events through the normal live dispatcher.
+6. Apply the history status and replay buffered events through the normal live dispatcher.
 
 Identical overlapping loads reuse the same request. Session/generation checks discard stale
 responses. An unchanged snapshot keeps its DOM; a changed snapshot restores the reading anchor
@@ -260,7 +256,7 @@ See `docs/message-history-merge.md` for module boundaries and validation.
 
 ```
 startNewSession(projectHash):
-  1. Read device runtimeCapabilities and keep entries with canCreate=true
+  1. Offer every runtime (Claude, Codex)
   2. Auto-select a single runtime, or restore the last per-device choice
   3. appState.session = '__new__'
   4. Reset all message state
@@ -280,7 +276,7 @@ On receiving sessionId:
   1. appState.session = msg.sessionId (replace '__new__')
   2. Adopt the real sessionId without resetting the active turn or its anchor
   3. loadLatestMessages(sessionId, { preserveLive: true })
-     Merge REST echoes in place, then replay buffered WS events; do not replace the live view
+     Merge history echoes in place, then replay buffered WS events; do not replace the live view
      Empty/stale history must not remove the first prompt or finish its local turn
 ```
 

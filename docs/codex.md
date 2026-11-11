@@ -13,11 +13,8 @@ Completed:
 
 - Automatically discover Claude Code and Codex history Sessions.
 - Both runtimes with the same cwd are grouped into the same Project.
-- Sync Codex Session metadata and history messages into the existing DynamoDB tables.
-- Existing users run the Codex initial sync automatically after upgrading the Bridge.
-- When DDB has no messages, old Sessions are backfilled on demand through REST → WS → Bridge.
-- Watch every Codex Session storage directory and sync in real time over WS after a rollout append.
-- WS ack, HTTP fallback, oversized frames, failure retry, and watermark commit use the same reliable delivery semantics as Claude.
+- The Bridge reads Codex Session metadata and history from the local rollouts on demand; nothing is stored on the server.
+- Watch every Codex Session storage directory and push rollout appends to subscribed Apps in real time.
 - Update new Session metadata and `running/completed` status in real time.
 - Lists and detail views reuse the unified UI, distinguished by runtime icon, short ID, and local presentation differences.
 - Bridge install, startup, and upgrade on macOS, Linux, and native Windows.
@@ -66,9 +63,8 @@ Not yet complete:
 - `turn/steer`, and recovery across Bridge restarts of standalone pending requests without a managed daemon.
 - Whether app-server tool output should become the live authority; final tool cards currently keep reusing the Phase 2 watcher.
 
-Therefore, Codex Sessions already support creation, history reading, real-time observation, and Web interaction. The New Session page shows
-runtimes according to the device's `canCreate` capability; with only one runtime it is selected automatically, with several the user can switch and the
-last choice on that device is remembered.
+Therefore, Codex Sessions already support creation, history reading, real-time observation, and Web interaction. The New Session page offers
+both runtimes; the user can switch and the last choice on that device is remembered.
 
 ## 2. Phases and Completion Criteria
 
@@ -99,8 +95,8 @@ The Phase 1 initial read path consists of the following files:
 | `bridge/claude-runtime.mjs` | Claude discovery, reading, status, deletion, and capabilities |
 | `bridge/codex-runtime.mjs` | Codex discovery, reading, and status polling capabilities |
 | `bridge/codex-commands.mjs` | Phone command capability matrix, TUI order, legacy prompt scanning, and argument expansion |
-| `bridge/sync.mjs` | Merges catalogs, aggregates, filters, and uploads |
-| `bridge/ws.mjs` | Generic WS routing; runs `sync_session` through the adapter |
+| `bridge/sync.mjs` | Merges catalogs, sets end-of-file watermarks, and reports Session rows to the status cache and notifier |
+| `bridge/ws.mjs` | Direct-channel request handlers and Session event push |
 
 Phase 2 real-time path:
 
@@ -110,7 +106,6 @@ Phase 2 real-time path:
 | `bridge/runtime-watcher-registry.mjs` | Registers and starts the Claude/Codex watchers |
 | `bridge/watcher.mjs` | Claude JSONL watcher |
 | `bridge/codex-watcher.mjs` | Codex multi-Home rollout watcher, watermark, and status updates |
-| `bridge/realtime-delivery.mjs` | WS ack, HTTP fallback, and large-frame policy shared by both runtimes |
 
 Phase 3 existing-Session interaction path:
 
@@ -129,12 +124,8 @@ Adapters must implement:
 
 ```text
 discover
-detectCapability
 findSessionFile
-shouldSkipInitial
 baselineToEnd
-syncInitialMessages
-syncAllMessages
 ```
 
 Optional capabilities are declared through `features`, currently including:
@@ -163,18 +154,18 @@ claude
 codex
 ```
 
-Claude's historical IDs and DDB keys are completely unchanged. Codex uses:
+Claude's IDs are unchanged. Codex uses:
 
 ```text
 nativeSessionId = Codex rollout UUID
 sessionId       = codex:<nativeSessionId>
 ```
 
-`sessionId` is used for the DDB message partition, Session row, WS subscription, and local watermark;
+`sessionId` is used for the Session row, subscription, and in-memory watermark;
 `nativeSessionId` is used to locate the local rollout and for future app-server calls. The frontend shows the last 8 characters of the Codex native ID,
 because UUIDv7 prefixes lack distinctiveness among Sessions created around the same time.
 
-The Server treats old payloads and old DDB items that lack `runtime` as Claude by default.
+A missing `runtime` is read as `claude`.
 
 ### 4.2 Project Hash
 
@@ -192,84 +183,12 @@ spaces, Chinese paths, and existing Claude project hashes; Codex does not depend
 
 The actual session cwd of a Codex worktree stays unchanged; v2 lists group by the resolved project when the Bridge reads each rollout.
 
-## 5. DynamoDB Data Model
+## 5. Session Rows
 
-The Codex integration adds no tables and does not change primary keys, GSIs, or TTL.
-
-### 5.1 BridgeSessions
-
-```text
-PK = accountId
-
-SK = DEV#<deviceName>
-SK = SESS#<deviceName>#<projectHash>#<sessionId>
-```
-
-Session items add or standardize the following fields:
-
-```text
-sessionId
-nativeSessionId
-runtime
-modelProvider
-clientSource
-cliVersion
-```
-
-A missing `runtime` is read as `claude`. Status is unified as:
-
-```text
-running
-needs_input
-completed
-```
-
-Codex JSONL can currently only reliably yield `running` or `completed`; persisted history alone cannot tell whether an external
-Codex process is waiting for approval, so the JSONL watcher does not produce Codex `needs_input`.
-
-### 5.2 Device Runtime Capabilities
-
-Each account and `deviceName` has exactly one DEV item. Capabilities are a nested map on that item, not a separate row
-per runtime:
-
-```json
-{
-  "runtimeCapabilities": {
-    "claude": {
-      "installed": true,
-      "historyAvailable": true,
-      "canRead": true,
-      "canCreate": true,
-      "canSend": true,
-      "version": "..."
-    },
-    "codex": {
-      "installed": true,
-      "historyAvailable": true,
-      "canRead": true,
-      "canCreate": true,
-      "canSend": true,
-      "version": "..."
-    }
-  }
-}
-```
-
-`installed` is separate from `historyAvailable` because local history may still be readable after the CLI is uninstalled.
-These capabilities are stored in the device aggregate for Bridge/diagnostic use and are not returned with the homepage `/devices` list.
-
-### 5.3 BridgeMessages
-
-```text
-PK = sessionId
-SK = timestamp#uuid
-TTL = 90 days
-```
-
-Repeated extraction uses the same `uuid` and sort key, so DDB `PutItem` overwrites the same row and copies do not accumulate. Message items
-keep a unified structure: `uuid`, `type`, `content`, `timestamp`, plus optional `nativeId`,
-`stopReason`, `toolUseResult`. `nativeId` is the stable identity shared by live and watcher/DDB rows;
-the frontend dedups through the same identity set as Claude.
+Codex Session rows add `nativeSessionId`, `runtime`, `modelProvider`, `clientSource`, and
+`cliVersion` to the shared fields. Messages keep the unified structure `uuid`, `type`, `content`, `timestamp`,
+plus optional `nativeId`, `stopReason`, `toolUseResult`; `nativeId` is the stable identity shared by live and
+watcher rows, and the frontend dedups through the same identity set as Claude.
 
 ## 6. Codex Discovery and Status
 
@@ -292,7 +211,6 @@ When `CODEX_HOME` is not set, the default `~/.codex` is used. Discovery rules:
 - lastActive and size come from the file stat.
 - Empty files, files without user messages, or files missing required metadata produce no Session.
 - Corrupt middle lines are skipped; a half-written tail line does not block other Sessions.
-- When discovery hits unreadable files or missing key metadata, it does not overwrite the authoritative DEV/PROJ aggregates.
 
 `running` requires an unclosed task plus at least one of: the file is still fresh, a matching Session process, or a matching
 Project process; otherwise it is `completed`. Windows does not enumerate Codex processes and only uses file lifecycle
@@ -302,53 +220,27 @@ Page status polling and writer takeover checks both obtain this status through `
 obtained process evidence for the current Session from the lock holder, so it only supplies that extra context rather than maintaining a separate
 `running` check.
 
+Status uses the shared `running` / `needs_input` / `completed` enum. Codex JSONL can only reliably yield `running` or
+`completed`; persisted history alone cannot tell whether an external Codex process is waiting for approval, so the
+JSONL watcher does not produce Codex `needs_input`.
+
 ## 7. Phase 1 Data Flow
 
 ### 7.1 Bridge Initialization
 
 ```text
 Bridge starts or restarts after upgrade
-→ restore synced.json watermark
 → Claude/Codex adapters run discovery separately
 → merge into a unified catalog
-→ compute Device/Project aggregates once
-→ upload all Session metadata
-→ select running, needs_input, or last-24h Sessions
-→ extract and upload messages for 2 Sessions concurrently
-→ commit watermark after a successful upload
+→ set every Session's in-memory watermark to the end of its file
+→ report the Session rows to the status cache and notifier
 → start Claude/Codex watchers through the watcher registry
 ```
 
-Startup sync closes the gap from while the Bridge was offline; at runtime the Codex watcher continues reading from the same watermark.
-Both paths only commit the watermark after messages are written successfully.
+No messages are uploaded. History is read from the rollout when the App asks for it, and the watcher pushes only
+what is appended after startup.
 
-Messages backfilled during a Bridge restart are written to DDB over HTTP and do not go through the real-time message broadcast. If startup sync actually
-backfilled messages, the Bridge sends one device-level recovery-complete notification after the WS connects; the App on the current device then merges
-the current Session from DDB, so intermediate tool results do not require a manual refresh to appear. No notification is sent when nothing was backfilled.
-
-`--skip-init` uploads no messages but establishes end-of-file watermarks for both runtimes. When the catalog exceeds 5000
-Sessions it is uploaded in batches, and only the first batch carries the authoritative DEV/PROJ aggregates.
-
-### 7.2 On-Demand Backfill of Old Sessions
-
-Sessions older than 24 hours with no messages in DDB yet go through this path when the detail page opens:
-
-```text
-App GET /api/bridge/messages
-→ Server returns needSync=true
-→ Server WS sync_session
-   { sessionId, runtime, nativeSessionId }
-→ Bridge selects the runtime adapter and extracts from line 0
-→ Bridge POST /api/bridge/sync-messages
-→ Bridge WS sync_complete
-→ Server broadcasts sync_complete to the account's Apps
-→ App GETs /messages again
-```
-
-Default message reads use consistent reads, shortening the window where an immediate refresh after `sync_complete` misses just-written rows.
-Repeated opening, repeated syncs, and Bridge restarts all rely on deterministic UUIDs + DDB keys to stay idempotent.
-
-### 7.3 Phase 2 Real-Time Reads
+### 7.2 Phase 2 Real-Time Reads
 
 ```text
 Parcel native directory subscription discovers a rollout
@@ -356,10 +248,9 @@ or an active/recent file watcher receives an append
 → same busy/pending coalescing as Claude
 → process serially by nativeSessionId immediately
 → extract complete JSON lines from the watermark
-→ WS messages and wait for messages_ack
-→ no WS / ack timeout → HTTP write to DDB
-→ commit watermark on success
-→ sync Session metadata/status
+→ push messages to the Session's subscribers over the direct channel
+→ advance the watermark
+→ report Session metadata/status
 ```
 
 - Each `CODEX_HOME/sessions` uses one `@parcel/watcher` native recursive subscription, responsible for discovering new directories,
@@ -373,10 +264,8 @@ or an active/recent file watcher receives an append
   compares the file size/mtime again. If the file keeps growing during processing, the next round starts immediately without relying on a second file event.
 - A half-written tail line does not advance the watermark; once complete, it produces the same deterministic UUID from its original line number.
 - Each Session has only one processing loop; bursts of events only set one pending flag.
-- Small WS messages are batched in order within the frame budget; the Server only acks after DDB persistence succeeds, and disconnects, write failures,
-  or ack timeouts all go through the strict HTTP fallback.
-- Messages exceeding the WS frame budget send a truncated `noCache` copy in real time, and the full copy is saved over HTTP.
-- Any delivery failure keeps the watermark and retries on a timer; on restart `synced.json` backfills again.
+- Pushes are best effort: with no subscriber the rows are dropped, and an App that missed rows recovers them from its next
+  history request.
 - `task_started/task_complete/turn_aborted` drive real-time status; ordinary assistant/tool appends do not rescan
   rollout status. Long-unclosed turns are rechecked by a stale timer and the existing `checkStopped` adapter.
 
@@ -418,9 +307,9 @@ showing running until the separate, later `event_msg/task_complete` is normalize
 `stopReason=end_turn` lifecycle. That lifecycle takes part in status computation but produces no extra timeline node.
 Frontend status decisions are separated through a runtime status adapter: Claude keeps its existing error-result/interactive-tool rules;
 an ordinary Codex tool failure still belongs to a running turn, and only `task_complete` or `turn_aborted` ends it.
-On first entry and on foreground/reconnect recovery, `/api/bridge/messages` also returns the Session status; if a newer
-`stream_turn_start/end` or permission lifecycle event was applied during the request, the WS status takes precedence. The runtime status
-adapter is only a fallback when the API lacks status or when handling the tail of ordinary real-time messages.
+On first entry and on foreground/reconnect recovery, the Bridge's `history` reply also returns the Session status; if a newer
+`stream_turn_start/end` or permission lifecycle event was applied during the request, the pushed status takes precedence. The runtime status
+adapter is only a fallback when the reply lacks status or when handling the tail of ordinary real-time messages.
 
 Tools are paired by `call_id + occurrence`, supporting call ID reuse within the same Session; message UUIDs are separate from tool
 pairing IDs. Unfinished or interrupted tools may have only an IN; a nonexistent OUT must not be fabricated.
@@ -489,9 +378,7 @@ and rendered as Markdown when expanded. Review lifecycle and rollback use the un
 
 - A generic tool IN shows a preview of the first 1500 characters in the UI.
 - Tool OUT is no longer truncated by character count on the frontend; it is only visually collapsed.
-- The API Gateway WS frame budget is about 31 KB; oversized real-time messages send a reduced preview marked `noCache`.
-- The full copy is written to DDB over HTTP, with a per-normalized-message limit of about 360 KB.
-- After the user re-enters the Session, the available full version is read from REST/DDB.
+- Real-time messages and history pages are split into direct-channel chunks, not truncated to fit a frame.
 - Content Codex itself already wrote as `Warning: truncated output` cannot be recovered by Baton.
 
 ## 9. Codex Data Not Added to the Timeline
@@ -518,6 +405,8 @@ uses that event to update the original Bash node's final output, exit status, an
 and does not replace the original Bash node.
 
 ## 10. Verification Evidence
+
+Recorded before v2 removed the DynamoDB Session storage; DDB and REST checks below describe that earlier path.
 
 ### 10.1 Local and Mixed Data
 
@@ -626,7 +515,7 @@ Pending:
 
 ### UX and Coverage
 
-- Verify mobile expand performance for tool output near 360 KB.
+- Verify mobile expand performance for very large tool output.
 - Decide whether to show a Thinking placeholder without body text.
 - Define the upload and display contract for real multimedia input.
 - Implement the Session metadata modal opened by clicking the runtime icon.

@@ -2,9 +2,9 @@
 
 > Status: strict streaming implemented; history merge refactor pending
 > Date: 2026-08-27
-> Scope: Claude Code, Codex, Bridge, WebSocket Server, and the Web frontend
+> Scope: Claude Code, Codex, Bridge, and the Web frontend
 
-For the target merge strategy across REST, the request-time historyBuffer, local history, and DOM, plus current open issues, see
+For the target merge strategy across the history snapshot, the request-time historyBuffer, local history, and DOM, plus current open issues, see
 [`message-history-merge.md`](message-history-merge.md).
 
 ## 1. Core Principles
@@ -85,7 +85,6 @@ The following single-connection or control events do not enter the turn sequence
 - `subscribe`
 - `send_message`
 - `send_message_result`
-- `messages_ack`
 - heartbeat
 - session/project status sync
 
@@ -134,21 +133,11 @@ After a Bridge restart:
 - a new turn's `seq` starts from 0
 - persisted history messages are unaffected
 
-## 5. Server
+## 5. Delivery
 
-Server repeats the same validation on active-turn events from Bridge. Invalid events return `400` and are not forwarded to Web.
-
-Server's only responsibilities are:
-
-1. Broadcast shared events to all subscribed windows of that Session.
-2. Write ordinary watcher `messages` to DDB and return `messages_ack`.
-3. Only broadcast runtime-owned `messages{noCache:true}`; the corresponding JSONL watcher owns final persistence.
-
-DDB does not store streaming transport fields:
-
-- does not store `turnId`
-- does not store `seq`
-- does not restore active streaming state
+The Bridge pushes shared events over the direct channel to every connection subscribed to that Session; the server neither
+validates nor stores them. Pushes are best effort: a dropped frame shows up as a seq gap, which the App recovers from through
+its next `history` request. JSONL rows the runtime already pushed are not pushed again by the watcher (`live-message-registry.mjs`).
 
 History records store only final message fields such as `uuid/nativeId/type/content/timestamp`.
 
@@ -219,7 +208,7 @@ At the same moment it creates:
 <div class="user-message" data-anchor="sent-uuid">...</div>
 ```
 
-Bridge and Server use that `turnId` unchanged. The streaming renderer locates it only via an exact selector:
+Bridge uses that `turnId` unchanged. The streaming renderer locates it only via an exact selector:
 
 ```text
 [data-anchor="<turnId>"]
@@ -236,7 +225,7 @@ When multiple questions with identical text are sent quickly, each question stil
 
 ## 8. Multiple Windows and Late Join
 
-Subscription is fire-and-forget. Server only records the subscription; it sends no ack. Bridge neither stores nor replays the active turn.
+The Bridge records the subscription and sends the new subscriber the events of its active turns so far (`turn_replay`).
 
 A new window joining a running turn uses these minimal rules:
 
@@ -254,15 +243,15 @@ and never duplicates nodes already confirmed by real-time events. The recovery l
 
 ### 8.1 Connection Recovery
 
-> This section describes the strict turn recovery invariants. The unified FetchBarrier for REST/historyBuffer/local history
+> This section describes the strict turn recovery invariants. The unified FetchBarrier for history snapshot/historyBuffer/local history
 > is still pending a refactor per [`message-history-merge.md`](message-history-merge.md).
 
 Returning from background to foreground and unexpected WS disconnects use the same recovery chain:
 
 1. Immediately discard the old connection's turn seq buffers, but do not modify existing DOM.
-2. After the new WS subscribes, request REST history; the same response reads Session status in parallel with strong consistency.
-3. Until REST completes, strict turn events on the new connection are only buffered, not rendered.
-4. REST history is merged by UUID/nativeId first, then buffered WS events are released through the unified queue.
+2. Request history from the Bridge with `subscribe`; the same reply carries the Session status.
+3. Until the history reply arrives, strict turn events on the new connection are only buffered, not rendered.
+4. The history snapshot is merged by UUID/nativeId first, then buffered WS events are released through the unified queue.
 5. `completed` closes out turns from before the reconnect; `running` keeps the outstanding turn; `needs_input`
    keeps the turn but stops the spinner.
 6. Resume streaming from the next complete block/permission checkpoint.
@@ -285,15 +274,15 @@ Handling rules:
 2. Content differs: locally patch the corresponding node.
 3. tool result: update OUT by the tool's own native ID.
 4. Never rebuild the whole `.messages`.
-5. Runtime-owned JSONL messages are only persisted, not broadcast; seq-less watcher messages from external TUI/IDE are handled as
+5. Runtime-owned JSONL messages are not pushed again; seq-less watcher messages from external TUI/IDE are handled as
    ordinary history messages and do not reopen an ended turn.
 6. Codex runtime ownership lasts from this turn's `task_started` until the next turn's `task_started`. An intermediate
-   `turn_aborted/task_complete` is not a release boundary, ensuring trailing tool results after it are still only persisted.
+   `turn_aborted/task_complete` is not a release boundary, ensuring trailing tool results after it are still not pushed again.
 7. On interruption, the runtime sends a single authority before `stream_end`; Web does not synthesize nodes from error codes or display text.
 
 ## 10. First Entry into a Session
 
-Web first sends `subscribe` while fetching REST history. The two kinds of WS messages are handled separately:
+Web subscribes in the same `history` request that fetches the first page. The two kinds of WS messages are handled separately:
 
 Every `subscribe` on the Bridge only restores the current permission state: the waiting prompt is pushed again. It does not request or replay a streaming
 snapshot. CC uses the hook/runtime pending request already stored by Bridge; Codex TUI uses a
@@ -307,33 +296,33 @@ the same `turnId + seq`, it is deduplicated. Ordinary deltas, tool nodes, and au
 ### 10.1 Live Turns with `turnId + seq`
 
 - Enter the `TurnEventQueue` immediately, not the history buffer.
-- After the first REST render, reattach still-active previews to the corresponding `data-anchor=turnId`.
-- Authority `messages` and REST history are deduplicated by `uuid/nativeId`.
-- Late-join authority still belongs to the strict turn; it is consumed by seq/checkpoint after the REST barrier completes,
-  and does not take part in REST array merging as ordinary seq-less history messages.
+- After the first history render, reattach still-active previews to the corresponding `data-anchor=turnId`.
+- Authority `messages` and the history snapshot are deduplicated by `uuid/nativeId`.
+- Late-join authority still belongs to the strict turn; it is consumed by seq/checkpoint after the history barrier completes,
+  and does not take part in history snapshot merging as ordinary seq-less history messages.
 
 ### 10.2 Seq-less JSONL/TUI Messages
 
 - Come only from external TUI/IDE turns without runtime ownership; Web-initiated runtime turns never take this path.
-- Before REST completes, they go into the request-level `historyBuffer`.
-- After REST returns, they are merged and deduplicated by `uuid/nativeId`, then the first history render runs.
-- Seq-less messages arriving after REST completes go through ordinary incremental history rendering.
+- Before the history reply arrives, they go into the request-level `historyBuffer`.
+- After it arrives, they are merged and deduplicated by `uuid/nativeId`, then the first history render runs.
+- Seq-less messages arriving after the history reply go through ordinary incremental history rendering.
 - Seq-less messages never enter the turn queue and can neither close nor alter an active streaming turn.
 
-Whichever of REST and WS arrives first must not cause duplicate nodes, overwrite previews, or change tool expanded state.
+Whichever of the history reply and WS arrives first must not cause duplicate nodes, overwrite previews, or change tool expanded state.
 
 ### 10.3 Status Authority on Initial Load
 
-`bufferAndFetch` records whether the following lifecycle events were actually applied during the REST request:
+`bufferAndFetch` records whether the following lifecycle events were actually applied during the history request:
 
 - `stream_turn_start`: running
 - `stream_end`: computed from the remaining outstanding turns
 - `permission_request`: keep the turn, but stop the spinner
 - `permission_resolved`: computed from the remaining outstanding turns
 
-When lifecycle events exist, the WS status is newer than the REST snapshot; otherwise `/messages.status` is used. Ordinary deltas,
+When lifecycle events exist, the WS status is newer than the history snapshot; otherwise the history reply's `status` is used. Ordinary deltas,
 tool input, block start/stop, or authority message fragments cannot independently prove whether a turn has ended, so they never override
-the REST status. Only when the endpoint returns no status is a compatibility derivation made from the tail of the merged messages.
+the history status. Only when the reply has no status is a compatibility derivation made from the tail of the merged messages.
 
 ## 11. Test Invariants
 
@@ -351,20 +340,18 @@ Must be retained long-term:
 - Late join does not show a partial preview lacking a block start.
 - A later block start can resume streaming from a node boundary.
 - When end arrives early, the whole-turn authority completes it in one pass, and late frames do not reopen the turn.
-- REST and strict WS in any order produce only one node.
-- REST and seq-less JSONL WS in any order produce only one history message.
+- History and strict WS in any order produce only one node.
+- History and seq-less JSONL WS in any order produce only one history message.
 - Every Bridge active-turn action carries a valid seq.
-- Runtime-owned JSONL user/text/tool-use/tool-result/end are all only persisted and do not produce a second WS stream.
+- Runtime-owned JSONL user/text/tool-use/tool-result/end do not produce a second WS stream.
 - External TUI/IDE JSONL still sends complete seq-less messages when there is no runtime ownership.
 - Trailing tool results of a runtime-interrupted turn that arrive after the terminal record still belong to the same ownership.
 - A failed interrupt request does not show Interrupted; a final interrupt is strictly ordered as `OUT → Interrupted → stream_end`.
-- Server rejects active-turn events missing turnId/seq.
-- DDB does not store live transport fields.
 
 Current core reordering coverage includes:
 
 - all 720 permutations of 6 events
 - 500 rounds of random reordering including duplicate delivery
 - stop, authority, and end arriving early
-- multiple blocks, multiple turns, concurrent REST/WS, and late join
+- multiple blocks, multiple turns, concurrent history/WS, and late join
 - replay of real Codex large-chunk reordering
