@@ -279,18 +279,71 @@ left as they are; 2b removes both checks into one on the Bridge.
 
 ## Stage 2b. Notifications from the Bridge
 
-Waits for the open PR on `main` that changes subagent notifications, then `main` merged into
-`feat/v2`; designed then. Settled so far:
+Designed 2026-11-11, after `main` (#197) was merged into `feat/v2`. The Bridge decides and words
+every alert and checks "being viewed" itself; the server only stores the event and pushes it.
+Old Bridges are not supported (they update with the stack).
 
-- The Bridge emits a notify event on `completed` / `needs_input` with title and text from its own
-  data and today's rules applied locally (interrupted turns, pending task notifications, the 120 s
-  local-idle rule). "Being viewed" is decided on the Bridge from its subscriber table (keyed by
-  root). The server keeps push devices, the relay call and the event feed (Android polling, the
-  iOS extension's fetch).
-- Events raised while the Bridge cannot reach the server are queued: the newest per Session, at
-  most 10, dropped after 10 minutes (as APNs and FCM coalesce per collapse key).
-- Removes: `notify_check` / `notify_seen`, the stream trigger of the notification worker, the
-  Subscriptions table.
+### Flow
+
+1. **Where alerts are decided.** Every status write already goes through `post('/api/bridge/sync-sessions')`
+   (`bridge/http.mjs`); about ten call sites (watcher, pool, `checkStopped`, agent poll, Codex). The
+   notifier observes those rows there, keeps the previous row per Session (the server's old image:
+   rows are written whole; `threadRootId` and child counts carry over when omitted) and runs the
+   worker's rules on old → new. The first row of a Session after a Bridge start is only a
+   baseline, as a new DynamoDB row was. In stage 3 the observation point stays when the POST goes.
+2. **Rules** (unchanged from `notification_worker.notification`, including #197): only root rows;
+   `localIdleSec < 120` skips; `needs_input` alerts when entered or when its question changes;
+   `completed` alerts after `running`, or after a held Done whose agents are gone; held while
+   `backgroundAgents`. Title, folder name and body (`✅ Done · …`, `🟡 Needs input · …`) as today.
+3. **Done text** from the Bridge's own history (`historyService`, the latest 20 rows, up to 3 tries
+   1 s apart because the final reply may land after the status): no alert after `[Request
+   interrupted`, or when a `<task-notification>` row came before any reply; a slash command's
+   `<local-command-stdout>`; else the last assistant text once an `end_turn` row is seen. Claude
+   and Codex rows have the same normalized shape.
+4. **Being viewed.** The Bridge pushes `notify_check {rootSessionId, eventId}` to the connections
+   subscribed under that root (`targets(root, {root: true})`) and waits **3 s** (one App ⇄ Bridge
+   round trip measured 200–250 ms; the transport's own stall limit is 3 s). The App answers with a
+   `notify_seen {eventId}` request only when the page is visible, focused and shows that root; any
+   answer suppresses the alert. No subscriber: no wait. A suspended iOS socket keeps its lease but
+   cannot answer, so its alert goes out.
+5. **Delivery.** `POST /api/notifications/events {alert}` on the API Lambda (next to the feed it writes): the server takes the account
+   from the key, assigns the feed key at receipt (`EVENT#<now ms>#<eventId>`; Android's cursor only
+   moves forward, so a queued event must not keep its old time), writes the feed row and calls the
+   push relay for the account's iOS devices, as `deliver()` does now.
+6. **Offline queue.** A POST that fails (no response or 5xx) is queued: the newest per Session, at
+   most 10, dropped after 10 minutes; retried every 30 s. A request
+   that reached the server but lost its answer may alert twice (iOS replaces it by collapse id).
+
+### Changes
+
+| Part | Change | Estimate |
+|---|---|---|
+| `bridge/notify.mjs` (new) | rules, Done text, `notify_check` / wait, queue, POST | +170–200 |
+| `bridge/http.mjs`, `bridge/ws.mjs` | observe `sync-sessions` rows; `notify_seen` request handler | +20 |
+| App (`ws.js`) | answer `notify_check` | +10–15 |
+| Server | `POST /api/notifications/events` with `deliver` / `send_apns` / `relay` moved into `notifications.py`; delete `notification_worker.py` and the WS `subscribe` / `unsubscribe` / `notify_seen` handlers | +40 / −220 |
+| Template | delete `NotificationWorker`, its role, logs and stream mapping, `SubscriptionsTable` and the `SUBSCRIPTIONS_TABLE` / `WS_API_ENDPOINT` uses for it; the API role may invoke `*-apns` | −80 |
+| Tests | the rule cases move to a Bridge test; one server test for `/notify`; the worker and subscription tests go | +110 / −250 |
+
+`backgroundAgents` and `localIdleSec` stay in the `sync-sessions` rows until stage 3: the notifier
+reads them from the same rows.
+
+### Done (2026-11-11)
+
+Verified on BatonV2 (`1.1.0-10c88fb5-s2b1`, Chromium, reading the event feed as Android does):
+Done after leaving the page (`✅ Done · notify-a`); nothing while the page is open and focused
+(`notify_check` push → `notify_seen` request); `🟡 Needs input · Tea or coffee?` when the question
+arrives after leaving, and nothing when it arrives while viewing; nothing for an interrupted turn;
+one Done for a turn with two background agents (`✅ Done · all-done`). Not run live: the iOS relay
+leg (no iPhone registered on the test stack) and the offline queue (unit test only).
+
+### Planned verification
+
+BatonV2 with the TestFlight build (Device Farm's public iOS devices strip the push entitlement)
+and Android: Done and Needs input arrive with today's text; a subagent session alerts once; an
+interrupted turn does not alert; nothing while the Session is open and focused on another device;
+an alert after the iOS app is suspended with the Session open; queued alerts after the Bridge was
+offline.
 
 ## Stage 3. Delete Session storage in DynamoDB
 

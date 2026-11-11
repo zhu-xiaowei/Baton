@@ -63,8 +63,7 @@ Valid status values are `running`, `needs_input`, and `completed`. A request wit
 - Session SK: `SESS#{deviceName}#{project}#{storageSessionId}`
 - Device SK: `DEV#{deviceName}` (identity only: `deviceDisplayName`, `os`)
 
-Session rows remain only for notifications and the Session view until v2 moves them to the
-Bridge. Device, project and Session lists are answered by the Bridge (see **Bridge RPC** below).
+Session rows remain until v2 stage 3 deletes them (`checkStopped` still reads them). Device, project and Session lists are answered by the Bridge (see **Bridge RPC** below).
 
 ---
 
@@ -561,48 +560,9 @@ send/streaming/interrupt and runtime-specific permission handling through its ap
 
 Since v2 stage 2a the App opens no control socket: Session events, sends, interrupts,
 permission replies, commands, files, Git, rename, create project and delete all travel on the
-direct channel above. Their payloads are still described below; `notify_seen` has no sender until
-stage 2b. The Bridge keeps sending the `messages` rows that DynamoDB stores.
+direct channel above. Their payloads are still described below. The Bridge keeps sending the `messages` rows that DynamoDB stores.
 
 ### App → Server
-
-#### subscribe
-
-Records the viewer of a Session for the notification worker's "being viewed" check.
-
-```json
-{ "action": "subscribe", "sessionId": "ROOT#a1ca0870-xxxx" }
-```
-
-**Server handling**:
-1. Record subscription in DDB Subscriptions table
-
-The operation is fire-and-forget. Session events are subscribed on the Bridge (direct channel).
-If a window joins after the current turn has started, the frontend either
-resumes from `seq=1`, resumes at the next complete `stream_block_start`, or uses the complete
-deduplicated authority carried by `stream_end`.
-
-**Subscriptions table**:
-```
-PK: sessionId
-SK: connectionId
-Attributes: accountId, subscribedAt
-TTL: 24h
-```
-
----
-
-#### unsubscribe
-
-Cancel subscription.
-
-```json
-{ "action": "unsubscribe", "sessionId": "a1ca0870-xxxx" }
-```
-
-**Server handling**: Delete corresponding record in Subscriptions table
-
----
 
 #### heartbeat
 
@@ -884,9 +844,8 @@ Bridge pushes new messages to Server.
 ```
 
 **Server (Lambda) handling**:
-1. Query Subscriptions table (PK=sessionId) → get all subscribed app connectionIds
-2. **Has subscribers** → `post_to_connection` push to all apps first (latency-sensitive)
-3. **Write DDB** → BridgeMessages table; acknowledge only after persistence succeeds
+1. **Write DDB** → BridgeMessages table; acknowledge only after persistence succeeds (Apps get
+   the rows from the Bridge directly)
 
 Message format pushed to app:
 ```json
@@ -928,7 +887,7 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
 }
 ```
 
-**Server handling**: `_handle_bridge_relay` — query Subscriptions table by sessionId, forward to all subscribed app connections (excluding bridge itself).
+Pushed by the Bridge to the Session's subscribers on the direct channel.
 
 ---
 
@@ -1230,10 +1189,9 @@ All endpoints use a unified error format:
 
 | Table | PK | SK | Purpose | TTL |
 |-------|----|----|---------|-----|
-| BridgeSessions | accountId | `DEV#...` / `SESS#...` | Device identity; Session rows for notifications and the Session view | No TTL value written |
+| BridgeSessions | accountId | `DEV#...` / `SESS#...` | Device identity; Session rows until v2 stage 3 | No TTL value written |
 | BridgeMessages | sessionId | timestamp#uuid | Message cache | 90 days |
 | Connections | connectionId | — | WS connection records with role/device routing | 24h |
-| Subscriptions | sessionId | connectionId | WS subscription relationships | 24h |
 
 ---
 
@@ -1247,8 +1205,7 @@ persisted.
 
 ### Connection routing indexes
 
-Bridge routing queries `Connections.accountId-role-index`. Disconnect cleanup queries
-`Subscriptions.connectionId-index`.
+Bridge routing queries `Connections.accountId-role-index`.
 
 ### send_message_result broadcast scope
 

@@ -1,18 +1,33 @@
-"""Mobile notification registration and the event feed.
+"""Mobile notifications: device registration, the event feed and delivery.
 
-Android polls the feed; an iOS push carries only an event ID, which the notification
-extension resolves here. Alerts carry no transcript or credential.
+The Bridge decides and words each alert (bridge/notify.mjs) and posts it here. Android polls
+the feed; an iOS push carries only an event ID, which the notification extension resolves
+here. Alerts carry no transcript or credential.
 """
+import http.client
+import json
+import logging
 import os
+import random
 import re
 import time
+import urllib.parse
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import api_key
+
+logger = logging.getLogger(__name__)
+# Reused while this instance is warm: a new client or TLS handshake costs tens to hundreds of ms.
+_session = boto3.Session()
+_relay = None
+# API Gateway answers at 29 s; past this the feed row (already written) is enough for Android.
+RELAY_BUDGET_SEC = 20
 
 router = APIRouter(prefix="/api/notifications")
 
@@ -95,3 +110,108 @@ def events(request: Request, cursor: str = ""):
         "events": [row["event"] for row in rows if int(row["ttl"]) > time.time()],
         "cursor": rows[-1]["sk"] if rows else cursor,
     }
+
+
+class Alert(BaseModel):
+    eventId: str = Field(pattern=r"^[a-f0-9]{64}$")
+    device: str = Field(max_length=200)
+    projectHash: str = Field(max_length=400)
+    projectName: str = Field(max_length=80)
+    sessionId: str = Field(max_length=200)
+    sessionTitle: str = Field(max_length=120)
+    rootSessionId: str = Field(max_length=200)
+    title: str = Field(max_length=210)
+    body: str = Field(max_length=300)
+
+
+@router.post("/events")
+def post_event(alert: Alert, request: Request):
+    """A Bridge's alert: stored for Android and the iOS extension, then pushed to iOS."""
+    account = _account(request)
+    table = _table()
+    now = time.time()
+    # Keyed at receipt: Android's cursor only moves forward, so a queued alert must not keep its time.
+    # The key is also the iOS push ID: the push carries nothing else.
+    event_id = f"EVENT#{int(now * 1000):016d}#{alert.eventId}"
+    table.put_item(Item={
+        "pk": f"NOTIFICATIONS#{account}", "sk": event_id,
+        "event": {**alert.model_dump(), "accountId": account}, "ttl": int(now) + 7 * 86400,
+    })
+    if not _relay_configured():
+        return {"ok": True}
+    # One partition for every account: a token re-registered by another account overwrites its row.
+    deadline = now + RELAY_BUDGET_SEC
+    devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
+    for device in devices.get("Items", []):
+        if device.get("accountId") == account and int(device.get("ttl", 0)) > now:
+            try:
+                send_apns(table, event_id, device, deadline)
+            except Exception:
+                # The feed row is written: Android still gets it. The relay is down, so skip the rest.
+                logger.exception("Push relay unavailable; iOS alert dropped")
+                break
+    return {"ok": True}
+
+
+def send_apns(table, event_id, device, deadline=None):
+    environment, token = device["sk"].split(":", 1)
+    result = relay({"token": token, "environment": environment, "id": event_id}, deadline)
+    if result.get("status") == 200:
+        return
+    if result.get("reason") in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "TopicDisallowed"):
+        table.delete_item(Key={"pk": "PUSH_DEVICE", "sk": device["sk"]})
+        return
+    logger.warning("APNs rejected an alert: %s", result.get("reason", "unknown"))
+
+
+def _signed_headers(url, body):
+    # The relay URL uses AWS_IAM auth: this function's own role signs, nothing to configure.
+    host = urllib.parse.urlparse(url).hostname.split(".")
+    region = host[2] if len(host) > 2 and host[1] == "lambda-url" else os.environ["AWS_REGION"]
+    request = AWSRequest("POST", url, data=body, headers={"content-type": "application/json"})
+    SigV4Auth(_session.get_credentials(), "lambda", region).add_auth(request)
+    return dict(request.headers)
+
+
+def _post(url, body, timeout=15):
+    """POST on the kept-alive relay connection; one fresh retry if it was dropped while frozen."""
+    global _relay
+    target = urllib.parse.urlparse(url)
+    for fresh in (False, True):
+        if _relay is None:
+            _relay = http.client.HTTPSConnection(target.hostname, timeout=timeout)
+        elif _relay.sock:
+            _relay.sock.settimeout(timeout)
+        try:
+            _relay.request("POST", target.path or "/", body=body, headers=_signed_headers(url, body))
+            response = _relay.getresponse()
+            return response.status, response.read()
+        except (OSError, http.client.HTTPException):
+            _relay.close()
+            _relay = None
+            if fresh:
+                raise
+
+
+def relay(request, deadline=None, attempts=4):
+    """POST one alert to the shared APNs relay (push-relay/); it returns APNs' status and reason."""
+    url = os.environ["PUSH_RELAY_URL"]
+    body = json.dumps(request).encode()
+    deadline = deadline or time.time() + RELAY_BUDGET_SEC
+    for attempt in range(attempts):
+        if attempt:
+            # The relay rejects (429) rather than queues past its concurrency; full jitter
+            # (0-2, 0-4, 0-8 s) spreads stacks retrying at the same moment.
+            time.sleep(min(random.uniform(0, 2 ** attempt), max(0, deadline - time.time())))
+        left = deadline - time.time()
+        if left <= 0:
+            break
+        try:
+            status, data = _post(url, body, left / 2)  # _post may reconnect once
+        except (OSError, http.client.HTTPException):
+            continue
+        if status == 200:
+            return json.loads(data)
+        if status != 429 and status < 500:
+            raise RuntimeError(f"Push relay rejected the alert ({status})")
+    raise RuntimeError("Push relay unavailable")

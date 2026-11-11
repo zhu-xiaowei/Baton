@@ -19,14 +19,15 @@ permission is re-checked whenever the app returns to the foreground.
 ## Flow
 
 ```
-Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ event feed (7d, own account)
-                                                                    └→ push-relay → APNs → iPhone
-                                                                         (token + event ID only)
+Bridge status rows → bridge/notify.mjs → POST /api/notifications/events ─┬→ event feed (7d, own account)
+                                                                           └→ push-relay → APNs → iPhone
+                                                                                (token + event ID only)
 ```
 
-1. **Trigger.** Bridge writes every approval as `needs_input` + `agentDetail`, so
-   the stream filter forwards only rows entering `needs_input` or `done#…`.
-   `NotificationWorker` alerts on `running → completed`, on entering
+1. **Trigger.** Bridge reports every approval as `needs_input` + `agentDetail`.
+   `bridge/notify.mjs` watches the rows Bridge reports (`sync-sessions`), keeps the previous
+   row per Session (the first one after a start is only a baseline) and alerts on
+   `running → completed` (the root's status merged with its children's counts), on entering
    `needs_input`, and on a new `agentDetail` while waiting. A Done whose row carries
    `backgroundAgents` is skipped: CC reports back as each background agent ends, and only
    the turn after the last one alerts. Bridge reads the pool's `local_agent` tasks, or CC's
@@ -41,13 +42,13 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    Android clears a session's stack when the app opens it: a tap cancels only the
    tapped alert, and the summary would otherwise stay on its own.
 2. **Skip what the user already knows.** Interrupted turns. Sessions someone is
-   looking at on any device: the worker sends `notify_check` to apps subscribed to
-   the session (`ROOT#<root>`), and a visible, focused one showing it answers
-   `notify_seen` within 2 s. A suspended iOS socket never answers, so it still gets
+   looking at on any device: Bridge pushes `notify_check` to the pages subscribed under
+   the root, and a visible, focused one showing it answers with a `notify_seen` request
+   within 3 s. A suspended iOS socket never answers, so it still gets
    the push; each app also hides alerts for the session open in the foreground.
    Turns started outside Baton (terminal TUI, VS Code, the Codex/Claude apps) while
    the user is at that computer: when such a turn leaves `running`, Bridge
-   (`presence.mjs`) attaches `localIdleSec`, and the worker skips the alert (event
+   (`presence.mjs`) attaches `localIdleSec`, and Bridge skips the alert (event
    included) when it is under 120 s. It is the smaller of the newest input on the
    user's own ptys (a pty's atime moves only when its reader consumes typed input;
    Linux rounds it to 8 s) and, on macOS, `ioreg` `HIDIdleTime` (none while locked).
@@ -60,9 +61,9 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    agents, or from Baton's own remote terminals' ptys (input from the phone).
 3. **Summary.** The turn's last reply (Claude marks it `end_turn`; Codex appends an
    empty `end_turn` row), or a slash command's `<local-command-stdout>`. The reply is
-   persisted separately from the status, so the worker re-reads up to twice, 1 s apart.
+   persisted separately from the status, so Bridge re-reads its history up to twice, 1 s apart.
 4. **Deliver.**
-   - **iOS**: the worker posts `{token, environment, id}` to the push relay. The
+   - **iOS**: the server posts `{token, environment, id}` to the push relay. The
      push carries only the event ID and a placeholder ("Baton · Session update").
      The `NotificationService` extension fetches the text from the user's own
      server (`GET /api/notifications/event?id=`), using the server URL and key the
@@ -85,11 +86,11 @@ devices are skipped.
 Only the team that publishes the app can push to it, so every stack sends iOS
 pushes through one stateless relay in its own AWS account. It is one Lambda
 behind a Function URL with `AWS_IAM` auth: any SigV4-signed AWS principal may call
-it (each worker signs with its own role), and unsigned requests are refused before
+it (each stack's API Lambda signs with its own role), and unsigned requests are refused before
 it runs. It holds the APNs key, never sees alert text and stores nothing.
 
 - Limits: 1 KB requests, 60 pushes per token per minute per instance, and the
-  account's Lambda concurrency. The worker retries 429/5xx with full jitter
+  account's Lambda concurrency. The server retries 429/5xx with full jitter
   (0–2, 0–4, 0–8 s).
 - 512 MB (memory only shortens the ≈2 s cold start); kept-alive HTTP/2 to APNs;
   error-only logs for 7 days; an email at every 1 USD of monthly cost, up to 5 USD.

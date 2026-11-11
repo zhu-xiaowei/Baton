@@ -134,14 +134,16 @@ Done:
   One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
-- Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
-  `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
-  `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
-  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription;
-  in v2 no App answers it until stage 2b, so only the viewing device's own foreground app suppresses).
+- Bridge decides and words every alert (`bridge/notify.mjs`, from the rows it reports to
+  `sync-sessions`; each approval is `needs_input` + `agentDetail`) and posts it to
+  `POST /api/notifications/events`, which stores the feed row and calls the push relay; while the
+  server is unreachable it keeps the newest alert per Session (at most 10, 10 minutes). Devices are
+  one `PUSH_DEVICE` row per `<environment>:<token>`. Before alerting it skips interrupted turns
+  and sessions a visible, focused page is viewing (`notify_check` push → `notify_seen` request
+  within 3 s, to the pages subscribed under the root).
   A turn started outside Baton also skips while the user is at that computer: Bridge attaches
   `localIdleSec` (`presence.mjs`: own pty atime, macOS `HIDIdleTime`, Windows Interactive helper
-  task) and the worker drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
+  task) and Bridge drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
   agents and Baton's own terminals never set it, so their alerts are unchanged.
 - iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
   extension fetches the text from the user's own server (`/api/notifications/event`, credentials
@@ -185,7 +187,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
     Every turn end is `completed`, background tasks or not. A `completed` write also carries
     `backgroundAgents` while background agents still run (the pool's `local_agent` tasks, else
-    CC's own `~/.claude/sessions` record reading `busy`, re-read after 1 s); the worker skips
+    CC's own `~/.claude/sessions` record reading `busy`, re-read after 1 s); Bridge's notifier skips
     that Done, so only the report-back turn after the last agent alerts, and a hold released
     without a running write in between (`heldForAgents`) alerts the last reply. Background Bash
     and Monitor never hold it: CC does not mark long-running ones (servers, persistent Monitors),
