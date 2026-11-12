@@ -2517,8 +2517,9 @@ function pendingStatus(pending, text, color) {
 
 function handleCodexSendConflict(pending, msg) {
   var writer = msg.writer || {};
-  if (msg.errorCode !== 'codex_active_writer'
-    || writer.status !== 'running'
+  // Codex takes an idle terminal over by itself; Claude asks for either state.
+  var claude = msg.errorCode === 'claude_active_writer';
+  if (!(claude || (msg.errorCode === 'codex_active_writer' && writer.status === 'running'))
     || !writer.canTerminate
     || !writer.pid) return false;
   pending.awaitingTakeover = true;
@@ -2527,15 +2528,20 @@ function handleCodexSendConflict(pending, msg) {
   updateSendBtn();
   pendingStatus(pending, 'Waiting for confirmation');
 
-  _codexTakeover = { pending: pending, writer: writer, sending: false };
+  _codexTakeover = { pending: pending, writer: writer, sending: false, runtime: claude ? 'Claude Code' : 'Codex' };
   var modal = document.getElementById('codexTakeoverModal');
   if (!modal) return true;
+  document.getElementById('codexTakeoverTitle').textContent = _codexTakeover.runtime + ' session is active';
   var desc = document.getElementById('codexTakeoverDesc');
   var error = document.getElementById('codexTakeoverError');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
-  desc.textContent = (writer.label || 'A Codex terminal')
-    + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
+  desc.textContent = claude
+    ? (writer.label || 'A Claude Code terminal')
+      + (writer.status === 'running' ? ' is running this session.' : ' has this session open.')
+      + ' Taking over will close it and send this message.'
+    : (writer.label || 'A Codex terminal')
+      + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
   error.textContent = '';
   confirm.style.display = '';
   setButtonLoading(confirm);
@@ -2569,7 +2575,7 @@ function confirmCodexTakeover() {
   pending.awaitingTakeover = false;
   state.wsRunning = true;
   updateSendBtn();
-  pendingStatus(pending, 'Taking over Codex...');
+  pendingStatus(pending, 'Taking over ' + _codexTakeover.runtime + '...');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
   setButtonLoading(confirm, 'Taking over');

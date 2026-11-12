@@ -107,7 +107,7 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 | Rapid sends in one session | Go into `queue` serially, no parallel spawn (stdin is naturally single-writer) |
 | New session | Bridge pre-generates a UUID and starts with `--session-id`; `system/init` confirms session/cwd |
 | Send path | headless is the only send path; `streamMode` and the tmux fallback are deleted |
-| Takeover rule | daemon agent: `claude stop` first, then resume; other sessions reuse or start headless directly |
+| Takeover rule | daemon agent: `claude stop` first, then resume; another live CC process holding the session (`~/.claude/sessions/<pid>.json`, live claude pid, not ours) → `claude_active_writer` → App confirms → SIGTERM that pid, wait for exit, resume; otherwise reuse or start headless directly |
 | Permissions | **Default `--permission-prompt-tool stdio` without bypass** — whatever permissions the user configured apply (zero intrusion). See Section 6.5 |
 | Display/persistence | Complete stream lines = real-time authority, `text_delta` = typewriter preview; runtime-owned JSONL lines are not pushed again |
 | Preview rendering | Fault-tolerant full markdown re-render (see Section 5) |
@@ -117,8 +117,11 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 
 ### Single-Writer Constraint (two layers)
 1. **Internal**: only one headless process per session (guaranteed by the pool) → eliminates double writes from "us starting several".
-2. **External**: a daemon agent can be taken over after `claude stop`; ordinary terminal/VS Code has no equivalent lock,
-   and resuming from Web while the original process is still generating is not supported (see Section 4).
+2. **External**: a daemon agent can be taken over after `claude stop`. A terminal/VS Code process holding the session
+   has no lock, so Bridge asks (`claude_active_writer`, same modal as Codex) and terminates it on confirmation; it
+   never reloads the jsonl, so its next write would fork. An idle pooled process that missed a turn appended by
+   another client (unseen user/assistant uuid after its last idle size) is closed and resumed again before the send.
+   A terminal opening the session while a Baton turn runs is still undetected.
 
 ## 3. Data Flow
 

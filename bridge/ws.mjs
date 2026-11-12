@@ -14,6 +14,7 @@ import {
   getAgentsJson,
   requireClaudeBin,
   liveRecordBusy,
+  claudeSessionWriter,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
@@ -612,7 +613,8 @@ export function shouldCacheClientTurnAck(data) {
     && !!data.turnId
     && !data.queued
     && data.errorCode !== 'previous_turn_missing'
-    && data.errorCode !== 'codex_active_writer';
+    && data.errorCode !== 'codex_active_writer'
+    && !/^claude_(active_writer|writer_changed|writer_unsafe)$/.test(data.errorCode);
 }
 
 export function wsSend(data) {
@@ -1143,6 +1145,7 @@ async function handleSendMessage(
         turnId,
         projectHash,
         reservedTurnId,
+        { takeover: !!takeover, expectedWriterPid },
       );
     if (handled) return;
     wsSend({ action: 'send_message_result', sessionId, ok: false, error: 'Session unavailable.', turnId });
@@ -1682,6 +1685,7 @@ async function handleHeadlessSend(
   turnId,
   projectHash,
   reservedTurnId = null,
+  { takeover = false, expectedWriterPid = null } = {},
 ) {
   // cwd from projectHash (works even if jsonl was deleted); fall back to jsonl reverse-lookup.
   let cwd = projectHash ? projectHashToPath(projectHash) : null;
@@ -1698,15 +1702,21 @@ async function handleHeadlessSend(
 
   const liveTurnId = reservedTurnId || resolveTurnId(sessionId, turnId);
   let acked = false;
-  const ack = (ok, error) => {
+  const ack = (ok, error, meta = {}) => {
     if (acked) return;
     acked = true;
-    wsSend({ action: 'send_message_result', sessionId, ok, error, turnId });
+    wsSend({ action: 'send_message_result', sessionId, ok, error, turnId, ...meta });
   };
 
   // Not in pool but daemon holds it → release so --resume can take over.
   if (!_pool.owns(sessionId) && getDaemonRunningSessionIds().has(sessionId)) {
     _pool.stopDaemon(sessionId);
+  } else {
+    const conflict = await claudeWriterConflict(sessionId, takeover, expectedWriterPid);
+    if (conflict) {
+      ack(false, conflict.error, { errorCode: conflict.errorCode, writer: conflict.writer });
+      return true;
+    }
   }
 
   syncPoolStatus(sessionId, 'running');
@@ -1744,6 +1754,34 @@ async function handleHeadlessSend(
 
   ack(true);
   return true;
+}
+
+// A TUI holding the session must exit first; only the pid the user confirmed is killed.
+export async function claudeWriterConflict(sessionId, takeover, expectedWriterPid, {
+  findWriter = (sid) => claudeSessionWriter(sid, { ownPids: _pool.ownPids() }),
+  kill = process.kill,
+  timeoutMs = 10_000,
+} = {}) {
+  const writer = findWriter(sessionId);
+  if (!writer) return null;
+  if (!takeover) {
+    return { errorCode: 'claude_active_writer', error: 'The Claude Code session is open elsewhere', writer };
+  }
+  if (writer.pid !== Number(expectedWriterPid)) {
+    return { errorCode: 'claude_writer_changed', error: 'The Claude Code writer changed before takeover', writer };
+  }
+  const alive = () => { try { kill(writer.pid, 0); return true; } catch { return false; } };
+  try { kill(writer.pid, 'SIGTERM'); } catch {}
+  for (const end = Date.now() + timeoutMs; alive() && Date.now() < end;) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (alive()) {
+    return { errorCode: 'claude_writer_unsafe', error: 'The Claude Code terminal did not exit', writer };
+  }
+  const next = findWriter(sessionId);
+  return next
+    ? { errorCode: 'claude_active_writer', error: 'The Claude Code session is open elsewhere', writer: next }
+    : null;
 }
 
 // New regular session: mint the session id upfront and stream the first turn.
