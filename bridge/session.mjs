@@ -470,24 +470,34 @@ export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
   return latest?.status === 'busy';
 }
 
-function isClaudePid(pid) {
+// Not Baton's own CC behind a forking launcher, nor (macOS has no procStart) a pid
+// reused by a process started after CC wrote the record.
+function isOtherClaude(record, ownPids) {
   try {
-    const command = process.platform === 'linux'
-      ? fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-      : execSync(`ps -p ${Number(pid)} -o command= 2>/dev/null`).toString();
-    return /claude/i.test(command);
+    const pid = Number(record.pid);
+    let command, ppid, started;
+    if (process.platform === 'linux') {
+      command = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      ppid = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1];
+    } else {
+      command = execSync(`LC_ALL=C ps -p ${pid} -o ppid= -o lstart= -o command= 2>/dev/null`).toString().trim();
+      ppid = command.split(/\s+/)[0];
+      started = Date.parse(command.slice(ppid.length).trim().slice(0, 24));
+    }
+    return /claude/i.test(command) && !ownPids.has(Number(ppid)) && !(started > record.startedAt + 1000);
   } catch { return false; }
 }
 
 // Another live CC process (TUI, VS Code, another Bridge) with sessionId open. It never
 // reloads the jsonl, so its next write would fork whatever Baton appends.
 export function claudeSessionWriter(sessionId, {
-  ownPids = new Set(), dir = CLAUDE_SESSIONS, isClaude = isClaudePid,
+  ownPids = new Set(), dir = CLAUDE_SESSIONS, isClaude = isOtherClaude,
 } = {}) {
   if (process.platform === 'win32') return null;
   let latest = null;
-  for (const record of liveRecords(dir, (pid) => !ownPids.has(Number(pid)) && isClaude(pid))) {
-    if (record.sessionId !== sessionId || !LIVE_STATUS[record.status]) continue;
+  for (const record of liveRecords(dir, (pid) => !ownPids.has(Number(pid)))) {
+    if (record.sessionId !== sessionId || !LIVE_STATUS[record.status] || !isClaude(record, ownPids)) continue;
     if (!latest || record.updatedAt > latest.updatedAt) latest = record;
   }
   if (!latest) return null;

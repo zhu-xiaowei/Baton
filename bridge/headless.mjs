@@ -368,7 +368,7 @@ export class ClaudePool {
   _remove(key, proc) { if (this.procs.get(key) === proc) this.procs.delete(key); }
 
   _sessionFileSize(proc) {
-    if (!proc.sessionFile && proc.sessionId) proc.sessionFile = this.findSessionFile(proc.sessionId);
+    if (!fs.existsSync(proc.sessionFile || '') && proc.sessionId) proc.sessionFile = this.findSessionFile(proc.sessionId);
     try { return fs.statSync(proc.sessionFile).size; } catch { return null; }
   }
 
@@ -393,13 +393,13 @@ export class ClaudePool {
       try { o = JSON.parse(line); } catch { continue; }
       if ((o.type === 'user' || o.type === 'assistant') && o.uuid && !proc.seenUuids.has(o.uuid)) return true;
     }
-    proc.fileSize = size;
+    proc.fileSize += Buffer.byteLength(text.slice(0, text.lastIndexOf('\n') + 1));
     return false;
   }
 
-  // EOF and wait for exit so the next --resume is the only writer.
+  // EOF and wait for exit so the next --resume is the only writer; it stays pooled until
+  // then, so a concurrent send waits for the same exit.
   async _retire(proc) {
-    this._remove(proc.key, proc);
     if (proc.dead) return;
     await new Promise((resolve) => {
       const timer = setTimeout(() => { try { proc.proc.kill('SIGKILL'); } catch {} }, 5000);

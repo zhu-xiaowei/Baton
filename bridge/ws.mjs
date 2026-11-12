@@ -656,7 +656,7 @@ export function shouldCacheClientTurnAck(data) {
     && !data.queued
     && data.errorCode !== 'previous_turn_missing'
     && data.errorCode !== 'codex_active_writer'
-    && data.errorCode !== 'claude_active_writer';
+    && !/^claude_(active_writer|writer_changed|writer_unsafe)$/.test(data.errorCode);
 }
 
 export function wsSend(data) {
