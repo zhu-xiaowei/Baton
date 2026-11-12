@@ -73,7 +73,7 @@ export async function loadLatestHistory({ device, sessionId, subscribe, root, on
   const { rows, more } = shown(entry);
   return { messages: rows, hasMore: more, oldestTimestamp: rows[0]?.orderKey || '', status: reply.status || '',
     titles: reply.titles || [], ...(reply.historyReset ? { historyReset: true } : {}),
-    ...(reply.agentCount !== undefined ? { agentCount: reply.agentCount } : {}) };
+    ...(reply.agentCount !== undefined ? { agentCount: reply.agentCount } : {}), ...(reply.sentPrompt ? { sentPrompt: reply.sentPrompt } : {}) };
 }
 
 // The page before `before`: from the cache while it has the rows, else from the Bridge (filling a gap

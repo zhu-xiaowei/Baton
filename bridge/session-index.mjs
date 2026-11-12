@@ -354,8 +354,7 @@ export class SessionIndex {
     if (rec.state) {
       if (rec.runtime === 'claude') {
         let preview = claudePreview(rec.state, this.history.prompts.get(rec.id));
-        if (preview) this.sentPrompts.delete(rec.id);
-        else preview = previewText(this.sentPrompts.get(rec.id));
+        preview ||= previewText(this.sentPrompts.get(rec.id));
         const agents = this.subagentCount(rec);
         // Like the v1 watcher: a daemon agent is listed before its transcript has a prompt.
         if (preview || agents || cachedDaemonSessions().has(rec.id)) {

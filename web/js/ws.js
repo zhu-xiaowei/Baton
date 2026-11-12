@@ -1702,6 +1702,7 @@ function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
 }
 
 function commitMessages(messages, options = {}) {
+  if (messages.length) document.querySelector('.messages > .sent-prompt')?.remove(); // real rows replace it
   var wasFollowingBottom = state.stickBottom;
   var hiddenOnlyUpdate = onlyHiddenToolUpdates(messages, true);
   var mergeResult = mergeMessages({
@@ -1794,6 +1795,8 @@ function displayHistorySnapshot(data, pendingNodes) {
   // keep the empty list so the running spinner shows.
   if (!state.wsAllMessages.length && !pendingNodes.length && data.status !== 'running') {
     container.innerHTML = '<div class="empty">No messages</div>';
+  } else if (!state.wsAllMessages.length && !pendingNodes.length && data.sentPrompt) {
+    container.insertAdjacentHTML('beforeend', '<div class="msg-user sent-prompt"><div class="msg-text">' + esc(data.sentPrompt) + '</div></div>');
   }
   if (permissionPrompt) container.appendChild(permissionPrompt);
   content.replaceChildren(container);
