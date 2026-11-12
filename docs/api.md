@@ -30,7 +30,7 @@ Every REST call the API Lambda serves, by caller (Session data never goes throug
 | App | `GET /api/bridge/devices` | Home load / refresh, credential renewal, WS address (names, online, direct-channel routes, credentials, storage) |
 | App | `POST /auth/exchange-token`, `POST /api/auth/start-token` | Sign-in with a Start URL; Setup page |
 | App | `POST /api/bridge/delete-device` | Removing a device |
-| App | `/api/notifications/config`, `POST /devices`, `POST /devices/remove`, `GET /event` | Push registration; alert text |
+| App | `POST /api/notifications/devices`, `POST /devices/remove`, `GET /event` | Push registration; alert text |
 | iOS extension | `GET /api/notifications/event` | Each push |
 | Android service | `GET /api/notifications/events` | Polling, 5 s foreground / 15 s background |
 | Install script | `GET /auth/install?t=…`, `GET /api/bridge/device-name/validate` | Installing a Bridge |
@@ -113,9 +113,12 @@ Everything else on the home page comes from each Bridge. `rpc` addresses the joi
 (`docs/v2-step1-home-plan.md`). `wsUrl` is the control socket (stored as `state.WS_URL` /
 localStorage `_wsurl`). `rpc.credentials` and `rpc.storage` are always present, also with no Bridge
 online; the App calls `/devices` again when the credentials have less than 5 minutes left.
+`notifications` sets up mobile alerts: `accountId` (an alert from another account is ignored) and
+`ios` (whether this server can push to iOS).
 
 ```json
 { "protocol": 2, "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1",
+  "notifications": { "accountId": "<16 hex>", "ios": true },
   "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "os": "darwin", "online": true }],
   "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }],
     "storage": { "bucket": "…", "region": "ap-northeast-1", "accountId": "<16 hex>", "accelerate": true } } }

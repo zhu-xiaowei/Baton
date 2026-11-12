@@ -44,6 +44,11 @@ def _relay_configured():
     return bool(os.environ.get("PUSH_RELAY_URL"))
 
 
+def notification_info(account_id):
+    """What the App needs to set up alerts; returned with /devices."""
+    return {"accountId": account_id, "ios": _relay_configured()}
+
+
 class PushDevice(BaseModel):
     token: str = Field(pattern=r"^[a-fA-F0-9]{64,200}$")
     environment: str = Field(pattern=r"^(development|production)$")
@@ -51,11 +56,6 @@ class PushDevice(BaseModel):
     def key(self):
         # Keyed by token: a reinstall or another account reusing it replaces the old binding.
         return {"pk": "PUSH_DEVICE", "sk": f"{self.environment}:{self.token.lower()}"}
-
-
-@router.get("/config")
-def config(request: Request):
-    return {"accountId": _account(request), "ios": _relay_configured()}
 
 
 @router.post("/devices")

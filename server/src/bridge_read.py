@@ -69,7 +69,8 @@ async def get_devices(request: Request):
         except Exception as error:
             print(f"bridge connections unavailable: {error}")
     online_devices = {row.get("deviceName", "") for row in bridges}
-    result = {"protocol": PROTOCOL_VERSION, "wsUrl": _ws_url(), "devices": [{
+    from notifications import notification_info
+    result = {"protocol": PROTOCOL_VERSION, "wsUrl": _ws_url(), "notifications": notification_info(account_id), "devices": [{
         "deviceName": item["deviceName"],
         "deviceDisplayName": item.get("deviceDisplayName") or item["deviceName"],
         "os": item.get("os", ""),

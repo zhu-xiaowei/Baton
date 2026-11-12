@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
+import { devices } from './v2/direct-transport.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed. Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -125,11 +126,7 @@ async function initialize() {
   await drain();
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
-  // Servers deployed before notifications existed answer 404.
-  config = await window.api('/api/notifications/config').catch(error => {
-    if (String(error.message).startsWith('404')) return null;
-    throw error;
-  });
+  config = (await devices()).notifications;
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
   // On each page load: refreshes the iOS token TTL, restarts the Android service. The first
