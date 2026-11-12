@@ -81,7 +81,10 @@ export class HistoryService {
     // The root's subagent count: the App asks for `threads` only when there are some.
     const rootId = String(params.rootSessionId || params.sessionId || '');
     const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
-    return { ...(await this.pages.history(file, params)), status, ...(root ? { agentCount: root.agentCount } : {}) };
+    const page = await this.pages.history(file, params);
+    // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
+    const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.
