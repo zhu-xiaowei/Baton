@@ -9,6 +9,31 @@ import { hashFile } from '../../bridge/content-hash.mjs';
 
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 
+// The cases mock the former upload requests; the transfer store answers through them.
+function storeFromPost(postFn) {
+  if (!postFn) return undefined;
+  return {
+    async prepareUpload(body) {
+      const response = await postFn('/api/bridge/file-prepare', body);
+      if (!response?.ok) throw new Error('Could not prepare file download');
+      return response.json();
+    },
+    async put(key, buffer) {
+      const response = await postFn('/api/bridge/upload-file', { key, data: buffer.toString('base64') });
+      if (!response?.ok) throw new Error('upload failed');
+    },
+    async head(key) {
+      const response = await postFn('/api/bridge/video-prepare', { key });
+      this.video = response?.ok ? await response.json() : {};
+      return this.video.exists ? { size: 0, modified: Date.now() } : null;
+    },
+    async uploadUrl() {
+      if (!this.video?.url) throw new Error('upload failed');
+      return { url: this.video.url, headers: { 'Content-Type': this.video.contentType } };
+    },
+  };
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-project-files-'));
   const chunkedContent = 'const path = "C:\\\\workspace\\\\file"; // chunked\n'.repeat(3000);
@@ -45,7 +70,7 @@ async function request(root, message, options = {}) {
   }, {
     resolveProjectRoot: () => root,
     send: (payload) => sent.push(payload),
-    postFn: options.postFn,
+    store: storeFromPost(options.postFn),
     fetchFn: options.fetchFn,
     home: options.home,
   });

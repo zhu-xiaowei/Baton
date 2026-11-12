@@ -232,14 +232,10 @@ setNativeTabTitle('Baton');
   // The /devices call doubles as auth check (401 throws); /config gives wsUrl.
   async function routeAfterLogin(key, server) {
     var serverNorm = server ? server.replace(/\/+$/, '') : null;
-    var results = await Promise.all([
-      api('/api/bridge/devices', null, { key: key, server: serverNorm || undefined }),
-      api('/api/bridge/config', null, { key: key, server: serverNorm || undefined }).catch(function () { return null; }),
-    ]);
+    var result = await api('/api/bridge/devices', null, { key: key, server: serverNorm || undefined });
     setCredentials(key, isNativeApp ? serverNorm : null);
-    var cfg = results[1];
-    if (cfg && cfg.wsUrl) localStorage.setItem('_wsurl', cfg.wsUrl);
-    var devs = results[0] && results[0].devices;
+    if (result && result.wsUrl) localStorage.setItem('_wsurl', result.wsUrl);
+    var devs = result && result.devices;
     var hasDevices = Array.isArray(devs) && devs.length > 0;
     location.replace(hasDevices ? 'index.html' : 'setup.html');
   }

@@ -78,10 +78,13 @@ export class HistoryService {
     const target = this.resolve(String(params.sessionId || ''));
     if (!target) throw new Error('unknown_session');
     const { status, ...file } = target;
-    return { ...(await this.pages.history(file, params)), status };
+    // The root's subagent count: the App asks for `threads` only when there are some.
+    const rootId = String(params.rootSessionId || params.sessionId || '');
+    const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
+    return { ...(await this.pages.history(file, params)), status, ...(root ? { agentCount: root.agentCount } : {}) };
   }
 
-  // The former /session-threads answer: the root, then its subagents depth-first, newest first.
+  // The thread list: the root, then its subagents depth-first, newest first.
   async threads(params = {}) {
     await this.index.readyPromise;
     const sessionId = String(params.sessionId || '');

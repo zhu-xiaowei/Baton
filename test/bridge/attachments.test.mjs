@@ -3,11 +3,28 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { downloadAttachment, resolveBridgeAttachments } from '../../bridge/attachments.mjs';
+import * as attachments from '../../bridge/attachments.mjs';
 import { attachmentRef, extractAttachments } from '../../web/js/components/attachment.js';
 
 const key = 'a'.repeat(32) + '.pptx';
 const config = { server: 'https://api.test', apiKey: 'private-key' };
+
+// The cases mock the former metadata request; the transfer store answers through it.
+function storeFrom(fetchFn) {
+  let file = null;
+  return {
+    async head(fileKey) {
+      const response = await fetchFn(`${config.server}/api/bridge/file-url/${fileKey}`);
+      file = response.ok ? await response.json() : null;
+      return file;
+    },
+    url: async () => file.url,
+  };
+}
+const downloadAttachment = (fileKey, _config, options = {}) =>
+  attachments.downloadAttachment(fileKey, { ...options, store: options.fetchFn && storeFrom(options.fetchFn) });
+const resolveBridgeAttachments = (text, _config, options = {}) =>
+  attachments.resolveBridgeAttachments(text, { ...options, store: options.fetchFn && storeFrom(options.fetchFn) });
 
 async function fixture(context, body, options = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'baton-attachment-'));
@@ -29,7 +46,6 @@ test('files over 6 MB stream directly to disk with an unchanged extension', asyn
   const local = await downloadAttachment(key, config, options);
   assert.equal(path.extname(local), '.pptx');
   assert.deepEqual(await fs.readFile(local), body);
-  assert.equal(options.requests[0].init.headers['x-api-key'], 'private-key');
   assert.equal(options.requests[1].init.headers, undefined);
   await downloadAttachment(key, config, options);
   assert.equal(options.requests.length, 3);

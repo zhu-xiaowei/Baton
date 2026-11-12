@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractClaudeMessages } from '../../bridge/extract.mjs';
+import { claudeMessageLine, extractForApp, nativeOrderKey } from '../../bridge/extract.mjs';
 import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
 import { ClaudeHistoryReader } from '../../bridge/history-claude-reader.mjs';
 import { CodexHistoryReader } from '../../bridge/history-codex-reader.mjs';
@@ -83,8 +83,23 @@ function codexRollout(turns) {
   return json(lines);
 }
 
-const fullClaude = async (file) => (await extractClaudeMessages(file, 's', { watermarks: new Map() })).messages
-  .filter((row) => !TITLES.has(row.type));
+// Every row of the whole file, in order: what the pages must add up to.
+async function fullClaude(file) {
+  const rows = [];
+  const metaUuids = new Set();
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    let msg;
+    try { msg = JSON.parse(lines[i]); } catch { continue; }
+    msg = claudeMessageLine(msg, metaUuids);
+    if (!msg) continue;
+    const row = await extractForApp(msg);
+    if (!row.uuid || TITLES.has(row.type)) continue;
+    row.orderKey = nativeOrderKey(i);
+    rows.push(row);
+  }
+  return rows;
+}
 const fullCodex = (file) => extractCodexMessages(file, 'native-1').messages;
 
 // Pages back from the newest one until the start; every page must equal the full extraction's slice.
@@ -207,11 +222,12 @@ test('an image is compressed and uploaded once, however often its page is read',
     rows.push({ type: 'user', uuid: `i${i}`, timestamp: '2026-11-01T00:00:00.000Z', message: { role: 'user', content: [await image(color), { type: 'text', text: `look ${i}` }] } });
   }
   fs.writeFileSync(file, json(rows).join('\n') + '\n');
-  (await import('../../bridge/http.mjs')).initHttp({ server: 'https://baton.test', apiKey: 'k' });
-  const realFetch = globalThis.fetch;
+  const { transfer } = await import('../../bridge/transfer-store.mjs');
+  const real = { head: transfer.head, put: transfer.put };
   let uploads = 0;
   let ok = false;
-  globalThis.fetch = async (url) => { if (String(url).endsWith('/upload-image')) uploads++; return { ok, text: async () => '' }; };
+  transfer.head = async () => null;
+  transfer.put = async () => { uploads++; if (!ok) throw new Error('offline'); };
   try {
     const reader = new ClaudeHistoryReader(file);
     reader.update();
@@ -221,7 +237,7 @@ test('an image is compressed and uploaded once, however often its page is read',
     for (let i = 0; i < 3; i++) await reader.page({ limit: 50 });
     assert.equal(uploads, 5, 'then each distinct image is uploaded once');
   } finally {
-    globalThis.fetch = realFetch;
+    Object.assign(transfer, real);
   }
 });
 

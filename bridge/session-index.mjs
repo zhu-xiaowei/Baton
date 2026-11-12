@@ -1,5 +1,5 @@
 // The Bridge's Session catalog for v2: home, project list and session list are answered from
-// memory, nothing is read from DDB. Each JSONL file keeps a small summary (session-summary.mjs).
+// memory. Each JSONL file keeps a small summary (session-summary.mjs).
 //
 // Warm-up (newest files first, in workers) reads each file's head and tail. Requests are
 // answered once it completes. Watchers call touch() afterwards;

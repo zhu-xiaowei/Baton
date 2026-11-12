@@ -26,20 +26,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 # Engines clamp it: WebKit (iOS/macOS) 600s, Chromium (Android/Windows) 7200s.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], max_age=7200)
 
-from bridge_sync import bridge_router
 from bridge_read import read_router, get_install, install_script
 from notifications import router as notifications_router
-app.include_router(bridge_router)
 app.include_router(read_router)
 app.include_router(notifications_router)
 
 # Short alias for install endpoint
 app.get("/api/install")(get_install)
-
-
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "version": os.environ.get("APP_VERSION", "dev")}
 
 
 @app.get("/api/version")

@@ -1,21 +1,10 @@
-import { observeSessions } from './notify.mjs';
-
 let _config;
 
 export function initHttp(config) {
   _config = config;
 }
 
-export async function get(endpoint) {
-  try {
-    const res = await fetch(`${_config.server}${endpoint}`, { headers: { 'x-api-key': _config.apiKey } });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
-
 export async function post(endpoint, data, options = {}) {
-  if (endpoint === '/api/bridge/sync-sessions') observeSessions(data); // alerts follow the rows, delivered or not
   try {
     const res = await fetch(`${_config.server}${endpoint}`, {
       method: 'POST',
@@ -32,10 +21,4 @@ export async function post(endpoint, data, options = {}) {
     console.error(`POST ${endpoint} failed: ${err.message}`);
     return null;
   }
-}
-
-export async function postRequired(endpoint, data, options) {
-  const response = await post(endpoint, data, options);
-  if (!response?.ok) throw new Error(`POST ${endpoint} failed`);
-  return response;
 }

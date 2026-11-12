@@ -117,14 +117,28 @@ def test_join_rejects_a_replaced_bridge_connection(world):
     assert join(world, token)["statusCode"] == 403
 
 
-def test_credentials_are_reused_and_only_issued_with_a_joined_bridge(world):
+def test_credentials_are_reused_per_account(world):
     table, query, post, sent, sts = world
-    assert "credentials" not in direct_rpc_ws.rpc_info("A", query, sts)
-    join(world, token_for(world))
+    first = direct_rpc_ws.rpc_info("A", query, sts)
     calls = len(sts.calls)
+    join(world, token_for(world))
     info = direct_rpc_ws.rpc_info("A", query, sts)
-    assert info["credentials"]["sessionToken"] == "TOKEN" and len(sts.calls) == calls
+    assert info["credentials"] == first["credentials"] and len(sts.calls) == calls
     assert direct_rpc_ws.rpc_info("B", query, sts)["bridges"] == []
+
+
+def test_credentials_reach_only_the_accounts_transfer_prefix(world, monkeypatch):
+    table, query, post, sent, sts = world
+    monkeypatch.setenv("BRIDGE_IMAGES_BUCKET", "files-bucket")
+    account = "0123456789abcdef"
+    info = direct_rpc_ws.rpc_info(account, query, sts)
+    assert info["storage"] == {"bucket": "files-bucket", "region": "ap-northeast-1", "accountId": account,
+                               "accelerate": False}
+    statements = json.loads(sts.calls[-1]["Policy"])["Statement"]
+    s3 = [statement for statement in statements if statement["Action"] != "execute-api:ManageConnections"]
+    assert s3 == [{"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+                   "Resource": f"arn:aws:s3:::files-bucket/t/{account}/*"}]
+    assert direct_rpc_ws.storage_info("not-an-account") is None
 
 
 def test_bridge_data_disconnect_unbinds_and_notifies(world):

@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import hashlib
 import os
 import sys
@@ -13,7 +12,6 @@ from fastapi import Response
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'server', 'src'))
 
 import api_key
-import bridge_sync
 import bridge_ws
 import main
 
@@ -85,18 +83,3 @@ def test_an_unreadable_key_is_a_503_not_a_guess(monkeypatch):
     assert response.status_code == 503
     assert bridge_ws._handle_connect({'queryStringParameters': {'apiKey': KEY, 'role': 'app'},
         'requestContext': {'domainName': 'control.test', 'stage': 'v1'}}, 'c') == {'statusCode': 503}
-
-
-def test_removing_a_device_notifies_its_bridge_then_deletes_only_its_rows(monkeypatch):
-    deleted, notified = [], []
-    sessions = SimpleNamespace(
-        query=lambda KeyConditionExpression, **_: {'Items': [{'sk': sk} for sk in ('SESS#Mac#p#s', 'PROJ#Mac#p', 'SESS#Mac2#p#s')
-            if sk.startswith(KeyConditionExpression.get_expression()['values'][1].get_expression()['values'][1])]},
-        batch_writer=lambda: contextlib.nullcontext(SimpleNamespace(delete_item=lambda Key: deleted.append(Key['sk']))))
-    monkeypatch.setattr(bridge_sync, '_tables', lambda: (sessions, None))
-    monkeypatch.setenv('WS_API_ENDPOINT', 'https://ws.test/v1')
-    monkeypatch.setattr(bridge_ws, 'disconnect_removed_bridge', lambda *args: notified.append(args))
-    reply = asyncio.run(bridge_sync.delete_device(bridge_sync.DeleteDeviceRequest(deviceName='Mac'), REQUEST))
-    assert reply == {'ok': True, 'deletedSessions': 1}
-    assert notified == [(api_key.account_id(KEY), 'https://ws.test/v1', 'Mac')]
-    assert deleted == ['DEV#Mac', 'SESS#Mac#p#s', 'PROJ#Mac#p']

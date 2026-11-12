@@ -22,26 +22,6 @@ function harness(answer) {
   return { context, writes, requests };
 }
 
-// List records go only after the Bridge confirms the files are gone.
-for (const [name, answer, failure] of [
-  ['success', async () => ({ frames: [{ pending: true }, { ok: true }] }), null],
-  ['failure', async () => ({ frames: [{ ok: false, error: 'Native database deletion failed' }] }), /Native database deletion failed/],
-  ['timeout', async () => { throw new Error('timeout'); }, /device stopped confirming/],
-]) {
-  test(`delete ${name} decides whether list records are deleted`, async () => {
-    const h = harness(answer);
-    const operation = h.context.performDelete('device', true, ['project']);
-    if (failure) {
-      await assert.rejects(operation, failure);
-      assert.equal(h.writes.length, 0);
-    } else {
-      assert.equal((await operation).ddb, true);
-      assert.equal(JSON.stringify(h.writes), JSON.stringify([['/api/bridge/delete', { deviceName: 'device', projectHashes: ['project'] }]]));
-    }
-    assert.equal(JSON.stringify(h.requests[0].slice(0, 2)), JSON.stringify(['delete_files', { projectHashes: ['project'] }]));
-  });
-}
-
 test('failed file deletion stays visible in the modal', async () => {
   const h = harness(async () => ({ frames: [{ ok: false, error: 'Session is active' }] }));
   const error = { textContent: '' };

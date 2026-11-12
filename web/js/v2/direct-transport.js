@@ -6,6 +6,7 @@
 import { state } from '../state.js';
 import { createHeaderSigner } from '../../../bridge/terminal-direct-protocol.mjs';
 import { RpcAssembler, decodeRpcPayload, rpcRequest, rpcRequestFrames } from '../../../bridge/direct-rpc-protocol.mjs';
+import { setTransferAccess } from '../../../bridge/transfer-store.mjs';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
 // chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
@@ -90,7 +91,8 @@ function restore() {
 function applyRpc(next, { persist = true } = {}) {
   if (!next) return;
   // The region is part of the execute-api host: <api>.execute-api.<region>.amazonaws.com.
-  rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials };
+  rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials,
+    storage: next.storage || null };
   const seen = new Set();
   const cameOnline = [];
   for (const bridge of next.bridges || []) {
@@ -415,10 +417,32 @@ export function devices() {
     if (response.status === 401 || response.status === 403) window.logout?.();
     if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
     const body = await response.json();
+    if (body.wsUrl) {
+      state.WS_URL = body.wsUrl;
+      localStorage.setItem('_wsurl', body.wsUrl);
+    }
     if (body.protocol === 2) updateRoutes(body);
     return body;
   })().finally(() => { devicesInflight = null; });
   return devicesInflight;
+}
+
+// The account's S3 transfer area with the current credentials, renewed when little time is left.
+export async function storageAccess() {
+  restore();
+  const left = rpc?.credentials ? rpc.credentials.expiresAt * 1000 - Date.now() : 0;
+  if (!rpc?.storage || left < RENEW_MS) await devices();
+  if (!rpc?.storage || !rpc.credentials) throw new Error('File storage is unavailable');
+  return { ...rpc.storage, credentials: rpc.credentials };
+}
+
+setTransferAccess(storageAccess);
+
+// The control socket's address (terminal, preview), known from /devices.
+export async function controlSocketUrl() {
+  if (!state.WS_URL) await devices();
+  if (!state.WS_URL?.startsWith('wss://')) throw new Error('Server did not provide a WSS endpoint.');
+  return state.WS_URL;
 }
 
 // `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once. After a receipt or a

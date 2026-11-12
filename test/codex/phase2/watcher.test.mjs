@@ -6,7 +6,6 @@ import test from 'node:test';
 import {
   CodexWatcher,
 } from '../../../bridge/codex-watcher.mjs';
-import { deliverRealtimeMessages } from '../../../bridge/realtime-delivery.mjs';
 import {
   clearLiveMessageRegistry,
   liveMessageRoute,
@@ -73,24 +72,21 @@ function writeLines(filePath, lines) {
 
 function watcherHarness(homes, options = {}) {
   const delivered = [];
-  const uploaded = [];
   const posts = [];
   const watermarks = options.watermarks || new Map();
+  const statuses = options.lastKnownStatus || new Map();
   const watcher = new CodexWatcher({ deviceName: 'Codex-Test' }, {
     codexHomes: homes,
     initialSessions: options.initialSessions || [],
     watermarks,
     recentSessions: options.recentSessions || new Set(),
-    lastKnownStatus: options.lastKnownStatus || new Map(),
-    deliverFn: options.deliverFn || (async (sessionId, messages, identity) => {
-      delivered.push({ sessionId, messages, identity });
+    lastKnownStatus: statuses,
+    publishFn: options.publishFn || ((sessionId, messages) => {
+      delivered.push({ sessionId, messages });
     }),
-    uploadFn: options.uploadFn || (async (sessionId, messages, identity) => {
-      uploaded.push({ sessionId, messages, identity });
-    }),
-    postFn: async (endpoint, body) => {
-      posts.push({ endpoint, body });
-      return { ok: true };
+    reportFn: (_config, sessions, extra = {}) => {
+      posts.push({ body: { sessions, ...extra } });
+      for (const s of sessions) statuses.set(storageSessionId('codex', s.nativeSessionId || s.id), s.status);
     },
     runningInfoFn: () => ({ projects: new Set(), sessions: new Set() }),
     ...(options.scanRollout ? { scanRollout: options.scanRollout } : {}),
@@ -102,13 +98,9 @@ function watcherHarness(homes, options = {}) {
       : {}),
     ...(options.rescanMs ? { rescanMs: options.rescanMs } : {}),
     ...(options.watchRetryMs ? { watchRetryMs: options.watchRetryMs } : {}),
-    ...(options.activitySyncIntervalMs !== undefined
-      ? { activitySyncIntervalMs: options.activitySyncIntervalMs }
-      : {}),
-    retryMs: 60_000,
     statusRecheckMs: 60_000,
   });
-  return { watcher, delivered, uploaded, posts, watermarks };
+  return { watcher, delivered, posts, watermarks };
 }
 
 test('Codex watcher sends new lines once and preserves a partial trailing line', async (t) => {
@@ -201,7 +193,7 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
   let fail = true;
   const delivered = [];
   const h = watcherHarness([home], {
-    deliverFn: async (_sessionId, messages) => {
+    publishFn: (_sessionId, messages) => {
       if (fail) throw new Error('offline');
       delivered.push(...messages);
     },
@@ -216,200 +208,6 @@ test('Codex watcher keeps its watermark when delivery fails', async (t) => {
   assert.equal(delivered.length, 3);
   assert.equal(delivered.at(-1).stopReason, 'end_turn');
   assert.equal(h.watermarks.get(storageSessionId('codex', IDS[1])), 6);
-});
-
-test('Codex watcher catalogs internal children without uploading their transcript', async (t) => {
-  const home = createHome(t);
-  const childId = IDS[0];
-  const parentId = IDS[1];
-  const filePath = rolloutPath(home, childId);
-  const lines = [
-    json('session_meta', {
-      id: childId,
-      session_id: parentId,
-      parent_thread_id: parentId,
-      cwd: home,
-      model_provider: 'test-provider',
-      originator: 'codex-tui',
-      thread_source: 'subagent',
-      source: { subagent: { other: 'guardian' } },
-    }),
-    json('event_msg', { type: 'user_message', message: 'Review this action' }, 1),
-  ];
-  writeLines(filePath, lines);
-  const h = watcherHarness([home]);
-  t.after(() => h.watcher.stop());
-
-  await h.watcher.scanNow({ initial: true });
-
-  assert.equal(h.delivered.length, 0);
-  assert.equal(h.uploaded.length, 0);
-  assert.equal(h.posts.length, 1);
-  assert.equal(h.posts[0].body.sessions[0].threadKind, 'internal');
-  assert.equal(h.posts[0].body.sessions[0].parentSessionId, `codex:${parentId}`);
-  assert.equal(h.watermarks.get(storageSessionId('codex', childId)), lines.length);
-});
-
-test('Codex watcher persists live user and assistant rows without broadcasting them again', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[2]);
-  const clientId = 'stream-live-test';
-  const assistantId = 'msg-live-test';
-  writeLines(filePath, [
-    json('session_meta', {
-      session_id: IDS[2],
-      cwd: home,
-      model_provider: 'test-provider',
-      originator: 'codex-exec',
-      cli_version: '0.147.0',
-    }),
-    json('event_msg', { type: 'task_started', turn_id: 'turn-live' }, 1),
-    json('response_item', {
-      id: 'msg-user-live-test',
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: 'hello live' }],
-      internal_chat_message_metadata_passthrough: { turn_id: 'turn-live' },
-    }, 2),
-    json('event_msg', {
-      type: 'item_completed',
-      turn_id: 'turn-live',
-      item: {
-        type: 'UserMessage',
-        id: 'user-live-test',
-        client_id: clientId,
-        content: [{ type: 'text', text: 'hello live' }],
-      },
-    }, 3),
-    json('response_item', {
-      id: assistantId,
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'output_text', text: 'world live' }],
-    }, 4),
-    json('event_msg', { type: 'task_complete', turn_id: 'turn-live' }, 5),
-  ]);
-
-  const persisted = [];
-  const h = watcherHarness([home], {
-    uploadFn: async (sessionId, messages, identity) => {
-      persisted.push({ sessionId, messages, identity });
-    },
-  });
-  t.after(() => {
-    h.watcher.stop();
-    clearLiveMessageRegistry();
-  });
-  markLiveMessagePushed('codex', codexTurnLiveKey('turn-live'));
-
-  await h.watcher.scanNow({ initial: true });
-
-  assert.equal(h.delivered.length, 0);
-  assert.deepEqual(
-    persisted.flatMap((batch) => batch.messages).map((message) => message.type),
-    ['user', 'assistant', 'assistant'],
-  );
-  assert.deepEqual(
-    persisted.flatMap((batch) => batch.messages)
-      .filter((message) => message.nativeId)
-      .map((message) => message.nativeId),
-    [`codex:user:${clientId}`, `codex:item:${assistantId}`],
-  );
-  assert.equal(
-    persisted.flatMap((batch) => batch.messages).at(-1).stopReason,
-    'end_turn',
-  );
-});
-
-test('Codex watcher only persists runtime-owned authority before live publish', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[1]);
-  const assistantId = 'runtime-owned-assistant';
-  writeLines(filePath, [
-    json('session_meta', {
-      session_id: IDS[1],
-      cwd: home,
-      model_provider: 'test-provider',
-      originator: 'codex-exec',
-      cli_version: '0.147.0',
-    }),
-    json('event_msg', { type: 'task_started', turn_id: 'turn-runtime' }, 1),
-    json('response_item', {
-      id: assistantId,
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'output_text', text: 'runtime authority' }],
-    }, 2),
-  ]);
-
-  const persisted = [];
-  const h = watcherHarness([home], {
-    uploadFn: async (sessionId, messages, identity) => {
-      persisted.push({ sessionId, messages, identity });
-    },
-  });
-  t.after(() => {
-    h.watcher.stop();
-    clearLiveMessageRegistry();
-  });
-  registerRuntimeOwnedMessage('codex', codexTurnLiveKey('turn-runtime'));
-
-  await h.watcher.scanNow({ initial: true });
-
-  assert.equal(h.delivered.some((batch) =>
-    batch.messages.some((message) =>
-      message.nativeId === `codex:item:${assistantId}`)), false);
-  assert.equal(persisted.some((batch) =>
-    batch.messages.some((message) =>
-      message.nativeId === `codex:item:${assistantId}`)), true);
-});
-
-test('Codex watcher persists every row while app-server owns the session', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[1]);
-  writeLines(filePath, [
-    ...baseLines(IDS[1], home, { complete: false }),
-    json('response_item', {
-      type: 'function_call',
-      name: 'exec_command',
-      arguments: JSON.stringify({ cmd: 'printf runtime-owned' }),
-      call_id: 'runtime-owned-command',
-    }, 5),
-    json('response_item', {
-      type: 'function_call_output',
-      call_id: 'runtime-owned-command',
-      output: 'runtime-owned',
-      status: 'completed',
-    }, 6),
-    json('event_msg', { type: 'task_complete', turn_id: 'turn-1' }, 7),
-  ]);
-  const h = watcherHarness([home], {
-    runtimeOwnsFn: (nativeSessionId) => nativeSessionId === IDS[1],
-  });
-  t.after(() => {
-    h.watcher.stop();
-    clearLiveMessageRegistry();
-  });
-
-  await h.watcher.scanNow({ initial: true });
-
-  assert.equal(h.delivered.length, 0);
-  const persisted = h.uploaded.flatMap((batch) => batch.messages);
-  assert.deepEqual(persisted.map((message) => message.type), [
-    'user',
-    'assistant',
-    'assistant',
-    'user',
-    'assistant',
-  ]);
-  assert.deepEqual(
-    persisted.flatMap((message) => (
-      Array.isArray(message.content)
-        ? message.content.map((block) => block.type)
-        : []
-    )),
-    ['text', 'tool_use', 'tool_result'],
-  );
 });
 
 test('Codex watcher keeps a stale open turn running while app-server owns the session', async (t) => {
@@ -430,78 +228,6 @@ test('Codex watcher keeps a stale open turn running while app-server owns the se
       session.nativeSessionId === IDS[1] && session.status === 'running')),
     true,
   );
-});
-
-test('Codex watcher keeps a completed runtime turn storage-only through its JSONL terminal row', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[1]);
-  const turnId = 'turn-runtime-interrupted';
-  const lines = [
-    json('session_meta', {
-      session_id: IDS[1],
-      cwd: home,
-      model_provider: 'test-provider',
-      originator: 'codex-exec',
-      cli_version: '0.147.0',
-    }),
-    json('event_msg', { type: 'task_started', turn_id: turnId }, 1),
-    json('response_item', {
-      type: 'function_call',
-      name: 'exec_command',
-      arguments: JSON.stringify({ cmd: 'sleep 10' }),
-      call_id: 'runtime-interrupted-command',
-    }, 2),
-    json('event_msg', {
-      type: 'turn_aborted',
-      turn_id: turnId,
-      reason: 'interrupted',
-    }, 3),
-    json('response_item', {
-      type: 'function_call_output',
-      call_id: 'runtime-interrupted-command',
-      output: '',
-      status: 'failed',
-    }, 4),
-  ];
-  writeLines(filePath, lines);
-  const h = watcherHarness([home], {
-    runtimeOwnsFn: () => false,
-  });
-  t.after(() => {
-    h.watcher.stop();
-    clearLiveMessageRegistry();
-  });
-  registerRuntimeOwnedMessage('codex', codexTurnLiveKey(turnId));
-
-  await h.watcher.scanNow({ initial: true });
-
-  assert.equal(h.delivered.length, 0);
-  const persisted = h.uploaded.flatMap((batch) => batch.messages);
-  assert.deepEqual(
-    persisted.flatMap((message) => (
-      Array.isArray(message.content)
-        ? message.content.map((block) => block.type)
-        : []
-    )),
-    ['tool_use', 'text', 'tool_result'],
-  );
-  assert.equal(
-    persisted[1].content[0].text,
-    '[Request interrupted by user]',
-  );
-  assert.equal(
-    liveMessageRoute('codex', codexTurnLiveKey(turnId))?.runtimeOwned,
-    true,
-  );
-
-  lines.push(json('event_msg', {
-    type: 'task_started',
-    turn_id: 'turn-after-interrupt',
-  }, 5));
-  writeLines(filePath, lines);
-  await h.watcher.scanNow();
-
-  assert.equal(liveMessageRoute('codex', codexTurnLiveKey(turnId)), null);
 });
 
 test('Codex watcher still broadcasts an external TUI interrupted turn without runtime ownership', async (t) => {
@@ -586,91 +312,6 @@ test('Codex watcher skips rollout status scans for ordinary tool appends', async
   }, 7)}\n`);
   await h.watcher.scanNow();
   assert.equal(scans, 2);
-});
-
-test('Codex watcher refreshes session metadata for throttled message activity', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[0]);
-  const lines = baseLines(IDS[0], home, { complete: false });
-  writeLines(filePath, lines);
-  const h = watcherHarness([home]);
-  t.after(() => h.watcher.stop());
-
-  await h.watcher.scanNow({ initial: true });
-  assert.equal(h.posts.length, 1);
-  h.watcher.lastActivitySyncAt.set(storageSessionId('codex', IDS[0]), 0);
-
-  fs.appendFileSync(filePath, `${json('response_item', {
-    type: 'function_call',
-    name: 'exec_command',
-    arguments: JSON.stringify({ cmd: 'printf hello' }),
-    call_id: 'call-activity-refresh',
-  }, 6)}\n`);
-  const newer = new Date(Date.now() + 2_000);
-  fs.utimesSync(filePath, newer, newer);
-  await h.watcher.scanNow();
-
-  assert.equal(h.posts.length, 2);
-  assert.equal(h.posts[1].body.sessions[0].status, 'running');
-  assert.equal(h.posts[1].body.sessions[0].lastActive, newer.toISOString());
-});
-
-test('Codex watcher drains appends during delivery without another file event', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[0]);
-  const lines = baseLines(IDS[0], home);
-  writeLines(filePath, lines);
-  const key = storageSessionId('codex', IDS[0]);
-  const delivered = [];
-  let releaseFirst;
-  let firstStarted;
-  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
-  const started = new Promise((resolve) => { firstStarted = resolve; });
-  let batches = 0;
-  const h = watcherHarness([home], {
-    initialSessions: [{
-      id: IDS[0],
-      nativeSessionId: IDS[0],
-      runtime: 'codex',
-      project: '-test',
-      lastActive: new Date().toISOString(),
-      status: 'completed',
-    }],
-    watermarks: new Map([[key, lines.length]]),
-    recentSessions: new Set([key]),
-    lastKnownStatus: new Map([[key, 'completed']]),
-    deliverFn: async (_sessionId, messages) => {
-      delivered.push(...messages);
-      batches++;
-      if (batches === 1) {
-        firstStarted();
-        await firstGate;
-      }
-    },
-  });
-  t.after(() => h.watcher.stop());
-
-  fs.appendFileSync(filePath, `${json('response_item', {
-    type: 'message',
-    role: 'assistant',
-    content: [{ type: 'output_text', text: 'first append' }],
-  }, 6)}\n`);
-  const first = h.watcher.queueFile(filePath);
-  await started;
-
-  fs.appendFileSync(filePath, `${json('response_item', {
-    type: 'message',
-    role: 'assistant',
-    content: [{ type: 'output_text', text: 'second append' }],
-  }, 7)}\n`);
-  releaseFirst();
-  await first;
-
-  assert.deepEqual(delivered.map((message) => message.content[0].text), [
-    'first append',
-    'second append',
-  ]);
-  assert.equal(h.watermarks.get(key), lines.length + 2);
 });
 
 test('Codex watcher uses one native root subscription and queues file events immediately', async (t) => {
@@ -817,50 +458,6 @@ test('Codex watcher directly watches all running sessions plus a bounded recent 
   );
 });
 
-test('Codex watcher does not rebuild the recent set for an already watched append', async (t) => {
-  const home = createHome(t);
-  const filePath = rolloutPath(home, IDS[0]);
-  const lines = baseLines(IDS[0], home);
-  writeLines(filePath, lines);
-  const key = storageSessionId('codex', IDS[0]);
-  const h = watcherHarness([home], {
-    initialSessions: [{
-      id: IDS[0],
-      nativeSessionId: IDS[0],
-      runtime: 'codex',
-      project: '-test',
-      lastActive: new Date().toISOString(),
-      status: 'completed',
-    }],
-    watermarks: new Map([[key, lines.length]]),
-    recentSessions: new Set([key]),
-    lastKnownStatus: new Map([[key, 'completed']]),
-    subscribeFn: async () => ({ async unsubscribe() {} }),
-  });
-  t.after(() => h.watcher.stop());
-
-  await h.watcher.scanNow({ initial: true });
-  assert.equal(h.watcher.fileWatchers.has(fs.realpathSync.native(filePath)), true);
-
-  const desiredFileWatchPaths = h.watcher.desiredFileWatchPaths.bind(h.watcher);
-  let recomputes = 0;
-  h.watcher.desiredFileWatchPaths = () => {
-    recomputes++;
-    return desiredFileWatchPaths();
-  };
-  h.watcher.lastActivitySyncAt.set(key, Date.now());
-
-  fs.appendFileSync(filePath, `${json('response_item', {
-    type: 'message',
-    role: 'assistant',
-    content: [{ type: 'output_text', text: 'watched append' }],
-  }, 6)}\n`);
-  await h.watcher.queueChangedFile(fs.realpathSync.native(filePath));
-
-  assert.equal(recomputes, 0);
-  assert.equal(h.delivered.at(-1).messages[0].content[0].text, 'watched append');
-});
-
 test('Codex watcher rescans changes immediately after a watcher retry', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[0]);
@@ -930,67 +527,4 @@ test('Codex watcher handles rename, multiple homes, and running to completed sta
   assert.equal(h.watermarks.get(firstKey), firstLines.length + 1);
   assert.equal(h.posts.some((entry) => entry.body.sessions?.[0]?.status === 'completed'), true);
   assert.equal(h.delivered.some((entry) => entry.sessionId === storageSessionId('codex', IDS[2])), true);
-});
-
-test('Realtime delivery uses WS ack, HTTP fallback, and a truncated oversized preview', async () => {
-  const message = {
-    uuid: 'm1',
-    type: 'assistant',
-    content: [{ type: 'text', text: 'ok' }],
-    timestamp: '2026-08-09T12:00:00.000Z',
-  };
-  const secondMessage = {
-    ...message,
-    uuid: 'm2',
-    content: [{ type: 'text', text: 'second' }],
-  };
-  const sent = [];
-  const uploaded = [];
-
-  await deliverRealtimeMessages('codex:test', [message, secondMessage], {
-    wsSendWithAckFn: async (payload) => {
-      sent.push(payload);
-      return true;
-    },
-    wsSendFn: (payload) => sent.push(payload),
-    uploadMessagesFn: async (...args) => uploaded.push(args),
-  });
-  assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0].messages.map((item) => item.uuid), ['m1', 'm2']);
-  assert.equal(uploaded.length, 0);
-
-  await deliverRealtimeMessages('codex:test', [message, secondMessage], {
-    wsSendWithAckFn: async () => false,
-    wsSendFn: () => true,
-    uploadMessagesFn: async (...args) => uploaded.push(args),
-    runtime: 'codex',
-    nativeSessionId: 'test',
-  });
-  assert.equal(uploaded.length, 1);
-  assert.deepEqual(uploaded[0][1].map((item) => item.uuid), ['m1', 'm2']);
-  assert.equal(uploaded[0][2].runtime, 'codex');
-
-  const large = {
-    ...message,
-    uuid: 'large',
-    content: [{ type: 'text', text: 'x'.repeat(5000) }],
-  };
-  const oversizedSent = [];
-  const oversizedUploads = [];
-  await deliverRealtimeMessages('codex:test', [large], {
-    frameLimit: 1200,
-    itemLimit: 10_000,
-    wsSendFn: (payload) => {
-      oversizedSent.push(payload);
-      return true;
-    },
-    wsSendWithAckFn: async () => {
-      throw new Error('oversized messages must not use ack path');
-    },
-    uploadMessagesFn: async (...args) => oversizedUploads.push(args),
-  });
-  assert.equal(oversizedSent[0].noCache, true);
-  assert.equal(oversizedSent[0].messages[0].truncated, true);
-  assert.ok(Buffer.byteLength(JSON.stringify(oversizedSent[0])) < 1200);
-  assert.equal(oversizedUploads[0][1][0].content[0].text.length, 5000);
 });

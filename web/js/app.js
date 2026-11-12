@@ -3,7 +3,6 @@ import { state } from './state.js';
 import { layoutPixels } from './page-zoom.js';
 import {
   invalidateListCache,
-  migrateLegacyListCache,
   readListCache,
   writeListCache,
 } from './list-cache.js';
@@ -300,7 +299,7 @@ function attachLongPress(container, type, onLongPress) {
   container.__longPressCleanup = cleanup;
 }
 
-// Unified 3-state (running / needs_input / completed); legacy idle/stopped/unknown → Done.
+// Three states (running / needs_input / completed); anything else reads as Done.
 function statusLabel(status) {
   if (status === 'running') return 'Running';
   if (status === 'needs_input') return 'Needs input';
@@ -665,11 +664,7 @@ async function refreshSessionThreads() {
   }
   var rootSessionId = state.rootSessionId;
   var requestVersion = state.threadRequestVersion;
-  var data = await api('/api/bridge/session-threads', {
-    device: state.appState.device,
-    project: state.appState.project.hash,
-    session: rootSessionId,
-  });
+  var data = await bridgeList('threads', { device: state.appState.device, sessionId: rootSessionId });
   if (requestVersion !== state.threadRequestVersion
     || rootSessionId !== state.rootSessionId) {
     return state.sessionThreads;
@@ -1003,7 +998,7 @@ function projectListOptions(device) {
     fetchPage: function (cursor) {
       var params = { device: device, limit: LIST_PAGE_SIZE };
       if (cursor) params.cursor = cursor;
-      return api('/api/bridge/projects', params);
+      return bridgeList('projects', params);
     }
   };
 }
@@ -1019,7 +1014,7 @@ function sessionListOptions(device, projectHash) {
     fetchPage: function (cursor) {
       var params = { device: device, project: projectHash, limit: LIST_PAGE_SIZE };
       if (cursor) params.cursor = cursor;
-      return api('/api/bridge/sessions', params);
+      return bridgeList('sessions', params);
     }
   };
 }
@@ -1105,7 +1100,6 @@ document.addEventListener('click', function (e) {
   if (e.target.closest('a[href="setup.html"]')) savePagePreview();
 }, true);
 
-migrateLegacyListCache();
 
 function captureListAnchor(content) {
   var top = content.getBoundingClientRect().top;
@@ -1382,8 +1376,8 @@ async function loadDevices() {
 
   var preload = wasHome ? window.__preload : null;
   window.__preload = null;
-  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
-  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
+  var activePromise = (preload && preload.active) || bridgeHome();
+  var devicesPromise = (preload && preload.devices) || bridgeDevices();
   return window.__loadHome(activePromise, devicesPromise, {
     resetScroll: !homePreview,
     restoreSnapshot: homePreview,
@@ -1755,11 +1749,8 @@ async function submitDeviceDelete(btn) {
   loadDevices();
 }
 
-// Confirm original-file deletion before removing list records, so an active
-// session or failed device deletion remains visible and can be retried.
+// The Bridge deletes the original files; lists follow from them. A failure stays visible for a retry.
 async function performDelete(device, isProject, ids) {
-  var body = { deviceName: device };
-  if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
   await window.loadViewerLibs();
   // The Bridge reports progress while it deletes; the last frame is the outcome.
   var filesResult;
@@ -1774,8 +1765,7 @@ async function performDelete(device, isProject, ids) {
       ? 'The device stopped confirming file deletion. Check the connection and retry.'
       : filesResult.error || 'Some original files could not be deleted.');
   }
-  await apiPost('/api/bridge/delete', body);
-  return { ddb: true, files: filesResult };
+  return { files: filesResult };
 }
 
 async function submitDelete() {
@@ -2002,10 +1992,9 @@ async function loadMessages(sessionId, preview, options) {
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
+  // The first history reply says whether the root has subagents; `threads` is asked only then.
+  if (!options.preserveThreads) state.threadsPendingRoot = rootSessionId;
   startWs(sessionId);
-  if (!options.preserveThreads) {
-    refreshSessionThreads().catch(function () {});
-  }
 
   try {
     var t0 = performance.now();

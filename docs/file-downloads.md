@@ -1,6 +1,6 @@
 # File downloads and sharing
 
-The file viewer has one Download action and no separate Share button. It works for uploaded attachments and project files, including files whose contents cannot be previewed, and downloads the original bytes rather than the truncated text preview. While Bridge prepares the file the download control spins the upload ring; while a native app receives the bytes the ring fills with progress, then a check mark shows briefly. Duplicate clicks on the same file are ignored. Downloads are tracked in memory per file, so closing the viewer keeps a download running (except on iOS) and reopening the same file shows its live progress. The existing account-scoped `file-prepare` / `file-url` endpoints are reused; only project files need the new `project_files` operation `download` to stream the original from Bridge to S3. File contents never pass through Lambda or WebSocket. The limit is 512 MiB per file.
+The file viewer has one Download action and no separate Share button. It works for uploaded attachments and project files, including files whose contents cannot be previewed, and downloads the original bytes rather than the truncated text preview. While Bridge prepares the file the download control spins the upload ring; while a native app receives the bytes the ring fills with progress, then a check mark shows briefly. Duplicate clicks on the same file are ignored. Downloads are tracked in memory per file, so closing the viewer keeps a download running (except on iOS) and reopening the same file shows its live progress. Files travel through the account's S3 transfer area with URLs the app and Bridge sign themselves (`bridge/transfer-store.mjs`): `transfer.fileInfo` gives the download URL; project files first need the `project_files` operation `download`, which streams the original from Bridge to S3 (`transfer.prepareUpload`). File contents never pass through Lambda or WebSocket. The limit is 512 MiB per file.
 
 ## Platform behavior
 
@@ -21,8 +21,6 @@ Bucket acceleration being Enabled is necessary but not sufficient: the deployed 
 
 ```sh
 node --test test/frontend/attachments.test.mjs test/frontend/file-download.test.mjs test/bridge/project-files.test.mjs
-python3 -m pytest test/server/test_project_files_ws.py
-node test/browser/attachments-chrome.mjs
 rustc --edition=2021 --test test/native/file-download.rs -o /tmp/baton-file-download-tests && /tmp/baton-file-download-tests
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios-sim

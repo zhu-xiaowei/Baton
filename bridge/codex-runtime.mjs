@@ -1,7 +1,5 @@
 import fs from 'fs';
-import path from 'path';
 import { countJsonlLines } from './extract.mjs';
-import { syncCodexMessages } from './codex-extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
   discoverCodexHistory,
@@ -12,12 +10,7 @@ import {
 } from './codex-session.mjs';
 import { readableProjectName } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
-import {
-  binaryVersion,
-  existingDirectory,
-  resolveCodexBin,
-  resolveCodexHomes,
-} from './runtime-capabilities.mjs';
+import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { projectHashCandidatesFromCwd, storageSessionId } from './session-identity.mjs';
 import { projectCwdFromCwd } from './repository-identity.mjs';
 import { CodexAppServerClient } from './codex-app-server.mjs';
@@ -119,19 +112,6 @@ export const codexRuntime = defineRuntimeAdapter({
   interaction: codexInteraction,
 
   discover: discoverCodexSessions,
-  detectCapability(options = {}) {
-    const homes = options.codexHomes || resolveCodexHomes();
-    const binary = options.codexBin === undefined ? resolveCodexBin() : options.codexBin;
-    const historyAvailable = homes.some((home) => existingDirectory(path.join(home, 'sessions')));
-    return {
-      installed: !!binary,
-      historyAvailable,
-      canRead: historyAvailable,
-      canCreate: !!binary,
-      canSend: !!binary,
-      version: options.skipVersions ? '' : binaryVersion(binary),
-    };
-  },
   findSessionFile: findCodexSessionFile,
   deleteSessionHistory(nativeSessionId, context = {}) {
     return !!nativeSessionId && deleteCodexHistory(nativeSessionId, '', context, (id) => this.ownsLiveSession(id, context));
@@ -143,46 +123,14 @@ export const codexRuntime = defineRuntimeAdapter({
     return codexInteraction.owns(nativeSessionId);
   },
 
-  shouldSkipInitial(session) {
-    // Internal Guardian/compact/review threads are catalogued only so a full
-    // sync can overwrite older rows that were mistakenly exposed as agents.
-    return session.threadKind === 'internal';
-  },
-
   baselineToEnd(session, context) {
     const lineCount = session._lineCount ?? countJsonlLines(session._filePath);
     context.watermarks.set(context.storageSessionId, lineCount);
   },
 
-  syncInitialMessages(session, context) {
-    return syncCodexMessages(
-      session._filePath,
-      session.nativeSessionId,
-      context.storageSessionId,
-      {
-        watermarks: context.watermarks,
-        uploader: context.uploader,
-      },
-    );
-  },
-
-  syncAllMessages(session, context) {
-    return syncCodexMessages(
-      session._filePath,
-      session.nativeSessionId,
-      context.storageSessionId,
-      {
-        startLine: 0,
-        watermarks: context.watermarks,
-        uploader: context.uploader,
-      },
-    );
-  },
-
   createStatusContext(context = {}) {
     return {
       runningInfo: getCodexRunningInfo(),
-      lastKnownStatus: context.lastKnownStatus,
     };
   },
 
@@ -220,7 +168,6 @@ export const codexRuntime = defineRuntimeAdapter({
     }
     if (session.status === active.status) return null;
 
-    context.lastKnownStatus.set(sessionId, session.status);
     return { session: publicSession(session) };
   },
 
@@ -236,13 +183,6 @@ export const codexRuntime = defineRuntimeAdapter({
     if (!session) return;
     session.status = newStatus;
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
-    const agentCountUpdates = trackAgentSession(session);
-    await context.postFn('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: [publicSession(session)],
-      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-    });
-    context.lastKnownStatus.set(sessionId, newStatus);
+    context.report(config, [session], { agentCountUpdates: trackAgentSession(session) });
   },
 });

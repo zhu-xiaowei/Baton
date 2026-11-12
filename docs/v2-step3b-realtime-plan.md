@@ -347,29 +347,152 @@ offline.
 
 ## Stage 3. Delete Session storage in DynamoDB
 
-Before deleting, move the side effects of `sync-sessions`:
-1. Device registration (the `DEV#` row) → when the Bridge connects.
-2. The threads-changed push → stage 2.
-3. `lastKnownStatus` is set only after the POST succeeds at most call sites, and the session index
-   trusts it first → set it directly.
+Planned 2026-11-11 from a full inventory of the readers and writers (below). Stage 2b is merged
+(#200). One PR, commits ordered: the Bridge stops writing → server and infra deletions → App →
+tests → docs. No compatibility for old Bridges (they update with the stack); `BridgeMessages` goes
+with no read fallback.
 
-Also: `checkStopped` takes its candidates from the local index, not `GET /active-sessions`.
+### Decisions (confirmed 2026-11-11)
 
-Then delete:
-- **Bridge:** `sync.mjs` uploads, `uploadMessages` and the startup message sync,
-  `realtime-delivery.mjs`, `session-ack-queue.mjs`, `wsSendWithAck` and the HTTP fallback, `noCache`,
-  transport truncation (`fitWsPayload`, `recoveryRequired`), `handleSyncSession`,
-  `bridge_recovery_complete` (the `epoch` of stage 1 covers it), the rename mirror. The `synced` map
-  stays only as the watcher's read cursor.
-- **Server:** `/sync-sessions`, `/sync-messages`, `/session-title`, `/delete`, `/active-sessions`,
-  `/session-threads`, `/messages`, the message write and relay branches in `bridge_ws.py`,
-  `message_history.py`.
-- **Infra:** the `BridgeMessages` table; `SESS#` / `PROJ#` rows, both indexes and the stream on
-  `BridgeSessions`.
-- **App:** what is left of the v1 socket code in `ws.js`, dead `file_ready` / `file_progress`
-  branches.
+Rule: what v2 does not need logically is deleted (add it back if something breaks); what it still
+needs stays. The only v1/v2 guard left is the App's `protocol !== 2` check on `/devices`
+(`web/js/v2/home.js`). Old native App builds are not a concern (the App is upgraded first).
 
-Stays: Connections table, `DEV#` rows, tokens, push devices, the notification event feed.
+1. **Device rows are written by `$connect`.** The Bridge adds its display name and os to the
+   control-socket URL; the WS Lambda puts `pk DEVICE#<account>`, `sk <device>` in `SystemTable`
+   on every Bridge connect. `/devices`, `/device-name/validate` and `/delete-device` read it.
+   No new endpoint; `BridgeSessions` is deleted whole. A device offline at deploy time appears
+   again when it next connects.
+2. **One local outlet** `reportSessions(body)` replaces every `sync-sessions` POST: it sets
+   `lastKnownStatus` and calls `observeSessions` (the hook moves out of `http.mjs`).
+3. **Cursors advance without a POST.** The retries that existed for failed POSTs go: the Claude
+   file-queue backoff, `_firstSyncs`, Codex `scheduleRetry`.
+4. **`checkStopped` candidates are local** (`lastKnownStatus` running/needs_input; project from the
+   session index, Codex keeps its catalog project).
+5. **Live rows publish straight to subscribers**; ack queue, HTTP fallback, `noCache`,
+   `fitWsPayload`, `truncateToBytes`, `DDB_ITEM_LIMIT`, `MAX_POST_BYTES` go.
+   **`recoveryRequired` goes** (Bridge flag + the App's reads of it; `scheduleTurnEndRecovery`
+   stays for the dropped-live-rows path). In v1 it repaired transport truncation. Checked with
+   CC 2.1.322 headless, Bridge arguments, stdout vs JSONL per turn (`.scratch/stage3-verify/`):
+   plain reply, tool call, killed mid-turn: every JSONL row was on stdout; `/compact`: only its
+   command echo row was not, in a turn that has other rows (the flag would not fire).
+6. **Startup always baselines cursors to EOF** (today's `--skip-init`, free: `_lineCount` is
+   known), otherwise a known Session's first change replays its whole JSONL to subscribers.
+   `synced.json` persistence and its legacy decoding go (the cursor map stays in memory).
+7. **Activity throttle goes** (`session-activity.mjs`, `forceActivity`): added in 347cc09c to
+   refresh DynamoDB `lastActive` every 30 s while rows arrive without a status change; v2 lists
+   read file times from the session index. Codex status scans keep their own triggers
+   (`task_started` / `task_complete` / `turn_aborted` / `user_message`).
+
+### Deleted (inventory, 2026-11-11; about 4,100 lines)
+
+- **Server (≈1,250):** `bridge_sync.py` `/sync-sessions`, `/sync-messages`, `/session-title`,
+  `/delete` and helpers; `bridge_read.py` `/active-sessions`, `/session-threads`, `/messages` and
+  helpers; `bridge_ws.py` `messages`, `messages_ack`, `sync_complete`, `bridge_recovery_complete`,
+  `notify_bridge_sync`, turn-sequence checks; `message_history.py`; `clear-sessions-table.py`,
+  `backfill-message-ttl.py`. `/delete-device` keeps `device_removed`.
+- **Template (≈90):** `BridgeSessionsTable`, `BridgeMessagesTable`, their env vars and grants; the
+  unused WsApi `realtime_ping` MOCK route (App and Bridge ping only the direct API). Adds the WS
+  Lambda's `SystemTable` grant.
+- **Bridge (≈680):** `realtime-delivery.mjs`, `session-ack-queue.mjs`, `session-activity.mjs`,
+  `uploadMessages`, `uploadCatalog`, startup message sync, `handleSyncSession`, the adapters'
+  `shouldSkipInitial` / `syncInitialMessages` / `syncAllMessages`, `--skip-init`, the rename mirror
+  and its `synced` reply field, `bridge_recovery_complete`. `refreshClaudeSubagents` keeps its
+  count carry-over (`notify.mjs` relies on the same rule).
+- **App (≈60):** `/api/bridge/delete` after `delete_files`; the path aliases in `api()` (callers
+  use `loadHomeV2` / `requestFresh` / `loadLatestHistory` directly); `recoveryRequired` reads;
+  the token-less setup fallback (`entry-setup.js`); the v1 list-cache key migration; `legacyGear`;
+  the `baton-nav` cleanup; the `synced` rename field.
+- **Tests (≈1,570 deleted, ~20 cases rewired):** whole files `session-ack-queue`,
+  `test_message_history`, `payload-sizing`; most of `test_bridge_runtime.py`; storage cases in
+  `session-catalog`, `claude-watcher-routing`, `claude-agent-status`, `runtime-adapter`,
+  `tool-preview`, Codex `watcher` / `session`, `e2e.mjs`; `recoveryRequired` cases; frontend tests
+  that call the removed `api()` aliases. Cases asserting POST bodies move to the local outlet;
+  `notify.test.mjs` unchanged.
+- **Docs (≈520 deleted, ≈270 rewritten):** mainly `docs/api.md`, `claude-code-bridge.md`,
+  `codex.md`, CLAUDE.md; smaller edits in `headless-streaming.md`, `streaming-render-design.md`,
+  `frontend-patterns.md`, `session-rename.md`, `tool-preview.md`, `v2-architecture.md`,
+  `mobile-notifications.md`, `message-history-merge.md`, `claude-commands.md`.
+
+Kept on purpose: CLI-version handling of local files (old Codex rollouts and prompts, older CC
+without session records, `legacyTurnUserOccurrenceKey` for current `codex:turn:*:user` IDs);
+install/upgrade migration (`--key` rewrite, Windows old-process stop, `/api/install`); the
+new-Session result match by `turnId` (some results carry no `requestId`); terminal `themeUpdates`
+(it tells the two terminal implementations apart).
+
+Stays: Connections table, `SystemTable` (tokens, push devices, the notification feed, device
+rows), attachments in S3, `/devices`, `/device-name/validate`, `/delete-device`,
+`/api/notifications/*`, heartbeat.
+
+### Detailed design
+
+One PR `v2/stage3` → `feat/v2`, five commits in this order; each leaves the suites green.
+
+**Commit 1 — Bridge stops writing (≈ −680 / +60)**
+- `sync.mjs`: `reportSessions(config, sessions, extra)` builds the former `sync-sessions` body
+  (`deviceName`, `os`, `sessions`, optional `agentCountUpdates`), sets `lastKnownStatus` per row and
+  calls `observeSessions(body)`; sync, no network. `syncSessions` keeps discovery,
+  `rebuildAgentCounts`, `recentSessions` / `lastKnownStatus` seeding, and always runs
+  `baselineToEnd` (no message sync, no `uploadCatalog`). `checkStopped(config, index)`: candidates
+  are `lastKnownStatus` entries with running / needs_input; project, preview and lastActive come from
+  `index.catalog()` roots when present (Codex children and roots without a row are inspected from
+  their file), `active.status` = the known status; results go to `reportSessions`.
+- Every `postFn('/api/bridge/sync-sessions')` / `postRequired(...)` (watcher ×3, both runtimes'
+  `updateSessionStatus`, Codex `syncMetadata`, `checkStopped`) → `reportSessions`; `postFn` options
+  are dropped. `http.mjs` loses the `observeSessions` hook and `postRequired` / `get` if unused.
+- `watcher.mjs`: rows of runtime-owned turns are skipped (not uploaded); `historyComplete` uploads,
+  `_firstSyncs`, the file-queue backoff and `forceActivity` go; watermark set after the pass.
+- `codex-watcher.mjs` + `codex-extract.mjs`: `syncCodexMessages` becomes extract + watermark; the
+  uploader's persisted-only branch drops rows, the rest publish; `scheduleRetry` / `clearRetry`,
+  `uploadFn`, `postFn`, `forceActivity` go.
+- `realtime-delivery.mjs` → a ~10-line `publishMessages(sessionId, messages, { turnId })` in `ws.mjs`
+  (tool previews, turn event when a live turn exists, else plain `messages`), via `wsSend`.
+- `ws.mjs`: `wsSend` publishes Session events only (no fall-through to Lambda for `messages`, no
+  `recoveryRequired`); delete `fitWsPayload` (remaining Lambda frames are small: heartbeat, terminal,
+  preview; oversize → log + drop as today), `SessionAckQueue` / `wsSendWithAck`, `handleSyncSession`
+  and the `sync_session` / `messages_ack` cases, `noCache` options; connect URL gains
+  `&name=<display>&os=<platform>`.
+- `extract.mjs`: delete `uploadMessages`, `truncateToBytes`, `loadSynced` / `saveSynced` /
+  `decodeSyncedState` (the `synced` Map stays in memory). `config.mjs`: `MAX_POST_BYTES`,
+  `DDB_ITEM_LIMIT`, `WS_FRAME_LIMIT` (if unused), `--skip-init`. `bridge.mjs`: `--skip-init` and
+  `bridge_recovery_complete`. Runtimes / `runtime-adapter.mjs`: `shouldSkipInitial`,
+  `syncInitialMessages`, `syncAllMessages`. `session-rename.mjs`: the `/session-title` mirror and
+  `synced`. `live-turn-stream.mjs` / `live-execution-stream.mjs`: `noCache`. Delete
+  `session-ack-queue.mjs`, `session-activity.mjs`.
+
+**Commit 2 — server and template (≈ −1,340 / +40)**
+- `bridge_ws.py` `_handle_connect`: after a successful Bridge claim, `put_item` into `SystemTable`
+  `{pk: DEVICE#<account>, sk: <device>, deviceName, deviceDisplayName, os, lastConnected}`.
+  Delete `messages` / `sync_complete` / `bridge_recovery_complete` handling, `_handle_bridge_messages`,
+  `_handle_sync_complete`, `_handle_bridge_broadcast`, `notify_bridge_sync`,
+  `_runtime_session_fields`, turn-sequence checks, `_messages_table`.
+- `bridge_read.py`: `/devices` and `/device-name/validate` query `DEVICE#<account>`; delete
+  `/active-sessions`, `/session-threads`, `/messages` and their helpers / constants.
+- `bridge_sync.py`: delete `/sync-sessions`, `/sync-messages`, `/session-title`, `/delete` and their
+  models / helpers; `/delete-device` disconnects, then deletes the device row.
+- Delete `message_history.py` (+ Dockerfile line), `clear-sessions-table.py`, `backfill-message-ttl.py`.
+- Template: delete both tables, `BRIDGE_*_TABLE` env vars, their IAM resources, the WsApi
+  `realtime_ping` route / integration / responses; WS Lambda gets `SYSTEM_TABLE` + grant.
+
+**Commit 3 — App (≈ −60 / +15):** `api()` aliases out, call sites call `loadHomeV2` /
+`expandedHome` / `requestFresh` / `loadLatestHistory` / `loadOlderHistory` (app.js, ws.js,
+index.html); `recoveryRequired` reads; `/api/bridge/delete`; `entry-setup.js` token-less fallback;
+list-cache v1 migration; `legacyGear`; `baton-nav`; rename `synced`; stale comments.
+
+**Commit 4 — tests (≈ −1,570):** as in the inventory; rewired cases assert `reportSessions` output
+(spy on `observeSessions` / `lastKnownStatus`); one new Bridge case: startup baselines every
+catalogued Session to EOF.
+
+**Commit 5 — docs (≈ −520, ≈ 270 rewritten)** plus this plan doc.
+
+### Verification
+
+Local suites (Node 20). BatonV2 deploy `1.1.0-<sha>-s3a`: the existing e2e scripts
+(`.scratch/v2-stage1/e2e` chat / resilience, `.scratch/v2-stage2a/e2e` basic / repeat / threads /
+notify) plus rename, delete, a device row appearing after the Bridge reconnects, `/device-name/validate`
+from the install script, and device removal on a throwaway device (a second Bridge connection under
+another name, so `test-ec2-ap` is not uninstalled). CloudWatch: no `sync-*`, `session-title`,
+`active-sessions` or `messages` requests after the deploy; both tables gone from the stack.
 
 ## Known gaps to fix on the way
 

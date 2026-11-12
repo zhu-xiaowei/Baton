@@ -434,7 +434,7 @@ test('Claude inline subagents are discovered as child threads', () => {
   }
 });
 
-test('forked skills appear before the parent prompt and publish their initial history', async () => {
+test('forked skills appear before the parent prompt', async () => {
   const parentId = '67676767-1111-4111-8111-676767676767';
   const fixture = sessionFixture(parentId);
   const discover = () => discoverClaudeSessions({
@@ -464,17 +464,6 @@ test('forked skills appear before the parent prompt and publish their initial hi
     assert.equal(sessions[0].preview, 'New session');
     assert.equal(sessions[1].parentSessionId, parentId);
     assert.equal(sessions[1].status, 'running');
-
-    const watermarks = new Map([[parentId, 2]]);
-    assert.equal(claudeRuntime.shouldSkipInitial(sessions[0], {
-      storageSessionId: parentId, watermarks,
-    }), false);
-    const uploads = [];
-    await claudeRuntime.syncInitialMessages(sessions[0], {
-      storageSessionId: parentId, watermarks,
-      uploader: async (...args) => uploads.push(args),
-    });
-    assert.deepEqual(uploads, [[parentId, [], { historyComplete: true }]]);
 
     fs.appendFileSync(fixture.filePath, JSON.stringify({
       type: 'user', uuid: 'command',
@@ -669,7 +658,7 @@ test('pool status writes clear stale detail except for current needs_input', asy
         {
           daemonMeta,
           lastKnownStatus: new Map([[sessionId, item.previous]]),
-          postFn: async (_url, body) => { request = body; },
+          report: (_config, sessions) => { request = { sessions }; },
         },
       );
       assert.equal(request.sessions[0].isAgent, true);
@@ -697,7 +686,7 @@ test('regular Claude sessions persist the current interaction detail', async () 
       {
         daemonMeta: new Map(),
         lastKnownStatus: new Map([[sessionId, 'running']]),
-        postFn: async (_url, body) => { request = body; },
+        report: (_config, sessions) => { request = { sessions }; },
       },
     );
     assert.equal(request.sessions[0].isAgent, undefined);
@@ -725,11 +714,10 @@ test('first interaction status registers a new Claude session', async () => {
         isNew: true,
         daemonMeta: new Map(),
         lastKnownStatus: statuses,
-        postFn: async (_url, body) => { request = body; },
+        report: (_config, sessions) => { request = { sessions }; },
       },
     );
     assert.equal(request.sessions[0].status, 'running');
-    assert.equal(statuses.get(sessionId), 'running');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -762,35 +750,11 @@ test('interaction status refreshes the server even when the local status matches
       {
         daemonMeta: new Map(),
         lastKnownStatus: statuses,
-        postFn: async (_url, body) => { request = body; },
+        report: (_config, sessions) => { request = { sessions }; },
       },
     );
     assert.equal(request.sessions[0].status, 'needs_input');
     assert.equal(request.sessions[0].agentDetail, 'Current command');
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true });
-  }
-});
-
-test('failed interaction status writes do not advance the local status cache', async () => {
-  const sessionId = '80808080-8080-4808-8808-808080808080';
-  const fixture = sessionFixture(sessionId);
-  const statuses = new Map([[sessionId, 'running']]);
-  try {
-    await assert.rejects(() => claudeRuntime.updateSessionStatus(
-      { deviceName: 'test-device' },
-      sessionId,
-      fixture.filePath,
-      fixture.project,
-      'needs_input',
-      'Current command',
-      {
-        daemonMeta: new Map(),
-        lastKnownStatus: statuses,
-        postFn: async () => { throw new Error('network down'); },
-      },
-    ));
-    assert.equal(statuses.get(sessionId), 'running');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -869,7 +833,7 @@ test('agent moves from daemon needs_input through web completion to immediate te
         {
           daemonMeta,
           lastKnownStatus: new Map([[sessionId, previous]]),
-          postFn: async (_url, body) => { request = body; },
+          report: (_config, sessions) => { request = { sessions }; },
         },
       );
       assert.equal(request.sessions[0].status, next);
@@ -947,7 +911,7 @@ test('agent moves from daemon needs_input through web completion to immediate te
 });
 
 test('forked skill output written as a system local_command row completes the turn', async () => {
-  const { extractClaudeMessages } = await import('../../bridge/extract.mjs');
+  const { ClaudeHistoryReader } = await import('../../bridge/history-claude-reader.mjs');
   const sessionId = '47474747-4747-4474-8474-474747474747';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-local-command-'));
   const project = '-tmp-agent-project';
@@ -976,9 +940,9 @@ test('forked skill output written as a system local_command row completes the tu
   const runningInfo = { projects: new Set([project]), sessions: new Set([sessionId]) };
   try {
     assert.equal(getSessionStatus(sessionId, filePath, runningInfo), 'completed');
-    const { messages } = await extractClaudeMessages(filePath, sessionId, {
-      watermarks: new Map(),
-    });
+    const reader = new ClaudeHistoryReader(filePath);
+    reader.update();
+    const messages = await reader.page({ limit: 10 });
     assert.deepEqual(messages.map((m) => [m.uuid, m.type, m.content]), [
       ['prompt', 'user', '/code-review https://example.test/pull/42'],
       ['output', 'user', '<local-command-stdout>Review result</local-command-stdout>'],

@@ -1,10 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS } from './config.mjs';
-import {
-  extractClaudeMessages,
-  countJsonlLines,
-} from './extract.mjs';
+import { countJsonlLines } from './extract.mjs';
 import {
   findSessionFile,
   getDaemonSessions,
@@ -18,11 +15,6 @@ import {
   readableProjectName,
 } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
-import {
-  binaryVersion,
-  existingDirectory,
-  resolveClaudeBinForCapability,
-} from './runtime-capabilities.mjs';
 import {
   discoverClaudeSubagents,
   findClaudeSubagentFile,
@@ -126,30 +118,14 @@ export function discoverClaudeSessions(options = {}) {
   };
 }
 
-// sync-sessions keeps a root's stored child counts when they are omitted, so a
-// settling root re-derives them from disk and carries its children along.
+// The notifier keeps a root's child counts when they are omitted, so a settling
+// root re-derives them from disk and carries its children along.
 function refreshClaudeSubagents(session, filePath) {
   if (parseClaudeSubagentSessionId(session.nativeSessionId)) return [];
   const children = filePath ? discoverClaudeSubagents(path.dirname(filePath), session) : [];
   for (const child of children) trackAgentSession(child);
   trackAgentSession(session);
   return children;
-}
-
-async function syncClaudeMessages(session, context, startLine) {
-  const extracted = await extractClaudeMessages(
-    session._filePath,
-    session.nativeSessionId,
-    {
-      startLine,
-      watermarks: context.watermarks,
-    },
-  );
-  if (extracted.messages.length > 0 || startLine === 0) {
-    await context.uploader(context.storageSessionId, extracted.messages, { historyComplete: startLine === 0 });
-  }
-  context.watermarks.set(context.storageSessionId, extracted.nextLine);
-  return extracted;
 }
 
 function insideRoot(target, root) {
@@ -218,38 +194,11 @@ export const claudeRuntime = defineRuntimeAdapter({
   },
 
   discover: discoverClaudeSessions,
-  detectCapability(options = {}) {
-    const binary = options.claudeBin === undefined
-      ? resolveClaudeBinForCapability()
-      : options.claudeBin;
-    const historyAvailable = existingDirectory(options.claudeProjects || CLAUDE_PROJECTS);
-    return {
-      installed: !!binary,
-      historyAvailable,
-      canRead: historyAvailable,
-      canCreate: !!binary,
-      canSend: !!binary,
-      version: options.skipVersions ? '' : binaryVersion(binary),
-    };
-  },
   findSessionFile: findClaudeSessionFile,
-
-  shouldSkipInitial(session, context) {
-    return !session._provisional && context.watermarks.has(context.storageSessionId);
-  },
 
   baselineToEnd(session, context) {
     const lineCount = session._lineCount ?? countJsonlLines(session._filePath);
     context.watermarks.set(context.storageSessionId, lineCount);
-  },
-
-  syncInitialMessages(session, context) {
-    const startLine = session._provisional ? 0 : (context.watermarks.get(context.storageSessionId) ?? 0);
-    return syncClaudeMessages(session, context, startLine);
-  },
-
-  syncAllMessages(session, context) {
-    return syncClaudeMessages(session, context, 0);
   },
 
   deleteSessionHistory(nativeSessionId, context = {}) {
@@ -296,7 +245,6 @@ export const claudeRuntime = defineRuntimeAdapter({
       daemonRunning: getDaemonRunningSessionIds(),
       poolOwns: context.poolOwns || (() => false),
       poolAwaitsAgents: context.poolAwaitsAgents,
-      lastKnownStatus: context.lastKnownStatus,
       findSessionFile: context.findSessionFile || findSessionFile,
     };
   },
@@ -319,7 +267,6 @@ export const claudeRuntime = defineRuntimeAdapter({
     const stat = gone ? null : fs.statSync(filePath);
     const metadata = gone ? null : getSessionMetadata(filePath);
     const lastActive = gone ? active.lastActive : stat.mtime.toISOString();
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
     const session = {
       id: nativeSessionId,
       nativeSessionId,
@@ -345,7 +292,6 @@ export const claudeRuntime = defineRuntimeAdapter({
 
   async updateSessionStatus(config, nativeSessionId, filePath, projectHash, newStatus, detail, context) {
     projectHash = normalizeProjectHash(projectHash);
-    const previousStatus = context.lastKnownStatus.get(nativeSessionId);
     let stat;
     try { stat = fs.statSync(filePath); } catch { return; }
     const lastActive = stat.mtime.toISOString();
@@ -375,11 +321,6 @@ export const claudeRuntime = defineRuntimeAdapter({
     // CC reports back when its background agents end; that turn alerts instead.
     if (context.backgroundAgents) session.backgroundAgents = true;
     trackAgentSession(session);
-    await context.postFn('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: [session],
-    });
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
+    context.report(config, [session]);
   },
 });

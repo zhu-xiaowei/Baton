@@ -25,7 +25,7 @@ Bridge status rows → bridge/notify.mjs → POST /api/notifications/events ─�
 ```
 
 1. **Trigger.** Bridge reports every approval as `needs_input` + `agentDetail`.
-   `bridge/notify.mjs` watches the rows Bridge reports (`sync-sessions`), keeps the previous
+   `bridge/notify.mjs` watches the rows Bridge reports (`reportSessions` in `bridge/sync.mjs`), keeps the previous
    row per Session (the first one after a start is only a baseline) and alerts on
    `running → completed` (the root's status merged with its children's counts), on entering
    `needs_input`, and on a new `agentDetail` while waiting. A Done whose row carries

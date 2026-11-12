@@ -14,6 +14,7 @@ import { currentProjectHash, relativeProjectImagePath } from './project/project-
 import { expandedHome, loadHomeV2 } from './v2/home.js';
 import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
+import { transfer } from '../../bridge/transfer-store.mjs';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -44,7 +45,6 @@ function clearCachedAccountData() {
   resetDirectTransport();
   answers.clear();
   localStorage.removeItem('baton-preview-ports');
-  localStorage.removeItem('baton-nav'); // legacy location
   sessionStorage.removeItem('baton-nav');
   clearListCaches();
   clearProjectDataCache();
@@ -92,10 +92,6 @@ async function _do(path, params, opts, init) {
   return res;
 }
 
-// Lists come from each Bridge (same responses as the former REST endpoints); the remaining
-// pages still use REST until they move.
-const BRIDGE_METHODS = { '/api/bridge/projects': 'projects', '/api/bridge/sessions': 'sessions' };
-
 // The last answer to each list request: asked again, the Bridge says "not modified" when it is
 // still current, and this copy is used.
 const answers = new Map();
@@ -112,22 +108,27 @@ export async function requestFresh(device, method, params) {
 }
 
 async function api(path, params, opts) {
-  if (!(opts && (opts.key || opts.server))) {
-    if (path === '/api/bridge/active-sessions') return (await (params?.allProjects ? expandedHome() : loadHomeV2())).active;
-    if (path === '/api/bridge/devices') return (await loadHomeV2()).devices;
-    if (path === '/api/bridge/session-threads') return requestFresh(params.device, 'threads', { sessionId: params.session });
-    if (path === '/api/bridge/messages') {
-      const target = { device: params.device, sessionId: params.session };
-      return params.before ? loadOlderHistory({ ...target, before: params.before })
-        : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', root: state.wsRootSessionId || params.session,
-          onSlow: opts?.onSlow });
-    }
-    if (BRIDGE_METHODS[path]) {
-      const { device, ...rest } = params || {};
-      return requestFresh(device, BRIDGE_METHODS[path], rest);
-    }
-  }
   return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();
+}
+
+// Session data is answered by each Bridge over the direct channel.
+async function bridgeHome(options) {
+  return (await (options?.allProjects ? expandedHome() : loadHomeV2())).active;
+}
+
+async function bridgeDevices() {
+  return (await loadHomeV2()).devices;
+}
+
+function bridgeList(method, { device, ...params }) {
+  return requestFresh(device, method, params);
+}
+
+function bridgeHistory({ device, session, before }, options) {
+  const target = { device, sessionId: session };
+  return before ? loadOlderHistory({ ...target, before })
+    : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', root: state.wsRootSessionId || session,
+      onSlow: options?.onSlow });
 }
 
 async function apiText(path, params, opts) {
@@ -209,8 +210,7 @@ async function getImageUrl(key, attachment = false) {
     var blob = await cachedAttachmentBlob(storeKey);
     var file = null;
     if (!blob) {
-      file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
-        attachment ? { attachment: 'true' } : undefined);
+      file = { url: await transfer.url(key) };
       blob = await fetch(file.url).then(function (response) { return response.ok ? response.blob() : null; })
         .catch(function () { return null; });
       if (!blob) {
@@ -379,6 +379,7 @@ function viewImage(src, element) {
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
   api, apiText, apiPost, loadingSpinner,
+  bridgeHome, bridgeDevices, bridgeList, bridgeHistory,
   loadOneImage, loadImages, viewImage, getImageUrl,
 });
 window.__resolveApiReady?.();

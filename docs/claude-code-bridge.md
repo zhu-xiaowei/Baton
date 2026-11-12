@@ -13,23 +13,21 @@ integration status are documented in [codex.md](codex.md); the wire contract is 
 ```
 Mac/Linux/Windows                   AWS (Serverless)                    Baton App
 ┌──────────────┐              ┌───────────────────────┐           ┌──────────────┐
-│ Claude Code  │              │ REST API GW + Lambda  │           │              │
-│ (unchanged)  │              │ (FastAPI in Docker)   │           │ Device/      │
-│   ↓ writes   │              │                       │           │ Project/     │
-│ .jsonl files │  HTTP POST   │ DynamoDB              │   REST    │ Session list │
-│   ↓ watches  ├─────────────→│ - Session metadata    │←──────────┤              │
-│ bridge       │              │ - Message cache       │           │ Chat view    │
-│              │              │                       │           │ (markdown)   │
-│              │◄────── WS ──►│ WebSocket API GW      │◄── WS ──►│              │
-│              │              │ (real-time push)      │           │              │
+│ Claude Code  │              │ REST API GW + Lambda  │   REST    │ Device list, │
+│ (unchanged)  │  REST (S3    │ (devices, auth,       │←──────────┤ attachments  │
+│   ↓ writes   ├─ uploads) ──→│  attachments)         │           │              │
+│ .jsonl files │              │                       │           │ Home/Project/│
+│   ↓ watches  │◄─ control ──►│ WebSocket API GW      │           │ Session list │
+│ bridge       │◄─ direct ───►│ data API (direct RPC  │◄─ direct ─►│ Chat view    │
+│              │   channel    │  + pushes, no Lambda) │  channel  │              │
 └──────────────┘              └───────────────────────┘           └──────────────┘
 ```
 
 **Key principles:**
-- **DDB**: session metadata (bridge REST) + message cache (Lambda writes on WS receive)
-- **WS**: bridge → Lambda → app push + DDB write in parallel (bridge only needs one WS connection)
+- **Local JSONL is the only source**: the Bridge answers lists, history, threads and tool details
+  over the direct channel; the server stores no Session data
+- **Pushes**: real-time rows go from the Bridge straight to the subscribed App connections, best effort
 - **Data minimization**: bridge extracts only uuid, type, content, timestamp (~40-60% smaller)
-- **Multi-device**: server broadcasts to all subscribed app connections
 
 ## Bridge
 
@@ -43,27 +41,22 @@ and computes Device/Project aggregates once. The steps below describe the Claude
    This is Baton's rule, not CC's: the CC resume list prefers `last-prompt` over the first
    prompt (verified in 2.1.316), but Baton names a Session by its first prompt. The open-Session
    title (`web/js/ws.js` `updateTitleFromMessages`) uses the same order.
-2. `POST /api/bridge/sync-sessions` → full upload to DDB (only on startup)
-3. Build `recentSessions` set (sessions active in last 24h) for periodic sync
-4. Initial message sync: active session per project (latest only) + recent 24h sessions → extract + upload to DDB
-   - Active: for each running project, only the most recent session (the one being used)
-   - Recent: sessions with mtime within 24h
-   - Sessions synced in parallel (sliding window, shared concurrency=2)
-   - Images: compressed to 1280px JPEG (quality=90) via sharp → uploaded to S3 via Lambda
-   - Messages batched by byte size (≤4MB per POST)
-   - Line-number tracking: only reads new lines, no UUID set in memory
-5. Start `fs.watch` on all `.jsonl` files (no age filter)
+2. `reportSessions()` (`sync.mjs`) fills the local status cache (`lastKnownStatus`) and the
+   notifier (`notify.mjs`); nothing is sent to the server
+3. Set every Session's line cursor to the end of its file (in memory only); the watcher pushes
+   only what is written from then on, and history is read from the files on demand
+4. Start `fs.watch` on all `.jsonl` files (no age filter)
 
 ### Runtime (always-on, auto-start on boot)
-- **File change** → fs.watch triggers → immediately read new lines → extract → WS push to server
+- **File change** → fs.watch triggers → immediately read new lines → extract → push to the
+  Session's subscribers (dropped when nobody is subscribed)
   - Per-session busy flag prevents concurrent reads (pending events replayed after)
   - Partial JSON lines (mid-write) → break, synced not advanced, next event re-reads
   - Trailing empty string from `split('\n')` removed to prevent synced pointer drift
-  - WS ack: `wsSendWithAck` waits for server `messages_ack` (5s timeout), only advances synced line on ack
-  - WS fallback: ack timeout or WS disconnected → HTTP POST to DDB
-  - Metadata sync only on: status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
-- **Periodic check (5min)** → `checkStopped()` detects disappeared CC processes via `ps aux`
-  - Checks sessions previously known as active
+  - Session rows are reported (`reportSessions`) only on status change, new session, or ai-title arrived (via `lastKnownStatus` cache)
+- **Periodic check** → `checkStopped()` runs once after the session index warms up, then every
+  10 min (`CHECK_STOPPED_INTERVAL`)
+  - Candidates: running/needs_input entries in `lastKnownStatus`, matched to session-index roots
   - Updates status to completed if the process is gone
 - **Status detection** → process, daemon, pool, and JSONL sources:
   - `statusFromEntry(entry)`: pure function, entry → running/needs_input/completed/null
@@ -79,7 +72,7 @@ and computes Device/Project aggregates once. The steps below describe the Claude
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
-- **WS connection** → auto-discover WS URL from `GET /api/bridge/config`, auto-reconnect on disconnect
+- **WS connection** → `wsUrl` from `~/.baton-bridge/config.json` (missing → asked from `/devices` at start and saved), auto-reconnect on disconnect
 
 ### Bridge connection recovery
 
@@ -158,63 +151,18 @@ Automatic updates restart Bridge, so no manual restart or unit changes are neede
 for this fix. Later credential edits apply to new Claude processes; restart Bridge
 to refresh already-running processes immediately.
 
-## DynamoDB
-
-```
-BridgeSessions
-  PK: accountId (SHA256(apiKey)[:16])
-  SK: DEV#deviceName
-      SESS#deviceName#projectHash#sessionId
-  Attributes: deviceName, projectHash, projectName, sessionId,
-              lastActive, preview, model, status (running/needs_input/completed),
-              runtime, nativeSessionId, size, os
-  TTL: no value written
-
-BridgeMessages
-  PK: sessionId
-  SK: timestamp#uuid (e.g. "2026-03-27T10:30:00.000Z#msg_abc123")
-  Attributes: uuid, type, content (JSON), timestamp
-  TTL: 90 days
-```
-
-### Worktree project-hash normalization (one session = one row)
-
-The session row's SK is `SESS#deviceName#projectHash#sessionId`, so a session's
-identity in DDB is `(projectHash, sessionId)` — **not sessionId alone**. That
-breaks when a session moves between project dirs.
+## Worktree project-hash normalization (one session = one row)
 
 When a Claude session `cd`s into a **git worktree** (e.g. an agent working under
-`<project>/.claude/worktrees/<name>`), CC re-homes that session's `.jsonl`:
-it *moves* the file (same inode, birth time preserved — verified, not a copy)
-from the parent project dir to a new project dir whose hash is
-`<parentHash>--claude-worktrees-<name>`. There is still only **one** jsonl and
-**one** sessionId.
+`<project>/.claude/worktrees/<name>`), CC *moves* that session's `.jsonl` (same inode, not a copy)
+to a project dir whose hash is `<parentHash>--claude-worktrees-<name>`. There is still one jsonl
+and one sessionId.
 
-The bridge derives `projectHash` from the file's directory
-(`path.basename(path.dirname(...))`), so after the move it starts POSTing under
-the new worktree hash while the old parent-project row is left frozen (the
-bridge never deletes rows). Result, before the fix:
-
-- The same sessionId has **two** rows (two SKs) → the app shows two cards for
-  one session; opening either shows identical messages (messages are keyed by
-  sessionId over WS, so both cards read the same jsonl).
-- The worktree project often never appeared in the (v1, DDB) project list. In v2 the Bridge's
-  `session-index.mjs` groups by the same normalized hash, so the session is listed once.
-
-**Fix — `normalizeProjectHash(hash)` (`session.mjs`)**: strips the
-`--claude-worktrees-*` suffix, collapsing a worktree hash back to its parent.
-It is applied **only to the projectHash POSTed to the server** — every write
-site: full sync (`syncSessions`), `watcher.postSessionMeta`,
-`watcher.pushAgentMeta`, `updateSessionStatus`, and `checkStopped`. On-disk
-reads (`findSessionFile`, `getPreview`, `projectHashToPath`, the `_projectDirs`
-cache) keep the **real** worktree hash, so the jsonl is still read from the
+`normalizeProjectHash(hash)` (`session-identity.mjs`) strips the `--claude-worktrees-*` suffix.
+The session index, watcher, Claude runtime adapter and rename use the normalized hash, so the
+session is listed once under its parent project. On-disk reads (`findSessionFile`,
+`projectHashToPath`) keep the **real** worktree hash, so the jsonl is still read from the
 worktree dir.
-
-Net effect: a session that enters a worktree keeps the same SK (parent hash),
-stays a single row under the parent project, and its worktree is treated as an
-implementation detail rather than a separate project. Pre-existing duplicate
-`--claude-worktrees-*` rows from before the fix are stale and must be deleted
-once (they no longer receive updates).
 
 ## REST API
 
@@ -222,58 +170,44 @@ All require `x-api-key` header.
 
 ### Bridge → Server
 
-```
-POST /api/bridge/sync-sessions
-Body: {
-  deviceName: "MacBook-Pro", os: "darwin",
-  sessions: [{ id, project, projectName, lastActive, size, preview, status }]
-}
-
-POST /api/bridge/sync-messages
-Body: {
-  sessionId: "abc123",
-  messages: [{ uuid, type, content, timestamp }]
-}
-```
+Only `/api/version`, `/api/install` (updates) and `/api/notifications/events` (alerts). Files go
+through the account's S3 transfer area `t/<accountId>/<key>`, signed by the Bridge itself
+(`bridge/transfer-store.mjs`, see "File transfer area" in docs/api.md).
 
 ### App → Server
 
 ```
 GET /api/bridge/devices
 → { protocol: 2, devices: [{ deviceName, deviceDisplayName, os, online }], rpc }
-# Home, project and session lists are Bridge RPCs (home / projects / sessions), see docs/api.md.
-
-GET /api/bridge/messages?session=abc&after=<timestamp>&device=D&project=P
-→ { messages: [{ uuid, type, content, timestamp }], status: "running|needs_input|completed" }
+# Home, project and session lists, history, threads and tool details are Bridge RPCs
+# (home / projects / sessions / history / threads / tool_details), see docs/api.md.
 ```
 
 ## WebSocket Protocol
 
-Three participants: App, Server (relay), Bridge. All on persistent WS connections.
+Three participants: App, Server (relay), Bridge. App ⇄ Bridge requests and pushes use the
+direct channel (see docs/api.md); the Bridge's control socket carries heartbeats and routing.
 
 ### Real-time message push
 
 ```
 Bridge detects new message in .jsonl:
-  1. Bridge → WS → API GW → Lambda
-  2. Lambda in parallel:
-     a. Query Subscriptions → post_to_connection → App (priority, latency-sensitive)
-     b. Write DDB BridgeMessages, then ack; write failure falls back to Bridge HTTP upload
-  Bridge maintains one WS connection, no longer writes DDB directly via HTTP POST.
+  Bridge → direct channel → every App connection subscribed to that Session
+  (best effort: no subscriber, no socket or a backlog drops it; the App recovers from a
+   turn seq gap or its next history request)
 ```
 
 ### App subscribe/unsubscribe
 
 ```
-App → Server:  { action: "subscribe", sessionId: "abc" }
-App → Server:  { action: "unsubscribe", sessionId: "abc" }
-Server → App:  { action: "messages", sessionId: "abc", messages: [...] }
+App → Bridge (rpc):  history { sessionId, subscribe: true }  or  subscribe { sessionId }
+App → Bridge (rpc):  unsubscribe { sessionId }
+Bridge → App (push): { action: "messages", sessionId: "abc", messages: [...] }
 ```
 
 ### Heartbeat
 
 ```
-App → Server:  { action: "heartbeat" }
 Bridge → Server:  { action: "heartbeat" }
 Server → Bridge:  { action: "heartbeat", ts: 1789900000, bridgeVersion: "1.0.0-abcdef0" }
 (Bridge: every 4 minutes)
@@ -283,7 +217,7 @@ Server → Bridge:  { action: "heartbeat", ts: 1789900000, bridgeVersion: "1.0.0
 
 ```
 Existing session:
-App → Server → Bridge:  { action: "send_message", sessionId: "abc", text: "...", device: "MacBook-Pro" }
+App → Bridge (rpc):  send_message { sessionId: "abc", text: "...", turnId: "..." }
 Bridge: _pool.send(sessionId) → headless `claude -p --resume <id>` over kept-open stdin (spawns if none)
         → stream_delta/stream_end (preview) + authoritative `messages` rows
 
@@ -302,28 +236,25 @@ The bridge writes one JSON line per message to the session's headless process st
 ### Create project
 
 ```
-App → Server → Bridge:  { action: "create_project", projectPath: "workspace/x", device: "MacBook-Pro" }
-Bridge: mkdir -p → derive projectHash → seed project metadata → return result
-Bridge → Server → App:  { action: "create_project_result", ok: true, projectHash: "...", projectName: "x", projectPath: "workspace/x" }
+App → Bridge (rpc):  create_project { projectPath: "workspace/x" }
+Bridge: mkdir -p → derive projectHash → reply
+Bridge → App:  { ok: true, projectHash: "...", projectName: "x", projectPath: "workspace/x" }
 ```
 
 ### View a project file (click-to-sync)
 
 ```
-App → Server → Bridge:  { action: "request_file", path: "bridge/ws.mjs", sessionId: "abc",
-                          projectHash: "xxx", device: "MacBook-Pro", requestId: "..." }
-Bridge: resolve path (relative → projectHashToPath), stat, dedup by key (LRU 1000), then by type:
-  text  → read ≤5MB (truncate + drop partial last line) → POST /upload-file  (S3 files/{key})
-  image → ≤10MB whole file (else "image too large")     → POST /upload-image (S3 images/{key})
-  video → ≤5GB; ack file_progress, then POST /video-prepare (HEAD dedup) →
-          stream file to presigned PUT URL, direct to S3 (never through Lambda) (S3 videos/{key})
-Bridge → Server → App:  { action: "file_ready", requestId: "...", sessionId: "abc",
-                          key: "<sha>.ext", path: "/abs/path", size: N, truncated: false, image: false }
-App: text  → GET /api/bridge/file/{key}  → detectLang(path) → highlight.js file viewer
-     image → GET /api/bridge/image-url/{key} → signed S3 URL → reuse the image overlay (viewImage)
-     video → GET /api/bridge/video-url/{key} (presigned, no-store, ~50min app cache) → <video> streams from S3
-     (text/image content travels via REST/S3, never over WS — avoids the ~31KB frame budget;
-      video bytes stream browser↔S3 directly, bypassing the Lambda 6MB payload limit)
+App → Bridge (rpc):  project_files { operation: "read", projectHash: "xxx", path: "bridge/ws.mjs" }
+Bridge (bridge/project/files.mjs): resolve inside the project, stat, then by type:
+  text  ≤300KB → the content in the reply's frames
+  text  >300KB → first 1MB (partial last line dropped) → signed PUT to t/<accountId>/<key>
+  image ≤10MB  → transfer.prepareUpload (content-hash key, HEAD dedup) → signed PUT
+  video ≤5GB   → HEAD, then a streamed signed PUT when missing
+Bridge → App:  { ok, key, path, size, truncated, image?, video?, text frames? }
+App: text  → inline frames, or transfer.text(key) (signed GET)
+     image → transfer.fileInfo(key) → signed URL (cached in IndexedDB)
+     video → transfer.url(key) → <video> streams from S3 (Range/seek); re-signed at the
+             current position when playback errors
 ```
 
 ### Slash commands (autocomplete)
@@ -333,7 +264,7 @@ commands with the same descriptions and argument hints. Continuing to type
 filters by prefix; ↑↓ navigates; commands with options open a second-level picker.
 
 ```
-App → Server → Bridge:  { action: "list_commands", projectHash: "xxx", device: "MacBook-Pro", knownRevision: "...", requestId: "cmds_..." }
+App → Bridge (rpc):  list_commands { projectHash: "xxx", runtime, known: "<fingerprint>" }
 Bridge → Claude `-p` control_request `{subtype:"initialize"}` with
          `--no-session-persistence`
 Claude → Bridge: runtime-filtered `commands`, `models`, aliases, descriptions,
@@ -346,9 +277,7 @@ App: cache by device/runtime/project for five minutes; send `list_commands` only
 Bridge: force-refresh that current project for every real request; hash the compact
         frontend DTO into a stable revision; hard-truncate descriptions to 256
         UTF-8 bytes without splitting characters; coalesce concurrent refreshes
-Bridge → REST: upload changed catalog to an account-scoped stable S3 object
-Bridge → Server → App: small `command_catalog_ready`, or `notModified`
-App → REST: fetch the catalog by `catalogRef`
+Bridge → App: the catalog in the rpc reply, or `notModified`
 App: cache content + revision by device/runtime/project; show it immediately, skip
      validation for five minutes, and redraw an open top-level menu only when revision changes
 ```
@@ -382,47 +311,20 @@ full/reduced/filtered classifications.
 ```
 App taps session "abc":
 
-1. Open a request-scoped FetchBarrier
-   WS: { action: "subscribe", sessionId: "abc" }
+1. App → Bridge (rpc): history { sessionId: "abc", subscribe: true }
+   The Bridge subscribes the caller before reading the file, so nothing falls between the
+   page and the pushes, then answers the latest page from the local JSONL.
 
-2. bufferAndFetch(sessionId, '') → REST load from DDB
-   GET /api/bridge/messages?session=abc&device=D&project=P
-   → DDB has cached messages → return instantly (<100ms)
-   → DDB empty → return empty (bridge hasn't synced this session yet)
-   → Session status is read in parallel and returned with the message page
+2. The App merges the page into its cached history (IndexedDB) and renders; a running turn is
+   replayed to the new subscriber from its start.
 
-3. Merge:
-   → mergeFetchWindow(REST, complete no-seq historyBuffer)
-   → mergeLocalHistory(current confirmed history, fetched + delayed strict authority)
-   → preserve REST/WS source order; do not globally sort by timestamp
+3. Subsequent pushes (`messages`, stream events) append in turn/seq order.
 
-4. Resolve running state:
-   → applied WS lifecycle during REST wins
-   → otherwise use response status
-   → message-tail inference only if status is missing
+4. Reconnect or foreground → the same `history` request refreshes the page and renews the
+   subscription.
 
-5. Keyed DOM reconcile → close FetchBarrier → replay strict DOM operations.
-   Track wsLastTimestamp for reconnect recovery.
-
-6. Subsequent complete no-seq WS messages → append to confirmed tail before pending bubbles.
-
-7. WS reconnect → subscribe + recoverMissing():
-   bufferAndFetch(sessionId, wsLastTimestamp)
-   Same FetchBarrier + merge + keyed DOM reconciliation.
-   The returned status replaces the former active-turn state request.
-
-8. App leaves session:
-   WS: { action: "unsubscribe", sessionId: "abc" }
+5. App leaves session → unsubscribe { sessionId: "abc" }
 ```
-
-### Why DDB + WS is better than WS-only
-
-| Scenario | WS only | DDB cache + WS |
-|---|---|---|
-| Open session (bridge syncing for 30min) | Wait for bridge to read & transmit file | **DDB has 30min of cached msgs, instant** |
-| Switch phone / clear cache | Bridge retransmits everything | **DDB instant** |
-| Bridge temporarily offline | Can't load anything | **DDB has cached history** |
-| Real-time new messages | WS push ~100ms | **WS push ~100ms (same)** |
 
 ## Code Structure
 
@@ -431,8 +333,8 @@ baton/
 ├── bridge/
 │   ├── bridge.mjs          # Entry point — startup, orchestration
 │   ├── config.mjs          # CLI args, config loading, server config fetch
-│   ├── http.mjs            # HTTP POST helper
-│   ├── extract.mjs         # Message extraction, image compression, DDB upload
+│   ├── http.mjs            # HTTP POST helper (attachment uploads)
+│   ├── extract.mjs         # Message extraction, image compression + S3 upload
 │   ├── runtime-adapter.mjs # Shared runtime read contract
 │   ├── runtime-registry.mjs # Claude/Codex adapter registry
 │   ├── claude-runtime.mjs  # Claude runtime adapter
@@ -442,15 +344,19 @@ baton/
 │   ├── session.mjs         # Preview, model, project name, session status detection
 │   ├── headless.mjs        # ClaudePool — persistent `claude -p` stream-json process per session
 │   ├── commands.mjs        # Slash-command scan (user/project/plugin/builtin)
-│   ├── sync.mjs            # Initial + periodic session sync
-│   ├── watcher.mjs         # fs.watch → read → WS push
-│   └── ws.mjs              # WebSocket client, send/permission/interrupt, sync_session handler
+│   ├── sync.mjs            # Startup catalog, reportSessions, checkStopped
+│   ├── session-index.mjs   # Home/project/session lists for the direct channel
+│   ├── history-service.mjs # History pages and threads from local JSONL
+│   ├── direct-rpc.mjs      # Direct-channel requests and subscriber pushes
+│   ├── transfer-store.mjs  # Signed S3 requests to the transfer area (Bridge and App)
+│   ├── watcher.mjs         # fs.watch → read → push to subscribers
+│   └── ws.mjs              # Control socket, rpc handlers, send/permission/interrupt
 ├── server/
 │   ├── src/
 │   │   ├── main.py         # FastAPI entry
-│   │   ├── bridge_sync.py  # POST sync-sessions, sync-messages, upload-image, upload-file, video-prepare
-│   │   ├── bridge_read.py  # GET devices/projects/sessions/messages/image/file/video-url
-│   │   └── bridge_ws.py    # WS relay ($connect/$disconnect/$default)
+│   │   ├── bridge_read.py  # devices, delete-device, device-name/validate, install
+│   │   ├── devices.py      # Device rows in SystemTable
+│   │   └── bridge_ws.py    # WS control socket ($connect/$disconnect/$default)
 │   ├── template/Baton.template
 │   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
 ├── web/
@@ -501,6 +407,8 @@ baton/
 ## Phases
 
 ### Phase 1: Bridge → DDB ✅ Complete
+
+> The DynamoDB Session storage was removed in v2; the Bridge's local JSONL is the only source.
 - bridge.mjs watches .jsonl, syncs session metadata + messages to DDB
 - New/resumed sessions detected instantly via fs.watch
 - fs.watch → immediate read → WS push (no debounce, no polling)
@@ -521,8 +429,6 @@ baton/
 - Server WS relay: send_message, permission_reply, interrupt
 - Bridge: `_pool.send` → headless `claude -p --resume` (was tmux findTarget/sendKeys/auto-launch)
 - Viewer: message sending + optimistic rendering + dedup, permission prompt + user interaction, image sending via S3
-- WS reconnect recovery: track wsLastTimestamp → recoverMissing() returns incremental messages plus
-  Session status; no separate active-turn lookup or online inactivity probe
 - Device routing
 - Permission: bridge relays CC's `control_request` → app prompt → `permission_reply` (was client-side scan + capture-pane)
 
@@ -563,5 +469,3 @@ Tauri v2 wraps the web/ static frontend as a native app — zero web code change
 ### Phase 3: Production Polish (Future)
 - Improve native Windows process/status precision
 - Push notifications
-- Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
-- Continue monitoring the existing 90-day message-cache TTL

@@ -53,6 +53,7 @@ for (const fails of [false, true]) {
         }));
         window.__apiReady = Promise.resolve();
         window.api = async path => { const r = await window.fetch(new URL(path, window.location.href).href); if (r && r.ok === false) throw new Error(String(r.status)); return r && r.json ? r.json() : r; };
+        window.bridgeHome = (p) => window.api('/api/bridge/active-sessions', p); window.bridgeDevices = () => window.api('/api/bridge/devices'); window.bridgeList = (m, p) => window.api('/api/bridge/' + (m === 'threads' ? 'session-threads' : m), p); window.bridgeHistory = (p, o) => window.api('/api/bridge/messages', p, o);
         window.fetch = url => url.includes('active-sessions') ? active : devices;
       },
     });

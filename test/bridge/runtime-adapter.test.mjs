@@ -5,12 +5,10 @@ import path from 'path';
 import test from 'node:test';
 import { claudeRuntime } from '../../bridge/claude-runtime.mjs';
 import { codexRuntime } from '../../bridge/codex-runtime.mjs';
-import { decodeSyncedState } from '../../bridge/extract.mjs';
 import { scanJsonlLines } from '../../bridge/jsonl.mjs';
 import { defineInteractionAdapter } from '../../bridge/interaction-adapter.mjs';
 import { defineRuntimeAdapter } from '../../bridge/runtime-adapter.mjs';
 import {
-  detectRegisteredRuntimeCapabilities,
   getRuntimeAdapter,
   runtimeAdapters,
 } from '../../bridge/runtime-registry.mjs';
@@ -98,30 +96,6 @@ test('interaction adapters expose the reusable existing-session contract', () =>
   );
 });
 
-test('Codex permission status refresh preserves needs_input detail without a counter delta', async () => {
-  let request;
-  const statuses = new Map([[
-    `codex:${CODEX_SESSION_ID}`,
-    'needs_input',
-  ]]);
-
-  await codexRuntime.updateSessionStatus(
-    { deviceName: 'test-ec2-ap' },
-    CODEX_SESSION_ID,
-    CODEX_FIXTURE,
-    '-tmp-baton-codex-target',
-    'needs_input',
-    'Allow network access?',
-    {
-      lastKnownStatus: statuses,
-      postFn: async (_url, body) => { request = body; },
-    },
-  );
-
-  assert.equal(request.sessions[0].status, 'needs_input');
-  assert.equal(request.sessions[0].agentDetail, 'Allow network access?');
-});
-
 test('Codex stopped polling updates the original project after its worktree disappears', () => {
   const oldProject = '-home-ec2-user-workspace-video-video-capability';
   const result = codexRuntime.inspectActiveSession({
@@ -137,34 +111,6 @@ test('Codex stopped polling updates the original project after its worktree disa
 
   assert.equal(result.session.project, oldProject);
   assert.equal(result.session.status, 'completed');
-});
-
-test('capability detection is dispatched through runtime adapters', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-capabilities-'));
-  const claudeProjects = path.join(root, 'claude-projects');
-  const codexHome = path.join(root, 'codex');
-  fs.mkdirSync(claudeProjects);
-  fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
-  try {
-    const capabilities = detectRegisteredRuntimeCapabilities({
-      claude: {
-        claudeProjects,
-        claudeBin: '/fake/claude',
-        skipVersions: true,
-      },
-      codex: {
-        codexHomes: [codexHome],
-        codexBin: '/fake/codex',
-        skipVersions: true,
-      },
-    });
-    assert.equal(capabilities.claude.canCreate, true);
-    assert.equal(capabilities.codex.canRead, true);
-    assert.equal(capabilities.codex.canSend, true);
-    assert.equal(capabilities.codex.canCreate, true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('Codex binary resolution finds an NVM sibling of the running Node executable', () => {
@@ -290,50 +236,4 @@ test('chunked JSONL scan preserves UTF-8, CRLF, and line numbering', () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-test('Claude adapter commits its watermark only after upload succeeds', async () => {
-  const { root, filePath } = claudeFixture();
-  const watermarks = new Map();
-  const session = {
-    nativeSessionId: 'session',
-    _filePath: filePath,
-  };
-  try {
-    await assert.rejects(
-      claudeRuntime.syncInitialMessages(session, {
-        storageSessionId: 'session',
-        watermarks,
-        uploader: async () => { throw new Error('upload failed'); },
-      }),
-      /upload failed/,
-    );
-    assert.equal(watermarks.has('session'), false);
-
-    let uploaded = 0;
-    const result = await claudeRuntime.syncInitialMessages(session, {
-      storageSessionId: 'session',
-      watermarks,
-      uploader: async (_sessionId, messages) => { uploaded += messages.length; },
-    });
-    assert.equal(uploaded, 2);
-    assert.equal(result.messages.length, 2);
-    assert.equal(watermarks.get('session'), 2);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('legacy watermark migration replays one Claude line but preserves v2 values', () => {
-  assert.deepEqual(
-    Object.fromEntries(decodeSyncedState({ claude: 10, 'codex:thread': 20 })),
-    { claude: 9, 'codex:thread': 20 },
-  );
-  assert.deepEqual(
-    Object.fromEntries(decodeSyncedState({
-      version: 2,
-      watermarks: { claude: 10, 'codex:thread': 20 },
-    })),
-    { claude: 10, 'codex:thread': 20 },
-  );
 });

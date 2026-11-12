@@ -14,12 +14,3 @@ const adaptersByRuntime = new Map(
 export function getRuntimeAdapter(runtime) {
   return adaptersByRuntime.get(normalizeRuntime(runtime)) || claudeRuntime;
 }
-
-export function detectRegisteredRuntimeCapabilities(runtimeOptions = {}) {
-  return Object.fromEntries(
-    runtimeAdapters.map((adapter) => [
-      adapter.runtime,
-      adapter.detectCapability(runtimeOptions[adapter.runtime] || {}),
-    ]),
-  );
-}

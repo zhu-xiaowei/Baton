@@ -45,10 +45,9 @@ dependency set.
    `action: 'rename_session'`. The shared `components/modal-viewport.js` helper
    centers form/confirmation dialogs above the keyboard, outside the transformed
    page, and releases viewport listeners when they close.
-3. `server/src/bridge_ws.py` → `server/src/project/session_ws.py`: validates the
-   request and routes it only to the selected device's Bridge. Responses must
-   target an app connection in the same account. Other app connections receive a
-   `session_title_changed` notification after native success.
+3. The request goes to the selected device's Bridge over the direct channel
+   (`rename_session`). After native success the Bridge pushes
+   `session_title_changed` to the Session's root subscribers.
 4. `bridge/ws.mjs` → `bridge/session-rename.mjs`: validates the native UUID, title,
    local session file and project ownership, then invokes the official operation.
    Claude calls `ClaudePool.renameSession()` in `bridge/headless.mjs`; Codex
@@ -56,19 +55,14 @@ dependency set.
    and falls back to an isolated stdio client using that same `CODEX_HOME`.
    No `thread/resume`, `turn/start`, writer takeover, or hand-written native
    metadata mutation is used by the rename implementation.
-5. `POST /api/bridge/session-title` in `server/src/bridge_sync.py`: patches only
-   `preview` on the existing device/project/session row. It does not recreate
-   deleted sessions, update activity timestamps, or overwrite running status.
-6. The response updates the visible title and saved navigation, invalidates the
+5. The response updates the visible title and saved navigation, invalidates the
    session-list/home caches, and updates thread metadata. A short-lived title
    guard prevents older Claude title messages from undoing the acknowledged name
    while the native history watcher catches up. Existing watchers continue to
    read Claude custom titles and the Codex native title index.
 
 Names are limited to 200 characters and a single line. Native failure leaves the
-current title unchanged. If native rename succeeds but the cloud metadata update
-fails, the dialog explicitly reports partial success and permits retrying Save;
-it does not claim synchronization succeeded or roll back the native name.
+current title unchanged.
 
 The native persisted name is synchronized. An already-open native TUI may need
 to refresh/reopen its session picker to display externally changed metadata;
@@ -78,7 +72,6 @@ instant repaint of every native client is not assumed.
 
 ```sh
 node --test test/bridge/session-rename.test.mjs test/codex/phase3/app-server.test.mjs
-python3 -m pytest test/server/test_session_rename.py -q
 BATON_TEST_NATIVE_RENAME=1 node --test test/frontend/session-toolbar.test.mjs
 npm run build
 ```
@@ -91,17 +84,13 @@ reader, plus a fresh Codex app-server client and Codex's history scanner. Tempor
 processes are cleaned up. Existing personal sessions are not renamed, and no
 model turn is started.
 
-AWS transport and the catalog POST are stubbed in this local UI/native test;
-server routing, account/device isolation and the conditional preview-only update
-are covered separately with local server tests. This is not a deployed AWS
+AWS transport is stubbed in this local UI/native test. This is not a deployed AWS
 end-to-end verification or a manual native-TUI repaint test.
 
-Existing-session verification also confirmed native metadata, local history
-readers and both real server list/detail endpoints agreed after rename and after
+Existing-session verification also confirmed native metadata and local history
+readers agreed after rename and after
 restoring the original display names. Conversation-record hashes were unchanged.
 This does not verify immediate repaint of an already-open native terminal.
 
-To use the new edit-button/RPC feature outside these tests, release the frontend,
-Bridge, HTTP server and WebSocket Lambda together. The WebSocket
-module lives under the already-packaged `project/` directory. No table migration
-or new WebSocket IAM permissions are required.
+To use the edit-button/RPC feature outside these tests, release the frontend and
+Bridge together; the server takes no part in renaming.

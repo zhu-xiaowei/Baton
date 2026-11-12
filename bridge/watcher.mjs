@@ -1,23 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
-import { post, postRequired } from './http.mjs';
 import {
   synced,
   extractForApp,
   isClaudeLocalCommandCaveat,
   normalizeClaudeQueuedInput,
   nativeOrderKey,
-  uploadMessages,
 } from './extract.mjs';
-import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import {
   clearClaudeInterruptTurn,
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
-import { recentSessions, lastKnownStatus } from './sync.mjs';
+import { recentSessions, lastKnownStatus, reportSessions } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
 import {
@@ -26,6 +23,7 @@ import {
   backgroundAgentsLeft,
   heldForAgents,
   poolOwns,
+  publishMessages,
 } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
@@ -38,15 +36,9 @@ import {
   readClaudeSubagentMeta,
   claudeTaskEvent,
 } from './claude-subagent.mjs';
-import {
-  activitySyncDue,
-  markActivitySynced,
-} from './session-activity.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
-const _lastActivitySyncAt = new Map();
-const _firstSyncs = new Map(); // sessionId → line an interrupted first sync resumes from
-// Preserve child changes that arrive while the first parent POST is in flight.
+// Roots whose children changed before the root itself was reported.
 const _subagentParents = new Map();
 const CLAUDE_INTERRUPT_TEXTS = new Set([
   '[Request interrupted by user]',
@@ -64,7 +56,8 @@ function enqueueEndedSubagent(row, rootSessionId, subagentsDir, enqueue) {
   if (status && status !== 'completed') enqueue(path.join(subagentsDir, `${agentId}.jsonl`), childId);
 }
 
-export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
+// Rows of a Baton-driven turn already reached the App from the live stream.
+export function claudeRowPushedLive(runtimeOwned, route) {
   return !!runtimeOwned || !!route?.pushed || !!route?.runtimeOwned;
 }
 
@@ -138,18 +131,9 @@ export function preferPendingInteraction(status, detail) {
     : { status: 'needs_input', detail };
 }
 
-export function createClaudeFileQueue(config, readFile = readAndSend, retryMs = 1000) {
+export function createClaudeFileQueue(config, readFile = readAndSend) {
   const busy = new Map();
-  const retries = new Map();
-  const failures = new Map();
   function enqueue(filename, sessionId) {
-    // A scheduled retry reads to EOF anyway; file events must not bypass its backoff,
-    // but the transcript may have moved (worktree), so the retry reads the latest path.
-    const retry = retries.get(sessionId);
-    if (retry) {
-      retry.filename = filename;
-      return;
-    }
     const existing = busy.get(sessionId);
     if (existing) {
       existing.pending = true;
@@ -157,36 +141,21 @@ export function createClaudeFileQueue(config, readFile = readAndSend, retryMs = 
     }
     const state = { pending: false };
     busy.set(sessionId, state);
-    state.promise = processClaudeLoop(
-      config, busy, retries, failures, filename, sessionId, readFile, enqueue, retryMs,
-    );
+    state.promise = (async () => {
+      try {
+        do {
+          state.pending = false;
+          await readFile(config, filename, sessionId, enqueue);
+        } while (state.pending);
+      } catch (error) {
+        // The next change to the file reads from the same line again.
+        console.error(`[watcher] Claude ${sessionId.slice(0, 8)}: ${error.message}`);
+      }
+      busy.delete(sessionId);
+    })();
     return state.promise;
   }
   return enqueue;
-}
-
-async function processClaudeLoop(config, busy, retries, failures, filename, sessionId, readFile, enqueue, retryMs) {
-  const state = busy.get(sessionId);
-  try {
-    do {
-      state.pending = false;
-      await readFile(config, filename, sessionId, enqueue);
-    } while (state.pending);
-    failures.delete(sessionId);
-  } catch (error) {
-    console.error(`[watcher] Claude ${sessionId.slice(0, 8)}: ${error.message}`);
-    const failed = failures.get(sessionId) || 0;
-    failures.set(sessionId, failed + 1);
-    const delay = Math.min(retryMs * 2 ** failed, 60_000) * (0.5 + Math.random() / 2);
-    const retry = { filename };
-    retry.timer = setTimeout(() => {
-      retries.delete(sessionId);
-      enqueue(retry.filename, sessionId);
-    }, delay);
-    retry.timer.unref();
-    retries.set(sessionId, retry);
-  }
-  busy.delete(sessionId);
 }
 
 function pollProjects(enqueue, mtimes) {
@@ -272,11 +241,9 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-  const resumeAt = _firstSyncs.get(sessionId);
-  const lastLine = resumeAt ?? (recentSessions.has(sessionId) ? (synced.get(sessionId) ?? 0) : 0);
+  const lastLine = recentSessions.has(sessionId) ? (synced.get(sessionId) ?? 0) : 0;
   const parentUpdate = _subagentParents.get(sessionId) || 0;
-  if (lines.length <= lastLine && recentSessions.has(sessionId) && !parentUpdate
-    && resumeAt === undefined) return;
+  if (lines.length <= lastLine && recentSessions.has(sessionId) && !parentUpdate) return;
 
   const metadata = getSessionMetadata(filePath, { includeFirstPromptLine: true });
   if (!metadata.preview && _subagentParents.has(sessionId)) metadata.preview = 'New session';
@@ -287,15 +254,10 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   }
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
-  let gotActivity = false;
   let lastStatus = null; // track status from parsed entries directly
-  const firstSync = lastLine === 0 || resumeAt !== undefined;
-  // A failed pass resumes from here. A first sync keeps it in memory only: a persisted
-  // partial watermark would make the next startup skip the rest of the history.
-  const progress = firstSync ? _firstSyncs : synced;
 
   for (let i = lastLine; i < lines.length; i++) {
-    progress.set(sessionId, i);
+    synced.set(sessionId, i);
     if (!lines[i].trim()) { lastParsedLine = i + 1; continue; }
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
@@ -322,39 +284,28 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     msg.orderKey = nativeOrderKey(i);
     msg = correlateClaudeInterruptMessage(sessionId, msg);
 
-    // A managed headless turn is the sole realtime source. Its JSONL copy only
-    // persists; terminal/VS Code rows have no runtime ownership and still broadcast.
+    // A managed headless turn is the sole realtime source; terminal/VS Code rows have no
+    // runtime ownership and are pushed from here.
     const route = headlessRoute(msg.uuid);
-    if (shouldPersistClaudeJsonlMessage(poolOwns(sessionId), route)) {
-      await uploadMessages(sessionId, [msg]);
-      gotActivity = true;
+    if (claudeRowPushedLive(poolOwns(sessionId), route)) {
       clearLiveMessage('claude', msg.uuid);
       if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
       continue;
     }
-    await deliverRealtimeMessages(sessionId, [msg]);
-    gotActivity = true;
+    publishMessages(sessionId, [msg]);
     if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
-  progress.set(sessionId, lastParsedLine);
-  if (firstSync) await uploadMessages(sessionId, [], { historyComplete: true });
-
-  const forceActivity = !!parentUpdate
-    || (gotActivity && activitySyncDue(_lastActivitySyncAt, sessionId));
-  // Sync metadata on lifecycle/title changes, plus throttled message activity.
+  synced.set(sessionId, lastParsedLine);
+  // Report on lifecycle and title changes.
   if (!recentSessions.has(sessionId) || parentUpdate
-    || (lastParsedLine > lastLine && (lastStatus || gotNewTitle || forceActivity))) {
+    || (lastParsedLine > lastLine && (lastStatus || gotNewTitle))) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
     const poolOwned = poolOwns(sessionId);
-    if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
-      synced.set(sessionId, lastParsedLine);
-      _firstSyncs.delete(sessionId);
-      return;
-    }
-    // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
+    if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !parentUpdate) return;
+    // Agent identity is permanent — never downgrade it.
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
@@ -375,31 +326,26 @@ async function readAndSend(config, filename, sessionId, enqueue) {
       agentMeta,
       gotNewTitle,
       effective.detail,
-      forceActivity,
+      !!parentUpdate,
       metadata,
     );
   }
-  synced.set(sessionId, lastParsedLine);
-  _firstSyncs.delete(sessionId);
   if (_subagentParents.get(sessionId) === parentUpdate) _subagentParents.delete(sessionId);
 }
 
 async function readAndSendSubagent(config, filename, filePath, sessionId, enqueue) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
   if (lines.at(-1) === '') lines.pop();
-  const resumeAt = _firstSyncs.get(sessionId);
-  const lastLine = resumeAt ?? synced.get(sessionId) ?? 0;
+  const lastLine = synced.get(sessionId) ?? 0;
   const meta = readClaudeSubagentMeta(filePath);
-  if (!lines.length || (lines.length <= lastLine && resumeAt === undefined
+  if (!lines.length || (lines.length <= lastLine
     && (lastKnownStatus.get(sessionId) === 'completed'
       || (meta.finished !== true && !claudeSubagentEnded(filePath, meta))))) return;
   const rootId = parseClaudeSubagentSessionId(sessionId)?.parentSessionId;
   let lastParsedLine = lastLine;
   let lastStatus = null;
-  const firstSync = lastLine === 0 || resumeAt !== undefined;
-  const progress = firstSync ? _firstSyncs : synced;
   for (let i = lastLine; i < lines.length; i++) {
-    progress.set(sessionId, i);
+    synced.set(sessionId, i);
     if (!lines[i].trim()) {
       lastParsedLine = i + 1;
       continue;
@@ -415,12 +361,9 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
     const message = await extractForApp(raw);
     if (!message.uuid) continue;
     message.orderKey = nativeOrderKey(i);
-    await deliverRealtimeMessages(sessionId, [message]);
+    publishMessages(sessionId, [message]);
   }
-  progress.set(sessionId, lastParsedLine);
-  if (firstSync) await uploadMessages(sessionId, [], { historyComplete: true });
   synced.set(sessionId, lastParsedLine);
-  _firstSyncs.delete(sessionId);
 
   const parts = String(filename).split(path.sep);
   const subagentIndex = parts.indexOf('subagents');
@@ -455,22 +398,16 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
     canSend: false,
   };
   const agentCountUpdates = trackAgentSession(sessionMeta);
-  // Use the parent's own queue for metadata, retries, and status precedence.
+  // Use the parent's own queue for metadata and status precedence.
   if (!recentSessions.has(rootSessionId) && fs.existsSync(parentFile)) {
     _subagentParents.set(rootSessionId, (_subagentParents.get(rootSessionId) || 0) + 1);
     enqueue(parentFilename, rootSessionId);
   }
-  await postRequired('/api/bridge/sync-sessions', {
-    deviceName: config.deviceName,
-    os: process.platform,
-    sessions: [sessionMeta],
-    ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-  });
-  lastKnownStatus.set(sessionId, status);
+  reportSessions(config, [sessionMeta], { agentCountUpdates });
   recentSessions.add(sessionId);
 }
 
-// Post session metadata + counter delta when status changed, is new, or title arrived.
+// Report session metadata when status changed, is new, or title arrived.
 async function postSessionMeta(
   config,
   filePath,
@@ -480,7 +417,7 @@ async function postSessionMeta(
   dm,
   gotNewTitle,
   interactionDetail = null,
-  forceActivity = false,
+  force = false,
   metadata = getSessionMetadata(filePath),
 ) {
   const oldStatus = lastKnownStatus.get(sessionId);
@@ -495,7 +432,7 @@ async function postSessionMeta(
   const held = newStatus === 'completed' && (statusChanged || !!heldForAgents.get(sessionId))
     && await backgroundAgentsLeft(sessionId);
   const heldChanged = held !== (heldForAgents.get(sessionId) || false);
-  if (!(statusChanged || isNew || gotNewTitle || forceActivity || heldChanged)) return;
+  if (!(statusChanged || isNew || gotNewTitle || force || heldChanged)) return;
 
   const stat = fs.statSync(filePath);
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
@@ -517,20 +454,14 @@ async function postSessionMeta(
   if (newStatus === 'needs_input' && interactionDetail !== null) {
     sessionMeta.agentDetail = interactionDetail;
   }
-  // A turn started outside Baton: let the server skip the alert if the user is at the computer.
+  // A turn started outside Baton: the notifier skips the alert if the user is at the computer.
   if (oldStatus === 'running' && newStatus !== 'running' && !dm && !batonSessions.has(sessionId)) {
     sessionMeta.localIdleSec = await localIdleSec();
   }
   if (held) sessionMeta.backgroundAgents = true;
   trackAgentSession(sessionMeta);
-  await postRequired('/api/bridge/sync-sessions', {
-    deviceName: config.deviceName,
-    os: process.platform,
-    sessions: [sessionMeta],
-  }, { signal: AbortSignal.timeout(5000) });
-  lastKnownStatus.set(sessionId, newStatus);
+  reportSessions(config, [sessionMeta]);
   heldForAgents.set(sessionId, held);
-  markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
   exposeKnownClaudeSession(filePath, sessionId);
 }
@@ -542,9 +473,7 @@ const _jobsState = new Map(); // sessionId → { agentName, agentDetail, status 
 // instead — the daemon-live source — and push any agent whose state changed.
 export function startJobsWatcher(config) {
   if (!fs.existsSync(CLAUDE_JOBS)) return;
-  // No seed: the first poll pushes every agent once, so DDB gets correct agent
-  // flags/state even for sessions the initial full sync didn't cover (it only
-  // syncs running/idle + recent 24h, missing older blocked/working agents).
+  // No seed: the first poll reports every agent once.
   pollAgentStates(config);
   setInterval(() => pollAgentStates(config), AGENTS_POLL_INTERVAL_MS);
 }
@@ -578,8 +507,7 @@ export async function pollAgentStates(config, options = {}) {
     if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.status === e.status && old.preview === preview) continue;
     try {
       await pushMeta(config, sid, e, filePath, preview, metadata.model);
-      // Commit the dedupe snapshot only after the Server accepted the update.
-      // A transient POST failure must be retried on the next 8-second poll.
+      // A file that vanished mid-report is retried on the next poll.
       _jobsState.set(sid, { ...e, preview });
     } catch (error) {
       console.error(`[watcher] Agent ${sid.slice(0, 8)}: ${error.message}`);
@@ -587,7 +515,7 @@ export async function pollAgentStates(config, options = {}) {
   }
 }
 
-async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
+function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
   const sessionMeta = {
@@ -604,12 +532,7 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
     agentDetail: e.agentDetail,
   };
   trackAgentSession(sessionMeta);
-  await postRequired('/api/bridge/sync-sessions', {
-    deviceName: config.deviceName,
-    os: process.platform,
-    sessions: [sessionMeta],
-  });
-  lastKnownStatus.set(sessionId, e.status);
+  reportSessions(config, [sessionMeta]);
 }
 
 export const claudeWatcherAdapter = defineRuntimeWatcher({

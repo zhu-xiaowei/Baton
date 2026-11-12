@@ -7,7 +7,7 @@ import {
   CODEX_STATUS_STALE_MS,
   CODEX_WATCH_RESCAN_MS,
 } from './config.mjs';
-import { syncCodexMessages } from './codex-extract.mjs';
+import { extractCodexMessages } from './codex-extract.mjs';
 import {
   CODEX_SESSION_INDEX,
   codexSessionIdFromPath,
@@ -16,26 +16,20 @@ import {
   scanCodexRollout,
 } from './codex-session.mjs';
 import { codexLiveSource } from './codex-live.mjs';
-import { countJsonlLines, synced, uploadMessages } from './extract.mjs';
-import { postRequired } from './http.mjs';
+import { countJsonlLines, synced } from './extract.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
 import {
   clearLiveMessage,
   liveMessageRoute,
 } from './live-message-registry.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
-import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
-import { lastKnownStatus, recentSessions } from './sync.mjs';
+import { lastKnownStatus, recentSessions, reportSessions } from './sync.mjs';
+import { publishMessages } from './ws.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
-import {
-  SESSION_ACTIVITY_SYNC_INTERVAL_MS,
-  activitySyncDue,
-  markActivitySynced,
-} from './session-activity.mjs';
 
 function walkJsonl(root) {
   const files = [];
@@ -104,17 +98,11 @@ export class CodexWatcher {
     this.initialIds = new Set((options.initialSessions || [])
       .filter((session) => session.runtime === 'codex')
       .map((session) => session.nativeSessionId || session.id));
-    this.initialCatchupIds = new Set((options.initialSessions || [])
-      .filter((session) => session.runtime === 'codex')
-      .filter((session) => session.status !== 'completed'
-        || Date.parse(session.lastActive) >= Date.now() - 86400_000)
-      .map((session) => session.nativeSessionId || session.id));
     this.watermarks = options.watermarks || synced;
     this.recent = options.recentSessions || recentSessions;
     this.statuses = options.lastKnownStatus || lastKnownStatus;
-    this.postFn = options.postFn || postRequired;
-    this.deliverFn = options.deliverFn || deliverRealtimeMessages;
-    this.uploadFn = options.uploadFn || uploadMessages;
+    this.reportFn = options.reportFn || reportSessions;
+    this.publishFn = options.publishFn || publishMessages;
     this.scanRollout = options.scanRollout || scanCodexRollout;
     this.runningInfoFn = options.runningInfoFn || getCodexRunningInfo;
     this.subscribeFn = options.subscribeFn
@@ -124,7 +112,6 @@ export class CodexWatcher {
     this.recentFileWatchLimit = options.recentFileWatchLimit
       ?? CODEX_RECENT_FILE_WATCH_LIMIT;
     this.rescanMs = options.rescanMs ?? CODEX_WATCH_RESCAN_MS;
-    this.retryMs = options.retryMs || 1000;
     this.watchRetryMs = options.watchRetryMs || 2000;
     this.statusRecheckMs = options.statusRecheckMs || CODEX_STATUS_RECHECK_MS;
     this.runtimeOwnsFn = options.runtimeOwnsFn
@@ -132,7 +119,6 @@ export class CodexWatcher {
     this.fileStats = new Map();
     this.sessionPaths = new Map();
     this.busy = new Map();
-    this.retryTimers = new Map();
     this.watchRetryTimers = new Map();
     this.statusTimers = new Map();
     this.watchHandles = new Map();
@@ -142,9 +128,6 @@ export class CodexWatcher {
     this.threadNameWatchRetryTimers = new Map();
     this.desiredFileWatchers = new Set();
     this.fileWatchRetryTimers = new Map();
-    this.lastActivitySyncAt = options.lastActivitySyncAt || new Map();
-    this.activitySyncIntervalMs = options.activitySyncIntervalMs
-      ?? SESSION_ACTIVITY_SYNC_INTERVAL_MS;
     this.metadataSignatures = new Map((options.initialSessions || [])
       .filter((session) => session.runtime === 'codex')
       .map((session) => [
@@ -201,7 +184,6 @@ export class CodexWatcher {
   stop() {
     this.stopped = true;
     for (const timer of this.timers) clearInterval(timer);
-    for (const timer of this.retryTimers.values()) clearTimeout(timer);
     for (const timer of this.watchRetryTimers.values()) clearTimeout(timer);
     for (const timer of this.fileWatchRetryTimers.values()) clearTimeout(timer);
     for (const timer of this.threadNameWatchRetryTimers.values()) clearTimeout(timer);
@@ -210,7 +192,6 @@ export class CodexWatcher {
     for (const filePath of this.fileWatchers.keys()) this.closeFileWatcher(filePath);
     for (const home of this.threadNameWatchers.keys()) this.closeThreadNameWatcher(home);
     this.timers = [];
-    this.retryTimers.clear();
     this.watchRetryTimers.clear();
     this.fileWatchRetryTimers.clear();
     this.threadNameWatchRetryTimers.clear();
@@ -219,7 +200,6 @@ export class CodexWatcher {
     this.fileWatchers.clear();
     this.threadNameWatchers.clear();
     this.desiredFileWatchers.clear();
-    this.lastActivitySyncAt.clear();
   }
 
   async ensureWatchers() {
@@ -424,9 +404,6 @@ export class CodexWatcher {
         if (!nativeSessionId) continue;
         if (options.initial && this.initialIds.has(nativeSessionId)) {
           const key = storageSessionId('codex', nativeSessionId);
-          if (!this.watermarks.has(key) && !this.initialCatchupIds.has(nativeSessionId)) {
-            continue;
-          }
           if (this.watermarks.has(key) && countJsonlLines(filePath) <= this.watermarks.get(key)) {
             continue;
           }
@@ -636,10 +613,9 @@ export class CodexWatcher {
         try {
           const result = await this.processFile(currentPath, { forceStatus, forceMetadata });
           state.pending ||= result.fileChanged;
-          this.clearRetry(nativeSessionId);
         } catch (error) {
+          // The next change to the rollout reads from the same line again.
           console.error(`[watcher] Codex ${nativeSessionId.slice(-8)}: ${error.message}`);
-          this.scheduleRetry(nativeSessionId, currentPath);
           break;
         }
       } while (state.pending);
@@ -674,7 +650,7 @@ export class CodexWatcher {
       }
     }
     if (this.threadKinds.get(sessionId) === 'internal') {
-      // Advance the watermark without persisting internal reviewer transcripts.
+      // Advance the watermark without pushing internal reviewer transcripts.
       this.watermarks.set(sessionId, countJsonlLines(filePath));
       let fileChanged = false;
       try {
@@ -684,49 +660,22 @@ export class CodexWatcher {
       } catch {}
       return { messages: [], fileChanged };
     }
-    const extracted = await syncCodexMessages(filePath, nativeSessionId, sessionId, {
-      watermarks: this.watermarks,
-      uploader: async (id, messages, identity) => {
-        const historyComplete = identity.historyComplete;
-        identity = { ...identity, historyComplete: false };
-        const persistedOnly = [];
-        const realtime = [];
-        const runtimeOwned = this.runtimeOwnsFn(nativeSessionId);
-        for (const message of messages) {
-          const liveKey = codexLiveSource(message);
-          const route = runtimeOwned
-            ? null
-            : liveMessageRoute('codex', liveKey);
-          if (runtimeOwned) {
-            persistedOnly.push(message);
-            continue;
-          }
-          if (route?.pushed || route?.runtimeOwned) {
-            persistedOnly.push(message);
-            continue;
-          }
-          realtime.push(message);
-        }
-        if (persistedOnly.length) {
-          await this.uploadFn(id, persistedOnly, identity);
-        }
-        if (realtime.length) await this.deliverFn(id, realtime, identity);
-        if (historyComplete) await this.uploadFn(id, [], { ...identity, historyComplete: true });
-      },
+    const extracted = extractCodexMessages(filePath, nativeSessionId, {
+      startLine: this.watermarks.get(sessionId) ?? 0,
     });
+    // Rows the live turn already pushed, or a turn Baton drives, are not pushed again.
+    const runtimeOwned = this.runtimeOwnsFn(nativeSessionId);
+    const fresh = runtimeOwned ? [] : extracted.messages.filter((message) => {
+      const route = liveMessageRoute('codex', codexLiveSource(message));
+      return !route?.pushed && !route?.runtimeOwned;
+    });
+    if (fresh.length) this.publishFn(sessionId, fresh);
+    this.watermarks.set(sessionId, extracted.nextLine);
     for (const liveKey of extracted.releaseOwnershipKeys || []) {
       clearLiveMessage('codex', liveKey);
     }
 
-    const forceActivity = extracted.messages.length > 0
-      && activitySyncDue(
-        this.lastActivitySyncAt,
-        sessionId,
-        Date.now(),
-        this.activitySyncIntervalMs,
-      );
-    const needsSessionScan = forceActivity
-      || options.forceStatus
+    const needsSessionScan = options.forceStatus
       || options.forceMetadata
       || extracted.needsSessionScan
       || !this.metadataSignatures.has(sessionId);
@@ -738,7 +687,7 @@ export class CodexWatcher {
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
       }).session;
       if (session) {
-        await this.syncMetadata(session, { forceActivity });
+        await this.syncMetadata(session);
         this.scheduleStatusRecheck(session, filePath);
       }
     } else if (this.statuses.get(sessionId) === 'running') {
@@ -754,14 +703,14 @@ export class CodexWatcher {
     return { ...extracted, fileChanged };
   }
 
-  async syncMetadata(session, options = {}) {
+  async syncMetadata(session) {
     const sessionId = storageSessionId('codex', session.nativeSessionId);
     const previousStatus = this.statuses.get(sessionId);
     const isNew = !this.recent.has(sessionId);
     const signature = metadataSignature(session);
     const metadataChanged = this.metadataSignatures.get(sessionId) !== signature;
     const statusChanged = previousStatus !== session.status;
-    if (!options.forceActivity && !isNew && !metadataChanged && !statusChanged) return;
+    if (!isNew && !metadataChanged && !statusChanged) return;
 
     const agentCountUpdates = trackAgentSession(session);
     const { _filePath, _lineCount, ...publicSession } = session;
@@ -769,35 +718,11 @@ export class CodexWatcher {
       && !session.parentSessionId && !batonSessions.has(session.nativeSessionId)) {
       publicSession.localIdleSec = await localIdleSec();
     }
-    await this.postFn('/api/bridge/sync-sessions', {
-      deviceName: this.config.deviceName,
-      os: process.platform,
-      sessions: [publicSession],
-      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-    });
-
-    markActivitySynced(this.lastActivitySyncAt, sessionId);
-    this.statuses.set(sessionId, session.status);
+    this.reportFn(this.config, [publicSession], { agentCountUpdates });
     this.recent.add(sessionId);
     this.metadataSignatures.set(sessionId, signature);
     this.threadKinds.set(sessionId, session.threadKind || 'main');
     if (isNew || metadataChanged || statusChanged) this.refreshFileWatchers();
-  }
-
-  scheduleRetry(nativeSessionId, filePath) {
-    if (this.retryTimers.has(nativeSessionId)) return;
-    const timer = setTimeout(() => {
-      this.retryTimers.delete(nativeSessionId);
-      this.queueFile(filePath);
-    }, this.retryMs);
-    timer.unref();
-    this.retryTimers.set(nativeSessionId, timer);
-  }
-
-  clearRetry(nativeSessionId) {
-    const timer = this.retryTimers.get(nativeSessionId);
-    if (timer) clearTimeout(timer);
-    this.retryTimers.delete(nativeSessionId);
   }
 
   scheduleStatusRecheck(session, filePath) {

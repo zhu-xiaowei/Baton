@@ -188,7 +188,14 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
-  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type"],"MaxAgeSeconds":3600}]}'
+  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type","x-amz-checksum-sha256","x-amz-meta-filename","x-amz-meta-content-type"],"MaxAgeSeconds":3600}]}'
+# t/<account>/ is a transfer channel, emptied after 7 days; the pre-v2 file prefixes empty out once.
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" --lifecycle-configuration \
+  '{"Rules":[{"ID":"transfer","Status":"Enabled","Filter":{"Prefix":"t/"},"Expiration":{"Days":7}},
+    {"ID":"images","Status":"Enabled","Filter":{"Prefix":"images/"},"Expiration":{"Days":1}},
+    {"ID":"files","Status":"Enabled","Filter":{"Prefix":"files/"},"Expiration":{"Days":1}},
+    {"ID":"videos","Status":"Enabled","Filter":{"Prefix":"videos/"},"Expiration":{"Days":1}},
+    {"ID":"attachments","Status":"Enabled","Filter":{"Prefix":"attachments/"},"Expiration":{"Days":1}}]}'
 UPLOAD_ACCELERATION=false
 if [ "${S3_UPLOAD_ACCELERATE:-true}" = "true" ]; then
   echo "Enabling S3 upload acceleration (AWS transfer acceleration charges may apply)..."
@@ -229,7 +236,7 @@ cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
 cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" \
   "$ROOT_DIR/bridge/preview-protocol.mjs" \
-  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$BUILD_CTX/bridge/"
+  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 
@@ -408,7 +415,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py devices.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi

@@ -1,23 +1,15 @@
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  isRecentSession,
   lastKnownStatus,
   recentSessions,
   syncSessions,
-  uploadCatalog,
 } from '../../bridge/sync.mjs';
 import { synced } from '../../bridge/extract.mjs';
 import {
   rebuildAgentCounts,
   trackAgentSession,
 } from '../../bridge/agent-counts.mjs';
-
-const CODEX_FIXTURE = fileURLToPath(new URL(
-  '../codex/phase1/fixtures/codex/rollout-2026-08-06T00-00-00-22222222-2222-4222-8222-222222222222.jsonl',
-  import.meta.url,
-));
 
 function session(index, runtime = 'claude', project = '-repo') {
   const id = String(index).padStart(4, '0');
@@ -33,34 +25,6 @@ function session(index, runtime = 'claude', project = '-repo') {
     _lineCount: 10,
   };
 }
-
-test('the catalog upload carries child threads with their root counts', async () => {
-  const root = session(1, 'codex');
-  const child = {
-    ...session(2, 'codex'),
-    status: 'running',
-    parentSessionId: 'codex:0001',
-    threadKind: 'subagent',
-  };
-  rebuildAgentCounts([root, child]);
-  assert.equal(root.agentCount, 1);
-  assert.equal(root.runningAgentCount, 1);
-  assert.equal(root.activeStatus, 'running');
-  assert.equal(root.threadRootId, 'codex:0001');
-  assert.equal(child.threadRootId, 'codex:0001');
-
-  const requests = [];
-  await uploadCatalog(
-    { deviceName: 'Mac' },
-    [root, child],
-    async (_url, body) => requests.push(body),
-  );
-  assert.equal(requests[0].sessions.length, 2);
-  assert.equal(requests[0].sessions[0].agentCount, 1);
-  assert.equal(requests[0].sessions[0].threadRootId, 'codex:0001');
-  assert.equal(requests[0].sessions[1].threadRootId, 'codex:0001');
-  assert.equal(requests[0].sessions[1].parentSessionId, 'codex:0001');
-});
 
 test('agent count tracking overwrites exact Set size across duplicates and internal migration', () => {
   const root = session(1, 'codex');
@@ -137,32 +101,7 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
   assert.deepEqual(trackAgentSession(guardian), []);
 });
 
-test('catalog upload is batched and an empty catalog still names the device', async () => {
-  const sessions = Array.from({ length: 5001 }, (_, index) => session(index));
-  const requests = [];
-  await uploadCatalog(
-    { deviceName: 'Mac', deviceDisplayName: 'Office Mac' },
-    sessions,
-    async (url, body) => requests.push({ url, body }),
-  );
-  assert.equal(requests.length, 2);
-  assert.equal(requests[0].body.sessions.length, 5000);
-  assert.equal(requests[0].body.deviceDisplayName, 'Office Mac');
-  assert.equal(requests[1].body.sessions.length, 1);
-  assert.equal(requests[0].body.sessions[0]._filePath, undefined);
-  const empty = [];
-  await uploadCatalog({ deviceName: 'Mac' }, [], async (_url, body) => empty.push(body));
-  assert.deepEqual(empty.map((body) => [body.deviceDisplayName, body.sessions.length]), [['Mac', 0]]);
-});
-
-test('24-hour cutoff includes the boundary and future timestamps', () => {
-  const now = Date.parse('2026-08-06T12:00:00.000Z');
-  assert.equal(isRecentSession('2026-08-05T11:59:59.999Z', now), false);
-  assert.equal(isRecentSession('2026-08-05T12:00:00.000Z', now), true);
-  assert.equal(isRecentSession('2026-08-06T12:01:00.000Z', now), true);
-});
-
-test('startup accepts Claude-only, Codex-only, mixed, and empty catalogs', async () => {
+test('startup reads every catalog and starts each Session at the end of its file', async () => {
   const cases = [
     { claude: [session(1, 'claude')], codex: [], expected: 1 },
     { claude: [], codex: [session(2, 'codex')], expected: 1 },
@@ -173,10 +112,7 @@ test('startup accepts Claude-only, Codex-only, mixed, and empty catalogs', async
     synced.clear();
     recentSessions.clear();
     lastKnownStatus.clear();
-    let uploadedSessions = 0;
-    let messageUploads = 0;
-    const result = await syncSessions({ deviceName: 'test' }, {
-      skipMessages: true,
+    const result = syncSessions({ deviceName: 'test' }, {
       runtimeCatalogs: {
         claude: { sessions: item.claude, complete: true },
         codex: {
@@ -185,45 +121,10 @@ test('startup accepts Claude-only, Codex-only, mixed, and empty catalogs', async
           diagnostics: { files: item.codex.length, errors: [], malformedLines: 0 },
         },
       },
-      postFn: async (_url, body) => { uploadedSessions += body.sessions.length; },
-      messageUploader: async () => { messageUploads++; },
     });
     assert.equal(result.sessions.length, item.expected);
-    assert.equal(uploadedSessions, item.expected);
-    assert.equal(messageUploads, 0);
-    assert.equal(result.messageCount, 0);
     assert.equal(synced.size, item.expected);
+    for (const s of [...item.claude, ...item.codex]) assert.equal(synced.get(s.runtime === 'codex' ? `codex:${s.id}` : s.id), 10);
     assert.equal(recentSessions.size, item.expected);
   }
-});
-
-test('startup reports messages written during recovery', async () => {
-  synced.clear();
-  recentSessions.clear();
-  lastKnownStatus.clear();
-  const recovered = {
-    ...session(1, 'codex'),
-    id: '22222222-2222-4222-8222-222222222222',
-    nativeSessionId: '22222222-2222-4222-8222-222222222222',
-    lastActive: '2026-08-06T00:00:10.000Z',
-    _filePath: CODEX_FIXTURE,
-  };
-  let uploaded = 0;
-
-  const result = await syncSessions({ deviceName: 'test' }, {
-    now: Date.parse('2026-08-06T00:00:20.000Z'),
-    runtimeCatalogs: {
-      claude: { sessions: [], complete: true },
-      codex: {
-        sessions: [recovered],
-        complete: true,
-        diagnostics: { files: 1, errors: [], malformedLines: 0 },
-      },
-    },
-    postFn: async () => {},
-    messageUploader: async (_sessionId, messages) => { uploaded += messages.length; },
-  });
-
-  assert.ok(uploaded > 0);
-  assert.equal(result.messageCount, uploaded);
 });

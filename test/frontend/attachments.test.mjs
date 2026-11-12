@@ -31,6 +31,15 @@ const vite = await createTestServer({
   server: { middlewareMode: true }, appType: 'custom',
 });
 await vite.ssrLoadModule('/js/project/file-viewer.js');
+// The transfer store signs S3 requests itself; here it answers through the mocked paths the cases know.
+const viaApi = (store) => Object.assign(store, {
+  prepareUpload: (body) => window.apiPost('/api/bridge/file-prepare', body),
+  fileInfo: (fileKey, name) => window.api('/api/bridge/file-url/' + fileKey + (name ? '?name=' + encodeURIComponent(name) : '')),
+  url: async (fileKey) => (await window.api('/api/bridge/image-url/' + fileKey)).url,
+  text: (fileKey) => window.apiText('/api/bridge/file/' + fileKey),
+});
+viaApi((await import('../../bridge/transfer-store.mjs')).transfer);
+viaApi((await vite.ssrLoadModule(new URL('../../bridge/transfer-store.mjs', import.meta.url).pathname)).transfer);
 
 class FakeUpload {
   static requests = [];
@@ -639,7 +648,7 @@ test('the image viewer downloads the current stored image through the native plu
   showImageViewer([{ src: 'blob:https://app.test/2', key: 'b'.repeat(32) + '.png', attachment: true }]);
   document.querySelector('.img-overlay-download').click();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: { attachment: 'true' } }]);
+  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: undefined }]);
   assert.equal(calls[0].command, 'plugin:file-download|download');
   assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);

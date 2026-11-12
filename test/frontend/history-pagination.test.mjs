@@ -63,7 +63,6 @@ test('older history merge updates state without rebuilding the visible page', as
     params: {
       session: 'pagination-session',
       before: current.timestamp,
-      limit: 200,
       device: 'D',
     },
   });

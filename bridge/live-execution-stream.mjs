@@ -102,7 +102,7 @@ export class LiveExecutionStream {
     }
     const canonical = { ...message, turnId: target.turnId };
     if (target.isEnded()) {
-      this.publish({ action: 'messages', sessionId: this.options.sessionId, messages: [canonical], noCache: true });
+      this.publish({ action: 'messages', sessionId: this.options.sessionId, messages: [canonical] });
       return true;
     }
     return target.sendAuthoritative(canonical, options);

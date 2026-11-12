@@ -1,8 +1,7 @@
-import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { DEFAULT_CODEX_HOME } from './config.mjs';
-import { findExecutable, runExecutable } from './platform.mjs';
+import { findExecutable } from './platform.mjs';
 import {
   resolveRuntimeLauncher,
   runtimeLauncherError,
@@ -16,10 +15,6 @@ function claudeCandidates(home) {
     '/opt/homebrew/bin/claude',
     '/usr/bin/claude',
   ];
-}
-
-export function existingDirectory(value) {
-  try { return fs.statSync(value).isDirectory(); } catch { return false; }
 }
 
 export function resolveCodexHomes(env = process.env) {
@@ -62,17 +57,4 @@ export function resolveClaudeBinForCapability(options = {}) {
 export function claudeLauncherError(options = {}) {
   const home = options.home || os.homedir();
   return runtimeLauncherError('claude', claudeCandidates(home), options);
-}
-
-export function binaryVersion(binary) {
-  if (!binary) return '';
-  try {
-    return runExecutable(binary, ['--version'], {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim().slice(0, 120);
-  } catch {
-    return '';
-  }
 }

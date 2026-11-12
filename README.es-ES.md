@@ -124,7 +124,7 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
                                  └────────────────┘
 ```
 
-El **Bridge** descubre las sesiones de Claude Code y Codex, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal. El **Server** autentica y enruta los mensajes de control, almacena los datos de las sesiones y los hilos raíz en DynamoDB y sirve los archivos multimedia sincronizados mediante S3. La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las sesiones y los agentes raíz, agrupa los hilos anidados bajo la sesión principal y envía las acciones del usuario al entorno local correspondiente.
+El **Bridge** descubre las sesiones de Claude Code y Codex, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal. El **Server** autentica y enruta los mensajes de control, guarda en DynamoDB solo los registros de conexiones y dispositivos (las sesiones permanecen en tu ordenador) y emite credenciales por cuenta con las que la App y el Bridge intercambian archivos a través de una zona de tránsito temporal en S3. La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las sesiones y los agentes raíz, agrupa los hilos anidados bajo la sesión principal y envía las acciones del usuario al entorno local correspondiente.
 
 ---
 

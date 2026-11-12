@@ -53,19 +53,6 @@ same latest-200 fetch, but only confirm the matching send rather than reset the 
 message index and exact-ID pending-send confirmation. `message-dom.js` updates
 live DOM nodes while preserving user anchors, tool expansion and streamed blocks.
 `ws.js` commits these live updates directly; there is no separate recovery adapter
-or callback-based commit layer. REST snapshot refresh uses `history-snapshot.js`
+or callback-based commit layer. History snapshot refresh uses `history-snapshot.js`
 instead of per-message reconciliation. Tests cover these production paths rather
 than legacy adapter stubs.
-
-## Chrome verification
-
-```bash
-node test/browser/history-snapshot-chrome.mjs --headed
-```
-
-This opens an isolated Chrome profile and a temporary Vite server, loads the real
-application, and substitutes REST/WS fixtures before page startup. No test messages
-are sent to a real session. It exercises real tab visibility, composer clicks,
-reconnect, stream-end recovery, reading position and lazy Edit diffs. The script
-prints the temporary screenshot/results directory. Omit `--headed` for headless
-Chrome, or set `CHROME_BIN` when Chrome is installed at a non-default location.

@@ -4,7 +4,7 @@ import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
-import { post } from '../http.mjs';
+import { previewType, recentKeys, reusable, transfer } from '../transfer-store.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
@@ -22,10 +22,10 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi',
 ]);
-const uploadedFileKeys = new Set();
-const downloadFileKeys = new Map();
+const uploadedFileKeys = recentKeys();
+const downloadFileKeys = recentKeys(100); // file identity → key
 
-async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send, home }) {
+async function prepareFileDownload(message, { projectRoot, store = transfer, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);
   const stat = await fs.promises.stat(absPath);
   if (!stat.isFile()) throw new Error('not a regular file');
@@ -35,11 +35,9 @@ async function prepareFileDownload(message, { projectRoot, postFn = post, fetchF
   if (!key) {
     sendProgress(message, send, { downloading: true });
     const hash = await contentHash(absPath, stat, home);
-    const prepared = await postFn('/api/bridge/file-prepare', {
+    const info = await store.prepareUpload({
       name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream', contentHash: hash,
     });
-    if (!prepared?.ok) throw new Error('Could not prepare file download');
-    const info = await prepared.json();
     if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
     const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
     let uploaded = !!info.exists;
@@ -69,7 +67,6 @@ async function prepareFileDownload(message, { projectRoot, postFn = post, fetchF
       throw new Error('File changed while preparing the download. Try again.');
     }
     key = info.key;
-    if (downloadFileKeys.size >= 100) downloadFileKeys.delete(downloadFileKeys.keys().next().value);
     downloadFileKeys.set(identity, key);
   }
   send(responseBase(message, { ok: true, key, path: absPath, name: path.basename(absPath), size: stat.size }));
@@ -184,21 +181,14 @@ async function browseDirectories(message, options) {
   });
 }
 
-async function uploadVideo(absPath, key, size, postFn) {
-  const prep = await postFn('/api/bridge/video-prepare', { key });
-  if (!prep || !prep.ok) return false;
-  let info;
-  try { info = await prep.json(); } catch { return false; }
-  if (info.error) return false;
-  if (info.exists) return true;
-  if (!info.url) return false;
+// Content-addressed: a video already in the transfer area is not sent again.
+async function uploadVideo(absPath, key, size, store) {
   try {
-    const response = await fetch(info.url, {
+    if (reusable(await store.head(key))) return true;
+    const { url, headers } = await store.uploadUrl(key, { contentType: previewType(key) });
+    const response = await fetch(url, {
       method: 'PUT',
-      headers: {
-        'Content-Type': info.contentType,
-        'Content-Length': String(size),
-      },
+      headers: { ...headers, 'Content-Length': String(size) },
       body: fs.createReadStream(absPath),
       duplex: 'half',
     });
@@ -231,7 +221,7 @@ function sendProgress(message, send, extra) {
 async function readProjectFile(message, context) {
   const {
     send,
-    postFn = post,
+    store = transfer,
     projectRoot,
   } = context;
   const absPath = resolveReadablePath(projectRoot, message.path);
@@ -247,7 +237,7 @@ async function readProjectFile(message, context) {
       .update(`${absPath}#${stat.mtimeMs}#${stat.size}`)
       .digest('hex').slice(0, 16) + extension;
     sendProgress(message, send, { video: true });
-    const uploaded = await uploadVideo(absPath, key, stat.size, postFn);
+    const uploaded = await uploadVideo(absPath, key, stat.size, store);
     if (!uploaded) throw new Error('upload failed');
     send({
       ...base,
@@ -293,7 +283,7 @@ async function readProjectFile(message, context) {
   const contentVersion = crypto.createHash('sha256').update(buffer).digest('hex');
   const key = crypto.createHash('sha256')
     .update(`${absPath}\0${contentVersion}`)
-    .digest('hex').slice(0, 16) + extension;
+    .digest('hex').slice(0, 16) + (/^\.[a-z0-9]{1,16}$/.test(extension) ? extension : '');
   const metadata = {
     ...base,
     key,
@@ -308,16 +298,9 @@ async function readProjectFile(message, context) {
     return;
   }
 
-  if (!uploadedFileKeys.has(key)) {
-    const response = await postFn('/api/bridge/upload-file', {
-      key,
-      data: buffer.toString('base64'),
-    });
-    if (!response || !response.ok) throw new Error('upload failed');
-    uploadedFileKeys.add(key);
-    if (uploadedFileKeys.size > 1000) {
-      uploadedFileKeys.delete(uploadedFileKeys.values().next().value);
-    }
+  if (!uploadedFileKeys.get(key)) {
+    await store.put(key, buffer, { contentType: 'text/plain; charset=utf-8' });
+    uploadedFileKeys.set(key);
   }
   send(metadata);
 }

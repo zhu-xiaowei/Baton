@@ -42,6 +42,7 @@ expose('isInterruptMsg', () => false);
 expose('isLocalCommandStdout', () => false);
 let apiResponse = { messages: [], hasMore: false };
 expose('api', async () => apiResponse);
+expose('bridgeHistory', async () => apiResponse);
 for (const name of [
   'clampOverflow',
   'loadImages',

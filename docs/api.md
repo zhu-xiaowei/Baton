@@ -10,7 +10,7 @@
 - Exception: `POST /auth/exchange-token` and `GET /auth/install` are outside `/api/` and accept a
   short-lived token instead of the key
 
-**accountId derivation**: `SHA256(apiKey)[:16]`, used for DDB queries — the raw key is never stored
+**accountId derivation**: `SHA256(apiKey)[:16]`, the partition for connection and device rows — the raw key is never stored
 
 **Runtime identity**:
 - `runtime`: `claude` or `codex`; omitted values default to `claude`
@@ -19,197 +19,27 @@
 
 ---
 
-## REST API — Bridge → Server
+## Lambda Requests Outside WebSocket
 
-### POST /api/bridge/sync-sessions
+Every REST call the API Lambda serves, by caller (Session data never goes through it).
 
-Bridge uploads session metadata to DDB.
+| Caller | Request | When |
+|---|---|---|
+| Bridge | `GET /api/version`, `GET /api/install` | Version check at startup / reconnect / heartbeat version change; install script only when updating |
+| Bridge | `POST /api/notifications/events` | Each alert |
+| App | `GET /api/bridge/devices` | Home load / refresh, credential renewal, WS address (names, online, direct-channel routes, credentials, storage) |
+| App | `POST /auth/exchange-token`, `POST /api/auth/start-token` | Sign-in with a Start URL; Setup page |
+| App | `POST /api/bridge/delete-device` | Removing a device |
+| App | `POST /api/notifications/devices`, `POST /devices/remove`, `GET /event` | Push registration; alert text |
+| iOS extension | `GET /api/notifications/event` | Each push |
+| Android service | `GET /api/notifications/events` | Polling, 5 s foreground / 15 s background |
+| Install script | `GET /auth/install?t=…`, `GET /api/bridge/device-name/validate` | Installing a Bridge |
+| Browser | `/`, `/index.html`, `/assets/*` | Page loads (CloudFront → the same Lambda) |
 
-**Request**
-```json
-{
-  "deviceName": "MacBook-Pro",
-  "os": "darwin",
-  "sessions": [
-    {
-      "id": "a1ca0870-xxxx-xxxx-xxxx",
-      "nativeSessionId": "a1ca0870-xxxx-xxxx-xxxx",
-      "runtime": "claude",
-      "project": "-Users-xiaoweii-workspace-rn-baton",
-      "projectName": "baton",
-      "lastActive": "2026-03-27T10:30:00.000Z",
-      "size": 102400,
-      "preview": "Help me implement Phase 2 APIs",
-      "model": "claude-sonnet-4-5-20250514",
-      "modelProvider": "",
-      "clientSource": "",
-      "cliVersion": "2.1.220",
-      "status": "running"
-    }
-  ]
-}
-```
-
-Valid status values are `running`, `needs_input`, and `completed`. A request with
-`deviceDisplayName` (the startup catalog) also records the device's name and `os`.
-
-**Response** `200`
-```json
-{ "synced": 1 }
-```
-
-**DDB write**: BridgeSessions table
-- PK: `accountId`
-- Session SK: `SESS#{deviceName}#{project}#{storageSessionId}`
-- Device SK: `DEV#{deviceName}` (identity only: `deviceDisplayName`, `os`)
-
-Session rows remain until v2 stage 3 deletes them (`checkStopped` still reads them). Device, project and Session lists are answered by the Bridge (see **Bridge RPC** below).
-
----
-
-### POST /api/bridge/delete
-
-Deletes the Session rows of the given Sessions (with their nested children) or projects. Message
-rows remain until TTL expiry. Optional local JSONL deletion is a separate WS `delete_files` action.
-
-```json
-{
-  "deviceName": "MacBook-Pro",
-  "sessionIds": ["a1ca0870-xxxx"],
-  "projectHashes": []
-}
-```
-
----
-
-### POST /api/bridge/sync-messages
-
-Bridge batch-uploads messages to DDB. Used for startup history, HTTP fallback, oversized authoritative
-copies, and on-demand old Session sync. Real-time Claude messages normally use WS.
-
-**Request**
-```json
-{
-  "sessionId": "a1ca0870-xxxx-xxxx-xxxx",
-  "runtime": "claude",
-  "nativeSessionId": "a1ca0870-xxxx-xxxx-xxxx",
-  "messages": [
-    {
-      "uuid": "msg_abc123",
-      "type": "user",
-      "content": [{ "type": "text", "text": "hello" }],
-      "timestamp": "2026-03-27T10:30:00.000Z"
-    },
-    {
-      "uuid": "msg_def456",
-      "type": "assistant",
-      "content": [{ "type": "text", "text": "Hi! How can I help?" }],
-      "timestamp": "2026-03-27T10:30:01.000Z"
-    }
-  ]
-}
-```
-
-**Response** `200`
-```json
-{ "written": 2 }
-```
-
-**DDB write**: BridgeMessages table
-- PK: `sessionId`
-- SK: `{timestamp}#{uuid}`
-- content stored as JSON string
-- deterministic `timestamp#uuid` writes are idempotent
-- every write refreshes the message TTL to 90 days
-
----
-
-### POST /api/bridge/upload-image
-
-Bridge uploads a compressed image to S3.
-
-**Request**
-```json
-{
-  "key": "903158ab6d09b5657c3529f3e4c9e5f8.jpg",
-  "data": "<base64 encoded JPEG>"
-}
-```
-
-**Response** `200`
-```json
-{ "key": "903158ab6d09b5657c3529f3e4c9e5f8.jpg", "size": 45321 }
-```
-
-**S3 storage path**: `images/{key}` (e.g. `images/903158ab6d09b5657c3529f3e4c9e5f8.jpg`)
-
----
-
-### POST /api/bridge/upload-file
-
-Bridge uploads a project **text** file to S3, in response to a `project_files` `read`. Used to let the app view the actual source of a file referenced by a Read/Edit/Write tool node. (Image files reuse `POST /upload-image` instead.)
-
-**Request**
-```json
-{
-  "key": "5f3a9c1b2d4e6f80.ts",
-  "data": "<base64 encoded file content>"
-}
-```
-
-**Response** `200`
-```json
-{ "key": "5f3a9c1b2d4e6f80.ts", "size": 18342 }
-```
-
-**S3 storage path**: `files/{key}`
-
-**Notes**:
-- `key` = `sha256(absPath + "#" + mtimeMs + "#" + size)[:16]` + original file extension, where `mtimeMs` is the file's modification time in milliseconds and `size` is the **full** file size (not the post-truncation size). An edited file (changed mtime/size) produces a fresh key, so the app's per-key cache and the bridge's uploaded-set never serve stale content. `truncated` is a field of the read result, not part of the key.
-- Content is base64-encoded (handles arbitrary bytes / UTF-8 uniformly), same as `upload-image`.
-
----
-
-### POST /api/bridge/video-prepare
-
-Videos are too large to base64 through Lambda (API Gateway's ~6 MB payload limit), so the bridge **streams them directly to S3** via a presigned PUT URL instead of using `upload-file`. This endpoint decides whether an upload is needed and, if so, hands out the presigned URL.
-
-**Request**
-```json
-{ "key": "1a2b3c4d5e6f7a8b.mp4" }
-```
-
-**Logic**: `HEAD videos/{key}` in S3.
-- **Exists** → `{ "exists": true, "key": "..." }` — bridge skips the upload (dedup by content-hash key survives bridge restarts, unlike the in-memory uploaded-set).
-- **Missing** → generate a presigned **PUT** URL (`ExpiresIn=900`) signed with `ContentType`.
-
-**Response** `200`
-```json
-{ "exists": false, "key": "1a2b3c4d5e6f7a8b.mp4", "url": "https://...s3...", "contentType": "video/mp4" }
-```
-
-**Notes**:
-- `key` uses the same `sha256(absPath#mtimeMs#size)[:16] + ext` formula as `upload-file`.
-- Bridge PUTs with `fs.createReadStream` + `fetch(url, { duplex: 'half', headers: { 'Content-Type', 'Content-Length' } })` → flat memory regardless of file size. The signed `ContentType` must match the header sent.
-- Video extensions: `.mp4 .m4v .mov .webm .mkv .avi`. Cap: 5 GB (`error: "video too large"`).
-- **S3 storage path**: `videos/{key}`.
-
----
+Files never go through Lambda. App and Bridge exchange them through the account's S3 transfer area
+`t/<accountId>/<key>` and sign every S3 request themselves (see "File transfer area" below).
 
 ## REST API — General
-
-### GET /api/health
-
-Connectivity check, called by app on startup.
-
-**Query**: none
-
-**Response** `200`
-```json
-{ "status": "ok", "version": "dev" }
-```
-
----
 
 ### GET /api/version
 
@@ -243,32 +73,18 @@ command. `GET /auth/install?t=<token>[&platform=windows][&name=…]` returns the
 
 ### POST /api/bridge/delete-device
 
-`{ "deviceName": "MyMac" }` → `{ "ok": true, "deletedSessions": N }`. Sends
-`{ "action": "device_removed" }` to the device's Bridge sockets and closes them, then deletes its
-`DEV#`/`SESS#` rows, and `PROJ#` rows left by older releases (message rows expire via TTL). The Bridge removes its autostart entry and
-`config.json` and exits; session files on the device are kept. A new install command adds it back.
+`{ "deviceName": "MyMac" }` → `{ "ok": true }`. Sends `{ "action": "device_removed" }` to the
+device's Bridge sockets and closes them, then deletes its device row. The Bridge removes its
+autostart entry and `config.json` and exits; session files on the device are kept. A Bridge that
+was offline reappears when it next connects; a new install command also adds it back.
 
 ---
 
-### GET /api/bridge/config
+### GET /api/install
 
-Returns server configuration for bridge/app auto-discovery of WS URL, etc.
-
-**Query**: none
-
-**Response** `200`
-```json
-{
-  "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1"
-}
-```
-
----
-
-### GET /api/bridge/install
-
-Generates a Bridge install script, used by the setup page. It configures launchd on macOS,
-systemd user service on Linux, or Task Scheduler on native Windows.
+Generates a Bridge install script. Installed Bridges call it when they update and take the package
+URL from it; people install with `GET /auth/install?t=…` (same script, a token instead of the key).
+It configures launchd on macOS, systemd user service on Linux, or Task Scheduler on native Windows.
 
 **Query**:
 | Param | Required | Description |
@@ -276,42 +92,36 @@ systemd user service on Linux, or Task Scheduler on native Windows.
 | `name` | No | Device name (if omitted, script asks interactively, defaults to hostname) |
 | `platform` | No | Use `windows` for the PowerShell installer; otherwise returns the shell installer |
 
-**Alias**: `GET /api/install` (same handler)
-
 **Response** `200`: `text/plain` shell or PowerShell script
 
 **Script logic**:
 1. Download bridge.tar.gz (S3 presigned URL, valid 1h)
 2. npm install
-3. Write launchd plist / systemd service / Windows scheduled task configuration
-4. Start service
+3. Write `~/.baton-bridge/config.json` (`server`, `apiKey`, device names; the Bridge adds `wsUrl` from `/devices` on its first start)
+4. Write launchd plist / systemd service / Windows scheduled task configuration
+5. Start service
 
 ---
 
 ## REST API — App → Server
 
-### GET /api/bridge/active-sessions
-
-Used only by the Bridge's `checkStopped` until M2: the account's `running`/`needs_input` root
-Sessions (offline devices and `needs_input` older than 7 days omitted), newest first.
-
-```json
-{ "sessions": [{ "sessionId": "codex:019e...", "status": "running", "deviceName": "MacBook-Pro",
-  "projectHash": "-Users-user-project", "projectName": "project", "preview": "Inspect the current changes",
-  "lastActive": "2026-08-09T08:00:00.000Z", "agentCount": 0 }] }
-```
-
----
-
 ### GET /api/bridge/devices
 
-Device names and online state; everything else on the home page comes from each Bridge.
-`rpc` addresses the joined Bridges directly (`docs/v2-step1-home-plan.md`).
+Device names and online state from the device rows in SystemTable, which the WS `$connect` handler
+writes after a Bridge claims its device name (the control-socket URL carries `&name=<display>&os=<platform>`).
+Everything else on the home page comes from each Bridge. `rpc` addresses the joined Bridges directly
+(`docs/v2-step1-home-plan.md`). `wsUrl` is the control socket (stored as `state.WS_URL` /
+localStorage `_wsurl`). `rpc.credentials` and `rpc.storage` are always present, also with no Bridge
+online; the App calls `/devices` again when the credentials have less than 5 minutes left.
+`notifications` sets up mobile alerts: `accountId` (an alert from another account is ignored) and
+`ios` (whether this server can push to iOS).
 
 ```json
-{ "protocol": 2,
+{ "protocol": 2, "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1",
+  "notifications": { "accountId": "<16 hex>", "ios": true },
   "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "os": "darwin", "online": true }],
-  "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }] } }
+  "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }],
+    "storage": { "bucket": "…", "region": "ap-northeast-1", "accountId": "<16 hex>", "accelerate": true } } }
 ```
 
 ---
@@ -378,147 +188,47 @@ Project rows: `projectHash, projectName, projectPath, sessionCount, runningCount
 needsInputCount, lastActive`. Session rows: `sessionId, preview, lastActive, size, model, status,
 agentCount` plus `isAgent, agentName` for daemon agents and `agentDetail` while one waits for input.
 Both lists are newest first (`lastActive`, then id, descending); the cursor is opaque. `status` is
-the effective root-plus-agents status. `api.js` maps `/api/bridge/projects` and
-`/api/bridge/sessions` to these methods, so the pages keep their former REST call sites.
-
----
-
-### GET /api/bridge/messages
-
-Get messages for a specific session, supports incremental loading.
-
-**Query**:
-| Param | Required | Description |
-|-------|----------|-------------|
-| `session` | Yes | sessionId |
-| `after` | No | ISO 8601 timestamp, returns messages after this time |
-| `before` | No | Opaque `oldestTimestamp` cursor returned by the previous page |
-| `limit` | No | Page size; default 100, maximum 500 |
-| `device` | No | Target device for routing a `needSync` request to the matching Bridge |
-| `project` | No | Project hash; together with `device`, returns the latest Session `status` |
-
-**Examples**:
-- Full load: `GET /api/bridge/messages?session=a1ca0870-xxxx&device=MacBook-Pro&project=-workspace`
-- Incremental: `GET /api/bridge/messages?session=a1ca0870-xxxx&after=2026-03-27T10:30:01.000Z&device=MacBook-Pro&project=-workspace`
-
-**Logic**:
-- Default: consistently read the newest page, then return it in ascending order
-- With `before`: fetch the preceding page
-- With `after`: fetch all rows after the timestamp, used for reconnect recovery
-- DDB empty: return `needSync: true`, simultaneously notify bridge via WS to sync this session
-- With `device` and `project`: strongly read Session status in parallel with the message query
-
-**Response** `200` — has messages:
-```json
-{
-  "messages": [...],
-  "hasMore": true,
-  "oldestTimestamp": "2026-03-27T10:30:00.000Z#msg_abc123",
-  "needSync": false,
-  "status": "running"
-}
-```
-
-**Response** `200` — DDB has no cache (needs bridge sync):
-```json
-{
-  "messages": [],
-  "needSync": true,
-  "status": "needs_input"
-}
-```
-
-The Web uses this status when no newer WS lifecycle event was applied while the request was in
-flight. Applied `stream_turn_start`, `stream_end`, `permission_request`, and
-`permission_resolved` events take precedence. Message-tail inference is only a fallback when the
-response omits `status`.
-
-**needSync triggered flow**:
-```
-1. Server returns needSync: true, simultaneously notifies bridge via WS:
-   → { action: "sync_session", sessionId: "codex:abc", runtime: "codex", nativeSessionId: "abc" }
-2. Bridge selects the runtime adapter, reads JSONL → POST /sync-messages to write DDB
-3. Bridge completes, notifies server via WS:
-   → { action: "sync_complete", sessionId: "abc" }
-4. Server broadcasts to all app connections under the account:
-   → { action: "sync_complete", sessionId: "abc" }
-5. App receives it, re-fetches GET /messages → has data now → render
-```
-
-**Notes**:
-- `content` is a JSON array (deserialized from JSON string in DDB)
-- `type` includes `user`, `assistant`, `summary`, `system_event`, `interrupt`, and Claude metadata types
-- Content block types: `text`, `image`, `document`, `thinking`, `tool_use`, `tool_result`
-- `document` block: `{ type: "document", source: { type: "text", media_type: "text/plain", data: "..." }, title: "filename.txt" }`
-- Sorted by `timestamp` ascending (conversation order)
-
-`stopReason` and `toolUseResult` are persisted when present. `parentUuid` and transient streaming
-fields are not persisted.
-
----
-
-### GET /api/bridge/image-url/{key}
-
-Get a one-hour signed S3 URL. The browser or Bridge downloads image bytes directly from S3.
-
-**Path params**:
-| Param | Description |
-|-------|-------------|
-| `key` | Image filename, e.g. `903158ab.jpg` |
-
-**Query**: `attachment=true` selects account-scoped `attachments/{account}/{key}` storage;
-otherwise the key refers to a previously uploaded image in `images/{key}`.
-
-**Response** `200`: `{ "url": "https://..." }`, with `Cache-Control: no-store`.
-
-**Notes**:
-- The signed response overrides the image MIME type and uses inline disposition.
-- Invalid keys return `400`; missing objects return `404` from S3 when downloaded.
-- This replaces the removed `/image/{key}` Base64 download endpoint; clients must be updated together.
-
----
-
-### GET /api/bridge/file/{key}
-
-Get a synced project file's content (proxied from S3).
-
-**Path params**:
-| Param | Description |
-|-------|-------------|
-| `key` | File key as returned by a `project_files` `read`, e.g. `5f3a9c1b2d4e6f80.ts` |
-
-**Logic**: Read from S3 `files/{key}` and return.
-
-**Response** `200`: file content as `text/plain; charset=utf-8`
-
-**Notes**:
-- App fetches the file body via this endpoint (REST, gzip-compressed, outside the WebSocket ~31 KB frame budget), then renders it with highlight.js in the file viewer
-- The viewer caches by `key`; since the key embeds mtime+size, an edited file is re-fetched automatically
-- `404` if key not found
-
----
-
-### GET /api/bridge/video-url/{key}
-
-Return a short-lived presigned **GET** URL so the browser `<video>` element streams `videos/{key}` **directly from S3** (with HTTP Range/seek), bypassing the Lambda 6 MB limit. HEADs the object first; `404` if missing.
-
-**Response** `200`: `{ "url": "https://...s3...?X-Amz-..." }` (`ExpiresIn=3600`)
-
-**Notes**:
-- Response carries **`Cache-Control: no-store`** — critical. CloudFront's default GET cache is 1 day, but the presigned URL expires in 1h; without `no-store` the CDN would serve a stale/expired signature (→ S3 `403 Request has expired`). Content-addressed endpoints (`/file`, `/image`) are safe to cache; only this signature-returning endpoint must not be.
-- App caches the returned URL in memory (`state.videoUrlCache`) for ~50 min (10 min safety margin under the 1h expiry) so re-opening the same video skips the round-trip. This front-end cache is separate from and complementary to the CDN `no-store`.
+the effective root-plus-agents status. `api.js` calls them through `bridgeHome`, `bridgeDevices`,
+`bridgeList` and `bridgeHistory`.
 
 ---
 
 ### Office attachment previews (no server endpoint)
 
-Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, legacy `.doc/.ppt/.xls`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.89.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the same presigned `previewUrl` from `GET /file-url/{key}`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls` go through the experimental [@silurus/ooxml-legacy-office](https://www.npmjs.com/package/@silurus/ooxml-legacy-office) readers (pinned to the same version) into the same viewers; content they cannot represent (including encrypted files) is rejected and shows the download note. OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
+Word, PowerPoint and Excel attachments (`.docx/.pptx/.xlsx`, legacy `.doc/.ppt/.xls`, and the same files opened from the project tree) are rendered in the browser with [@silurus/ooxml](https://www.npmjs.com/package/@silurus/ooxml) 0.89.0 — Rust/WASM parsers and a canvas renderer — loaded on demand from jsDelivr like PDF.js and Mermaid, so nothing is added to the app package and the server never converts files. The viewer reads the signed `previewUrl` from `transfer.fileInfo(key)`; project files are first uploaded through the existing `download` operation. Word uses the progressive scroll viewer (the first page appears before the whole document is laid out), slide decks the scroll viewer, both with the app's two-finger zoom; Excel keeps the library's sheet tabs and zoom bar. Legacy `.doc/.ppt/.xls` go through the experimental [@silurus/ooxml-legacy-office](https://www.npmjs.com/package/@silurus/ooxml-legacy-office) readers (pinned to the same version) into the same viewers; content they cannot represent (including encrypted files) is rejected and shows the download note. OpenDocument and Keynote files show the download note. Workbooks above the library's 250,000-cell limit report "too large to preview".
 
-Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no `file-url` request and no download; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
+Office files, images and PDFs that load in one request (≤ 8 MB) are kept in IndexedDB by attachment key, so reopening one makes no S3 request; files uploaded from the device are cached at upload. The budget is 500 MB (oldest-opened evicted first, files over 100 MB skipped). Attachment keys never change content, so the cache needs no validation.
 
-### Attachment content IDs (`POST /file-prepare`, `GET /file-url/{key}`)
+### File transfer area (no server endpoint)
 
-The app and Bridge send `contentHash`: the SHA-256 of the whole file (64 hex). The key becomes its first 32 hex digits plus the extension. The server HEADs that object in the account's prefix with `ChecksumMode=ENABLED`: only when S3's stored `ChecksumSHA256` equals the hash and the size matches is the response `{ "key", "exists": true }` with no upload URL, and the client treats the file as uploaded. If the object is missing, both presigned PUT URLs are signed with `ChecksumSHA256` and `headers` carries `x-amz-checksum-sha256`; S3 rejects any other bytes with `400 BadDigest`, so a content key always holds its content (Bridge then reports the file as changed and does not retry the fallback). Any other object at that key keeps a random key and is never overwritten. Requests without `contentHash` keep random keys; clients send exactly the returned headers. `GET /file-url/{key}?name=` overrides the stored file name (used for the title and `Content-Disposition`), because identical content uploaded under another name shares one object.
+Files between the App and its Bridges travel through `t/<accountId>/<key>` in the attachment
+bucket. It is a transfer channel, not storage: a lifecycle rule empties it after 7 days
+(`server/install.sh`; the pre-v2 prefixes `images/`, `files/`, `videos/`, `attachments/` expire after
+1 day), and the Bridge can upload any object again from its own disk.
+
+Both sides sign their own requests (SigV4 query authentication, presigned URLs only) in
+`bridge/transfer-store.mjs`, which the App imports too. Credentials are the direct-channel STS
+credentials (1 h, reused by the server while more than 10 minutes are left); their session policy
+adds `s3:GetObject` / `s3:PutObject` on `t/<accountId>/*` only. `storage` =
+`{bucket, region, accountId, accelerate}` comes with them: the App gets both from `/devices`, the
+Bridge from the `direct_rpc` `credentials` message on its control socket, and each renews them on
+demand. A URL never outlives its credentials (at most 1 h). The bucket's CORS exposes
+`x-amz-checksum-sha256`, `x-amz-meta-filename` and `x-amz-meta-content-type`.
+
+`transfer` operations: `head`, `prepareUpload`, `uploadUrl`, `put`, `url` (inline with the type
+the key implies, or a download under a name), `fileInfo` (`{key, name, size, contentType, url,
+previewUrl, previewType}`) and `text`.
+
+Attachment content IDs (`prepareUpload`): the App and Bridge compute `contentHash`, the SHA-256 of
+the whole file. The key becomes its first 32 hex digits plus the extension. A HEAD with
+`x-amz-checksum-mode: ENABLED` finds an existing object; only when its `ChecksumSHA256` equals the
+hash and the size matches is the result `{ key, exists: true }` and nothing is uploaded. A missing
+object gets a PUT URL signed with `x-amz-checksum-sha256` (an accelerated URL plus a standard
+`fallbackUrl` when acceleration is on); S3 rejects any other bytes with `400 BadDigest`, so a content
+key always holds its content (Bridge then reports the file as changed and does not retry the
+fallback). Any other object at that key, or no hash, gets a random key. Clients send exactly the
+returned `headers`. `fileInfo(key, name)` uses the caller's name for the title and
+`Content-Disposition`, because identical content uploaded under another name shares one object.
 
 ---
 
@@ -543,15 +253,15 @@ DDB Connections:
   TTL: 24h
 ```
 
-`deviceName` is only carried by bridge connections, used for:
-- Device routing for `send_message` / `permission_reply` / `interrupt` (only forwarded to matching bridge)
-- Online status in `GET /devices`
+`deviceName` is only carried by bridge connections, used for online status and the `rpc.bridges`
+list in `GET /devices`. After a Bridge claims its device name, `$connect` also writes its device row
+in SystemTable from the `name` (display name) and `os` query parameters.
 
 Bridge connections also send their immutable package version as the `version` query parameter.
 The server stores it as `bridgeVersion` so deployments can verify the running fleet directly.
 
 The server strips the `device` routing field before forwarding an app action to Bridge. Codex
-uses `messages`/`messages_ack` for live rollout updates and supports existing-Session
+uses `messages` for live rollout updates and supports existing-Session
 send/streaming/interrupt and runtime-specific permission handling through its app-server adapter.
 
 **$disconnect**: Delete connectionId + clean up related subscription records
@@ -560,7 +270,7 @@ send/streaming/interrupt and runtime-specific permission handling through its ap
 
 Since v2 stage 2a the App opens no control socket: Session events, sends, interrupts,
 permission replies, commands, files, Git, rename, create project and delete all travel on the
-direct channel above. Their payloads are still described below. The Bridge keeps sending the `messages` rows that DynamoDB stores.
+direct channel above. Their payloads are still described below.
 
 ### App → Server
 
@@ -605,7 +315,7 @@ runtime from a Project.
 2. No sessionId, has projectHash → route by selected runtime: Claude uses its existing headless
    creation path; Codex uses `thread/start` + `turn/start` on one cwd-scoped app-server client
 
-**Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → Server broadcasts to all app connections.
+**Return**: Bridge sends `send_message_result` (with `sessionId` + echoed `requestId`) → returned as the reply to the sender's request.
 
 ---
 
@@ -826,7 +536,7 @@ revision returns `notModified` without another catalog upload.
 
 #### messages
 
-Bridge pushes new messages to Server.
+Bridge pushes new message rows to subscribed apps.
 
 ```json
 {
@@ -843,24 +553,13 @@ Bridge pushes new messages to Server.
 }
 ```
 
-**Server (Lambda) handling**:
-1. **Write DDB** → BridgeMessages table; acknowledge only after persistence succeeds (Apps get
-   the rows from the Bridge directly)
-
-Message format pushed to app:
-```json
-{
-  "action": "messages",
-  "sessionId": "a1ca0870-xxxx",
-  "messages": [...]
-}
-```
+Pushed by the Bridge to the Session's subscribers on the direct channel; nothing is sent to the
+server. With no subscriber the rows are dropped.
 
 **Notes**:
-- Normal real-time messages use WS and are cached by Lambda
-- `noCache:true` means the WS copy is only a size-limited preview; Bridge writes the authoritative copy through REST
-- Startup, retry, and on-demand history use REST `sync-messages`
-- When no app is subscribed, only writes DDB (no wasted forwarding)
+- `content` is a JSON array; content block types: `text`, `image`, `document`, `thinking`, `tool_use`, `tool_result`
+- `type` includes `user`, `assistant`, `summary`, `system_event`, `interrupt`, and Claude metadata types
+- `document` block: `{ type: "document", source: { type: "text", media_type: "text/plain", data: "..." }, title: "filename.txt" }`
 
 ---
 
@@ -935,7 +634,7 @@ Synchronous local commands may also return:
 }
 ```
 
-`commandPanel` is ephemeral UI state. The server broadcasts it verbatim but does not write it to
+`commandPanel` is ephemeral UI state. The Bridge returns it verbatim but does not write it to
 the Claude transcript. The frontend stores `commandOutput` as the panel's copyable text fallback.
 
 **Fields**: `ok`, optional `sessionId` (new sessions only), `error` (when `ok=false`),
@@ -943,7 +642,7 @@ the Claude transcript. The frontend stores `commandOutput` as the panel's copyab
 `commandOutput`; the app atomically promotes the optimistic command bubble and renders that
 ephemeral local result without writing it to rollout history.
 
-**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId (not limited to subscribers).
+Returned as the reply to the sender's `send_message` request.
 
 ---
 
@@ -957,7 +656,7 @@ Bridge returns the result after processing `create_project`.
 
 **Fields**: `ok`, `projectPath` (echoed, used by the app to match the pending create), optional `sessionId`, and `error` (when `ok=false`).
 
-**Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections under this accountId.
+Returned as the reply to the `create_project` request.
 
 ---
 
@@ -969,7 +668,7 @@ Bridge reports completion of optional local history deletion.
 { "action": "delete_files_result", "requestId": "delete_123", "ok": true, "skippedReadOnly": 1 }
 ```
 
-The result is broadcast to all app connections under the account.
+The result is the last frame of the `delete_files` reply.
 
 ---
 
@@ -987,19 +686,6 @@ Bridge sends this every four minutes. The server updates the connection TTL and 
 
 Bridge checks for an update only when `bridgeVersion` differs from its installed version.
 Unchanged heartbeats do not trigger additional REST requests.
-
----
-
-#### sync_complete
-
-Bridge notifies server after completing an on-demand sync.
-
-```json
-{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx", "status": "ok", "count": 42 }
-```
-
-**Server handling**: Broadcast to all app connections under the account. This avoids losing a
-fast completion before the app's subscription write becomes visible.
 
 ---
 
@@ -1028,7 +714,7 @@ thread choices out of the project-level cache.
 
 #### streaming actions
 
-Claude headless preview actions are relayed to subscribed apps and never written to DDB:
+Claude headless preview actions are pushed to subscribed apps:
 
 ```text
 stream_turn_start
@@ -1049,119 +735,11 @@ permission events. The app buffers by `turnId + seq`; no event type may cross a 
 
 For Web-managed turns, Claude headless and Codex app-server are the only realtime authorities.
 Their user, assistant, tool-use, and tool-result messages all travel through the sequence above.
-The later JSONL copies are persisted to DDB without another WebSocket broadcast. JSONL messages
-created by an external TUI/IDE have no runtime ownership, so they continue to broadcast as complete
-unsequenced `messages` and are merged with REST history by UUID/native ID.
+The watcher does not push the later JSONL copies again. JSONL messages created by an external
+TUI/IDE have no runtime ownership, so they are pushed as complete unsequenced `messages` and are
+merged with Bridge history by UUID/native ID.
 
-Connection-only acknowledgements such as `send_message_result` and `messages_ack` do not consume
-turn sequence numbers. `subscribe` is fire-and-forget: the server records the subscription but
-does not return an acknowledgement or request an active-turn replay.
-
----
-
-### Server → Bridge (Push)
-
-#### messages_ack
-
-Server acknowledges receipt and successful DDB persistence of bridge messages, allowing bridge to
-advance its synced pointer. If persistence fails after retry, the server withholds the ack so the
-bridge uses its HTTP fallback before advancing.
-
-```json
-{ "action": "messages_ack", "sessionId": "a1ca0870-xxxx" }
-```
-
-**Bridge handling**: `wsSendWithAck` waits for this message (5s timeout). Received → resolve(true), bridge advances line number. Timeout → resolve(false), bridge falls back to HTTP POST to DDB.
-
----
-
-#### sync_session
-
-Server notifies bridge to sync a specific session's messages to DDB (triggered by GET /messages returning needSync).
-
-```json
-{
-  "action": "sync_session",
-  "sessionId": "codex:019e...",
-  "runtime": "codex",
-  "nativeSessionId": "019e..."
-}
-```
-
-**Bridge handling**:
-1. Select runtime adapter and find the corresponding JSONL by native ID
-2. Read and extract messages → POST /sync-messages to write DDB
-3. On completion, send `sync_complete` via WS
-
----
-
-### Server → App (Push)
-
-#### messages
-
-Server forwards bridge messages to app (only pushed to app connections subscribed to this sessionId).
-
-```json
-{
-  "action": "messages",
-  "sessionId": "a1ca0870-xxxx",
-  "messages": [...]
-}
-```
-
----
-
-#### permission_request
-
-Server forwards bridge permission confirmation request (only pushed to app connections subscribed to this sessionId).
-
-```json
-{
-  "action": "permission_request",
-  "sessionId": "a1ca0870-xxxx",
-  "kind": "tool",
-  "requestId": "ctrl_123",
-  "toolName": "Bash",
-  "input": { "command": "npm test" }
-}
-```
-
----
-
-#### send_message_result
-
-Server forwards bridge send result (broadcast to **all** app connections under this account).
-
-```json
-{ "action": "send_message_result", "ok": true, "sessionId": "new-session-id", "requestId": "req_abc123", "turnId": "sent_123" }
-```
-
----
-
-#### create_project_result
-
-Server forwards bridge create-project result (broadcast to **all** app connections under this account).
-
-```json
-{ "action": "create_project_result", "ok": true, "projectHash": "-Users-user-workspace-my-new-project", "projectName": "my-new-project", "projectPath": "workspace/my-new-project" }
-```
-
----
-
-#### sync_complete
-
-Notifies app that a session's historical messages have been synced to DDB, app can re-fetch GET /messages.
-
-```json
-{ "action": "sync_complete", "sessionId": "a1ca0870-xxxx", "status": "ok", "count": 42 }
-```
-
----
-
-#### streaming and operation results
-
-The server forwards `stream_block_start`, `stream_delta`, `stream_tool_input`,
-`stream_block_stop` and `stream_end` using the same payloads documented above.
+`send_message_result` does not consume turn sequence numbers.
 
 ---
 
@@ -1185,46 +763,28 @@ All endpoints use a unified error format:
 
 ---
 
-## DynamoDB Table Overview
+## DynamoDB Tables
 
-| Table | PK | SK | Purpose | TTL |
-|-------|----|----|---------|-----|
-| BridgeSessions | accountId | `DEV#...` / `SESS#...` | Device identity; Session rows until v2 stage 3 | No TTL value written |
-| BridgeMessages | sessionId | timestamp#uuid | Message cache | 90 days |
-| Connections | connectionId | — | WS connection records with role/device routing | 24h |
+The server keeps no Session data. `Connections` (PK `connectionId`, GSI `accountId-role-index`,
+24h TTL) holds WS connection records with role/device routing. `SystemTable` (`pk`/`sk`, TTL) holds
+token, push-device and notification rows, and one device row per Bridge: `pk DEVICE#<accountId>`,
+`sk <deviceName>`, with `deviceDisplayName`, `os`, `lastConnected` (`server/src/devices.py`).
 
 ---
 
 ## Known Limitations & Design Notes
 
-### DDB message fields
-
-DDB stores `uuid`, `type`, `content`, `timestamp`, plus optional `stopReason` and
-`toolUseResult`. `parentUuid`, stream IDs, sequence numbers, and preview-only fields are not
-persisted.
-
 ### Connection routing indexes
 
 Bridge routing queries `Connections.accountId-role-index`.
 
-### send_message_result broadcast scope
-
-`send_message_result` uses `_handle_bridge_broadcast` to broadcast to **all** app connections under the account, not just the requester. When multiple devices/tabs are open, all apps receive the new session's `sessionId`. Frontend handles this via `appState.session === '__new__'` check — no functional impact.
-
 ### Codex
 
-Codex participates in Session metadata, history reads, `sync_session`, `sync_complete`, and live
-`messages`/`messages_ack` updates from the rollout watcher. Existing-Session `send_message`,
+Codex participates in Session lists, history reads, and live `messages` updates from the rollout
+watcher. Existing-Session `send_message`,
 streaming, interrupt, and permission requests use the app-server adapter. The adapter reuses a
 managed Unix WebSocket daemon when present and falls back to `app-server --stdio` otherwise.
 The standalone writer termination flow remains only as the explicit fallback for a subsequent
 message send that cannot share a daemon. New-Session creation is supported; local history deletion
 remains disabled by Codex runtime capabilities. Project directory creation is runtime-neutral.
 See [codex.md](codex.md) for validation.
-
-### Image & file endpoints have no account isolation
-
-Legacy `GET /api/bridge/image-url/{key}` (without `attachment=true`), `GET /api/bridge/file/{key}`,
-and `GET /api/bridge/video-url/{key}` do not verify object ownership. They rely on unguessable
-hash keys. `POST /upload-image`, `POST /upload-file`, and `POST /video-prepare` likewise use
-legacy storage. New project image uploads and `image-url?attachment=true` use account-scoped attachments.

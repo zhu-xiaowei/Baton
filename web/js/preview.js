@@ -8,6 +8,7 @@ import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { previewNativeAvailable } from './native-shell.js';
+import { controlSocketUrl } from './v2/direct-transport.js';
 import { previewOpenExternal } from './preview-native.js';
 import '../css/preview.css';
 import '../css/loading.css';
@@ -369,15 +370,7 @@ async function wsUrl() {
     throw new Error('Port forwarding requires the Baton desktop or mobile app.');
   }
   if (!state.KEY || !state.SERVER) throw new Error('Sign in before opening a preview.');
-  const cached = state.WS_URL || localStorage.getItem('_wsurl');
-  if (cached?.startsWith('wss://')) return cached;
-  const response = await fetch(`${state.SERVER.replace(/\/$/, '')}/api/bridge/config`, {
-    headers: { 'x-api-key': state.KEY }, signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`Preview configuration failed: HTTP ${response.status}`);
-  const config = await response.json();
-  if (!config.wsUrl?.startsWith('wss://')) throw new Error('Server did not provide a WSS endpoint.');
-  return config.wsUrl;
+  return controlSocketUrl();
 }
 
 async function connect(entry, { speculative = false, mode } = {}) {

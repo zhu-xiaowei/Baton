@@ -15,6 +15,7 @@ import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../comp
 import { toolDetailsSource } from '../tool-details.js';
 import { resolveEditLocation } from './edit-location.js';
 import { imageMimeType } from '../components/image-type.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -69,12 +70,8 @@ function uploadedKey(target) {
 }
 
 // Identical content shares one stored file, so the name it was opened under wins over the stored one.
-function attachmentUrl(key, name) {
-  return '/api/bridge/file-url/' + key + (name ? '?name=' + encodeURIComponent(name) : '');
-}
-
 async function prepareViewedDownload(target) {
-  return window.api(attachmentUrl(await uploadedKey(target), target.name));
+  return transfer.fileInfo(await uploadedKey(target), target.name);
 }
 
 async function showUploadedProjectFile(target) {
@@ -585,7 +582,7 @@ function inlineImages(container, dir, root, svgScheme) {
 function previewAssetText(m) {
   if (m.content != null) return Promise.resolve(m.content);
   if (m.truncated) return Promise.resolve('');
-  return window.apiText('/api/bridge/file/' + m.key).catch(function () { return ''; });
+  return transfer.text(m.key).catch(function () { return ''; });
 }
 
 // HTML previews run in an opaque-origin iframe, which cannot read this page's blob: URLs.
@@ -744,7 +741,7 @@ async function showAttachment(key) {
     if (token !== _fileRequestToken) return;
     const file = cached
       ? { name: _view?.name || cached.name, size: cached.data.byteLength, previewType: cachedType, data: cached.data }
-      : await window.api(attachmentUrl(key, _view?.name));
+      : await transfer.fileInfo(key, _view?.name);
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
     if (isTextAttachment(file)) {
@@ -798,7 +795,7 @@ async function showAttachment(key) {
     if (token !== _fileRequestToken) return;
     if (cachedPdf) {
       // A cache hit has no URL; the browser's own viewer needs a fresh one.
-      pdfFallbackUrl = await window.api(attachmentUrl(key, _view?.name))
+      pdfFallbackUrl = await transfer.fileInfo(key, _view?.name)
         .then(file => escapeAttachment(file.previewUrl || ''), () => '');
       if (token !== _fileRequestToken) return;
     }
@@ -827,7 +824,7 @@ async function showOfficeAttachment(key, kind, token) {
   let source = cached?.data;
   let name = _view?.name || cached?.name;
   if (!cached) {
-    const file = await window.api(attachmentUrl(key, _view?.name));
+    const file = await transfer.fileInfo(key, _view?.name);
     if (token !== _fileRequestToken) return;
     name = file.name;
     source = downloadAttachment(key, file);
@@ -897,21 +894,26 @@ async function renderSource(absPath, text, truncated, lineHint, snippet) {
 
 // Presigned GET URLs expire in 1h; cache them ~50min (10min safety margin) so
 // re-opening the same video reuses the URL instead of round-tripping the bridge.
-var VIDEO_URL_TTL = 50 * 60 * 1000;
-
-function renderVideo(url) {
+// The signed URL lives as long as the credentials; an expired one is signed again where playback stopped.
+function renderVideo(key, url) {
   setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
+  var video = document.querySelector('#fileOverlayBody .file-video');
+  var renewed = 0;
+  video?.addEventListener('error', function () {
+    if (renewed++ > 2) return;
+    var at = video.currentTime;
+    transfer.url(key).then(function (next) {
+      if (!video.isConnected) return;
+      video.src = next;
+      video.addEventListener('loadedmetadata', function () { video.currentTime = at; }, { once: true });
+    }).catch(function () {});
+  });
 }
 
 function showVideo(key, token) {
-  var c = state.videoUrlCache.get(key);
-  if (c && c.exp > Date.now()) return renderVideo(c.url);
-  return window.api('/api/bridge/video-url/' + key).then(function (r) {
+  return transfer.url(key).then(function (url) {
     if (token !== _fileRequestToken) return;
-    if (!r || !r.url) return setBody('<div class="file-error">Failed to load video.</div>');
-    if (state.videoUrlCache.size > 50) state.videoUrlCache.delete(state.videoUrlCache.keys().next().value);
-    state.videoUrlCache.set(key, { url: r.url, exp: Date.now() + VIDEO_URL_TTL });
-    renderVideo(r.url);
+    renderVideo(key, url);
   }).catch(function () {
     if (token === _fileRequestToken) setBody('<div class="file-error">Failed to load video.</div>');
   });
@@ -936,7 +938,7 @@ function handleFileResponse(msg, line, snippet, token) {
     ? Promise.resolve(msg.content)
     : cachedAttachment(msg.key).then(function (cached) {
       if (cached) return new TextDecoder().decode(cached.data);
-      return window.apiText('/api/bridge/file/' + msg.key).then(function (text) {
+      return transfer.text(msg.key).then(function (text) {
         cacheAttachment(msg.key, (msg.path || '').split('/').pop() || msg.key, new Blob([text]));
         return text;
       });
