@@ -132,6 +132,24 @@ Done:
 - Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
   whose `engines` the running Node does not meet.
 
+### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/runtimes/opencode/`)
+- Loaded only when `~/.local/share/opencode/opencode.db` exists and has `session_v2` (`loadInstalledRuntimes()`).
+  Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
+  max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. Baton prompts carry
+  `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
+- The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
+  `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.
+  Busy with no opencode process alive is an orphaned claim → Done.
+- Interaction goes through the user's own background service (`~/.local/state/opencode/service.json`); Baton
+  runs `opencode service start` only to send (it resumes suspended sessions), never to read. One `/api/event` SSE
+  per Baton turn, closed 120 s after the last ends. Sends never set `delivery` (OpenCode steers them into a running
+  turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
+  request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
+  turn); forms map per field key (multiselect → array). `heldElsewhere`: busy in the DB but not active in the service
+  → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
+  else `opencode api … --standalone`. Commands: the service's `/api/command` (only while it runs).
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout

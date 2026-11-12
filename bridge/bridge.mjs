@@ -17,6 +17,7 @@ import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
+import { loadInstalledRuntimes } from './runtime-registry.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
@@ -69,6 +70,7 @@ while (!CONFIG.wsUrl && !shuttingDown) {
   if (CONFIG.wsUrl) saveConfig(CONFIG);
   else await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
+await loadInstalledRuntimes();
 initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
