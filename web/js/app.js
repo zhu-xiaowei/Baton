@@ -1,6 +1,6 @@
 // App state, routing, page loading
 import { state } from './state.js';
-import { layoutPixels } from './page-zoom.js';
+import { layoutPixels, layoutRect } from './page-zoom.js';
 import {
   invalidateListCache,
   readListCache,
@@ -432,15 +432,15 @@ function openRuntimePicker() {
       + '</button>';
   }).join('');
   // Drop down from the button, right-aligned, with the arrow under its centre.
-  var rect = button.getBoundingClientRect();
-  var right = Math.max(8, innerWidth - rect.right - 4);
+  var rect = layoutRect(button);
+  var width = layoutPixels(innerWidth);
+  var right = Math.max(8, width - rect.right - 4);
   menu.style.top = (rect.bottom + 10) + 'px';
   menu.style.right = right + 'px';
-  menu.style.setProperty('--arrow-right', Math.max(10, innerWidth - right - rect.left - rect.width / 2 - 6) + 'px');
+  menu.style.setProperty('--arrow-right', Math.max(10, width - right - rect.left - rect.width / 2 - 6) + 'px');
   layer.hidden = false;
   addEventListener('keydown', runtimePickerKey);
   addEventListener('resize', closeRuntimePicker);
-  addEventListener('hashchange', closeRuntimePicker);
   menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
 }
 
@@ -453,7 +453,6 @@ function closeRuntimePicker() {
   if (layer) layer.hidden = true;
   removeEventListener('keydown', runtimePickerKey);
   removeEventListener('resize', closeRuntimePicker);
-  removeEventListener('hashchange', closeRuntimePicker);
 }
 
 function pickNewSessionRuntime(runtime) {
