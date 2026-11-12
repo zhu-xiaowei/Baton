@@ -10,7 +10,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     overlay.className = 'modal-overlay';
     // Above the in-app browser page.
     overlay.style.zIndex = '1500';
-    overlay.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true">'
+    overlay.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true" tabindex="-1">'
       + '<div class="modal-title"></div><div class="modal-actions"></div></div>';
     overlay.querySelector('.modal-title').textContent = message;
     if (detail) overlay.querySelector('.modal-title').insertAdjacentHTML('afterend', '<div class="modal-desc"></div>');
@@ -38,6 +38,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
       }
     });
     showCenteredModal(overlay);
-    (overlay.querySelector('.confirm') || buttons[0]).focus({ preventScroll: true });
+    // The dialog takes focus, not a button, which would show a focus ring on open; Tab reaches them.
+    overlay.querySelector('.modal-box').focus({ preventScroll: true });
   });
 }

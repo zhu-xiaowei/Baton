@@ -607,6 +607,7 @@ html[data-theme="light"] .d2h-info { background-color: var(--surface-info); }
 .modal-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; min-width: 80px; padding: 8px 16px; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 500; line-height: 20px; cursor: pointer; border: 1px solid transparent; }
 .modal-btn.cancel { background: var(--surface-raised); color: var(--text-normal); border: 1px solid var(--border); }
 .modal-btn.confirm { background: var(--success-solid); color: var(--on-accent); }
+.modal-box:focus { outline: none; }
 @media (hover: hover) and (pointer: fine) {
   .modal-btn.cancel:hover { background: var(--border); }
   .modal-btn.confirm:hover { background: var(--success-hover); }
