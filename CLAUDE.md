@@ -131,6 +131,26 @@ Done:
   (no Done alert for a turn a takeover, exit or parent ended).
 - Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
   whose `engines` the running Node does not meet.
+- `registerInstalledRuntimes()` (bridge startup) imports each runtime's catalog module, calls its `detect()`, and
+  loads the full adapter only when the CLI is installed; it first kills processes left in the turn-process ledger.
+
+### Kiro (H5, kiro-cli 3.x v3 engine): `bridge/kiro.mjs`, `bridge/kiro-runtime.mjs`
+- `kiro.mjs` (also loaded by the workers; top-level files because the Bridge package and its updater carry only
+  root `*.mjs` and `project/`): catalog of `$KIRO_HOME/sessions/<hash16>/<id>/messages.jsonl`
+  (+ `session.json`, `sub-executions/*.jsonl` as children; v2 `sessions/cli/*.jsonl` read only), titles as the
+  `/sessions` dashboard shows them (dashboard renames, placeholder → first prompt line). Status: a lease whose pid
+  is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
+  one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
+  `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
+- `kiro-runtime.mjs`: a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+  `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
+  uses `_session/steer`; interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
+  (`replayId` = stored Say id); every row, including tool cards (a stream block, then the row), comes from the
+  jsonl drain, so live and history match. Approvals map by option kind; "for this session" is `allow_always`
+  plus a grant (`capability(resource)` in `~/.baton-bridge/kiro-grants.json`) answered again in later processes;
+  Skill loads are allowed. `heldElsewhere`: another client's live lease (takeover SIGTERMs that pid). Commands: the
+  ACP `available_commands_update` of the last turn in that cwd, else Skills/prompts on disk. Delete runs
+  `kiro-cli chat --delete-session`, refused while held.
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
