@@ -6,6 +6,10 @@
 const encoder = new TextEncoder();
 const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
+// Objects expire 7 days after they were written; one older than this is written again before it
+// is reused, so it outlives the day the writer remembers it (`recentKeys`).
+const REUSE_MS = 6 * 86400_000;
+export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
 
 export const IMAGE_TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
@@ -70,7 +74,7 @@ export async function signUrl({ method, host, path, region, credentials, expires
 export async function presign(access, method, key, { headers = {}, query = {}, accelerate = false, now = new Date() } = {}) {
   if (!KEY.test(key)) throw new Error('Invalid file key');
   const { bucket, region, accountId, credentials } = access;
-  const expires = Math.min(MAX_EXPIRES, Math.floor(credentials.expiresAt - now.getTime() / 1000) - 30);
+  const expires = Math.min(MAX_EXPIRES, Math.floor(credentials.expiresAt - now.getTime() / 1000) - 5);
   if (expires < 1) throw new Error('Storage credentials expired');
   return signUrl({
     method, region, credentials, expires, headers, query, now,
@@ -100,6 +104,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       checksum: response.headers.get('x-amz-checksum-sha256') || '',
       name: meta('filename'),
       contentType: meta('content-type'),
+      modified: Date.parse(response.headers.get('last-modified') || '') || 0,
     };
   }
 
@@ -116,8 +121,9 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       if (checksum) {
         const hashed = contentHash.slice(0, 32) + ext;
         const existing = await head(hashed);
-        if (!existing) key = hashed;
-        else if (existing.checksum === checksum && existing.size === size) return { key: hashed, exists: true };
+        const same = existing?.checksum === checksum && existing.size === size;
+        if (same && reusable(existing)) return { key: hashed, exists: true };
+        if (!existing || same) key = hashed;
       }
       const headers = {
         'Content-Type': 'application/octet-stream',
@@ -172,17 +178,20 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
   };
 }
 
-// Keys this process stored in the last day. Objects live 7 days, so an older entry is checked again.
-export function storedRecently(limit = 1000, maxAgeMs = 86400_000) {
-  const at = new Map();
+// What this process stored in the last day (id → value), so a hot page does not write again.
+export function recentKeys(limit = 1000, maxAgeMs = 86400_000) {
+  const entries = new Map();
   return {
-    has: (key) => Date.now() - (at.get(key) || 0) < maxAgeMs,
-    add(key) {
-      at.delete(key);
-      at.set(key, Date.now());
-      if (at.size > limit) at.delete(at.keys().next().value);
+    get(id) {
+      const entry = entries.get(id);
+      return entry && Date.now() - entry.at < maxAgeMs ? entry.value : undefined;
     },
-    delete: (key) => at.delete(key),
+    set(id, value = true) {
+      entries.delete(id);
+      entries.set(id, { value, at: Date.now() });
+      if (entries.size > limit) entries.delete(entries.keys().next().value);
+    },
+    delete: (id) => entries.delete(id),
   };
 }
 

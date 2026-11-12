@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, removeServiceKeyArgs } from './config.mjs';
+import { loadConfig, removeServiceKeyArgs, saveConfig } from './config.mjs';
 import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
@@ -56,9 +56,16 @@ console.log(`  server:   ${CONFIG.server}`);
 console.log(`  ws:       ${CONFIG.wsUrl || '-'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
 
-if (!CONFIG.wsUrl) {
-  console.error('[ws] config.json has no wsUrl; run the install command from Setup again');
-  process.exit(1);
+// The control socket's address is kept in config.json; the first start asks /devices for it.
+while (!CONFIG.wsUrl && !shuttingDown) {
+  try {
+    const res = await fetch(`${CONFIG.server}/api/bridge/devices`, {
+      headers: { 'x-api-key': CONFIG.apiKey }, signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) CONFIG.wsUrl = (await res.json()).wsUrl || '';
+  } catch {}
+  if (CONFIG.wsUrl) saveConfig(CONFIG);
+  else await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 sessionIndex.statuses = lastKnownStatus;

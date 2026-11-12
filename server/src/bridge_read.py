@@ -30,7 +30,7 @@ def _account_id(request: Request) -> str:
 
 
 def _ws_url():
-    """The control socket: the Bridge keeps it in config.json, the App gets it with /devices."""
+    """The control socket's address, for the App and for a Bridge whose config.json lacks it."""
     endpoint = os.environ.get("WS_API_ENDPOINT", "")
     return endpoint.replace("https://", "wss://") if endpoint else ""
 
@@ -204,7 +204,6 @@ fi"""
 def _windows_install_script(url, server, api_key, name):
     package = _powershell_literal(url)
     server_value = _powershell_literal(server)
-    ws_value = _powershell_literal(_ws_url())
     key_value = _powershell_literal(api_key)
     name_value = _powershell_literal(name)
     validation_uri = _powershell_literal(f"{server}/api/bridge/device-name/validate")
@@ -353,7 +352,7 @@ def _windows_install_script(url, server, api_key, name):
         "  }",
         "} finally { Pop-Location }",
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
-        f"$config = @{{ server = {server_value}; wsUrl = {ws_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
+        f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
         "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
         "$utf8 = New-Object System.Text.UTF8Encoding($false)",
         "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
@@ -494,11 +493,11 @@ def install_script(request: Request, api_key: str, name, platform: str):
         '    node verify-dependencies.mjs\n'
         '}\n'
         'install_bridge_dependencies || { sleep 2; install_bridge_dependencies; }\n'
-        f'BATON_SERVER={_shell_literal(server)} BATON_WS_URL={_shell_literal(_ws_url())} BATON_API_KEY={_shell_literal(api_key)} '
+        f'BATON_SERVER={_shell_literal(server)} BATON_API_KEY={_shell_literal(api_key)} '
         'BATON_DEVICE_NAME="$NAME" BATON_DEVICE_DISPLAY_NAME="$DEVICE_DISPLAY_NAME" '
         'node -e \'const fs=require("fs");const p=process.argv[1];'
         'let existing={};try{existing=JSON.parse(fs.readFileSync(p,"utf8"));}catch{}'
-        'const config={server:process.env.BATON_SERVER,wsUrl:process.env.BATON_WS_URL,apiKey:process.env.BATON_API_KEY,'
+        'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
         'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
         'if(existing.bridgeId)config.bridgeId=existing.bridgeId;'
         'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n'

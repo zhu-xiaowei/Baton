@@ -1,7 +1,7 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import { transfer } from './transfer-store.mjs';
+import { recentKeys, reusable, transfer } from './transfer-store.mjs';
 import { VALID_TYPES } from './config.mjs';
 import { stripToolResultBase64 } from './tool-preview.mjs';
 
@@ -18,25 +18,20 @@ export function countJsonlLines(filePath) {
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
 
-// History pages are read again and again: each image is compressed and uploaded once a day
-// (transfer objects live 7 days).
-const IMAGE_MEMO_LIMIT = 500;
-const IMAGE_MEMO_MS = 86400_000;
-const imageKeys = new Map(); // sha1(base64) → { job: Promise<key>, at }
+// History pages are read again and again: each image is compressed and uploaded once a day.
+const imageKeys = recentKeys(500); // sha1(base64) → Promise<key>
 
 function processImage(base64Data) {
   const id = crypto.createHash('sha1').update(base64Data).digest('hex');
-  let entry = imageKeys.get(id);
-  if (!entry || Date.now() - entry.at > IMAGE_MEMO_MS) {
-    imageKeys.delete(id);
-    if (imageKeys.size >= IMAGE_MEMO_LIMIT) imageKeys.delete(imageKeys.keys().next().value);
-    entry = { at: Date.now(), job: compressAndUpload(base64Data).then(({ key, ok }) => {
+  let job = imageKeys.get(id);
+  if (!job) {
+    job = compressAndUpload(base64Data).then(({ key, ok }) => {
       if (!ok) imageKeys.delete(id); // tried again next time
       return key;
-    }, (error) => { imageKeys.delete(id); throw error; }) };
-    imageKeys.set(id, entry);
+    }, (error) => { imageKeys.delete(id); throw error; });
+    imageKeys.set(id, job);
   }
-  return entry.job;
+  return job;
 }
 
 async function compressAndUpload(base64Data) {
@@ -51,7 +46,7 @@ async function compressAndUpload(base64Data) {
   const key = `${hash}.jpg`;
 
   try {
-    if (!await transfer.head(key)) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
+    if (!reusable(await transfer.head(key))) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
     return { key, ok: true };
   } catch {
     return { key, ok: false };

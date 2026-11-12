@@ -121,11 +121,7 @@ export function checkStopped(config, index = sessionIndex) {
     if (!row && (parseClaudeSubagentSessionId(identity.nativeSessionId)
       || adapter.findSessionFile(identity.nativeSessionId))) continue;
     if (!statusContexts.has(adapter.runtime)) {
-      statusContexts.set(adapter.runtime, adapter.createStatusContext({
-        lastKnownStatus,
-        poolOwns,
-        poolAwaitsAgents,
-      }));
+      statusContexts.set(adapter.runtime, adapter.createStatusContext({ poolOwns, poolAwaitsAgents }));
     }
     const result = adapter.inspectActiveSession({
       sessionId: identity.sessionId,

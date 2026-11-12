@@ -116,6 +116,9 @@
     var topRight = document.getElementById('top-right');
     if (!topRight) return;
     topRight.classList.toggle('syncing', syncing);
+    // The gear spins from the static HTML until the first sync settles.
+    var gear = topRight.querySelector('.top-gear.syncing');
+    if (gear) gear.classList.remove('syncing');
   }
   function stopSync() {
     setSync(false);

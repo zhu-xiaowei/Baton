@@ -25,7 +25,7 @@ function storeFromPost(postFn) {
     async head(key) {
       const response = await postFn('/api/bridge/video-prepare', { key });
       this.video = response?.ok ? await response.json() : {};
-      return this.video.exists ? { size: 0 } : null;
+      return this.video.exists ? { size: 0, modified: Date.now() } : null;
     },
     async uploadUrl() {
       if (!this.video?.url) throw new Error('upload failed');

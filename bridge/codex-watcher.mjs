@@ -719,7 +719,6 @@ export class CodexWatcher {
       publicSession.localIdleSec = await localIdleSec();
     }
     this.reportFn(this.config, [publicSession], { agentCountUpdates });
-    this.statuses.set(sessionId, session.status);
     this.recent.add(sessionId);
     this.metadataSignatures.set(sessionId, signature);
     this.threadKinds.set(sessionId, session.threadKind || 'main');

@@ -97,7 +97,7 @@ It configures launchd on macOS, systemd user service on Linux, or Task Scheduler
 **Script logic**:
 1. Download bridge.tar.gz (S3 presigned URL, valid 1h)
 2. npm install
-3. Write `~/.baton-bridge/config.json` (`server`, `wsUrl`, `apiKey`, device names)
+3. Write `~/.baton-bridge/config.json` (`server`, `apiKey`, device names; the Bridge adds `wsUrl` from `/devices` on its first start)
 4. Write launchd plist / systemd service / Windows scheduled task configuration
 5. Start service
 

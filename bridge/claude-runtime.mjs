@@ -245,7 +245,6 @@ export const claudeRuntime = defineRuntimeAdapter({
       daemonRunning: getDaemonRunningSessionIds(),
       poolOwns: context.poolOwns || (() => false),
       poolAwaitsAgents: context.poolAwaitsAgents,
-      lastKnownStatus: context.lastKnownStatus,
       findSessionFile: context.findSessionFile || findSessionFile,
     };
   },
@@ -268,7 +267,6 @@ export const claudeRuntime = defineRuntimeAdapter({
     const stat = gone ? null : fs.statSync(filePath);
     const metadata = gone ? null : getSessionMetadata(filePath);
     const lastActive = gone ? active.lastActive : stat.mtime.toISOString();
-    context.lastKnownStatus.set(nativeSessionId, newStatus);
     const session = {
       id: nativeSessionId,
       nativeSessionId,

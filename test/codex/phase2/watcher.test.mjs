@@ -74,17 +74,19 @@ function watcherHarness(homes, options = {}) {
   const delivered = [];
   const posts = [];
   const watermarks = options.watermarks || new Map();
+  const statuses = options.lastKnownStatus || new Map();
   const watcher = new CodexWatcher({ deviceName: 'Codex-Test' }, {
     codexHomes: homes,
     initialSessions: options.initialSessions || [],
     watermarks,
     recentSessions: options.recentSessions || new Set(),
-    lastKnownStatus: options.lastKnownStatus || new Map(),
+    lastKnownStatus: statuses,
     publishFn: options.publishFn || ((sessionId, messages) => {
       delivered.push({ sessionId, messages });
     }),
     reportFn: (_config, sessions, extra = {}) => {
       posts.push({ body: { sessions, ...extra } });
+      for (const s of sessions) statuses.set(storageSessionId('codex', s.nativeSessionId || s.id), s.status);
     },
     runningInfoFn: () => ({ projects: new Set(), sessions: new Set() }),
     ...(options.scanRollout ? { scanRollout: options.scanRollout } : {}),

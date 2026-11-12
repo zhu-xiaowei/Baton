@@ -247,8 +247,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   Codex Skills come from app-server `skills/list`; selecting one composes `$name`, and
   `turn/start.input` carries the matching structured Skill item. The app preserves Bridge order
   and caches by device + runtime + project. Details: `docs/api.md` + `docs/codex.md`.
-- Config: `~/.baton-bridge/config.json`, auto-created from CLI args. `wsUrl` is written by the
-  install script (`--ws` for manual runs); without it the Bridge exits asking to reinstall.
+- Config: `~/.baton-bridge/config.json`, auto-created from CLI args. Without a `wsUrl` the Bridge
+  asks `/devices` for it at start (every 10 s until it answers) and keeps it there.
   - Tool previews are always enabled; historical `toolPreviews` settings have no
     effect. Clients use `tool_details` to load full content from the original JSONL.
 - Always-on: launchd (macOS), systemd user service + `loginctl enable-linger` (Linux), Task Scheduler (Windows)

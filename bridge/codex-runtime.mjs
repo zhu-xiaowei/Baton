@@ -131,7 +131,6 @@ export const codexRuntime = defineRuntimeAdapter({
   createStatusContext(context = {}) {
     return {
       runningInfo: getCodexRunningInfo(),
-      lastKnownStatus: context.lastKnownStatus,
     };
   },
 
@@ -169,7 +168,6 @@ export const codexRuntime = defineRuntimeAdapter({
     }
     if (session.status === active.status) return null;
 
-    context.lastKnownStatus.set(sessionId, session.status);
     return { session: publicSession(session) };
   },
 

@@ -4,7 +4,7 @@ import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
-import { storedRecently, transfer } from '../transfer-store.mjs';
+import { previewType, recentKeys, reusable, transfer } from '../transfer-store.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
@@ -22,8 +22,8 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi',
 ]);
-const uploadedFileKeys = storedRecently();
-const downloadFileKeys = new Map(); // file identity → { key, at }
+const uploadedFileKeys = recentKeys();
+const downloadFileKeys = recentKeys(100); // file identity → key
 
 async function prepareFileDownload(message, { projectRoot, store = transfer, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);
@@ -31,8 +31,7 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
   if (!stat.isFile()) throw new Error('not a regular file');
   if (stat.size > 512 * 1024 * 1024) throw new Error('Download exceeds the 512 MB limit');
   const identity = `${absPath}\0${stat.mtimeMs}\0${stat.size}`;
-  const known = downloadFileKeys.get(identity);
-  let key = known && Date.now() - known.at < 86400_000 ? known.key : '';
+  let key = downloadFileKeys.get(identity);
   if (!key) {
     sendProgress(message, send, { downloading: true });
     const hash = await contentHash(absPath, stat, home);
@@ -68,9 +67,7 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
       throw new Error('File changed while preparing the download. Try again.');
     }
     key = info.key;
-    downloadFileKeys.delete(identity);
-    if (downloadFileKeys.size >= 100) downloadFileKeys.delete(downloadFileKeys.keys().next().value);
-    downloadFileKeys.set(identity, { key, at: Date.now() });
+    downloadFileKeys.set(identity, key);
   }
   send(responseBase(message, { ok: true, key, path: absPath, name: path.basename(absPath), size: stat.size }));
 }
@@ -184,16 +181,11 @@ async function browseDirectories(message, options) {
   });
 }
 
-const VIDEO_TYPES = {
-  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
-  '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
-};
-
 // Content-addressed: a video already in the transfer area is not sent again.
 async function uploadVideo(absPath, key, size, store) {
   try {
-    if (await store.head(key)) return true;
-    const { url, headers } = await store.uploadUrl(key, { contentType: VIDEO_TYPES[path.extname(key)] || 'video/mp4' });
+    if (reusable(await store.head(key))) return true;
+    const { url, headers } = await store.uploadUrl(key, { contentType: previewType(key) });
     const response = await fetch(url, {
       method: 'PUT',
       headers: { ...headers, 'Content-Length': String(size) },
@@ -306,9 +298,9 @@ async function readProjectFile(message, context) {
     return;
   }
 
-  if (!uploadedFileKeys.has(key)) {
+  if (!uploadedFileKeys.get(key)) {
     await store.put(key, buffer, { contentType: 'text/plain; charset=utf-8' });
-    uploadedFileKeys.add(key);
+    uploadedFileKeys.set(key);
   }
   send(metadata);
 }

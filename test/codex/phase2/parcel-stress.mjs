@@ -75,7 +75,7 @@ try {
     recentSessions,
     lastKnownStatus: statuses,
     publishFn: (_sessionId, messages) => delivered.push(...messages),
-    reportFn: () => {},
+    reportFn: (_config, sessions) => { for (const s of sessions) statuses.set('codex:' + (s.nativeSessionId || s.id), s.status); },
     runningInfoFn: () => ({ projects: new Set(), sessions: new Set() }),
     rescanMs: 3_600_000,
     statusRecheckMs: 3_600_000,

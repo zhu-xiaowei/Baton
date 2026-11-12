@@ -257,7 +257,10 @@ def _handle_connect(event, connection_id):
     if item.get("bridgeOwner"):
         if not _claim_bridge_connection(item, context, connected_endpoint):
             return {"statusCode": 409}
-        devices.put_device(account_id, device, qs.get("name", ""), qs.get("os", ""))
+        try:  # display only: the connection does not depend on it
+            devices.put_device(account_id, device, qs.get("name", ""), qs.get("os", ""))
+        except Exception as error:
+            print(f"device row not written: {error}")
 
     return {"statusCode": 200}
 

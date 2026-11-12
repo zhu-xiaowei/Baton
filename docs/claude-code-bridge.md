@@ -72,7 +72,7 @@ and computes Device/Project aggregates once. The steps below describe the Claude
 - **isMeta filtering** → VS Code `--replay-user-messages` creates duplicate user entries with `isMeta=true`
   - Skip `isMeta` user messages (avoid duplicate user input)
   - Keep their assistant replies (contain real CC output: first text paragraph, thinking blocks)
-- **WS connection** → `wsUrl` from `~/.baton-bridge/config.json` (written by the install script; `--ws` for manual runs; missing → exit asking to reinstall), auto-reconnect on disconnect
+- **WS connection** → `wsUrl` from `~/.baton-bridge/config.json` (missing → asked from `/devices` at start and saved), auto-reconnect on disconnect
 
 ### Bridge connection recovery
 
