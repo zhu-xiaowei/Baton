@@ -237,11 +237,22 @@ import { showToast } from './toast.js';
     body.style.display = body.style.display === 'block' ? 'none' : 'block';
   };
 
+  const SYSTEM_EVENT_ICONS = {
+    clock: '<circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.2M3.5 3.2l1.6-1.2M12.5 3.2l-1.6-1.2"/>',
+    team: '<circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.4-2.2 2-3.5 4-3.5s3.6 1.3 4 3.5"/><circle cx="11.3" cy="6" r="1.7"/><path d="M11 9.6c1.6.1 2.7 1.2 3 3"/>',
+    revert: '<path d="M4 6h6a3 3 0 010 6H6"/><path d="M6 3.5L3.5 6 6 8.5"/>',
+    bookmark: '<path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/>',
+    alert: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.8M8 11.1v.1"/>',
+  };
+
   window.renderSystemEvent = function (msg) {
     const content = contentText(msg);
     if (!content) return '';
     const segment = esc(systemEventId(msg)).replace(/"/g, '&quot;');
-    return `<div class="msg-system-event" data-timeline-segment="${segment}"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><span>${esc(content)}</span></div>`;
+    const icon = SYSTEM_EVENT_ICONS[msg.icon];
+    const svg = icon ? `<svg class="msg-event-icon" viewBox="0 0 16 16" aria-hidden="true">${icon}</svg>` : '';
+    const notice = msg.icon === 'alert' ? ' msg-system-notice' : '';
+    return `<div class="msg-system-event${notice}" data-timeline-segment="${segment}"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>${svg}<span>${esc(content)}</span></div>`;
   };
 
   window.renderSummary = function (msg) {

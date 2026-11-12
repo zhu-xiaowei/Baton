@@ -106,8 +106,8 @@ function prefetchCommands() {
 function applyCommandCatalog(msg) {
   if (_latestRequestId && msg.requestId !== _latestRequestId) return;
   var currentRuntime = runtime();
-  if (currentRuntime === 'codex' && msg.runtime !== 'codex') return;
-  if (currentRuntime !== 'codex' && msg.runtime && msg.runtime !== currentRuntime) return;
+  // Older Bridges omit runtime only for Claude catalogs.
+  if (msg.runtime ? msg.runtime !== currentRuntime : currentRuntime !== 'claude') return;
   if (msg.device && msg.device !== (state.appState.device || '')) return;
   if (msg.projectHash && msg.projectHash !== projectHash()) return;
   _requestPending = false;

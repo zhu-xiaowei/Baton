@@ -415,6 +415,7 @@ test('Claude AskUserQuestion keeps the answerText reply contract', () => {
     requestId: 'ask-approval',
     decision: 'answer',
     answerText: 'Choose a region → AP',
+    answers: { 'Choose a region': ['AP'] },
   });
 });
 

@@ -378,5 +378,5 @@ test('runtime icons load on demand instead of using unconditional image preloads
     indexHtml,
     /<link[^>]+rel="preload"[^>]+(?:claude-code|codex)\.svg/,
   );
-  assert.match(indexHtml, /runtime === 'codex' \? 'codex\.svg' : 'claude-code\.svg'/);
+  assert.match(indexHtml, /'\.\/assets\/' \+ \(runtimeIconTable\[runtime\] \|\| runtimeIconTable\.claude\)\[1\]/);
 });

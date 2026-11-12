@@ -14,6 +14,7 @@ import {
   savePagePreview,
   takePreviousNavigation,
 } from './edge-back.js';
+import { runtimeInfo, runtimeOf, RUNTIMES } from './runtimes.js';
 import {
   creatableRuntimes,
   newSessionRuntimePreferenceKey,
@@ -314,14 +315,13 @@ function statusClass(status) {
 }
 
 function sessionRuntime(sessionId, runtime) {
-  return runtime === 'codex' || String(sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
+  return runtimeOf(sessionId, runtime);
 }
 
 function nativeSessionId(sessionId, nativeId, runtime) {
   var value = String(nativeId || sessionId || '');
-  return sessionRuntime(sessionId, runtime) === 'codex' && value.indexOf('codex:') === 0
-    ? value.slice('codex:'.length)
-    : value;
+  var prefix = sessionRuntime(sessionId, runtime) + ':';
+  return prefix !== 'claude:' && value.indexOf(prefix) === 0 ? value.slice(prefix.length) : value;
 }
 
 function shortSessionId(sessionId, nativeId, runtime) {
@@ -330,11 +330,10 @@ function shortSessionId(sessionId, nativeId, runtime) {
 }
 
 function runtimeIcon(sessionId, runtime) {
-  var value = sessionRuntime(sessionId, runtime);
-  var label = value === 'codex' ? 'Codex' : 'Claude Code';
-  return '<span class="runtime-mark' + (value === 'codex' ? ' runtime-mark-codex' : '')
-    + '" role="img" aria-label="' + label + '" title="' + label + '">'
-    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(value) || './assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg')) + '" alt="" aria-hidden="true"></span>';
+  var info = runtimeInfo(sessionRuntime(sessionId, runtime));
+  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-' + info.id : '')
+    + '" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">'
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(info.id) || info.icon) + '" alt="" aria-hidden="true"></span>';
 }
 
 function activeSessionThread() {
@@ -392,7 +391,7 @@ function sessionRuntimeControl() {
     state.appState.runtime,
   );
   var label = runtimeLabel(runtime);
-  var text = runtime === 'codex' ? 'Codex' : 'Claude';
+  var text = runtimeIcon('', runtime) + esc(runtimeInfo(runtime).short);
   if (state.sessionThreads.length <= 1) {
     return '<span class="badge session-runtime-label" title="' + label + '">' + text + '</span>';
   }
@@ -405,7 +404,7 @@ function sessionRuntimeControl() {
 }
 
 function runtimeLabel(runtime) {
-  return runtime === 'codex' ? 'Codex' : 'Claude Code';
+  return runtimeInfo(runtime).label;
 }
 
 function newSessionRuntimeControl() {
@@ -414,10 +413,32 @@ function newSessionRuntimeControl() {
   if (!runtimes.length || !current) return '';
   var mark = runtimeIcon('__new__', current);
   if (runtimes.length === 1) return mark;
-  var next = nextNewSessionRuntime(runtimes, current);
-  return '<button class="runtime-switch" type="button" onclick="toggleNewSessionRuntime()"'
-    + ' aria-label="Switch coding runtime. Current: ' + runtimeLabel(current) + '"'
-    + ' title="Switch to ' + runtimeLabel(next) + '">' + mark + '</button>';
+  return '<button class="runtime-switch" type="button" onclick="openRuntimePicker()"'
+    + ' aria-haspopup="dialog" aria-controls="runtimePickerModal"'
+    + ' aria-label="Choose coding runtime. Current: ' + runtimeLabel(current) + '"'
+    + ' title="' + runtimeLabel(current) + '">' + mark + '</button>';
+}
+
+function openRuntimePicker() {
+  var modal = document.getElementById('runtimePickerModal');
+  if (!modal || state.appState.session !== '__new__') return;
+  document.getElementById('runtimePickerList').innerHTML = state.newSessionRuntimes.map(function (runtime) {
+    var current = runtime === state.appState.runtime;
+    return '<button class="runtime-picker-row" type="button" aria-pressed="' + current + '"'
+      + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
+      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">&#10003;</span>' : '')
+      + '</button>';
+  }).join('');
+  showCenteredModal(modal);
+}
+
+function closeRuntimePicker() {
+  hideCenteredModal(document.getElementById('runtimePickerModal'));
+}
+
+function pickNewSessionRuntime(runtime) {
+  closeRuntimePicker();
+  applyNewSessionRuntime(runtime, true);
 }
 
 function showStats() {}  // no-op, stats bar removed
@@ -1502,7 +1523,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
     var title = attachmentPreviewText(s.preview || (s.isAgent && s.agentName) || 'No preview');
-    var resumeCommand = (runtime === 'codex' ? 'codex resume ' : 'claude --resume ') + nativeId;
+    var resumeCommand = runtimeInfo(runtime).resume?.(nativeId, s.projectPath) || nativeId;
     var sidLabel = '<span class="meta-sid-copy" title="Copy ' + esc(resumeCommand) + '"'
       + ' data-copy="' + esc(resumeCommand) + '">' + esc(shortId) + '</span>';
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
@@ -1825,11 +1846,12 @@ function applyNewSessionRuntime(runtime, remember) {
   }
   var agent = document.getElementById('newAsAgent');
   var agentToggle = document.getElementById('newAgentToggle');
-  if (runtime !== 'claude') {
+  var canAgent = runtimeInfo(runtime).features.agentToggle;
+  if (!canAgent) {
     state.appState.isAgent = false;
     if (agent) agent.checked = false;
   }
-  if (agentToggle) agentToggle.hidden = runtime !== 'claude';
+  if (agentToggle) agentToggle.hidden = !canAgent;
   var messages = document.querySelector('.messages');
   if (messages) messages.className = 'messages runtime-' + runtime;
   updateBreadcrumb();
@@ -1910,7 +1932,7 @@ async function startNewSession(projectHash) {
     '<div class="new-session-hero">'
       + '<img class="hero-logo" src="assets/baton-logo.svg" alt="">'
       + '<div class="hero-title">Baton</div>'
-      + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
+      + '<label class="agent-toggle" id="newAgentToggle"' + (runtimeInfo(runtime).features.agentToggle ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages runtime-' + runtime + '" hidden></div>';
   document.body.classList.add('new-session');
@@ -1921,6 +1943,18 @@ async function startNewSession(projectHash) {
   // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
   newSessionRequest(projectHash);
+  refreshNewSessionRuntimes(myNav);
+}
+
+// The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
+async function refreshNewSessionRuntimes(nav) {
+  var reply;
+  try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
+  if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
+  var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
+  if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
+  state.newSessionRuntimes = runtimes;
+  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, state.appState.runtime), false);
 }
 
 // ---- Messages ----
@@ -2348,7 +2382,7 @@ Object.assign(window, {
   createNewProject, closeNewProjectModal, submitNewProject,
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
-  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, openRuntimePicker, closeRuntimePicker, pickNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,

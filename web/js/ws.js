@@ -10,6 +10,7 @@ import {
   syncComposerDraft,
 } from './drafts/composer-draft.js';
 import { dedupeCodexUserMessages } from './message-dedup.js';
+import { RUNTIMES, runtimeInfo } from './runtimes.js';
 import { FetchBarrierCoordinator } from './fetch-barrier.js';
 import {
   replaceHistoryTail,
@@ -2517,8 +2518,11 @@ function pendingStatus(pending, text, color) {
 
 function handleCodexSendConflict(pending, msg) {
   var writer = msg.writer || {};
-  if (msg.errorCode !== 'codex_active_writer'
-    || writer.status !== 'running'
+  var runtime = /^(\w+)_active_writer$/.exec(msg.errorCode || '')?.[1];
+  var label = runtimeInfo(runtime).label;
+  // Codex asks only while the terminal is mid-turn; other runtimes hold the session whenever it is open.
+  if (!RUNTIMES[runtime]
+    || (runtime === 'codex' && writer.status !== 'running')
     || !writer.canTerminate
     || !writer.pid) return false;
   pending.awaitingTakeover = true;
@@ -2527,15 +2531,17 @@ function handleCodexSendConflict(pending, msg) {
   updateSendBtn();
   pendingStatus(pending, 'Waiting for confirmation');
 
-  _codexTakeover = { pending: pending, writer: writer, sending: false };
+  _codexTakeover = { pending: pending, writer: writer, label: label, sending: false };
   var modal = document.getElementById('codexTakeoverModal');
   if (!modal) return true;
   var desc = document.getElementById('codexTakeoverDesc');
   var error = document.getElementById('codexTakeoverError');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
-  desc.textContent = (writer.label || 'A Codex terminal')
-    + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
+  document.getElementById('codexTakeoverTitle').textContent = label + ' session is active';
+  desc.textContent = (writer.label || 'A ' + label + ' terminal') + (runtime === 'codex'
+    ? ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.'
+    : (writer.status === 'running' ? ' is running this session.' : ' has this session open.') + ' Taking over will close it and send this message.');
   error.textContent = '';
   confirm.style.display = '';
   setButtonLoading(confirm);
@@ -2569,7 +2575,7 @@ function confirmCodexTakeover() {
   pending.awaitingTakeover = false;
   state.wsRunning = true;
   updateSendBtn();
-  pendingStatus(pending, 'Taking over Codex...');
+  pendingStatus(pending, 'Taking over ' + _codexTakeover.label + '...');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
   setButtonLoading(confirm, 'Taking over');

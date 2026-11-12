@@ -709,16 +709,34 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     };
   }
 
-  // Generic fallback
+  const PLUG_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 01-7 0zM8 11v3"/></svg>';
+  const KEY_ARGS = ['title', 'name', 'path', 'query', 'url'];
+
+  function compactValue(value, nested) {
+    if (Array.isArray(value)) return value.map(item => compactValue(item, true)).join(', ');
+    if (value && typeof value === 'object') {
+      const text = Object.entries(value).map(([key, item]) => `${key}: ${compactValue(item, true)}`).join(', ');
+      return nested ? `{${text}}` : text;
+    }
+    return String(value);
+  }
+
+  // Generic fallback: source badge + name + one key argument; the input as key/value rows.
   function renderGeneric(name, input, result) {
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+    const entries = Object.entries(input || {});
+    const key = KEY_ARGS.find(k => typeof input?.[k] === 'string' && input[k]);
+    const arg = key ? input[key] : entries.map(([, v]) => v).find(v => typeof v === 'string' && v.length <= 80);
     // Cancelled ask/plan: show a clean [Interrupted] instead of CC's long rejection text.
     var out = result != null ? resultText(result) : null;
     if (out != null && out.indexOf(CANCEL_MARK) !== -1) out = '[Interrupted]';
+    const kv = entries.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(compactValue(v))}</span>`).join('');
     return {
-      name,
-      desc: truncate(JSON.stringify(input), 80),
+      name: mcp ? mcp[2] : name,
+      badge: mcp?.[1],
+      desc: truncate(arg, 80),
       body: grid([
-        ['IN', esc(JSON.stringify(input, null, 2))],
+        kv ? ['IN', `<div class="tool-kv">${kv}</div>`] : null,
         out != null ? ['OUT', ansiHtml(out)] : null,
       ]),
     };
@@ -730,20 +748,13 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     return server && tool ? { server, tool } : null;
   }
 
+  // Codex keeps its Called/Calling header (its run group folds different tools under it).
   function renderCodexMcp(input, result) {
     const invocation = codexMcpInfo(input, result);
     const visibleInput = Object.fromEntries(
       Object.entries(input || {}).filter(([key]) => !key.startsWith('codexMcp')),
     );
-    const out = result != null ? resultText(result) : null;
-    return {
-      name: result ? 'Called' : 'Calling',
-      desc: invocation ? `${invocation.server}.${invocation.tool}` : '',
-      body: grid([
-        ['IN', esc(JSON.stringify(visibleInput, null, 2))],
-        out != null ? ['OUT', ansiHtml(out)] : null,
-      ]),
-    };
+    return { ...renderGeneric(invocation.tool, visibleInput, result), desc: `${invocation.server}.${invocation.tool}` };
   }
 
   function renderWebSearch(input) {
@@ -1093,6 +1104,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
 
     return `<div class="${baseHeaderClass}"${headerAttrs}>
         ${chevronHtml}
+        ${info.badge ? `<span class="tool-source">${PLUG_SVG}${esc(info.badge)}</span>` : ''}
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}
         ${elevatedHtml}

@@ -70,7 +70,7 @@ export function createCodexPermissionController(options) {
     }
   }
 
-  function choose(act, label, isTyped) {
+  function choose(act, label, isTyped, picked) {
     if (!request) return false;
 
     if (request.approvalType === 'codex-goal-resume') {
@@ -92,7 +92,7 @@ export function createCodexPermissionController(options) {
 
     if (request.approvalType === 'codex-mcp-elicitation') {
       if (mcpFields) {
-        chooseMcpField(act, label, isTyped);
+        chooseMcpField(act, label, isTyped, picked);
       } else {
         var mcpAction = act.indexOf('mcp:') === 0 ? act.slice(4) : 'cancel';
         finish({
@@ -239,7 +239,16 @@ export function createCodexPermissionController(options) {
     var elicitation = request.input.codexMcpElicitation || {};
     var prefix = mcpFields.length > 1 ? '[' + (mcpIndex + 1) + '/' + mcpFields.length + '] ' : '';
     var promptOptions = [];
-    if (field.input && field.input.type === 'select') {
+    var multi = field.input && field.input.type === 'multiselect';
+    if (multi) {
+      promptOptions = field.input.options.map(function (option, index) {
+        return {
+          label: option.label,
+          act: 'mcp-pick:' + index,
+          check: (field.input.defaultValues || []).includes(option.value),
+        };
+      });
+    } else if (field.input && field.input.type === 'select') {
       promptOptions = (field.input.options || []).map(function (option, index) {
         return {
           label: option.label,
@@ -265,14 +274,19 @@ export function createCodexPermissionController(options) {
         field.prompt && field.prompt !== field.label ? field.prompt : '',
       ].filter(Boolean).join('\n\n'),
       options: promptOptions,
+      submit: multi
+        ? { act: 'mcp-submit', min: field.input.minItems, max: field.input.maxItems }
+        : null,
     });
   }
 
-  function chooseMcpField(act, label, isTyped) {
+  function chooseMcpField(act, label, isTyped, picked) {
     var field = mcpFields[mcpIndex] || {};
     if (act !== 'mcp-skip') {
       var value;
-      if (act === 'mcp-text' || isTyped) {
+      if (act === 'mcp-submit') {
+        value = picked.map(function (index) { return field.input.options[index].value; });
+      } else if (act === 'mcp-text' || isTyped) {
         value = label;
       } else {
         var index = parseInt(act.slice('mcp-field:'.length), 10);
