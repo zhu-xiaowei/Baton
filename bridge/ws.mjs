@@ -1401,8 +1401,9 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
       ...meta,
     });
   };
-  const conflict = adapter.interaction.heldElsewhere && await writerConflict(identity.runtime,
-    () => adapter.interaction.heldElsewhere(identity.nativeSessionId), sendOptions.takeover, sendOptions.expectedWriterPid);
+  const conflict = adapter.interaction.heldElsewhere && await writerConflict(identity.nativeSessionId,
+    sendOptions.takeover, sendOptions.expectedWriterPid,
+    { runtime: identity.runtime, label: adapter.displayName, findWriter: (id) => adapter.interaction.heldElsewhere(id) });
   if (conflict) {
     ack(false, conflict.error, { errorCode: conflict.errorCode, writer: conflict.writer });
     return true;
@@ -1736,8 +1737,7 @@ async function handleHeadlessSend(
   if (!_pool.owns(sessionId) && getDaemonRunningSessionIds().has(sessionId)) {
     _pool.stopDaemon(sessionId);
   } else {
-    const conflict = await writerConflict('claude', () => claudeSessionWriter(sessionId, { ownPids: _pool.ownPids() }),
-      takeover, expectedWriterPid);
+    const conflict = await writerConflict(sessionId, takeover, expectedWriterPid);
     if (conflict) {
       ack(false, conflict.error, { errorCode: conflict.errorCode, writer: conflict.writer });
       return true;
@@ -1781,14 +1781,16 @@ async function handleHeadlessSend(
   return true;
 }
 
-// A session another client holds: the user confirms first, then only the confirmed pid is stopped.
-export async function writerConflict(runtime, findWriter, takeover, expectedWriterPid, {
+// A session another client holds must be let go first; only the pid the user confirmed is killed.
+export async function writerConflict(sessionId, takeover, expectedWriterPid, {
+  runtime = 'claude',
+  label = 'Claude Code',
+  findWriter = (sid) => claudeSessionWriter(sid, { ownPids: _pool.ownPids() }),
   kill = process.kill,
   timeoutMs = 10_000,
 } = {}) {
-  const writer = await findWriter();
+  const writer = await findWriter(sessionId);
   if (!writer) return null;
-  const label = getRuntimeAdapter(runtime).displayName;
   const held = (current) => ({ errorCode: `${runtime}_active_writer`, error: `The ${label} session is open elsewhere`, writer: current });
   if (!takeover) return held(writer);
   if (writer.pid !== Number(expectedWriterPid)) {
@@ -1800,7 +1802,7 @@ export async function writerConflict(runtime, findWriter, takeover, expectedWrit
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   if (alive()) return { errorCode: `${runtime}_writer_unsafe`, error: `The ${label} terminal did not exit`, writer };
-  const next = await findWriter();
+  const next = await findWriter(sessionId);
   return next ? held(next) : null;
 }
 
