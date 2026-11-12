@@ -177,6 +177,12 @@ function streamChildrenCompatible(current, expected) {
   return false;
 }
 
+// The streamed text is a prefix of the final one; its tail may still be mid-markdown.
+function streamTextContinues(current, expected) {
+  var streamed = (current.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return !!streamed && (expected.textContent || '').replace(/\s+/g, ' ').trim().startsWith(streamed);
+}
+
 function reconcileChildren(parent, expectedParent) {
   var existing = Array.from(parent.children);
   var used = new Set();
@@ -548,15 +554,20 @@ export function createMessageDom(options) {
           var present = Array.from(streamRow.children).find(function (candidate) {
             return (recoveredKey && domKey(candidate) === recoveredKey)
               || (toolId && candidate.dataset.toolId === toolId);
-          }) || (committed && Array.from(streamRow.children).find(function (candidate) {
-            // Only a block without identity may stand in for a history node.
+          });
+          // Only a block without identity may stand in for a history node; in a turn that has not
+          // ended (its end lost, or held during this load) only one the history text continues,
+          // which the history then completes.
+          var continued = false;
+          present ||= Array.from(streamRow.children).find(function (candidate) {
             return !adopted.has(candidate) && !candidate.dataset.messageId
               && !candidate.dataset.nativeId && !candidate.dataset.toolId
-              && streamChildrenCompatible(candidate, recoveredChild);
-          })) || null;
+              && streamChildrenCompatible(candidate, recoveredChild)
+              && (committed || (continued = streamTextContinues(candidate, recoveredChild)));
+          }) || null;
           if (present) {
             adopted.add(present);
-            if (committed && !nodeUnchanged(present, recoveredChild)) {
+            if ((committed || continued) && !nodeUnchanged(present, recoveredChild)) {
               syncElementInPlace(present, recoveredChild);
             }
             continue;

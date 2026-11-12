@@ -82,7 +82,7 @@ var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
 // A running turn silent this long is checked against the history in case its tail frames were lost.
-var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
+var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 20000;
 var _turnGapWatch = null;
 var _lastTurnEventAt = 0;
 var _silentTurnCheckAt = 0;
@@ -375,7 +375,7 @@ function resumeSessionForeground() {
 // A running turn whose tail (stream_end included) was lost is settled from the history status.
 setInterval(function () {
   if (!document.hidden && state.wsSessionId) checkSilentTurn();
-}, 25000)?.unref?.();
+}, 5000)?.unref?.();
 
 function clearTurnGapWatch() {
   clearTimeout(_turnGapWatch?.timer);
@@ -432,6 +432,8 @@ function checkSilentTurn() {
     drainStrictStreamOperations();
     applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
     updateSendBtn();
+    // The streamed blocks stopped where the frames were lost; the history holds the whole reply.
+    return refreshSessionMessages();
   });
 }
 
