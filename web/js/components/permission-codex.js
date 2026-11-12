@@ -242,11 +242,7 @@ export function createCodexPermissionController(options) {
     var multi = field.input && field.input.type === 'multiselect';
     if (multi) {
       promptOptions = field.input.options.map(function (option, index) {
-        return {
-          label: option.label,
-          act: 'mcp-pick:' + index,
-          check: (field.input.defaultValues || []).includes(option.value),
-        };
+        return { label: option.label, act: 'mcp-pick:' + index, check: field.input.defaultValues.includes(option.value) };
       });
     } else if (field.input && field.input.type === 'select') {
       promptOptions = (field.input.options || []).map(function (option, index) {
@@ -274,9 +270,7 @@ export function createCodexPermissionController(options) {
         field.prompt && field.prompt !== field.label ? field.prompt : '',
       ].filter(Boolean).join('\n\n'),
       options: promptOptions,
-      submit: multi
-        ? { act: 'mcp-submit', min: field.input.minItems, max: field.input.maxItems }
-        : null,
+      submit: multi ? { act: 'mcp-submit', min: field.input.minItems, max: field.input.maxItems } : null,
     });
   }
 

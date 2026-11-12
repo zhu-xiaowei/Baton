@@ -281,19 +281,12 @@ function mcpFormFields(schema) {
       continue;
     }
     const items = property.type === 'array' ? property.items || {} : {};
-    const choices = Array.isArray(items.enum)
-      ? items.enum.map((value) => ({ label: value, value }))
-      : (Array.isArray(items.anyOf)
-        ? items.anyOf.map((entry) => ({ label: entry?.title, value: entry?.const }))
-        : []);
-    if (choices.length && choices.every((option) => (
-      typeof option.label === 'string' && typeof option.value === 'string'
-    ))) {
-      const defaultValues = Array.isArray(property.default) ? property.default : [];
-      fields.push({ id, label, prompt, required: required.has(id), input: {
-        type: 'multiselect', options: choices, defaultValues,
-        minItems: property.minItems ?? 0, maxItems: property.maxItems ?? null,
-      } });
+    const choices = (Array.isArray(items.enum) && items.enum.map((value) => ({ label: value, value })))
+      || (Array.isArray(items.anyOf) && items.anyOf.map((entry) => ({ label: entry?.title, value: entry?.const }))) || [];
+    if (choices.length && choices.every((option) => typeof option.label === 'string' && typeof option.value === 'string')) {
+      fields.push({ id, label, prompt, required: required.has(id), input: { type: 'multiselect', options: choices,
+        defaultValues: Array.isArray(property.default) ? property.default : [],
+        minItems: property.minItems ?? 0, maxItems: property.maxItems ?? Infinity } });
       continue;
     }
     return null;
@@ -339,11 +332,8 @@ function validMcpFormContent(schema, value) {
     if (field.input.type === 'text') {
       if (typeof answer !== 'string' || (field.required && !answer)) return null;
     } else if (field.input.type === 'multiselect') {
-      if (!Array.isArray(answer) || answer.length < field.input.minItems
-        || (field.input.maxItems !== null && answer.length > field.input.maxItems)
-        || answer.some((item) => !field.input.options.some((option) => option.value === item))) {
-        return null;
-      }
+      if (!Array.isArray(answer) || answer.length < field.input.minItems || answer.length > field.input.maxItems
+        || answer.some((item) => !field.input.options.some((option) => option.value === item))) return null;
     } else if (!field.input.options.some((option) => (
       approvalDecisionKey(option.value) === approvalDecisionKey(answer)
     ))) {

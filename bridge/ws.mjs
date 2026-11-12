@@ -16,7 +16,7 @@ import {
   liveRecordBusy,
   claudeSessionWriter,
 } from './session.mjs';
-import { parseStorageSessionId, runtimeDescriptor } from './session-identity.mjs';
+import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
@@ -65,7 +65,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier } from './notify.mjs';
+import { configureNotifier, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -1802,6 +1802,7 @@ export async function writerConflict(sessionId, takeover, expectedWriterPid, {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   if (alive()) return { errorCode: `${runtime}_writer_unsafe`, error: `The ${label} terminal did not exit`, writer };
+  noteTakeover(storageSessionId(runtime, sessionId));
   const next = await findWriter(sessionId);
   return next ? held(next) : null;
 }

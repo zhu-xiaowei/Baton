@@ -197,7 +197,7 @@ function renderPrompt(prompt) {
     html += '<div class="permission-actions">'
       + '<button class="permission-btn deny" onclick="cancelPermissionPrompt()">Cancel</button>'
       + '<button class="permission-btn allow permission-multi-submit" data-act="' + esc(prompt.submit.act)
-      + '" data-min="' + (prompt.submit.min || 0) + '" data-max="' + (prompt.submit.max || '')
+      + '" data-min="' + (prompt.submit.min || 0) + '" data-max="' + (prompt.submit.max ?? Infinity)
       + '" onclick="handlePermissionOption(this)"><span class="permission-label"></span></button></div>';
   }
   html += '</div>';
@@ -244,8 +244,7 @@ function checkedIndexes() {
 function updateMultiSubmit() {
   var submit = document.querySelector('#permission-prompt .permission-multi-submit');
   var count = checkedIndexes().length;
-  submit.disabled = count < +submit.getAttribute('data-min')
-    || count > parseInt(submit.getAttribute('data-max'), 10);
+  submit.disabled = count < +submit.dataset.min || count > +submit.dataset.max;
   submit.firstChild.textContent = count ? 'Submit (' + count + ' selected)' : 'Submit';
 }
 

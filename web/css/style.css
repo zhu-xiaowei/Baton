@@ -58,7 +58,7 @@ body {
 .breadcrumb-nav { line-height: 1.8; flex: 1; min-width: 0; padding-left: 4px; max-height: 4em; overflow: hidden; cursor: pointer; }
 .breadcrumb-nav.expanded { max-height: none; }
 .breadcrumb-nav > span:first-child { margin-left: -6px; }
-.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge),
+.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):not(.runtime-mark),
 .breadcrumb-nav a {
   display: inline-block; cursor: pointer; color: var(--text-normal); background: var(--surface); border: 1px solid var(--chip-border);
   padding: 1px 5px; border-radius: 12px; font-size: 11px; white-space: nowrap;
@@ -66,10 +66,10 @@ body {
   transition: all 0.15s; text-decoration: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):hover,
+  .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):not(.runtime-mark):hover,
   .breadcrumb-nav a:hover { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text-primary); }
 }
-.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):active,
+.breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):not(.runtime-mark):active,
 .breadcrumb-nav a:active { background: var(--surface-raised); border-color: var(--border-strong); color: var(--text-primary); }
 .breadcrumb-sep { color: var(--text-secondary); font-size: 13px; padding: 0 2px; vertical-align: middle; }
 .breadcrumb-title { font-size: 13px; color: var(--text-normal); line-height: 1.8; vertical-align: middle; }
@@ -1536,7 +1536,7 @@ html.native-mobile .breadcrumb.session-detail .breadcrumb-nav:not(.expanded) {
 html.native-mobile .breadcrumb.session-detail .breadcrumb-nav.is-truncated:not(.expanded)::after {
   font-size: 17px;
 }
-html.native-mobile .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge),
+html.native-mobile .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge):not(.runtime-mark),
 html.native-mobile .breadcrumb-nav a { max-width: 140px; padding: 2px 7px; font-size: 13px; }
 html.native-mobile .breadcrumb-sep,
 html.native-mobile .breadcrumb-title { font-size: 15px; }

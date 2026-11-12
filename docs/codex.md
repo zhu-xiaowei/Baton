@@ -33,7 +33,10 @@ Completed:
 - interrupt and command/file/permissions/MCP elicitation/user-input are wired into the existing WS
   control protocol. Command approvals pass through App Server `availableDecisions` in original order; permissions
   only return a semantic action and the Bridge builds the grant from the original request; MCP supports ordinary approval, session/always
-  persistent grants, and the string/boolean/enum forms supported by the TUI.
+  persistent grants, and the string/boolean/enum forms supported by the TUI, plus array fields (`items.enum` /
+  `items.anyOf[{const,title}]`, `minItems`/`maxItems`) shown as checkboxes and validated against the schema.
+- `request_user_input` replies use the App's structured `answers` (keyed by question id), so each question
+  receives only its own answer; `answerText` remains the fallback for older Apps.
 - Form schemas MCP does not support degrade to three ordinary approval options, as in the TUI; Baton has not implemented AppLink
   install/auth UI, so `openai/form`, URL, and tool suggestion are safely `decline`d.
 - Each active thread uses a temporary app-server client lease; managed daemon mode only closes that connection,
