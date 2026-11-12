@@ -270,6 +270,7 @@ export async function checkStopped(config) {
 
   const updates = [];
   const statusDeltas = [];
+  const agentCountUpdates = [];
   const statusContexts = new Map();
 
   for (const s of active.sessions) {
@@ -290,9 +291,13 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
-    if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
-    updates.push(result.session, ...(result.extraSessions || []));
-    statusDeltas.push(result.statusDelta);
+    if (result.session) {
+      if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
+      updates.push(result.session);
+      statusDeltas.push(result.statusDelta);
+    }
+    updates.push(...(result.extraSessions || []));
+    agentCountUpdates.push(...(result.agentCountUpdates || []));
   }
 
   if (updates.length > 0) {
@@ -301,6 +306,7 @@ export async function checkStopped(config) {
       os: process.platform,
       sessions: updates.map(publicSession),
       statusDeltas,
+      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
     });
   }
 }

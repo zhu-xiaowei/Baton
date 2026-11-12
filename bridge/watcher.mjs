@@ -432,7 +432,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
   const stat = fs.statSync(filePath);
   let status = meta.finished === true ? 'completed'
     : lastStatus || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
-  if (status !== 'completed' && claudeSubagentEnded(filePath, meta)) status = 'completed';
+  if (status !== 'completed' && claudeSubagentEnded(filePath, meta, stat.mtimeMs)) status = 'completed';
   const sessionMeta = {
     id: sessionId,
     nativeSessionId: sessionId,

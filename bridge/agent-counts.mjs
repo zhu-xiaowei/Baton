@@ -42,7 +42,7 @@ function normalizedStatus(status) {
   return status === 'running' || status === 'needs_input' ? status : 'completed';
 }
 
-function summaryForRoot(rootSessionId) {
+export function summaryForRoot(rootSessionId) {
   let agentCount = 0;
   let runningAgentCount = 0;
   let needsInputAgentCount = 0;

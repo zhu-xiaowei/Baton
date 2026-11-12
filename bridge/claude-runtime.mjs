@@ -28,7 +28,7 @@ import {
   findClaudeSubagentFile,
   parseClaudeSubagentSessionId,
 } from './claude-subagent.mjs';
-import { trackAgentSession } from './agent-counts.mjs';
+import { summaryForRoot, trackAgentSession } from './agent-counts.mjs';
 
 function findClaudeSessionFile(nativeSessionId) {
   return findClaudeSubagentFile(nativeSessionId) || findSessionFile(nativeSessionId);
@@ -134,6 +134,21 @@ function refreshClaudeSubagents(session, filePath) {
   for (const child of children) trackAgentSession(child);
   trackAgentSession(session);
   return children;
+}
+
+// A root still counting active children re-derives them even while its own status
+// holds, so an orphaned child settles; posts only when the counts change.
+function refreshActiveSubagents(active, nativeSessionId, filePath) {
+  const before = summaryForRoot(nativeSessionId);
+  if (!filePath || !(before.runningAgentCount || before.needsInputAgentCount)) return null;
+  const project = normalizeProjectHash(active.projectHash || '');
+  const children = discoverClaudeSubagents(path.dirname(filePath), {
+    nativeSessionId, project, projectName: readableProjectName(project), status: active.status,
+  });
+  const counts = children.flatMap(trackAgentSession).at(-1);
+  return counts && (counts.runningAgentCount !== before.runningAgentCount
+    || counts.needsInputAgentCount !== before.needsInputAgentCount)
+    ? { extraSessions: children, agentCountUpdates: [counts] } : null;
 }
 
 async function syncClaudeMessages(session, context, startLine) {
@@ -307,12 +322,12 @@ export const claudeRuntime = defineRuntimeAdapter({
     const gone = !filePath || !fs.existsSync(filePath);
     const daemon = context.daemonMeta.get(nativeSessionId);
     if (!gone && ((context.daemonRunning || new Set()).has(nativeSessionId) || context.poolOwns(nativeSessionId))) {
-      return null;
+      return refreshActiveSubagents(active, nativeSessionId, filePath);
     }
     const newStatus = gone
       ? 'completed'
       : getSessionStatus(nativeSessionId, filePath, context.runningInfo);
-    if (newStatus === active.status) return null;
+    if (newStatus === active.status) return refreshActiveSubagents(active, nativeSessionId, filePath);
 
     const projectHash = normalizeProjectHash(active.projectHash || '');
     const projectName = readableProjectName(projectHash);
