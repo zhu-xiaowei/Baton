@@ -16,6 +16,7 @@ const DEADLINE_MS = 12000;
 const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
 const PROBE_MS = 1000;
+const FOREGROUND_PROBE_MS = 1500;
 // A request this long without any inbound frame pings the socket (rebuilt after the same wait
 // without an answer); a request that asked for a receipt and has none is sent again.
 const STALL_MS = 3000;
@@ -44,6 +45,7 @@ let retries = 0;              // consecutive drops since the last whoami
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
+let gatewayRttMs = 0;
 let probeTimer = null;
 const pending = new Map();    // requestId → request state
 const assembler = new RpcAssembler();
@@ -219,9 +221,12 @@ export function ping() {
 // A socket idle past the ping interval may have been dropped by a NAT without a close event:
 // ping it and rebuild it if nothing arrives within a second. whoami then resends pending requests.
 // `stalled`: a request is waiting on a silent socket, so ping now and allow a slow network.
-function probe(stalled) {
+// `foreground`: the page was shown, after which a socket often only looks open (iOS suspends it);
+// ping at once while requests go out as usual, and allow three gateway round trips.
+function probe({ stalled = false, foreground = false } = {}) {
   const ws = socket;
-  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer || (!stalled && performance.now() - lastInboundAt < PING_MS)) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer
+    || (!stalled && !foreground && performance.now() - lastInboundAt < PING_MS)) return;
   const sentAt = performance.now();
   ws.send(PING);
   probeTimer = setTimeout(() => {
@@ -233,7 +238,7 @@ function probe(stalled) {
     connectionId = '';
     clearInterval(pingTimer);
     connect();
-  }, stalled ? STALL_MS : PROBE_MS);
+  }, stalled ? STALL_MS : foreground ? Math.max(FOREGROUND_PROBE_MS, 3 * gatewayRttMs) : PROBE_MS);
 }
 
 // A hidden page leaves its Sessions at once so the Bridge stops pushing; shown again it rejoins.
@@ -243,8 +248,8 @@ if (typeof document !== 'undefined' && document.addEventListener) {
       for (const entry of subscriptions.values()) leave(entry.device, entry.sessionId);
       return;
     }
-    if (subscriptions.size) connect();
-    else probe();
+    if (socket?.readyState === WebSocket.OPEN) probe({ foreground: true });
+    else if (subscriptions.size) connect();
     resubscribe();
   });
 }
@@ -306,7 +311,8 @@ function receive(ws, text) {
     replacedId = lastId;
     connectionId = lastId = frame.connectionId;
     retries = 0;
-    timing('whoami', performance.now() - ws.__whoamiAt);
+    gatewayRttMs = performance.now() - ws.__whoamiAt; // whoami is answered by the gateway itself
+    timing('whoami', gatewayRttMs);
     for (const request of pending.values()) request.attemptVersion = null;
     reconcile();
     resubscribe();
@@ -401,7 +407,7 @@ function reconcile() {
     if (left < RENEW_MS && !devicesInflight && now - devicesAt > STALL_MS) devices().catch(() => {});
     if (left < 5000) continue;
     const stalled = request.attemptVersion === route.version && now - request.sentAt > STALL_MS;
-    if (stalled && lastInboundAt < request.sentAt) probe(true);
+    if (stalled && lastInboundAt < request.sentAt) probe({ stalled: true });
     // A new route or connection needs the whole reply again; a stall only what is missing.
     if (request.attemptVersion !== route.version) send(key, request, route);
     else if (request.ack && !request.acked) { if (stalled) send(key, request, route); }
