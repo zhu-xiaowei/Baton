@@ -50,8 +50,8 @@ every frame itself.
   command, `baton-bridge pair`), never to the service's stdout (journald / launchd / Task Scheduler logs).
 - **Recovery phrase**: `K` encoded as 24 words. Needs a word list; BIP-39's English list is public domain
   text, embedded as data (not a dependency).
-- **Self-host**: keeps the API key for authentication. Encryption uses the same scheme with a `K` created
-  by the first Bridge of the stack and carried in the Setup QR code (decision D1).
+- **Self-host**: keeps the API key for authentication. Encryption uses the same scheme; `K` reaches Apps and
+  Bridges through the API-key channel (§9 migration, D1).
 
 ## 4. Tokens and the server side
 
@@ -115,33 +115,24 @@ appears in the device list (removal rotates `K`).
 
 - **Where**: in `bridge/direct-rpc-protocol.mjs` (shared by Bridge and App), around the existing
   compress-and-chunk step: `payload → deflate → AES-256-GCM(sessionKey, nonce) → base64 → chunks`. One place
-  covers `rpc` params, `rpc_result`, `rpc_progress`, errors, `push` and `stream` (`m` of terminal/preview
-  frames). Only WebCrypto (App) and `node:crypto` (Bridge, synchronous so frame order is kept); no dependency.
-- **Session keys (forward secrecy)**: each App process and Bridge process pair runs one handshake in the
-  TLS 1.3 `psk_dhe_ke` pattern (equivalently Noise NNpsk0): both sides send an ephemeral ECDH P-256 key;
-  `sessionKey = HKDF(salt = hash(transcript), ikm = ECDH ‖ dataKey)`, with one key per direction. Ephemeral
-  private keys are discarded after the handshake, so a later leak of `K` does not decrypt recorded traffic;
-  the per-key random-nonce budget (2³² messages) applies per session, not per account. Session keys live in
-  memory only: an App socket reconnect keeps them; an App cold start or a Bridge restart makes a new one.
-- **No extra round trip (0-RTT)**: the handshake rides on the first request the App sends to that Bridge
-  after start — in practice `home` (sent to every online Bridge in parallel), otherwise `subscribe`/history,
-  `projects`/`sessions`, or the request retried after a Bridge epoch change. That first request carries the
-  App's ephemeral public key in the clear envelope and is encrypted under a key derived from `dataKey`;
-  concurrent requests before the reply reuse the same ephemeral key and the Bridge makes one session per key.
-  The reply carries the Bridge's ephemeral key and is already under the session key. A Bridge that does not
-  know a session (restarted) answers "handshake required" and the App's existing epoch-change retry carries a
-  new handshake.
-- **0-RTT only for read-only methods** (RFC 8446 §8): `home`, `projects`, `sessions`, `threads`, `subscribe`,
-  `unsubscribe`, history, `tool_details`, command lists, file and Git reads. Requests with side effects
-  (`send_message`, `interrupt`, permission replies, file deletion, commit/push, terminal input, project
-  creation) wait for the session; if one is the very first request, the transport sends a standalone
-  handshake first. Terminal and preview streams always use the session key.
-- **Replay**: every sealed payload carries a per-session, per-direction sequence number inside the
-  ciphertext; the receiver keeps a sliding window (DTLS / IPsec anti-replay) because profile A delivers
-  frames out of order. No clock is involved. Old sessions cannot be replayed into new ones (different keys).
-- **Static `dataKey` is used only where no handshake is possible**: the 0-RTT request itself, notifications
-  (the phone may be offline), and attachments at rest in S3. Those have no forward secrecy, as in every
-  comparable product.
+  covers `rpc` params, `rpc_result` (errors included), `push` and `stream` (`m` of terminal/preview frames).
+  One wire format, two native implementations cross-tested (as Happy does): `node:crypto`, synchronous, on
+  Bridge (frame order and the synchronous frame builders stay as they are) and WebCrypto in the App.
+  No dependency.
+- **Session keys (forward secrecy) without a handshake round trip**: Bridge creates an ephemeral ECDH P-256
+  key per process and sends its public key in `bridge_join`; the server returns it with the Bridge's route
+  (`/devices`, and the `bridges` update after every join). The App creates an ephemeral key per process and
+  sends its public key on requests and stream `open`s (other frames carry a short session id).
+  `sessionKey = HKDF(ikm = ECDH, salt = HMAC(psk, appPub ‖ bridgePub))`, one key per direction, with `psk`
+  derived from `K`. A server that swaps a public key cannot compute the salt, so it can neither read nor
+  forge; no signature is needed. The App's ephemeral private key dies with the App process, so a later leak
+  of `K` does not decrypt recorded traffic, and the 2³² random-nonce budget applies per session. A Bridge
+  restart publishes a new key; the App derives a new session from the route update (no rekey message).
+- **Replay**: every sealed payload carries a per-session sequence number inside the ciphertext; Bridge
+  rejects numbers it has seen (a window, since profile A reorders frames). No clock is involved. Frames from
+  an earlier Bridge process cannot be replayed into a new one (different keys).
+- **`K` itself** (via HKDF) is used only where no session exists: notifications (the phone may be offline)
+  and attachments in S3. Those have no forward secrecy, as in every comparable product.
 - **Clear envelope**: `v`, `kind`, `method`/`event`, `requestId`/`id`, `sessionId`, `chunk`, `keyId`,
   `from`/`replyTo`, and the handshake's ephemeral public keys. Everything else is ciphertext.
 - **AAD**: `kind`, `method|event`, `requestId|id`, `sessionId` (and `ch`, `id` for streams). A payload is
@@ -157,9 +148,14 @@ appears in the device list (removal rotates `K`).
 - **Compress, then encrypt** stays (traffic and per-32 KB charges): the length leak (CRIME class) needs an
   attacker who controls the relay and injects chosen text into the same payload; accepted and stated in
   SECURITY.md.
-- **Attachments**: client-side encryption before the S3 PUT; files are chunked (e.g. 1 MiB GCM records)
-  because WebCrypto has no streaming AEAD; the content-hash key becomes `HMAC(dataKey, sha256(file))`
-  so dedup stays per account (§6 "Attachments"). The S3 checksum then covers the ciphertext.
+- **Attachments**: non-video files up to 50 MB are encrypted whole (one AES-GCM record, key derived from
+  `K`) before the S3 PUT and opened after download; the content-hash key becomes `HMAC(K-derived key,
+  sha256(file))` so dedup stays per account, and the S3 checksum covers the ciphertext. Videos and larger files
+  stay as today (account-scoped prefix, 7-day lifecycle) so videos keep streaming with Range; chunked records
+  with ranged reads come with the EC2 relay (phase 4). Competitors: Happy encrypts server attachments whole
+  up to 10 MB and streams video only over a direct link to the computer; Paseo sends files whole (≤ 50 MB
+  up, 64 MB down) through its encrypted channel and has no video preview. 8–50 MB PDFs lose ranged loading
+  (whole download with progress).
 - **Notifications**: Bridge encrypts title and body; the server stores and forwards ciphertext only (§12
   item 4); the iOS NSE and Android decrypt with `K` from shared storage.
 
@@ -184,27 +180,33 @@ A checklist, each item with a test in the cross-account suite (two accounts on o
 - Key storage per platform and its exposure to the NSE (iOS) and the Android notification path.
 - Every existing data path is unchanged above `direct-transport.js`; encryption is inside the protocol layer.
 
-## 9. Work order (one PR each, into feat/v2)
+## 9. Work order (two PRs into feat/v2)
 
-1. **Crypto core**: HKDF derivations, AES-GCM payload seal/open with AAD, the session handshake (0-RTT for
-   read-only requests) and the replay window, wired into `direct-rpc-protocol.mjs` behind a key (no key =
-   today's behaviour); Node + browser; ≈15 lines of tests for round-trip, tamper, wrong key and replay.
-2. **Tokens + account rows + auth middleware** (server), keeping API-key mode; `$connect` by token.
-3. **Pairing**: register, pair create/claim, Bridge QR (terminal + CLI), App scan/link screens.
-4. **E2EE on**: Bridge and App exchange `K` through pairing; self-host QR carries `K`; every payload
-   encrypted; terminal/preview included.
-5. **Device management + rotation + account deletion**.
-6. **Notifications**: encrypted payloads, per-account push devices, NSE decryption, Android decision (D4).
-7. **Attachments encryption**.
-8. **Cross-account test suite + §12 fixes** (logs, limits), run on a two-account test stack.
+- **PR A — encryption** (≈ 290 lines without tests): crypto core and wire format (§6), Bridge-published
+  session keys, replay window, `K` storage (IndexedDB non-extractable; iOS shared keychain and Android
+  native storage for notifications), automatic migration of existing users (below), encrypted
+  notifications, attachments ≤ 50 MB. Released together with a new TestFlight build (D3).
+- **PR B — accounts**: tokens and account rows, auth middleware, register/recover, pairing (§5, terminal QR
+  with `qrcode-terminal`), device list and removal with `K` rotation, account deletion, recovery phrase,
+  per-account push devices, log retention and abuse limits, the cross-account test suite (§7).
 
-Each PR: implement → self-test on a test stack → independent review (reproducible findings only) →
-fix → acceptance through the real Baton API → merge on the user's OK.
+**Migration without scanning (PR A)**: existing self-host users only have the API key. After the update,
+Bridges do not create `K` on their own. The App asks its Bridges over the existing API-key channel: if one
+holds `K`, the App takes it; if none does, the App creates `K`; it then gives `K` to every Bridge without
+one. Bridges publish a key fingerprint with their route; the App overwrites a Bridge whose fingerprint
+differs. This exposes `K` once to the user's own stack, which today carries everything in clear; the first
+device removal (PR B) rotates `K` over forward-secret sessions. Self-host keeps the Setup link / API-key
+sign-in, and a new App signed in that way gets `K` the same way. Hosted mode (PR B) disables this route.
+
+Each PR: implement → self-test → independent review (reproducible findings only) → fix → acceptance
+through the real Baton API → merge on the user's OK.
 
 ## 10. Decisions (confirmed 2026-11-12)
 
-- **D1** Self-host is encrypted by default: a random `K` from the first Bridge; the first App scans that
-  Bridge's terminal QR code exactly as on hosted. The API key only authenticates.
+- **D1** Self-host is encrypted by default with a random `K`; existing and new self-host Apps get it
+  automatically over the API-key channel (§9 migration), and scanning a Bridge QR code also works. For
+  self-host the encryption protects against logs, storage and inspection, not against an API-key holder
+  (who already controls the Bridges).
 - **D2** The browser Web App stays, with `K` as a non-extractable `CryptoKey` in IndexedDB: it cannot pair
   other devices or show the recovery phrase and re-pairs on loss. Tauri desktop Apps store an extractable `K`.
 - **D3** No mixed encrypted/unencrypted window: one coordinated update of Bridge, server and App (new
@@ -219,7 +221,7 @@ fix → acceptance through the real Baton API → merge on the user's OK.
   and can show a pairing QR code again, and the server keeps no conversation data, so the phrase is only
   needed when every device is lost.
 - Also confirmed: rotation replaces `K` (§3), QR codes never in logs (§3), register-once + separate
-  recovery route (§4), forward-secret session keys with 0-RTT for read-only first requests, and the
+  recovery route (§4), forward-secret session keys from a Bridge-published ephemeral key (no extra round trip), and the
   sequence-number replay window (§6).
 
 ## 11. Comparison with competitors (source read 2026-11-12, HEAD of each repository)
@@ -232,7 +234,7 @@ fix → acceptance through the real Baton API → merge on the user's OK.
 | Adding a device | QR + public-key sealing; relayed key not verified | everyone scans one static link | QR; the public key is scanned, not relayed |
 | Device removal / rotation | none | none | `K` rotated, delivered over forward-secret sessions |
 | Replay | none (server `seq` / `localId` dedup only) | counters; any reorder closes the channel | sequence window tolerant of reordering |
-| Forward secrecy | none | per connection | per App/Bridge session, 0-RTT for reads |
+| Forward secrecy | none | per connection | per App process, no extra round trip |
 | Push content | **plain text** | — | encrypted |
 | Recovery | base32 secret | none | 24 words |
 | Compression | none | none | deflate before encryption (accepted, §6) |
