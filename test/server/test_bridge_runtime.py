@@ -83,7 +83,7 @@ def test_windows_installer_prefers_s4u_with_interactive_fallback():
     assert "$env:Path = (Split-Path $nodePath) + ';' + $env:Path" in script
     assert "ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "verify-dependencies.mjs" in script
-    assert "[version]'20.9.0'" in script
+    assert "[version]'22.15.0'" in script
     assert "-LogonType ServiceAccount" in script
     assert "Administrator privileges are required" in script
     assert "Run as administrator" in script
@@ -100,7 +100,7 @@ def test_windows_installer_prefers_s4u_with_interactive_fallback():
     assert "Start error: $taskError" in script
     assert "AppData\\Local\\Programs\\nodejs\\node.exe" in script
     assert "'C:\\nodejs'" in script
-    assert "Node.js 20.9+ was not found or could not run" in script
+    assert "Node.js 22.15+ was not found or could not run" in script
     assert "Get-CimInstance Win32_UserProfile" in script
     assert "$useSystemTask = $isSystemContext -or ($currentIdentity -match" in script
     assert "bridge.log" in script
@@ -138,7 +138,7 @@ def test_unix_installer_validates_runtime_dependencies(monkeypatch):
     assert "/api/bridge/device-name/validate" in script
     assert "deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME" in script
     assert "if(existing.bridgeId)config.bridgeId=existing.bridgeId" in script
-    assert "Requires >= 20.9" in script
+    assert "Requires >= 22.15" in script
     assert "npm ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "node verify-dependencies.mjs" in script
     assert 'NODE_DIR=$(dirname "$NODE")' in script
