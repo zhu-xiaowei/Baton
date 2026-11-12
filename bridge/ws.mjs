@@ -12,9 +12,7 @@ import {
   projectHashToPath,
   getDaemonRunningSessionIds,
   getAgentsJson,
-  normalizeProjectHash,
   requireClaudeBin,
-  resolveClaudeBin,
   liveRecordBusy,
 } from './session.mjs';
 import { parseStorageSessionId } from './session-identity.mjs';
@@ -171,82 +169,57 @@ const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 let _projectFilesModule = null;
 let _gitStatusModule = null;
-let _terminalRemote = null;
-let _terminalRemoteLoading = null;
 let _sharedTerminals = null;
 let _sharedTerminalsLoading = null;
 let _previewBridge = null;
 let _previewBridgeLoading = null;
 
-async function handlePreviewTunnelMessage(message) {
-  if (!_previewBridgeLoading) {
-    _previewBridgeLoading = import('./preview-bridge.mjs').then(({ createPreviewBridge }) => {
-      _previewBridge = createPreviewBridge({
-        endpoint: _config.wsUrl, key: _config.apiKey, device: _config.deviceName,
-        sendControl: wsSend,
-        socketFactory: url => new WebSocket(url, {
-          handshakeTimeout: 15000, maxPayload: 28 * 1024, perMessageDeflate: false,
-        }),
-      });
-      return _previewBridge;
-    }).catch(error => { _previewBridgeLoading = null; throw error; });
-  }
-  const connection = _ws;
+// A terminal or preview peer's way back to its App page; it outlives a control-socket reconnect
+// (which replaces _directRpc). `follow(frame)` keeps it on the page's latest connection and on
+// whether that page inflates.
+function streamChannel(ch, id, target, deflate = false) {
+  const channel = {
+    readyState: 1,
+    target,
+    deflate,
+    follow(frame) {
+      channel.target = frame.from;
+      channel.deflate = frame.inflate === 1;
+    },
+    get bufferedAmount() { return _directRpc?.bufferedAmount || 0; },
+    send(message) {
+      if (channel.readyState !== 1) return false;
+      void _directRpc?.sendStream(ch, id, channel.target, message, channel.deflate);
+      return true;
+    },
+    close() { channel.readyState = 3; },
+  };
+  return channel;
+}
+
+async function terminalStream(frame) {
+  _sharedTerminalsLoading ||= import('./terminal-shared.mjs').then(({ createSharedTerminals }) => {
+    _sharedTerminals = createSharedTerminals({ channel: (frame) => streamChannel('terminal', frame.id, frame.from, frame.inflate === 1) });
+    return _sharedTerminals;
+  }).catch(error => { _sharedTerminalsLoading = null; throw error; });
   try {
-    const manager = await _previewBridgeLoading;
-    if (_ws === connection) manager.handle(message);
+    (await _sharedTerminalsLoading).handle(frame);
   } catch {
-    wsSend({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId: message.tunnelId });
+    streamChannel('terminal', frame.id, frame.from).send({ type: 'error', eventSeq: 0, fatal: true,
+      message: 'Terminal components unavailable. Update or reinstall Bridge.' });
   }
 }
 
-async function handleSharedTerminalMessage(message) {
-  if (!_sharedTerminalsLoading) {
-    _sharedTerminalsLoading = import('./terminal-shared.mjs').then(({ createSharedTerminals }) => {
-      _sharedTerminals = createSharedTerminals({ endpoint: _config.wsUrl, key: _config.apiKey,
-        device: _config.deviceName, sendControl: wsSend,
-        socketFactory: url => new WebSocket(url, { handshakeTimeout: 15000, maxPayload: 28 * 1024, perMessageDeflate: false }),
-      });
-      return _sharedTerminals;
-    }).catch(error => { _sharedTerminalsLoading = null; throw error; });
-  }
-  const connection = _ws;
+async function previewStream(frame) {
+  _previewBridgeLoading ||= import('./preview-bridge.mjs').then(({ createPreviewBridge }) => {
+    _previewBridge = createPreviewBridge({ channel: (frame) => streamChannel('preview', frame.id, frame.from, frame.inflate === 1) });
+    return _previewBridge;
+  }).catch(error => { _previewBridgeLoading = null; throw error; });
   try {
-    const manager = await _sharedTerminalsLoading;
-    if (_ws === connection) manager.handle(message);
+    (await _previewBridgeLoading).handle(frame);
   } catch {
-    wsSend({ action: 'terminal_direct', v: 1, op: 'close', terminalId: message.terminalId,
-      reason: 'Terminal components unavailable. Update or reinstall Bridge.' });
+    streamChannel('preview', frame.id, frame.from).send({ type: 'gone' });
   }
-}
-
-async function handleTerminalPocMessage(message) {
-  const connection = _ws;
-  if (_config?.terminalPoc?.enabled !== true) {
-    if (connection?.readyState === WebSocket.OPEN) connection.send(JSON.stringify({
-      action: 'terminal_poc', v: 1, type: 'error', eventSeq: 0,
-      terminalId: message.terminalId, replyConnectionId: message.replyConnectionId,
-      device: _config.deviceName, message: 'Terminal POC is disabled on this Bridge',
-    }));
-    return;
-  }
-  if (!_terminalRemoteLoading) {
-    _terminalRemoteLoading = import('./terminal-remote.mjs').then(({ createTerminalRemote }) => {
-      _terminalRemote = createTerminalRemote({
-        cwd: _config.terminalPoc.cwd || process.cwd(), device: _config.deviceName,
-        send(payload) {
-          const encoded = JSON.stringify(payload);
-          if (_ws?.readyState !== WebSocket.OPEN || Buffer.byteLength(encoded) > 28 * 1024
-            || _ws.bufferedAmount > 1024 * 1024) return false;
-          _ws.send(encoded, error => { if (error) _terminalRemote?.closeAll(); });
-          return true;
-        },
-      });
-      return _terminalRemote;
-    }).catch(error => { _terminalRemoteLoading = null; throw error; });
-  }
-  const manager = await _terminalRemoteLoading;
-  if (_ws === connection && connection.readyState === WebSocket.OPEN) manager.handle(message);
 }
 
 async function projectFilesModule() {
@@ -266,10 +239,11 @@ async function gitStatusModule() {
 
 // Windows updates stop terminal shells first so no ConPTY children outlive the old Bridge.
 export async function closeTerminalsForUpdate() {
-  const terminals = [_sharedTerminals, _terminalRemote].filter(Boolean);
-  _sharedTerminals = _sharedTerminalsLoading = _terminalRemote = _terminalRemoteLoading = null;
-  for (const terminal of terminals) terminal.dispose();
-  if (terminals.length) await new Promise(resolve => setTimeout(resolve, 1500));
+  const terminals = _sharedTerminals;
+  _sharedTerminals = _sharedTerminalsLoading = null;
+  if (!terminals) return;
+  terminals.dispose();
+  await new Promise(resolve => setTimeout(resolve, 1500));
 }
 
 // Idle pooled processes do not block terminal-driven status updates.
@@ -306,7 +280,6 @@ export async function shutdownInteractions() {
       else socket.terminate();
     });
   }
-  _terminalRemote?.dispose();
   _sharedTerminals?.dispose();
   _previewBridge?.dispose();
   _pool.shutdownAll();
@@ -730,8 +703,7 @@ function connect() {
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + `&name=${encodeURIComponent(_config.deviceDisplayName || _config.deviceName)}&os=${process.platform}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
-    + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + '&terminal=2&terminalStartup=1&preview=1';
+    + `&version=${encodeURIComponent(BRIDGE_VERSION)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
@@ -760,6 +732,7 @@ function connect() {
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
       limited: limitedRequest,
+      streams: { terminal: terminalStream, preview: previewStream },
       handlers: {
         home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
@@ -884,9 +857,6 @@ function resetConnection() {
   }
   _directRpc?.dispose();
   _directRpc = null;
-  _terminalRemote?.closeAll();
-  _sharedTerminals?.detachAll();
-  _previewBridge?.detachAll();
 }
 
 function scheduleReconnect() {
@@ -905,15 +875,6 @@ function scheduleReconnect() {
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
-    case 'terminal_direct':
-      await handleSharedTerminalMessage(msg);
-      break;
-    case 'preview_tunnel':
-      await handlePreviewTunnelMessage(msg);
-      break;
-    case 'terminal_poc':
-      await handleTerminalPocMessage(msg);
-      break;
     case 'device_removed':
       uninstallBridge();
       console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');

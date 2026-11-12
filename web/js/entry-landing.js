@@ -234,7 +234,6 @@ setNativeTabTitle('Baton');
     var serverNorm = server ? server.replace(/\/+$/, '') : null;
     var result = await api('/api/bridge/devices', null, { key: key, server: serverNorm || undefined });
     setCredentials(key, isNativeApp ? serverNorm : null);
-    if (result && result.wsUrl) localStorage.setItem('_wsurl', result.wsUrl);
     var devs = result && result.devices;
     var hasDevices = Array.isArray(devs) && devs.length > 0;
     location.replace(hasDevices ? 'index.html' : 'setup.html');

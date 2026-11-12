@@ -1,13 +1,20 @@
 import { randomUUID } from 'node:crypto';
+import { deflateRawSync } from 'node:zlib';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
-import { DirectDataChannel } from './terminal-direct-protocol.mjs';
 import { defaultShell, dimensions, inputBytes, spawnTerminal } from './terminal-pty.mjs';
 import { resolveProjectPath } from './project/git-context.mjs';
 
 const MAX_CLIENT_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 const CHUNK_BYTES = 16384;
+// Output is sent at most every FLUSH_MS (about 60 updates a second), up to OUTPUT_MAX_BYTES per
+// message, deflated here; a message whose compressed data would not fit a frame goes as chunks.
+const FLUSH_MS = 16;
+const OUTPUT_MAX_BYTES = 64 * 1024;
+const PACKED_MAX_CHARS = 20000;
+const IDLE_MS = 90_000;
+const MAX_PEERS = 16;
 const PROJECT_LIMIT = 5;
 const TOTAL_LIMIT = 20;
 const MANAGEMENT_TYPES = new Set(['create_session', 'select_session', 'close_session']);
@@ -38,8 +45,7 @@ export function createSharedTerminals(options) {
       peer.inflight.set(eventSeq, bytes);
       peer.inflightBytes += bytes;
     }
-    const accepted = peer.channel.send({ action: 'terminal_shared', v: 1, terminalId: peer.id,
-      device: options.device, projectHash: peer.projectHash, eventSeq, ...message });
+    const accepted = peer.channel.send({ eventSeq, ...message });
     if (!accepted) drop(peer, 'Terminal disconnected.');
     return accepted;
   }
@@ -53,9 +59,39 @@ export function createSharedTerminals(options) {
     } else rawSend(peer, message, bytes);
   }
 
-  function broadcast(session, message, bytes = 0) {
+  function broadcast(session, message, bytes = 0, except = null) {
     if (session.closed) return;
-    for (const peer of session.peers) publish(peer, { epoch: session.epoch, ...message }, bytes);
+    if (message.type !== 'output') flushOutput(session);
+    for (const peer of session.peers) if (peer !== except) publish(peer, { epoch: session.epoch, ...message }, bytes);
+  }
+
+  function queueOutput(session, bytes) {
+    session.out.push(bytes);
+    session.outBytes += bytes.length;
+    if (session.outBytes >= OUTPUT_MAX_BYTES) flushOutput(session);
+    else session.outTimer ||= setTimeout(() => flushOutput(session), FLUSH_MS);
+  }
+
+  // `except`: a peer whose snapshot already holds this output.
+  function flushOutput(session, except = null) {
+    clearTimeout(session.outTimer);
+    session.outTimer = null;
+    if (!session.outBytes) return;
+    const bytes = Buffer.concat(session.out);
+    session.out = [];
+    session.outBytes = 0;
+    for (let offset = 0; offset < bytes.length; offset += OUTPUT_MAX_BYTES) {
+      const part = bytes.subarray(offset, offset + OUTPUT_MAX_BYTES);
+      const packed = [...session.peers].every((peer) => peer.channel.deflate) && deflateRawSync(part).toString('base64');
+      if (packed && packed.length <= PACKED_MAX_CHARS) {
+        broadcast(session, { type: 'output', data: packed, z: 1 }, part.length, except);
+        continue;
+      }
+      for (let at = 0; at < part.length; at += CHUNK_BYTES) {
+        const chunk = part.subarray(at, at + CHUNK_BYTES);
+        broadcast(session, { type: 'output', data: chunk.toString('base64') }, chunk.length, except);
+      }
+    }
   }
 
   function projectSessions(cwd) {
@@ -71,7 +107,7 @@ export function createSharedTerminals(options) {
     for (const peer of peers.values()) if (peer.cwd === cwd) sendSessions(peer);
   }
 
-  function drop(peer, reason, notify = true) {
+  function drop(peer, reason) {
     if (peer.closed || peer.closing) return;
     peer.closing = true;
     if (reason && peer.channel.readyState === 1) rawSend(peer, { type: 'error', message: reason, fatal: true });
@@ -84,8 +120,6 @@ export function createSharedTerminals(options) {
     peer.snapshot = null;
     const session = peer.session;
     session?.peers.delete(peer);
-    if (notify) options.sendControl({ action: 'terminal_direct', v: 1, op: 'close', terminalId: peer.id,
-      ...(reason ? { reason: reason.slice(0, 256) } : {}) });
     if (session && !disposed) broadcast(session, { type: 'peers', count: session.peers.size });
   }
 
@@ -118,6 +152,10 @@ export function createSharedTerminals(options) {
     session.exited = false;
     session.exitCode = null;
     session.queuedBytes = 0;
+    session.out = [];
+    session.outBytes = 0;
+    clearTimeout(session.outTimer);
+    session.outTimer = null;
     session.cols = size.cols;
     session.rows = size.rows;
     const epoch = session.epoch;
@@ -150,10 +188,7 @@ export function createSharedTerminals(options) {
         await new Promise(resolve => mirror.write(bytes, resolve));
         if (session.closed) return;
         session.queuedBytes -= bytes.length;
-        for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
-          const chunk = bytes.subarray(offset, offset + CHUNK_BYTES);
-          broadcast(session, { type: 'output', data: chunk.toString('base64') }, chunk.length);
-        }
+        queueOutput(session, bytes);
         if (session.queuedBytes < 64 * 1024 && session.process === process) process.resume();
       });
     });
@@ -191,6 +226,7 @@ export function createSharedTerminals(options) {
 
   function snapshot(peer) {
     const session = peer.session;
+    flushOutput(session, peer); // the mirror, and so the snapshot, already holds it
     let bytes;
     let historyTruncated = false;
     try {
@@ -209,7 +245,7 @@ export function createSharedTerminals(options) {
     peer.inflightBytes = 0;
     peer.snapshot = { id: randomUUID(), epoch: session.epoch, bytes, sent: 0, acked: 0,
       chunks: Math.ceil(bytes.length / CHUNK_BYTES) };
-    rawSend(peer, { type: 'ready', themeUpdates: true, epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
+    rawSend(peer, { type: 'ready', epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
       cols: session.cols, rows: session.rows, peers: session.peers.size, exited: session.exited,
       exitCode: session.exitCode, snapshotId: peer.snapshot.id, snapshotBytes: bytes.length,
       snapshotChunks: peer.snapshot.chunks, historyTruncated });
@@ -338,10 +374,9 @@ export function createSharedTerminals(options) {
     rawSend(peer, { type: 'ack', clientSeq: message.clientSeq });
   }
 
-  function receive(peer, payload) {
+  function receive(peer, message) {
     if (peer.closed) return;
     try {
-      const message = JSON.parse(payload);
       if (message.type === 'open') {
         if (message.clientSeq !== 0) throw new Error('Invalid open sequence');
         if (message.theme === 'light' || message.theme === 'dark') theme = message.theme;
@@ -352,13 +387,14 @@ export function createSharedTerminals(options) {
       if (MANAGEMENT_TYPES.has(message.type) && (typeof message.requestId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(message.requestId))) throw new Error('Invalid management request');
       if (message.type === 'input') inputBytes(message.data);
       if (message.type === 'resize') dimensions(message);
-      if (message.clientSeq < peer.nextInput) return;
+      // Input the App sent again (its acknowledgement was lost): acknowledge it again.
+      if (message.clientSeq < peer.nextInput) return void rawSend(peer, { type: 'ack', clientSeq: peer.nextInput - 1 });
       if (peer.pending.has(message.clientSeq)) {
         if (JSON.stringify(peer.pending.get(message.clientSeq)) !== JSON.stringify(message)) throw new Error('Conflicting input sequence');
         return;
       }
       peer.pending.set(message.clientSeq, message);
-      peer.pendingBytes += Buffer.byteLength(payload);
+      peer.pendingBytes += Buffer.byteLength(JSON.stringify(message));
       if (message.clientSeq - peer.nextInput > 128 || peer.pendingBytes > MAX_CLIENT_BYTES) throw new Error('Input reorder limit exceeded');
       while (peer.pending.has(peer.nextInput)) {
         const next = peer.pending.get(peer.nextInput);
@@ -385,7 +421,7 @@ export function createSharedTerminals(options) {
 
   const watchdog = setInterval(() => {
     for (const peer of [...peers.values()]) {
-      if (Date.now() - peer.lastSeen > 45000 || (peer.gapSince && Date.now() - peer.gapSince > 10000)) {
+      if (Date.now() - peer.lastSeen > IDLE_MS || (peer.gapSince && Date.now() - peer.gapSince > 10000)) {
         drop(peer, 'Connection timed out. Reconnect; background terminals are retained.');
       }
     }
@@ -394,34 +430,29 @@ export function createSharedTerminals(options) {
 
   return {
     get activeCount() { return [...sessions.values()].filter(session => !session.exited).length; },
-    handle(message) {
-      if (disposed || message.action !== 'terminal_direct' || message.v !== 1 || message.device !== options.device) return;
-      if (message.type === 'offer') {
-        if (peers.has(message.terminalId) || message.side !== 'bridge') return;
-        if (!message.projectHash || peers.size >= 16) {
-          options.sendControl({ action: 'terminal_direct', v: 1, op: 'close', terminalId: message.terminalId });
+    // A frame from an App terminal page (`frame.id` = its terminalId); its first message opens it.
+    handle(frame) {
+      if (disposed) return;
+      const message = frame.m;
+      let peer = peers.get(frame.id);
+      if (!peer) {
+        if (message.type !== 'open' || typeof message.projectHash !== 'string' || !message.projectHash) {
+          // A Bridge restart forgot this terminal: tell the page, which reconnects.
+          options.channel(frame).send({ type: 'error', eventSeq: 0, fatal: true, message: 'Terminal closed. Reconnecting.' });
           return;
         }
-        const channel = new DirectDataChannel({ endpoint: options.endpoint, key: options.key,
-          offer: message, socketFactory: options.socketFactory });
-        const peer = { id: message.terminalId, projectHash: message.projectHash, channel, eventSeq: 0, nextInput: 1,
+        if (peers.size >= MAX_PEERS) {
+          options.channel(frame).send({ type: 'error', eventSeq: 0, fatal: true, message: 'Too many open terminals on this device.' });
+          return;
+        }
+        peer = { id: frame.id, projectHash: message.projectHash, channel: options.channel(frame), eventSeq: 0, nextInput: 1,
           work: Promise.resolve(),
           pending: new Map(), pendingBytes: 0, inflight: new Map(), inflightBytes: 0, buffered: [], bufferedBytes: 0, lastSeen: Date.now() };
         peers.set(peer.id, peer);
-        channel.addEventListener('open', () => {
-          if (message.initialOpen) receive(peer, JSON.stringify({ ...message.initialOpen, type: 'open', clientSeq: 0 }));
-        });
-        channel.addEventListener('message', event => receive(peer, event.data));
-        channel.addEventListener('error', () => drop(peer));
-        channel.addEventListener('close', () => drop(peer));
-      } else {
-        const peer = peers.get(message.terminalId);
-        if (!peer) return;
-        if (message.type === 'ready') peer.channel.authorize(message);
-        else if (message.type === 'closed' || message.type === 'error') drop(peer, null, false);
       }
+      peer.channel.follow(frame); // a reconnected page writes from a new connection
+      receive(peer, message);
     },
-    detachAll() { for (const peer of [...peers.values()]) drop(peer, null, false); },
     dispose() {
       disposed = true;
       clearInterval(watchdog);

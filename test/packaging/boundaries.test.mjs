@@ -74,12 +74,12 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload > -1);
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation create-stack'));
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
-  assert.match(install, /preview_tunnel_ws\.py/);
+  assert.match(install, /direct_rpc_ws\.py/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/preview-protocol\.mjs"/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/direct-rpc-protocol\.mjs"/);
   const resources = JSON.parse(read('server/template/Baton.template')).Resources;
   // Direct frames reach their target through the data API's own integration, without Lambda.
-  for (const [name, key] of [['PreviewDataRoute', 'preview_data'], ['DirectRpcRoute', 'rpc'], ['DirectPushRoute', 'push']]) {
+  for (const [name, key] of [['DirectRpcRoute', 'rpc'], ['DirectPushRoute', 'push']]) {
     assert.equal(resources[name].Properties.ApiId.Ref, 'TerminalDirectApi');
     assert.equal(resources[name].Properties.RouteKey, key);
     assert.deepEqual(resources[name].Properties.Target, { 'Fn::Sub': 'integrations/${TerminalDirectIntegration}' });
@@ -89,7 +89,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
   assert.doesNotMatch(dockerfile, /^COPY project\//m); // the WebSocket relays for files, Git and rename are gone
-  assert.match(dockerfile, /^COPY .*preview_tunnel_ws\.py .*\.\/$/m);
+  assert.match(dockerfile, /^COPY direct_rpc_ws\.py \.\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });
 

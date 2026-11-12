@@ -17,7 +17,7 @@ COPY main.py api_key.py ./
 COPY bridge_read.py .
 COPY bridge_ws.py .
 COPY notifications.py devices.py ./
-COPY terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py direct_rpc_ws.py ./
+COPY direct_rpc_ws.py ./
 COPY --from=web-builder /build/dist web/
 RUN pip install --no-cache-dir -r requirements.txt
 RUN chmod -R a+rX /app

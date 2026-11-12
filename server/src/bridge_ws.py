@@ -12,12 +12,9 @@ import boto3
 from botocore.exceptions import ClientError
 import api_key as deployment_key
 import devices
-from terminal_ws import handle_terminal_poc
-from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
-from preview_tunnel_ws import handle_preview_tunnel, preview_tunnel_disconnect
 from direct_rpc_ws import direct_rpc_disconnect, handle_direct_rpc
 
-_DATA_ROLES = ("terminal_data", "preview_data", "app_data", "bridge_data")
+_DATA_ROLES = ("app_data", "bridge_data")
 
 _ddb = None
 _connections_table = None
@@ -120,7 +117,7 @@ def _retire_bridge_connection(connection_id, endpoint, replaced=True):
         except Exception:
             pass
     try:
-        _disconnect_terminal_data(endpoint, connection_id)
+        _delete_connection(endpoint, connection_id)
     except Exception:
         print(f"Bridge socket cleanup deferred: {connection_id}")
     _handle_disconnect(connection_id, endpoint)
@@ -245,14 +242,6 @@ def _handle_connect(event, connection_id):
         item["connectionOrder"] = f"{connected_at:016d}:{connection_id}"
     if bridge_id:
         item["bridgeId"] = bridge_id
-    if role == "bridge" and qs.get("terminal") == "2":
-        item["terminalProtocol"] = 2
-        if qs.get("terminalStartup") == "1":
-            item["terminalStartup"] = 1
-    if role == "bridge" and qs.get("preview") == "1":
-        item["previewProtocol"] = 1
-    if role in _DATA_ROLES:
-        item["terminalDataEndpoint"] = connected_endpoint
     _connections_table.put_item(Item=item)
     if item.get("bridgeOwner"):
         if not _claim_bridge_connection(item, context, connected_endpoint):
@@ -265,7 +254,7 @@ def _handle_connect(event, connection_id):
     return {"statusCode": 200}
 
 
-def _disconnect_terminal_data(endpoint, connection_id):
+def _delete_connection(endpoint, connection_id):
     try:
         _apigw_client(endpoint).delete_connection(ConnectionId=connection_id)
     except _apigw_client(endpoint).exceptions.GoneException:
@@ -279,18 +268,6 @@ def _handle_disconnect(connection_id, endpoint=None):
             ConsistentRead=True).get("Item") if endpoint else None)
     except Exception:
         connection = None
-    if endpoint:
-        try:
-            terminal_direct_disconnect(connection, endpoint, table=_connections_table,
-                query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
-        except Exception:
-            pass
-        try:
-            preview_tunnel_disconnect(connection, endpoint, table=_connections_table,
-                query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
-        except Exception:
-            pass
-
     try:
         _connections_table.delete_item(Key={"connectionId": connection_id})
     except Exception:
@@ -313,7 +290,6 @@ def _handle_message(event, connection_id, endpoint):
 
     action = body.get("action", "")
 
-    terminal_identity_started = time.perf_counter() if action == "terminal_poc" and body.get("profile") is True else None
 
     # Get connection info — if missing (e.g. DDB cleared), force reconnect.
     # Client's onclose handler will auto-reconnect → $connect rewrites the record.
@@ -337,28 +313,13 @@ def _handle_message(event, connection_id, endpoint):
         if (owner or conn.get("bridgeOwner")) and owner.get("activeConnectionId") != connection_id:
             _retire_bridge_connection(connection_id, endpoint, replaced=bool(owner.get("activeConnectionId")))
             return {"statusCode": 200}
-    if action == "terminal_direct":
-        return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
-            query=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
-            post=_post_to_connection, disconnect=_disconnect_terminal_data)
-    if action == "preview_tunnel":
-        return handle_preview_tunnel(body, conn, connection_id, endpoint, table=_connections_table,
-            query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
     if action == "direct_rpc":
         return handle_direct_rpc(body, conn, connection_id, endpoint, table=_connections_table,
             query=_query_connections, post=_post_to_connection)
     if role in _DATA_ROLES:
         return {"statusCode": 403}
 
-    if action == "terminal_poc":
-        return handle_terminal_poc(
-            body, conn, connection_id, endpoint,
-            identity_ms=(time.perf_counter() - terminal_identity_started) * 1000 if terminal_identity_started is not None else 0,
-            query_connections=lambda account, requested_role: _query_connections(account, requested_role, device=body.get("device", "")),
-            post_to_connection=_post_to_connection,
-            connections_table=_connections_table,
-        )
-    elif action == "heartbeat":
+    if action == "heartbeat":
         # Update TTL
         ttl = int(time.time()) + 86400
         try:
