@@ -16,7 +16,6 @@ const DEADLINE_MS = 12000;
 const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
 const PROBE_MS = 1000;
-const FOREGROUND_PROBE_MS = 1500;
 // A request this long without any inbound frame pings the socket (rebuilt after the same wait
 // without an answer); a request that asked for a receipt and has none is sent again.
 const STALL_MS = 3000;
@@ -45,7 +44,6 @@ let retries = 0;              // consecutive drops since the last whoami
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
-let gatewayRttMs = 0;
 let probeTimer = null;
 const pending = new Map();    // requestId → request state
 const assembler = new RpcAssembler();
@@ -222,7 +220,7 @@ export function ping() {
 // ping it and rebuild it if nothing arrives within a second. whoami then resends pending requests.
 // `stalled`: a request is waiting on a silent socket, so ping now and allow a slow network.
 // `foreground`: the page was shown, after which a socket often only looks open (iOS suspends it);
-// ping at once while requests go out as usual, and allow three gateway round trips.
+// ping at once while requests go out as usual, allowing a slow network as for a stalled request.
 function probe({ stalled = false, foreground = false } = {}) {
   const ws = socket;
   if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer
@@ -238,7 +236,7 @@ function probe({ stalled = false, foreground = false } = {}) {
     connectionId = '';
     clearInterval(pingTimer);
     connect();
-  }, stalled ? STALL_MS : foreground ? Math.max(FOREGROUND_PROBE_MS, 3 * gatewayRttMs) : PROBE_MS);
+  }, stalled || foreground ? STALL_MS : PROBE_MS);
 }
 
 // A hidden page leaves its Sessions at once so the Bridge stops pushing; shown again it rejoins.
@@ -311,8 +309,7 @@ function receive(ws, text) {
     replacedId = lastId;
     connectionId = lastId = frame.connectionId;
     retries = 0;
-    gatewayRttMs = performance.now() - ws.__whoamiAt; // whoami is answered by the gateway itself
-    timing('whoami', gatewayRttMs);
+    timing('whoami', performance.now() - ws.__whoamiAt);
     for (const request of pending.values()) request.attemptVersion = null;
     reconcile();
     resubscribe();

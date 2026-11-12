@@ -24,6 +24,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
       return button;
     });
     overlay.querySelector('.modal-actions').append(...buttons);
+    const box = overlay.querySelector('.modal-box');
     function close(value) {
       hideCenteredModal(overlay);
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
@@ -32,6 +33,11 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     overlay.addEventListener('click', event => { if (event.target === overlay && dismissed !== null) close(dismissed); });
     overlay.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); if (dismissed !== null) close(dismissed); }
+      // The dialog itself holds focus on open: Enter or Space there means the primary choice.
+      if ((event.key === 'Enter' || event.key === ' ') && event.target === box) {
+        event.preventDefault();
+        (overlay.querySelector('.confirm') || buttons[0]).click();
+      }
       if (event.key === 'Tab') {
         event.preventDefault();
         buttons[(buttons.indexOf(event.target) + 1) % buttons.length].focus();
@@ -39,6 +45,6 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     });
     showCenteredModal(overlay);
     // The dialog takes focus, not a button, which would show a focus ring on open; Tab reaches them.
-    overlay.querySelector('.modal-box').focus({ preventScroll: true });
+    box.focus({ preventScroll: true });
   });
 }
