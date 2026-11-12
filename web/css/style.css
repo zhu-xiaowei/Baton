@@ -216,7 +216,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .runtime-picker-row:first-child { border-top-left-radius: 9px; border-top-right-radius: 9px; }
 .runtime-picker-row:last-child { border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
 .runtime-picker-label { flex: 1; }
-.runtime-picker-check { color: var(--accent); }
+.runtime-picker-check { color: var(--text-primary); }
 .runtime-picker-row:active { background: var(--surface-raised); }
 .runtime-picker-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) { .runtime-picker-row:hover { background: var(--surface-raised); } }
