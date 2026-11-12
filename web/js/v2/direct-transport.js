@@ -219,9 +219,12 @@ export function ping() {
 // A socket idle past the ping interval may have been dropped by a NAT without a close event:
 // ping it and rebuild it if nothing arrives within a second. whoami then resends pending requests.
 // `stalled`: a request is waiting on a silent socket, so ping now and allow a slow network.
-function probe(stalled) {
+// `foreground`: the page was shown, after which a socket often only looks open (iOS suspends it);
+// ping at once while requests go out as usual, allowing a slow network as for a stalled request.
+function probe({ stalled = false, foreground = false } = {}) {
   const ws = socket;
-  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer || (!stalled && performance.now() - lastInboundAt < PING_MS)) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN || probeTimer
+    || (!stalled && !foreground && performance.now() - lastInboundAt < PING_MS)) return;
   const sentAt = performance.now();
   ws.send(PING);
   probeTimer = setTimeout(() => {
@@ -233,7 +236,7 @@ function probe(stalled) {
     connectionId = '';
     clearInterval(pingTimer);
     connect();
-  }, stalled ? STALL_MS : PROBE_MS);
+  }, stalled || foreground ? STALL_MS : PROBE_MS);
 }
 
 // A hidden page leaves its Sessions at once so the Bridge stops pushing; shown again it rejoins.
@@ -243,8 +246,8 @@ if (typeof document !== 'undefined' && document.addEventListener) {
       for (const entry of subscriptions.values()) leave(entry.device, entry.sessionId);
       return;
     }
-    if (subscriptions.size) connect();
-    else probe();
+    if (socket?.readyState === WebSocket.OPEN) probe({ foreground: true });
+    else if (subscriptions.size) connect();
     resubscribe();
   });
 }
@@ -401,7 +404,7 @@ function reconcile() {
     if (left < RENEW_MS && !devicesInflight && now - devicesAt > STALL_MS) devices().catch(() => {});
     if (left < 5000) continue;
     const stalled = request.attemptVersion === route.version && now - request.sentAt > STALL_MS;
-    if (stalled && lastInboundAt < request.sentAt) probe(true);
+    if (stalled && lastInboundAt < request.sentAt) probe({ stalled: true });
     // A new route or connection needs the whole reply again; a stall only what is missing.
     if (request.attemptVersion !== route.version) send(key, request, route);
     else if (request.ack && !request.acked) { if (stalled) send(key, request, route); }

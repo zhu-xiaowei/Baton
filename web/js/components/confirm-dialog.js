@@ -10,7 +10,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     overlay.className = 'modal-overlay';
     // Above the in-app browser page.
     overlay.style.zIndex = '1500';
-    overlay.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true">'
+    overlay.innerHTML = '<div class="modal-box" role="alertdialog" aria-modal="true" tabindex="-1">'
       + '<div class="modal-title"></div><div class="modal-actions"></div></div>';
     overlay.querySelector('.modal-title').textContent = message;
     if (detail) overlay.querySelector('.modal-title').insertAdjacentHTML('afterend', '<div class="modal-desc"></div>');
@@ -24,6 +24,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
       return button;
     });
     overlay.querySelector('.modal-actions').append(...buttons);
+    const box = overlay.querySelector('.modal-box');
     function close(value) {
       hideCenteredModal(overlay);
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
@@ -32,12 +33,18 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
     overlay.addEventListener('click', event => { if (event.target === overlay && dismissed !== null) close(dismissed); });
     overlay.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); if (dismissed !== null) close(dismissed); }
+      // The dialog itself holds focus on open: Enter or Space there means the primary choice.
+      if ((event.key === 'Enter' || event.key === ' ') && event.target === box) {
+        event.preventDefault();
+        (overlay.querySelector('.confirm') || buttons[0]).click();
+      }
       if (event.key === 'Tab') {
         event.preventDefault();
         buttons[(buttons.indexOf(event.target) + 1) % buttons.length].focus();
       }
     });
     showCenteredModal(overlay);
-    (overlay.querySelector('.confirm') || buttons[0]).focus({ preventScroll: true });
+    // The dialog takes focus, not a button, which would show a focus ring on open; Tab reaches them.
+    box.focus({ preventScroll: true });
   });
 }
