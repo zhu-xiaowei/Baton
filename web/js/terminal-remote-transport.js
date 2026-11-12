@@ -69,6 +69,8 @@ export class RemoteTerminalSocket extends EventTarget {
     try {
       if (this.readyState !== WebSocket.OPEN) return;
       this.unacked.delete(0); // any answer means the open arrived
+      // The Bridge sends input acknowledgements on its next message when it has one.
+      if (Number.isSafeInteger(message.ack) && message.type !== 'ack') this.deliver({ type: 'ack', clientSeq: message.ack });
       if (message.type === 'ack' && message.eventSeq === 0) {
         if (!Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('Invalid input acknowledgment');
         return this.deliver(message);

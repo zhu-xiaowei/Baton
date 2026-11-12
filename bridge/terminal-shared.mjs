@@ -16,6 +16,7 @@ const OUTPUT_MAX_BYTES = 64 * 1024;
 const PACKED_MAX_CHARS = 20000;
 const IDLE_MS = 90_000;
 const PAUSE_BYTES = 192 * 1024;
+const ACK_DELAY_MS = 50;
 const RESUME_BYTES = 64 * 1024;
 const MAX_PEERS = 16;
 const PROJECT_LIMIT = 5;
@@ -37,8 +38,25 @@ export function createSharedTerminals(options) {
   let disposed = false;
   let theme = 'dark';
 
+  // Acknowledgements ride on the next message (`ack`); only without one within ACK_DELAY_MS do
+  // they go alone. They are cumulative: input is applied in clientSeq order.
+  function acknowledge(peer, clientSeq) {
+    if (peer.closed) return;
+    peer.ackSeq = Math.max(peer.ackSeq || 0, clientSeq);
+    peer.ackTimer ||= setTimeout(() => {
+      peer.ackTimer = null;
+      if (peer.ackSeq) rawSend(peer, { type: 'ack', clientSeq: peer.ackSeq });
+    }, ACK_DELAY_MS);
+  }
+
   function rawSend(peer, message, bytes = 0) {
     if (peer.closed) return false;
+    if (peer.ackSeq) {
+      message = message.type === 'ack' ? message : { ...message, ack: peer.ackSeq };
+      peer.ackSeq = 0;
+      clearTimeout(peer.ackTimer);
+      peer.ackTimer = null;
+    }
     if (peer.inflightBytes + bytes > MAX_CLIENT_BYTES) {
       drop(peer, 'Terminal display is behind. Reconnect to restore.');
       return false;
@@ -137,6 +155,7 @@ export function createSharedTerminals(options) {
     peer.closing = true;
     if (reason && peer.channel.readyState === 1) rawSend(peer, { type: 'error', message: reason, fatal: true });
     peer.closed = true;
+    clearTimeout(peer.ackTimer);
     peers.delete(peer.id);
     peer.channel.close();
     peer.pending.clear();
@@ -408,7 +427,7 @@ export function createSharedTerminals(options) {
         session.process.write(inputBytes(message.data));
       }
     }
-    rawSend(peer, { type: 'ack', clientSeq: message.clientSeq });
+    acknowledge(peer, message.clientSeq);
   }
 
   function receive(peer, message) {
@@ -425,7 +444,7 @@ export function createSharedTerminals(options) {
       if (message.type === 'input') inputBytes(message.data);
       if (message.type === 'resize') dimensions(message);
       // Input the App sent again (its acknowledgement was lost): acknowledge it again.
-      if (message.clientSeq < peer.nextInput) return void rawSend(peer, { type: 'ack', clientSeq: peer.nextInput - 1 });
+      if (message.clientSeq < peer.nextInput) return void acknowledge(peer, peer.nextInput - 1);
       if (peer.pending.has(message.clientSeq)) {
         if (JSON.stringify(peer.pending.get(message.clientSeq)) !== JSON.stringify(message)) throw new Error('Conflicting input sequence');
         return;
@@ -442,7 +461,7 @@ export function createSharedTerminals(options) {
           if (!peer.cwd) throw new Error('Terminal has not opened');
           peer.lastSeen = Date.now();
           if (MANAGEMENT_TYPES.has(next.type)) {
-            return manage(peer, next).then(() => rawSend(peer, { type: 'ack', clientSeq: next.clientSeq }));
+            return manage(peer, next).then(() => acknowledge(peer, next.clientSeq));
           }
           const operation = () => {
             try { apply(peer, next); } catch { drop(peer, 'Invalid terminal request. Reconnect.'); }
