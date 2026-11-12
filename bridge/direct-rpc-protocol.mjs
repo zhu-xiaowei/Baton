@@ -142,7 +142,9 @@ export async function decodeRpcPayload({ enc, data }, inflate) {
 // connection (the reply target), `m` the channel's own message. A message's `data` (base64 bytes)
 // travels deflated (`z: 1`) when that makes it smaller. `deflate`/`inflate` may return Promises.
 const STREAM_CHANNELS = new Set(['terminal', 'preview']);
-const PACK_MIN = 512;
+// Data shorter than this does not shrink under deflate; the packed copy is used only when it saves 10%.
+export const PACK_MIN = 128;
+export const packPays = (plainLength, packedLength) => plainLength >= PACK_MIN && packedLength < plainLength * 0.9;
 
 export function streamFrame(ch, id, from, m) {
   return { v: RPC_VERSION, kind: 'stream', ch, id, from, m };
@@ -157,7 +159,7 @@ export function isStreamFrame(frame) {
 export async function packStreamMessage(message, deflate) {
   if (!deflate || message.z || typeof message.data !== 'string' || message.data.length < PACK_MIN) return message;
   const packed = toBase64(await deflate(fromBase64(message.data)));
-  return packed.length < message.data.length * 0.9 ? { ...message, data: packed, z: 1 } : message;
+  return packPays(message.data.length, packed.length) ? { ...message, data: packed, z: 1 } : message;
 }
 
 export async function unpackStreamMessage(message, inflate) {

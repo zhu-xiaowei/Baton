@@ -4,6 +4,7 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { defaultShell, dimensions, inputBytes, spawnTerminal } from './terminal-pty.mjs';
 import { resolveProjectPath } from './project/git-context.mjs';
+import { PACK_MIN, packPays } from './direct-rpc-protocol.mjs';
 
 const MAX_CLIENT_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
@@ -14,6 +15,8 @@ const FLUSH_MS = 16;
 const OUTPUT_MAX_BYTES = 64 * 1024;
 const PACKED_MAX_CHARS = 20000;
 const IDLE_MS = 90_000;
+const PAUSE_BYTES = 192 * 1024;
+const RESUME_BYTES = 64 * 1024;
 const MAX_PEERS = 16;
 const PROJECT_LIMIT = 5;
 const TOTAL_LIMIT = 20;
@@ -80,18 +83,40 @@ export function createSharedTerminals(options) {
     const bytes = Buffer.concat(session.out);
     session.out = [];
     session.outBytes = 0;
+    const deflate = [...session.peers].every((peer) => peer.channel.deflate);
+    // 'sent', 'large' (packed but over the frame budget) or false (deflate does not pay).
+    const sendPacked = (part) => {
+      const plainLength = Math.ceil(part.length / 3) * 4;
+      if (!deflate || plainLength < PACK_MIN) return false;
+      const packed = deflateRawSync(part).toString('base64');
+      if (!packPays(plainLength, packed.length)) return false;
+      if (packed.length > PACKED_MAX_CHARS) return 'large';
+      broadcast(session, { type: 'output', data: packed, z: 1 }, part.length, except);
+      return 'sent';
+    };
     for (let offset = 0; offset < bytes.length; offset += OUTPUT_MAX_BYTES) {
       const part = bytes.subarray(offset, offset + OUTPUT_MAX_BYTES);
-      const packed = [...session.peers].every((peer) => peer.channel.deflate) && deflateRawSync(part).toString('base64');
-      if (packed && packed.length <= PACKED_MAX_CHARS) {
-        broadcast(session, { type: 'output', data: packed, z: 1 }, part.length, except);
-        continue;
-      }
+      const whole = sendPacked(part);
+      if (whole === 'sent') continue;
       for (let at = 0; at < part.length; at += CHUNK_BYTES) {
         const chunk = part.subarray(at, at + CHUNK_BYTES);
+        if (whole === 'large' && sendPacked(chunk) === 'sent') continue;
         broadcast(session, { type: 'output', data: chunk.toString('base64') }, chunk.length, except);
       }
     }
+    pace(session);
+  }
+
+  // The PTY is read only as fast as the mirror and the most caught-up page keep up (`render_ack`);
+  // a page further behind than that is dropped by `rawSend`, so it cannot hold the others back.
+  function pace(session) {
+    const process = session.process;
+    if (!process) return;
+    let shown = session.peers.size ? Infinity : 0;
+    for (const peer of session.peers) shown = Math.min(shown, peer.inflightBytes + peer.bufferedBytes);
+    const backlog = session.queuedBytes + session.outBytes + shown;
+    if (!session.paused && backlog > PAUSE_BYTES) { session.paused = true; process.pause(); }
+    else if (session.paused && backlog < RESUME_BYTES) { session.paused = false; process.resume(); }
   }
 
   function projectSessions(cwd) {
@@ -120,7 +145,10 @@ export function createSharedTerminals(options) {
     peer.snapshot = null;
     const session = peer.session;
     session?.peers.delete(peer);
-    if (session && !disposed) broadcast(session, { type: 'peers', count: session.peers.size });
+    if (session && !disposed) {
+      broadcast(session, { type: 'peers', count: session.peers.size });
+      pace(session);
+    }
   }
 
   function stopProcess(session) {
@@ -168,6 +196,7 @@ export function createSharedTerminals(options) {
     const process = spawnTerminal({ shell: options.shell || shell.shell,
       shellArgs: options.shellArgs || shell.shellArgs, cwd: session.cwd, ...size });
     session.process = process;
+    session.paused = false;
     for (const code of [10, 11, 12]) {
       mirror.parser.registerOscHandler(code, data => {
         if (data !== '?') return false;
@@ -177,19 +206,26 @@ export function createSharedTerminals(options) {
     }
     mirror.onData(data => { if (session.process === process) process.write(Buffer.from(data)); });
     mirror.onBinary(data => { if (session.process === process) process.write(Buffer.from(data, 'binary')); });
+    let batch = null;
     process.onData(bytes => {
       if (disposed || session.closed || session.epoch !== epoch) return;
       if (!Buffer.isBuffer(bytes)) return enqueue(session, () => { throw new Error('Expected PTY bytes'); });
       session.queuedBytes += bytes.length;
-      if (session.queuedBytes > 256 * 1024) process.pause();
+      pace(session);
       if (session.queuedBytes > 1024 * 1024) return enqueue(session, () => { throw new Error('Mirror backlog'); });
+      // Reads that arrive while the mirror is busy are written in one call: one write per small
+      // PTY read caps output at a few hundred KB/s.
+      if (batch) return batch.push(bytes);
+      batch = [bytes];
       enqueue(session, async () => {
+        const chunk = batch.length === 1 ? batch[0] : Buffer.concat(batch);
+        batch = null;
         if (session.closed || session.epoch !== epoch) return;
-        await new Promise(resolve => mirror.write(bytes, resolve));
+        await new Promise(resolve => mirror.write(chunk, resolve));
         if (session.closed) return;
-        session.queuedBytes -= bytes.length;
-        queueOutput(session, bytes);
-        if (session.queuedBytes < 64 * 1024 && session.process === process) process.resume();
+        session.queuedBytes -= chunk.length;
+        queueOutput(session, chunk);
+        if (session.process === process) pace(session);
       });
     });
     process.onExit(({ exitCode, signal }) => {
@@ -349,6 +385,7 @@ export function createSharedTerminals(options) {
           peer.inflightBytes -= bytes;
         }
       }
+      if (session) pace(session);
       if (peer.snapshot?.id && peer.snapshot.id === message.snapshotId) {
         if (!Number.isSafeInteger(message.index) || message.index !== peer.snapshot.acked || message.index >= peer.snapshot.sent) throw new Error('Invalid snapshot acknowledgement');
         peer.snapshot.acked++;
