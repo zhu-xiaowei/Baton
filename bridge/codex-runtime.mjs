@@ -2,7 +2,6 @@ import fs from 'fs';
 import { countJsonlLines } from './extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
-  codexProjectCwd,
   discoverCodexHistory,
   discoverCodexSessions,
   findCodexSessionFile,
@@ -16,6 +15,7 @@ import { projectHashCandidatesFromCwd, storageSessionId } from './session-identi
 import { projectCwdFromCwd } from './repository-identity.mjs';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
+import { sessionIndex } from './session-index.mjs';
 
 function publicSession(session) {
   const { _filePath, _lineCount, ...item } = session;
@@ -30,7 +30,7 @@ async function deleteCodexHistory(sessionId, projectHash, context, ownsLiveSessi
     .filter(({ cwd, repositoryUrl }) => {
       if (typeof cwd !== 'string' || !cwd) return false;
       if (!projects.has(cwd)) {
-        projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(codexProjectCwd(cwd, repositoryUrl, context.codexHomes))));
+        projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(sessionIndex.codexProjectCwd(cwd, repositoryUrl))));
       }
       return projects.get(cwd).includes(projectHash);
     }).map((file) => file.id));
