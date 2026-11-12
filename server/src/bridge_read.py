@@ -437,7 +437,7 @@ def _windows_install_script(url, server, api_key, name):
     ])
 
 
-@read_router.get("/install")
+# Served as /api/install (main.py): every installed Bridge's update path.
 async def get_install(
     request: Request,
     name: str = Query(None),

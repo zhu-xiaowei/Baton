@@ -80,18 +80,17 @@ was offline reappears when it next connects; a new install command also adds it 
 
 ---
 
-### GET /api/bridge/install
+### GET /api/install
 
-Generates a Bridge install script, used by the setup page. It configures launchd on macOS,
-systemd user service on Linux, or Task Scheduler on native Windows.
+Generates a Bridge install script. Installed Bridges call it when they update and take the package
+URL from it; people install with `GET /auth/install?t=…` (same script, a token instead of the key).
+It configures launchd on macOS, systemd user service on Linux, or Task Scheduler on native Windows.
 
 **Query**:
 | Param | Required | Description |
 |-------|----------|-------------|
 | `name` | No | Device name (if omitted, script asks interactively, defaults to hostname) |
 | `platform` | No | Use `windows` for the PowerShell installer; otherwise returns the shell installer |
-
-**Alias**: `GET /api/install` (same handler)
 
 **Response** `200`: `text/plain` shell or PowerShell script
 
