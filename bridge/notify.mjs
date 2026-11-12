@@ -19,9 +19,21 @@ const queue = new Map(); // sessionId → { alert, at }: alerts the server did n
 let retryTimer = null;
 
 // Sessions whose turn a takeover ended: no Done until Baton's own turn there reports its end.
-const takenOver = new Set();
-export const noteTakeover = (sessionId) => takenOver.add(sessionId);
-export const endTakeover = (sessionId) => takenOver.delete(sessionId);
+// A completion seen after Baton's turn started is held; it is that turn's end when no newer turn runs.
+const takenOver = new Map(); // sessionId → { started, held: [old, row] }
+export const noteTakeover = (sessionId) => takenOver.set(sessionId, {});
+
+export function endTakeover(sessionId) {
+  const held = takenOver.get(sessionId)?.held;
+  takenOver.delete(sessionId);
+  if (held) alertAndDeliver(...held);
+}
+
+function alertAndDeliver(old, row) {
+  void alertFor(old, row).then((alert) => alert && deliver(alert)).catch((error) => {
+    console.error(`[notify] ${error.message}`);
+  });
+}
 
 export function configureNotifier(next) {
   deps = { ...deps, ...next };
@@ -65,11 +77,7 @@ export function observeSessions(body) {
     rows.set(key, row);
     changes.push([old, row]);
   }
-  for (const [old, row] of changes) {
-    void alertFor(old, row).then((alert) => alert && deliver(alert)).catch((error) => {
-      console.error(`[notify] ${error.message}`);
-    });
-  }
+  for (const [old, row] of changes) alertAndDeliver(old, row);
 }
 
 function textSummary(content) {
@@ -124,11 +132,16 @@ export async function completionSummary(sessionId, attempts = 3) {
 }
 
 export async function alertFor(old, row) {
+  const taken = takenOver.get(row.sessionId);
+  if (taken && effectiveStatus(row) === 'running') Object.assign(taken, { started: true, held: null });
+  if (taken && effectiveStatus(row) === 'completed') {
+    if (taken.started) taken.held ||= [old, row];
+    return null;
+  }
   if (!old || row.parentSessionId) return null; // subagent threads surface through their root
   if (row.localIdleSec != null && row.localIdleSec < LOCAL_IDLE_ALERT_SEC) return null; // the user is at that computer
   const before = effectiveStatus(old);
   const after = effectiveStatus(row);
-  if (after === 'completed' && takenOver.has(row.sessionId)) return null;
   let action;
   let detail;
   if (after === 'needs_input') {
