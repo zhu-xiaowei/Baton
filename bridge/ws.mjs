@@ -65,7 +65,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier, noteTakeover } from './notify.mjs';
+import { configureNotifier, endTakeover, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -383,6 +383,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
   const key = identity.sessionId;
   const previous = _statusSyncs.get(key) || Promise.resolve();
   const next = previous.then(async () => {
+    if (status === 'completed') endTakeover(key);
     const adapter = getRuntimeAdapter(identity.runtime);
     let filePath = adapter.findSessionFile(identity.nativeSessionId);
     if (options.waitForFile
@@ -1773,6 +1774,7 @@ async function handleHeadlessSend(
     }
   } catch (error) {
     cb?.failTurn('unavailable');
+    endTakeover(sessionId);
     ack(false, error.message || 'Session unavailable.');
     return true;
   }
@@ -1797,13 +1799,14 @@ export async function writerConflict(sessionId, takeover, expectedWriterPid, {
     return { errorCode: `${runtime}_writer_changed`, error: `The ${label} writer changed before takeover`, writer };
   }
   const alive = () => { try { kill(writer.pid, 0); return true; } catch { return false; } };
+  noteTakeover(storageSessionId(runtime, sessionId));
   try { kill(writer.pid, 'SIGTERM'); } catch {}
   for (const end = Date.now() + timeoutMs; alive() && Date.now() < end;) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  const next = alive() ? writer : await findWriter(sessionId);
+  if (next) endTakeover(storageSessionId(runtime, sessionId));
   if (alive()) return { errorCode: `${runtime}_writer_unsafe`, error: `The ${label} terminal did not exit`, writer };
-  noteTakeover(storageSessionId(runtime, sessionId));
-  const next = await findWriter(sessionId);
   return next ? held(next) : null;
 }
 

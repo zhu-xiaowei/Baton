@@ -18,9 +18,10 @@ const rows = new Map();  // `device|project|sessionId` → the last reported row
 const queue = new Map(); // sessionId → { alert, at }: alerts the server did not take yet
 let retryTimer = null;
 
-// Sessions whose turn a takeover ended: that turn's Done is not alerted, until the next turn runs.
+// Sessions whose turn a takeover ended: no Done until Baton's own turn there reports its end.
 const takenOver = new Set();
 export const noteTakeover = (sessionId) => takenOver.add(sessionId);
+export const endTakeover = (sessionId) => takenOver.delete(sessionId);
 
 export function configureNotifier(next) {
   deps = { ...deps, ...next };
@@ -123,14 +124,11 @@ export async function completionSummary(sessionId, attempts = 3) {
 }
 
 export async function alertFor(old, row) {
-  const after = effectiveStatus(row);
-  if (takenOver.has(row.sessionId)) {
-    if (after === 'running') takenOver.delete(row.sessionId);
-    else if (after === 'completed') return null;
-  }
   if (!old || row.parentSessionId) return null; // subagent threads surface through their root
   if (row.localIdleSec != null && row.localIdleSec < LOCAL_IDLE_ALERT_SEC) return null; // the user is at that computer
   const before = effectiveStatus(old);
+  const after = effectiveStatus(row);
+  if (after === 'completed' && takenOver.has(row.sessionId)) return null;
   let action;
   let detail;
   if (after === 'needs_input') {
