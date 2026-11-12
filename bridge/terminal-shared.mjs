@@ -15,9 +15,12 @@ const FLUSH_MS = 16;
 const OUTPUT_MAX_BYTES = 64 * 1024;
 const PACKED_MAX_CHARS = 20000;
 const IDLE_MS = 90_000;
-const PAUSE_BYTES = 192 * 1024;
 const ACK_DELAY_MS = 50;
-const RESUME_BYTES = 64 * 1024;
+// A page this far behind stops receiving output; below CATCH_UP_BYTES it gets the current screen
+// instead of what it missed (both keep 1000 lines of history, so nothing visible is lost).
+const BEHIND_BYTES = 192 * 1024;
+const CATCH_UP_BYTES = 64 * 1024;
+const CATCH_UP_MAX_BYTES = 256 * 1024;
 const MAX_PEERS = 16;
 const PROJECT_LIMIT = 5;
 const TOTAL_LIMIT = 20;
@@ -73,11 +76,39 @@ export function createSharedTerminals(options) {
 
   function publish(peer, message, bytes = 0) {
     if (peer.closed) return;
+    const output = message.type === 'output';
+    if (output && peer.behind) return;
     if (peer.snapshot) {
+      if (output && peer.bufferedBytes + bytes > BEHIND_BYTES) {
+        peer.behind = true;
+        peer.buffered = peer.buffered.filter((entry) => entry.message.type !== 'output');
+        peer.bufferedBytes = peer.buffered.length * 128;
+        return;
+      }
       peer.bufferedBytes += Math.max(bytes, 128);
       if (peer.bufferedBytes > MAX_CLIENT_BYTES) return drop(peer, 'Too much output during screen sync. Reconnect.');
       peer.buffered.push({ message, bytes });
-    } else rawSend(peer, message, bytes);
+    } else if (output && peer.inflightBytes + bytes > BEHIND_BYTES) peer.behind = true;
+    else rawSend(peer, message, bytes);
+  }
+
+  function catchUp(peer) {
+    if (!peer.behind || peer.snapshot || peer.closed || peer.inflightBytes >= CATCH_UP_BYTES) return;
+    const session = peer.session;
+    flushOutput(session, peer); // already in the mirror
+    let bytes;
+    try {
+      bytes = Buffer.from(session.serializer.serialize());
+      if (bytes.length > CATCH_UP_MAX_BYTES) bytes = Buffer.from(session.serializer.serialize({ scrollback: 0 }));
+    } catch {
+      return drop(peer, 'Cannot restore terminal screen. Reconnect.');
+    }
+    peer.behind = false;
+    let first = true;
+    for (const { message, bytes: size } of outputMessages(bytes, peer.channel.deflate)) {
+      rawSend(peer, { epoch: session.epoch, ...message, ...(first ? { reset: 1 } : {}) }, size);
+      first = false;
+    }
   }
 
   function broadcast(session, message, bytes = 0, except = null) {
@@ -89,7 +120,8 @@ export function createSharedTerminals(options) {
   function queueOutput(session, bytes) {
     session.out.push(bytes);
     session.outBytes += bytes.length;
-    if (session.outBytes >= OUTPUT_MAX_BYTES) flushOutput(session);
+    // The first output after a quiet spell (an echo) goes at once; a burst is merged.
+    if (session.outBytes >= OUTPUT_MAX_BYTES || (!session.outTimer && Date.now() - (session.flushedAt || 0) >= FLUSH_MS)) flushOutput(session);
     else session.outTimer ||= setTimeout(() => flushOutput(session), FLUSH_MS);
   }
 
@@ -101,40 +133,43 @@ export function createSharedTerminals(options) {
     const bytes = Buffer.concat(session.out);
     session.out = [];
     session.outBytes = 0;
+    session.flushedAt = Date.now();
     const deflate = [...session.peers].every((peer) => peer.channel.deflate);
+    for (const { message, bytes: size } of outputMessages(bytes, deflate)) broadcast(session, message, size, except);
+  }
+
+  // Output messages for `bytes`: deflated where that pays, each within the frame budget.
+  function outputMessages(bytes, deflate) {
+    const messages = [];
     // 'sent', 'large' (packed but over the frame budget) or false (deflate does not pay).
-    const sendPacked = (part) => {
+    const pack = (part) => {
       const plainLength = Math.ceil(part.length / 3) * 4;
       if (!deflate || plainLength < PACK_MIN) return false;
       const packed = deflateRawSync(part).toString('base64');
       if (!packPays(plainLength, packed.length)) return false;
       if (packed.length > PACKED_MAX_CHARS) return 'large';
-      broadcast(session, { type: 'output', data: packed, z: 1 }, part.length, except);
+      messages.push({ message: { type: 'output', data: packed, z: 1 }, bytes: part.length });
       return 'sent';
     };
     for (let offset = 0; offset < bytes.length; offset += OUTPUT_MAX_BYTES) {
       const part = bytes.subarray(offset, offset + OUTPUT_MAX_BYTES);
-      const whole = sendPacked(part);
+      const whole = pack(part);
       if (whole === 'sent') continue;
       for (let at = 0; at < part.length; at += CHUNK_BYTES) {
         const chunk = part.subarray(at, at + CHUNK_BYTES);
-        if (whole === 'large' && sendPacked(chunk) === 'sent') continue;
-        broadcast(session, { type: 'output', data: chunk.toString('base64') }, chunk.length, except);
+        if (whole === 'large' && pack(chunk) === 'sent') continue;
+        messages.push({ message: { type: 'output', data: chunk.toString('base64') }, bytes: chunk.length });
       }
     }
-    pace(session);
+    return messages;
   }
 
-  // The PTY is read only as fast as the mirror and the most caught-up page keep up (`render_ack`);
-  // a page further behind than that is dropped by `rawSend`, so it cannot hold the others back.
+  // The PTY pauses only while the mirror falls behind it; pages that fall behind catch up instead.
   function pace(session) {
     const process = session.process;
     if (!process) return;
-    let shown = session.peers.size ? Infinity : 0;
-    for (const peer of session.peers) shown = Math.min(shown, peer.inflightBytes + peer.bufferedBytes);
-    const backlog = session.queuedBytes + session.outBytes + shown;
-    if (!session.paused && backlog > PAUSE_BYTES) { session.paused = true; process.pause(); }
-    else if (session.paused && backlog < RESUME_BYTES) { session.paused = false; process.resume(); }
+    if (!session.paused && session.queuedBytes > 256 * 1024) { session.paused = true; process.pause(); }
+    else if (session.paused && session.queuedBytes < 64 * 1024) { session.paused = false; process.resume(); }
   }
 
   function projectSessions(cwd) {
@@ -164,10 +199,7 @@ export function createSharedTerminals(options) {
     peer.snapshot = null;
     const session = peer.session;
     session?.peers.delete(peer);
-    if (session && !disposed) {
-      broadcast(session, { type: 'peers', count: session.peers.size });
-      pace(session);
-    }
+    if (session && !disposed) broadcast(session, { type: 'peers', count: session.peers.size });
   }
 
   function stopProcess(session) {
@@ -277,6 +309,7 @@ export function createSharedTerminals(options) {
     peer.buffered = [];
     peer.bufferedBytes = 0;
     for (const entry of buffered) rawSend(peer, entry.message, entry.bytes);
+    catchUp(peer);
   }
 
   function snapshot(peer) {
@@ -296,6 +329,7 @@ export function createSharedTerminals(options) {
     if (bytes.length > MAX_SNAPSHOT_BYTES) return drop(peer, 'Terminal screen too large to restore safely.');
     peer.buffered = [];
     peer.bufferedBytes = 0;
+    peer.behind = false;
     peer.inflight.clear();
     peer.inflightBytes = 0;
     peer.snapshot = { id: randomUUID(), epoch: session.epoch, bytes, sent: 0, acked: 0,
@@ -404,7 +438,7 @@ export function createSharedTerminals(options) {
           peer.inflightBytes -= bytes;
         }
       }
-      if (session) pace(session);
+      catchUp(peer);
       if (peer.snapshot?.id && peer.snapshot.id === message.snapshotId) {
         if (!Number.isSafeInteger(message.index) || message.index !== peer.snapshot.acked || message.index >= peer.snapshot.sent) throw new Error('Invalid snapshot acknowledgement');
         peer.snapshot.acked++;

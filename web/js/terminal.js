@@ -623,11 +623,12 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     } else if (message.type === 'output') {
       if (message.epoch !== current.epoch) throw new Error('Terminal generation mismatch');
       const bytes = decode(message.data);
+      if (message.reset) terminal.reset(); // the Bridge sends the current screen after skipping output
       await write(bytes);
       if (!ownsRuntime(current) || generation !== current.generation) return;
       current.lastAck = message.eventSeq;
       current.ackBytes += bytes.length;
-      if (current.ackBytes >= 16384) acknowledge();
+      if (current.ackBytes >= 48 * 1024) acknowledge();
       else if (!current.ackTimer) current.ackTimer = setTimeout(acknowledge, 100);
     } else if (message.type === 'resized') {
       if (message.epoch !== current.epoch) return;
