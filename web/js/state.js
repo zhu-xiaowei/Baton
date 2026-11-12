@@ -6,7 +6,6 @@ export const state = {
   // ---- Credentials (api.js) ----
   KEY: '',
   SERVER: '',
-  WS_URL: '',
 
   // ---- Navigation / device list (app.js) ----
   appState: { device: null, project: null, session: null, sessionPreview: '' },

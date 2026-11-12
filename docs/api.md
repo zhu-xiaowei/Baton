@@ -145,10 +145,13 @@ make the operation readable. Bodies:
 | `rpc_progress` | `requestId, progress?` (after 5 s, then every 15 s while the handler runs) | Bridge → App |
 | `rpc_result` | `method, requestId, ok, chunk, enc, data` or `error` | Bridge → App |
 | `push` | `event, sessionId, id, chunk, enc, data` | Bridge → subscribed Apps |
+| `stream` | `ch` (`terminal` / `preview`), `id, from, m, inflate?` | both ways, on the `push` route |
 
 Replies and pushes above 1 KB are deflated and split into chunks reassembled by `requestId` / `id`;
 a request whose params do not fit one frame is sent as `rpc` chunks (`chunk, enc, data` instead of
-`params`) the same way.
+`params`) the same way. `stream` frames carry one terminal or preview channel message each; its
+base64 `data` is deflated (`z: 1`) only for pages that sent `inflate: 1`
+(`docs/terminal-direct-integration.md`, `docs/preview-tunnel-protocol.md`).
 
 | Method | Params | Answer |
 |---|---|---|

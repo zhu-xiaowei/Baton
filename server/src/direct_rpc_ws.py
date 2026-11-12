@@ -11,11 +11,10 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 import uuid
 
 import boto3
-
-from terminal_direct_ws import callback_policy
 
 CREDENTIAL_SECONDS = 3600
 CREDENTIAL_REUSE_MARGIN = 600
@@ -29,6 +28,19 @@ def data_endpoint():
 
 def _ticket_key(token):
     return "RPCJOIN#" + hashlib.sha256(token.encode()).hexdigest()
+
+
+def callback_policy(endpoint, role_arn, region):
+    """POST @connections/* on the data API: API Gateway authorizes the route template, not one socket."""
+    parsed = urllib.parse.urlsplit(endpoint)
+    api_id = (parsed.hostname or "").split(".")[0]
+    stage = parsed.path.strip("/")
+    if (parsed.scheme != "https" or "?" in endpoint or "#" in endpoint or not re.fullmatch(r"[a-z0-9]+", api_id)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", stage)):
+        raise ValueError("Invalid callback destination")
+    partition, account = role_arn.split(":")[1], role_arn.split(":")[4]
+    return {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "execute-api:ManageConnections",
+        "Resource": f"arn:{partition}:execute-api:{region}:{account}:{api_id}/{stage}/POST/@connections/*"}]}
 
 
 def storage_info(account_id):

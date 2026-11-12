@@ -45,7 +45,7 @@
 > on the live page connected directly to that main Bridge, dual-client input at desktop / phone sizes and recovery after disconnect were both verified.
 >
 > The subsequent Header direct relay POC is implemented: see `docs/terminal-direct-integration.md`.
-> Because testing showed IAM cannot restrict a single connection ID, data uses a separate hosted WS API + session HMAC, and the original API only does control.
+> Because testing showed IAM cannot restrict a single connection ID, data uses a separate hosted WS API, and the original API only does control. Since `v2/one-socket` the terminal is a `stream` channel on the App's one direct socket, without the per-session HMAC.
 > The controlled POC passed browser acceptance; API-level STS permissions are not to be mislabeled as connection-level ACLs suitable for untrusted multi-tenancy.
 
 ## 1. Conclusion and Scope

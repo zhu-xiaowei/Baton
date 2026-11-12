@@ -48,8 +48,8 @@ queue or confirm pushes. A lost one shows as a turn `seq` gap or is covered by t
 ### Wire
 
 - Two routes on the data API share the existing HTTP integration: `rpc` (requests and replies)
-  and `push` (Bridge → App events). They never change when a method is added. The terminal keeps
-  `terminal_direct_data`, the preview `preview_data`.
+  and `push` (Bridge → App events). They never change when a method is added. Terminals and previews
+  later moved onto `push` as `stream` frames (`v2/one-socket`), and their own routes were removed.
 - The operation is readable in both directions: the signed frame carries a clear `method` /
   `event` next to `action`, and the body the receiver gets carries it too.
 - Bodies: `{v: 2, kind: 'rpc', method, requestId, params, replyTo, accept, ack?}`,
@@ -504,8 +504,8 @@ another name, so `test-ec2-ap` is not uninstalled). CloudWatch: no `sync-*`, `se
 
 ## Later (not in this step)
 
-Persistent outbox; prefetch; attachment lifecycle and encryption; FCM for Android; terminal and
-preview pairing off Lambda (with the EC2 relay).
+Persistent outbox; prefetch; attachment encryption; FCM for Android. (Terminal and preview pairing
+moved off Lambda in `v2/one-socket`: both are `stream` frames on the App's one direct socket.)
 
 Traffic, to settle with the EC2 relay and end-to-end encryption (bytes are billed there; API
 Gateway bills per message, so none of this saves anything today except the last item):
@@ -518,10 +518,9 @@ Gateway bills per message, so none of this saves anything today except the last 
   API Gateway never tells the Bridge that an App socket closed. The relay knows, so it tells the
   Bridge on a disconnect; renewals, leases and `replaces` then go, and the keepalive is the plain
   ping. Until then the renewal stays as it is (on API Gateway a ping costs the same two messages).
-- Terminal and preview send base64 inside JSON, uncompressed: binary frames and compression before
-  encryption. Measure the traffic by type first (`docs/v2-architecture.md` §13).
-- Terminal output is sent as it arrives; merging a few milliseconds of it into one frame would cut
-  messages on API Gateway too, at the price of that delay. Measure before deciding.
+- Terminal and preview data are deflated when that pays (`v2/one-socket`); binary frames come with
+  the relay and encryption.
+- Terminal output is merged every 16 ms (`v2/one-socket`), about 60 messages a second at most.
 
 ## Workflow
 

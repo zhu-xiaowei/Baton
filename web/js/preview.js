@@ -8,7 +8,6 @@ import { parsePreviewInput, parsePreviewTarget } from './preview-link.js';
 import { PreviewTunnel } from './preview-transport.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { previewNativeAvailable } from './native-shell.js';
-import { controlSocketUrl } from './v2/direct-transport.js';
 import { previewOpenExternal } from './preview-native.js';
 import '../css/preview.css';
 import '../css/loading.css';
@@ -365,12 +364,11 @@ function goBack() {
   timer = setTimeout(finish, 320);
 }
 
-async function wsUrl() {
+function requirePreview() {
   if (!previewNativeAvailable()) {
     throw new Error('Port forwarding requires the Baton desktop or mobile app.');
   }
   if (!state.KEY || !state.SERVER) throw new Error('Sign in before opening a preview.');
-  return controlSocketUrl();
 }
 
 async function connect(entry, { speculative = false, mode } = {}) {
@@ -391,10 +389,10 @@ async function connect(entry, { speculative = false, mode } = {}) {
   entry.status = 'Connecting…';
   entry.pending = (async () => {
     try {
-      const endpoint = await wsUrl();
+      requirePreview();
       if (entry.version !== version) return null;
       const tunnel = new PreviewTunnel({
-        device: entry.device, target: entry.target, wsUrl: endpoint, key: state.KEY, mode,
+        device: entry.device, target: entry.target, mode,
         onStatus(message) {
           if (entry.version !== version) return;
           entry.status = message;

@@ -509,14 +509,6 @@
         "ResponseTemplates": { "application/json": "{}" }
       }
     },
-    "TerminalDirectRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "DependsOn": ["TerminalDirectIntegrationResponse"],
-      "Properties": {
-        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "terminal_direct_data",
-        "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
-      }
-    },
     "DirectRpcRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "DependsOn": ["TerminalDirectIntegrationResponse"],
@@ -530,14 +522,6 @@
       "DependsOn": ["TerminalDirectIntegrationResponse"],
       "Properties": {
         "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "push",
-        "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
-      }
-    },
-    "PreviewDataRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "DependsOn": ["TerminalDirectIntegrationResponse"],
-      "Properties": {
-        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "preview_data",
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
     },

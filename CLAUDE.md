@@ -407,8 +407,10 @@ routes (`/devices`), retries, subscriptions and credentials. Frames are `action:
 readable `method` / `event`. Full protocol: `docs/api.md`; design: `docs/v2-step3b-realtime-plan.md`.
 
 ### WebSocket (Bridge ⇄ server; the App opens no control socket since v2 stage 2a)
-The Bridge's control socket carries only `heartbeat`, `direct_rpc` (data-socket binding),
-`terminal_direct` and `preview_tunnel`; the URL carries `device`, `name` (display) and `os`.
+The Bridge's control socket carries only `heartbeat` and `direct_rpc` (data-socket binding); the
+URL carries `device`, `name` (display) and `os`. Terminals and port previews are `stream` frames
+on the App's one direct socket (`docs/terminal-direct-integration.md`), so opening one creates no
+socket and calls no Lambda.
 `device_removed` / `bridge_replaced` are pushed to it. No Session data passes through it.
 
 Full protocol: `docs/api.md`

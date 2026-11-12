@@ -107,8 +107,8 @@ test('shared terminals adopt the current device size after synchronization witho
       ] });
     };
     const ready = (size, sessionId = 'first') => socket.receive({ type: 'ready', sessionId, name: 'Terminal',
-      epoch: sessionId, ...size, snapshotId: sessionId, snapshotBytes: 0, snapshotChunks: 0, exited: false });
-    const synced = (sessionId = 'first') => socket.receive({ type: 'synced', epoch: sessionId, snapshotId: sessionId });
+      epoch: sessionId, view: sessionId, ...size, snapshotId: sessionId, snapshotBytes: 0, snapshotChunks: 0, exited: false });
+    const synced = (sessionId = 'first') => socket.receive({ type: 'synced', snapshotId: sessionId });
     const resizes = () => socket.sent.filter(message => message.type === 'resize');
 
     await context.test('touch taps open the keyboard without a compatibility click, but swipes and scrollbars do not', async () => {
@@ -181,12 +181,12 @@ test('shared terminals adopt the current device size after synchronization witho
         await tick();
         if (previousSize.cols !== localSize.cols) {
           assert.equal(resizes().length, 1);
-          assert.deepEqual(resizes()[0], { type: 'resize', sessionId: 'first', epoch: 'first', ...localSize });
-          socket.receive({ type: 'resized', epoch: 'first', ...localSize });
+          assert.deepEqual(resizes()[0], { type: 'resize', ...localSize, view: 'first' });
+          socket.receive({ type: 'resized', ...localSize });
           await tick();
           assert.equal(terminal.cols, localSize.cols);
           assert.equal(terminal.rows, localSize.rows);
-          socket.receive({ type: 'resized', epoch: 'first', ...previousSize });
+          socket.receive({ type: 'resized', ...previousSize });
           await tick();
           assert.equal(resizes().length, 1, 'another device resizing must not start a resize feedback loop');
         } else assert.equal(resizes().length, 0);
@@ -215,7 +215,7 @@ test('shared terminals adopt the current device size after synchronization witho
         if (resultFirst) synced('second');
         else result();
         await tick();
-        assert.deepEqual(resizes(), [{ type: 'resize', sessionId: 'second', epoch: 'second', ...localSize }]);
+        assert.deepEqual(resizes(), [{ type: 'resize', ...localSize, view: 'second' }]);
         terminalModule.closeProjectTerminal();
       });
     }
@@ -230,7 +230,7 @@ test('shared terminals adopt the current device size after synchronization witho
       assert.equal(resizes().length, 0);
       hidden = false;
       document.dispatchEvent(new window.Event('visibilitychange'));
-      assert.deepEqual(resizes(), [{ type: 'resize', sessionId: 'first', epoch: 'first', ...localSize }]);
+      assert.deepEqual(resizes(), [{ type: 'resize', ...localSize, view: 'first' }]);
       document.dispatchEvent(new window.Event('visibilitychange'));
       window.dispatchEvent(new window.Event('focus'));
       assert.equal(resizes().length, 1, 'an in-flight resize is not repeated');

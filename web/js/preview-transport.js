@@ -1,5 +1,6 @@
 import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
-import { PreviewDataChannel } from '../../bridge/preview-protocol.mjs';
+import { validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
+import { openStream } from './v2/direct-transport.js';
 
 const CHUNK_BYTES = 16 * 1024;
 const WINDOW_BYTES = 128 * 1024;
@@ -17,15 +18,6 @@ function decodedLength(value) {
   return value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
 }
 
-function waitForOpen(socket) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Preview control connection timed out')), 15000);
-    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-    socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Preview control connection failed')); }, { once: true });
-    socket.addEventListener('close', () => { clearTimeout(timer); reject(new Error('Preview control connection closed')); }, { once: true });
-  });
-}
-
 // The local listener rejects a taken port as `port-in-use:` + `baton`, `app:<pid>:<name>` or nothing.
 function portInUseError(error, port) {
   const match = /^port-in-use:(baton|app:(\d+):([\s\S]*))?$/.exec(String(error?.message ?? error));
@@ -38,12 +30,10 @@ function portInUseError(error, port) {
 }
 
 export class PreviewTunnel {
-  constructor({ device, target, wsUrl, key, mode = 'strict', onStatus, onTraffic }) {
+  constructor({ device, target, mode = 'strict', onStatus, onTraffic }) {
     this.device = device;
     this.target = target;
     this.mode = mode;
-    this.wsUrl = wsUrl;
-    this.key = key;
     this.onStatus = onStatus;
     this.onTraffic = onTraffic;
     this.inboundBytes = 0;
@@ -61,45 +51,47 @@ export class PreviewTunnel {
     this.onStatus?.(message);
   }
 
-  sendControl(op, fields = {}) {
-    if (this.control?.readyState === WebSocket.OPEN) {
-      this.control.send(JSON.stringify({
-        action: 'preview_tunnel', v: 1, op, tunnelId: this.tunnelId,
-        ...(op === 'open' ? { device: this.device, port: this.target.port } : {}),
-        ...fields,
-      }));
-    }
-  }
-
+  // A tunnel is a stream on the App's direct socket: `start` until the Bridge answers `started`
+  // (resent like any frame; a duplicate is answered again).
   async pair() {
-    const endpoint = new URL(this.wsUrl);
-    if (endpoint.protocol !== 'wss:') throw new Error('Preview requires a secure WS endpoint');
-    endpoint.search = new URLSearchParams({ apiKey: this.key, role: 'app' });
-    this.tunnelId = crypto.randomUUID();
-    const control = this.control = new WebSocket(endpoint);
-    control.addEventListener('message', event => {
-      if (this.control === control) this.handleControl(event.data);
+    const tunnelId = this.tunnelId = crypto.randomUUID();
+    const stream = openStream(this.device, 'preview', tunnelId, message => {
+      if (this.tunnelId === tunnelId) this.bridgeMessage(message);
     });
-    control.addEventListener('close', () => {
-      if (this.control === control) this.lost('Preview control connection closed');
-    });
+    this.channel = {
+      readyState: 1,
+      get bufferedAmount() { return stream.bufferedAmount; },
+      send(message) { if (this.readyState === 1) stream.send(message); return this.readyState === 1; },
+      close() { this.readyState = 3; stream.close(); },
+    };
     const ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
     ready.catch(() => {});
-    this.pairTimer = setTimeout(() => this.rejectReady?.(new Error('Preview pairing timed out')), 30000);
+    const start = { type: 'start', port: this.target.port };
+    this.pairTimer = setTimeout(() => this.rejectReady?.(new Error('Preview pairing timed out')), 15000);
+    const resend = setInterval(() => this.channel?.send(start), RETRANSMIT_MS);
     try {
-      await waitForOpen(control);
-      if (this.closed) throw new Error('Preview closed');
-      this.sendControl('open');
+      this.channel.send(start);
       await ready;
       if (this.closed) throw new Error('Preview closed');
     } finally {
       clearTimeout(this.pairTimer);
+      clearInterval(resend);
       this.resolveReady = null;
       this.rejectReady = null;
     }
+  }
+
+  bridgeMessage(value) {
+    let message;
+    try { message = validatePreviewMessage(value, 'bridge'); } catch { return this.lost('Invalid preview frame'); }
+    if (message.type === 'started') return this.resolveReady?.();
+    // The Bridge restarted and no longer knows this tunnel.
+    if (message.type === 'gone') return this.lost('Preview connection closed');
+    if (message.type === 'error' && message.code === 'tunnel_limit') return this.fail('Too many previews on this device');
+    this.remoteMessage(message);
   }
 
   // Bridge reconnects (API Gateway closes every WebSocket within 2 hours) end the remote side
@@ -134,12 +126,9 @@ export class PreviewTunnel {
   }
 
   detachRemote() {
-    clearTimeout(this.renewTimer);
     const { channel } = this;
-    this.sendControl('close');
-    this.control?.close();
-    this.control = null;
     this.channel = null;
+    channel?.send({ type: 'stop' });
     channel?.close();
     for (const finish of this.portChecks.values()) finish(new Error('Preview reconnecting'));
     for (const streamId of [...this.streams.keys()]) this.closeStream(streamId, false);
@@ -203,40 +192,6 @@ export class PreviewTunnel {
         finish(new Error('Could not check the remote port'));
       }
     });
-  }
-
-  handleControl(value) {
-    let message;
-    try { message = JSON.parse(value); } catch { return; }
-    if (message.action !== 'preview_tunnel' || message.tunnelId !== this.tunnelId || this.closed) return;
-    if (message.type === 'offer') {
-      if (message.side !== 'app' || this.channel) return this.lost('Invalid preview offer');
-      try {
-        const channel = this.channel = new PreviewDataChannel({ key: this.key, offer: message });
-        channel.addEventListener('open', () => {
-          if (this.channel === channel) this.resolveReady?.();
-        });
-        channel.addEventListener('message', event => {
-          if (this.channel === channel) this.remoteMessage(event.data);
-        });
-        channel.addEventListener('error', event => {
-          if (this.channel === channel) this.lost(event.data || 'Preview data connection failed');
-        });
-        channel.addEventListener('close', () => {
-          if (this.channel === channel) this.lost('Preview data connection closed');
-        });
-      } catch {
-        this.lost('Could not open preview data channel');
-      }
-    } else if (message.type === 'ready') {
-      this.channel?.authorize(message);
-      clearTimeout(this.renewTimer);
-      const delay = message.credentials?.expiresAt * 1000 - Date.now() - 120000;
-      if (Number.isFinite(delay)) this.renewTimer = setTimeout(() => this.sendControl('renew'),
-        Math.max(60000, Math.min(300000, delay)));
-    } else if (message.type === 'error' || message.type === 'closed') {
-      this.lost(message.message || message.reason || 'Preview connection closed');
-    }
   }
 
   nativeOpen(payload) {
@@ -461,10 +416,8 @@ export class PreviewTunnel {
     clearTimeout(this.flushTimer);
     clearInterval(this.retransmitTimer);
     clearTimeout(this.pairTimer);
-    clearTimeout(this.renewTimer);
-    this.sendControl('close');
+    this.channel?.send({ type: 'stop' });
     this.channel?.close();
-    this.control?.close();
     this.streams.clear();
     for (const unlisten of this.unlisteners) unlisten();
     this.unlisteners = [];

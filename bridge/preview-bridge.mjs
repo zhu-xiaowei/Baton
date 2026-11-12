@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { PreviewDataChannel } from './preview-protocol.mjs';
+import { validatePreviewMessage } from './preview-protocol.mjs';
 
 const CHUNK_BYTES = 16 * 1024;
 const WINDOW_BYTES = 128 * 1024;
@@ -9,13 +9,15 @@ const MAX_TUNNELS = 4;
 // Data frames wait per stream while the shared channel holds this much unsent output.
 const CHANNEL_HIGH_BYTES = 256 * 1024;
 const LOOPBACK_HOSTS = ['127.0.0.1', '::1'];
+// A tunnel without streams and without frames this long is closed; the App starts it again.
+const IDLE_MS = 10 * 60_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function createPreviewBridge(options) {
   const sessions = new Map();
   let disposed = false;
 
-  function closeSession(session, notify = true) {
+  function closeSession(session) {
     if (session.closed) return;
     session.closed = true;
     clearTimeout(session.pumpTimer);
@@ -26,9 +28,6 @@ export function createPreviewBridge(options) {
     }
     session.streams.clear();
     session.channel.close();
-    if (notify && !disposed) options.sendControl({
-      action: 'preview_tunnel', v: 1, op: 'close', tunnelId: session.id,
-    });
   }
 
   function send(session, message) {
@@ -212,42 +211,48 @@ export function createPreviewBridge(options) {
     void flushIncoming(session, stream);
   }
 
+  const idle = setInterval(() => {
+    for (const session of [...sessions.values()]) {
+      if (!session.streams.size && Date.now() - session.lastSeen > IDLE_MS) closeSession(session);
+    }
+  }, 60_000);
+  idle.unref?.();
+
   return {
-    handle(message) {
-      if (disposed || message?.action !== 'preview_tunnel' || message.v !== 1
-        || message.device !== options.device || !UUID.test(message.tunnelId || '')) return;
-      if (message.type === 'offer') {
-        if (message.side !== 'bridge' || sessions.has(message.tunnelId)
-          || sessions.size >= MAX_TUNNELS || !Number.isInteger(message.port)
-          || message.port < 1 || message.port > 65535) {
-          options.sendControl({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId: message.tunnelId });
-          return;
+    // A frame from an App preview (`frame.id` = its tunnelId); `start` opens the tunnel.
+    handle(frame) {
+      if (disposed || !UUID.test(frame.id)) return;
+      let message;
+      try { message = validatePreviewMessage(frame.m, 'app'); } catch { return; }
+      let session = sessions.get(frame.id);
+      if (message.type === 'start') {
+        if (!session) {
+          if (sessions.size >= MAX_TUNNELS) {
+            options.channel(frame).send({ type: 'error', code: 'tunnel_limit', streamId: frame.id });
+            return;
+          }
+          session = { id: frame.id, port: message.port, channel: options.channel(frame),
+            streams: new Map(), closed: false, pumpTimer: null, lastSeen: Date.now() };
+          sessions.set(session.id, session);
         }
-        let channel;
-        try {
-          channel = (options.channelFactory || (value => new PreviewDataChannel(value)))({
-            key: options.key, offer: message, socketFactory: options.socketFactory,
-          });
-        } catch {
-          options.sendControl({ action: 'preview_tunnel', v: 1, op: 'close', tunnelId: message.tunnelId });
-          return;
-        }
-        const session = { id: message.tunnelId, port: message.port, channel, streams: new Map(), closed: false, pumpTimer: null };
-        sessions.set(session.id, session);
-        channel.addEventListener('message', event => receive(session, event.data));
-        channel.addEventListener('error', () => closeSession(session));
-        channel.addEventListener('close', () => closeSession(session));
+        session.channel.follow(frame);
+        session.lastSeen = Date.now();
+        send(session, { type: 'started' });
         return;
       }
-      const session = sessions.get(message.tunnelId);
-      if (!session) return;
-      if (message.type === 'ready') session.channel.authorize(message);
-      else if (message.type === 'closed' || message.type === 'error') closeSession(session, false);
+      if (!session) {
+        if (message.type !== 'stop') options.channel(frame).send({ type: 'gone' });
+        return;
+      }
+      session.channel.follow(frame);
+      session.lastSeen = Date.now();
+      if (message.type === 'stop') return closeSession(session);
+      receive(session, message);
     },
-    detachAll() { for (const session of [...sessions.values()]) closeSession(session, false); },
     dispose() {
       disposed = true;
-      for (const session of [...sessions.values()]) closeSession(session, false);
+      clearInterval(idle);
+      for (const session of [...sessions.values()]) closeSession(session);
     },
   };
 }

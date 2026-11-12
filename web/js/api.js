@@ -32,14 +32,11 @@ state.KEY = (function () {
     return '';
   }
 })();
-state.WS_URL = localStorage.getItem('_wsurl') || '';
 
 function clearCachedAccountData() {
   window.closeProjectTerminal?.({ keepAlive: false });
   window.closePreviewConnections?.();
   window.disconnectWs?.();
-  state.WS_URL = '';
-  localStorage.removeItem('_wsurl');
   localStorage.removeItem('apeek_home_cache');
   localStorage.removeItem('apeek_v2_home_devices');
   resetDirectTransport();
@@ -375,7 +372,7 @@ function viewImage(src, element) {
 }
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
-// State (KEY/SERVER/WS_URL) lives in state.js, not on window.
+// State (KEY/SERVER) lives in state.js, not on window.
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
   api, apiText, apiPost, loadingSpinner,

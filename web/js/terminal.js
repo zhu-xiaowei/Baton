@@ -251,8 +251,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   };
   listen(window, 'themechange', () => {
     terminal.options.theme = terminalTheme();
-    // Older Bridges reject unknown frame types; they only learn the theme from `open`.
-    if (current.themeUpdates) send({ type: 'theme', theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' });
+    send({ type: 'theme', theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' });
   });
   // Bottom-anchor only once content fills the screen so the fit remainder moves above row one.
   const syncFill = () => {
@@ -481,7 +480,17 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
 
   function send(message) {
     if (!ownsRuntime(current) || current.socket?.readyState !== WebSocket.OPEN) return false;
-    current.socket.send(JSON.stringify({ sessionId: current.sessionId, ...message, epoch: current.epoch }));
+    // Input and resize name the screen they were meant for (`view`, from `ready`).
+    // They also report what is displayed, which otherwise waits for acknowledge().
+    const screenInput = message.type === 'input' || message.type === 'resize';
+    const view = screenInput ? { view: current.view, ...(current.lastAck ? { rendered: current.lastAck } : {}) } : {};
+    if (screenInput && current.lastAck) {
+      clearTimeout(current.ackTimer);
+      current.ackTimer = null;
+      current.lastAck = 0;
+      current.ackBytes = 0;
+    }
+    current.socket.send(JSON.stringify({ ...message, ...view }));
     return true;
   }
 
@@ -573,7 +582,6 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (message.error) { current.focusAfterSync = false; status(message.error, 'error'); }
       else settledStatus();
     } else if (message.type === 'ready') {
-      current.themeUpdates = message.themeUpdates === true;
       if (!current.sessions.some(session => session.id === message.sessionId)) throw new Error('Terminal list out of sync. Update Bridge and reconnect.');
       clearTimeout(current.ackTimer);
       current.ackTimer = null;
@@ -583,6 +591,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.ready = false;
       current.exited = message.exited;
       current.epoch = message.epoch;
+      current.view = message.view;
       current.sessionId = message.sessionId;
       current.sessionName = message.name;
       rememberSelection();
@@ -605,7 +614,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       clearTimeout(current.syncTimer);
       current.syncTimer = setTimeout(() => { fail('Screen sync timed out; reconnect to restore'); current.socket?.close(); }, 60000);
     } else if (message.type === 'snapshot') {
-      if (message.epoch !== current.epoch || message.snapshotId !== current.snapshotId || message.index !== current.snapshotIndex) throw new Error('Snapshot sequence mismatch');
+      if (message.snapshotId !== current.snapshotId || message.index !== current.snapshotIndex) throw new Error('Snapshot sequence mismatch');
       const bytes = decode(message.data);
       current.snapshotBytes += bytes.length;
       if (current.snapshotBytes > current.snapshotTotal || current.snapshotTotal > 4 * 1024 * 1024) throw new Error('Snapshot exceeds limit');
@@ -614,7 +623,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.snapshotIndex++;
       send({ type: 'render_ack', eventSeq: message.eventSeq, snapshotId: message.snapshotId, index: message.index });
     } else if (message.type === 'synced') {
-      if (message.epoch !== current.epoch || message.snapshotId !== current.snapshotId
+      if (message.snapshotId !== current.snapshotId
         || current.snapshotBytes !== current.snapshotTotal || current.snapshotIndex !== current.snapshotChunks) throw new Error('Incomplete terminal snapshot');
       clearTimeout(current.syncTimer);
       current.ready = true;
@@ -623,16 +632,24 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       controls();
       settledStatus();
     } else if (message.type === 'output') {
-      if (message.epoch !== current.epoch) throw new Error('Terminal generation mismatch');
       const bytes = decode(message.data);
+      if (message.reset) terminal.reset(); // the Bridge sends the current screen after skipping output
       await write(bytes);
       if (!ownsRuntime(current) || generation !== current.generation) return;
       current.lastAck = message.eventSeq;
       current.ackBytes += bytes.length;
-      if (current.ackBytes >= 16384) acknowledge();
-      else if (!current.ackTimer) current.ackTimer = setTimeout(acknowledge, 100);
+      // Large output is reported within 100 ms (the Bridge paces catch-up by it); a little output
+      // (echoes, spinners) waits up to 2 s or rides on the next input.
+      if (current.ackBytes >= 48 * 1024) acknowledge();
+      else if (current.ackBytes >= 16 * 1024 && current.ackSlow) {
+        clearTimeout(current.ackTimer);
+        current.ackSlow = false;
+        current.ackTimer = setTimeout(acknowledge, 100);
+      } else if (!current.ackTimer) {
+        current.ackSlow = current.ackBytes < 16 * 1024;
+        current.ackTimer = setTimeout(acknowledge, current.ackSlow ? 2000 : 100);
+      }
     } else if (message.type === 'resized') {
-      if (message.epoch !== current.epoch) return;
       const localResize = current.requestedSize?.cols === message.cols && current.requestedSize?.rows === message.rows;
       const followBottom = localResize && current.requestedSize.followBottom;
       if (localResize) current.requestedSize = null;
@@ -671,10 +688,10 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.retry.hidden = true;
     current.socket?.close();
     status('Connecting…', 'connecting');
-    const initialOpen = { sessionId: current.sessionId, ...proposedSize(), theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' };
-    const socket = current.socket = new RemoteTerminalSocket(device, { direct: true, projectHash, initialOpen });
+    const open = { type: 'open', sessionId: current.sessionId, ...proposedSize(), theme: document.documentElement.dataset.theme === 'light' ? 'light' : 'dark' };
+    const socket = current.socket = new RemoteTerminalSocket(device, { projectHash });
     socket.addEventListener('open', () => {
-      if (view === current && generation === current.generation && !socket.initialOpenAccepted) socket.send(JSON.stringify({ type: 'open', ...initialOpen }));
+      if (view === current && generation === current.generation) socket.send(JSON.stringify(open));
     });
     socket.addEventListener('message', event => {
       if (!ownsRuntime(current) || generation !== current.generation) return;

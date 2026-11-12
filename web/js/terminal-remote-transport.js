@@ -1,110 +1,77 @@
-import { DirectAppSocket } from '../../bridge/terminal-direct-protocol.mjs';
-import { state } from './state.js';
+import { openStream } from './v2/direct-transport.js';
 
-let configuration = null;
-
-function terminalConfiguration(server, key) {
-  if (state.SERVER === server && state.KEY === key && state.ws?.readyState === WebSocket.OPEN && state.WS_URL) {
-    return Promise.resolve({ wsUrl: state.WS_URL });
-  }
-  if (configuration?.server === server && configuration.key === key) return configuration.promise;
-  const current = configuration = { server, key };
-  // /devices carries the control socket's address.
-  current.promise = fetch(`${server}/api/bridge/devices`, {
-    headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000),
-  }).then(response => {
-    if (!response.ok) throw new Error(`Remote config failed: HTTP ${response.status}`);
-    return response.json();
-  }).catch(error => {
-    if (configuration === current) configuration = null;
-    throw error;
-  });
-  return current.promise;
-}
+// A terminal page's stream to its Bridge, on the App's one direct socket. Input carries
+// `clientSeq` and is sent again until acknowledged; output carries `eventSeq` and is put back in
+// order. A gap that does not fill in GAP_MS ends the stream, and the page reconnects with a fresh
+// snapshot.
+const RESEND_MS = 1500;
+const HEARTBEAT_MS = 30_000;
+const SILENT_MS = 90_000;
+const GAP_MS = 3000;
+const MAX_UNACKED_BYTES = 256 * 1024;
 
 export class RemoteTerminalSocket extends EventTarget {
   readyState = WebSocket.CONNECTING;
-  socket = null;
+  stream = null;
   clientSeq = 0;
   eventSeq = 1;
   outputSeq = 0;
   pending = new Map();
   pendingBytes = 0;
-  unacked = new Map();
-  terminalId = crypto.randomUUID();
+  unacked = new Map(); // clientSeq (0 = open) → { message, size, sentAt }
+  // 72 random bits: unique among one Bridge's pages, shorter on every frame than a UUID.
+  terminalId = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(9)))).replace(/\+/g, '-').replace(/\//g, '_');
 
-  constructor(device, { profile = false, direct = false, projectHash = null, initialOpen } = {}) {
+  constructor(device, { projectHash } = {}) {
     super();
     this.device = device;
-    this.profile = profile;
-    this.direct = direct;
     this.projectHash = projectHash;
-    this.initialOpen = initialOpen;
-    Promise.resolve().then(() => this.connect()).catch(() => this.fail('Check your network.'));
+    Promise.resolve().then(() => this.connect());
   }
 
   get bufferedAmount() {
-    return (this.socket?.bufferedAmount || 0) + [...this.unacked.values()].reduce((sum, size) => sum + size, 0);
+    return (this.stream?.bufferedAmount || 0) + [...this.unacked.values()].reduce((sum, entry) => sum + entry.size, 0);
   }
 
-  get initialOpenAccepted() {
-    return this.socket?.initialOpenAccepted === true;
-  }
-
-  async connect() {
-    const key = atob(localStorage.getItem('_ak') || '');
-    if (!key || !this.device) return this.fail('Sign in on the main page and select an online device.');
-    const server = (localStorage.getItem('_as') || location.origin).replace(/\/$/, '');
-    const { wsUrl } = await terminalConfiguration(server, key);
-    if (key !== atob(localStorage.getItem('_ak') || '')
-      || server !== (localStorage.getItem('_as') || location.origin).replace(/\/$/, '')) return this.close();
-    if (!wsUrl?.startsWith('wss://')) return this.fail('Server returned an invalid WSS URL.');
-    const endpoint = new URL(wsUrl);
-    endpoint.search = new URLSearchParams({ apiKey: key, role: 'app' });
+  connect() {
     if (this.readyState !== WebSocket.CONNECTING) return;
-    this.socket = this.direct
-      ? new DirectAppSocket({ endpoint: wsUrl, key, terminalId: this.terminalId, device: this.device, projectHash: this.projectHash,
-        initialOpen: this.initialOpen, controlSocket: state.SERVER === server && state.KEY === key ? state.ws : null })
-      : new WebSocket(endpoint);
-    this.socket.addEventListener('open', () => {
-      this.readyState = WebSocket.OPEN;
-      this.readyTimeout = setTimeout(() => this.fail('Remote terminal timed out. Check that Bridge is online and updated.'), 15000);
-      this.dispatchEvent(new Event('open'));
-    });
-    this.socket.addEventListener('message', event => this.receive(event.data));
-    this.socket.addEventListener('error', event => this.fail(event.data || 'Check your network.'));
-    this.socket.addEventListener('close', event => {
-      this.cleanup();
-      this.readyState = WebSocket.CLOSED;
-      this.dispatchEvent(new CloseEvent('close', { code: event.code, reason: event.reason }));
-    });
+    if (!this.device || !this.projectHash) return this.fail('Sign in on the main page and select an online device.');
+    this.stream = openStream(this.device, 'terminal', this.terminalId, message => this.receive(message));
+    this.readyState = WebSocket.OPEN;
+    this.readyTimeout = setTimeout(() => this.fail('Remote terminal timed out. Check that Bridge is online and updated.'), 15000);
+    this.resendTimer = setInterval(() => this.resend(), 500);
+    this.dispatchEvent(new Event('open'));
   }
 
   send(payload) {
     if (this.readyState !== WebSocket.OPEN) return;
     const message = JSON.parse(payload);
     const clientSeq = message.type === 'open' ? 0 : ++this.clientSeq;
-    const frame = JSON.stringify({
-      ...message, action: this.projectHash ? 'terminal_shared' : 'terminal_poc', v: 1, device: this.device,
-      terminalId: this.terminalId, clientSeq,
-      ...(this.projectHash ? { projectHash: this.projectHash } : {}),
-      ...(this.profile ? { profile: true } : {}),
-    });
-    if (new TextEncoder().encode(frame).length > 28 * 1024 || this.bufferedAmount + frame.length > 256 * 1024) {
+    const out = { ...message, clientSeq, ...(clientSeq ? {} : { projectHash: this.projectHash }) };
+    const size = JSON.stringify(out).length;
+    if (this.bufferedAmount + size > MAX_UNACKED_BYTES) {
       return this.fail('Input queue full. Session stopped; input will not be replayed.');
     }
-    if (clientSeq) this.unacked.set(clientSeq, frame.length);
-    this.socket.send(frame);
+    this.unacked.set(clientSeq, { message: out, size, sentAt: Date.now() });
+    this.stream.send(out);
   }
 
-  receive(payload) {
+  // A frame lost on the way is sent again; the Bridge acknowledges a duplicate without applying it.
+  resend() {
+    const now = Date.now();
+    for (const entry of this.unacked.values()) {
+      if (now - entry.sentAt < RESEND_MS) continue;
+      entry.sentAt = now;
+      this.stream.send(entry.message);
+    }
+  }
+
+  receive(message) {
     try {
-      if (typeof payload !== 'string' || new TextEncoder().encode(payload).length > 28 * 1024) throw new Error('Remote message too large');
-      const message = JSON.parse(payload);
-      if (message.action !== (this.projectHash ? 'terminal_shared' : 'terminal_poc')) return;
-      if (this.projectHash && message.projectHash !== this.projectHash) return;
-      if (message.terminalId !== this.terminalId || message.device !== this.device) return;
-      if (message.v !== 1) throw new Error('Remote protocol version mismatch');
+      if (this.readyState !== WebSocket.OPEN) return;
+      this.unacked.delete(0); // any answer means the open arrived
+      // The Bridge sends input acknowledgements on its next message when it has one.
+      if (Number.isSafeInteger(message.ack) && message.type !== 'ack') this.deliver({ type: 'ack', clientSeq: message.ack });
       if (message.type === 'ack' && message.eventSeq === 0) {
         if (!Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('Invalid input acknowledgment');
         return this.deliver(message);
@@ -113,16 +80,16 @@ export class RemoteTerminalSocket extends EventTarget {
       if (!Number.isSafeInteger(message.eventSeq) || message.eventSeq < 1) throw new Error('Invalid output sequence');
       if (message.eventSeq < this.eventSeq || this.pending.has(message.eventSeq)) return;
       this.pending.set(message.eventSeq, message);
-      this.pendingBytes += JSON.stringify(message).length;
-      if (message.eventSeq - this.eventSeq > 256 || this.pendingBytes > 1024 * 1024) throw new Error('Output reorder queue full');
+      this.pendingBytes += message.data?.length || 0;
+      if (message.eventSeq - this.eventSeq > 256 || this.pendingBytes > 2 * 1024 * 1024) throw new Error('Output reorder queue full');
       while (this.pending.has(this.eventSeq)) {
         const next = this.pending.get(this.eventSeq);
         this.pending.delete(this.eventSeq++);
-        this.pendingBytes -= JSON.stringify(next).length;
+        this.pendingBytes -= next.data?.length || 0;
         this.deliver(next);
       }
       if (!this.pending.size) { clearTimeout(this.gapTimeout); this.gapTimeout = null; }
-      else if (!this.gapTimeout) this.gapTimeout = setTimeout(() => this.fail('Output missing. Session stopped; refresh to start a new one.'), 10000);
+      else if (!this.gapTimeout) this.gapTimeout = setTimeout(() => this.fail('Output missing. Reconnecting.'), GAP_MS);
     } catch (error) {
       this.fail(error.message);
     }
@@ -139,9 +106,9 @@ export class RemoteTerminalSocket extends EventTarget {
       clearInterval(this.heartbeat);
       this.lastAckAt = Date.now();
       this.heartbeat = setInterval(() => {
-        if (Date.now() - this.lastAckAt > 30000) return this.fail('Bridge is not responding. Session stopped.');
+        if (Date.now() - this.lastAckAt > SILENT_MS) return this.fail('Bridge is not responding. Session stopped.');
         this.send(JSON.stringify({ type: 'heartbeat' }));
-      }, 10000);
+      }, HEARTBEAT_MS);
     }
     if (message.type === 'output') message = { ...message, seq: ++this.outputSeq };
     if (message.type === 'closed') return this.close();
@@ -152,13 +119,13 @@ export class RemoteTerminalSocket extends EventTarget {
     clearTimeout(this.readyTimeout);
     clearTimeout(this.gapTimeout);
     clearInterval(this.heartbeat);
+    clearInterval(this.resendTimer);
     this.pending.clear();
     this.unacked.clear();
   }
 
   fail(message) {
     if (this.readyState >= WebSocket.CLOSING) return;
-    configuration = null;
     this.dispatchEvent(new MessageEvent('error', { data: message }));
     this.close();
   }
@@ -166,16 +133,10 @@ export class RemoteTerminalSocket extends EventTarget {
   close() {
     if (this.readyState >= WebSocket.CLOSING) return;
     this.readyState = WebSocket.CLOSING;
-    if (this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 256 * 1024) {
-      this.socket.send(JSON.stringify({
-        action: this.projectHash ? 'terminal_shared' : 'terminal_poc', v: 1,
-        type: this.projectHash ? 'detach' : 'close', terminalId: this.terminalId,
-        device: this.device, clientSeq: ++this.clientSeq,
-        ...(this.projectHash ? { projectHash: this.projectHash } : {}),
-      }));
-    }
+    this.stream?.send({ type: 'detach', clientSeq: ++this.clientSeq });
+    this.stream?.close();
     this.cleanup();
-    if (this.socket) this.socket.close(1000, 'POC page closed');
-    else this.readyState = WebSocket.CLOSED;
+    this.readyState = WebSocket.CLOSED;
+    this.dispatchEvent(new CloseEvent('close', { code: 1000, reason: 'Terminal closed' }));
   }
 }

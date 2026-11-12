@@ -232,7 +232,7 @@ export async function makeHarness(options = {}) {
 // or 'existing' (history already rendered / empty). Returns nothing; mutates state+DOM.
 export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText = '' } = {}) {
   const { state, document } = h;
-  state.WS_URL = 'wss://test'; state.KEY = 'k';
+  state.KEY = 'k';
   state.appState = { session: mode === 'new' ? '__new__' : sessionId, device: 'D', project: { hash: '-h' } };
   state.wsSessionId = sessionId;
   state.wsRootSessionId = sessionId;

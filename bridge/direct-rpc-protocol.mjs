@@ -1,7 +1,7 @@
 // v2 App ⇄ Bridge frames, shared by Bridge (Node) and the web App: requests, their replies and
-// receipts, and pushed Session events. Payloads above COMPRESS_MIN are deflated (raw) and
-// base64-encoded; replies and pushes are split into chunks that fit a signed direct frame and may
-// arrive in any order.
+// receipts, pushed Session events, and terminal / preview streams. Payloads above COMPRESS_MIN are
+// deflated (raw) and base64-encoded; replies and pushes are split into chunks that fit a signed
+// direct frame and may arrive in any order.
 
 export const RPC_VERSION = 2;
 const COMPRESS_MIN = 1024;
@@ -10,15 +10,17 @@ const JSON_CHUNK_CHARS = 6000;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const MAX_SIGNED_FRAME = 28 * 1024;
+const CONNECTION = /^[A-Za-z0-9_+=.-]{1,256}$/;
 
-function toBase64(bytes) {
+export function toBase64(bytes) {
   if (globalThis.Buffer) return globalThis.Buffer.from(bytes).toString('base64');
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
 }
 
-function fromBase64(text) {
+export function fromBase64(text) {
   if (globalThis.Buffer) return new Uint8Array(globalThis.Buffer.from(text, 'base64'));
   return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 }
@@ -135,3 +137,87 @@ export async function decodeRpcPayload({ enc, data }, inflate) {
   const json = enc === 'deflate-b64' ? decoder.decode(await inflate(fromBase64(data))) : data;
   return JSON.parse(json);
 }
+
+// Terminal and preview streams: { v, kind: 'stream', ch, id, from, m }. `from` is the App's
+// connection (the Bridge's reply target; the Bridge sends none), `m` the channel's own message. A message's `data` (base64 bytes)
+// travels deflated (`z: 1`) when that makes it smaller. `deflate`/`inflate` may return Promises.
+const STREAM_CHANNELS = new Set(['terminal', 'preview']);
+// Data shorter than this does not shrink under deflate; the packed copy is used only when it saves 10%.
+export const PACK_MIN = 128;
+export const packPays = (plainLength, packedLength) => plainLength >= PACK_MIN && packedLength < plainLength * 0.9;
+
+export function streamFrame(ch, id, from, m) {
+  return { v: RPC_VERSION, kind: 'stream', ch, id, ...(from ? { from } : {}), m };
+}
+
+export function isStreamFrame(frame) {
+  return frame?.v === RPC_VERSION && frame.kind === 'stream' && STREAM_CHANNELS.has(frame.ch)
+    && typeof frame.id === 'string' && frame.id.length <= 64 && CONNECTION.test(frame.from || '')
+    && !!frame.m && typeof frame.m === 'object';
+}
+
+export async function packStreamMessage(message, deflate) {
+  if (!deflate || message.z || typeof message.data !== 'string' || message.data.length < PACK_MIN) return message;
+  const packed = toBase64(await deflate(fromBase64(message.data)));
+  return packPays(message.data.length, packed.length) ? { ...message, data: packed, z: 1 } : message;
+}
+
+export async function unpackStreamMessage(message, inflate) {
+  if (!message.z) return message;
+  const { z, ...rest } = message;
+  return { ...rest, data: toBase64(await inflate(fromBase64(message.data))) };
+}
+
+function hex(bytes) {
+  return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function digest(value) {
+  return hex(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
+}
+
+async function hmac(key, value) {
+  const imported = await crypto.subtle.importKey('raw', typeof key === 'string' ? encoder.encode(key) : key,
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return crypto.subtle.sign('HMAC', imported, encoder.encode(value));
+}
+
+function encodePath(path) {
+  return path.split('/').map((part) => encodeURIComponent(part).replace(/[!'()*]/g,
+    (value) => `%${value.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
+}
+
+// A frame the data API's HTTP integration posts to `target`'s connection: the body plus the SigV4
+// headers for `POST @connections/<target>`, signed with the account's temporary credentials.
+export function createHeaderSigner({ endpoint, region, target, credentials, action }) {
+  const base = new URL(endpoint);
+  if (base.protocol !== 'https:' || base.search || base.hash || base.username || base.password
+    || !CONNECTION.test(target) || !/^[a-z0-9-]+$/.test(region)
+    || !credentials?.accessKeyId || !credentials.secretAccessKey || !credentials.sessionToken
+    || !Number.isSafeInteger(credentials.expiresAt)) throw new Error('Invalid signing authorization');
+  let cachedDate;
+  let cachedKey;
+  // `label` adds clear fields (the operation name) next to `action`; the gateway ignores them.
+  return async (body, now = new Date(), label = {}) => {
+    if (now.getTime() >= credentials.expiresAt * 1000 - 2000) throw new Error('Signing authorization expired');
+    const stamp = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const date = stamp.slice(0, 8);
+    if (cachedDate !== date) {
+      cachedDate = date;
+      cachedKey = hmac(`AWS4${credentials.secretAccessKey}`, date)
+        .then((key) => hmac(key, region)).then((key) => hmac(key, 'execute-api')).then((key) => hmac(key, 'aws4_request'));
+    }
+    const signedHeaders = 'host;x-amz-date;x-amz-security-token';
+    const headers = `host:${base.host}\nx-amz-date:${stamp}\nx-amz-security-token:${credentials.sessionToken}\n`;
+    const path = `${base.pathname.replace(/\/$/, '')}/@connections/${target}`;
+    const canonical = ['POST', encodePath(path), '', headers, signedHeaders, await digest(body)].join('\n');
+    const scope = `${date}/${region}/execute-api/aws4_request`;
+    const signature = hex(await hmac(await cachedKey, `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await digest(canonical)}`));
+    const frame = JSON.stringify({ action, ...label, target, body, date: stamp,
+      token: credentials.sessionToken,
+      authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` });
+    if (encoder.encode(frame).length > MAX_SIGNED_FRAME) throw new Error('Signed frame exceeds 28 KiB');
+    return frame;
+  };
+}
+
