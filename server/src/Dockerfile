@@ -18,6 +18,7 @@ COPY bridge_sync.py .
 COPY bridge_read.py .
 COPY bridge_ws.py .
 COPY notifications.py .
+COPY voice.py .
 COPY message_history.py .
 COPY terminal_ws.py terminal_direct_ws.py realtime_direct_ws.py preview_tunnel_ws.py ./
 COPY project/ project/

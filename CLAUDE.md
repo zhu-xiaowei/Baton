@@ -150,6 +150,12 @@ Done:
   CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:
   `docs/mobile-notifications.md`.
 
+### Voice Mode: COMPLETE
+- Opt-in per Session (toolbar headphones; Sessions start in text mode). Android/browsers stream
+  mic PCM straight to Amazon Transcribe over a presigned WebSocket (`/api/voice/stt-url`); finished
+  replies are read aloud via `/api/voice/speak` (optional Bedrock brief → Polly → S3 `voice/`,
+  expired after a day). iOS keeps native dictation. Bridge unchanged. Details: `docs/voice.md`.
+
 ### Phase 3: LATER — Production polish
 - Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 

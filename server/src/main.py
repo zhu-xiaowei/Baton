@@ -29,9 +29,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 from bridge_sync import bridge_router
 from bridge_read import read_router, get_install, install_script
 from notifications import router as notifications_router
+from voice import router as voice_router
 app.include_router(bridge_router)
 app.include_router(read_router)
 app.include_router(notifications_router)
+app.include_router(voice_router)
 
 # Short alias for install endpoint
 app.get("/api/install")(get_install)

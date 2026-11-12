@@ -1410,6 +1410,7 @@ function drainStrictStreamOperations() {
   if (completedTurn && !state.wsRunning && typeof window.markSpinnerTurnEnd === 'function') {
     window.markSpinnerTurnEnd();
   }
+  if (completedTurn && !state.wsRunning) window.onVoiceTurnEnd?.();
   updateSendBtn();
 }
 
@@ -2023,7 +2024,10 @@ function commitMessages(messages, options = {}) {
   drainStrictStreamOperations();
   var wasRunning = state.wsRunning;
   state.wsRunning = activity === 'running';
-  if (wasRunning && activity === 'completed') window.markSpinnerTurnEnd?.();
+  if (wasRunning && activity === 'completed') {
+    window.markSpinnerTurnEnd?.();
+    window.onVoiceTurnEnd?.();
+  }
   updateSendBtn();
   if (typeof updateSpinner === 'function') updateSpinner();
   dom.finalize();
@@ -2428,6 +2432,7 @@ function updateSendBtn(options) {
   input.readOnly = waitingReceipt || !state.activeThreadCanSend;
   if (!options.skipSpinner && typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
+  window.refreshVoiceUi?.();
 }
 function onSendBtnClick() {
   if (pendingReceipt()) return;
