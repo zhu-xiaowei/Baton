@@ -8,8 +8,10 @@ import {
   discoverClaudeSessions,
   removeClaudeSessionHistoryFiles,
 } from '../../bridge/claude-runtime.mjs';
+import { claudeSubagentEnded } from '../../bridge/claude-subagent.mjs';
 import { ClaudePool } from '../../bridge/headless.mjs';
 import {
+  claudeSessionStartedAt,
   getSessionStatus,
   readLiveSessionStatuses,
   resolveAgentMetadata,
@@ -990,4 +992,17 @@ test('forked skill output written as a system local_command row completes the tu
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a subagent last written before every live process of its session started has ended', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-cc-orphan-'));
+  const sid = '50505050-5050-4505-8505-505050505050', file = path.join(dir, sid, 'subagents', 'agent-x.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n');
+  [[sid, 3000], [sid, 2000], ['other', 1000]].forEach(([sessionId, startedAt], pid) => fs.writeFileSync(path.join(dir, `${pid}.json`), JSON.stringify({ sessionId, startedAt })));
+  assert.equal(claudeSessionStartedAt(sid, { dir, isClaude: () => true }), 2000);
+  assert.equal(claudeSessionStartedAt(sid, { dir, isClaude: () => false }), null);
+  const { mtimeMs } = fs.statSync(file);
+  assert.deepEqual([mtimeMs + 1, mtimeMs - 1, null].map((t) => claudeSubagentEnded(file, {}, () => t)), [true, false, false]);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
