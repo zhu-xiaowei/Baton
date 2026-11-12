@@ -1437,6 +1437,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
     return true;
   } catch (error) {
     callbacks?.rejectInput(liveTurnId, error.message);
+    endTakeover(identity.sessionId);
     const errorCode = {
       CODEX_ACTIVE_WRITER: 'codex_active_writer',
       CODEX_WRITER_CHANGED: 'codex_writer_changed',
