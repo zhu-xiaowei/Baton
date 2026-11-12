@@ -432,6 +432,8 @@ function checkSilentTurn() {
     drainStrictStreamOperations();
     applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
     updateSendBtn();
+    // The streamed blocks stopped where the frames were lost; the history holds the whole reply.
+    return refreshSessionMessages();
   });
 }
 

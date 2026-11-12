@@ -2,6 +2,7 @@
 // Produces the shapes the home page renders (former /active-sessions and /devices).
 import { state } from '../state.js';
 import { showToast } from '../components/toast.js';
+import { confirmDialog } from '../components/confirm-dialog.js';
 import { cachedOnlineDevices, connect, devices, request } from './direct-transport.js';
 
 const CACHE_KEY = 'apeek_v2_home_devices';
@@ -23,6 +24,8 @@ function readCache() {
 function saveCache(devices, list) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify({ server: state.SERVER, devices, list })); } catch {}
 }
+
+let outdated = null; // the server-update dialog, shown once
 
 // "Show more" only reveals projects the last answer already holds (15), so it sends nothing.
 export function expandedHome() {
@@ -112,7 +115,9 @@ async function load(publish) {
     throw error;
   }
   if (response.protocol !== 2) {
-    showToast('Server update required');
+    outdated ||= confirmDialog('Server update required', [['settings', 'Settings'], ['retry', 'Retry', true]], null,
+      'Run the install command again to update your Baton stack.')
+      .then((choice) => { if (choice === 'retry') location.reload(); else location.href = 'setup.html'; });
     throw new Error('server_outdated');
   }
   const reachable = new Set((response.rpc?.bridges || []).map((bridge) => bridge.device));
