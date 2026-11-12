@@ -68,6 +68,9 @@ class HeadlessProc {
     ];
     if (this.noPersistence) args.push('--no-session-persistence');
     if (this.bare) args.push('--bare');
+    // Session grants live only in CC's memory; every resume gets them again.
+    const allowed = this.sessionId ? this.pool.allowedTools(this.sessionId) : [];
+    if (allowed.length) args.push('--allowedTools', ...allowed);
     // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
     if (this.createId) args.push('--session-id', this.createId);
     else if (this.sessionId) args.push('--resume', this.sessionId);
@@ -355,6 +358,7 @@ export class ClaudePool {
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
     this._live = new Set();  // spawned and not yet exited, including reaped ones still closing
+    this.allowedTools = opts.allowedTools || (() => []);  // sessionId → rules granted for the session
     this._onExit = opts.onExit || null;  // (sessionId, hadPrompts) => void, a busy or prompting proc exited
     this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
     this.findSessionFile = opts.findSessionFile || findSessionFile;

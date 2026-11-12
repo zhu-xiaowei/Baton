@@ -1,6 +1,9 @@
 // Warm-up worker for session-index.mjs: one summary per file, posted in batches.
 import { parentPort, workerData } from 'worker_threads';
 import { summarize } from './session-summary.mjs';
+import { loadRuntimeModules } from './session-identity.mjs';
+
+await loadRuntimeModules(workerData.runtimeModules);
 
 const BATCH = 200;
 let batch = [];

@@ -24,6 +24,7 @@ import {
   cleanupUpdateWorkspace,
   createUpdateWorkspace,
   installStagedBridge,
+  unmetNodeFloor,
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
@@ -36,6 +37,7 @@ process.on('exit', () => releaseInstanceLock());
 let shuttingDown = false;
 let updateInProgress = false;
 let nextUpdateCheckAt = 0;
+let skippedVersion = '';
 async function shutdownBridge(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -89,7 +91,7 @@ async function checkUpdate() {
     if (!res.ok) return;
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
-    if (!version || version === 'dev' || version === BRIDGE_VERSION) return;
+    if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
@@ -112,6 +114,12 @@ async function checkUpdate() {
         if (!packageRes.ok) throw new Error(`package HTTP ${packageRes.status}`);
         fs.writeFileSync(tgz, Buffer.from(await packageRes.arrayBuffer()));
         extractTar(tgz, stage);
+        const floor = unmetNodeFloor(stage);
+        if (floor) {
+          skippedVersion = version;
+          console.log(`[update] ${version} needs Node.js >= ${floor} (running ${process.versions.node}), update skipped`);
+          return;
+        }
         execFileSync(process.execPath, ['--check', path.join(stage, 'bridge.mjs')], { stdio: 'ignore' });
         installProductionDependencies(stage);
 

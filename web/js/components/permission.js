@@ -120,13 +120,18 @@ function showPermissionPrompt(msg) {
     return true;
   }
   var summary = buildToolSummary(msg.toolName, msg.input || {});
+  var toolOptions = [{ label: 'Yes', act: 'allow' }, { label: 'No', act: 'deny' }];
+  if (msg.sessionScope) {
+    toolOptions.splice(1, 0, {
+      label: 'Yes, for this session', description: msg.sessionScope.label, act: 'allow-session',
+    });
+  }
   renderPrompt({
     title: summary.title,
     description: summary.description,
-    options: [
-      { label: 'Yes', act: 'allow', key: '1' },
-      { label: 'No', act: 'deny', key: '2' },
-    ],
+    options: toolOptions.map(function (option, index) {
+      return Object.assign(option, { key: String(index + 1) });
+    }),
   });
   return true;
 }
@@ -149,7 +154,8 @@ function renderPrompt(prompt) {
 
   var html = '<div class="permission-prompt" id="permission-prompt">';
   html += '<div class="permission-header"><div class="permission-title">'
-    + esc(prompt.title || 'Confirm?') + '</div>'
+    + esc(prompt.title || 'Confirm?')
+    + (prompt.submit ? ' <span class="permission-pill">multi-select</span>' : '') + '</div>'
     + '<button class="permission-close" onclick="cancelPermissionPrompt()" '
     + 'title="Cancel (Esc)">&times;</button></div>';
   if (prompt.description) {
@@ -158,12 +164,16 @@ function renderPrompt(prompt) {
   html += '<div class="permission-options">';
   for (var i = 0; i < prompt.options.length; i++) {
     var option = prompt.options[i];
-    var buttonClass = option.tone === 'deny' || /deny|reject|no/i.test(option.act || '')
-      ? 'permission-btn deny'
-      : 'permission-btn allow';
+    var isCheck = option.check !== undefined;
+    var buttonClass = isCheck ? 'permission-btn'
+      : (option.tone === 'deny' || /deny|reject|no/i.test(option.act || '')
+        ? 'permission-btn deny'
+        : 'permission-btn allow');
     html += '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
+      + (isCheck ? 'role="checkbox" aria-checked="' + option.check + '" ' : '')
       + 'data-has-input="' + (option.hasInput ? '1' : '0') + '" '
       + 'onclick="handlePermissionOption(this)">'
+      + (isCheck ? '<span class="permission-box"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>' : '')
       + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span>' : '')
       + '<span class="permission-copy">'
       + '<span class="permission-label">' + esc(option.label) + '</span>'
@@ -182,9 +192,18 @@ function renderPrompt(prompt) {
         + '\')">Send</button></div>';
     }
   }
-  html += '</div></div>';
+  html += '</div>';
+  if (prompt.submit) {
+    html += '<div class="permission-actions">'
+      + '<button class="permission-btn deny" onclick="cancelPermissionPrompt()">Cancel</button>'
+      + '<button class="permission-btn allow permission-multi-submit" data-act="' + esc(prompt.submit.act)
+      + '" data-min="' + (prompt.submit.min || 0) + '" data-max="' + (prompt.submit.max ?? Infinity)
+      + '" onclick="handlePermissionOption(this)"><span class="permission-label"></span></button></div>';
+  }
+  html += '</div>';
 
   container.insertAdjacentHTML('beforeend', html);
+  if (prompt.submit) updateMultiSubmit();
   if (typeof updateSpinner === 'function') updateSpinner();
   pinPermissionPromptToBottom();
 }
@@ -195,11 +214,13 @@ function renderAskStep() {
     ? '[' + (_askIndex + 1) + '/' + _askQuestions.length + '] '
     : '';
   var header = question.header ? '[' + question.header + '] ' : '';
+  var multi = question.multiSelect === true;
   var options = (question.options || []).map(function (option, index) {
     return {
       label: option.label,
       description: option.description || '',
       act: 'opt:' + index,
+      check: multi ? false : undefined,
     };
   });
   options.push({
@@ -211,11 +232,29 @@ function renderAskStep() {
   renderPrompt({
     title: prefix + header + (question.question || question.text || ''),
     options: options,
+    submit: multi ? { act: 'ask-submit', min: 1 } : null,
   });
+}
+
+function checkedIndexes() {
+  return Array.from(document.querySelectorAll('#permission-prompt [aria-checked="true"]'))
+    .map(function (row) { return parseInt(row.getAttribute('data-act').split(':').pop(), 10); });
+}
+
+function updateMultiSubmit() {
+  var submit = document.querySelector('#permission-prompt .permission-multi-submit');
+  var count = checkedIndexes().length;
+  submit.disabled = count < +submit.dataset.min || count > +submit.dataset.max;
+  submit.firstChild.textContent = count ? 'Submit (' + count + ' selected)' : 'Submit';
 }
 
 function handlePermissionOption(button) {
   var act = button.getAttribute('data-act');
+  if (button.getAttribute('role') === 'checkbox') {
+    button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
+    updateMultiSubmit();
+    return;
+  }
   if (button.getAttribute('data-has-input') === '1') {
     var wrapper = button.nextElementSibling;
     if (wrapper && wrapper.classList.contains('permission-input-wrap')) {
@@ -227,7 +266,7 @@ function handlePermissionOption(button) {
     }
   }
   var label = button.querySelector('.permission-label');
-  chooseOption(act, label ? label.textContent : act);
+  chooseOption(act, label ? label.textContent : act, false, checkedIndexes());
 }
 
 function submitPermissionWithInput(input, act) {
@@ -235,13 +274,14 @@ function submitPermissionWithInput(input, act) {
   if (text) chooseOption(act, text, true);
 }
 
-function chooseOption(act, label, isTyped) {
-  if (!_req || codexPermission.choose(act, label, isTyped)) return;
+function chooseOption(act, label, isTyped, picked) {
+  if (!_req || codexPermission.choose(act, label, isTyped, picked)) return;
 
   if (_req.kind === 'tool') {
     reply({
       requestId: _req.requestId,
-      decision: act === 'allow' ? 'allow' : 'deny',
+      decision: act === 'allow' || act === 'allow-session' ? 'allow' : 'deny',
+      ...(act === 'allow-session' ? { scope: 'session' } : {}),
     });
     dismissPermissionPrompt();
     return;
@@ -257,15 +297,15 @@ function chooseOption(act, label, isTyped) {
   }
 
   var question = _askQuestions[_askIndex] || {};
-  var answer = label;
-  if (act !== 'type' && !isTyped) {
-    var index = parseInt(act.slice(4), 10);
-    var option = (question.options || [])[index];
-    answer = option ? option.label : label;
-  }
+  var labels = isTyped ? [label]
+    : (act === 'ask-submit' ? picked : [parseInt(act.slice(4), 10)]).map(function (index) {
+      var option = (question.options || [])[index];
+      return option ? option.label : label;
+    });
   _askAnswers.push({
+    id: question.id || question.question,
     question: question.question || question.text || '',
-    answer: answer,
+    labels: labels,
   });
 
   if (_askIndex < _askQuestions.length - 1) {
@@ -274,12 +314,13 @@ function chooseOption(act, label, isTyped) {
     return;
   }
   var text = _askAnswers.map(function (entry) {
-    return (entry.question ? entry.question + ' ' : '') + '→ ' + entry.answer;
+    return (entry.question ? entry.question + ' ' : '') + '→ ' + entry.labels.join(', ');
   }).join('\n');
   reply({
     requestId: _req.requestId,
     decision: 'answer',
     answerText: text,
+    answers: Object.fromEntries(_askAnswers.map(function (entry) { return [entry.id, entry.labels]; })),
   });
   dismissPermissionPrompt();
 }

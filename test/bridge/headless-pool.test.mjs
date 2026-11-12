@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudePool } from '../../bridge/headless.mjs';
-import { claudeWriterConflict, shouldCacheClientTurnAck } from '../../bridge/ws.mjs';
+import { writerConflict, shouldCacheClientTurnAck } from '../../bridge/ws.mjs';
 
 test('a process exiting after its session was respawned keeps the new process in the pool', async () => {
   const pool = new ClaudePool({ bin: '/nonexistent/claude', initTimeout: 1000 });
@@ -122,8 +122,8 @@ test('an idle process notices only rows another client appended', () => {
 });
 test('a held Claude session asks first, and takeover stops only the confirmed pid', async () => {
   let live = true; const deps = { findWriter: () => live && { pid: 42, canTerminate: true }, kill: (_, sig) => { if (sig) live = false; else if (!live) throw new Error('ESRCH'); } };
-  assert.equal((await claudeWriterConflict('sid', false, null, deps)).errorCode, 'claude_active_writer');
-  assert.equal((await claudeWriterConflict('sid', true, 41, deps)).errorCode, 'claude_writer_changed');
+  assert.equal((await writerConflict('sid', false, null, deps)).errorCode, 'claude_active_writer');
+  assert.equal((await writerConflict('sid', true, 41, deps)).errorCode, 'claude_writer_changed');
   assert.equal(shouldCacheClientTurnAck({ action: 'send_message_result', turnId: 't', errorCode: 'claude_writer_changed' }), false);
-  assert.equal(await claudeWriterConflict('sid', true, 42, deps), null);
+  assert.equal(await writerConflict('sid', true, 42, deps), null);
 });

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extractCodexMessages } from './codex-extract.mjs';
+import { runtimeDescriptor, runtimeModules } from './session-identity.mjs';
 import { compactToolFields, stripToolResultBase64, toolPreview, toolResultStats } from './tool-preview.mjs';
 
 // History pages leave thinking text out; it is fetched like a tool, under this id.
@@ -10,7 +11,7 @@ function thinkingDetailId(messageUuid, blockIndex) {
 
 export function readToolIndex(filePath, nativeSessionId, runtime) {
   const tools = new Map();
-  const messages = runtime === 'codex'
+  const messages = runtimeDescriptor(runtime) ? runtimeDescriptor(runtime).messages(filePath, nativeSessionId) : runtime === 'codex'
     ? extractCodexMessages(filePath, nativeSessionId).messages
     : fs.readFileSync(filePath, 'utf8').split('\n').flatMap((line) => {
       if (!line.trim()) return [];
@@ -65,6 +66,8 @@ export function readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, 
 export function createToolDetailsReader(readIndex = readToolIndex) {
   let cached;
   return (filePath, nativeSessionId, runtime, toolUseIds, preview) => {
+    // Rows sources (SQLite) have no file to version the cached index by.
+    if (filePath.startsWith('rows:')) return readToolDetails(filePath, nativeSessionId, runtime, toolUseIds, null, preview);
     const stat = fs.statSync(filePath);
     const key = JSON.stringify([filePath, nativeSessionId, runtime, stat.size, stat.mtimeMs, stat.ctimeMs]);
     if (cached?.key !== key) cached = { key, index: readIndex(filePath, nativeSessionId, runtime) };
@@ -78,7 +81,7 @@ const pending = new Map();
 
 export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUseIds, preview) {
   if (!readerWorker) {
-    const worker = readerWorker = new Worker(new URL('./tool-details-worker.mjs', import.meta.url));
+    const worker = readerWorker = new Worker(new URL('./tool-details-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } });
     const fail = error => {
       if (readerWorker !== worker) return;
       readerWorker = null;

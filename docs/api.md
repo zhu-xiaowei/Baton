@@ -340,6 +340,12 @@ Reply to a permission confirmation or user choice.
 For Claude ordinary tools, `decision` is `allow`/`deny`. AskUserQuestion and plan prompts use
 `answer`/`deny`, with the selected or typed value in `answerText`.
 
+Every ask reply also carries `answers`: `{ [question.id || question.question]: [label, ...] }`. A
+`multiSelect` question sends every checked label (`answerText` joins them with `, `); typed text is
+`[text]`. A tool prompt that offered `sessionScope` may answer `{ "decision": "allow", "scope": "session" }`:
+the Bridge allows the call for this Session only and remembers the rule (Claude: `--allowedTools` on
+every later spawn, kept in `~/.baton-bridge/session-grants.json`, dropped when the Session is deleted).
+
 Codex requests include a discriminating `permission_request.approvalType` and use the App Server
 response shape for that request:
 
@@ -588,6 +594,9 @@ Bridge detects a permission confirmation need, pushes to all apps subscribed to 
   "input": {}
 }
 ```
+
+A `kind: "tool"` request may carry `sessionScope: { "label": "Bash(npm test:*)" }`, the rule a
+"Yes, for this session" reply would remember; without it the prompt offers only Yes / No.
 
 Pushed by the Bridge to the Session's subscribers on the direct channel.
 

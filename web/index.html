@@ -188,7 +188,10 @@
         try { return decodeURIComponent(label); } catch (error) { return reference; }
       });
   }
-  var runtimeIconCacheKey = 'baton-runtime-icons-v1';
+  var runtimeIconCacheKey = 'baton-runtime-icons-v2';
+  // Mirrors js/runtimes.js (id: [label, icon file, mono]); this script runs before modules load.
+  var runtimeIconTable = { claude: ['Claude Code', 'claude-code.svg'], codex: ['Codex', 'codex.svg', 1], opencode: ['OpenCode', 'runtime-opencode.svg', 1],
+    dsh: ['DeepSeek Harness', 'runtime-dsh.svg', 1], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg', 1], kiro: ['Kiro', 'runtime-kiro.svg', 1] };
   var runtimeIconCache = {};
   var runtimeIconPending = {};
   function validRuntimeSvg(svg) {
@@ -196,23 +199,27 @@
   }
   try {
     var savedIcons = JSON.parse(sessionStorage.getItem(runtimeIconCacheKey) || '{}');
-    ['claude', 'codex'].forEach(function (runtime) {
+    Object.keys(runtimeIconTable).forEach(function (runtime) {
       if (savedIcons && validRuntimeSvg(savedIcons[runtime])) runtimeIconCache[runtime] = savedIcons[runtime];
     });
   } catch (e) {}
   function runtimeIconSource(runtime) {
     var svg = runtimeIconCache[runtime];
     return svg ? 'data:image/svg+xml,' + encodeURIComponent(svg)
-      : './assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg');
+      : './assets/' + (runtimeIconTable[runtime] || runtimeIconTable.claude)[1];
   }
   window.__runtimeIconSource = runtimeIconSource;
-  if (runtimeIconCache.codex) {
-    document.documentElement.style.setProperty('--runtime-codex-image', 'url("' + runtimeIconSource('codex') + '")');
+  Object.keys(runtimeIconCache).forEach(function (runtime) {
+    if (runtimeIconTable[runtime][2]) document.documentElement.style.setProperty('--runtime-' + runtime + '-image', 'url("' + runtimeIconSource(runtime) + '")');
+  });
+  function markRuntime(image) {
+    var mark = image.closest('.runtime-mark');
+    return mark && runtimeIconTable[mark.dataset.runtime] ? mark.dataset.runtime : mark && mark.classList.contains('runtime-mark-codex') ? 'codex' : 'claude';
   }
   document.addEventListener('load', function (event) {
     var image = event.target;
     if (image.tagName !== 'IMG' || !image.classList.contains('runtime-icon')) return;
-    var runtime = image.closest('.runtime-mark-codex') ? 'codex' : 'claude';
+    var runtime = markRuntime(image);
     if (runtimeIconCache[runtime] || runtimeIconPending[runtime]) return;
     runtimeIconPending[runtime] = true;
     fetch(image.currentSrc || image.src, { cache: 'force-cache' }).then(function (response) {
@@ -226,9 +233,10 @@
     });
   }, true);
   function runtimeIcon(s) {
-    var runtime = String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
-    var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
-    return '<span class="runtime-mark' + (runtime === 'codex' ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
+    var prefix = String(s.sessionId || '').split(':')[0];
+    var runtime = runtimeIconTable[prefix] ? prefix : 'claude';
+    var label = runtimeIconTable[runtime][0];
+    return '<span class="runtime-mark' + (runtimeIconTable[runtime][2] ? ' runtime-mark-' + runtime : '') + '" data-runtime="' + runtime + '" role="img" aria-label="' + label + '" title="' + label + '">'
       + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(runtimeIconSource(runtime)) + '" alt="" aria-hidden="true"></span>';
   }
 
@@ -373,7 +381,7 @@
     var preview = document.createElement('template');
     preview.innerHTML = snapshot.contentHtml;
     preview.content.querySelectorAll('img.runtime-icon').forEach(function (image) {
-      image.src = runtimeIconSource(image.closest('.runtime-mark-codex') ? 'codex' : 'claude');
+      image.src = runtimeIconSource(markRuntime(image));
     });
     content.replaceChildren(preview.content);
     fitRecentTimeColumn();
@@ -777,6 +785,13 @@
       <button class="modal-btn cancel" id="codexTakeoverCancel" onclick="closeCodexTakeoverModal()">Cancel send</button>
       <button class="modal-btn confirm danger" id="codexTakeoverConfirm" onclick="confirmCodexTakeover()">Take over and send</button>
     </div>
+  </div>
+</div>
+
+<div id="runtimePickerModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRuntimePicker()">
+  <div class="modal-box runtime-picker-box" role="dialog" aria-modal="true" aria-labelledby="runtimePickerTitle">
+    <div class="modal-title" id="runtimePickerTitle">New session with</div>
+    <div id="runtimePickerList" class="runtime-picker-list"></div>
   </div>
 </div>
 

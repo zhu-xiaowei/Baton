@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { SessionIndex } from '../../bridge/session-index.mjs';
 import { ObservedMap } from '../../bridge/observed-map.mjs';
-import { projectHashFromCwd } from '../../bridge/session-identity.mjs';
+import { projectHashFromCwd, registerRuntimeDescriptor } from '../../bridge/session-identity.mjs';
 
 const BASE = Date.parse('2026-11-01T00:00:00Z');
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -197,4 +197,20 @@ test('worker warm-up gives the same answers as warming on this thread', async (t
   const strip = (answer) => ({ ...answer, revision: undefined });
   assert.deepEqual(strip(await workers.index.home()), strip(await here.index.home()));
   assert.deepEqual(await workers.index.projects(), await here.index.projects());
+});
+
+// Last: the registration stays for the rest of this file.
+test('a registered rows source is listed and a change seen during its refresh is read once more', async (t) => {
+  const { index } = fixture(t);
+  let rows = [{ id: 'r1', ms: BASE }], calls = 0;
+  registerRuntimeDescriptor({ runtime: 'rows1', catalog: { kind: 'rows', watchPaths: () => ['/db-wal'],
+    refresh: async () => { calls++; return { upserts: rows }; }, status: () => 'running',
+    view: (rec) => ({ project: '-p', preview: rec.id, agentCount: 0 }) } });
+  await index.warm();
+  rows = [{ id: 'r2', ms: BASE + 1 }];
+  const refreshed = index.touch('/db-wal');
+  index.touch('/db-wal');
+  await refreshed;
+  assert.equal(calls, 3);
+  assert.deepEqual((await index.home()).sessions.map((s) => s.sessionId), ['rows1:r2', 'rows1:r1']);
 });

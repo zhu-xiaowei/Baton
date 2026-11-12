@@ -38,7 +38,7 @@ Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código Q
 
 ### 2. Instalar el Bridge
 
-Requiere [Node.js](https://nodejs.org/) 20.9 o posterior.
+Requiere [Node.js](https://nodejs.org/) 22.15 o posterior.
 
 1. Abre la **Start URL** en tu navegador (también sirve como visor web).
 2. Copia el comando de una línea **Install bridge** de la página Setup.

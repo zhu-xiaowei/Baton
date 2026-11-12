@@ -15,7 +15,7 @@ import {
 } from './session.mjs';
 import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
 import { discoverClaudeSubagents } from './claude-subagent.mjs';
-import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
+import { projectHashFromCwd, runtimeDescriptor, runtimeDescriptors, runtimeModules, storageSessionId } from './session-identity.mjs';
 import { repositoryIdentity } from './repository-identity.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { advance, claudePreview, codexView, newState, summarize, titlesBefore } from './session-summary.mjs';
@@ -41,6 +41,10 @@ const intern = (value) => {
   strings.set(value, value);
   return value;
 };
+
+// Catalogs of registered runtimes: 'file' sources summarize files like Claude/Codex; 'rows' sources
+// (SQLite) list rows, refreshed when a watched path changes.
+const sources = (kind) => runtimeDescriptors().filter((d) => d.catalog?.kind === kind);
 
 const newestFirst = (a, b) => (b.ms - a.ms) || (a.sessionId < b.sessionId ? 1 : a.sessionId > b.sessionId ? -1 : 0);
 
@@ -73,6 +77,7 @@ export class SessionIndex {
     this.snapshotCache = null;
     this.running = null;
     this.refreshingRunning = false;
+    this.rowSync = new Map(); // rows descriptor → { cursor, busy, pending }
     this.readyPromise = new Promise((resolve) => { this.resolveReady = resolve; });
   }
 
@@ -95,6 +100,7 @@ export class SessionIndex {
       }
     }
     for (const home of this.homes()) walkJsonl(path.join(home, 'sessions'), found);
+    for (const d of sources('file')) found.push(...d.catalog.files());
     return found;
   }
 
@@ -103,6 +109,10 @@ export class SessionIndex {
     let stat;
     try { stat = fs.statSync(file); } catch { return null; }
     if (!stat.isFile() || !stat.size) return null;
+    for (const d of sources('file')) {
+      const match = d.catalog.match(file);
+      if (match) return { runtime: d.runtime, ...match, file, size: stat.size, ms: stat.mtime.getTime(), ino: stat.ino, state: null, local: false, view: undefined };
+    }
     const home = this.homes().find((h) => file.startsWith(path.join(h, 'sessions') + path.sep));
     if (home) {
       const id = codexSessionIdFromPath(file);
@@ -171,6 +181,7 @@ export class SessionIndex {
     }
     // A worker that failed left its files unread.
     for (const rec of files) if (!rec.state && !rec.local && this.records.get(rec.file) === rec) this.readLocally(rec);
+    for (const d of sources('rows')) await this.refreshRows(d);
     this.markDirty();
     this.snapshot();
     this.resolveReady();
@@ -184,7 +195,7 @@ export class SessionIndex {
     const shards = Array.from({ length: count }, () => []);
     jobs.forEach((job, i) => shards[i % count].push(job));
     return Promise.all(shards.map((files) => new Promise((resolve) => {
-      const worker = new Worker(new URL('./session-index-worker.mjs', import.meta.url), { workerData: { files } });
+      const worker = new Worker(new URL('./session-index-worker.mjs', import.meta.url), { workerData: { files, runtimeModules: runtimeModules() } });
       worker.on('message', (results) => { for (const [file, state] of results) this.accept(file, state); });
       worker.once('error', (error) => console.error(`[session-index] worker failed: ${error.message}`));
       worker.once('exit', resolve);
@@ -217,10 +228,13 @@ export class SessionIndex {
 
   // Called by the watchers for every changed JSONL (subagent files included).
   touch(file) {
-    if (!file.endsWith('.jsonl')) return;
+    const rows = sources('rows').find((d) => d.catalog.watchPaths().includes(file));
+    if (rows) return this.refreshRows(rows);
+    const registered = sources('file').some((d) => d.catalog.match(file));
+    if (!registered && !file.endsWith('.jsonl')) return;
     const parts = file.split(path.sep);
     const sub = parts.lastIndexOf('subagents');
-    if (sub > 1) {
+    if (sub > 1 && !registered) {
       const root = parts.slice(0, sub - 1).join(path.sep) + path.sep + parts[sub - 1] + '.jsonl';
       this.subagents.delete(root);
       if (this.records.has(root)) this.records.get(root).view = undefined;
@@ -247,10 +261,37 @@ export class SessionIndex {
     this.markDirty();
   }
 
+  // A change seen while refreshing is read by one more pass, never dropped.
+  async refreshRows(d) {
+    const sync = this.rowSync.get(d) || this.rowSync.set(d, { cursor: null }).get(d);
+    if (sync.busy) { sync.pending = true; return; }
+    sync.busy = true;
+    try {
+      do {
+        sync.pending = false;
+        const { upserts = [], deletes = [], cursor } = await d.catalog.refresh(sync.cursor);
+        sync.cursor = cursor;
+        for (const row of upserts) {
+          const file = `rows:${d.runtime}:${row.id}`;
+          this.records.set(file, { file, runtime: d.runtime, id: row.id, size: row.size || 0, ms: row.ms, ino: 0,
+            state: row, local: true, view: undefined });
+        }
+        for (const id of deletes) this.records.delete(`rows:${d.runtime}:${id}`);
+        if (upserts.length || deletes.length) this.markDirty();
+      } while (sync.pending);
+    } catch (error) {
+      // The cursor stays, so the next change reads again.
+      console.error(`[session-index] ${d.runtime} refresh failed: ${error.message}`);
+    } finally {
+      sync.busy = false;
+    }
+  }
+
   // After deletions: drop records whose files are gone and pick up any new ones.
   rescan() {
     const present = new Set(this.enumerate());
-    for (const file of this.records.keys()) if (!present.has(file)) this.records.delete(file);
+    for (const file of this.records.keys()) if (!present.has(file) && !file.startsWith('rows:')) this.records.delete(file);
+    for (const d of sources('rows')) void this.refreshRows(d);
     for (const file of present) if (!this.records.has(file)) this.touch(file);
     this.subagents.clear();
     this.names.clear();
@@ -351,7 +392,9 @@ export class SessionIndex {
   view(rec) {
     if (rec.view !== undefined) return rec.view;
     let view = null;
-    if (rec.state) {
+    const source = runtimeDescriptor(rec.runtime)?.catalog;
+    if (rec.state && source) view = source.view(rec, this);
+    else if (rec.state) {
       if (rec.runtime === 'claude') {
         let preview = claudePreview(rec.state, this.history.prompts.get(rec.id));
         preview ||= previewText(this.sentPrompts.get(rec.id));
@@ -379,7 +422,7 @@ export class SessionIndex {
     for (const rec of this.records.values()) {
       const view = this.view(rec);
       if (!view) continue;
-      if (rec.runtime === 'codex' && view.parent) {
+      if (view.parent) {
         if (view.visible) codexChildren.push({ rec, parent: view.parent });
         continue;
       }
@@ -396,7 +439,7 @@ export class SessionIndex {
       let root = child.parent;
       const seen = new Set();
       while (parentOf.has(root) && !seen.has(root)) { seen.add(root); root = parentOf.get(root); }
-      const row = roots.get(storageSessionId('codex', root));
+      const row = roots.get(storageSessionId(child.rec.runtime, root));
       if (row) { row.agentCount++; row.children.push(child.rec); }
     }
     const byProject = new Map();
@@ -413,7 +456,11 @@ export class SessionIndex {
 
   // Process lists are refreshed after the answer that found them stale, so a request never waits for ps.
   runningInfo(now) {
-    const read = () => ({ at: Date.now(), claude: getRunningInfo(), codex: getCodexRunningInfo() });
+    const read = () => {
+      const info = { at: Date.now(), claude: getRunningInfo(), codex: getCodexRunningInfo() };
+      for (const d of runtimeDescriptors()) if (d.catalog?.running) info[d.runtime] = d.catalog.running();
+      return info;
+    };
     if (!this.running) this.running = read();
     else if (now - this.running.at > RUNNING_INFO_TTL_MS && !this.refreshingRunning) {
       this.refreshingRunning = true;
@@ -446,6 +493,12 @@ export class SessionIndex {
         own = known || (agent ? agent.status : candidate ? getSessionStatus(rec.id, rec.file, claudeRunning) : 'completed');
         // A Claude child can be active only while its parent runs or right after it was written.
         if (row.agentCount && (own === 'running' || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, own, now);
+      } else if (runtimeDescriptor(rec.runtime)?.catalog) {
+        const { catalog: source } = runtimeDescriptor(rec.runtime);
+        const running = this.running[rec.runtime];
+        own = known || source.status(rec, running, now);
+        children = row.children.map((child) => ({
+          status: this.statuses.get(storageSessionId(rec.runtime, child.id)) || source.status(child, running, now) }));
       } else {
         own = known || (codexRunningNow(rec, row.project) ? 'running' : 'completed');
         children = row.children.map((child) => ({ status: this.statuses.get(storageSessionId('codex', child.id))

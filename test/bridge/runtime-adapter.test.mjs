@@ -54,7 +54,7 @@ test('runtime registry exposes one validated adapter per runtime', () => {
   assert.deepEqual(runtimeAdapters.map((adapter) => adapter.runtime), ['claude', 'codex']);
   assert.equal(getRuntimeAdapter('claude'), claudeRuntime);
   assert.equal(getRuntimeAdapter('codex'), codexRuntime);
-  assert.equal(getRuntimeAdapter('unknown'), claudeRuntime);
+  assert.throws(() => getRuntimeAdapter('unknown'), /unknown_runtime/);
   assert.equal(claudeRuntime.features.send, true);
   assert.equal(codexRuntime.features.create, true);
   assert.equal(codexRuntime.features.send, true);

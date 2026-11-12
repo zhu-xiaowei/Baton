@@ -11,7 +11,7 @@
   "license": "ISC",
   "description": "",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.15.0"
   },
   "dependencies": {
     "@parcel/watcher": "2.6.0",

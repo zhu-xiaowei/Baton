@@ -1,6 +1,7 @@
 // Mobile alerts, decided here from the Session rows this Bridge reports (`reportSessions`). The
 // server only stores the event for Android and the iOS extension and pushes it through the relay.
 import { createHash, randomUUID } from 'crypto';
+import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 
 const LOCAL_IDLE_ALERT_SEC = 120;
 const QUEUE_LIMIT = 10;
@@ -17,6 +18,23 @@ const rows = new Map();  // `device|project|sessionId` → the last reported row
 const queue = new Map(); // sessionId → { alert, at }: alerts the server did not take yet
 let retryTimer = null;
 
+// Sessions whose turn a takeover ended: no Done until Baton's own turn there reports its end.
+// A completion seen after Baton's turn started is held; it is that turn's end when no newer turn runs.
+const takenOver = new Map(); // sessionId → { started, held: [old, row] }
+export const noteTakeover = (sessionId) => takenOver.set(sessionId, {});
+
+export function endTakeover(sessionId) {
+  const held = takenOver.get(sessionId)?.held;
+  takenOver.delete(sessionId);
+  if (held) alertAndDeliver(...held);
+}
+
+function alertAndDeliver(old, row) {
+  void alertFor(old, row).then((alert) => alert && deliver(alert)).catch((error) => {
+    console.error(`[notify] ${error.message}`);
+  });
+}
+
 export function configureNotifier(next) {
   deps = { ...deps, ...next };
 }
@@ -24,10 +42,7 @@ export function configureNotifier(next) {
 // By characters, not UTF-16 units: half an emoji is rejected by the server and the alert is lost.
 const clip = (text, length) => Array.from(text).slice(0, length).join('');
 
-const storageId = (s) => {
-  const native = String(s.nativeSessionId || s.id || '').replace(/^codex:/, '');
-  return s.runtime === 'codex' ? `codex:${native}` : native;
-};
+const storageId = (s) => storageSessionId(s.runtime, s.nativeSessionId || s.id);
 
 function effectiveStatus(row) {
   if (row.status === 'needs_input' || row.needsInputAgentCount > 0) return 'needs_input';
@@ -62,11 +77,7 @@ export function observeSessions(body) {
     rows.set(key, row);
     changes.push([old, row]);
   }
-  for (const [old, row] of changes) {
-    void alertFor(old, row).then((alert) => alert && deliver(alert)).catch((error) => {
-      console.error(`[notify] ${error.message}`);
-    });
-  }
+  for (const [old, row] of changes) alertAndDeliver(old, row);
 }
 
 function textSummary(content) {
@@ -98,6 +109,7 @@ export async function completionSummary(sessionId, attempts = 3) {
     let messages = [];
     try { messages = (await deps.history({ sessionId, limit: 20 })).messages || []; } catch {}
     for (const message of messages.slice().reverse()) {
+      if (message.noAlert) return null; // a turn a takeover, its process's exit or its parent ended
       const text = textSummary(message.content ?? '');
       if (message.type === 'user') {
         if (text.startsWith('[Request interrupted')) return null;
@@ -120,6 +132,12 @@ export async function completionSummary(sessionId, attempts = 3) {
 }
 
 export async function alertFor(old, row) {
+  const taken = takenOver.get(row.sessionId);
+  if (taken && effectiveStatus(row) === 'running') Object.assign(taken, { started: true, held: null });
+  if (taken && effectiveStatus(row) === 'completed') {
+    if (taken.started) taken.held ||= [old, row];
+    return null;
+  }
   if (!old || row.parentSessionId) return null; // subagent threads surface through their root
   if (row.localIdleSec != null && row.localIdleSec < LOCAL_IDLE_ALERT_SEC) return null; // the user is at that computer
   const before = effectiveStatus(old);
@@ -143,7 +161,7 @@ export async function alertFor(old, row) {
   const folder = String(row.projectName || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
   const project = clip(folder || row.project, 80);
   const title = clip(String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' '), 120)
-    || `Session ${row.sessionId.replace(/^codex:/, '').slice(0, 8)}`;
+    || `Session ${parseStorageSessionId(row.sessionId).nativeSessionId.slice(0, 8)}`;
   return {
     eventId: createHash('sha256').update(randomUUID()).digest('hex'),
     device: row.deviceName,

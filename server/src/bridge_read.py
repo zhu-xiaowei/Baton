@@ -256,12 +256,12 @@ def _windows_install_script(url, server, api_key, name):
         "  if (-not $candidate -or -not (Test-Path $candidate)) { continue }",
         "  try {",
         "    $candidateVersion = [version](& $candidate -p \"process.versions.node\" 2>&1)",
-        "    if ($candidateVersion -ge [version]'20.9.0') {",
+        "    if ($candidateVersion -ge [version]'22.15.0') {",
         "      $nodePath = $candidate",
         "      $nodeVersion = $candidateVersion",
         "      break",
         "    }",
-        "    $nodeErrors += \"${candidate}: version $candidateVersion is below 20.9.0\"",
+        "    $nodeErrors += \"${candidate}: version $candidateVersion is below 22.15.0\"",
         "  } catch {",
         "    $nodeErrors += \"${candidate}: $($_.Exception.Message)\"",
         "  }",
@@ -269,7 +269,7 @@ def _windows_install_script(url, server, api_key, name):
         "if (-not $nodePath) {",
         "  $checked = ($nodeCandidates | Select-Object -Unique) -join ', '",
         "  $details = $nodeErrors -join '; '",
-        "  throw \"Node.js 20.9+ was not found or could not run. Checked: $checked. Details: $details. Install Node.js 20.9+ and retry.\"",
+        "  throw \"Node.js 22.15+ was not found or could not run. Checked: $checked. Details: $details. Install Node.js 22.15+ from https://nodejs.org/ and retry.\"",
         "}",
         "$env:Path = (Split-Path $nodePath) + ';' + $env:Path",
         "$dir = Join-Path $targetHome '.baton-bridge'",
@@ -469,15 +469,15 @@ def install_script(request: Request, api_key: str, name, platform: str):
         '#!/bin/bash\n'
         'set -e\n'
         '\n'
-        '# Require Node.js >= 20.9\n'
+        '# Require Node.js >= 22.15\n'
         'if ! command -v node &>/dev/null; then\n'
         '  echo "\\033[0;31mError: Node.js is not installed.\\033[0m" >&2\n'
-        '  echo "Install Node.js 20.9+ from https://nodejs.org/ and try again." >&2\n'
+        '  echo "Install Node.js 22.15+ from https://nodejs.org/ and try again." >&2\n'
         '  exit 1\n'
         'fi\n'
         'NODE_VER=$(node -p "process.versions.node")\n'
-        'if ! node -e "const [major, minor] = process.versions.node.split(\'.\').map(Number); process.exit(major > 20 || (major === 20 && minor >= 9) ? 0 : 1)"; then\n'
-        '  echo "\\033[0;31mError: Node.js $NODE_VER is too old. Requires >= 20.9.\\033[0m" >&2\n'
+        'if ! node -e "const [major, minor] = process.versions.node.split(\'.\').map(Number); process.exit(major > 22 || (major === 22 && minor >= 15) ? 0 : 1)"; then\n'
+        '  echo "\\033[0;31mError: Node.js $NODE_VER is too old. Requires >= 22.15.\\033[0m" >&2\n'
         '  echo "Current: $(node --version)  —  upgrade from https://nodejs.org/" >&2\n'
         '  exit 1\n'
         'fi\n'

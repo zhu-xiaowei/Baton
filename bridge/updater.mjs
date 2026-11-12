@@ -108,3 +108,11 @@ export function installStagedBridge(stage, bridgeHome) {
     removable(oldModules);
   }
 }
+
+// The `>=x.y.z` floor of a staged package's engines.node when the running Node is below it.
+export function unmetNodeFloor(stage, current = process.versions.node) {
+  const range = JSON.parse(fs.readFileSync(path.join(stage, 'package.json'), 'utf8')).engines?.node || '';
+  const floor = /^>=\s*(\d+\.\d+\.\d+)$/.exec(range.trim())?.[1];
+  const rank = (v) => v.split('.').reduce((sum, part) => sum * 1000 + Number(part), 0);
+  return floor && rank(current) < rank(floor) ? floor : null;
+}

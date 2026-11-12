@@ -16,7 +16,8 @@ import {
   liveRecordBusy,
   claudeSessionWriter,
 } from './session.mjs';
-import { parseStorageSessionId } from './session-identity.mjs';
+import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
+import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
@@ -64,7 +65,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier } from './notify.mjs';
+import { configureNotifier, endTakeover, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -97,12 +98,14 @@ const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn or with prompts unanswered.
 const _pool = new ClaudePool({
+  allowedTools: (sessionId) => _grants.get(sessionId),
   onExit: (sessionId, hadPrompts) => {
     if (hadPrompts) clearPendingControls(sessionId);
     syncPoolStatus(sessionId, 'completed');
   },
   onControlRequest: (sessionId, req) => queuePermissionRequest(sessionId, req),
 });
+const _grants = new SessionGrants();
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
@@ -331,6 +334,7 @@ function cwdForSession(sessionId) {
 async function loadCommandCatalog(runtime, cwd, fallbackDir = cwd) {
   let commands = [];
   let skills = [];
+  if (runtimeDescriptor(runtime)) return runtimeDescriptor(runtime).interaction.listCommands({ cwd });
   if (runtime === 'codex') {
     const context = await getRuntimeAdapter('codex').interaction.listCommandContext({
       cwd,
@@ -379,6 +383,7 @@ function syncInteractionStatus(sessionId, status, detail, runtimeHint, options =
   const key = identity.sessionId;
   const previous = _statusSyncs.get(key) || Promise.resolve();
   const next = previous.then(async () => {
+    if (status === 'completed') endTakeover(key);
     const adapter = getRuntimeAdapter(identity.runtime);
     let filePath = adapter.findSessionFile(identity.nativeSessionId);
     if (options.waitForFile
@@ -448,6 +453,7 @@ function sendPermissionRequest(sessionId, p) {
     questions: p.input.questions,
     plan: p.input.plan,
     input: p.input,
+    ...(p.sessionScope ? { sessionScope: { label: p.sessionScope.label } } : {}),
   };
   if (p.liveTurn && !p.liveTurn.isEnded()) {
     p.liveTurn.emit('permission_request', payload);
@@ -493,6 +499,15 @@ function dismissPendingControl(sessionId, requestId) {
   }
 }
 
+// CC suggests rules for "don't ask again" (for the project); Baton keeps them for this Session only.
+function claudeSessionScope(r) {
+  const rules = (r.permission_suggestions || []).filter((s) => s.type === 'addRules' && s.behavior === 'allow')
+    .flatMap((s) => s.rules || []);
+  if (r.requires_user_interaction || !rules.length) return null;
+  const grants = rules.map((rule) => (rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName));
+  return { label: grants.join(', '), rules, grants };
+}
+
 function queuePermissionRequest(sessionId, req, options = {}) {
   const r = req.request || {};
   const input = r.input || {};
@@ -506,6 +521,7 @@ function queuePermissionRequest(sessionId, req, options = {}) {
     runtime: options.runtime || 'claude',
     nativeSessionId: options.nativeSessionId || sessionId,
     syncStatus,
+    sessionScope: claudeSessionScope(r),
     ...(options.liveTurn ? { liveTurn: options.liveTurn } : {}),
   });
   if (queued.current.syncStatus) {
@@ -608,13 +624,15 @@ export function initWs(config, options = {}) {
   connect();
 }
 
+// codex_writer_changed/unsafe stay cached as before; every other runtime's conflicts are retried.
+const WRITER_CONFLICT = /^(?!codex_writer_)\w+_(active_writer|writer_changed|writer_unsafe)$/;
+
 export function shouldCacheClientTurnAck(data) {
   return data?.action === 'send_message_result'
     && !!data.turnId
     && !data.queued
     && data.errorCode !== 'previous_turn_missing'
-    && data.errorCode !== 'codex_active_writer'
-    && !/^claude_(active_writer|writer_changed|writer_unsafe)$/.test(data.errorCode);
+    && !WRITER_CONFLICT.test(data.errorCode || '');
 }
 
 export function wsSend(data) {
@@ -770,7 +788,7 @@ function connect() {
         }), caller),
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
-        ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.map(adapter => adapter.runtime) }),
+        ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });
     _directRpc.start();
@@ -1384,6 +1402,13 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
       ...meta,
     });
   };
+  const conflict = adapter.interaction.heldElsewhere && await writerConflict(identity.nativeSessionId,
+    sendOptions.takeover, sendOptions.expectedWriterPid,
+    { runtime: identity.runtime, label: adapter.displayName, findWriter: (id) => adapter.interaction.heldElsewhere(id) });
+  if (conflict) {
+    ack(false, conflict.error, { errorCode: conflict.errorCode, writer: conflict.writer });
+    return true;
+  }
   try {
     callbacks = createStreamCallbacks(
       identity.sessionId,
@@ -1393,7 +1418,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
       {
         runtime: identity.runtime,
         nativeSessionId: identity.nativeSessionId,
-        syncStatus: identity.runtime === 'codex',
+        syncStatus: identity.runtime !== 'claude',
         userInitiated: true,
         ...(identity.runtime === 'claude' ? { userText: text } : {}),
       },
@@ -1412,6 +1437,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
     return true;
   } catch (error) {
     callbacks?.rejectInput(liveTurnId, error.message);
+    endTakeover(identity.sessionId);
     const errorCode = {
       CODEX_ACTIVE_WRITER: 'codex_active_writer',
       CODEX_WRITER_CHANGED: 'codex_writer_changed',
@@ -1658,8 +1684,9 @@ async function newAdapterSession(
         void syncInteractionStatus(sessionId, 'running', '', adapter.runtime, {
           waitForFile: true,
           registerNew: true,
-          fileReady: (filePath) => !!inspectCodexSession(nativeSessionId, { filePath }),
+          ...(adapter.runtime === 'codex' ? { fileReady: (filePath) => !!inspectCodexSession(nativeSessionId, { filePath }) } : {}),
         });
+        if (runtimeDescriptor(adapter.runtime)) sessionIndex.notePrompt(nativeSessionId, text);
         callbacks = createStreamCallbacks(sessionId, liveTurnId, cwd, (_ok, error) => {
           ack(false, sessionId, error);
         }, {
@@ -1712,7 +1739,7 @@ async function handleHeadlessSend(
   if (!_pool.owns(sessionId) && getDaemonRunningSessionIds().has(sessionId)) {
     _pool.stopDaemon(sessionId);
   } else {
-    const conflict = await claudeWriterConflict(sessionId, takeover, expectedWriterPid);
+    const conflict = await writerConflict(sessionId, takeover, expectedWriterPid);
     if (conflict) {
       ack(false, conflict.error, { errorCode: conflict.errorCode, writer: conflict.writer });
       return true;
@@ -1748,6 +1775,7 @@ async function handleHeadlessSend(
     }
   } catch (error) {
     cb?.failTurn('unavailable');
+    endTakeover(sessionId);
     ack(false, error.message || 'Session unavailable.');
     return true;
   }
@@ -1756,32 +1784,31 @@ async function handleHeadlessSend(
   return true;
 }
 
-// A TUI holding the session must exit first; only the pid the user confirmed is killed.
-export async function claudeWriterConflict(sessionId, takeover, expectedWriterPid, {
+// A session another client holds must be let go first; only the pid the user confirmed is killed.
+export async function writerConflict(sessionId, takeover, expectedWriterPid, {
+  runtime = 'claude',
+  label = 'Claude Code',
   findWriter = (sid) => claudeSessionWriter(sid, { ownPids: _pool.ownPids() }),
   kill = process.kill,
   timeoutMs = 10_000,
 } = {}) {
-  const writer = findWriter(sessionId);
+  const writer = await findWriter(sessionId);
   if (!writer) return null;
-  if (!takeover) {
-    return { errorCode: 'claude_active_writer', error: 'The Claude Code session is open elsewhere', writer };
-  }
+  const held = (current) => ({ errorCode: `${runtime}_active_writer`, error: `The ${label} session is open elsewhere`, writer: current });
+  if (!takeover) return held(writer);
   if (writer.pid !== Number(expectedWriterPid)) {
-    return { errorCode: 'claude_writer_changed', error: 'The Claude Code writer changed before takeover', writer };
+    return { errorCode: `${runtime}_writer_changed`, error: `The ${label} writer changed before takeover`, writer };
   }
   const alive = () => { try { kill(writer.pid, 0); return true; } catch { return false; } };
+  noteTakeover(storageSessionId(runtime, sessionId));
   try { kill(writer.pid, 'SIGTERM'); } catch {}
   for (const end = Date.now() + timeoutMs; alive() && Date.now() < end;) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (alive()) {
-    return { errorCode: 'claude_writer_unsafe', error: 'The Claude Code terminal did not exit', writer };
-  }
-  const next = findWriter(sessionId);
-  return next
-    ? { errorCode: 'claude_active_writer', error: 'The Claude Code session is open elsewhere', writer: next }
-    : null;
+  const next = alive() ? writer : await findWriter(sessionId);
+  if (next) endTakeover(storageSessionId(runtime, sessionId));
+  if (alive()) return { errorCode: `${runtime}_writer_unsafe`, error: `The ${label} terminal did not exit`, writer };
+  return next ? held(next) : null;
 }
 
 // New regular session: mint the session id upfront and stream the first turn.
@@ -1911,7 +1938,17 @@ export async function handleDeleteFiles(msg, {
     for (const sid of msg.sessionIds || []) {
       const identity = parseStorageSessionId(sid);
       const adapter = adapters.find((item) => item.runtime === identity.runtime);
-      if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) deletedSessions++;
+      // Some harnesses delete a Session another client is using; the Bridge refuses first.
+      const interaction = adapter?.interaction;
+      if (interaction?.heldElsewhere && (interaction.isBusy(identity.nativeSessionId)
+        || await interaction.heldElsewhere(identity.nativeSessionId))) {
+        errors.push(`${adapter.runtime}: the Session is in use`);
+        continue;
+      }
+      if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) {
+        deletedSessions++;
+        _grants.forget(identity.sessionId);
+      }
     }
     for (const ph of msg.projectHashes || []) {
       let ok = true;
@@ -1991,7 +2028,7 @@ async function downloadBridgeImage(key) {
 // and plan feedback use deny+answerText. Codex preserves its native decision.
 function handlePermissionReply(msg) {
   const {
-    sessionId, requestId, decision, answerText, approvalResponse,
+    sessionId, requestId, decision, answerText, approvalResponse, answers, scope,
   } = msg;
   const pending = _pendingControl.current(sessionId);
   if (!pending || (requestId && pending.requestId !== requestId)) return;
@@ -2002,7 +2039,7 @@ function handlePermissionReply(msg) {
     replied = !!adapter.interaction?.replyControl?.(
       pending.nativeSessionId,
       pending.requestId,
-      { decision, answerText, approvalResponse },
+      { decision, answerText, approvalResponse, answers, scope },
     );
   } else if (pending.hookReply) {
     if (pending.requiresInteraction && decision === 'answer' && answerText) {
@@ -2029,8 +2066,13 @@ function handlePermissionReply(msg) {
       replied = _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'The user did not answer.', interrupt: true });
     }
   } else {
-    // Ordinary Claude tool: allow (input unchanged) or deny.
-    replied = decision === 'allow'
+    // Ordinary Claude tool: allow (input unchanged, for this Session too) or deny.
+    const session = decision === 'allow' && scope === 'session' && pending.sessionScope;
+    if (session) _grants.add(sessionId, session.grants);
+    replied = session
+      ? _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input,
+        updatedPermissions: [{ type: 'addRules', rules: session.rules, behavior: 'allow', destination: 'session' }] })
+      : decision === 'allow'
       ? _pool.replyControl(sessionId, pending.requestId, { behavior: 'allow', updatedInput: pending.input })
       : _pool.replyControl(sessionId, pending.requestId, { behavior: 'deny', message: 'User denied this tool call.' });
   }
