@@ -1073,6 +1073,7 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'command_catalog_ready') {
       if (window.handleCommandCatalogReady) window.handleCommandCatalogReady(msg);
     } else if (msg.action === 'command_options') {
+      if (handleWsRpcMessage(msg)) return;
       if (window.handleCommandOptions) window.handleCommandOptions(msg);
     } else if (msg.action === 'stream_turn_start') {
       if (isStrictTurnEvent(msg)) handleStrictTurnStart(msg);
