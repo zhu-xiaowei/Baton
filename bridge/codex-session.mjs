@@ -5,6 +5,7 @@ import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
+import { repositoryIdentity } from './repository-identity.mjs';
 import { readableProjectName } from './session.mjs';
 import { attachmentPreviewText } from './attachments.mjs';
 
@@ -57,6 +58,7 @@ export async function discoverCodexHistory(options = {}) {
       const row = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
         result.cwd = row.payload?.cwd;
+        result.repositoryUrl = row.payload?.git?.repository_url;
         result.parentId = row.payload?.parent_thread_id;
       }
     } catch {} // Still allow an explicit session deletion by its filename ID.
@@ -67,6 +69,40 @@ export async function discoverCodexHistory(options = {}) {
     history.push(...await Promise.all(files.slice(i, i + 16).map(readHead)));
   }
   return history;
+}
+
+// A Codex worktree checkout (<CODEX_HOME>/worktrees/<id>/<repo>) that Codex has deleted can no
+// longer be traced to its repository on disk; its sessions join the checkout of another session
+// with the same git remote, found once by reading every rollout's session_meta line.
+let repositoryRoots = null; // repository_url → primary checkout root
+
+export function codexProjectCwd(cwd, repositoryUrl, homes = resolveCodexHomes()) {
+  if (!repositoryUrl || fs.existsSync(cwd)) return cwd;
+  for (const home of homes) {
+    const parts = path.relative(path.join(home, 'worktrees'), cwd).split(path.sep);
+    if (parts.length < 2 || parts[0] === '..' || path.isAbsolute(parts[0])) continue;
+    if (!repositoryRoots) {
+      repositoryRoots = new Map();
+      const files = [];
+      for (const codexHome of homes) walkJsonl(path.join(codexHome, 'sessions'), files);
+      const buffer = Buffer.alloc(1 << 20);
+      for (const file of files) {
+        try {
+          const fd = fs.openSync(file, 'r');
+          const n = fs.readSync(fd, buffer, 0, buffer.length, 0);
+          fs.closeSync(fd);
+          const head = buffer.subarray(0, n);
+          const meta = JSON.parse(head.subarray(0, head.indexOf(10) >>> 0).toString('utf8')).payload;
+          const url = meta?.git?.repository_url;
+          const root = url && !repositoryRoots.has(url) && repositoryIdentity(meta.cwd)?.primaryRoot;
+          if (root) repositoryRoots.set(url, root);
+        } catch {}
+      }
+    }
+    const root = repositoryRoots.get(repositoryUrl);
+    return root ? path.join(root, ...parts.slice(2)) : cwd;
+  }
+  return cwd;
 }
 
 export function previewText(value) {
@@ -310,7 +346,10 @@ export function scanCodexRollout(filePath, options = {}) {
     return { session: null, malformedLines, trailingMalformed, reason: 'missing_metadata' };
   }
 
-  const project = projectHashFromCwd(String(meta.cwd), options.claudeProjectsRoot || CLAUDE_PROJECTS);
+  const project = projectHashFromCwd(
+    codexProjectCwd(String(meta.cwd), meta.git?.repository_url, options.codexHomes),
+    options.claudeProjectsRoot || CLAUDE_PROJECTS,
+  );
   if (!project) return { session: null, malformedLines, trailingMalformed, reason: 'missing_project' };
   const parentNativeSessionId = String(
     meta.parent_thread_id || meta.forked_from_id || '',

@@ -147,6 +147,7 @@ function slimMeta(payload) {
   const spawn = structured?.thread_spawn || {};
   return {
     cwd: payload.cwd ? String(payload.cwd) : '',
+    repositoryUrl: payload.git?.repository_url || '',
     parent,
     visible: !!parent && (structured === undefined || !!structured?.thread_spawn),
     agentPath: String(payload.agent_path || spawn.agent_path || ''),
@@ -232,7 +233,7 @@ export function codexView(state, threadName) {
   const name = codexPreviewText(threadName);
   const pathTitle = codexPreviewText(meta.agentPath.split('/').filter(Boolean).pop()?.replace(/[_-]+/g, ' ') || '');
   const preview = name || (meta.visible ? (prompt || pathTitle) : prompt);
-  return preview ? { cwd: meta.cwd, parent: meta.parent, visible: meta.visible, preview } : null;
+  return preview ? { cwd: meta.cwd, repositoryUrl: meta.repositoryUrl, parent: meta.parent, visible: meta.visible, preview } : null;
 }
 
 // ---------- tails ----------

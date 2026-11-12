@@ -1790,12 +1790,9 @@ function displayHistorySnapshot(data, pendingNodes) {
     }
     container.append(...rows);
   }
-  if (!state.wsAllMessages.length && !pendingNodes.length) {
-    // A running Session can have no rows yet (a forked Skill writes none until it finishes).
-    if (data.status === 'running' && typeof skeletonMessages === 'function') {
-      content.innerHTML = skeletonMessages();
-      return true;
-    }
+  // A running Session can have no rows yet (a forked Skill writes none until it finishes):
+  // keep the empty list so the running spinner shows.
+  if (!state.wsAllMessages.length && !pendingNodes.length && data.status !== 'running') {
     container.innerHTML = '<div class="empty">No messages</div>';
   }
   if (permissionPrompt) container.appendChild(permissionPrompt);

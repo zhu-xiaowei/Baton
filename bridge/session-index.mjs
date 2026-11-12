@@ -13,7 +13,7 @@ import {
   cachedDaemonSessions, getRunningInfo, getSessionStatus, normalizeProjectHash, previewText,
   readableProjectName, readClaudeFirstPrompts,
 } from './session.mjs';
-import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
+import { CODEX_SESSION_INDEX, codexProjectCwd, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
 import { discoverClaudeSubagents } from './claude-subagent.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
@@ -290,8 +290,10 @@ export class SessionIndex {
     }
   }
 
-  cwdProject(cwd) {
-    if (!this.cwdProjects.has(cwd)) this.cwdProjects.set(cwd, projectHashFromCwd(cwd, this.claudeRoot));
+  cwdProject(cwd, repositoryUrl) {
+    if (!this.cwdProjects.has(cwd)) {
+      this.cwdProjects.set(cwd, projectHashFromCwd(codexProjectCwd(cwd, repositoryUrl, this.homes()), this.claudeRoot));
+    }
     return this.cwdProjects.get(cwd);
   }
 
@@ -329,7 +331,7 @@ export class SessionIndex {
         }
       } else {
         const codex = codexView(rec.state, this.threadNames.get(rec.home)?.names.get(rec.id));
-        const project = codex && intern(this.cwdProject(codex.cwd));
+        const project = codex && intern(this.cwdProject(codex.cwd, codex.repositoryUrl));
         if (project) view = { project, preview: codex.preview, parent: codex.parent, visible: codex.visible, agentCount: 0 };
       }
     }

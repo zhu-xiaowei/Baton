@@ -2,6 +2,7 @@ import fs from 'fs';
 import { countJsonlLines } from './extract.mjs';
 import { codexInteraction } from './codex-interaction.mjs';
 import {
+  codexProjectCwd,
   discoverCodexHistory,
   discoverCodexSessions,
   findCodexSessionFile,
@@ -26,9 +27,11 @@ async function deleteCodexHistory(sessionId, projectHash, context, ownsLiveSessi
   const files = await (context.codexHistoryFiles ||= discoverCodexHistory(context));
   const projects = new Map();
   const ids = new Set(sessionId ? [sessionId] : files
-    .filter(({ cwd }) => {
+    .filter(({ cwd, repositoryUrl }) => {
       if (typeof cwd !== 'string' || !cwd) return false;
-      if (!projects.has(cwd)) projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(cwd)));
+      if (!projects.has(cwd)) {
+        projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(codexProjectCwd(cwd, repositoryUrl, context.codexHomes))));
+      }
       return projects.get(cwd).includes(projectHash);
     }).map((file) => file.id));
   // Only spawned children cascade. User-created forks remain independent.
