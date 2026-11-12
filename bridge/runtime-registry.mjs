@@ -1,5 +1,6 @@
 import { claudeRuntime } from './claude-runtime.mjs';
 import { codexRuntime } from './codex-runtime.mjs';
+import { piRuntime } from './pi-runtime.mjs';
 import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
 
 export const runtimeAdapters = [
@@ -23,4 +24,9 @@ export function getRuntimeAdapter(runtime) {
   const adapter = adaptersByRuntime.get(normalizeRuntime(runtime));
   if (!adapter) throw new Error('unknown_runtime');
   return adapter;
+}
+
+// Harness runtimes, registered at Bridge start when installed.
+export function registerInstalledRuntimes() {
+  for (const adapter of [piRuntime]) if (adapter.detect()) registerRuntime(adapter);
 }

@@ -27,6 +27,8 @@ import {
   unmetNodeFloor,
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
+import { killLeftovers } from './turn-process.mjs';
+import { registerInstalledRuntimes } from './runtime-registry.mjs';
 
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
@@ -50,6 +52,8 @@ process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 const CONFIG = loadConfig();
 if (removeServiceKeyArgs()) console.log('[init] removed the key from the service definition');
 cleanupStagedBridge(BRIDGE_HOME);
+killLeftovers(); // runtime processes a previous Bridge started
+registerInstalledRuntimes();
 initHttp(CONFIG);
 
 console.log('Baton Bridge started');

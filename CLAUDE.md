@@ -131,6 +131,33 @@ Done:
   (no Done alert for a turn a takeover, exit or parent ended).
 - Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
   whose `engines` the running Node does not meet.
+- Harness runtimes register at Bridge start (`registerInstalledRuntimes()`, only when installed), never on import,
+  so tests and workers never probe or write user config. Their files sit flat in `bridge/` (`<rt>-*.mjs`): the
+  package and the updater only ship root `*.mjs` + `project/`.
+
+### Multi-harness H4: Pi (≥ 1.0)
+- Files: `pi-catalog.mjs` (catalog, current-branch history, row mapping; worker-safe), `pi-runtime.mjs` (detect,
+  adapter, watcher), `pi-interaction.mjs` (`pi --mode rpc`), `pi-approval-ext.mjs` (passed with `-e`),
+  `pi-status-ext.mjs` (installed). Pi runs as `<node ≥ 22.19> <realpath of pi>` (`pickNode`), not via PATH.
+- Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
+  `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
+  continue the previous one bumps the epoch (`historyReset`). One `edit` call with N edits = N Edit cards (`<id>#i`).
+- Status: the Bridge installs `<agent dir>/extensions/baton-bridge-status.js` when its watcher starts (content
+  compared, atomic rename; removed on device removal). Every pi process writes
+  `~/.baton-bridge/pi-status/<sid>.<pid>.json` (`idle/running/waiting`; `waiting` = `ui_prompt_start` →
+  needs_input); a dead pid or another start time is stale. The same file holds the fork guard: a terminal whose
+  loaded leaf is not the file's last entry refuses input until `/baton-reload`.
+- Interaction: one process per Session, ended on `agent_settled` (never `agent_end`) by EOF. Sends during a turn are
+  `prompt{streamingBehavior:'steer'}`; interrupt = `clear_queue` + `abort` (the extension passes `ctx.signal`, so a
+  waiting dialog ends too). Each prompt starts with `<!--baton:<turnId>-->`; the approval extension strips it and
+  stores `batonTurnId` on the user message, so live and stored prompts are both `live:user:<turnId>`. Other rows:
+  uuid = nativeId (`pi:assistant:<ts>`, `pi:tool:<callId>`). Images go in the RPC `images` field. Tool calls are
+  streamed whole at `toolcall_end`, already mapped.
+- Dialogs: `baton:permission` confirm → `kind:'tool'` (session grant `bash:<prog [sub]>` / tool name, kept in
+  `~/.baton-bridge/pi-grants.json`, read by the extension on every call); `ask_user` (Baton's tool; `multiple:true`
+  rides on `input('baton:multiselect')` and answers a JSON array) and user-extension select/confirm/input → `ask`.
+- Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
+  be terminated). Delete refuses while held; rename appends a `session_info` entry on the leaf.
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.

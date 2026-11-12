@@ -5,7 +5,7 @@ import { ClaudePool } from './headless.mjs';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import { findCodexSessionFile, inspectCodexSession } from './codex-session.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
-import { parseStorageSessionId } from './session-identity.mjs';
+import { parseStorageSessionId, runtimeDescriptor } from './session-identity.mjs';
 import { findSessionFile, normalizeProjectHash, projectHashToPath } from './session.mjs';
 
 const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -54,6 +54,8 @@ export async function renameNativeSession(message, options = {}) {
     } finally {
       await client.stop();
     }
+  } else if (runtimeDescriptor(identity.runtime)?.rename) {
+    await runtimeDescriptor(identity.runtime).rename(identity.nativeSessionId, name);
   } else {
     throw new Error('This runtime does not support session renaming.');
   }
