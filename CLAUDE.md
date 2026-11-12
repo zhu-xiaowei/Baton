@@ -360,7 +360,10 @@ No Session or message data is stored server-side. DynamoDB holds only routing an
                      deviceName, …; GSI accountId-role-index) plus per-device Bridge owner rows
 <stack>-system       PK: pk  SK: sk  (TTL: ttl)
   DEVICE#<accountId> / <deviceName>  — deviceName, deviceDisplayName, os, lastConnected
-                                       (written by WS $connect once a Bridge claims its name)
+                                       (written by WS $connect once a Bridge claims its name;
+                                       nothing is migrated: after the first v2 deploy a device
+                                       is listed again once its Bridge reconnects, which the
+                                       version update triggers within minutes for online ones)
   TOKEN / <token>                    — start/install tokens (name the key, never hold it)
   PUSH_DEVICE / <environment>:<token>, NOTIFICATIONS#<accountId> / <eventId> — notifications
 ```
