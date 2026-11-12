@@ -363,8 +363,8 @@ These are acceptable for a single-tenant self-host stack but must be fixed befor
 7. Hosted production should run in a dedicated AWS account, separate from the current shared account.
 8. **Required:** the direct-forwarding STS credentials Bridge receives allow
    `execute-api:ManageConnections` on `…/POST/@connections/*` of the data API (`callback_policy` in
-   `server/src/terminal_direct_ws.py`), i.e. any connection on that API, not only the same account's.
-   HMAC/E2EE stops content injection but not bandwidth abuse, so this cannot support untrusted
+   `server/src/direct_rpc_ws.py`), i.e. any connection on that API, not only the same account's.
+   E2EE would stop content injection but not bandwidth abuse, so this cannot support untrusted
    multi-tenancy. Measured 2026-11-06: per-connection session policies
    (`…/POST/@connections/<connectionId>`) always deny, because API Gateway authorizes against the route
    template `…/POST/@connections/{connectionId}`. Credentials therefore cannot be narrowed below the whole
@@ -473,7 +473,7 @@ Source read: t3code, Paseo, Orca, litter, Happy (HEAD of 2026-11-03).
   pixels instead (t3code: headless Chrome on the host plus port discovery; Orca: CDP screencast of the
   desktop's built-in browser, so the desktop app must be open). Happy's new native iOS client (iOS 26,
   UIKit port) routes WKWebView through the computer like Baton; Paseo and litter have none. v2 must carry
-  preview frames inside the E2EE payload: today they are HMAC-signed, not encrypted.
+  preview frames inside the E2EE payload: today they are only SigV4-signed stream frames, not encrypted.
 - **Onboarding gap:** every competitor is "install one thing, scan one QR" with no cloud account. v2's
   hosted profile closes this; prefer a reverse flow (Bridge prints a QR or device code, the phone approves)
   as Happy and t3code do.
