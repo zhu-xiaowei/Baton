@@ -506,15 +506,17 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    var filesButton = state.appState.session !== '__new__'
+    // A virtual project (`<runtime>:<name>`, e.g. Hermes' messaging Sessions) has no folder.
+    var hasFolder = state.appState.session !== '__new__' && String(state.appState.project.hash).indexOf(':') < 0;
+    var filesButton = hasFolder
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    var terminalButton = state.appState.session !== '__new__'
+    var terminalButton = hasFolder
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
-    var gitButton = state.appState.session !== '__new__'
+    var gitButton = hasFolder
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';

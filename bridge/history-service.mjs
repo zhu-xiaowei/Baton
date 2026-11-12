@@ -96,7 +96,7 @@ export class HistoryService {
     if (!row) return { rootSessionId: sessionId, threads: [] };
     const rec = row.rec;
     const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: new Date(rec.ms).toISOString(), size: rec.size,
-      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id }];
+      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id, canSend: !rec.view?.readOnly }];
     const source = runtimeDescriptor(rec.runtime)?.catalog;
     if (row.agentCount && source) {
       // A registered runtime's children are catalog records already.
