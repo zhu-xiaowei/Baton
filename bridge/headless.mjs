@@ -8,10 +8,11 @@
 // Lifecycle (litter ClaudePool model): on-demand spawn, idle reap, LRU cap.
 // Reap = close stdin (CC exits cleanly, jsonl persists), never kill.
 
+import fs from 'fs';
 import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
-import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
+import { findSessionFile, requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
 
@@ -47,6 +48,9 @@ class HeadlessProc {
     this._framer = new StreamFramer((frame) => this._emitFrame(frame));
     this._pendingCtl = new Map(); // outbound control_request id → {resolve,reject,timer}
     this.unanswered = new Set();  // inbound control_request ids CC still waits on
+    this.seenUuids = new Set();   // user/assistant rows this process wrote (stdout echoes them)
+    this.sessionFile = null;
+    this.fileSize = null;         // jsonl size when this process last went idle
     this.noPersistence = !!options.noPersistence;
     this.bare = !!options.bare;
   }
@@ -73,6 +77,7 @@ class HeadlessProc {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.stdin = this.proc.stdin;
+    this.pool._live.add(this);
     this.stdin.on('error', (error) => this._onClose(-1, error.message));
 
     const rl = readline.createInterface({ input: this.proc.stdout });
@@ -132,6 +137,7 @@ class HeadlessProc {
 
     // Full authoritative rows (same uuid as jsonl → app dedupes; renders in/out cards).
     if ((t === 'assistant' || t === 'user') && o.uuid) {
+      this.seenUuids.add(o.uuid);
       if (t === 'user' && !o.timestamp && this.inputs.has(o.uuid)) {
         this._cb?.onInputConsumed?.([this.inputs.get(o.uuid).streamId]);
         return;
@@ -205,6 +211,7 @@ class HeadlessProc {
       if (!this.busy) {
         this._cb = null;
         this.streamId = null;
+        this.fileSize = this.pool._sessionFileSize(this);
       }
       cb?.onResult?.(sid, { ...o, consumedInputIds, continued: this.busy });
       return;
@@ -237,6 +244,7 @@ class HeadlessProc {
     if (this.dead) return;
     const wasBusy = this.busy;
     this.dead = true;
+    this.pool._live.delete(this);
     this._framer.cancel();
     this.pool._remove(this.key, this);
     // Unanswered requests die with the process, so their prompts must go too.
@@ -277,6 +285,7 @@ class HeadlessProc {
     }
     this.busy = true;
     this.inputs.set(uuid, { streamId, consumed: false });
+    this.seenUuids.add(uuid);
     this.pool._touch(this);
     const msg = {
       type: 'user',
@@ -345,8 +354,10 @@ export class ClaudePool {
     this.env = opts.env || null;
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
+    this._live = new Set();  // spawned and not yet exited, including reaped ones still closing
     this._onExit = opts.onExit || null;  // (sessionId, hadPrompts) => void, a busy or prompting proc exited
     this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
+    this.findSessionFile = opts.findSessionFile || findSessionFile;
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
     if (this._reaper.unref) this._reaper.unref();
   }
@@ -355,6 +366,51 @@ export class ClaudePool {
 
   // A reaped process can exit long after its key was respawned; it must not drop the live one.
   _remove(key, proc) { if (this.procs.get(key) === proc) this.procs.delete(key); }
+
+  _sessionFileSize(proc) {
+    if (!proc.sessionFile && proc.sessionId) proc.sessionFile = this.findSessionFile(proc.sessionId);
+    try { return fs.statSync(proc.sessionFile).size; } catch { return null; }
+  }
+
+  // An idle process continues from its in-memory chain, so a turn another client
+  // appended since then would be forked off. Only unseen user/assistant rows count.
+  _appendedElsewhere(proc) {
+    if (proc.busy || proc.backgroundTasks || proc.unanswered.size || proc.fileSize == null) return false;
+    const size = this._sessionFileSize(proc);
+    if (size == null || size === proc.fileSize) return false;
+    if (size < proc.fileSize) return true;
+    let text = '';
+    try {
+      const fd = fs.openSync(proc.sessionFile, 'r');
+      try {
+        const buf = Buffer.alloc(size - proc.fileSize);
+        fs.readSync(fd, buf, 0, buf.length, proc.fileSize);
+        text = buf.toString('utf8');
+      } finally { fs.closeSync(fd); }
+    } catch { return false; }
+    for (const line of text.split('\n')) {
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      if ((o.type === 'user' || o.type === 'assistant') && o.uuid && !proc.seenUuids.has(o.uuid)) return true;
+    }
+    proc.fileSize = size;
+    return false;
+  }
+
+  // EOF and wait for exit so the next --resume is the only writer.
+  async _retire(proc) {
+    this._remove(proc.key, proc);
+    if (proc.dead) return;
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => { try { proc.proc.kill('SIGKILL'); } catch {} }, 5000);
+      proc.proc.once('close', () => { clearTimeout(timer); resolve(); });
+      proc.shutdown();
+    });
+  }
+
+  ownPids() {
+    return new Set([...this._live].map((proc) => proc.proc.pid).filter(Boolean));
+  }
 
   // Send a message to sessionId's process (spawn/reuse/queue). Returns
   // { sessionId, bgLocked }: sessionId resolved from system/init (or upfront for
@@ -377,6 +433,10 @@ export class ClaudePool {
     };
 
     let proc = this.procs.get(key);
+    if (proc && !proc.dead && this._appendedElsewhere(proc)) {
+      await this._retire(proc);
+      proc = this.procs.get(key);
+    }
     if (!proc || proc.dead) {
       // Fresh process. NOTE: `system/init` is emitted only AFTER the first stdin
       // message is written — not on spawn. So write the turn immediately, then

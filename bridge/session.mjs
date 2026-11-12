@@ -470,6 +470,35 @@ export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
   return latest?.status === 'busy';
 }
 
+function isClaudePid(pid) {
+  try {
+    const command = process.platform === 'linux'
+      ? fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+      : execSync(`ps -p ${Number(pid)} -o command= 2>/dev/null`).toString();
+    return /claude/i.test(command);
+  } catch { return false; }
+}
+
+// Another live CC process (TUI, VS Code, another Bridge) with sessionId open. It never
+// reloads the jsonl, so its next write would fork whatever Baton appends.
+export function claudeSessionWriter(sessionId, {
+  ownPids = new Set(), dir = CLAUDE_SESSIONS, isClaude = isClaudePid,
+} = {}) {
+  if (process.platform === 'win32') return null;
+  let latest = null;
+  for (const record of liveRecords(dir, (pid) => !ownPids.has(Number(pid)) && isClaude(pid))) {
+    if (record.sessionId !== sessionId || !LIVE_STATUS[record.status]) continue;
+    if (!latest || record.updatedAt > latest.updatedAt) latest = record;
+  }
+  if (!latest) return null;
+  return {
+    pid: Number(latest.pid),
+    status: LIVE_STATUS[latest.status],
+    label: latest.entrypoint === 'cli' ? 'A Claude Code terminal' : 'Another Claude Code client',
+    canTerminate: true,
+  };
+}
+
 function* liveRecords(dir, isLive) {
   let files;
   try { files = fs.readdirSync(dir); } catch { return; }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ClaudePool } from '../../bridge/headless.mjs';
+import { claudeWriterConflict } from '../../bridge/ws.mjs';
 
 test('a process exiting after its session was respawned keeps the new process in the pool', async () => {
   const pool = new ClaudePool({ bin: '/nonexistent/claude', initTimeout: 1000 });
@@ -108,4 +109,18 @@ test('an unanswered permission keeps its process until answered, and goes with i
   next.proc.kill();
   await closed;
   assert.deepEqual(exits, [['sid', true]], 'a process dying with a prompt clears it');
+});
+test('an idle process notices only rows another client appended', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cc-')), 's.jsonl');
+  const row = (uuid) => fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid }) + '\n');
+  const pool = new ClaudePool({ bin: '/nonexistent/claude' });
+  const proc = { sessionFile: file, seenUuids: new Set(['own']), unanswered: new Set(), fileSize: 0 };
+  row('own'); assert.equal(pool._appendedElsewhere(proc), false);
+  row('cli'); assert.equal(pool._appendedElsewhere(proc), true); pool.shutdownAll();
+});
+test('a held Claude session asks first, and takeover stops only the confirmed pid', async () => {
+  let live = true; const deps = { findWriter: () => live && { pid: 42, canTerminate: true }, kill: (_, sig) => { if (sig) live = false; else if (!live) throw new Error('ESRCH'); } };
+  assert.equal((await claudeWriterConflict('sid', false, null, deps)).errorCode, 'claude_active_writer');
+  assert.equal((await claudeWriterConflict('sid', true, 41, deps)).errorCode, 'claude_writer_changed');
+  assert.equal(await claudeWriterConflict('sid', true, 42, deps), null);
 });
