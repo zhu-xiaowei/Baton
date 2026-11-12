@@ -106,7 +106,7 @@ export function createSharedTerminals(options) {
     peer.behind = false;
     let first = true;
     for (const { message, bytes: size } of outputMessages(bytes, peer.channel.deflate)) {
-      rawSend(peer, { epoch: session.epoch, ...message, ...(first ? { reset: 1 } : {}) }, size);
+      rawSend(peer, first ? { ...message, reset: 1 } : message, size);
       first = false;
     }
   }
@@ -114,7 +114,8 @@ export function createSharedTerminals(options) {
   function broadcast(session, message, bytes = 0, except = null) {
     if (session.closed) return;
     if (message.type !== 'output') flushOutput(session);
-    for (const peer of session.peers) if (peer !== except) publish(peer, { epoch: session.epoch, ...message }, bytes);
+    // Messages carry no session or epoch: they are ordered, and every switch starts with `ready`.
+    for (const peer of session.peers) if (peer !== except) publish(peer, message, bytes);
   }
 
   function queueOutput(session, bytes) {
@@ -298,13 +299,13 @@ export function createSharedTerminals(options) {
     while (snapshot.sent - snapshot.acked < 4 && snapshot.sent < snapshot.chunks) {
       const index = snapshot.sent++;
       const chunk = snapshot.bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES);
-      rawSend(peer, { type: 'snapshot', epoch: snapshot.epoch, snapshotId: snapshot.id, index,
+      rawSend(peer, { type: 'snapshot', snapshotId: snapshot.id, index,
         data: chunk.toString('base64') }, chunk.length);
       if (peer.closed) return;
     }
     if (snapshot.sent !== snapshot.chunks) return;
     peer.snapshot = null;
-    rawSend(peer, { type: 'synced', epoch: snapshot.epoch, snapshotId: snapshot.id });
+    rawSend(peer, { type: 'synced', snapshotId: snapshot.id });
     const buffered = peer.buffered;
     peer.buffered = [];
     peer.bufferedBytes = 0;
@@ -332,9 +333,10 @@ export function createSharedTerminals(options) {
     peer.behind = false;
     peer.inflight.clear();
     peer.inflightBytes = 0;
-    peer.snapshot = { id: randomUUID(), epoch: session.epoch, bytes, sent: 0, acked: 0,
+    peer.view = (peer.view || 0) + 1;
+    peer.snapshot = { id: randomUUID(), bytes, sent: 0, acked: 0,
       chunks: Math.ceil(bytes.length / CHUNK_BYTES) };
-    rawSend(peer, { type: 'ready', epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
+    rawSend(peer, { type: 'ready', view: peer.view, epoch: session.epoch, sessionId: session.id, name: `Terminal ${session.number}`, cwd: session.cwd,
       cols: session.cols, rows: session.rows, peers: session.peers.size, exited: session.exited,
       exitCode: session.exitCode, snapshotId: peer.snapshot.id, snapshotBytes: bytes.length,
       snapshotChunks: peer.snapshot.chunks, historyTruncated });
@@ -447,7 +449,7 @@ export function createSharedTerminals(options) {
     } else if (message.type === 'theme') {
       if (message.theme === 'light' || message.theme === 'dark') theme = message.theme;
     } else if (message.type !== 'heartbeat') {
-      if (!session || session.closed || message.epoch !== session.epoch || message.sessionId !== session.id) {
+      if (!session || session.closed || message.view !== peer.view) {
         rawSend(peer, { type: 'error', message: 'Terminal switched or closed. Previous input was ignored.', fatal: false });
       } else if (message.type === 'resize') {
         const size = dimensions(message);

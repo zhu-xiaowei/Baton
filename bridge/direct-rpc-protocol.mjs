@@ -138,8 +138,8 @@ export async function decodeRpcPayload({ enc, data }, inflate) {
   return JSON.parse(json);
 }
 
-// Terminal and preview streams: { v, kind: 'stream', ch, id, from, m }. `from` is the sender's
-// connection (the reply target), `m` the channel's own message. A message's `data` (base64 bytes)
+// Terminal and preview streams: { v, kind: 'stream', ch, id, from, m }. `from` is the App's
+// connection (the Bridge's reply target; the Bridge sends none), `m` the channel's own message. A message's `data` (base64 bytes)
 // travels deflated (`z: 1`) when that makes it smaller. `deflate`/`inflate` may return Promises.
 const STREAM_CHANNELS = new Set(['terminal', 'preview']);
 // Data shorter than this does not shrink under deflate; the packed copy is used only when it saves 10%.
@@ -147,7 +147,7 @@ export const PACK_MIN = 128;
 export const packPays = (plainLength, packedLength) => plainLength >= PACK_MIN && packedLength < plainLength * 0.9;
 
 export function streamFrame(ch, id, from, m) {
-  return { v: RPC_VERSION, kind: 'stream', ch, id, from, m };
+  return { v: RPC_VERSION, kind: 'stream', ch, id, ...(from ? { from } : {}), m };
 }
 
 export function isStreamFrame(frame) {

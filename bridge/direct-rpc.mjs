@@ -287,7 +287,7 @@ export class DirectRpcBridge {
   // `deflate`: the page said it inflates.
   async sendStream(ch, id, target, message, deflate) {
     const m = await packStreamMessage(message, deflate ? deflateRawSync : null);
-    await this.deliver([streamFrame(ch, id, 'bridge', m)], target, { stream: ch }, 'push');
+    await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
   }
 
   get bufferedAmount() {

@@ -480,7 +480,9 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
 
   function send(message) {
     if (!ownsRuntime(current) || current.socket?.readyState !== WebSocket.OPEN) return false;
-    current.socket.send(JSON.stringify({ sessionId: current.sessionId, ...message, epoch: current.epoch }));
+    // Input and resize name the screen they were meant for (`view`, from `ready`).
+    const view = message.type === 'input' || message.type === 'resize' ? { view: current.view } : {};
+    current.socket.send(JSON.stringify({ ...message, ...view }));
     return true;
   }
 
@@ -581,6 +583,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.ready = false;
       current.exited = message.exited;
       current.epoch = message.epoch;
+      current.view = message.view;
       current.sessionId = message.sessionId;
       current.sessionName = message.name;
       rememberSelection();
@@ -603,7 +606,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       clearTimeout(current.syncTimer);
       current.syncTimer = setTimeout(() => { fail('Screen sync timed out; reconnect to restore'); current.socket?.close(); }, 60000);
     } else if (message.type === 'snapshot') {
-      if (message.epoch !== current.epoch || message.snapshotId !== current.snapshotId || message.index !== current.snapshotIndex) throw new Error('Snapshot sequence mismatch');
+      if (message.snapshotId !== current.snapshotId || message.index !== current.snapshotIndex) throw new Error('Snapshot sequence mismatch');
       const bytes = decode(message.data);
       current.snapshotBytes += bytes.length;
       if (current.snapshotBytes > current.snapshotTotal || current.snapshotTotal > 4 * 1024 * 1024) throw new Error('Snapshot exceeds limit');
@@ -612,7 +615,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.snapshotIndex++;
       send({ type: 'render_ack', eventSeq: message.eventSeq, snapshotId: message.snapshotId, index: message.index });
     } else if (message.type === 'synced') {
-      if (message.epoch !== current.epoch || message.snapshotId !== current.snapshotId
+      if (message.snapshotId !== current.snapshotId
         || current.snapshotBytes !== current.snapshotTotal || current.snapshotIndex !== current.snapshotChunks) throw new Error('Incomplete terminal snapshot');
       clearTimeout(current.syncTimer);
       current.ready = true;
@@ -621,7 +624,6 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       controls();
       settledStatus();
     } else if (message.type === 'output') {
-      if (message.epoch !== current.epoch) throw new Error('Terminal generation mismatch');
       const bytes = decode(message.data);
       if (message.reset) terminal.reset(); // the Bridge sends the current screen after skipping output
       await write(bytes);
@@ -631,7 +633,6 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (current.ackBytes >= 48 * 1024) acknowledge();
       else if (!current.ackTimer) current.ackTimer = setTimeout(acknowledge, 100);
     } else if (message.type === 'resized') {
-      if (message.epoch !== current.epoch) return;
       const localResize = current.requestedSize?.cols === message.cols && current.requestedSize?.rows === message.rows;
       const followBottom = localResize && current.requestedSize.followBottom;
       if (localResize) current.requestedSize = null;

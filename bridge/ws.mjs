@@ -182,10 +182,7 @@ function streamChannel(ch, id, target, deflate = false) {
     readyState: 1,
     target,
     deflate,
-    follow(frame) {
-      channel.target = frame.from;
-      channel.deflate = frame.inflate === 1;
-    },
+    follow(frame) { channel.target = frame.from; }, // `inflate` comes only with open / start
     get bufferedAmount() { return _directRpc?.bufferedAmount || 0; },
     send(message) {
       if (channel.readyState !== 1) return false;

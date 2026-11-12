@@ -475,7 +475,9 @@ async function sendStream(entry, message) {
     target: route.dataId, action: 'rpc' });
   const m = await packStreamMessage(message, CAN_DEFLATE ? deflate : null);
   // `inflate`: the Bridge may send this page deflated data.
-  const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), ...(CAN_INFLATE ? { inflate: 1 } : {}) };
+  // The Bridge decides compression once per channel, when it opens (`open` / `start`).
+  const opens = message.type === 'open' || message.type === 'start';
+  const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), ...(CAN_INFLATE && opens ? { inflate: 1 } : {}) };
   socket.send(await route.sign(JSON.stringify(frame), undefined, { stream: entry.ch }));
 }
 

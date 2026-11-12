@@ -19,7 +19,8 @@ export class RemoteTerminalSocket extends EventTarget {
   pending = new Map();
   pendingBytes = 0;
   unacked = new Map(); // clientSeq (0 = open) → { message, size, sentAt }
-  terminalId = crypto.randomUUID();
+  // 72 random bits: unique among one Bridge's pages, shorter on every frame than a UUID.
+  terminalId = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(9)))).replace(/\+/g, '-').replace(/\//g, '_');
 
   constructor(device, { projectHash } = {}) {
     super();
