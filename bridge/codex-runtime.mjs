@@ -15,6 +15,7 @@ import { projectHashCandidatesFromCwd, storageSessionId } from './session-identi
 import { projectCwdFromCwd } from './repository-identity.mjs';
 import { CodexAppServerClient } from './codex-app-server.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
+import { sessionIndex } from './session-index.mjs';
 
 function publicSession(session) {
   const { _filePath, _lineCount, ...item } = session;
@@ -26,9 +27,11 @@ async function deleteCodexHistory(sessionId, projectHash, context, ownsLiveSessi
   const files = await (context.codexHistoryFiles ||= discoverCodexHistory(context));
   const projects = new Map();
   const ids = new Set(sessionId ? [sessionId] : files
-    .filter(({ cwd }) => {
+    .filter(({ cwd, repositoryUrl }) => {
       if (typeof cwd !== 'string' || !cwd) return false;
-      if (!projects.has(cwd)) projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(cwd)));
+      if (!projects.has(cwd)) {
+        projects.set(cwd, projectHashCandidatesFromCwd(projectCwdFromCwd(sessionIndex.codexProjectCwd(cwd, repositoryUrl))));
+      }
       return projects.get(cwd).includes(projectHash);
     }).map((file) => file.id));
   // Only spawned children cascade. User-created forks remain independent.

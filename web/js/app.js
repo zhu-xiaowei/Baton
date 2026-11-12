@@ -1887,6 +1887,7 @@ async function startNewSession(projectHash) {
   saveNav();
   // Reset WS message state for new session
   state.wsAllMessages = [];
+  state.wsTitleRows = [];
   state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
   state.wsRenderedCount = 0;

@@ -57,6 +57,7 @@ export async function discoverCodexHistory(options = {}) {
       const row = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
         result.cwd = row.payload?.cwd;
+        result.repositoryUrl = row.payload?.git?.repository_url;
         result.parentId = row.payload?.parent_thread_id;
       }
     } catch {} // Still allow an explicit session deletion by its filename ID.

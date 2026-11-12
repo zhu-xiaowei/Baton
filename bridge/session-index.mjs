@@ -16,6 +16,7 @@ import {
 import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
 import { discoverClaudeSubagents } from './claude-subagent.mjs';
 import { projectHashFromCwd, storageSessionId } from './session-identity.mjs';
+import { repositoryIdentity } from './repository-identity.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
 import { advance, claudePreview, codexView, newState, summarize, titlesBefore } from './session-summary.mjs';
 
@@ -61,6 +62,7 @@ export class SessionIndex {
     this.subagents = new Map(); // root file → { count, children? }
     this.names = new Map();     // projectHash → readable path
     this.cwdProjects = new Map();
+    this.repositoryRoots = null; // Codex repository_url → primary checkout root
     this.sentPrompts = new Map(); // Claude id → prompt Baton sent before CC wrote it
     this.history = null;
     this.threadNames = new Map(); // Codex home → { mtime, names }
@@ -253,6 +255,7 @@ export class SessionIndex {
     this.subagents.clear();
     this.names.clear();
     this.cwdProjects.clear();
+    this.repositoryRoots = null;
     this.markDirty();
   }
 
@@ -290,9 +293,40 @@ export class SessionIndex {
     }
   }
 
-  cwdProject(cwd) {
-    if (!this.cwdProjects.has(cwd)) this.cwdProjects.set(cwd, projectHashFromCwd(cwd, this.claudeRoot));
+  cwdProject(cwd, repositoryUrl) {
+    if (!this.cwdProjects.has(cwd)) {
+      this.cwdProjects.set(cwd, projectHashFromCwd(this.codexProjectCwd(cwd, repositoryUrl), this.claudeRoot));
+    }
     return this.cwdProjects.get(cwd);
+  }
+
+  // Path of cwd below a Codex worktree checkout (<CODEX_HOME>/worktrees/<id>/<repo>), else null.
+  codexWorktreePath(cwd) {
+    for (const home of this.homes()) {
+      const parts = path.relative(path.join(home, 'worktrees'), cwd).split(path.sep);
+      if (parts.length >= 2 && parts[0] !== '..' && !path.isAbsolute(parts[0])) return parts.slice(2);
+    }
+    return null;
+  }
+
+  // A worktree checkout Codex deleted can no longer be traced on disk; its sessions join the
+  // checkout of another indexed session with the same git remote.
+  codexProjectCwd(cwd, repositoryUrl) {
+    const rest = repositoryUrl && this.codexWorktreePath(cwd);
+    if (!rest || fs.existsSync(cwd)) return cwd;
+    if (!this.repositoryRoots) {
+      this.repositoryRoots = new Map();
+      const tried = new Set();
+      for (const rec of this.records.values()) {
+        const meta = rec.runtime === 'codex' && rec.state?.meta;
+        if (!meta?.repositoryUrl || this.repositoryRoots.has(meta.repositoryUrl) || tried.has(meta.cwd)) continue;
+        tried.add(meta.cwd);
+        const root = !this.codexWorktreePath(meta.cwd) && repositoryIdentity(meta.cwd)?.primaryRoot;
+        if (root) this.repositoryRoots.set(meta.repositoryUrl, root);
+      }
+    }
+    const root = this.repositoryRoots.get(repositoryUrl);
+    return root ? path.join(root, ...rest) : cwd;
   }
 
   // Non-empty agent-*.jsonl files below a Claude root, like discoverClaudeSubagents.
@@ -329,7 +363,7 @@ export class SessionIndex {
         }
       } else {
         const codex = codexView(rec.state, this.threadNames.get(rec.home)?.names.get(rec.id));
-        const project = codex && intern(this.cwdProject(codex.cwd));
+        const project = codex && intern(this.cwdProject(codex.cwd, codex.repositoryUrl));
         if (project) view = { project, preview: codex.preview, parent: codex.parent, visible: codex.visible, agentCount: 0 };
       }
     }
