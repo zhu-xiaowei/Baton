@@ -1,6 +1,7 @@
 // One retry scenario per worker thread (each has its own globals): the App transport, loaded as is,
 // against a real DirectRpcBridge through an in-process relay that injects faults.
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { saveAccountKey } from '../../../web/js/v2/account-key.js';
 import { parentPort, workerData } from 'node:worker_threads';
 import { DirectRpcBridge } from '../../../bridge/direct-rpc.mjs';
 import { state } from '../../../web/js/state.js';
@@ -34,7 +35,9 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
       if (appSocket?.id === target && appSocket.readyState === 1) setTimeout(() => appSocket.onmessage?.({ data: body }), 5);
     },
   };
-  const bridge = new DirectRpcBridge({ key: 'key', handlers: {
+  const accountKey = randomBytes(32);
+  void saveAccountKey(state.SERVER, accountKey); // the App and Bridge share K (e2ee.mjs)
+  const bridge = new DirectRpcBridge({ key: 'key', accountKey, handlers: {
     work: async (params) => { log.computed++; await new Promise((r) => setTimeout(r, computeMs)); return params.text ? { length: params.text.length } : result; },
     subscribe: (params, caller) => {
       log.subscribes.push({ to: caller.replyTo, renew: !!params.renew });
@@ -76,7 +79,7 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
   globalThis.WebSocket = FakeWebSocket;
   // The first /devices reply carries credentials with `appExpiresIn` left, later ones fresh credentials.
   globalThis.fetch = async () => (await new Promise((r) => setTimeout(r, devicesDelayMs)), { ok: true, status: 200, json: async () => ({ protocol: 2, devices: [],
-    rpc: { endpoint: ENDPOINT, bridges: online ? [{ device: 'dev', dataId: 'bridge=' }] : [],
+    rpc: { endpoint: ENDPOINT, bridges: online ? [{ device: 'dev', dataId: 'bridge=', pub: bridge.keys.pub, fp: bridge.keys.fp }] : [],
       credentials: { ...credentials(), sessionToken: 'TOKEN' + log.fetches, expiresAt: Math.floor(Date.now() / 1000) + (log.fetches++ ? 3600 : appExpiresIn) } } }) });
   return { log, bridge, reconnect: () => appSocket.close(), restart: () => { epoch = 'b'; } };
 }

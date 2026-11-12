@@ -19,7 +19,7 @@ import {
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
+import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -746,6 +746,8 @@ function connect() {
     };
     _directRpc = new DirectRpcBridge({
       key: _config.apiKey,
+      accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
+      saveAccountKey: (raw) => { _config.accountKey = raw.toString('base64'); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
       limited: limitedRequest,
@@ -946,7 +948,8 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp });
+configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
+  notifyKey: () => _directRpc?.keys?.notifyKey });
 setTransferAccess(() => {
   if (!_directRpc) throw new Error('File storage is unavailable');
   return _directRpc.storageAccess();

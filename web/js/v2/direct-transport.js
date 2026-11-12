@@ -5,8 +5,10 @@
 // every event.
 // One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
-import { RpcAssembler, createHeaderSigner, decodeRpcPayload, packStreamMessage, rpcRequest, rpcRequestFrames, streamFrame,
-  unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStreamMessage, packStreamMessage, rpcRequest,
+  rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
+import { appKeys } from '../../../bridge/e2ee.mjs';
+import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { setTransferAccess } from '../../../bridge/transfer-store.mjs';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
@@ -59,6 +61,10 @@ let replacedId = '';           // this App's previous connection, which the Brid
 let devicesAt = 0;
 let routesKnown = false;      // true once /devices answered since the socket last dropped
 let devicesInflight = null;
+let keys = null;              // appKeys(K): every frame but `account_key` is sealed (e2ee.mjs)
+let keysLoaded = null;
+let migrating = null;
+let migratedAt = -Infinity;
 
 function storageKey() {
   return 'baton-v2-rpc:' + state.SERVER;
@@ -97,14 +103,16 @@ function applyRpc(next, { persist = true } = {}) {
     storage: next.storage || null };
   const seen = new Set();
   const cameOnline = [];
+  const rekeyed = [];
   for (const bridge of next.bridges || []) {
     seen.add(bridge.device);
-    const version = bridge.dataId + '|' + (next.credentials?.sessionToken || '').slice(-16);
+    const version = bridge.dataId + '|' + (bridge.pub || '').slice(-8) + '|' + (next.credentials?.sessionToken || '').slice(-16);
     const previous = routes.get(bridge.device);
     if (previous?.version !== version || !previous.online) {
-      routes.set(bridge.device, { online: true, dataId: bridge.dataId, version });
+      routes.set(bridge.device, { online: true, dataId: bridge.dataId, version, pub: bridge.pub || '', fp: bridge.fp || '' });
     }
     if (!previous?.online) cameOnline.push(bridge.device);
+    else if (previous.pub !== (bridge.pub || '')) rekeyed.push(bridge.device); // a new session: subscribe again
   }
   for (const [device, route] of routes) {
     if (!seen.has(device)) routes.set(device, { ...route, online: false, version: route.version + '|off' });
@@ -118,6 +126,7 @@ function applyRpc(next, { persist = true } = {}) {
     for (const listener of onlineListeners) listener(device);
     resubscribe(device);
   }
+  for (const device of rekeyed) resubscribe(device);
 }
 
 // Pages learn when a device's Bridge joins (or rejoins) and can be asked again.
@@ -323,13 +332,18 @@ function receive(ws, text) {
   }
   if (frame.kind === 'stream') {
     const entry = streams.get(frame.ch + '|' + frame.id);
-    if (entry && frame.m) unpackStreamMessage(frame.m, inflate).then((m) => entry.onMessage(m), () => {});
+    if (!entry || !frame.m) return;
+    entry.inbound = entry.inbound.then(async () => {
+      const session = await sessionFor(entry.device);
+      const m = session && await openStreamMessage(frame, frame.m, session.open);
+      if (m) entry.onMessage(await unpackStreamMessage(m, inflate));
+    }).catch(() => {});
     return;
   }
   if (frame.kind === 'push') {
     const part = pushes.add(frame);
     if (part?.payload) {
-      pushQueue = pushQueue.then(() => decodeRpcPayload(part.payload, inflate))
+      pushQueue = pushQueue.then(() => decodeRpcPayload(part.payload, inflate, openAny))
         .then((event) => { for (const listener of pushListeners) listener(event); }).catch(() => {});
     }
     return;
@@ -342,8 +356,9 @@ function receive(ws, text) {
       request.acked = true;
       try { request.onAccepted?.(); } catch {}
     }
-    if (frame.kind === 'rpc_progress' && frame.progress !== undefined) {
-      try { request.onProgress?.(frame.progress); } catch {}
+    if (frame.kind === 'rpc_progress' && frame.data && request.session) {
+      decodeRpcPayload({ enc: frame.enc, data: frame.data, head: frame }, inflate, request.session.open)
+        .then((progress) => request.onProgress?.(progress)).catch(() => {});
     }
     return;
   }
@@ -354,7 +369,61 @@ function receive(ws, text) {
   if (!pending.has(frame.requestId)) return;
   const part = assembler.add(frame);
   if (!part?.done) return;
-  finish(part.requestId, pending.get(part.requestId), part.error ? { error: part.error } : { payload: part.payload });
+  finish(part.requestId, pending.get(part.requestId), part.error ? { error: part.error } : { payload: part.payload, failed: part.failed });
+}
+
+// Pushes do not say which Bridge sealed them; each live session is tried (a wrong key fails at once).
+async function openAny(head, text) {
+  for (const route of routes.values()) {
+    const session = route.online && await routeSession(route);
+    const out = session && await session.open(head, text);
+    if (out) return out;
+  }
+  return null;
+}
+
+// For the notification code on the phone (iOS extension, Android service): K's alert key only.
+export async function notifyKey() {
+  await accountKeys();
+  return keys ? keys.notifyKey() : '';
+}
+
+function accountKeys() {
+  keysLoaded ||= loadAccountKey(state.SERVER).then(async (k) => { if (k && !keys) keys = await appKeys(k); });
+  return keysLoaded;
+}
+
+function routeSession(route) {
+  return keys && route?.pub && route.fp === keys.fp ? keys.session(route.pub) : null;
+}
+
+async function sessionFor(device) {
+  await accountKeys();
+  return routeSession(routes.get(device));
+}
+
+// Existing users have only the API key: the App takes K from a Bridge that has one (the smallest
+// fingerprint wins, so every App and Bridge converge), or creates it, and gives it to the Bridges
+// without it, which then join again with sealed sessions (docs/v2-accounts-e2ee-plan.md §9).
+function migrate() {
+  if (migrating || performance.now() - migratedAt < STALL_MS) return;
+  migrating = (async () => {
+    const online = [...routes].filter(([, route]) => route.online);
+    const keyed = online.filter(([, route]) => route.fp).sort(([, a], [, b]) => (a.fp < b.fp ? -1 : 1));
+    const take = async (fp) => (await request(keyed.find(([, route]) => route.fp === fp)[0], 'account_key', {})).k;
+    let raw = null;
+    if (!keyed.length) raw = crypto.getRandomValues(new Uint8Array(32));
+    else if (keys?.fp !== keyed[0][1].fp) raw = fromBase64(await take(keyed[0][1].fp));
+    if (raw?.length === 32) {
+      keys = await appKeys(await saveAccountKey(state.SERVER, raw));
+      window.dispatchEvent?.(new Event('baton-account-key'));
+    }
+    if (!keys) return;
+    const missing = online.filter(([, route]) => route.fp !== keys.fp);
+    if (!missing.length) return;
+    const k = raw ? toBase64(raw) : await take(keys.fp);
+    await Promise.all(missing.map(([device]) => request(device, 'account_key', { k })));
+  })().catch(() => {}).finally(() => { migrating = null; migratedAt = performance.now(); });
 }
 
 async function finish(key, request, outcome) {
@@ -363,8 +432,11 @@ async function finish(key, request, outcome) {
   timing('rtt:' + request.device, performance.now() - request.sentAt);
   if (outcome.error) return request.reject(new Error(outcome.error));
   if (!outcome.payload) return request.reject(new Error(outcome.reason || 'failed'));
-  try { request.resolve(await decodeRpcPayload(outcome.payload, inflate)); }
-  catch (error) { request.reject(error); }
+  try {
+    const value = await decodeRpcPayload(outcome.payload, inflate, request.method === 'account_key' ? null : request.session?.open);
+    if (outcome.failed) request.reject(new Error(value.error));
+    else request.resolve(value);
+  } catch (error) { request.reject(error); }
 }
 
 async function send(key, request, route, missing) {
@@ -375,6 +447,18 @@ async function send(key, request, route, missing) {
     ack: request.ack });
   if (!CAN_INFLATE) body.accept = [];
   try {
+    const clear = request.method === 'account_key';
+    const session = clear ? null : await sessionFor(request.device);
+    if (!clear && !session) {
+      request.attemptVersion = null;
+      return migrate();
+    }
+    // Sealed once per session: a resend carries the same chunks, so they assemble on the Bridge.
+    if (session && request.session !== session) {
+      request.session = session;
+      body.pk = keys.pub;
+      request.frames = await rpcRequestFrames(body, CAN_DEFLATE ? deflate : null, session.seal);
+    }
     // One signer per route (a route is replaced when its Bridge or the credentials change).
     route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
       target: route.dataId, action: 'rpc' });
@@ -451,7 +535,7 @@ export function openStream(device, ch, id, onMessage) {
   connect();
   if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = ch + '|' + id;
-  const entry = { device, ch, id, onMessage, chain: Promise.resolve() };
+  const entry = { device, ch, id, onMessage, chain: Promise.resolve(), inbound: Promise.resolve(), pkFor: '' };
   streams.set(key, entry);
   return {
     send(message) {
@@ -476,11 +560,17 @@ async function sendStream(entry, message) {
   const route = routes.get(entry.device);
   route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
     target: route.dataId, action: 'rpc' });
-  const m = await packStreamMessage(message, CAN_DEFLATE ? deflate : null);
+  const session = await sessionFor(entry.device);
+  if (!session) return migrate();
+  const m = await sealStreamMessage({ kind: 'stream', ch: entry.ch, id: entry.id },
+    await packStreamMessage(message, CAN_DEFLATE ? deflate : null), session.seal);
   // `inflate`: the Bridge may send this page deflated data.
   // The Bridge decides compression once per channel, when it opens (`open` / `start`).
   const opens = message.type === 'open' || message.type === 'start';
-  const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), ...(CAN_INFLATE && opens ? { inflate: 1 } : {}) };
+  // The public key goes with the first frame to each Bridge process, then only its tag.
+  const pk = entry.pkFor !== route.pub ? { pk: keys.pub } : {};
+  entry.pkFor = route.pub;
+  const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), s: keys.tag, ...pk, ...(CAN_INFLATE && opens ? { inflate: 1 } : {}) };
   socket.send(await route.sign(JSON.stringify(frame), undefined, { stream: entry.ch }));
 }
 
@@ -506,6 +596,7 @@ export function resetDirectTransport() {
   epochs.clear();
   lastId = replacedId = '';
   rpc = null;
+  keys = keysLoaded = null;
   routesKnown = false;
   restored = true;
   dataUrl = '';
