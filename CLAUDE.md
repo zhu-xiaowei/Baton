@@ -447,7 +447,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   Lambda). A turn seq gap pings the direct socket; once its pong has arrived (socket alive and
   drained over the client link) and ≥3s passed, the frame is treated as lost and
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
-  gapped-end path. A running turn with no frame for 20s (no permission prompt) is checked against
+  gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
   the history status; `completed` settles it and reloads the history as a snapshot, covering a lost
   tail or `stream_end` (the streamed blocks stopped where the frames were lost).
 - **History rows rejoin their stream row by message order.** History rows carry no `turnId`, so
