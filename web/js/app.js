@@ -1992,10 +1992,9 @@ async function loadMessages(sessionId, preview, options) {
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
+  // The first history reply says whether the root has subagents; `threads` is asked only then.
+  if (!options.preserveThreads) state.threadsPendingRoot = rootSessionId;
   startWs(sessionId);
-  if (!options.preserveThreads) {
-    refreshSessionThreads().catch(function () {});
-  }
 
   try {
     var t0 = performance.now();

@@ -1841,6 +1841,10 @@ async function loadLatestMessages(sessionId, options = {}) {
     } catch (error) {
       restError = error;
     }
+    if (state.threadsPendingRoot && state.threadsPendingRoot === state.rootSessionId) {
+      state.threadsPendingRoot = '';
+      if (restError || data.agentCount !== 0) window.refreshSessionThreads?.().catch(function () {});
+    }
     if (!_historyFetchBarriers.isCurrent(barrier) || state.wsSessionId !== sessionId) {
       return { ok: false, stale: true };
     }
