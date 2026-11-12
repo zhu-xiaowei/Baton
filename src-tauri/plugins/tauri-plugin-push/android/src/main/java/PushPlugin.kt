@@ -26,6 +26,7 @@ import org.json.JSONArray
 class StartArgs {
   lateinit var server: String
   lateinit var apiKey: String
+  var notifyKey: String = ""
   var prompt: Boolean = true
 }
 
@@ -91,7 +92,7 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
       return
     }
     val args = invoke.parseArgs(StartArgs::class.java)
-    AlertService.start(activity, args.server.trimEnd('/'), args.apiKey)
+    AlertService.start(activity, args.server.trimEnd('/'), args.apiKey, args.notifyKey)
     invoke.resolve(JSObject().put("granted", true))
   }
 

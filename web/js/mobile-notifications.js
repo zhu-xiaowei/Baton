@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
-import { devices } from './v2/direct-transport.js';
+import { devices, notifyKey } from './v2/direct-transport.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed. Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -65,7 +65,7 @@ async function openNotification(event) {
 async function enableIos(prompt) {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
   // The notification extension reads these to fetch each alert's text.
-  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, prompt });
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt });
   if (!result.granted || !enabled() || !state.KEY) return result;
   const device = { token: result.token, environment: result.environment };
   await window.apiPost('/api/notifications/devices', device);
@@ -84,7 +84,7 @@ function showSwitch() {
 async function apply(prompt = true) {
   if (enabled()) {
     permission = await (platform === 'ios' ? enableIos(prompt)
-      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt })) || permission;
   } else {
     setStatus('');
   }
@@ -134,6 +134,8 @@ async function initialize() {
   const prompt = !localStorage.getItem(ASKED);
   localStorage.setItem(ASKED, '1');
   await apply(prompt);
+  // The phone opens sealed alerts with K's alert key: hand it over again once K arrives.
+  window.addEventListener('baton-account-key', () => { void apply(false).catch(() => {}); });
 }
 
 export function initMobileNotifications() {
