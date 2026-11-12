@@ -132,6 +132,24 @@ Done:
 - Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
   whose `engines` the running Node does not meet.
 
+### H2: DeepSeek Harness (dsh 0.2.2, log v4) — `bridge/runtimes/dsh/`
+- Registered by `bridge.mjs` only when `DSH_HOME` (default `~/.dsh`) exists. Storage id `dsh:<native id>`.
+- Logs are concatenated zstd frames; `frames.mjs` splits them by header (Node decodes one frame per call)
+  and `FrameIndex` is the LineIndex of frames. The warm-up workers GC every 16 frames (zstd contexts are
+  freed only on GC). Title = last `session/title`, else DSH's 5-word / 40-byte fallback, else the folder.
+- Status: a held `session.lock` (Linux `/proc/locks`, macOS `lsof`, read off the request path) plus the
+  log: open asks/approvals → needs_input, open turn → running, a child holding its lock keeps the root running.
+- Rows: one per event, assistant messages one row per block (so live blocks meet their own row). Live turns
+  get no rows of their own: the log watcher hands the new rows to the running turn (`deliver`), tagging the
+  first prompt row after a send `live:user:<turnId>`; other Sessions' rows go to subscribers.
+- Interaction: one `dsh --profile acp --patch ~/.baton-bridge/dsh-baton.patch.yml` per Session; sends queue in
+  it (ACP admits one prompt), and when the queue empties: `session/close` → EOF → the log is read to its end →
+  `stream_end`. The overlay pins approval to ask and adds ask_user_question with `baton-ask.mjs`, which asks
+  the Bridge over fd 3 (multi-select answers keep each question id). Approvals are allow-once/reject-once;
+  "for this session" is kept in `~/.baton-bridge/dsh-grants.json` and answered by the Bridge.
+- A lock held by another process → `dsh_active_writer` takeover (SIGTERM; a `dsh web` closes all its sessions).
+  Delete removes the Session folders (children too) and DSH's projcache entry. Rename is not supported yet.
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout

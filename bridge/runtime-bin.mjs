@@ -18,7 +18,7 @@ function versionDirs(root, suffix) {
 }
 
 // Node version managers' install directories, each holding a node binary.
-function nodeDirs() {
+export function nodeDirs() {
   const bin = IS_WINDOWS ? '' : 'bin';
   const fnm = process.env.FNM_DIR || (process.platform === 'darwin'
     ? path.join(HOME, 'Library/Application Support/fnm') : path.join(HOME, '.local/share/fnm'));

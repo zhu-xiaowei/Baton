@@ -17,6 +17,7 @@ import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
+import { registerRuntime } from './runtime-registry.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
@@ -69,6 +70,8 @@ while (!CONFIG.wsUrl && !shuttingDown) {
   if (CONFIG.wsUrl) saveConfig(CONFIG);
   else await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
+// Other runtimes load only when their data directory exists.
+if (fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))) registerRuntime((await import('./runtimes/dsh/index.mjs')).default);
 initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
