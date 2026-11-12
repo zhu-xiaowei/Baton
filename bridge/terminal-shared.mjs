@@ -92,6 +92,18 @@ export function createSharedTerminals(options) {
     else rawSend(peer, message, bytes);
   }
 
+  // The page has displayed output through `eventSeq` (a render_ack, or `rendered` on its input).
+  function rendered(peer, eventSeq) {
+    if (!Number.isSafeInteger(eventSeq) || eventSeq < 1 || eventSeq > peer.eventSeq) throw new Error('Invalid display acknowledgement');
+    for (const [sequence, bytes] of peer.inflight) {
+      if (sequence <= eventSeq) {
+        peer.inflight.delete(sequence);
+        peer.inflightBytes -= bytes;
+      }
+    }
+    catchUp(peer);
+  }
+
   function catchUp(peer) {
     if (!peer.behind || peer.snapshot || peer.closed || peer.inflightBytes >= CATCH_UP_BYTES) return;
     const session = peer.session;
@@ -433,14 +445,7 @@ export function createSharedTerminals(options) {
     peer.lastSeen = Date.now();
     if (message.type === 'detach') return drop(peer);
     if (message.type === 'render_ack') {
-      if (!Number.isSafeInteger(message.eventSeq) || message.eventSeq < 1 || message.eventSeq > peer.eventSeq) throw new Error('Invalid display acknowledgement');
-      for (const [sequence, bytes] of peer.inflight) {
-        if (sequence <= message.eventSeq) {
-          peer.inflight.delete(sequence);
-          peer.inflightBytes -= bytes;
-        }
-      }
-      catchUp(peer);
+      rendered(peer, message.eventSeq);
       if (peer.snapshot?.id && peer.snapshot.id === message.snapshotId) {
         if (!Number.isSafeInteger(message.index) || message.index !== peer.snapshot.acked || message.index >= peer.snapshot.sent) throw new Error('Invalid snapshot acknowledgement');
         peer.snapshot.acked++;
@@ -478,6 +483,7 @@ export function createSharedTerminals(options) {
       if ((!INPUT_TYPES.has(message.type) && !MANAGEMENT_TYPES.has(message.type)) || !Number.isSafeInteger(message.clientSeq) || message.clientSeq < 1) throw new Error('Invalid terminal input');
       if (MANAGEMENT_TYPES.has(message.type) && (typeof message.requestId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(message.requestId))) throw new Error('Invalid management request');
       if (message.type === 'input') inputBytes(message.data);
+      if (message.rendered !== undefined) rendered(peer, message.rendered);
       if (message.type === 'resize') dimensions(message);
       // Input the App sent again (its acknowledgement was lost): acknowledge it again.
       if (message.clientSeq < peer.nextInput) return void acknowledge(peer, peer.nextInput - 1);

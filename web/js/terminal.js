@@ -481,7 +481,15 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   function send(message) {
     if (!ownsRuntime(current) || current.socket?.readyState !== WebSocket.OPEN) return false;
     // Input and resize name the screen they were meant for (`view`, from `ready`).
-    const view = message.type === 'input' || message.type === 'resize' ? { view: current.view } : {};
+    // They also report what is displayed, which otherwise waits for acknowledge().
+    const screenInput = message.type === 'input' || message.type === 'resize';
+    const view = screenInput ? { view: current.view, ...(current.lastAck ? { rendered: current.lastAck } : {}) } : {};
+    if (screenInput && current.lastAck) {
+      clearTimeout(current.ackTimer);
+      current.ackTimer = null;
+      current.lastAck = 0;
+      current.ackBytes = 0;
+    }
     current.socket.send(JSON.stringify({ ...message, ...view }));
     return true;
   }
@@ -630,8 +638,17 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (!ownsRuntime(current) || generation !== current.generation) return;
       current.lastAck = message.eventSeq;
       current.ackBytes += bytes.length;
+      // Large output is reported within 100 ms (the Bridge paces catch-up by it); a little output
+      // (echoes, spinners) waits up to 2 s or rides on the next input.
       if (current.ackBytes >= 48 * 1024) acknowledge();
-      else if (!current.ackTimer) current.ackTimer = setTimeout(acknowledge, 100);
+      else if (current.ackBytes >= 16 * 1024 && current.ackSlow) {
+        clearTimeout(current.ackTimer);
+        current.ackSlow = false;
+        current.ackTimer = setTimeout(acknowledge, 100);
+      } else if (!current.ackTimer) {
+        current.ackSlow = current.ackBytes < 16 * 1024;
+        current.ackTimer = setTimeout(acknowledge, current.ackSlow ? 2000 : 100);
+      }
     } else if (message.type === 'resized') {
       const localResize = current.requestedSize?.cols === message.cols && current.requestedSize?.rows === message.rows;
       const followBottom = localResize && current.requestedSize.followBottom;
