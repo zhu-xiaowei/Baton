@@ -71,7 +71,10 @@ while (!CONFIG.wsUrl && !shuttingDown) {
   else await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 // Other runtimes load only when their data directory exists.
-if (fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))) registerRuntime((await import('./runtimes/dsh/index.mjs')).default);
+if (fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))) {
+  // A package installed by an older updater may lack runtimes/; the Bridge runs without them.
+  await import('./runtimes/dsh/index.mjs').then((m) => registerRuntime(m.default), (e) => console.error(`[init] DeepSeek Harness unavailable: ${e.message}`));
+}
 initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
 sessionIndex.statuses = lastKnownStatus;
 lastKnownStatus.onChange = () => sessionIndex.markStatus();
