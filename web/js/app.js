@@ -34,7 +34,7 @@ import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
-import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
+import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
@@ -428,7 +428,7 @@ function openRuntimePicker() {
     var current = runtime === state.appState.runtime;
     return '<button class="runtime-picker-row" type="button" role="menuitemradio" aria-checked="' + current + '"'
       + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
-      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">&#10003;</span>' : '')
+      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">' + CHECK_ICON_SVG + '</span>' : '')
       + '</button>';
   }).join('');
   // Drop down from the button, right-aligned, with the arrow under its centre.
@@ -1574,7 +1574,7 @@ function attachSessionIdCopy(container) {
       event.stopPropagation();
       if (target.classList.contains('copied') || !navigator.clipboard?.writeText) return;
       navigator.clipboard.writeText(target.dataset.copy).then(function () {
-        target.textContent = '✓';
+        target.innerHTML = CHECK_ICON_SVG;
         target.classList.add('copied');
         setTimeout(function () {
           target.textContent = label;

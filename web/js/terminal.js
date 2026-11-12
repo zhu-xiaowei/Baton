@@ -1,4 +1,5 @@
 import '../css/terminal.css';
+import { CHECK_ICON_SVG } from './components/icons.js';
 import { layoutPixels } from './page-zoom.js';
 import { backButtonHtml } from './components/back-button.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
@@ -405,7 +406,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       select.setAttribute('aria-current', session.id === current.sessionId ? 'true' : 'false');
       const check = document.createElement('span');
       check.className = 'project-terminal-check';
-      check.textContent = session.id === current.sessionId ? '✓' : '';
+      check.innerHTML = session.id === current.sessionId ? CHECK_ICON_SVG : '';
       check.setAttribute('aria-hidden', 'true');
       const name = document.createElement('span');
       name.textContent = session.name;
