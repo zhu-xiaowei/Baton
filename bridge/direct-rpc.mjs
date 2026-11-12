@@ -1,11 +1,11 @@
 // v2 direct channel: the Bridge keeps a `bridge_data` socket on the data API, receives signed App
-// requests on it without Lambda, answers straight to the requester's socket, and pushes Session
-// events to the connections subscribed to them.
+// requests on it without Lambda, answers straight to the requester's socket, pushes Session
+// events to the connections subscribed to them, and carries terminal and preview streams.
 import { createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { deflateRawSync, inflateRawSync } from 'zlib';
-import { createHeaderSigner } from './terminal-direct-protocol.mjs';
-import { RpcAssembler, decodeRpcPayload, isRpcRequest, pushFrames, rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames } from './direct-rpc-protocol.mjs';
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, packStreamMessage, pushFrames, rpcAckFrame,
+  rpcErrorFrame, rpcProgressFrame, rpcResultFrames, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
 
 // Reads that use the machine (files, Git, transcripts) run at most this many at once; requests that
 // only wait (sends, pushes, uploads) are not counted.
@@ -67,10 +67,12 @@ export class SessionSubscribers {
 
 export class DirectRpcBridge {
   // `limited(frame)`: whether the request counts against MAX_CONCURRENT (default: all do).
-  constructor({ key, sendControl, handlers, subscribers, socketFactory, limited = () => true }) {
+  // `streams[ch](frame)`: terminal / preview frames from Apps, their message already unpacked.
+  constructor({ key, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.sendControl = sendControl;
     this.handlers = handlers;
+    this.streams = streams;
     this.limited = limited;
     this.subscribers = subscribers || new SessionSubscribers();
     this.socketFactory = socketFactory || ((url) => new WebSocket(url, { handshakeTimeout: 15000, perMessageDeflate: false }));
@@ -171,6 +173,10 @@ export class DirectRpcBridge {
       return;
     }
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
+    if (isStreamFrame(frame)) {
+      unpackStreamMessage(frame.m, inflateRawSync).then((m) => this.streams[frame.ch]?.({ ...frame, m }), () => {});
+      return;
+    }
     if (!isRpcRequest(frame)) return;
     if (frame.chunk) return void this.receiveChunk(frame);
     this.accept(frame);
@@ -274,6 +280,18 @@ export class DirectRpcBridge {
       const frames = deflate ? (deflated ||= pushFrames(id, event, { deflate: deflateRawSync })) : (plain ||= pushFrames(id, event));
       void this.deliver(frames, connectionId, label, 'push');
     }
+  }
+
+  // A terminal or preview message to an App connection. Best effort: both channels recover from
+  // a sequence gap.
+  // `deflate`: the page said it inflates.
+  async sendStream(ch, id, target, message, deflate) {
+    const m = await packStreamMessage(message, deflate ? deflateRawSync : null);
+    await this.deliver([streamFrame(ch, id, 'bridge', m)], target, { stream: ch }, 'push');
+  }
+
+  get bufferedAmount() {
+    return this.socket?.bufferedAmount || 0;
   }
 
   async deliver(frames, target, label, action = 'rpc') {

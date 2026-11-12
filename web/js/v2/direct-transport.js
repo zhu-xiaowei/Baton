@@ -1,11 +1,12 @@
 // v2 App ⇄ Bridge direct channel over one `app_data` socket. Callers use
-// request(device, method, params, { onSlow, ack, onAccepted }), subscribe()/unsubscribe() and
-// onPush(); credentials, whoami, routing, resend, retry, timeout and resubscription are handled
-// here, requests by a single reconcile() pass that runs on every event.
+// request(device, method, params, { onSlow, ack, onAccepted }), subscribe()/unsubscribe(),
+// onPush() and openStream() (terminal, preview); credentials, whoami, routing, resend, retry,
+// timeout and resubscription are handled here, requests by a single reconcile() pass that runs on
+// every event.
 // One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
-import { createHeaderSigner } from '../../../bridge/terminal-direct-protocol.mjs';
-import { RpcAssembler, decodeRpcPayload, rpcRequest, rpcRequestFrames } from '../../../bridge/direct-rpc-protocol.mjs';
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, packStreamMessage, rpcRequest, rpcRequestFrames, streamFrame,
+  unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
 import { setTransferAccess } from '../../../bridge/transfer-store.mjs';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
@@ -53,6 +54,7 @@ const resyncListeners = new Set();
 const subscriptions = new Map(); // `device|sessionId` → { device, sessionId, inflight }
 const epochs = new Map();        // device → the Bridge process its last subscribe reply came from
 const pongWaiters = [];
+const streams = new Map();       // `ch|id` → { device, ch, id, onMessage, chain }
 let replacedId = '';           // this App's previous connection, which the Bridge may still push to
 let devicesAt = 0;
 let routesKnown = false;      // true once /devices answered since the socket last dropped
@@ -316,6 +318,11 @@ function receive(ws, text) {
     for (const done of pongWaiters.splice(0)) done();
     return;
   }
+  if (frame.kind === 'stream') {
+    const entry = streams.get(frame.ch + '|' + frame.id);
+    if (entry && frame.m) unpackStreamMessage(frame.m, inflate).then((m) => entry.onMessage(m), () => {});
+    return;
+  }
   if (frame.kind === 'push') {
     const part = pushes.add(frame);
     if (part?.payload) {
@@ -417,10 +424,6 @@ export function devices() {
     if (response.status === 401 || response.status === 403) window.logout?.();
     if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
     const body = await response.json();
-    if (body.wsUrl) {
-      state.WS_URL = body.wsUrl;
-      localStorage.setItem('_wsurl', body.wsUrl);
-    }
     if (body.protocol === 2) updateRoutes(body);
     return body;
   })().finally(() => { devicesInflight = null; });
@@ -438,11 +441,42 @@ export async function storageAccess() {
 
 setTransferAccess(storageAccess);
 
-// The control socket's address (terminal, preview), known from /devices.
-export async function controlSocketUrl() {
-  if (!state.WS_URL) await devices();
-  if (!state.WS_URL?.startsWith('wss://')) throw new Error('Server did not provide a WSS endpoint.');
-  return state.WS_URL;
+// A terminal or preview stream to `device` on this socket: `send(message)` in order, `onMessage`
+// for what the Bridge sends to `id`. Messages are best effort; both channels resend and resync.
+export function openStream(device, ch, id, onMessage) {
+  restore();
+  connect();
+  if (!routesKnown && !devicesInflight) devices().catch(() => {});
+  const key = ch + '|' + id;
+  const entry = { device, ch, id, onMessage, chain: Promise.resolve() };
+  streams.set(key, entry);
+  return {
+    send(message) {
+      entry.chain = entry.chain.then(() => sendStream(entry, message)).catch(() => {});
+    },
+    get bufferedAmount() { return socket?.bufferedAmount || 0; },
+    close() { if (streams.get(key) === entry) streams.delete(key); },
+  };
+}
+
+const STREAM_WAIT_MS = 5000;
+
+async function sendStream(entry, message) {
+  // A page opened before the socket or its routes are known waits for them briefly.
+  for (const started = performance.now(); ; await new Promise((resolve) => setTimeout(resolve, 100))) {
+    const route = routes.get(entry.device);
+    const left = rpc?.credentials ? rpc.credentials.expiresAt * 1000 - Date.now() : 0;
+    if (route?.online && connectionId && socket?.readyState === WebSocket.OPEN && left > 5000) break;
+    if (left < RENEW_MS && !devicesInflight && performance.now() - devicesAt > STALL_MS) devices().catch(() => {});
+    if (performance.now() - started > STREAM_WAIT_MS) return;
+  }
+  const route = routes.get(entry.device);
+  route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
+    target: route.dataId, action: 'rpc' });
+  const m = await packStreamMessage(message, CAN_DEFLATE ? deflate : null);
+  // `inflate`: the Bridge may send this page deflated data.
+  const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), ...(CAN_INFLATE ? { inflate: 1 } : {}) };
+  socket.send(await route.sign(JSON.stringify(frame), undefined, { stream: entry.ch }));
 }
 
 // `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once. After a receipt or a

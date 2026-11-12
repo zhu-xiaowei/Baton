@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes } from 'node:crypto';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
-import { RpcAssembler, decodeRpcPayload, rpcErrorFrame, rpcResultFrames } from '../../bridge/direct-rpc-protocol.mjs';
-import { createHeaderSigner } from '../../bridge/terminal-direct-protocol.mjs';
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, rpcErrorFrame, rpcResultFrames } from '../../bridge/direct-rpc-protocol.mjs';
 
 const big = { items: Array.from({ length: 2000 }, (_, i) => ({ id: i, preview: `${'中文'.repeat(20)} ✓ ${randomBytes(24).toString('hex')}` })) };
 
@@ -32,7 +31,7 @@ test('small and uncompressed results stay JSON', async () => {
 test('errors end the request and every chunk fits a signed frame', async () => {
   assert.equal((await roundTrip([rpcErrorFrame('r4', 'unknown method')])).error, 'unknown method');
   const sign = createHeaderSigner({ endpoint: 'https://data.execute-api.ap-northeast-1.amazonaws.com/v1',
-    region: 'ap-northeast-1', target: 'abc=', action: 'terminal_direct_data',
+    region: 'ap-northeast-1', target: 'abc=', action: 'rpc',
     credentials: { accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'T'.repeat(1200), expiresAt: Math.floor(Date.now() / 1000) + 3600 } });
   for (const frame of [...rpcResultFrames('r5', big, { deflate: deflateRawSync }), ...rpcResultFrames('r6', big)]) {
     await sign(JSON.stringify(frame));
