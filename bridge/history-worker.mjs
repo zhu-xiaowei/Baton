@@ -1,5 +1,8 @@
-import { parentPort } from 'node:worker_threads';
+import { parentPort, workerData } from 'node:worker_threads';
 import { createHistoryPages } from './history-pages.mjs';
+import { loadRuntimeModules } from './session-identity.mjs';
+
+await loadRuntimeModules(workerData?.runtimeModules);
 
 const pages = createHistoryPages();
 let queue = Promise.resolve(); // one request at a time: an update must not land inside another's page

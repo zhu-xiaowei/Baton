@@ -3,7 +3,7 @@
 // than the preview stay, because the tool header's state (error, exit code, cancel) reads them.
 import { toolPreview } from './tool-preview.mjs';
 
-const FIELDS = ['uuid', 'type', 'content', 'timestamp', 'nativeId', 'orderKey', 'stopReason', 'toolUseResult'];
+const FIELDS = ['uuid', 'type', 'content', 'timestamp', 'nativeId', 'orderKey', 'stopReason', 'toolUseResult', 'icon', 'noAlert'];
 const UNREAD_INPUTS = ['workdir', 'yield_time_ms', 'max_output_tokens', 'tty'];
 
 function slimBlock(block) {

@@ -64,6 +64,9 @@ class HeadlessProc {
     ];
     if (this.noPersistence) args.push('--no-session-persistence');
     if (this.bare) args.push('--bare');
+    // Session grants live only in CC's memory; every resume gets them again.
+    const allowed = this.sessionId ? this.pool.allowedTools(this.sessionId) : [];
+    if (allowed.length) args.push('--allowedTools', ...allowed);
     // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
     if (this.createId) args.push('--session-id', this.createId);
     else if (this.sessionId) args.push('--resume', this.sessionId);
@@ -73,6 +76,7 @@ class HeadlessProc {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.stdin = this.proc.stdin;
+    this.pool._live.add(this);
     this.stdin.on('error', (error) => this._onClose(-1, error.message));
 
     const rl = readline.createInterface({ input: this.proc.stdout });
@@ -237,6 +241,7 @@ class HeadlessProc {
     if (this.dead) return;
     const wasBusy = this.busy;
     this.dead = true;
+    this.pool._live.delete(this);
     this._framer.cancel();
     this.pool._remove(this.key, this);
     // Unanswered requests die with the process, so their prompts must go too.
@@ -345,6 +350,8 @@ export class ClaudePool {
     this.env = opts.env || null;
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
+    this._live = new Set();  // spawned and not yet exited, including reaped ones still closing
+    this.allowedTools = opts.allowedTools || (() => []);  // sessionId → rules granted for the session
     this._onExit = opts.onExit || null;  // (sessionId, hadPrompts) => void, a busy or prompting proc exited
     this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
     this._reaper = setInterval(() => this.reapIdle(), HEADLESS_REAP_INTERVAL_MS);
@@ -355,6 +362,10 @@ export class ClaudePool {
 
   // A reaped process can exit long after its key was respawned; it must not drop the live one.
   _remove(key, proc) { if (this.procs.get(key) === proc) this.procs.delete(key); }
+
+  ownPids() {
+    return new Set([...this._live].map((proc) => proc.proc.pid).filter(Boolean));
+  }
 
   // Send a message to sessionId's process (spawn/reuse/queue). Returns
   // { sessionId, bgLocked }: sessionId resolved from system/init (or upfront for

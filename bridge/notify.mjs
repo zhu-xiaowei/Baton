@@ -1,6 +1,7 @@
 // Mobile alerts, decided here from the Session rows this Bridge reports (`reportSessions`). The
 // server only stores the event for Android and the iOS extension and pushes it through the relay.
 import { createHash, randomUUID } from 'crypto';
+import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 
 const LOCAL_IDLE_ALERT_SEC = 120;
 const QUEUE_LIMIT = 10;
@@ -24,10 +25,7 @@ export function configureNotifier(next) {
 // By characters, not UTF-16 units: half an emoji is rejected by the server and the alert is lost.
 const clip = (text, length) => Array.from(text).slice(0, length).join('');
 
-const storageId = (s) => {
-  const native = String(s.nativeSessionId || s.id || '').replace(/^codex:/, '');
-  return s.runtime === 'codex' ? `codex:${native}` : native;
-};
+const storageId = (s) => storageSessionId(s.runtime, s.nativeSessionId || s.id);
 
 function effectiveStatus(row) {
   if (row.status === 'needs_input' || row.needsInputAgentCount > 0) return 'needs_input';
@@ -98,6 +96,7 @@ export async function completionSummary(sessionId, attempts = 3) {
     let messages = [];
     try { messages = (await deps.history({ sessionId, limit: 20 })).messages || []; } catch {}
     for (const message of messages.slice().reverse()) {
+      if (message.noAlert) return null; // a turn a takeover, its process's exit or its parent ended
       const text = textSummary(message.content ?? '');
       if (message.type === 'user') {
         if (text.startsWith('[Request interrupted')) return null;
@@ -143,7 +142,7 @@ export async function alertFor(old, row) {
   const folder = String(row.projectName || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
   const project = clip(folder || row.project, 80);
   const title = clip(String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' '), 120)
-    || `Session ${row.sessionId.replace(/^codex:/, '').slice(0, 8)}`;
+    || `Session ${parseStorageSessionId(row.sessionId).nativeSessionId.slice(0, 8)}`;
   return {
     eventId: createHash('sha256').update(randomUUID()).digest('hex'),
     device: row.deviceName,

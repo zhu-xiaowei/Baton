@@ -7,6 +7,7 @@
 import fs from 'fs';
 import { extractFirstPromptFromMsg, previewText } from './session.mjs';
 import { codexResponseUserText, previewText as codexPreviewText } from './codex-session.mjs';
+import { runtimeDescriptor } from './session-identity.mjs';
 
 const CHUNK = 1 << 20;
 const HEAD_CHUNK = 1 << 16;
@@ -300,18 +301,24 @@ function tailStart(file, runtime, size, floor) {
 }
 
 // ---------- entry points ----------
+// A registered runtime's file catalog summarizes its own files.
+const fileSource = (runtime) => runtimeDescriptor(runtime)?.catalog;
+
 export function newState(runtime) {
+  if (fileSource(runtime)) return fileSource(runtime).newState();
   return runtime === 'claude' ? claudeState() : codexState();
 }
 
 // mode: 'full' reads to the end; 'head' stops once the leading fields are known.
 export function advance(file, runtime, id, state, mode = 'full') {
+  if (fileSource(runtime)) return fileSource(runtime).advance(file, id, state, mode);
   return runtime === 'claude' ? advanceClaude(file, state, mode === 'head') : advanceCodex(file, state, id, mode);
 }
 
 // The leading fields plus the tail: Codex from its last task_started / turn_context, which decide
 // the model and turn state; Claude's last 1 MB, where CC re-stamps session titles.
 export function summarize(file, runtime, id) {
+  if (fileSource(runtime)) return fileSource(runtime).summarize(file, id);
   const state = advance(file, runtime, id, newState(runtime), 'head');
   if (!state.partial) return state;
   let size = 0;

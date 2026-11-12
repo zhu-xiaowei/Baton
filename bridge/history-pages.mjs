@@ -7,6 +7,7 @@ import { ClaudeHistoryReader } from './history-claude-reader.mjs';
 import { CodexHistoryReader } from './history-codex-reader.mjs';
 import { orderKeyLine } from './history-line-index.mjs';
 import { slimRow } from './history-slim.mjs';
+import { runtimeDescriptor } from './session-identity.mjs';
 
 const MAX_READERS = 32;
 const PAGE_LIMIT = 200;
@@ -15,9 +16,11 @@ const MAX_LIMIT = 500;
 export function createHistoryPages() {
   const readers = new Map(); // file → reader, least recently used first
 
-  function readerFor({ file, runtime, nativeSessionId }) {
+  function readerFor(target) {
+    const { file, runtime, nativeSessionId } = target;
     let reader = readers.get(file);
     if (reader) readers.delete(file);
+    else if (runtimeDescriptor(runtime)) reader = runtimeDescriptor(runtime).history(target);
     else reader = runtime === 'codex' ? new CodexHistoryReader(file, nativeSessionId) : new ClaudeHistoryReader(file);
     readers.set(file, reader);
     if (readers.size > MAX_READERS) readers.delete(readers.keys().next().value);

@@ -4,9 +4,11 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 import {
+  normalizeRuntime,
   parseStorageSessionId,
   projectHashCandidatesFromCwd,
   projectHashFromCwd,
+  registerRuntimeDescriptor,
   storageSessionId,
 } from '../../bridge/session-identity.mjs';
 import { resolveCodexHomes } from '../../bridge/runtime-capabilities.mjs';
@@ -25,6 +27,13 @@ test('storage ids preserve Claude and prefix Codex exactly once', () => {
     nativeSessionId: 'same-id',
     sessionId: 'same-id',
   });
+});
+
+test('registered runtimes get their own prefix and unknown ones are never claude', () => {
+  registerRuntimeDescriptor({ runtime: 'rt1' });
+  assert.equal(storageSessionId('rt1', 'x'), 'rt1:x');
+  assert.deepEqual(parseStorageSessionId('rt1:x'), { runtime: 'rt1', nativeSessionId: 'x', sessionId: 'rt1:x' });
+  assert.equal(normalizeRuntime('nope'), null);
 });
 
 test('POSIX path hashing matches existing Claude format and collapses worktrees', () => {

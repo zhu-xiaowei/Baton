@@ -115,6 +115,23 @@ Done:
   new-Session input view.
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
 
+### Multi-harness H0: registration points (no new runtime yet)
+- `runtime-registry.registerRuntime(adapter)` adds a runtime beyond claude/codex; `session-identity` keeps
+  the descriptors (storage id `<rt>:<native>`, claude unprefixed, unknown runtimes are `null`/`unknown_runtime`,
+  never claude). A descriptor may carry `module` (its own URL; the index, history and tool-details workers
+  import it), `catalog` (`kind:'file'`: files/match/newState/advance/summarize/view/status/running?;
+  `kind:'rows'`: watchPaths/refresh(cursor)/view/status), `history(target)` (a reader), `messages(file, id)`
+  (tool_details), `watcher`, and `interaction.listCommands/heldElsewhere`. `SessionIndex.touch()` dispatches by
+  source; rows sources refresh at once and a change seen mid-refresh triggers one more pass (no debounce).
+- Shared modules for H1–H5: `rpc-stdio.mjs`, `turn-process.mjs` (exit on Done: close step → EOF; SIGKILL of the
+  process group only after 30 s; pid + start-time ledger), `runtime-bin.mjs`, `sqlite-ro.mjs` (+ `RowIndex`).
+- App: `web/js/runtimes.js` (labels, icons, resume commands), the new-session runtime picker (from `ping.runtimes`,
+  the runtimes that can create), generic tool card (source badge + name + key argument, key/value body),
+  `system_event.icon` rows, generic `<rt>_active_writer` takeover dialog. History rows may carry `noAlert`
+  (no Done alert for a turn a takeover, exit or parent ended).
+- Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
+  whose `engines` the running Node does not meet.
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout
@@ -464,7 +481,9 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 ### Permission Detection + User Interaction (headless, bridge-driven)
 - Bridge `onControlRequest` (CC's `control_request`, precise — no client-side heuristic) → app `permission_request {kind, requestId, questions?/plan?/input}`. App replies `permission_reply {requestId, decision:allow|deny|answer, answerText?}`.
 - Ordinary tools (Bash/Edit/Write/MCP): allow → `control_response{allow, updatedInput}`; deny → `{deny, message}`. (`defaultMode:bypassPermissions` → CC never asks, no prompt.)
-- AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`** — CC's only answer channel on `--permission-prompt-tool stdio` (a structured `control_response` answer is force-converted to deny, verified CC 2.1.211). Multi-question wizard sends `question → answer` per line. Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
+- AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`**, which every CC version understands (2.1.211 force-converted a structured answer to deny; 2.1.322 accepts `allow + updatedInput.answers`, not used yet). Multi-question wizard sends `question → answer` per line; a `multiSelect` question shows checkboxes + Submit and joins labels with `, ` (CC's own format). Every ask reply also carries structured `answers {questionId|question: [labels]}` (Codex `request_user_input` maps them per question). Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
+- "Yes, for this session": a Claude tool request with CC `permission_suggestions` (`addRules` allow) carries `sessionScope {label}`; the reply `{decision:'allow', scope:'session'}` answers with `updatedPermissions` destination `session` and stores the rules in `~/.baton-bridge/session-grants.json` (`session-grants.mjs`, dropped when the Session is deleted). CC keeps session rules only in memory, so every spawn passes them back as `--allowedTools`.
+- A Session another Claude Code holds (`claudeSessionWriter`, from `~/.claude/sessions/<pid>.json`) returns `claude_active_writer {writer}`; confirming resends with `takeover` + `expectedWriterPid` and only that pid is SIGTERMed (`writerConflict` in ws.mjs, shared by any adapter with `interaction.heldElsewhere`, which also blocks deleting a Session in use).
 - Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (direct `subscribe` → bridge re-push; a prompt already on screen keeps its state).
 - `web/js/components/permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { parseClaudeSubagentSessionId } from './claude-subagent.mjs';
 import { sessionIndex } from './session-index.mjs';
-import { storageSessionId } from './session-identity.mjs';
+import { runtimeDescriptor, runtimeModules, storageSessionId } from './session-identity.mjs';
 
 const WARM_RECENT = 10;
 const WARM_MAX = 20;
@@ -17,7 +17,7 @@ function workerPages() {
   const pending = new Map();
   const call = (op, target, params) => {
     if (!worker) {
-      const current = worker = new Worker(new URL('./history-worker.mjs', import.meta.url));
+      const current = worker = new Worker(new URL('./history-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } });
       const fail = (error) => {
         if (worker !== current) return;
         worker = null;
@@ -66,8 +66,8 @@ export class HistoryService {
       return null;
     }
     for (const rec of this.index.records.values()) {
-      if (rec.runtime === 'codex' && storageSessionId('codex', rec.id) === sessionId) {
-        return { file: rec.file, runtime: 'codex', nativeSessionId: rec.id, status: statusOf(sessionId) };
+      if (rec.runtime !== 'claude' && storageSessionId(rec.runtime, rec.id) === sessionId) {
+        return { file: rec.file, runtime: rec.runtime, nativeSessionId: rec.id, status: statusOf(sessionId) };
       }
     }
     return null;
@@ -94,7 +94,17 @@ export class HistoryService {
     const rec = row.rec;
     const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: new Date(rec.ms).toISOString(), size: rec.size,
       agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id }];
-    if (row.agentCount) {
+    const source = runtimeDescriptor(rec.runtime)?.catalog;
+    if (row.agentCount && source) {
+      // A registered runtime's children are catalog records already.
+      for (const child of row.children) {
+        const childId = storageSessionId(rec.runtime, child.id);
+        items.push({ sessionId: childId, preview: child.view.preview, lastActive: new Date(child.ms).toISOString(), size: child.size,
+          status: this.index.statuses.get(childId) || source.status(child, this.index.running?.[rec.runtime], Date.now()),
+          agentName: child.view.agentName, runtime: rec.runtime, nativeSessionId: child.id, threadKind: 'subagent',
+          parentSessionId: storageSessionId(rec.runtime, child.view.parent) });
+      }
+    } else if (row.agentCount) {
       const codex = rec.runtime === 'codex' ? row.children.map((child) => ({ file: child.file, id: child.id,
         threadName: this.index.threadNames.get(child.home)?.names.get(child.id) || '' })) : [];
       const children = await this.pages.children({ runtime: rec.runtime, dir: rec.dir, id: rec.id, project: row.project,
@@ -136,7 +146,7 @@ function threadFields(item) {
     size: item.size || 0,
     agentName: item.agentName || '',
     agentRole: item.agentRole || '',
-    runtime: item.runtime === 'codex' ? 'codex' : 'claude',
+    runtime: item.runtime || 'claude',
     nativeSessionId: item.nativeSessionId || item.sessionId,
     threadKind: item.threadKind || 'main',
     canSend: item.canSend ?? true,
