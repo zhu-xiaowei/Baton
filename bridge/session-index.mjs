@@ -279,6 +279,9 @@ export class SessionIndex {
         for (const id of deletes) this.records.delete(`rows:${d.runtime}:${id}`);
         if (upserts.length || deletes.length) this.markDirty();
       } while (sync.pending);
+    } catch (error) {
+      // The cursor stays, so the next change reads again.
+      console.error(`[session-index] ${d.runtime} refresh failed: ${error.message}`);
     } finally {
       sync.busy = false;
     }

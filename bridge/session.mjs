@@ -526,7 +526,7 @@ function* liveRecords(dir, isLive) {
 }
 
 // Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.
-function processStartTime(pid) {
+export function processStartTime(pid) {
   const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
 }

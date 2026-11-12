@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { BRIDGE_HOME } from './config.mjs';
+import { processStartTime } from './session.mjs';
 
 const KILL_AFTER_MS = 30_000;
 const LEDGER = path.join(BRIDGE_HOME, 'turn-processes.json');
@@ -14,10 +15,7 @@ let ledger = null; // pid → start time
 // Linux: field 22 of /proc/<pid>/stat; macOS: ps lstart. Null when the process is gone.
 export function procStart(pid) {
   try {
-    if (process.platform === 'linux') {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-      return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
-    }
+    if (process.platform === 'linux') return processStartTime(pid);
     if (process.platform === 'darwin') return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || null;
   } catch {}
   return null;
