@@ -414,26 +414,46 @@ function newSessionRuntimeControl() {
   var mark = runtimeIcon('__new__', current);
   if (runtimes.length === 1) return mark;
   return '<button class="runtime-switch" type="button" onclick="openRuntimePicker()"'
-    + ' aria-haspopup="dialog" aria-controls="runtimePickerModal"'
+    + ' aria-haspopup="menu" aria-controls="runtimePickerMenu"'
     + ' aria-label="Choose coding runtime. Current: ' + runtimeLabel(current) + '"'
     + ' title="' + runtimeLabel(current) + '">' + mark + '</button>';
 }
 
 function openRuntimePicker() {
-  var modal = document.getElementById('runtimePickerModal');
-  if (!modal || state.appState.session !== '__new__') return;
-  document.getElementById('runtimePickerList').innerHTML = state.newSessionRuntimes.map(function (runtime) {
+  var layer = document.getElementById('runtimePickerMenu');
+  var button = document.querySelector('.runtime-switch');
+  if (!layer || !button || state.appState.session !== '__new__') return;
+  var menu = document.getElementById('runtimePickerList');
+  menu.innerHTML = state.newSessionRuntimes.map(function (runtime) {
     var current = runtime === state.appState.runtime;
-    return '<button class="runtime-picker-row" type="button" aria-pressed="' + current + '"'
+    return '<button class="runtime-picker-row" type="button" role="menuitemradio" aria-checked="' + current + '"'
       + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
       + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">&#10003;</span>' : '')
       + '</button>';
   }).join('');
-  showCenteredModal(modal);
+  // Drop down from the button, right-aligned, with the arrow under its centre.
+  var rect = button.getBoundingClientRect();
+  var right = Math.max(8, innerWidth - rect.right - 4);
+  menu.style.top = (rect.bottom + 10) + 'px';
+  menu.style.right = right + 'px';
+  menu.style.setProperty('--arrow-right', Math.max(10, innerWidth - right - rect.left - rect.width / 2 - 6) + 'px');
+  layer.hidden = false;
+  addEventListener('keydown', runtimePickerKey);
+  addEventListener('resize', closeRuntimePicker);
+  addEventListener('hashchange', closeRuntimePicker);
+  menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+}
+
+function runtimePickerKey(event) {
+  if (event.key === 'Escape') closeRuntimePicker();
 }
 
 function closeRuntimePicker() {
-  hideCenteredModal(document.getElementById('runtimePickerModal'));
+  var layer = document.getElementById('runtimePickerMenu');
+  if (layer) layer.hidden = true;
+  removeEventListener('keydown', runtimePickerKey);
+  removeEventListener('resize', closeRuntimePicker);
+  removeEventListener('hashchange', closeRuntimePicker);
 }
 
 function pickNewSessionRuntime(runtime) {
