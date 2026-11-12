@@ -6,6 +6,7 @@ import {
   countJsonlLines,
 } from './extract.mjs';
 import {
+  claudeSessionStartedAt,
   findSessionFile,
   getDaemonSessions,
   getDaemonRunningSessionIds,
@@ -24,11 +25,12 @@ import {
   resolveClaudeBinForCapability,
 } from './runtime-capabilities.mjs';
 import {
+  claudeSubagentEnded,
   discoverClaudeSubagents,
   findClaudeSubagentFile,
   parseClaudeSubagentSessionId,
 } from './claude-subagent.mjs';
-import { summaryForRoot, trackAgentSession } from './agent-counts.mjs';
+import { activeChildSessions, summaryForRoot, trackAgentSession } from './agent-counts.mjs';
 
 function findClaudeSessionFile(nativeSessionId) {
   return findClaudeSubagentFile(nativeSessionId) || findSessionFile(nativeSessionId);
@@ -136,19 +138,18 @@ function refreshClaudeSubagents(session, filePath) {
   return children;
 }
 
-// A root still counting active children re-derives them even while its own status
-// holds, so an orphaned child settles; posts only when the counts change.
-function refreshActiveSubagents(active, nativeSessionId, filePath) {
-  const before = summaryForRoot(nativeSessionId);
-  if (!filePath || !(before.runningAgentCount || before.needsInputAgentCount)) return null;
-  const project = normalizeProjectHash(active.projectHash || '');
-  const children = discoverClaudeSubagents(path.dirname(filePath), {
-    nativeSessionId, project, projectName: readableProjectName(project), status: active.status,
-  });
-  const counts = children.flatMap(trackAgentSession).at(-1);
-  return counts && (counts.runningAgentCount !== before.runningAgentCount
-    || counts.needsInputAgentCount !== before.needsInputAgentCount)
-    ? { extraSessions: children, agentCountUpdates: [counts] } : null;
+// While a root's own status holds, one stat per tracked active child settles those
+// that ended (orphaned by a restart, or reported by their spawner); counts drop with them.
+function settleActiveSubagents(active, nativeSessionId, filePath) {
+  const children = filePath ? activeChildSessions(nativeSessionId) : [];
+  const started = children.length && claudeSessionStartedAt(nativeSessionId);
+  const counts = { ...summaryForRoot(nativeSessionId), sessionId: nativeSessionId, project: normalizeProjectHash(active.projectHash || '') };
+  const ended = children.filter((child) => claudeSubagentEnded(
+    path.join(path.dirname(filePath), nativeSessionId, 'subagents', `${child.agentPath}.jsonl`),
+    { parentAgentId: parseClaudeSubagentSessionId(child.parentSessionId)?.agentId }, undefined, () => started,
+  ) && counts[child.status === 'running' ? 'runningAgentCount' : 'needsInputAgentCount']-- > 0);
+  return ended.length
+    ? { extraSessions: ended.map((child) => ({ ...child, status: 'completed' })), agentCountUpdates: [counts] } : null;
 }
 
 async function syncClaudeMessages(session, context, startLine) {
@@ -322,12 +323,12 @@ export const claudeRuntime = defineRuntimeAdapter({
     const gone = !filePath || !fs.existsSync(filePath);
     const daemon = context.daemonMeta.get(nativeSessionId);
     if (!gone && ((context.daemonRunning || new Set()).has(nativeSessionId) || context.poolOwns(nativeSessionId))) {
-      return refreshActiveSubagents(active, nativeSessionId, filePath);
+      return settleActiveSubagents(active, nativeSessionId, filePath);
     }
     const newStatus = gone
       ? 'completed'
       : getSessionStatus(nativeSessionId, filePath, context.runningInfo);
-    if (newStatus === active.status) return refreshActiveSubagents(active, nativeSessionId, filePath);
+    if (newStatus === active.status) return settleActiveSubagents(active, nativeSessionId, filePath);
 
     const projectHash = normalizeProjectHash(active.projectHash || '');
     const projectName = readableProjectName(projectHash);

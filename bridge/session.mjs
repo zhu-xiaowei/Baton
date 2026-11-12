@@ -511,13 +511,9 @@ export function claudeSessionWriter(sessionId, {
 
 // Earliest start of a live CC process (Baton's own included) with sessionId open.
 export function claudeSessionStartedAt(sessionId, { dir = CLAUDE_SESSIONS, isClaude = isOtherClaude } = {}) {
-  if (process.platform === 'win32') return null;
-  let earliest = null;
-  for (const record of liveRecords(dir, () => true)) {
-    if (record.sessionId !== sessionId || !(record.startedAt > 0) || !isClaude(record, new Set())) continue;
-    if (earliest === null || record.startedAt < earliest) earliest = record.startedAt;
-  }
-  return earliest;
+  const starts = process.platform === 'win32' ? [] : [...liveRecords(dir, () => true)]
+    .filter((r) => r.sessionId === sessionId && r.startedAt > 0 && isClaude(r, new Set())).map((r) => r.startedAt);
+  return starts.length ? Math.min(...starts) : null;
 }
 
 function* liveRecords(dir, isLive) {
