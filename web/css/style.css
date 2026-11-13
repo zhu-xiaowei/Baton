@@ -332,8 +332,8 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .assistant-turn.follows-turn > .tl-item:first-child::after { top: -2px; }
 .assistant-turn.follows-turn > .tl-item:only-child::after { display: block; top: -2px; }
 
-/* Assistant text (as timeline item) */
-.assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
+/* Assistant text (as timeline item); flow-root keeps a trailing table/pre margin under the line */
+.assistant-text { display: flow-root; padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
 .assistant-text:empty { display: none; }
 
 /* === Markdown in assistant text === */
