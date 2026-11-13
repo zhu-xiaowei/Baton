@@ -20,7 +20,6 @@ from botocore.awsrequest import AWSRequest
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-import api_key
 
 logger = logging.getLogger(__name__)
 # Reused while this instance is warm: a new client or TLS handshake costs tens to hundreds of ms.
@@ -37,7 +36,7 @@ def _table():
 
 
 def _account(request):
-    return api_key.account_id(request.headers.get("x-api-key", ""))
+    return request.state.auth["accountId"]
 
 
 def _relay_configured():

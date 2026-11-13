@@ -13,7 +13,7 @@ COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt
 
 WORKDIR /app
 COPY requirements.txt .
-COPY main.py api_key.py ./
+COPY main.py api_key.py auth.py ./
 COPY bridge_read.py .
 COPY bridge_ws.py .
 COPY notifications.py devices.py ./

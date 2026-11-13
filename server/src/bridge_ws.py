@@ -11,6 +11,7 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 import api_key as deployment_key
+import auth
 import devices
 from direct_rpc_ws import direct_rpc_disconnect, handle_direct_rpc
 
@@ -37,7 +38,7 @@ def _apigw_client(endpoint):
 
 
 def _account_id(api_key):
-    return deployment_key.account_id(api_key)
+    return auth.resolve(api_key)["accountId"]
 
 
 def _bridge_owner_key(account_id, device):
@@ -205,12 +206,15 @@ def _handle_connect(event, connection_id):
     device = qs.get("device", "")
     version = qs.get("version", "")
 
-    # API Gateway checks the key only on REST, so WebSocket connections are checked here.
     try:
-        if not deployment_key.is_current(api_key):
-            return {"statusCode": 401}
+        resolved = auth.resolve(api_key)
     except deployment_key.KeyUnavailable:
         return {"statusCode": 503}
+    if not resolved:
+        return {"statusCode": 401}
+    # A device token connects only in its own role: a phone cannot pose as a Bridge, nor a Bridge as an App.
+    if resolved["kind"] != "key" and (resolved["kind"] == "bridge") != role.startswith("bridge"):
+        return {"statusCode": 403}
     bridge_id = qs.get("bridgeId") if role == "bridge" else None
     if bridge_id is not None and not re.fullmatch(r"[a-f0-9]{32}", bridge_id):
         return {"statusCode": 400}
@@ -221,7 +225,7 @@ def _handle_connect(event, connection_id):
     if (role in _DATA_ROLES) != (bool(data_endpoint) and connected_endpoint == data_endpoint):
         return {"statusCode": 403}
 
-    account_id = _account_id(api_key)
+    account_id = resolved["accountId"]
     ttl = int(time.time()) + 86400  # 24h
 
     item = {
@@ -233,6 +237,8 @@ def _handle_connect(event, connection_id):
     }
     if device:
         item["deviceName"] = device
+    if resolved.get("tokenHash"):
+        item["tokenHash"] = resolved["tokenHash"]
     if role == "bridge" and version:
         item["bridgeVersion"] = version
     if role == "bridge" and device:

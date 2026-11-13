@@ -1,0 +1,61 @@
+"""Resolves a request's credential (deployment API key or device token) to its account, once per request."""
+
+import hashlib
+import os
+import time
+
+import boto3
+
+import api_key
+
+CACHE_SECONDS = 60
+SEEN_SECONDS = 3600
+
+_cache = {}
+_seen = {}
+_table = None
+
+
+def _system():
+    global _table
+    if _table is None:
+        _table = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1")) \
+            .Table(os.environ["SYSTEM_TABLE"])
+    return _table
+
+
+def token_hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def resolve(credential):
+    """{accountId, kind, deviceName, tokenHash} or None. KeyUnavailable propagates (503)."""
+    if not credential:
+        return None
+    if not credential.startswith("bt_"):
+        return {"accountId": api_key.account_id(credential), "kind": "key"} if api_key.is_current(credential) else None
+    digest = token_hash(credential)
+    cached = _cache.get(digest)
+    now = time.time()
+    if cached and cached[0] > now:
+        return cached[1]
+    table = _system()
+    row = table.get_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"}).get("Item")
+    if not row or not table.get_item(Key={"pk": f"ACCOUNT#{row['accountId']}", "sk": "META"}).get("Item"):
+        return None
+    result = {"accountId": row["accountId"], "kind": row["kind"], "deviceName": row.get("deviceName", ""),
+              "tokenHash": digest}
+    if _seen.get(digest, 0) < now - SEEN_SECONDS:  # per process: at most hourly per warm instance
+        _seen[digest] = now
+        try:
+            table.update_item(Key={"pk": f"ACCOUNT#{row['accountId']}", "sk": f"TOKEN#{digest}"},
+                UpdateExpression="SET lastSeen = :now", ConditionExpression="attribute_exists(pk)",
+                ExpressionAttributeValues={":now": int(now)})
+        except Exception as error:
+            print(f"lastSeen not written: {error}")
+    _cache[digest] = (now + CACHE_SECONDS, result)
+    return result
+
+
+def forget(digest):
+    _cache.pop(digest, None)

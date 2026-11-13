@@ -171,7 +171,7 @@
         "ResourceId": { "Ref": "ApiProxyResource" },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -308,7 +308,7 @@
         }]
       }
     },
-    "ApiDeploymentV3": {
+    "ApiDeploymentV4": {
       "Type": "AWS::ApiGateway::Deployment",
       "Metadata": {
         "Note": "Bump this id (V3 -> V4 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
@@ -322,8 +322,12 @@
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeploymentV3" },
-        "StageName": "v1"
+        "DeploymentId": { "Ref": "ApiDeploymentV4" },
+        "StageName": "v1",
+        "MethodSettings": [{
+          "ResourcePath": "/~1api~1{proxy+}", "HttpMethod": "*",
+          "ThrottlingRateLimit": 50, "ThrottlingBurstLimit": 100
+        }]
       }
     },
     "ApiGatewayRole": {
@@ -584,7 +588,8 @@
       "Properties": {
         "ApiId": { "Ref": "WsApi" },
         "StageName": "v1",
-        "AutoDeploy": true
+        "AutoDeploy": true,
+        "DefaultRouteSettings": { "ThrottlingRateLimit": 200, "ThrottlingBurstLimit": 400 }
       }
     },
     "WsHandler": {

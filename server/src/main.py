@@ -11,8 +11,31 @@ import os
 import re
 
 import api_key as deployment_key
+import auth
 
 app = FastAPI()
+
+PUBLIC = {"/api/version"}
+# Paths only some credential kinds may use: start-token hands out the deployment key, and an
+# install script embeds the caller's credential as the new Bridge's.
+KINDS = {"/api/auth/start-token": {"key"}, "/api/install": {"key", "bridge"}}
+
+
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/") or path in PUBLIC:
+        return await call_next(request)
+    try:
+        resolved = auth.resolve(request.headers.get("x-api-key", ""))
+    except deployment_key.KeyUnavailable:
+        return JSONResponse({"error": "temporarily unavailable"}, status_code=503)
+    if not resolved:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if resolved["kind"] not in KINDS.get(path, {resolved["kind"]}):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    request.state.auth = resolved
+    return await call_next(request)
 
 
 @app.exception_handler(deployment_key.KeyUnavailable)

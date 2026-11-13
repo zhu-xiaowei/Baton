@@ -7,7 +7,6 @@ from fastapi import APIRouter, Request, Query, Response
 from pydantic import BaseModel, Field
 import os
 import re
-import api_key as deployment_key
 import devices
 
 read_router = APIRouter(prefix="/api/bridge")
@@ -26,7 +25,7 @@ def _connections():
 
 
 def _account_id(request: Request) -> str:
-    return deployment_key.account_id(request.headers.get("x-api-key", ""))
+    return request.state.auth["accountId"]
 
 
 def _ws_url():
