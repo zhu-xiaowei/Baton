@@ -133,7 +133,7 @@ Done:
   whose `engines` the running Node does not meet.
 
 ### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
-- Loaded only when `~/.local/share/opencode/opencode.db` exists and has `session_v2` (`registerInstalledRuntimes()`).
+- Loaded only when `~/.local/share/opencode/opencode.db` exists and has `session_v2` (one `OPTIONAL_RUNTIMES` line; `discover` rejects a DB without `session_v2`).
   Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
   max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
   turn after the last `idle` row (and running `!cmd` rows) are unstable. Baton prompts carry

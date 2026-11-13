@@ -14,7 +14,6 @@ import { DB_FILE, displayLabel } from './opencode-extract.mjs';
 import history, { db, OpenCodeReader } from './opencode-history.mjs';
 import { interaction, refreshActive, service, working, writerProcesses } from './opencode-service.mjs';
 
-db.all('SELECT 1 FROM session_v2 LIMIT 0'); // OpenCode 1.x has no v2 tables
 const MARK = 'max(time_updated, coalesce(time_busy, 0), coalesce(time_idle, 0), coalesce(time_suspended, 0), coalesce(time_archived, 0))';
 const file = (id) => `rows:opencode:${id}`;
 const record = (id) => sessionIndex.records.get(file(id));
@@ -128,14 +127,15 @@ const watcher = defineRuntimeWatcher({
   },
 });
 
-export default defineRuntimeAdapter({
+// A copy: the optional-runtime loader wraps `discover`.
+export default { ...defineRuntimeAdapter({
   ...history,
   displayName: 'OpenCode',
   features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
   catalog,
   watcher,
   interaction,
-  discover: () => ({ sessions: [] }),
+  discover: () => db.all('SELECT 1 FROM session_v2 LIMIT 0') && { sessions: [] }, // OpenCode 1.x has no v2 tables
   findSessionFile: (id) => (record(id) ? file(id) : null),
   baselineToEnd() {},
   async updateSessionStatus(config, id, _file, _project, status, detail, context) {
@@ -158,4 +158,4 @@ export default defineRuntimeAdapter({
     }
     return true;
   },
-});
+}) };
