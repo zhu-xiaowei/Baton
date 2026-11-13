@@ -1029,7 +1029,7 @@ html[data-theme="light"] .permission-btn { background: var(--canvas); border-col
 html[data-theme="light"] .permission-btn[aria-checked="true"] { background: var(--surface-selected); border-color: var(--accent); }
 @media (hover: hover) and (pointer: fine) {
   .permission-btn:hover .permission-desc-inline { color: inherit; opacity: 0.8; }
-  html[data-theme="light"] .permission-btn:hover { background: var(--surface-raised); color: var(--text-primary); }
+  html[data-theme="light"] .permission-btn:not([aria-checked="true"]):hover { background: var(--surface-raised); color: var(--text-primary); }
   html[data-theme="light"] .permission-btn.allow:hover { border-color: var(--success-solid); }
   html[data-theme="light"] .permission-btn.deny:hover { border-color: var(--danger); }
 }

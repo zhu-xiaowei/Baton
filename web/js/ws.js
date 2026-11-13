@@ -634,7 +634,15 @@ function routeTurnEvent(message) {
     dispatchWsMessage(message);
     return;
   }
-  if (message._replay && message.seq <= replayCut(message.turnId)) return;
+  if (message._replay && replayCut(message.turnId) >= 0) {
+    if (message.seq <= replayCut(message.turnId)) return;
+    // A row after the cut has no block to join before the next one starts: show it as a plain row.
+    if (message.action === 'messages' && !_turnEventQueue.turns.has(message.turnId)) {
+      var { seq, ...row } = message;
+      dispatchWsMessage(row);
+      return;
+    }
+  }
   var ordered = _turnEventQueue.push(message);
   var orderedEnd = ordered.some(function (event) {
     return event.action === 'stream_end';
