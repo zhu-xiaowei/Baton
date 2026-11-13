@@ -1,5 +1,5 @@
 // OpenCode 2.x rows → Baton rows: a step is one assistant row plus one user row per tool result
-// (`<msgId>`, `<msgId>#r:<toolId>`), the same live and in history.
+// (`<msgId>#b:<toolId|t0|r0>`, `<msgId>#r:<toolId>`), the same live and in history.
 import os from 'node:os';
 import path from 'node:path';
 import { nativeOrderKey } from './extract.mjs';
@@ -94,20 +94,24 @@ export function messageRows(row, line) {
       const turnId = data.metadata?.baton?.turnId;
       return one('user', userContent(data), turnId ? { nativeId: `live:user:${turnId}` } : {});
     }
-    case 'assistant': {
-      const blocks = [];
-      const settled = [];
+    case 'assistant': { // one row per block, like Claude's JSONL: `<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`
+      const out = [];
+      const count = { text: 0, reasoning: 0 };
+      const add = (uuid, type, block) => out.push({ ...base, uuid, nativeId: uuid, type, content: [block], ...key(out.length) });
       for (const part of data.content || []) {
-        if (part.type === 'text' && part.text) blocks.push({ type: 'text', text: part.text });
-        else if (part.type === 'reasoning' && part.text) blocks.push({ type: 'thinking', thinking: part.text });
+        const id = `${row.id}#b:${part.type === 'tool' ? part.id : `${part.type[0]}${count[part.type]++}`}`;
+        if (part.type === 'text' && part.text) add(id, 'assistant', { type: 'text', text: part.text });
+        else if (part.type === 'reasoning' && part.text) add(id, 'assistant', { type: 'thinking', thinking: part.text });
         else if (part.type === 'tool') {
-          blocks.push({ type: 'tool_use', id: part.id, name: toolName(part.name), input: toolInput(part.name, part.state?.input) });
+          add(id, 'assistant', { type: 'tool_use', id: part.id, name: toolName(part.name), input: toolInput(part.name, part.state?.input) });
           const result = toolResult(part);
-          if (result) settled.push(result);
+          if (result) add(`${row.id}#r:${part.id}`, 'user', result);
         }
       }
       // A failed step without content is reported by the turn's idle {outcome:failed} row.
-      return [...(blocks.length ? one('assistant', blocks, STOP[data.finish] ? { stopReason: STOP[data.finish] } : {}) : []), ...results(settled)];
+      const last = out.findLast((r) => r.type === 'assistant');
+      if (last && STOP[data.finish]) last.stopReason = STOP[data.finish];
+      return out;
     }
     case 'idle':
       if (data.outcome === 'interrupted') return one('user', [{ type: 'text', text: '[Request interrupted by user]' }]);

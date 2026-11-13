@@ -193,7 +193,8 @@ Done:
   `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
   Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
   max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
-  turn after the last `idle` row (and running `!cmd` rows) are unstable. Baton prompts carry
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. One row per block, like Claude's JSONL
+  (`<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`), live and in history; a tool row goes out at `tool.called`. Baton prompts carry
   `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
 - The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
   `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.

@@ -152,8 +152,9 @@ function dispatch(ev) {
   const block = (key) => exec.blocks.get(key) ?? exec.blocks.set(key, exec.blocks.size + 1).get(key);
   const step = exec.steps.get(d.assistantMessageID) || exec.steps.set(d.assistantMessageID, []).get(d.assistantMessageID);
   const authority = (rows) => { for (const row of rows) cb.onMessage('', row, { normalized: true, runtime: 'opencode', liveKey: row.uuid }); };
-  // The App takes one authority per message: a step's row goes out once, when the step ends (parallel tools).
-  const stepRows = (finish, id = d.assistantMessageID) => messageRows({ id, type: 'assistant', data: { content: exec.steps.get(id), finish, time: { created: ev.created } } });
+  // Each block is its own row (the App takes one authority per row id), sent as soon as it is complete.
+  const send = (suffix) => authority(messageRows({ id: d.assistantMessageID, type: 'assistant', data: { content: step, time: { created: ev.created } } })
+    .filter((row) => row.uuid === `${d.assistantMessageID}#${suffix}`));
   const kind = ev.type.split('.')[1];
   const key = `${d.assistantMessageID}:${kind}${d.ordinal ?? d.id}`;
   // One block at a time: OpenCode starts the text before it ends a streamed reasoning.
@@ -185,23 +186,21 @@ function dispatch(ev) {
       const seen = exec.texts.get(key) || '';
       if (live && d.text?.startsWith(seen) && d.text.length > seen.length) exec.framer.delta(exec.open, d.text.slice(seen.length));
       step.push({ type: kind, text: d.text || '' });
-    } // falls through
+      if (live) close();
+      return send(`b:${kind[0]}${d.ordinal}`);
+    }
     case 'session.tool.input.ended': return live && close();
     case 'session.tool.called': case 'session.tool.success': case 'session.tool.failed': {
       const tool = step.find((part) => part.id === d.id);
       if (!tool) return;
       const input = d.input || tool.state.input;
       tool.state = { status: { called: 'running', success: 'completed' }[ev.type.split('.')[2]] || 'error', input, content: d.content, metadata: d.metadata, error: d.error };
-      return authority(stepRows().filter((row) => row.uuid.endsWith(`#r:${d.id}`))); // its result row
+      return send(ev.type === 'session.tool.called' ? `b:${d.id}` : `r:${d.id}`);
     }
-    case 'session.step.ended': case 'session.step.failed':
-      authority(stepRows(d.finish));
-      return exec.steps.delete(d.assistantMessageID);
     case 'permission.asked': case 'form.created': return cb.onControlRequest(control);
     case 'permission.replied': case 'form.replied': case 'form.cancelled':
       return cb.onControlResolved(d.requestID || d.id || d.form?.id);
     case 'session.execution.succeeded': case 'session.execution.failed': case 'session.execution.interrupted':
-      for (const id of exec.steps.keys()) if (id) authority(stepRows(undefined, id)); // steps an interrupt cut short
       return end(sid, exec, { is_error: ev.type === 'session.execution.failed', subtype: ev.type.split('.')[2] });
     default:
   }
