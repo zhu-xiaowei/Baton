@@ -21,8 +21,8 @@ class Table:
         self.meta = SimpleNamespace(client=self)
 
     def transact_write_items(self, TransactItems):
-        from boto3.dynamodb.types import TypeDeserializer
-        plain = lambda item: {k: TypeDeserializer().deserialize(v) for k, v in item.items()}
+        # Like boto3's resource client: plain Python values, not the low-level wire types.
+        plain = dict
         try:
             for op in TransactItems:  # conditions first: all or nothing
                 if 'Update' in op:

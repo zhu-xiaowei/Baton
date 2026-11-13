@@ -301,17 +301,16 @@ def _rotate_and_revoke(account, rotation, digests):
     """K' sealed under the K the leaving device also holds (design §8), and its tokens deleted, in ONE
     transaction: no moment where it may read the chain, nor where the old joinSecret still recovers.
     `head` makes two rotations from one K fail instead of forking the chain."""
-    from boto3.dynamodb.types import TypeSerializer
-    low = lambda item: {name: TypeSerializer().serialize(value) for name, value in item.items()}
+    # Plain values: the resource's client (table.meta.client) serializes them itself.
     meta = _meta(account)
     chain = [entry for entry in meta.get("rotations", []) if entry["fp"] != rotation.fp][-(MAX_ROTATIONS - 1):]
     table = _table()
-    update = {"TableName": table.name, "Key": low({"pk": f"ACCOUNT#{account}", "sk": "META"}),
+    update = {"TableName": table.name, "Key": {"pk": f"ACCOUNT#{account}", "sk": "META"},
               "UpdateExpression": "SET joinSecretHash = :hash, head = :next, rotations = :chain",
               "ConditionExpression": "head = :fp",
-              "ExpressionAttributeValues": low({":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
-                                                ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]})}
-    deletes = [{"Delete": {"TableName": table.name, "Key": low(key)}} for digest in digests for key in _token_keys(account, digest)]
+              "ExpressionAttributeValues": {":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
+                                            ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]}}
+    deletes = [{"Delete": {"TableName": table.name, "Key": key}} for digest in digests for key in _token_keys(account, digest)]
     try:
         table.meta.client.transact_write_items(TransactItems=[{"Update": update}] + deletes)
     except ClientError as error:
