@@ -332,8 +332,8 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .assistant-turn.follows-turn > .tl-item:first-child::after { top: -2px; }
 .assistant-turn.follows-turn > .tl-item:only-child::after { display: block; top: -2px; }
 
-/* Assistant text (as timeline item) */
-.assistant-text { padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
+/* Assistant text (as timeline item); flow-root keeps a trailing table/pre margin under the line */
+.assistant-text { display: flow-root; padding-top: 6px; padding-bottom: 0; font-size: 13px; line-height: 1.6; overflow-wrap: break-word; }
 .assistant-text:empty { display: none; }
 
 /* === Markdown in assistant text === */
@@ -1023,6 +1023,16 @@ html[data-theme="light"] .gallery-nav button:not(:disabled):active { background:
 .permission-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
 .permission-actions .permission-btn { width: auto; }
 .permission-btn:disabled { opacity: 0.5; pointer-events: none; }
+/* Light: a grey-white panel with neutral options; allow/deny colour only the hovered border. */
+html[data-theme="light"] .permission-prompt { background: var(--surface); border-color: var(--border); }
+html[data-theme="light"] .permission-btn { background: var(--canvas); border-color: var(--border); }
+html[data-theme="light"] .permission-btn[aria-checked="true"] { background: var(--surface-selected); border-color: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .permission-btn:hover .permission-desc-inline { color: inherit; opacity: 0.8; }
+  html[data-theme="light"] .permission-btn:not([aria-checked="true"]):hover { background: var(--surface-raised); color: var(--text-primary); }
+  html[data-theme="light"] .permission-btn.allow:hover { border-color: var(--success-solid); }
+  html[data-theme="light"] .permission-btn.deny:hover { border-color: var(--danger); }
+}
 
 /* === Input bar === */
 #input-bar { position: relative; background: var(--canvas); padding: 8px 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); flex-shrink: 0; display: flex; flex-direction: column; }

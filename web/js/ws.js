@@ -59,6 +59,8 @@ var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
+var _replayBatches = new Map(); // turnId → the events of its latest turn_replay
+var _replayCuts = new Map();    // turnId → last replayed seq the shown history already has
 var _queuedTurnIds = new Set();
 var _activeExecutionIds = new Set();
 var _goalContinuationIds = new Set();
@@ -76,8 +78,9 @@ var _historyFetchBarriers = new FetchBarrierCoordinator();
 var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
-// iOS can suspend a fetch forever; a hung history request would hold the barrier open.
-var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
+// A load that never settles (e.g. IndexedDB hung after an iOS suspension) would hold the barrier
+// open. Longer than the transport's own deadlines, which do not count waiting for a socket.
+var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 75000;
 // A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
 // frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
@@ -476,8 +479,9 @@ function resyncSession(device) {
 }
 // A replay is a running turn from its start, sent on (re)subscribing; events already applied are ignored.
 bridge.onPush(function (event) {
-  if (event.action === 'turn_replay') event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
-  else handleWsMessage(event);
+  if (event.action !== 'turn_replay') return handleWsMessage(event);
+  for (var e of event.events) if (e.turnId) _replayBatches.set(e.turnId, event.events);
+  event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
 });
 bridge.onResync(function (device) {
   resyncSession(device);
@@ -630,6 +634,15 @@ function routeTurnEvent(message) {
     dispatchWsMessage(message);
     return;
   }
+  if (message._replay && replayCut(message.turnId) >= 0) {
+    if (message.seq <= replayCut(message.turnId)) return;
+    // A row after the cut has no block to join before the next one starts: show it as a plain row.
+    if (message.action === 'messages' && !_turnEventQueue.turns.has(message.turnId)) {
+      var { seq, ...row } = message;
+      dispatchWsMessage(row);
+      return;
+    }
+  }
   var ordered = _turnEventQueue.push(message);
   var orderedEnd = ordered.some(function (event) {
     return event.action === 'stream_end';
@@ -657,6 +670,38 @@ function routeTurnEvent(message) {
     && !_handledControlEvents.has(strictEventKey(message))) {
     scheduleControlEventFallback(message);
   }
+}
+
+// A page that meets a running turn first through its replay already shows the rows the transcript
+// has; it joins at the first block after them (late join) instead of rebuilding them below.
+function replayCut(turnId) {
+  if (_replayCuts.has(turnId)) return _replayCuts.get(turnId);
+  var cut = -1;
+  if (!_turnEventQueue.turns.has(turnId)) {
+    var shown = new Set();
+    for (var row of state.wsAllMessages) {
+      if (row.uuid) shown.add(row.uuid);
+      if (row.nativeId) shown.add(row.nativeId);
+    }
+    var events = (_replayBatches.get(turnId) || []).filter(function (e) { return e.turnId === turnId; })
+      .sort(function (a, b) { return a.seq - b.seq; });
+    for (var e of events) {
+      if (e.action === 'messages' && e.messages?.length
+        && e.messages.every(function (m) { return shown.has(m.nativeId) || shown.has(m.uuid); })) cut = e.seq;
+    }
+    var open = -1;
+    var i = 0;
+    for (; i < events.length && events[i].seq <= cut; i++) {
+      if (events[i].action === 'stream_block_start') open = events[i].seq;
+      else if (events[i].action === 'stream_block_stop') open = -1;
+    }
+    // Claude sends a block's row before its stop: what follows up to that stop is the same block.
+    // Otherwise never cut into a block still open there.
+    while (open >= 0 && /^stream_(delta|tool_input)$/.test(events[i]?.action)) i++;
+    if (open >= 0) cut = events[i]?.action === 'stream_block_stop' ? events[i].seq : open - 1;
+  }
+  _replayCuts.set(turnId, cut);
+  return cut;
 }
 
 function scheduleExecutionRecovery(message) {
@@ -1458,12 +1503,14 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   }
   _streamCoordinator.resetSession('');
   _turnEventQueue.reset();
+  _replayCuts.clear();
   _checkpointResumedTurns.clear();
   _queuedTurnIds.clear();
   _activeExecutionIds.clear();
   _goalContinuationIds.clear();
   // A snapshot refresh keeps execution order: frames after it continue the same executionSeq.
   if (!keepHistoryRequest) {
+    _replayBatches.clear();
     _executionEvents.reset();
     for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
     _executionRecoveryTimers.clear();

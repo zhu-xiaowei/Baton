@@ -471,6 +471,10 @@ async function send(key, request, route, missing) {
   request.attemptVersion = route.version;
   request.sentAt = performance.now();
   request.firstSentAt ??= request.sentAt;
+  if (request.connection !== connectionId) {
+    request.connection = connectionId;
+    request.deadlineFrom = request.sentAt;
+  }
   const body = rpcRequest({ requestId: key, method: request.method, params: request.params, replyTo: connectionId, missing,
     ack: request.ack });
   if (!CAN_INFLATE) body.accept = [];
@@ -505,7 +509,10 @@ function reconcile() {
   for (const [key, request] of pending) {
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
-    if (request.acked ? now - request.aliveAt > ACKED_DEADLINE_MS : now - request.createdAt > DEADLINE_MS) { finish(key, request, { reason: 'timeout' }); continue; }
+    // Waiting for a socket or credentials does not count: DEADLINE_MS runs from the first send on the
+    // current connection; no request waits longer than ACKED_DEADLINE_MS in all.
+    const late = now - request.createdAt > ACKED_DEADLINE_MS || now - request.deadlineFrom > DEADLINE_MS;
+    if (request.acked ? now - request.aliveAt > ACKED_DEADLINE_MS : late) { finish(key, request, { reason: 'timeout' }); continue; }
     if (!request.slow && now - request.createdAt > SLOW_MS) {
       request.slow = true;
       try { request.onSlow?.(); } catch {}

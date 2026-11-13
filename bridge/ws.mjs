@@ -934,6 +934,7 @@ function publishTitle(reply) {
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;
+sessionIndex.awaitsAgents = poolAwaitsAgents;
 
 // "Being viewed": a page showing the root answers `notify_check` with `notify_seen` while it is
 // visible and focused. A suspended iOS page keeps its subscription but cannot answer.
