@@ -34,8 +34,9 @@ class Table:
         if UpdateExpression.startswith("REMOVE "):
             record.pop(UpdateExpression.split(" ", 1)[1], None)
         else:
-            name, value = UpdateExpression.split("SET ", 1)[1].split(" = ")
-            record[name] = ExpressionAttributeValues[value]
+            for part in UpdateExpression.split("SET ", 1)[1].split(", "):
+                name, value = part.split(" = ")
+                record[name] = ExpressionAttributeValues[value]
 
 
 class Sts:
