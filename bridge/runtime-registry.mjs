@@ -33,15 +33,14 @@ export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
     try {
       if (!installed()) continue;
       const adapter = (await import(new URL(file, import.meta.url))).default;
-      const discover = adapter.discover.bind(adapter);
       // A store this runtime cannot read must not stop Claude/Codex from syncing.
-      adapter.discover = (options) => {
-        try { return discover(options); } catch (error) {
+      const discover = (options) => {
+        try { return adapter.discover(options); } catch (error) {
           console.error(`[runtime] ${adapter.runtime} discovery failed: ${error.message}`);
           return { sessions: [] };
         }
       };
-      registerRuntime(adapter);
+      registerRuntime(Object.create(adapter, { discover: { value: discover } }));
     } catch (error) {
       console.error(`[runtime] ${file} not loaded: ${error.message}`);
     }
