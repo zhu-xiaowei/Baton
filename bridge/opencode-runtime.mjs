@@ -127,8 +127,7 @@ const watcher = defineRuntimeWatcher({
   },
 });
 
-// A copy: the optional-runtime loader wraps `discover`.
-export default { ...defineRuntimeAdapter({
+export default defineRuntimeAdapter({
   ...history,
   displayName: 'OpenCode',
   features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
@@ -158,4 +157,4 @@ export default { ...defineRuntimeAdapter({
     }
     return true;
   },
-}) };
+});
