@@ -28,18 +28,18 @@ export function getRuntimeAdapter(runtime) {
   return adapter;
 }
 
-// Runtimes whose modules load only when their data is on this computer.
-const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
+// Optional runtimes: [installed?, module], the module imported only when its harness is installed.
 const OPTIONAL_RUNTIMES = [
-  ['./runtimes/opencode/index.mjs', () => fs.existsSync(path.join(dataHome, 'opencode/opencode.db'))],
+  [() => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db')),
+    () => import('./opencode-runtime.mjs')],
 ];
 
-export async function loadInstalledRuntimes() {
-  for (const [url, installed] of OPTIONAL_RUNTIMES) {
+export async function registerInstalledRuntimes() {
+  for (const [installed, load] of OPTIONAL_RUNTIMES) {
     try {
-      if (installed()) registerRuntime((await import(url)).default);
+      if (installed()) registerRuntime((await load()).default);
     } catch (error) {
-      console.error(`[runtime] ${url} unavailable: ${error.message}`);
+      console.error(`[runtime] ${error.message}`);
     }
   }
 }

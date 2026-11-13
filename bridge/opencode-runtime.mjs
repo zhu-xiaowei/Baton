@@ -1,19 +1,18 @@
-// OpenCode ≥ 2.2: catalog and history from the read-only opencode.db, live pushes on its commits,
-// interaction through the user's own background service (service.mjs).
+// OpenCode ≥ 2.2: catalog, history and pushes from the read-only opencode.db; interaction in opencode-service.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
-import { defineRuntimeAdapter } from '../../runtime-adapter.mjs';
-import { defineRuntimeWatcher } from '../../watcher-adapter.mjs';
-import { liveMessagePushed } from '../../live-message-registry.mjs';
-import { batonSessions, localIdleSec } from '../../presence.mjs';
-import { sessionIndex } from '../../session-index.mjs';
-import { previewText } from '../../session.mjs';
-import { storageSessionId } from '../../session-identity.mjs';
-import { lastKnownStatus, reportSessions } from '../../sync.mjs';
-import { publishMessages } from '../../ws.mjs';
-import { DB_FILE, displayLabel } from './extract.mjs';
-import history, { db, OpenCodeReader } from './history.mjs';
-import { interaction, opencodeProcesses, service } from './service.mjs';
+import { defineRuntimeAdapter } from './runtime-adapter.mjs';
+import { defineRuntimeWatcher } from './watcher-adapter.mjs';
+import { liveMessagePushed } from './live-message-registry.mjs';
+import { batonSessions, localIdleSec } from './presence.mjs';
+import { sessionIndex } from './session-index.mjs';
+import { previewText } from './session.mjs';
+import { storageSessionId } from './session-identity.mjs';
+import { lastKnownStatus, reportSessions } from './sync.mjs';
+import { publishMessages } from './ws.mjs';
+import { DB_FILE, displayLabel } from './opencode-extract.mjs';
+import history, { db, OpenCodeReader } from './opencode-history.mjs';
+import { interaction, refreshActive, service, working, writerProcesses } from './opencode-service.mjs';
 
 db.all('SELECT 1 FROM session_v2 LIMIT 0'); // OpenCode 1.x has no v2 tables
 const MARK = 'max(time_updated, coalesce(time_busy, 0), coalesce(time_idle, 0), coalesce(time_suspended, 0), coalesce(time_archived, 0))';
@@ -57,11 +56,11 @@ const catalog = {
     const preview = s.title ? displayLabel(s.title) : previewText(index.sentPrompts.get(rec.id)) || displayLabel('', s.parent);
     return project ? { project, preview, parent: s.parent || undefined, visible: true, agentCount: 0 } : null;
   },
-  running: () => opencodeProcesses(),
-  // Busy with no opencode process left is an orphaned claim: the next `service start` resumes it.
+  running: () => { void refreshActive(); return writerProcesses(); },
+  // Busy that nobody runs is an orphaned claim: the next `service start` resumes it.
   status(rec, procs = []) {
     if (interaction.pending(rec.id)) return 'needs_input';
-    return rec.state.busy > rec.state.idle && procs.length ? 'running' : 'completed';
+    return rec.state.busy > rec.state.idle && working(rec.id, rec.state.directory, procs) ? 'running' : 'completed';
   },
 };
 
@@ -72,9 +71,8 @@ function sessionRow(rec, status, detail = '') {
     status, ...(status === 'needs_input' ? { agentDetail: detail } : {}) };
 }
 
-// Each commit: the catalog, root status changes, and the rows other clients wrote (Baton's own live
-// rows were pushed already). New rows are found through time_created (indexed); busy sessions are
-// re-read for rows updated in place.
+// Each commit: the catalog, root status changes, and rows other clients wrote; new rows through the
+// indexed time_created, busy sessions re-read for in-place updates.
 const watcher = defineRuntimeWatcher({
   runtime: 'opencode',
   start(config) {
@@ -84,7 +82,8 @@ const watcher = defineRuntimeWatcher({
     let again = false;
     const pass = async () => {
       await sessionIndex.touch(DB_FILE);
-      const procs = opencodeProcesses();
+      await refreshActive();
+      const procs = writerProcesses();
       for (const id of changed) {
         const rec = record(id);
         if (rec && interaction.owns(id)) continue; // reported by the turn; looked at again once it ends
@@ -143,11 +142,10 @@ export default defineRuntimeAdapter({
     const rec = record(id);
     if (rec) context.report(config, [sessionRow(rec, status, detail)]);
   },
-  createStatusContext: () => ({ procs: opencodeProcesses() }),
-  inspectActiveSession(active, context) {
-    const rec = record(active.nativeSessionId);
-    const status = rec ? catalog.status(rec, context.procs) : 'completed';
-    return rec && status !== active.status ? { session: sessionRow(rec, status) } : null;
+  createStatusContext: () => ({ procs: writerProcesses() }),
+  inspectActiveSession({ nativeSessionId, status }, { procs }) {
+    const rec = record(nativeSessionId);
+    return rec && catalog.status(rec, procs) !== status ? { session: sessionRow(rec, catalog.status(rec, procs)) } : null;
   },
   rename: (id, title) => service.api('PATCH', `/api/session/${id}`, { title }),
   // OpenCode deletes children with their root; it would also delete a busy session (ws.mjs guards).

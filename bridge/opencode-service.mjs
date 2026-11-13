@@ -1,16 +1,15 @@
-// Interaction through the user's own OpenCode background service (service.json, Basic auth). Baton
-// starts it only to send: `service start` resumes suspended sessions, so reading never starts it.
-// One /api/event SSE while Baton drives a turn, closed 120 s after the last one ends.
+// Interaction through the user's own OpenCode service. Only a send starts it (`service start` resumes
+// suspended sessions). One /api/event SSE while Baton drives a turn, closed 120 s after the last.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { defineInteractionAdapter } from '../../interaction-adapter.mjs';
-import { findRuntimeBin } from '../../runtime-bin.mjs';
-import { StreamFramer } from '../../stream-framer.mjs';
-import { SERVICE_FILE, messageRows, toolName } from './extract.mjs';
-import { db } from './history.mjs';
+import { defineInteractionAdapter } from './interaction-adapter.mjs';
+import { findRuntimeBin } from './runtime-bin.mjs';
+import { StreamFramer } from './stream-framer.mjs';
+import { SERVICE_FILE, messageRows, toolName } from './opencode-extract.mjs';
+import { db } from './opencode-history.mjs';
 
 const IDLE_MS = 120_000;
 const ASK_RULES = [{ action: 'shell', resource: '*', effect: 'ask' }, { action: 'edit', resource: '*', effect: 'ask' }];
@@ -19,12 +18,12 @@ const loc = (dir) => `location[directory]=${encodeURIComponent(dir)}`;
 const run = (bin, args) => new Promise((resolve, reject) => execFile(bin, args, { timeout: 60_000 },
   (error, stdout, stderr) => (error ? reject(new Error(String(stderr || error.message).trim())) : resolve(stdout))));
 
-// Live opencode processes (service, TUI, run, acp) as { pid, args }.
-export function opencodeProcesses() {
+// opencode processes other than a service (TUI, run, acp).
+export function writerProcesses() {
   if (process.platform === 'win32') return [];
   try {
     return execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8', timeout: 5000 }).split('\n')
-      .map((line) => /^\s*(\d+)\s+(\S+)\s*(.*)$/.exec(line)).filter((m) => m && /(^|\/)opencode(\.exe)?$/.test(m[2]))
+      .map((line) => /^\s*(\d+)\s+(\S+)\s*(.*)$/.exec(line)).filter((m) => m && /(^|\/)opencode(\.exe)?$/.test(m[2]) && !/\bserve\b|\bservice\b/.test(m[3]))
       .map((m) => ({ pid: Number(m[1]), args: m[3] }));
   } catch { return []; }
 }
@@ -43,18 +42,15 @@ function serviceInfo() {
 async function request(method, p, body) {
   const svc = serviceInfo();
   if (!svc) throw Object.assign(new Error('OpenCode service is not running'), { down: true });
-  let res;
-  try {
-    res = await fetch(svc.url + p, { method, headers: { Authorization: svc.auth, 'content-type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30_000) });
-  } catch (error) { throw Object.assign(error, { down: true }); }
+  const res = await fetch(svc.url + p, { method, headers: { Authorization: svc.auth, 'content-type': 'application/json' },
+    body: body && JSON.stringify(body), signal: AbortSignal.timeout(30_000) }).catch((error) => { throw Object.assign(error, { down: true }); });
   const text = await res.text();
   if (!res.ok) throw new Error(`OpenCode ${method} ${p}: ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
 }
 
 export const service = {
-  // Without the service (rename, delete) a private, unregistered server runs the call: it never resumes sessions.
+  // Without the service, a private unregistered server runs it (it resumes nothing).
   async api(method, p, body) {
     try { return await request(method, p, body); } catch (error) {
       if (!error.down || !opencodeBin()) throw error;
@@ -71,9 +67,9 @@ export const service = {
   },
 };
 
-const execs = new Map(); // native session id → the Baton execution in flight
-const asked = new Map(); // requestId → permission or form, for the reply
-const pending = new Map(); // native session id → Set of open request ids
+const execs = new Map(); // session id → Baton's execution
+const asked = new Map(); // request id → permission or form
+const pending = new Map(); // open request id → session id
 let sse = null;
 let idleTimer = null;
 
@@ -100,10 +96,10 @@ function connect() {
     }
   })().catch((error) => { if (error.name !== 'AbortError') console.error(`[opencode] events: ${error.message}`); }).finally(() => {
     ready();
+    pending.clear(); // no longer known
     if (sse !== current) return;
     sse = null;
-    pending.clear(); // no longer known
-    for (const [id, exec] of execs) end(id, exec, { is_error: true, subtype: 'unavailable' }); // the service went away
+    for (const [id, exec] of execs) end(id, exec, { is_error: true, subtype: 'unavailable' });
   });
   return current.ready;
 }
@@ -117,7 +113,7 @@ function end(id, exec, result) {
 }
 
 function newExec(callbacks) {
-  const exec = { callbacks, blocks: new Map(), steps: new Map(), inbox: new Map(), texts: new Map(), turns: new Set() };
+  const exec = { callbacks, blocks: new Map(), steps: new Map(), inbox: new Map(), texts: new Map(), turns: new Set(), commands: [], open: null };
   exec.framer = new StreamFramer((f) => {
     if (f.t === 'start') callbacks.onBlockStart('', f.blockId, f.kind, f.name);
     else if (f.t === 'delta') callbacks.onDelta('', f.chunk, f.blockId);
@@ -127,15 +123,9 @@ function newExec(callbacks) {
   return exec;
 }
 
-function track(sid, requestId, open) {
-  const set = pending.get(sid) || pending.set(sid, new Set()).get(sid);
-  if (open) set.add(requestId); else set.delete(requestId);
-}
-
-// A permission or form as the control_request queuePermissionRequest takes.
 function controlRequest(p, form) {
   asked.set(p.id, p);
-  track(p.sessionID, p.id, true);
+  pending.set(p.id, p.sessionID);
   const name = toolName(p.action);
   return { request_id: p.id, request: form ? { tool_name: 'AskUserQuestion', requires_user_interaction: true,
     input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: f.description || f.title || '',
@@ -144,12 +134,11 @@ function controlRequest(p, form) {
       permission_suggestions: p.save?.length ? [{ type: 'addRules', behavior: 'allow', rules: p.save.map((r) => ({ toolName: name, ruleContent: r })) }] : [] } };
 }
 
-// Service events of a Baton execution → the shared stream outlet.
 function dispatch(ev) {
   const d = ev.data || {};
   const sid = d.sessionID || d.form?.sessionID;
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
-  if (/^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type)) track(sid, d.requestID || d.id || d.form?.id, false);
+  if (/^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type)) pending.delete(d.requestID || d.id || d.form?.id);
   const exec = execs.get(sid);
   if (!exec) return;
   const cb = exec.callbacks;
@@ -159,41 +148,42 @@ function dispatch(ev) {
   const assistant = (finish) => authority(messageRows({ id: d.assistantMessageID, type: 'assistant', data: { content: step, finish, time: { created: ev.created } } }));
   const kind = ev.type.split('.')[1];
   const key = `${d.assistantMessageID}:${kind}${d.ordinal ?? d.id}`;
+  // One block at a time: OpenCode starts the text before it ends a streamed reasoning.
+  const close = () => { if (exec.open != null) exec.framer.stop(exec.open); exec.open = null; };
+  const live = exec.open === block(key);
   switch (ev.type) {
     case 'session.execution.started': return cb.onAccepted?.();
-    case 'session.inbox.enqueued': exec.inbox.set(d.inboxID, d.item); return;
+    case 'session.inbox.enqueued': // a command's prompt has no metadata of its own
+      if (d.item.type === 'user' && !d.item.payload?.metadata && exec.commands.length) d.item.payload.metadata = { baton: { turnId: exec.commands.shift() } };
+      exec.inbox.set(d.inboxID, d.item);
+      return;
     case 'session.inbox.delivered': {
       const item = exec.inbox.get(d.inboxID);
       exec.framer.finish();
       if (item?.type === 'user') authority(messageRows({ id: d.inboxID, type: 'user', data: { ...item.payload, time: { created: ev.created } } }));
       return;
     }
-    case 'session.text.started': case 'session.reasoning.started':
-      return exec.framer.start(block(key), kind === 'text' ? 'text' : 'thinking');
+    case 'session.text.started': case 'session.reasoning.started': case 'session.tool.input.started':
+      close();
+      exec.framer.start(exec.open = block(key), kind === 'tool' ? 'tool_use' : kind === 'text' ? 'text' : 'thinking', d.name && toolName(d.name));
+      if (d.name) step.push({ type: 'tool', id: d.id, name: d.name, state: { status: 'pending' } });
+      return;
     case 'session.text.delta': case 'session.reasoning.delta':
       exec.texts.set(key, (exec.texts.get(key) || '') + d.delta);
-      return exec.framer.delta(block(key), d.delta);
+      return live && exec.framer.delta(exec.open, d.delta);
+    case 'session.tool.input.delta': return live && exec.framer.input(exec.open, d.delta);
     case 'session.text.ended': case 'session.reasoning.ended': {
       // Some providers send no deltas; the ended text completes the preview.
       const seen = exec.texts.get(key) || '';
-      if (d.text?.startsWith(seen) && d.text.length > seen.length) exec.framer.delta(block(key), d.text.slice(seen.length));
-      exec.framer.stop(block(key));
+      if (live && d.text?.startsWith(seen) && d.text.length > seen.length) exec.framer.delta(exec.open, d.text.slice(seen.length));
       step.push({ type: kind, text: d.text || '' });
-      return;
-    }
-    case 'session.tool.input.started':
-      exec.framer.start(block(key), 'tool_use', toolName(d.name));
-      step.push({ type: 'tool', id: d.id, name: d.name, state: { status: 'pending' } });
-      return;
-    case 'session.tool.input.delta': return exec.framer.input(block(key), d.delta);
-    case 'session.tool.input.ended': return exec.framer.stop(block(key));
+    } // falls through
+    case 'session.tool.input.ended': return live && close();
     case 'session.tool.called': case 'session.tool.success': case 'session.tool.failed': {
       const tool = step.find((part) => part.id === d.id);
       if (!tool) return;
       const input = d.input || tool.state.input;
-      tool.state = ev.type === 'session.tool.called' ? { status: 'running', input }
-        : ev.type === 'session.tool.success' ? { status: 'completed', input, content: d.content, metadata: d.metadata }
-          : { status: 'error', input, error: d.error, content: d.content };
+      tool.state = { status: { called: 'running', success: 'completed' }[ev.type.split('.')[2]] || 'error', input, content: d.content, metadata: d.metadata, error: d.error };
       return assistant();
     }
     case 'session.step.ended': case 'session.step.failed': return assistant(d.finish);
@@ -216,10 +206,14 @@ function promptFiles(text) {
   return files;
 }
 
-async function prompt(id, text, turnId) {
+// A `/name` the service knows runs as its command (an unknown one answers 404 and is sent as text).
+async function prompt(id, text, turnId, exec) {
   const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-  if (command && ((await request('GET', `/api/command?${loc(sessionOf(id)?.directory || '')}`))?.data || []).some((c) => c.name === command[1])) {
-    return request('POST', `/api/session/${id}/command`, { name: command[1], text: command[2] || '' });
+  if (command) {
+    exec.commands.push(turnId);
+    if (await request('POST', `/api/session/${id}/command`, { name: command[1], text: command[2] || '' })
+      .then(() => true, (error) => { if (!/ 404 /.test(error.message)) throw error; })) return;
+    exec.commands.splice(exec.commands.indexOf(turnId), 1);
   }
   const files = promptFiles(text);
   // No `delivery`: while a turn runs, OpenCode steers the prompt into it at the next step.
@@ -230,20 +224,25 @@ async function start(id, callbacks, text, turnId) {
   let exec = execs.get(id);
   if (exec?.callbacks !== callbacks) execs.set(id, exec = newExec(callbacks));
   exec.turns.add(turnId);
-  try { await prompt(id, text, turnId); } catch (error) {
+  try { await prompt(id, text, turnId, exec); } catch (error) {
     exec.turns.delete(turnId);
     if (!exec.turns.size) execs.delete(id);
     throw error;
   }
 }
 
+let active = new Set(); // sessions the service runs
+export const refreshActive = () => request('GET', '/api/session/active').then((r) => { active = new Set(Object.keys(r?.data || {})); }, () => { active = new Set(); });
+const cwdOf = (pid) => { try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return ''; } };
+const writerOf = (id, directory, procs = writerProcesses()) => procs.find((p) => p.args.includes(id) || cwdOf(p.pid) === directory);
+// Someone runs a busy session: Baton, the service, or another process on it (else it is an orphaned claim).
+export const working = (id, directory, procs) => execs.has(id) || active.has(id) || !!writerOf(id, directory, procs);
 const sessionOf = (id) => db.all('SELECT directory, time_busy, time_idle FROM session_v2 WHERE id = ?', [id])[0];
 const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0);
-const cwdOf = (pid) => { try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return ''; } };
 
 export const interaction = defineInteractionAdapter({
   runtime: 'opencode',
-  pending: (id) => (pending.get(id)?.size || 0) > 0,
+  pending: (id) => [...pending.values()].includes(id),
   async create({ cwd, text, streamId, onCreated }) {
     await service.ensure();
     await connect();
@@ -267,7 +266,7 @@ export const interaction = defineInteractionAdapter({
   replyControl(id, requestId, { decision, answers = {}, scope }) {
     const req = asked.get(requestId);
     asked.delete(requestId);
-    track(id, requestId, false);
+    pending.delete(requestId);
     const base = `/api/session/${id}`;
     const reply = async () => {
       if (req?.fields) {
@@ -290,16 +289,15 @@ export const interaction = defineInteractionAdapter({
     return true;
   },
   owns: (id) => execs.has(id),
-  isBusy: (id) => execs.has(id) || (dbBusy(id) && opencodeProcesses().length > 0),
-  // Busy in the database but not in the service: a standalone TUI / run / acp process writes it.
+  isBusy: (id) => execs.has(id) || active.has(id),
+  // Busy but not run by the service: a standalone TUI / run / acp writes it.
   async heldElsewhere(id) {
     if (execs.has(id) || !dbBusy(id)) return null;
-    const active = await request('GET', '/api/session/active').then((r) => r?.data || {}, () => ({}));
-    if (active[id]) return null;
-    const writer = opencodeProcesses().find((p) => !/\bserve\b|\bservice\b/.test(p.args) && (p.args.includes(id) || cwdOf(p.pid) === sessionOf(id).directory));
+    await refreshActive();
+    const writer = !active.has(id) && writerOf(id, sessionOf(id).directory);
     return writer ? { pid: writer.pid, status: 'running', label: 'An OpenCode terminal', canTerminate: true } : null;
   },
-  // A request waiting since before this Bridge (or outside a Baton turn) is shown on subscribe.
+  // Requests waiting outside a Baton turn show on subscribe.
   async observePermissions({ nativeSessionId: id, callbacks }) {
     if (execs.has(id) || !serviceInfo()) return;
     for (const kind of ['permission', 'form']) {
@@ -310,7 +308,10 @@ export const interaction = defineInteractionAdapter({
   },
   async listCommands({ cwd }) {
     if (!serviceInfo()) return { commands: [], skills: [] };
-    const list = await request('GET', `/api/command?${loc(cwd)}`).then((r) => r?.data || [], () => []);
+    const get = () => request('GET', `/api/command?${loc(cwd)}`).then((r) => r?.data || [], () => []);
+    let list = await get();
+    // A directory the service has not opened yet lists nothing on the first request.
+    if (!list.length) list = await new Promise((r) => setTimeout(r, 700)).then(get);
     return { commands: list.map((c) => ({ name: c.name, description: c.description || '', source: 'runtime' })), skills: [] };
   },
   shutdown() { sse?.ctrl.abort(); sse = null; },

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { messageRows } from '../../bridge/runtimes/opencode/extract.mjs';
+import { messageRows } from '../../bridge/opencode-extract.mjs';
 
 test('OpenCode rows become Baton tool, prompt and turn-end rows', () => {
   const tool = { type: 'tool', id: 't1', name: 'shell', state: { status: 'completed', input: { command: 'ls' }, content: [{ type: 'text', text: 'a' }], metadata: { exit: 1 } } };

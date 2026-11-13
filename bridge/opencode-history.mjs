@@ -1,9 +1,8 @@
-// History of an OpenCode session from session_message (read-only). Loaded by the history and
-// tool-details workers too, each with its own connection.
-import { extractForApp } from '../../extract.mjs';
-import { readPage } from '../../history-page.mjs';
-import { open, RowIndex } from '../../sqlite-ro.mjs';
-import { DB_FILE, messageRows } from './extract.mjs';
+// Session history from session_message; the history and tool-details workers load this too.
+import { extractForApp } from './extract.mjs';
+import { readPage } from './history-page.mjs';
+import { open, RowIndex } from './sqlite-ro.mjs';
+import { DB_FILE, messageRows } from './opencode-extract.mjs';
 
 export const db = await open(DB_FILE);
 const COLS = 'id, type, seq, time_created, data';

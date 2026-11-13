@@ -1,11 +1,10 @@
-// OpenCode 2.x storage → Baton rows. One assistant step is one assistant row (thinking / text /
-// tool_use) plus one user row per tool result, so live authority and history share `<msgId>` and
-// `<msgId>#r:<toolId>`.
+// OpenCode 2.x rows → Baton rows: a step is one assistant row plus one user row per tool result
+// (`<msgId>`, `<msgId>#r:<toolId>`), the same live and in history.
 import os from 'node:os';
 import path from 'node:path';
-import { nativeOrderKey } from '../../extract.mjs';
-import { markEditResult } from '../../tool-preview.mjs';
-import { parseApplyPatchInput } from '../../codex-extract.mjs';
+import { nativeOrderKey } from './extract.mjs';
+import { markEditResult } from './tool-preview.mjs';
+import { parseApplyPatchInput } from './codex-extract.mjs';
 
 const xdg = (name, fallback) => path.join(process.env[name] || path.join(os.homedir(), fallback), 'opencode');
 export const DB_FILE = path.join(xdg('XDG_DATA_HOME', '.local/share'), 'opencode.db');
@@ -37,8 +36,7 @@ function toolInput(name, input = {}) {
       return { file_path: '', old_string: '', new_string: '', ...changes[0], ...(changes.length > 1 ? { files: changes.map((c) => c.file_path) } : {}) };
     }
     case 'Write': return { file_path: file, content: input.content ?? '' };
-    case 'Grep': return { pattern: input.pattern || '', path: input.path, glob: input.include };
-    case 'Glob': return { pattern: input.pattern || '', path: input.path };
+    case 'Grep': case 'Glob': return { pattern: input.pattern || '', path: input.path, glob: input.include };
     case 'TodoWrite': return { todos: Array.isArray(input.todos) ? input.todos : [] };
     case 'Agent': return { description: input.description || '', prompt: input.prompt || '', subagent_type: input.agent || input.subagent_type || '' };
     case 'AskUserQuestion': return { questions: (input.questions || []).map((q) => ({ question: q.question || '', header: q.header || '',
@@ -51,8 +49,7 @@ const contentText = (content) => (Array.isArray(content)
   ? content.map((c) => (c?.type === 'text' ? c.text : c?.uri ? `[${c.mime || 'file'}] ${c.uri}` : '')).filter(Boolean).join('\n')
   : typeof content === 'string' ? content : '');
 
-// The result block of a settled tool, or null while it runs.
-export function toolResult(tool) {
+function toolResult(tool) {
   const state = tool.state || {};
   const name = toolName(tool.name);
   if (state.status === 'completed') {
@@ -84,7 +81,7 @@ function userContent(data) {
 const STOP = { stop: 'end_turn', 'tool-calls': 'tool_use', length: 'max_tokens' };
 const iso = (ms) => new Date(Number.isFinite(ms) ? ms : 0).toISOString();
 
-// Baton rows of one session_message row { id, type, data }; history rows are ordered by `line`.
+// History rows are ordered by `line`.
 export function messageRows(row, line) {
   const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
   const base = { uuid: row.id, nativeId: row.id, timestamp: iso(data.time?.created ?? row.time_created) };

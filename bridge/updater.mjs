@@ -53,7 +53,7 @@ export function installStagedBridge(stage, bridgeHome) {
         || entry.name === 'package.json'
         || entry.name === 'package-lock.json'
       )
-    ) || (entry.isDirectory() && ['project', 'runtimes'].includes(entry.name)));
+    ) || (entry.isDirectory() && entry.name === 'project'));
   const newlyAdded = [];
   let modulesInstalled = false;
 
