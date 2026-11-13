@@ -26,7 +26,9 @@ export function open(key, sealed, aad) {
 
 // K (32 bytes) → this Bridge process's keys; sessions are found by the App's public key or its tag.
 // `since`: when K arrived (files written before it are read as they are for a while).
-export function bridgeKeys(k, since = 0) {
+// `exhausted()`: too many evicted sessions to remember; the caller makes new keys (a new ECDH key, so
+// none of the forgotten sessions can be made again).
+export function bridgeKeys(k, since = 0, exhausted = () => {}) {
   const psk = hkdf(k, 'psk');
   const ecdh = createECDH('prime256v1');
   const pubRaw = ecdh.generateKeys();
@@ -47,7 +49,7 @@ export function bridgeKeys(k, since = 0) {
     const [old, evicted] = sessions.entries().next().value;
     sessions.delete(old);
     retired.set(old, evicted.state());
-    if (retired.size > 4096) retired.delete(retired.keys().next().value);
+    if (retired.size > 4096) exhausted();
   };
   const session = (appPub) => {
     const tag = sessionTag(appPub);

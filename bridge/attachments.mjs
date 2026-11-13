@@ -29,6 +29,7 @@ export async function downloadAttachment(key, options = {}) {
   const localPath = path.join(directory, key);
   const existing = await fs.promises.lstat(localPath).catch(() => null);
   const { sealed } = file;
+  if (!sealed && await store.plainRefused?.(key, file.size)) throw new Error('Attachment is not sealed. Upload it again.');
   if (existing?.isFile() && existing.size === (sealed ? plainSize(file.size) : file.size)) return localPath;
   const temporary = `${localPath}.${crypto.randomUUID()}.part`;
   try {

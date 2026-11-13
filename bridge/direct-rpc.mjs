@@ -74,7 +74,8 @@ export class DirectRpcBridge {
   constructor({ key, accountKey, accountKeyAt, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.accountKey = accountKey || null;
-    this.keys = accountKey ? bridgeKeys(accountKey, accountKeyAt) : null;
+    this.keyAt = accountKeyAt;
+    this.keys = accountKey ? this.newKeys() : null;
     this.saveAccountKey = saveAccountKey;
     this.peers = new Map(); // App connection → its session tag
     this.sendControl = sendControl;
@@ -311,15 +312,21 @@ export class DirectRpcBridge {
     await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
   }
 
+  // Keys for this process; published by joining again (Apps then make new sessions).
+  newKeys() {
+    if (this.socket) setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
+    return bridgeKeys(this.accountKey, this.keyAt, () => { this.keys = this.newKeys(); });
+  }
+
   // Clear on purpose: an App of this account hands K over or takes it (§9 migration). A new K is
   // published by joining again with new keys.
   accountKeyRequest({ k } = {}) {
     const raw = typeof k === 'string' ? Buffer.from(k, 'base64') : null;
     if (raw?.length === 32 && !raw.equals(this.accountKey || Buffer.alloc(0))) {
       this.accountKey = raw;
-      this.keys = bridgeKeys(raw, Date.now());
+      this.keyAt = Date.now();
+      this.keys = this.newKeys();
       this.saveAccountKey?.(raw);
-      setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
     }
     return { fp: this.keys?.fp || '', ...(k ? {} : { k: this.accountKey?.toString('base64') || '' }) };
   }

@@ -33,7 +33,7 @@ export const SEALED_MAX = 50 * 1024 * 1024;
 const RECORD = 64 * 1024;
 const SEALED_RECORD = RECORD + 28;
 const records = (stored) => Math.max(1, Math.ceil(stored / SEALED_RECORD));
-export const plainSize = (stored) => stored - 28 * records(stored);
+export const plainSize = (stored) => Math.max(0, stored - 28 * records(stored));
 const sealedSize = (size) => size + 28 * Math.max(1, Math.ceil(size / RECORD));
 const STREAMED = /^(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/;
 // Files written before the account had K are read as they are for the 7 days S3 keeps them.
@@ -42,6 +42,12 @@ let fileKeys = () => null;
 // `next()` resolves { key: AES-GCM CryptoKey, id: HMAC CryptoKey, since: when K arrived } or null.
 export function setTransferKeys(next) { fileKeys = next; }
 const sealedKeys = async (name, size) => (size <= SEALED_MAX && !STREAMED.test(extension(name)) ? fileKeys() : null);
+// An unmarked file of a kind and size that is sealed: only one written before K, within the grace.
+async function plainRefused(key, stored) {
+  if (STREAMED.test(extension(key)) || stored > sealedSize(SEALED_MAX)) return false;
+  const keys = await fileKeys();
+  return !!keys && !(Date.now() - keys.since < PLAIN_GRACE_MS);
+}
 const recordAad = (key, index, count) => encoder.encode(`${key}|${index}|${index === count - 1 ? 1 : 0}`);
 
 async function sealBytes(keys, key, body) {
@@ -59,6 +65,7 @@ async function sealBytes(keys, key, body) {
 
 // `bytes` are whole records starting at record `first` of `count`.
 async function openRecords(keys, key, bytes, first, count) {
+  if (bytes.length < 28) throw new Error('Sealed file is truncated');
   const out = new Uint8Array(bytes.length - 28 * Math.ceil(bytes.length / SEALED_RECORD));
   for (let at = 0, i = first; at < bytes.length; at += SEALED_RECORD, i++) {
     const record = bytes.subarray(at, at + SEALED_RECORD);
@@ -210,6 +217,8 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
     },
 
     // The key for content identified by `id` (any string): HMAC-derived when files are sealed.
+    plainRefused,
+
     async keyFor(id, ext) {
       const keys = await fileKeys();
       if (!keys) return id.slice(0, 32) + ext;
@@ -230,12 +239,13 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const response = await fetchFn(await this.url(key, { plain: true }));
       if (!response.ok) throw new Error(`Storage read failed (${response.status})`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      const keys = sealed === false || STREAMED.test(extension(key)) ? null : await fileKeys();
+      const keys = STREAMED.test(extension(key)) || bytes.length > sealedSize(SEALED_MAX) ? null : await fileKeys();
       if (!keys) return bytes;
-      try { return await openRecords(keys, key, bytes, 0, records(bytes.length)); } catch (error) {
-        if (sealed || !(Date.now() - keys.since < PLAIN_GRACE_MS)) throw error;
-        return bytes;
+      if (sealed !== false) {
+        try { return await openRecords(keys, key, bytes, 0, records(bytes.length)); } catch (error) { if (sealed) throw error; }
       }
+      if (await plainRefused(key, bytes.length)) throw new Error('File is not sealed');
+      return bytes;
     },
 
     // Plain bytes [begin, end) of a sealed file stored with `stored` bytes: only the records needed.
@@ -270,6 +280,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const shown = name && name.length <= 255 && !/[\u0000-\u001f/\\]/.test(name) ? name : object.name || key;
       const type = previewType(key);
       const { sealed } = object;
+      if (!sealed && await plainRefused(key, object.size)) throw new Error('File is not sealed');
       // A sealed PDF is read by range (range()); the rest is opened here.
       const lazy = sealed && type === 'application/pdf';
       return {
