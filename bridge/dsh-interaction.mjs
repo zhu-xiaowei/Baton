@@ -16,7 +16,7 @@ import { StreamFramer } from './stream-framer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { mapTool } from './dsh-extract.mjs';
-import { catalog, DSH_HOME, LOG, SESSIONS } from './dsh-catalog.mjs';
+import { catalog, DSH_HOME, LOG, readdir, SESSIONS } from './dsh-catalog.mjs';
 import { lockHolder, refreshLocks } from './dsh-locks.mjs';
 
 const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
@@ -102,9 +102,8 @@ class DshInteraction {
   async spawn(cwd, s, open) {
     const dsh = findDsh();
     if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
-    s.key = `dsh:${randomUUID()}`;
+    Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
     s.child = await sessionProcess(s.key, dsh.node, [dsh.bin, '--profile', 'acp', '--patch', overlay()], { cwd, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
-    Object.assign(s, { queue: [], tags: [], controls: new Map(), tools: new Map() });
     s.rpc = new RpcStdio(s.child, {
       onNotify: (method, params) => { if (method === 'session/update' && params.sessionId === s.sid) this.update(s, params.update); },
       onRequest: (method, params) => this.approval(s, method, params),
@@ -273,10 +272,8 @@ class DshInteraction {
         try { m = JSON.parse(buf.slice(0, i)); } catch {}
         buf = buf.slice(i + 1);
         const requestId = `dsh:q:${m?.id}`;
-        if (m?.cancelled) {
-          s.controls.delete(requestId);
-          s.callbacks?.onControlResolved?.(requestId);
-        } else if (m?.questions) {
+        if (m?.cancelled) s.controls.delete(requestId) && s.callbacks?.onControlResolved?.(requestId);
+        else if (m?.questions) {
           this.control(s, requestId, { tool_name: 'AskUserQuestion', input: { questions: m.questions }, requires_user_interaction: true }, (reply) => {
             const answers = reply.decision === 'answer' && m.questions.map((q) => {
               const labels = [].concat(reply.answers?.[q.id] ?? reply.answers?.[q.question] ?? []).map(String);
@@ -292,8 +289,7 @@ class DshInteraction {
   }
 
   interrupt(sid) {
-    const s = this.sessions.get(sid);
-    if (s?.current) s.rpc.notify('session/cancel', { sessionId: sid });
+    if (this.sessions.get(sid)?.current) this.sessions.get(sid).rpc.notify('session/cancel', { sessionId: sid });
   }
 
   // Skills run as /name in the prompt; ACP offers no command catalog.
@@ -308,11 +304,7 @@ class DshInteraction {
   }
 }
 
-export function findLog(sid) {
-  let projects = [];
-  try { projects = fs.readdirSync(SESSIONS); } catch {}
-  return projects.map((p) => path.join(SESSIONS, p, sid, LOG)).find((file) => fs.existsSync(file)) || null;
-}
+export const findLog = (sid) => readdir(SESSIONS).map((p) => path.join(SESSIONS, p, sid, LOG)).find((file) => fs.existsSync(file)) || null;
 
 // Skills DSH offers as /name (dsh-skill-filesystem's roots, first wins): <name>/SKILL.md or <name>.md
 // with a kebab-case `name` and a `description` in the front matter.

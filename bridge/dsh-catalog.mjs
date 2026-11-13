@@ -11,6 +11,7 @@ import { lockHolder, lockHolders } from './dsh-locks.mjs';
 export const LOG = 'session.v4.jsonl.zstd';
 export const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 export const SESSIONS = path.join(DSH_HOME, 'sessions');
+export const readdir = (dir) => { try { return fs.readdirSync(dir); } catch { return []; } };
 
 // DSH's session-title fallback (packages/session/session-title normalize.ts): the first user prompt
 // without control sequences, its first 5 words, cut to 40 UTF-8 bytes.
@@ -45,15 +46,7 @@ function apply(st, e) {
 
 export const catalog = {
   kind: 'file',
-  files() {
-    const out = [];
-    let projects = [];
-    try { projects = fs.readdirSync(SESSIONS); } catch {}
-    for (const p of projects) {
-      try { for (const id of fs.readdirSync(path.join(SESSIONS, p))) out.push(path.join(SESSIONS, p, id, LOG)); } catch {}
-    }
-    return out;
-  },
+  files: () => readdir(SESSIONS).flatMap((p) => readdir(path.join(SESSIONS, p)).map((id) => path.join(SESSIONS, p, id, LOG))),
   match: (file) => (path.basename(file) === LOG && file.startsWith(SESSIONS + path.sep) ? { id: path.basename(path.dirname(file)) } : null),
   newState: () => ({ offset: 0, frames: 0, v: 0, cwd: '', parent: '', title: '', model: '', first: '', turns: 0, open: false, asks: [] }),
   // Frames cannot be found from the tail, and logs are small, so the warm-up is the full read.

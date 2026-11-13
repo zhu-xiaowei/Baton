@@ -49,11 +49,8 @@ export function newFrames(file, offset, size = fs.statSync(file).size) {
 
 // A zstd context (DSH frames declare a 2 MB window) is freed only when its handle is collected, so the
 // warm-up workers collect every 16 frames; otherwise thousands of decodes keep ~50 MB of RSS.
-let gc = null;
 let decoded = 0;
-if (!isMainThread) {
-  try { v8.setFlagsFromString('--expose-gc'); gc = vm.runInNewContext('gc'); } catch {}
-}
+const gc = isMainThread ? null : (() => { try { v8.setFlagsFromString('--expose-gc'); return vm.runInNewContext('gc'); } catch { return null; } })();
 
 export function frameEvents(bytes) {
   const out = [];
