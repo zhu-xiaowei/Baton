@@ -1909,13 +1909,7 @@ async function startNewSession(projectHash) {
   if (_navVersion !== myNav) return;
   var runtimes = creatableRuntimes();
   state.newSessionRuntimes = runtimes;
-  var savedRuntime = '';
-  try {
-    savedRuntime = localStorage.getItem(
-      newSessionRuntimePreferenceKey(state.appState.device),
-    ) || '';
-  } catch (e) {}
-  var runtime = preferredNewSessionRuntime(runtimes, savedRuntime);
+  var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.sessionPreview = 'New Session';
@@ -1973,7 +1967,13 @@ async function refreshNewSessionRuntimes(nav) {
   var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
   if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
   state.newSessionRuntimes = runtimes;
-  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, state.appState.runtime), false);
+  // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
+  var saved = savedNewSessionRuntime();
+  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, runtimes.includes(saved) ? saved : state.appState.runtime), false);
+}
+
+function savedNewSessionRuntime() {
+  try { return localStorage.getItem(newSessionRuntimePreferenceKey(state.appState.device)) || ''; } catch (e) { return ''; }
 }
 
 // ---- Messages ----
