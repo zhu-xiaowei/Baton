@@ -495,7 +495,7 @@ export class SessionIndex {
         // A Claude child can be active only while its parent's process runs (its turn may be Done while
         // background agents run: the pool's tasks, CC's busy/waiting record) or right after it was written.
         const live = !!row.agentCount && claudeParentLive({ status: own, backgroundAgents: this.awaitsAgents?.(rec.id) },
-          (records ??= liveRecordStatuses()).get(rec.id));
+          (records ??= liveRecordStatuses()).get(rec.id) ?? null);
         if (row.agentCount && (live || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, live, now);
       } else if (runtimeDescriptor(rec.runtime)?.catalog) {
         const { catalog: source } = runtimeDescriptor(rec.runtime);
