@@ -36,7 +36,8 @@ Bridge writes status → BridgeSessions stream → NotificationWorker ─┬→ 
    Monitor would hold it until CC stops it, or forever. Older Bridges omit the field and
    alert per turn.
    Once a report-back turn has
-   started (its `<task-notification>` is the newest row), only its own end alerts. Every
+   started (its `<task-notification>` is the newest row and newer than the row's `lastActive`), only its
+   own end alerts; one the Bridge read and found CC idle after is skipped by the summary. Every
    alert is kept and stacked per session (iOS thread, Android group + summary).
    Android clears a session's stack when the app opens it: a tap cancels only the
    tapped alert, and the summary would otherwise stay on its own.

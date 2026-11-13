@@ -526,6 +526,10 @@ test('an interrupted subagent no longer pins its root to running', () => {
     assert.equal(result.session.runningAgentCount, 0);
     assert.equal(result.session.activeStatus, 'completed');
     assert.deepEqual(result.extraSessions.map((session) => session.status), ['completed']);
+    // A pooled process whose background agent still runs keeps it, though its turn ended.
+    const pooled = claudeRuntime.inspectActiveSession({ sessionId: parentId, nativeSessionId: parentId, projectHash: fixture.project, status: 'running' },
+      { daemonMeta: new Map(), poolOwns: () => false, poolAwaitsAgents: () => true, runningInfo: noProcesses(), lastKnownStatus: new Map(), findSessionFile: () => fixture.filePath });
+    assert.deepEqual(pooled.extraSessions.map((session) => session.status), ['running']);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

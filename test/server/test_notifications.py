@@ -134,6 +134,9 @@ def test_summary_waits_for_the_final_reply_and_skips_interrupts(monkeypatch):
     assert worker.completion_summary(SESSION) is None  # That turn alerts when it ends.
     monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([assistant("All done."), notice]))
     assert worker.completion_summary(SESSION) == "All done."
+    replayed = {**notice, "timestamp": "2026-10-29T00:00:01Z"}  # Bridge found CC idle after it.
+    monkeypatch.setattr(worker._ddb, "Table", lambda name: Pages([replayed, assistant("launched")]))
+    assert worker.completion_summary({**SESSION, "lastActive": "2026-10-29T00:00:02Z"}) == "launched"
     codex = Pages([{"type": "assistant", "stopReason": "end_turn", "content": "[]"}, assistant("Done.", None), user])
     monkeypatch.setattr(worker._ddb, "Table", lambda name: codex)
     assert worker.completion_summary(SESSION) == "Done." and codex.queries == 1  # Codex's empty end marker.

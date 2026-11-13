@@ -16,7 +16,7 @@ import {
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash, liveRecordStatus } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
@@ -257,7 +257,15 @@ function queuePolledClaudeFile(
   enqueue(filename, sessionId);
 }
 
+// Children a notification ended are settled after the root's own write, whose lastActive a
+// Done summary reads, and also when that pass fails: its retry starts after the notification.
 async function readAndSend(config, filename, sessionId, enqueue) {
+  const ended = [];
+  try { return await readClaudeFile(config, filename, sessionId, enqueue, ended); }
+  finally { for (const args of ended) enqueue(...args); }
+}
+
+async function readClaudeFile(config, filename, sessionId, enqueue, ended) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
   if (String(filename).split(path.sep).includes('subagents')) {
@@ -287,6 +295,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   let gotNewTitle = false;
   let gotActivity = false;
   let lastStatus = null; // track status from parsed entries directly
+  let notice = false;
   const firstSync = lastLine === 0 || resumeAt !== undefined;
   // A failed pass resumes from here. A first sync keeps it in memory only: a persisted
   // partial watermark would make the next startup skip the rest of the history.
@@ -298,11 +307,11 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
-    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), enqueue);
+    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), (...a) => ended.push(a));
 
     // Track status from every parsed entry (statusFromEntry returns null for non-status types).
     const s = statusFromEntry(raw);
-    if (s) lastStatus = s;
+    if (s) { lastStatus = s; notice = !!claudeTaskEvent(raw); }
 
     raw = normalizeClaudeQueuedInput(raw);
     if (!VALID_TYPES.has(raw.type)) continue;
@@ -338,7 +347,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   progress.set(sessionId, lastParsedLine);
   if (firstSync) await uploadMessages(sessionId, [], { historyComplete: true });
 
-  const forceActivity = !!parentUpdate
+  let forceActivity = !!parentUpdate
     || (gotActivity && activitySyncDue(_lastActivitySyncAt, sessionId));
   // Sync metadata on lifecycle/title changes, plus throttled message activity.
   if (!recentSessions.has(sessionId) || parentUpdate
@@ -356,6 +365,15 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
+    // CC also writes a notification it already reported, or one replayed at resume, and never
+    // answers it (its record may lag a turn start by a moment). lastActive then tells the
+    // Server's Done summary that this notification is not a report-back turn.
+    const idle = () => liveRecordStatus(sessionId) === 'idle';
+    if (!poolOwned && !daemonActive && lastStatus === 'running' && notice && idle()
+      && await new Promise((resolve) => setTimeout(() => resolve(idle()), 1000))) {
+      lastStatus = 'completed';
+      forceActivity = true;
+    }
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
       : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
