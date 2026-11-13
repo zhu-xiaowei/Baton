@@ -9,13 +9,11 @@ import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
 import { publishMessages } from './ws.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
-import { killLeftovers } from './turn-process.mjs';
 import dsh, { catalog, DSH_HOME, LOG, SESSIONS, withImages } from './dsh-catalog.mjs';
 import { eventRows } from './dsh-extract.mjs';
 import { refreshLocks } from './dsh-locks.mjs';
 import { dshInteraction, findLog } from './dsh-interaction.mjs';
 
-killLeftovers();
 let config = null;
 const busy = new Map(); // log file → { again, done }
 const reported = new Map(); // storage id → status and title last reported
