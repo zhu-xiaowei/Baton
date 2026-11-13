@@ -1,5 +1,4 @@
-// Pi (pi.dev ≥ 1.0) sessions: catalog, history and row conversion. Loaded by the index, history and
-// tool-details workers too, so it imports nothing that only the main thread has.
+// Pi sessions: catalog, history and row mapping. Workers load it too: no main-thread-only imports.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +14,7 @@ export const PI_STATUS_DIR = path.join(BRIDGE_HOME, 'pi-status');
 const HEAD = /^\{"type":"([a-z_]+)"(?:,"id":"([^"]+)")?(?:,"parentId":(?:"([^"]+)"|null))?/;
 const USER_HEAD = /"message":\{"role":"user"/;
 const INTERRUPT = '[Request interrupted by user]';
-// extract.mjs's nativeOrderKey; importing extract.mjs would load sharp into the index workers.
+// extract.mjs's nativeOrderKey (that module loads sharp).
 const nativeOrderKey = (line, f = 0) => `O2#${String(line).padStart(12, '0')}#${String(f).padStart(4, '0')}`;
 const STOP = { stop: 'end_turn', toolUse: 'tool_use', length: 'max_tokens' };
 // Pi's session list shows control characters as spaces.
@@ -23,35 +22,35 @@ const piText = (value) => previewText(String(value || '').replace(/[\x00-\x1f\x7
 const text = (content) => (typeof content === 'string' ? content
   : (content || []).filter((b) => b?.type === 'text').map((b) => b.text).join(' '));
 
-// Pi tool → Baton tool; several edits in one call become several Edit uses (like Codex apply_patch).
+const opt = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== '' && v !== false));
+// Pi tool → Baton tool; one edit call with several edits is several Edit uses (like Codex apply_patch).
 function tools(name, a = {}) {
   a = a && typeof a === 'object' ? a : {};
+  const one = (n, input) => [{ name: n, input }];
   switch (name) {
-    case 'bash': return [{ name: 'Bash', input: { command: a.command ?? '', ...(a.timeout != null ? { timeout: a.timeout } : {}) } }];
-    case 'powershell': return [{ name: 'Bash', input: { command: a.command ?? '', shell: 'powershell' } }];
-    case 'read': return [{ name: 'Read', input: { file_path: a.path ?? '', ...(a.offset != null ? { offset: a.offset } : {}), ...(a.limit != null ? { limit: a.limit } : {}) } }];
-    case 'write': return [{ name: 'Write', input: { file_path: a.path ?? '', content: a.content ?? '' } }];
+    case 'bash': case 'powershell': return one('Bash', { command: a.command ?? '', ...opt({ timeout: a.timeout, shell: name === 'powershell' && name }) });
+    case 'read': return one('Read', { file_path: a.path ?? '', ...opt({ offset: a.offset, limit: a.limit }) });
+    case 'write': return one('Write', { file_path: a.path ?? '', content: a.content ?? '' });
     case 'edit': return (Array.isArray(a.edits) ? a.edits : [a]).map((e) => ({ name: 'Edit',
       input: { file_path: a.path ?? '', old_string: e?.oldText ?? '', new_string: e?.newText ?? '' } }));
-    case 'grep': return [{ name: 'Grep', input: { pattern: a.pattern ?? '', ...(a.path ? { path: a.path } : {}), ...(a.glob ? { glob: a.glob } : {}) } }];
-    case 'find': return [{ name: 'Glob', input: { pattern: a.pattern ?? '', ...(a.path ? { path: a.path } : {}) } }];
-    case 'ls': return [{ name: 'Glob', input: { pattern: '*', path: a.path || '.' } }];
-    case 'tool_search': return [{ name: 'ToolSearch', input: a }];
-    case 'ask_user': case 'ask_text': return [{ name: 'AskUserQuestion', input: { questions: [{ question: a.question ?? '',
-      options: (a.options || []).map((label) => ({ label: String(label) })), ...(a.multiple ? { multiSelect: true } : {}) }] } }];
-    default: return [{ name: String(name || 'Tool'), input: a }];
+    case 'grep': return one('Grep', { pattern: a.pattern ?? '', ...opt({ path: a.path, glob: a.glob }) });
+    case 'find': return one('Glob', { pattern: a.pattern ?? '', ...opt({ path: a.path }) });
+    case 'ls': return one('Glob', { pattern: '*', path: a.path || '.' });
+    case 'tool_search': return one('ToolSearch', a);
+    case 'ask_user': case 'ask_text': return one('AskUserQuestion', { questions: [{ question: a.question ?? '',
+      options: (a.options || []).map((label) => ({ label: String(label) })), ...opt({ multiSelect: !!a.multiple }) }] });
+    default: return one(String(name || 'Tool'), a);
   }
 }
 export { tools as piTools };
 const useIds = (id, n) => (n === 1 ? [id] : Array.from({ length: n }, (_, i) => `${id}#${i}`));
 const image = (b) => ({ type: 'image', source: { type: 'base64', media_type: b.mimeType, data: b.data } });
 
-// Rows for one entry. Live (RPC) and stored copies share uuid = nativeId; a prompt Baton sent carries
-// its turn (batonTurnId, written by pi-approval-ext). `edits`: toolCallId → Edit uses, across calls.
-// `line` (history) orders the rows; pushed rows have none.
+// Rows for one entry; live and stored copies share uuid = nativeId, and a prompt Baton sent carries its
+// batonTurnId (pi-approval-ext). `edits`: toolCallId → Edit uses; `line`: history order (live: none).
 export function piRows(entry, edits = new Map(), line = null) {
   const ts = entry.timestamp || '';
-  const key = (f = 0) => (line === null ? undefined : nativeOrderKey(line, f)); // live rows have no line
+  const key = (f = 0) => (line === null ? undefined : nativeOrderKey(line, f));
   const plain = (type, content) => [{ uuid: entry.id, type, content, timestamp: ts, orderKey: key() }];
   if (entry.type === 'compaction') return plain('summary', entry.summary || '');
   if (entry.type === 'branch_summary') return plain('summary', `Branch summary\n\n${entry.summary || ''}`);
@@ -98,7 +97,6 @@ export function piRows(entry, edits = new Map(), line = null) {
   return [];
 }
 
-// User images become uploaded image keys, as for Claude rows.
 export async function withImages(row) {
   if (!Array.isArray(row.content) || !row.content.some((b) => b.type === 'image')) return row;
   const { extractForApp } = await import('./extract.mjs');
@@ -136,7 +134,7 @@ function advance(file, id, state) {
 
 const newState = () => ({ offset: 0, cwd: '', name: '', first: '', model: '' });
 
-// Status files the managed extension writes, one per live pi process: sessionId → records.
+// sessionId → status records of live pi processes (pi-status-ext).
 function statusRecords() {
   const byId = new Map();
   let names = [];
@@ -145,8 +143,7 @@ function statusRecords() {
     let rec;
     try { rec = JSON.parse(fs.readFileSync(path.join(PI_STATUS_DIR, name), 'utf8')); } catch { continue; }
     const start = procStart(rec.pid);
-    // kill -9 leaves a record whose pid is gone, or reused by another process.
-    if (start === null || (rec.procStart != null && String(rec.procStart) !== String(start))) {
+    if (start === null || (rec.procStart != null && String(rec.procStart) !== String(start))) { // kill -9 left it
       try { fs.unlinkSync(path.join(PI_STATUS_DIR, name)); } catch {}
       continue;
     }
@@ -178,7 +175,7 @@ export const piCatalog = {
   newState,
   advance,
   summarize: (file, id) => advance(file, id, newState()),
-  // The project comes from the header's cwd: Pi's folder names are not Claude's hashes.
+  // Project from the header's cwd: Pi's folder names are not Claude's hashes.
   view(rec, index) {
     const st = rec.state;
     const preview = piText(st.name) || st.first || previewText(index.sentPrompts?.get(rec.id));
@@ -202,7 +199,7 @@ class PiHistory {
         this.ids[line] = m?.[2] || '';
         this.parents[line] = m?.[3] || '';
         if (m?.[1] === 'session_info') this.nameLine = line;
-        // A later page may hold the result of an edit call whose line it does not read.
+        // A page may hold the result of an edit call on a line it does not read.
         if (m?.[1] === 'message' && buf.subarray(s, e).includes('"name":"edit"')) {
           try { piRows(JSON.parse(buf.utf8Slice(s, e)), this.edits); } catch {}
         }
@@ -221,8 +218,7 @@ class PiHistory {
     return changed;
   }
 
-  // The branch ends at the last entry. An entry that does not continue the previous one moved the
-  // branch: the epoch changes, so clients reload.
+  // The branch ends at the last entry; an entry not continuing the previous one moved it (new epoch).
   branch() {
     this.dirty = false;
     const lineOf = new Map();
@@ -268,7 +264,7 @@ class PiHistory {
   page(range) { return readPage(this, range, 64, 64); }
 }
 
-// Every entry of the file, for tool_details (any branch: ids are unique).
+// Every entry, for tool_details (ids are unique across branches).
 function messages(file) {
   const edits = new Map();
   return fs.readFileSync(file, 'utf8').split('\n').flatMap((line) => {

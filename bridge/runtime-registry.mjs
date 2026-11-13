@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { claudeRuntime } from './claude-runtime.mjs';
 import { codexRuntime } from './codex-runtime.mjs';
-import { piRuntime } from './pi-runtime.mjs';
 import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
 
 export const runtimeAdapters = [
@@ -22,7 +24,9 @@ export function registerRuntime(adapter) {
 
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
-const OPTIONAL_RUNTIMES = [];
+const OPTIONAL_RUNTIMES = [
+  ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
+];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
   for (const [file, installed] of list) {
@@ -47,9 +51,4 @@ export function getRuntimeAdapter(runtime) {
   const adapter = adaptersByRuntime.get(normalizeRuntime(runtime));
   if (!adapter) throw new Error('unknown_runtime');
   return adapter;
-}
-
-// Harness runtimes, registered at Bridge start when installed.
-export function registerInstalledRuntimes() {
-  for (const adapter of [piRuntime]) if (adapter.detect()) registerRuntime(adapter);
 }

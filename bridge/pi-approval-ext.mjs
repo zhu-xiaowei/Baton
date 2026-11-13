@@ -1,26 +1,23 @@
-// Pi extension the Bridge passes with -e to the pi processes it starts (never installed). It asks
-// before tools run (unless granted for the session), adds an ask_user tool, and stamps each prompt
-// Baton sent with its turn id so the stored message keeps it (live:user:<turnId>).
+// Passed with -e to the pi processes the Bridge starts (never installed): asks before tools run, adds
+// ask_user, and stamps each prompt Baton sent with its turn id (stored as live:user:<turnId>).
 import fs from "node:fs";
 
 const UNGATED = new Set(["read", "grep", "find", "ls", "ask_user"]);
 const TURN = /^<!--baton:([\w-]+)-->/;
 
-// bash: the program, plus a plain-word subcommand ("git status"); others: the tool.
+// The session grant a call needs: bash = the program plus a plain-word subcommand ("git status"),
+// others = the tool. A command with any other shell syntax gets none, so it is asked every time.
 function grantOf(toolName, input) {
 	if (toolName !== "bash") return toolName;
-	const t = String(input?.command ?? "").trim().split(/\s+/);
-	return `bash:${t.length > 1 && /^[a-z][\w-]*$/i.test(t[1]) ? `${t[0]} ${t[1]}` : t[0]}`;
+	const command = String(input?.command ?? "").trim();
+	const t = command.split(/\s+/);
+	return /^[\w \t./:=@%+,-]+$/.test(command) ? `bash:${t[1] && /^[a-z][\w-]*$/i.test(t[1]) ? `${t[0]} ${t[1]}` : t[0]}` : null;
 }
 
-// A compound command is granted only when every part is.
-function granted(toolName, input) {
+function granted(grant) {
 	let grants = [];
 	try { grants = JSON.parse(fs.readFileSync(process.env.BATON_PI_GRANTS, "utf8"))[process.env.BATON_PI_SESSION] || []; } catch {}
-	if (toolName !== "bash") return grants.includes(toolName);
-	const parts = String(input?.command ?? "").split(/&&|\|\||;|\||\n|`|\$\(/).map((s) => s.trim()).filter(Boolean);
-	return parts.length > 0 && parts.every((part) => grants.some((g) => g.startsWith("bash:")
-		&& (part === g.slice(5) || part.startsWith(`${g.slice(5)} `))));
+	return !!grant && grants.some((g) => g === grant || (g.startsWith("bash:") && grant.startsWith(`${g} `)));
 }
 
 export default function (pi) {
@@ -35,13 +32,13 @@ export default function (pi) {
 		if (event.message.role === "user" && turns.length) return { message: { ...event.message, batonTurnId: turns.shift() } };
 	});
 	pi.on("tool_call", async (event, ctx) => {
-		if (UNGATED.has(event.toolName) || granted(event.toolName, event.input)) return undefined;
-		const body = JSON.stringify({ toolName: event.toolName, input: event.input, grant: grantOf(event.toolName, event.input) });
+		const grant = grantOf(event.toolName, event.input);
+		if (UNGATED.has(event.toolName) || granted(grant)) return undefined;
+		const body = JSON.stringify({ toolName: event.toolName, input: event.input, grant });
 		if (await ctx.ui.confirm("baton:permission", body, { signal: ctx.signal })) return undefined;
 		return { block: true, reason: `${event.toolName} was denied by the user` };
 	});
-	// Pi has no multi-select dialog: a multiple-choice question rides on input() and the Bridge answers
-	// with a JSON array of the chosen options.
+	// Pi has no multi-select dialog: it rides on input(), answered with a JSON array.
 	pi.registerTool({
 		name: "ask_user",
 		label: "Ask user",

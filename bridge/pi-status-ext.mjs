@@ -1,6 +1,5 @@
-// Pi extension the Bridge installs as <agent dir>/extensions/baton-bridge-status.js. No network:
-// each pi process writes <status dir>/<sessionId>.<pid>.json; the fork guard keeps a terminal from
-// branching a session that Baton continued since the terminal loaded it.
+// Installed as <agent dir>/extensions/baton-bridge-status.js. No network: each pi process writes
+// <status dir>/<sessionId>.<pid>.json; the fork guard stops a terminal branching a session Baton continued.
 import * as fs from "node:fs";
 import * as path from "node:path";
 
