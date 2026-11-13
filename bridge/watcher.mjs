@@ -257,7 +257,15 @@ function queuePolledClaudeFile(
   enqueue(filename, sessionId);
 }
 
+// Children a notification ended are settled after the root's own write, whose lastActive a
+// Done summary reads, and also when that pass fails: its retry starts after the notification.
 async function readAndSend(config, filename, sessionId, enqueue) {
+  const ended = [];
+  try { return await readClaudeFile(config, filename, sessionId, enqueue, ended); }
+  finally { for (const args of ended) enqueue(...args); }
+}
+
+async function readClaudeFile(config, filename, sessionId, enqueue, ended) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   if (!fs.existsSync(filePath)) return;
   if (String(filename).split(path.sep).includes('subagents')) {
@@ -288,7 +296,6 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   let gotActivity = false;
   let lastStatus = null; // track status from parsed entries directly
   let notice = false;
-  const ended = []; // Settled after this root's own write, whose lastActive a Done summary reads.
   const firstSync = lastLine === 0 || resumeAt !== undefined;
   // A failed pass resumes from here. A first sync keeps it in memory only: a persisted
   // partial watermark would make the next startup skip the rest of the history.
@@ -352,7 +359,6 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     if (poolOwned && recentSessions.has(sessionId) && !gotNewTitle && !forceActivity) {
       synced.set(sessionId, lastParsedLine);
       _firstSyncs.delete(sessionId);
-      for (const args of ended) enqueue(...args);
       return;
     }
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
@@ -392,7 +398,6 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   synced.set(sessionId, lastParsedLine);
   _firstSyncs.delete(sessionId);
   if (_subagentParents.get(sessionId) === parentUpdate) _subagentParents.delete(sessionId);
-  for (const args of ended) enqueue(...args);
 }
 
 async function readAndSendSubagent(config, filename, filePath, sessionId, enqueue) {
