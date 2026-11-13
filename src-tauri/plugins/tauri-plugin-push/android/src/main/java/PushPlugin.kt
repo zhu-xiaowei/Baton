@@ -10,6 +10,9 @@ import android.provider.Settings
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import app.tauri.PermissionState
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -52,15 +55,15 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
   private var onClick: Channel? = null
 
   override fun load(webView: WebView) {
-    AlertService.foreground = true
+    // Tauri 2.11 never calls a plugin's onPause/onResume, so follow the app process itself.
+    ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+      override fun onStart(owner: LifecycleOwner) { AlertService.foreground = true }
+      override fun onStop(owner: LifecycleOwner) { AlertService.foreground = false }
+    })
     takeTap(activity.intent)
   }
 
   override fun onNewIntent(intent: Intent) = takeTap(intent)
-
-  override fun onResume() { AlertService.foreground = true }
-
-  override fun onPause() { AlertService.foreground = false }
 
   private fun takeTap(intent: Intent?) {
     val event = intent?.getStringExtra(AlertService.EXTRA_EVENT) ?: return
