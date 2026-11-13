@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import kiro, { CLIENT, HOME, LEASES, KiroReader, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
+import kiro, { CLIENT, HOME, LEASES, ROOT, KiroReader, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
 import { finishProcess, sessionProcess } from './turn-process.mjs';
 import { StreamFramer } from './stream-framer.mjs';
@@ -26,11 +26,12 @@ const commands = new Map(); // cwd → ACP available commands
 let bin = null;
 let config = null;
 let spawned = 0;
+const watches = {};
 
 const sid = (id) => storageSessionId('kiro', id);
 const recOf = (id) => sessionIndex.records.get(sessionFile(id));
-// Found at the first use: startup only checks that ~/.kiro exists.
-const kiroBin = () => (bin ||= findRuntimeBin('kiro-cli', [], '3.0.0')?.bin) || Promise.reject(new Error('kiro-cli 3.x was not found on this device.'));
+// Found at the first use and kept, a miss too ('').
+const kiroBin = () => (bin ??= findRuntimeBin('kiro-cli', [], '3.0.0')?.bin || '') || Promise.reject(new Error('kiro-cli 3.x was not found on this device.'));
 
 // A closed session holds no lease, so a new turn starts at once while the old process is still exiting.
 function connect(cwd) {
@@ -98,8 +99,7 @@ async function endTurn(c, turn, stop, error) {
   const closing = close(c);
   turn.end();
   await closing;
-  const rec = recOf(c.id);
-  if (rec) void reportStatus(rec);
+  void reportStatus(recOf(c.id));
 }
 
 function notified(c, method, p) {
@@ -193,7 +193,7 @@ function sessionRow(rec, status) {
 
 // Sessions outside a Baton turn: status from the jsonl and the lease (Baton's own turns report theirs).
 async function reportStatus(rec) {
-  if (conns.get(rec.id)?.turn || !config) return;
+  if (!rec || conns.get(rec.id)?.turn || !config) return;
   const status = kiro.catalog.status(rec, kiro.catalog.running(), Date.now());
   const old = lastKnownStatus.get(sid(rec.id));
   const row = old !== status && sessionRow(rec, status);
@@ -235,7 +235,8 @@ const kiroInteraction = defineInteractionAdapter({
     const cwd = recOf(id)?.state?.cwd;
     if (!cwd) throw new Error('Kiro session not found on this device.');
     let c = conns.get(id);
-    if (c?.turn?.ending) c = await c.turn.ended.then(() => conns.get(id));
+    // Read after the wait: the first waiter opens the next connection, the others steer into it.
+    while (c?.turn?.ending) c = (await c.turn.ended) ?? conns.get(id);
     if (c?.turn) {
       // A prompt during a turn would cancel it; steer adds the message once the turn's prompt is stored.
       const turn = c.turn;
@@ -333,14 +334,19 @@ export default defineRuntimeAdapter({
   interaction: kiroInteraction,
   watcher: defineRuntimeWatcher({
     runtime: 'kiro',
-    // The whole Kiro home, so sessions/ and session-leases/ created later are seen too.
+    // sessions/ (recursive) and session-leases/; the home itself, not recursive, only until both exist.
     start(next) {
       config = next;
-      fs.watch(HOME, { recursive: true }, (_event, name) => {
-        const lease = /^session-leases[/\\](.+)\.lease$/.exec(name || '')?.[1];
-        if (lease) return recOf(lease) && reportStatus(recOf(lease));
-        if (name) changed(path.join(HOME, name));
-      }).on('error', (error) => console.error(`[kiro] watch: ${error.message}`));
+      const arm = () => {
+        if (!watches.sessions && fs.existsSync(ROOT)) {
+          watches.sessions = fs.watch(ROOT, { recursive: true }, (_event, name) => name && changed(path.join(ROOT, name)));
+          kiro.catalog.files().forEach(changed); // written before the watch existed
+        }
+        watches.leases ||= fs.existsSync(LEASES) && fs.watch(LEASES, (_event, name) => name?.endsWith('.lease') && reportStatus(recOf(name.slice(0, -6))));
+        if (watches.sessions && watches.leases) watches.home?.close();
+        else watches.home ||= fs.watch(HOME, arm);
+      };
+      arm();
     },
   }),
   // The catalog comes from the session index.

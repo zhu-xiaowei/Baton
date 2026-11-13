@@ -140,15 +140,16 @@ Done:
   is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
   one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
   `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
-- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when `$KIRO_HOME` exists; kiro-cli is located at first use): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas`; the binary is located at first use, a miss is kept too): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
   `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
-  waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
+  waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; sends that
+  arrive while a turn ends wait for it, then the first opens the next connection and the rest steer into it (one connection per Session); interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
   (`replayId` = stored Say id); every row, including tool cards (a stream block, then the row), comes from the
   jsonl drain, so live and history match. Approvals map by option kind; "for this session" is `allow_always`
   plus a session grant (`capability(resource)`, ws.mjs `_grants`) answered again in later processes;
   Skill loads are allowed. `heldElsewhere`: another client's live lease (takeover SIGTERMs that pid). Commands: the
-  ACP `available_commands_update` of the last turn in that cwd. One recursive `fs.watch` on `$KIRO_HOME` (so
-  `sessions/` and `session-leases/` created later are seen). Delete runs `kiro-cli chat --delete-session`.
+  ACP `available_commands_update` of the last turn in that cwd. `fs.watch`: `sessions/` recursive and `session-leases/`
+  (inotify cost is the sessions tree only); `$KIRO_HOME` itself, not recursive, only until both exist. Delete runs `kiro-cli chat --delete-session`.
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.

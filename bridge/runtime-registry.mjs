@@ -24,7 +24,8 @@ export function registerRuntime(adapter) {
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
-  ['./kiro-runtime.mjs', () => fs.existsSync(process.env.KIRO_HOME || `${os.homedir()}/.kiro`)],
+  // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
+  ['./kiro-runtime.mjs', () => ['.local/share', 'Library/Application Support'].some((dir) => fs.existsSync(`${os.homedir()}/${dir}/kiro-cli/kas`))],
 ];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
