@@ -771,7 +771,7 @@ function connect() {
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
         notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
-        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
+        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
