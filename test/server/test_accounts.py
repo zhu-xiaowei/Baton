@@ -1,3 +1,4 @@
+import copy
 import re
 from types import SimpleNamespace
 
@@ -30,10 +31,20 @@ class Table:
                     self._check(self.rows.get(tuple(plain(u['Key']).values()), {}), u['ConditionExpression'], {}, plain(u['ExpressionAttributeValues']))
         except ClientError:
             raise ClientError({'Error': {'Code': 'TransactionCanceledException'}}, 'transact')
+        saved = copy.deepcopy(self.rows)  # all or nothing, like DynamoDB
+        try:
+            self._apply(TransactItems, plain)
+        except Exception:
+            self.rows = saved
+            raise
+
+    def _apply(self, TransactItems, plain):
         for op in TransactItems:
             if 'Update' in op:
                 u = op['Update']
                 self.update_item(Key=plain(u['Key']), UpdateExpression=u['UpdateExpression'], ExpressionAttributeValues=plain(u['ExpressionAttributeValues']))
+            elif 'Put' in op:
+                self.put_item(Item=op['Put']['Item'])
             else:
                 self.delete_item(Key=plain(op['Delete']['Key']))
 

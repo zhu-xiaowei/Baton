@@ -298,8 +298,9 @@ class Rotation(BaseModel):
 
 
 def _rotate_and_revoke(account, rotation, digests):
-    """K' sealed under the K the leaving device also holds (design §8), and its tokens deleted, in ONE
-    transaction: no moment where it may read the chain, nor where the old joinSecret still recovers.
+    """K' sealed under the K the leaving device also holds (design §8), its tokens deleted and the recovery
+    index moved, in ONE transaction: no moment where it may read the chain, nor where the old joinSecret
+    still recovers, nor where neither phrase does.
     `head` makes two rotations from one K fail instead of forking the chain."""
     # Plain values: the resource's client (table.meta.client) serializes them itself.
     meta = _meta(account)
@@ -310,15 +311,15 @@ def _rotate_and_revoke(account, rotation, digests):
               "ConditionExpression": "head = :fp",
               "ExpressionAttributeValues": {":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
                                             ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]}}
-    deletes = [{"Delete": {"TableName": table.name, "Key": key}} for digest in digests for key in _token_keys(account, digest)]
+    keys = [key for digest in digests for key in _token_keys(account, digest)] + [{"pk": f"JOIN#{meta['joinSecretHash']}", "sk": "-"}]
+    join = {"TableName": table.name, "Item": {"pk": f"JOIN#{_sha(rotation.joinSecret)}", "sk": "-", "accountId": account}}
     try:
-        table.meta.client.transact_write_items(TransactItems=[{"Update": update}] + deletes)
+        table.meta.client.transact_write_items(TransactItems=[{"Update": update}, {"Put": join}]
+                                               + [{"Delete": {"TableName": table.name, "Key": key}} for key in keys])
     except ClientError as error:
         if error.response["Error"]["Code"] != "TransactionCanceledException":
             raise
         raise HTTPException(409, "The account key changed meanwhile; try again.")
-    _join_index(account, _sha(rotation.joinSecret))
-    table.delete_item(Key={"pk": f"JOIN#{meta['joinSecretHash']}", "sk": "-"})
 
 
 def remove(caller, rotation, digests, notice=None):
