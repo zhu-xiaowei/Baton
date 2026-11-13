@@ -539,7 +539,10 @@ export class SessionIndex {
   }
 
   projectPath(projectHash) {
-    if (!this.names.has(projectHash)) this.names.set(projectHash, readableProjectName(projectHash));
+    if (!this.names.has(projectHash)) {
+      const virtual = runtimeDescriptors().map((d) => d.catalog?.virtualProjects?.[projectHash]).find(Boolean);
+      this.names.set(projectHash, virtual || readableProjectName(projectHash));
+    }
     return this.names.get(projectHash);
   }
 

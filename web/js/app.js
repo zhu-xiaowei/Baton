@@ -527,15 +527,16 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    var filesButton = state.appState.session !== '__new__'
+    var hasFolder = state.appState.session !== '__new__' && !virtualProjectRuntimes(state.appState.project.hash);
+    var filesButton = hasFolder
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    var terminalButton = state.appState.session !== '__new__'
+    var terminalButton = hasFolder
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
-    var gitButton = state.appState.session !== '__new__'
+    var gitButton = hasFolder
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
@@ -965,7 +966,7 @@ function applyThreadInputState() {
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = blocked ? 'This Session is read-only' : 'Send a message...';
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -1909,7 +1910,7 @@ async function startNewSession(projectHash) {
   });
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = knownNewSessionRuntimes() || creatableRuntimes();
+  var runtimes = virtualProjectRuntimes(projectHash) || knownNewSessionRuntimes() || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
   var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
@@ -1961,6 +1962,12 @@ async function startNewSession(projectHash) {
   refreshNewSessionRuntimes(myNav);
 }
 
+// A virtual project (`<runtime>:<name>`) has no folder; only its own runtime creates Sessions there.
+function virtualProjectRuntimes(projectHash) {
+  var prefix = String(projectHash || '').split(':');
+  return prefix.length > 1 && RUNTIMES[prefix[0]] ? [prefix[0]] : null;
+}
+
 // The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
 async function refreshNewSessionRuntimes(nav) {
   var reply;
@@ -1969,7 +1976,9 @@ async function refreshNewSessionRuntimes(nav) {
   var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
   if (!runtimes.length) return;
   try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
-  if (runtimes.join() === state.newSessionRuntimes.join()) return;
+  var only = virtualProjectRuntimes(state.appState.project?.hash);
+  if (only) runtimes = runtimes.filter(function (runtime) { return only.includes(runtime); });
+  if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
   state.newSessionRuntimes = runtimes;
   // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
   var saved = savedNewSessionRuntime();
@@ -2418,7 +2427,7 @@ Object.assign(window, {
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, openRuntimePicker, closeRuntimePicker, pickNewSessionRuntime, loadMessages, toggleActiveSessions,
-  refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
+  refreshSessionThreads, applyThreadInputState, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
   openHomeFilesPage,

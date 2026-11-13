@@ -85,7 +85,7 @@ export class HistoryService {
     await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
     // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
     const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
-    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}) };
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.
@@ -97,7 +97,7 @@ export class HistoryService {
     if (!row) return { rootSessionId: sessionId, threads: [] };
     const rec = row.rec;
     const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: new Date(rec.ms).toISOString(), size: rec.size,
-      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id }];
+      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id, canSend: !rec.view?.readOnly }];
     const source = runtimeDescriptor(rec.runtime)?.catalog;
     if (row.agentCount && source) {
       // A registered runtime's children are catalog records already.
