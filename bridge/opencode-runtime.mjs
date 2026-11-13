@@ -16,6 +16,8 @@ import { interaction, refreshActive, service, working, writerProcesses } from '.
 
 // OpenCode 1.x has no v2 tables: such a store is listed as nothing and offers no sessions.
 const v2 = db.all("SELECT 1 FROM sqlite_master WHERE name = 'session_v2'").length > 0;
+const STATS = `SELECT (SELECT json_extract(data, '$.model') FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC LIMIT 1) AS m,
+  (SELECT coalesce(sum(length(CAST(data AS BLOB))), 0) FROM session_message WHERE session_id = ?) + (SELECT coalesce(sum(length(CAST(data AS BLOB))), 0) FROM session_part WHERE session_id = ?) AS size`;
 const MARK = 'max(time_updated, coalesce(time_busy, 0), coalesce(time_idle, 0), coalesce(time_suspended, 0), coalesce(time_archived, 0))';
 const file = (id) => `rows:opencode:${id}`;
 const record = (id) => sessionIndex.records.get(file(id));
@@ -39,11 +41,10 @@ const catalog = {
       marks.set(r.id, r.mark);
       changed.add(r.id);
       if (r.time_archived) { deletes.push(r.id); continue; }
-      let model = '';
-      // A session the service created has no model of its own; its last reply names it (indexed lookup).
-      const used = r.model || db.all("SELECT json_extract(data, '$.model') AS m FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC LIMIT 1", [r.id])[0]?.m;
-      try { model = JSON.parse(used || 'null')?.id || ''; } catch {}
-      upserts.push({ id: r.id, ms: r.time_updated, parent: r.parent_id || '', directory: r.directory, title: r.title || '', model,
+      // Size: the bytes of its messages and parts. A session the service created has no model of its own; its last reply names it.
+      const { m, size } = db.all(STATS, [r.id, r.id, r.id])[0];
+      let model = ''; try { model = JSON.parse(r.model || m || 'null')?.id || ''; } catch {}
+      upserts.push({ id: r.id, ms: r.time_updated, size, parent: r.parent_id || '', directory: r.directory, title: r.title || '', model,
         busy: r.time_busy || 0, idle: r.time_idle || 0 });
     }
     // Deleted rows leave no mark: the count tells, then the ids.
@@ -71,7 +72,7 @@ const catalog = {
 function sessionRow(rec, status, detail = '') {
   const { project = '', preview = '' } = catalog.view(rec, sessionIndex) || {};
   return { id: rec.id, nativeSessionId: rec.id, runtime: 'opencode', project, projectName: sessionIndex.projectPath(project),
-    preview, model: rec.state.model, size: 0, lastActive: new Date(rec.ms).toISOString(),
+    preview, model: rec.state.model, size: rec.size, lastActive: new Date(rec.ms).toISOString(),
     status, ...(status === 'needs_input' ? { agentDetail: detail } : {}) };
 }
 
