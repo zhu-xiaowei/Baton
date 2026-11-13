@@ -1,6 +1,3 @@
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { claudeRuntime } from './claude-runtime.mjs';
 import { codexRuntime } from './codex-runtime.mjs';
 import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
@@ -25,7 +22,7 @@ export function registerRuntime(adapter) {
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
-  ['./opencode-runtime.mjs', () => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db'))],
+  ['./opencode-runtime.mjs', () => process.getBuiltinModule('node:fs').existsSync(`${process.env.XDG_DATA_HOME || `${process.getBuiltinModule('node:os').homedir()}/.local/share`}/opencode/opencode.db`)],
 ];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {

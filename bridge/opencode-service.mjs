@@ -241,6 +241,7 @@ const writerOf = (id, directory, procs = writerProcesses()) => procs.find((p) =>
 // Someone runs a busy session: Baton, the service, or another process on it (else it is an orphaned claim).
 export const working = (id, directory, procs) => execs.has(id) || active.has(id) || !!writerOf(id, directory, procs);
 const sessionOf = (id) => db.all('SELECT directory, parent_id, time_busy, time_idle FROM session_v2 WHERE id = ?', [id])[0];
+const busyChildren = (id) => db.all('SELECT id FROM session_v2 WHERE parent_id = ? AND time_busy > coalesce(time_idle, 0)', [id]).map((r) => r.id);
 const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0);
 
 export const interaction = defineInteractionAdapter({
@@ -260,9 +261,7 @@ export const interaction = defineInteractionAdapter({
   },
   async interrupt(id) {
     await request('POST', `/api/session/${id}/interrupt`, {});
-    for (const child of db.all('SELECT id FROM session_v2 WHERE parent_id = ? AND time_busy > coalesce(time_idle, 0)', [id])) {
-      await request('POST', `/api/session/${child.id}/interrupt`, {}).catch(() => {});
-    }
+    for (const child of busyChildren(id)) await request('POST', `/api/session/${child}/interrupt`, {}).catch(() => {});
   },
   // Session scope adds the request's save patterns to this session's own rules (they survive restarts);
   // a deny must carry a message, or OpenCode cancels the whole turn.
@@ -300,12 +299,14 @@ export const interaction = defineInteractionAdapter({
     const writer = !active.has(id) && writerOf(id, sessionOf(id).directory);
     return writer ? { pid: writer.pid, status: 'running', label: 'An OpenCode terminal', canTerminate: true } : null;
   },
-  // Requests waiting outside a Baton turn show on subscribe.
+  // Requests waiting outside a Baton turn (its subagents' too) show on subscribe.
   async observePermissions({ nativeSessionId: id, callbacks }) {
     if (execs.has(id) || !serviceInfo()) return;
-    const [perms, forms] = await interaction.reconcile(id);
-    for (const p of perms) callbacks.onControlRequest(controlRequest(p));
-    for (const form of forms) callbacks.onControlRequest(controlRequest(form, true));
+    for (const sid of [id, ...busyChildren(id)]) {
+      const [perms, forms] = await interaction.reconcile(sid);
+      for (const p of perms) callbacks.onControlRequest(controlRequest(p));
+      for (const form of forms) callbacks.onControlRequest(controlRequest(form, true));
+    }
   },
   // The service's open requests of a session; ones answered elsewhere leave `pending`.
   async reconcile(id) {

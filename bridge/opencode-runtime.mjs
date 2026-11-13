@@ -135,7 +135,7 @@ const watcher = defineRuntimeWatcher({
 export default defineRuntimeAdapter({
   ...history,
   displayName: 'OpenCode',
-  features: { create: v2, send: v2, interrupt: v2, deleteHistory: v2, statusPolling: v2 },
+  features: { create: v2, send: v2, interrupt: v2, deleteHistory: true, statusPolling: v2 },
   catalog,
   watcher,
   interaction,

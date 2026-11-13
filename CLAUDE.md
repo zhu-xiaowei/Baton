@@ -133,7 +133,8 @@ Done:
   whose `engines` the running Node does not meet.
 
 ### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
-- Loaded only when `~/.local/share/opencode/opencode.db` exists and has `session_v2` (one `OPTIONAL_RUNTIMES` line); a 1.x DB without `session_v2` lists nothing and offers no create/send.
+- Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
+  `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
   Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
   max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
   turn after the last `idle` row (and running `!cmd` rows) are unstable. Baton prompts carry
@@ -148,7 +149,7 @@ Done:
   turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
   request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
   turn); forms map per field key (multiselect → array). A subagent's request joins its root's Baton turn and is
-  answered on the subagent's session; requests answered elsewhere leave `pending` on the next subscribe / commit. `heldElsewhere`: busy in the DB but not active in the service
+  answered on the subagent's session (subscribe also fetches busy subagents' requests); requests answered elsewhere leave `pending` on the next subscribe / commit. `heldElsewhere`: busy in the DB but not active in the service
   → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
   else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
   the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing.
