@@ -78,8 +78,9 @@ var _historyFetchBarriers = new FetchBarrierCoordinator();
 var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
-// iOS can suspend a fetch forever; a hung history request would hold the barrier open.
-var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
+// A load that never settles (e.g. IndexedDB hung after an iOS suspension) would hold the barrier
+// open. Longer than the transport's own deadlines, which do not count waiting for a socket.
+var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 75000;
 // A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
 // frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
