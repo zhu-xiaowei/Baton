@@ -7,6 +7,7 @@ import { FrameIndex, frameEvents, newFrames } from './dsh-frames.mjs';
 import { eventRows } from './dsh-extract.mjs';
 import { readPage } from './history-page.mjs';
 import { lockHolder, lockHolders } from './dsh-locks.mjs';
+import { recentKeys, reusable, transfer } from './transfer-store.mjs';
 
 export const LOG = 'session.v4.jsonl.zstd';
 export const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -114,15 +115,14 @@ export class DshHistoryReader extends FrameIndex {
 }
 
 // Image blocks name the attachment file; on the main thread (storage access lives there) its bytes
-// go to the transfer store under the block's key, once per Bridge run.
-const uploaded = new Set();
+// go to the transfer store under the block's key, checked again after a day (storage keeps 7).
+const uploaded = recentKeys();
 export async function withImages(rows) {
   const images = rows.flatMap((row) => (Array.isArray(row.content) ? row.content : []).filter((b) => b.type === 'image' && b.path));
-  const { transfer, reusable } = images.length ? await import('./transfer-store.mjs') : {};
   await Promise.all(images.map(async (b) => {
     try {
-      if (!uploaded.has(b.key) && !reusable(await transfer.head(b.key))) await transfer.put(b.key, fs.readFileSync(b.path), { contentType: b.mediaType || 'image/png' });
-      uploaded.add(b.key);
+      if (!uploaded.get(b.key) && !reusable(await transfer.head(b.key))) await transfer.put(b.key, fs.readFileSync(b.path), { contentType: b.mediaType || 'image/png' });
+      uploaded.set(b.key);
     } catch { b.placeholder = true; }
     delete b.path;
   }));
