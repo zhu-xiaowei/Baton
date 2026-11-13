@@ -152,7 +152,8 @@ function dispatch(ev) {
   const block = (key) => exec.blocks.get(key) ?? exec.blocks.set(key, exec.blocks.size + 1).get(key);
   const step = exec.steps.get(d.assistantMessageID) || exec.steps.set(d.assistantMessageID, []).get(d.assistantMessageID);
   const authority = (rows) => { for (const row of rows) cb.onMessage('', row, { normalized: true, runtime: 'opencode', liveKey: row.uuid }); };
-  const assistant = (finish) => authority(messageRows({ id: d.assistantMessageID, type: 'assistant', data: { content: step, finish, time: { created: ev.created } } }));
+  // The App takes one authority per message: a step's row goes out once, when the step ends (parallel tools).
+  const stepRows = (finish, id = d.assistantMessageID) => messageRows({ id, type: 'assistant', data: { content: exec.steps.get(id), finish, time: { created: ev.created } } });
   const kind = ev.type.split('.')[1];
   const key = `${d.assistantMessageID}:${kind}${d.ordinal ?? d.id}`;
   // One block at a time: OpenCode starts the text before it ends a streamed reasoning.
@@ -191,13 +192,16 @@ function dispatch(ev) {
       if (!tool) return;
       const input = d.input || tool.state.input;
       tool.state = { status: { called: 'running', success: 'completed' }[ev.type.split('.')[2]] || 'error', input, content: d.content, metadata: d.metadata, error: d.error };
-      return assistant();
+      return authority(stepRows().filter((row) => row.uuid.endsWith(`#r:${d.id}`))); // its result row
     }
-    case 'session.step.ended': case 'session.step.failed': return assistant(d.finish);
+    case 'session.step.ended': case 'session.step.failed':
+      authority(stepRows(d.finish));
+      return exec.steps.delete(d.assistantMessageID);
     case 'permission.asked': case 'form.created': return cb.onControlRequest(control);
     case 'permission.replied': case 'form.replied': case 'form.cancelled':
       return cb.onControlResolved(d.requestID || d.id || d.form?.id);
     case 'session.execution.succeeded': case 'session.execution.failed': case 'session.execution.interrupted':
+      for (const id of exec.steps.keys()) if (id) authority(stepRows(undefined, id)); // steps an interrupt cut short
       return end(sid, exec, { is_error: ev.type === 'session.execution.failed', subtype: ev.type.split('.')[2] });
     default:
   }
