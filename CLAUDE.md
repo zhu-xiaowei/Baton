@@ -152,7 +152,7 @@ Done:
   A failed prompt does not fail the ones queued behind it; the turn ends once, after the last.
 - A lock held by another process → `dsh_active_writer` takeover (SIGTERM; a `dsh web` closes all its sessions).
   Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
-  (children too) and DSH's projcache entry. Rename is not supported yet.
+  (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
