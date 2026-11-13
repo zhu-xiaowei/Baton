@@ -5,22 +5,21 @@ import fs from "node:fs";
 const UNGATED = new Set(["read", "grep", "find", "ls", "ask_user"]);
 const TURN = /^<!--baton:([\w-]+)-->/;
 
-// The session grant a call needs: bash = the program plus a plain-word subcommand ("git status"),
-// others = the tool. A command with any other shell syntax gets none, so it is asked every time.
+// The session grant a call needs: bash = the program and a plain lowercase subcommand ("git status"),
+// others = the tool. Any other bash command (shell syntax, a bare program, a flag, path or file second,
+// a wrapper such as "sudo rm") gets none, so it is asked every time.
 function grantOf(toolName, input) {
 	if (toolName !== "bash") return toolName;
 	const command = String(input?.command ?? "").trim();
-	const t = command.split(/\s+/);
-	// A wrapper runs whatever follows it, and a flag second ("rm -rf") would grant the whole program:
-	// both are asked every time.
-	if (/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|stdbuf|ionice|sh|bash|zsh)$/.test(t[0]) || t[1]?.startsWith("-")) return null;
-	return /^[\w \t./:=@%+,-]+$/.test(command) ? `bash:${t[1] && /^[a-z][\w-]*$/i.test(t[1]) ? `${t[0]} ${t[1]}` : t[0]}` : null;
+	const [program, sub] = command.split(/\s+/);
+	return /^[\w \t./:=@%+,-]+$/.test(command) && /^[a-z]+$/.test(sub ?? "")
+		&& !/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|stdbuf|ionice|sh|bash|zsh)$/.test(program) ? `bash:${program} ${sub}` : null;
 }
 
 function granted(grant) {
 	let grants = [];
 	try { grants = JSON.parse(fs.readFileSync(process.env.BATON_PI_GRANTS, "utf8"))[process.env.BATON_PI_SESSION] || []; } catch {}
-	return !!grant && grants.some((g) => g === grant || (g.startsWith("bash:") && grant.startsWith(`${g} `)));
+	return !!grant && grants.includes(grant);
 }
 
 export default function (pi) {

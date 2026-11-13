@@ -153,11 +153,12 @@ Done:
   stores `batonTurnId` on the user message, so live and stored prompts are both `live:user:<turnId>`. Other rows:
   uuid = nativeId (`pi:assistant:<ts>`, `pi:tool:<callId>`). Images go in the RPC `images` field. Tool calls are
   streamed whole at `toolcall_end`, already mapped.
-- Dialogs: `baton:permission` confirm → `kind:'tool'` (session grant `bash:<prog [sub]>` / tool name, kept in
-  `~/.baton-bridge/pi-grants.json`, read by the extension on every call); `ask_user` (Baton's tool; `multiple:true`
-  rides on `input('baton:multiselect')` and answers a JSON array) and user-extension select/confirm/input → `ask`.
-  A bash command with any shell syntax beyond plain words, or behind a wrapper (`timeout`, `env`, `sudo`, …) or a flag (`rm -rf`), gets
-  no grant and is asked every time. One edit call with several edits is approved on one joined diff.
+- Dialogs: `baton:permission` confirm → `kind:'tool'`. A session grant is offered only for `<program> <plain
+  lowercase subcommand>` (`bash:git status`, applied to that pair only) or a non-bash tool name; any other bash
+  command (shell syntax, a bare program, a flag/path/file second, a wrapper like `sudo`) is asked every time.
+  Grants live in `~/.baton-bridge/pi-grants.json`, read by the extension on every call. `ask_user` (Baton's
+  tool; `multiple:true` rides on `input('baton:multiselect')` and answers a JSON array) and user-extension
+  select/confirm/input → `ask`. One edit call with several edits is approved on one joined diff.
 - Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
   be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry
   (the catalog keeps its id, so nothing is re-read).
