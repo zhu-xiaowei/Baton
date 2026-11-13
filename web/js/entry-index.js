@@ -7,6 +7,7 @@ import './theme.js';
 import './state.js';
 import './api.js';
 import { showToast } from './components/toast.js';
+import { onDeviceOnline } from './v2/direct-transport.js';
 import './components/skeleton.js';
 import '../css/back-button.css';
 import '../css/breadcrumb.css';
@@ -50,4 +51,8 @@ addEventListener('pageshow', (event) => {
   if (event.persisted) { location.reload(); return; }
   sessionStorage.removeItem('baton-added');
   showToast('Added ' + added);
+  // A computer starts its Bridge only after it was approved: list it once it is online.
+  onDeviceOnline((device) => {
+    if (device === added && !location.hash.replace(/^#\/?/, '')) window.loadDevices?.();
+  });
 });
