@@ -120,6 +120,7 @@ function applyRpc(next, { persist = true } = {}) {
   }
   if (persist) {
     try { localStorage.setItem(storageKey(), JSON.stringify({ rpc: next })); } catch {}
+    noteHolders(next.bridges);
   }
   reconcile();
   if (!persist) return;
@@ -140,8 +141,21 @@ export function onDeviceOnline(listener) {
 export function updateRoutes(devicesResponse) {
   restore();
   routesKnown = true;
+  if (devicesResponse?.devices) noteHolders([], devicesResponse.devices);
   if (devicesResponse?.rpc) applyRpc(devicesResponse.rpc);
   else reconcile();
+}
+
+// Which K (fingerprint) each device last showed, dropping devices no longer in the account, so a page
+// holding K waits for an offline holder instead of creating another K (keys only change on purpose).
+function noteHolders(bridges = [], devicesList = null) {
+  const key = 'baton-e2ee-fp:' + state.SERVER;
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem(key) || '{}'); } catch {}
+  for (const bridge of bridges) if (bridge.fp) seen[bridge.device] = bridge.fp;
+  if (devicesList) for (const device of Object.keys(seen)) if (!devicesList.some((d) => d.deviceName === device)) delete seen[device];
+  try { localStorage.setItem(key, JSON.stringify(seen)); } catch {}
+  return seen;
 }
 
 export function cachedOnlineDevices() {
@@ -422,6 +436,8 @@ function migrate() {
     const take = async (fp) => (await request(keyed.find(([, route]) => route.fp === fp)[0], 'account_key', {})).k;
     // Routes still without a fingerprint after a handover (a late update) get the same K again.
     let raw = null;
+    if (!keyed.length && keys && !handedK
+      && Object.entries(noteHolders()).some(([device, fp]) => fp === keys.fp && !routes.get(device)?.online)) return;
     if (!keyed.length) raw = handedK || crypto.getRandomValues(new Uint8Array(32));
     else if (keys?.fp !== keyed[0][1].fp) raw = fromBase64(await take(keyed[0][1].fp));
     if (raw?.length === 32 && raw !== handedK) {
