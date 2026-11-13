@@ -788,11 +788,8 @@
   </div>
 </div>
 
-<div id="runtimePickerModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRuntimePicker()">
-  <div class="modal-box runtime-picker-box" role="dialog" aria-modal="true" aria-labelledby="runtimePickerTitle">
-    <div class="modal-title" id="runtimePickerTitle">New session with</div>
-    <div id="runtimePickerList" class="runtime-picker-list"></div>
-  </div>
+<div id="runtimePickerMenu" class="runtime-menu-layer" hidden onclick="if(event.target===this)closeRuntimePicker()">
+  <div id="runtimePickerList" class="runtime-menu" role="menu" aria-label="New session with"></div>
 </div>
 
 <div id="agentThreadsModal" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAgentThreadsModal()">

@@ -7,6 +7,7 @@ import { attachPageEdgeBackGesture } from './edge-back.js';
 import '../css/back-button.css';
 import qrcode from 'qrcode-generator';
 import { initSystemBack } from './system-back.js';
+import { CHECK_ICON_SVG } from './components/icons.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
@@ -121,7 +122,7 @@ setNativeTabTitle('Settings');
 
   function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(function () {
-      btn.textContent = '✓';
+      btn.innerHTML = CHECK_ICON_SVG;
       btn.classList.add('copied');
       setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
     });
