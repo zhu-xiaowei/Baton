@@ -40,7 +40,9 @@ const catalog = {
       changed.add(r.id);
       if (r.time_archived) { deletes.push(r.id); continue; }
       let model = '';
-      try { model = JSON.parse(r.model || 'null')?.id || ''; } catch {}
+      // A session the service created has no model of its own; its last reply names it (indexed lookup).
+      const used = r.model || db.all("SELECT json_extract(data, '$.model') AS m FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC LIMIT 1", [r.id])[0]?.m;
+      try { model = JSON.parse(used || 'null')?.id || ''; } catch {}
       upserts.push({ id: r.id, ms: r.time_updated, parent: r.parent_id || '', directory: r.directory, title: r.title || '', model,
         busy: r.time_busy || 0, idle: r.time_idle || 0 });
     }
