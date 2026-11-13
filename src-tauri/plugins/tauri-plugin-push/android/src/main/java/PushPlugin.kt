@@ -55,12 +55,10 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   override fun load(webView: WebView) {
     // Tauri 2.11 never calls a plugin's onPause/onResume, so follow the app process itself.
-    activity.runOnUiThread {
-      ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) { AlertService.foreground = true }
-        override fun onStop(owner: LifecycleOwner) { AlertService.foreground = false }
-      })
-    }
+    ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+      override fun onStart(owner: LifecycleOwner) { AlertService.foreground = true }
+      override fun onStop(owner: LifecycleOwner) { AlertService.foreground = false }
+    })
     takeTap(activity.intent)
   }
 
