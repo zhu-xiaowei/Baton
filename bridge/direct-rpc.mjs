@@ -71,9 +71,10 @@ export class DirectRpcBridge {
   // `streams[ch](frame)`: terminal / preview frames from Apps, their message already unpacked.
   // `accountKey` (K, 32 bytes): every frame but `account_key` is sealed (e2ee.mjs); `saveAccountKey(K)`
   // stores a K an App hands over (migration of existing users, docs/v2-accounts-e2ee-plan.md §9).
-  constructor({ key, accountKey, accountKeyAt, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
+  constructor({ key, accountKey, accountKeyAt, accounts = false, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.accountKey = accountKey || null;
+    this.accounts = accounts;
     this.keyAt = accountKeyAt;
     this.keys = accountKey ? this.newKeys() : null;
     this.saveAccountKey = saveAccountKey;
@@ -321,6 +322,8 @@ export class DirectRpcBridge {
   // Clear on purpose: an App of this account hands K over or takes it (§9 migration). A new K is
   // published by joining again with new keys.
   accountKeyRequest({ k } = {}) {
+    // A hosted account's K comes only by pairing: the relay must never see it in clear.
+    if (this.accounts) return { fp: this.keys?.fp || '' };
     const raw = typeof k === 'string' ? Buffer.from(k, 'base64') : null;
     if (raw?.length === 32 && !raw.equals(this.accountKey || Buffer.alloc(0))) {
       this.accountKey = raw;

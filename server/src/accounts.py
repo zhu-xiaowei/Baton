@@ -131,19 +131,22 @@ def recover(body: Account, request: Request):
 
 
 class Create(BaseModel):
+    code: str = SECRET
     sealed: str = SEALED
 
 
 @router.post("/pair/create")
 def pair_create(body: Create, request: Request):
-    """A device holding K offers it to one new App, sealed under the QR code's secret."""
+    """A device holding K offers it to one new App, sealed under the QR code's secret. The device picks the
+    code, which the seal is bound to."""
     caller = request.state.auth
     if caller["kind"] == "key":
         _ensure_meta(caller["accountId"])
-    code = secrets.token_urlsafe(16)
-    _table().put_item(Item={**_pair_key(code), "kind": "app", "accountId": caller["accountId"], "sealed": body.sealed,
-                            "ttl": int(time.time()) + PAIR_SECONDS})
-    return {"code": code, "expiresIn": PAIR_SECONDS}
+    if _conditional(lambda: _table().put_item(Item={
+            **_pair_key(body.code), "kind": "app", "accountId": caller["accountId"], "sealed": body.sealed,
+            "ttl": int(time.time()) + PAIR_SECONDS}, ConditionExpression="attribute_not_exists(pk)")) is False:
+        raise HTTPException(409, "Code in use.")
+    return {"expiresIn": PAIR_SECONDS}
 
 
 class Claim(BaseModel):
@@ -184,8 +187,13 @@ def pair_approve(body: Approve, request: Request):
         raise HTTPException(403, "Only an App can add a computer.")
     if caller["kind"] == "key":
         _ensure_meta(caller["accountId"])
-    if _open() and sum(token["kind"] == "bridge" for token in list_tokens(caller["accountId"])) >= MAX_BRIDGES:
+    computers = [token["deviceName"] for token in list_tokens(caller["accountId"]) if token["kind"] == "bridge"]
+    if _open() and len(computers) >= MAX_BRIDGES:
         raise HTTPException(409, f"This account already has {MAX_BRIDGES} computers.")
+    pending = _table().get_item(Key=_pair_key(body.code), ConsistentRead=True).get("Item") or {}
+    # The name is the computer's identity: a second one with it would take the first one's place.
+    if pending.get("deviceName") in computers:
+        raise HTTPException(409, f"A computer named {pending['deviceName']} is already in this account; reinstall with another name.")
     row = _conditional(lambda: _table().update_item(
         Key=_pair_key(body.code), ReturnValues="ALL_NEW",
         UpdateExpression="SET accountId = :account, sealed = :sealed, approvedBy = :by",

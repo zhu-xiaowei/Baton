@@ -30,6 +30,9 @@ import {
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
+// Not the service: shows a pairing QR code in this terminal, while the service keeps running.
+if (process.argv[2] === 'pair') process.exit(await (await import('./accounts.mjs')).runPair());
+
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
   console.log('[init] another Bridge instance is already running; exiting');

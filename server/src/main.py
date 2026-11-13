@@ -128,6 +128,15 @@ async def install_with_token(request: Request, t: str = "", name: str = Query(No
     return script
 
 
+@app.get("/install")
+async def public_install(request: Request, name: str = Query(None), platform: str = ""):
+    """Hosted install command: no credential, the computer then joins an account by QR code."""
+    if os.environ.get("OPEN_REGISTRATION") != "true":
+        return Response(content="echo 'This server has no public install; copy the command from Setup.' >&2\nexit 1\n",
+                        media_type="text/plain", status_code=404)
+    return install_script(request, "", name, platform)
+
+
 # Serve web static files (landing, viewer, setup).
 # html=True maps "/" to index.html and lets the SPA shortcut script handle
 # ?t= / ?key= → landing.html without a server-side redirect (preserves query).

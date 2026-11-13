@@ -749,6 +749,7 @@ function connect() {
       key: _config.apiKey,
       accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
       accountKeyAt: _config.accountKeyAt,
+      accounts: !!_config.accounts,
       saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,

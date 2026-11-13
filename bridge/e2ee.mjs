@@ -93,7 +93,7 @@ export async function appKeys(k, since = 0) {
     };
   };
   return {
-    pub, tag: sessionTag(pub), fp: Array.from(await bits(k, 'fp', 64), (v) => v.toString(16).padStart(2, '0')).join(''),
+    pub, tag: sessionTag(pub), fp: hex(await bits(k, 'fp', 64)),
     session: (bridgePub) => {
       if (!sessions.has(bridgePub)) sessions.set(bridgePub, session(bridgePub));
       return sessions.get(bridgePub);
@@ -111,4 +111,34 @@ export async function appKeys(k, since = 0) {
     files: () => (files ||= Promise.all([derive(k, 'file', { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']),
       derive(k, 'file-id', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign'])]).then(([key, id]) => ({ key, id, since }))),
   };
+}
+
+// Accounts and pairing (docs/v2-accounts-design.md §5). The server knows accountId and hash(joinSecret);
+// K travels sealed under `t`, which only the QR code carries, bound to its pairing code.
+const b64url = (bytes) => toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const hex = (bytes) => Array.from(bytes, (v) => v.toString(16).padStart(2, '0')).join('');
+const pairKey = async (t, usage) => derive(await subtle().importKey('raw', t, 'HKDF', false, ['deriveKey']), 'pair',
+  { name: 'AES-GCM', length: 256 }, [usage]);
+
+export async function accountOf(raw) {
+  const k = await importAccountKey(raw);
+  return { accountId: hex(await bits(k, 'account', 64)), joinSecret: b64url(await bits(k, 'join')) };
+}
+
+export async function sealPair(t, raw, code) {
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const body = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(code) },
+    await pairKey(t, 'encrypt'), raw));
+  const out = new Uint8Array(12 + body.length);
+  out.set(nonce);
+  out.set(body, 12);
+  return toBase64(out);
+}
+
+export async function openPair(t, sealed, code) {
+  try {
+    const bytes = fromBase64(sealed);
+    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(code) },
+      await pairKey(t, 'decrypt'), bytes.subarray(12)));
+  } catch { return null; }
 }

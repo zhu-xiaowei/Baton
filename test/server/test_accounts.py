@@ -1,5 +1,7 @@
 import re
+from types import SimpleNamespace
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
@@ -75,7 +77,9 @@ def test_two_accounts_never_reach_each_other(api):
     b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'Pixel'})['token']
     api('/api/account/register', {'accountId': A, 'joinSecret': 'x' * 24, 'deviceName': 'x'}, status=409)
     # Another phone joins A; the code works once.
-    code = api('/api/pair/create', {'sealed': SEALED}, a)['code']
+    code = 'app-code-0000000000000'
+    api('/api/pair/create', {'code': code, 'sealed': SEALED}, a)
+    api('/api/pair/create', {'code': code, 'sealed': SEALED}, b, status=409)
     assert api('/api/pair/claim', {'code': code, 'deviceName': 'iPad'})['accountId'] == A
     api('/api/pair/claim', {'code': code, 'deviceName': 'iPad'}, status=404)
     # A computer joins A: wrong poll, B approving after A, a Bridge approving, a second wait all fail.
@@ -87,6 +91,7 @@ def test_two_accounts_never_reach_each_other(api):
     joined = api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']})
     assert joined['accountId'] == A and joined['approvedBy'] == 'iPhone'
     api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']}, status=404)
+    api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'Mac'})['code'], 'sealed': SEALED}, a, status=409)
     api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'PC'})['code'], 'sealed': SEALED},
         joined['token'], status=403)
     assert sorted(t['deviceName'] for t in api('/api/bridge/devices', None, a)['apps']) == ['Mac', 'iPad', 'iPhone']
@@ -110,5 +115,10 @@ def test_limits(api, monkeypatch):
         api('/api/pair/approve', {'code': start['code'], 'sealed': SEALED}, owner, status=status)
         if status == 200:
             api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']})
+    monkeypatch.setenv('BRIDGE_IMAGES_BUCKET', 'bucket')
+    monkeypatch.setattr(boto3, 'client', lambda *a, **k: SimpleNamespace(generate_presigned_url=lambda *a, **k: 'https://s3/b'))
+    client = TestClient(main.app)
+    assert 'bridge.mjs" pair' in client.get('/install').text
     monkeypatch.setenv('OPEN_REGISTRATION', 'false')
+    assert client.get('/install').status_code == 404
     api('/api/account/register', {'accountId': 'd' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'}, status=404)
