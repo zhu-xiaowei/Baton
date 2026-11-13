@@ -68,9 +68,7 @@ export const service = {
 };
 
 const execs = new Map(); // session id → Baton's execution
-const asked = new Map(); // request id → permission or form
-const pending = new Map(); // open request id → session id
-const shown = new Map(); // request id → onControlResolved of the subscribe that showed it
+const asked = new Map(); // open request id → its permission or form (+ `resolved` of the page shown it)
 let sse = null;
 let idleTimer = null;
 
@@ -97,7 +95,6 @@ function connect() {
     }
   })().catch((error) => { if (error.name !== 'AbortError') console.error(`[opencode] events: ${error.message}`); }).finally(() => {
     ready();
-    pending.clear(); // no longer known
     if (sse !== current) return;
     sse = null;
     for (const [id, exec] of execs) end(id, exec, { is_error: true, subtype: 'unavailable' });
@@ -113,11 +110,11 @@ function end(id, exec, result) {
   if (!execs.size) idleTimer = setTimeout(() => { sse?.ctrl.abort(); sse = null; }, IDLE_MS).unref();
 }
 
-// A request is gone: the page that subscribed to it is told, like a reply event would.
+// Every way a request goes away: the page that subscribed to it is told, like a reply event would.
 function settle(requestId, notify = true) {
-  pending.delete(requestId);
-  if (notify) shown.get(requestId)?.(requestId);
-  shown.delete(requestId);
+  const p = asked.get(requestId);
+  asked.delete(requestId);
+  if (notify) p?.resolved?.(requestId);
 }
 
 function newExec(callbacks) {
@@ -131,9 +128,8 @@ function newExec(callbacks) {
   return exec;
 }
 
-function controlRequest(p, form) {
-  asked.set(p.id, p);
-  pending.set(p.id, p.sessionID);
+function controlRequest(p, form, resolved) {
+  asked.set(p.id, Object.assign(p, { resolved }));
   const name = toolName(p.action);
   return { request_id: p.id, request: form ? { tool_name: 'AskUserQuestion', requires_user_interaction: true,
     input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: f.description || f.title || '',
@@ -254,8 +250,8 @@ const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0
 
 export const interaction = defineInteractionAdapter({
   runtime: 'opencode',
-  pending: (id) => [...pending.values()].includes(id),
-  pendingSessions: () => new Set(pending.values()),
+  pending: (id) => [...asked.values()].some((p) => p.sessionID === id),
+  pendingSessions: () => new Set([...asked.values()].map((p) => p.sessionID)),
   async create({ cwd, text, streamId, onCreated }) {
     await service.ensure();
     await connect();
@@ -276,7 +272,6 @@ export const interaction = defineInteractionAdapter({
   // a deny must carry a message, or OpenCode cancels the whole turn.
   replyControl(id, requestId, { decision, answers = {}, scope }) {
     const req = asked.get(requestId);
-    asked.delete(requestId);
     settle(requestId, false);
     const base = `/api/session/${req?.sessionID || id}`; // a subagent's own session
     const reply = async () => {
@@ -313,17 +308,15 @@ export const interaction = defineInteractionAdapter({
     if (execs.has(id) || !serviceInfo()) return;
     for (const sid of [id, ...busyChildren(id)]) {
       const [perms, forms] = await interaction.reconcile(sid);
-      for (const [p, form] of [...perms.map((p) => [p]), ...forms.map((f) => [f, true])]) {
-        shown.set(p.id, callbacks.onControlResolved);
-        callbacks.onControlRequest(controlRequest(p, form));
-      }
+      for (const p of perms) callbacks.onControlRequest(controlRequest(p, false, callbacks.onControlResolved));
+      for (const form of forms) callbacks.onControlRequest(controlRequest(form, true, callbacks.onControlResolved));
     }
   },
-  // The service's open requests of a session; ones answered elsewhere leave `pending`.
+  // The service's open requests of a session; ones answered elsewhere are settled.
   async reconcile(id) {
     const lists = await Promise.all(['permission', 'form'].map((kind) => request('GET', `/api/session/${id}/${kind}`).then((r) => r?.data || [], () => [])));
     const open = new Set(lists.flat().map((p) => p.id));
-    for (const [rid, sid] of pending) if (sid === id && !open.has(rid)) settle(rid);
+    for (const [rid, p] of asked) if (p.sessionID === id && !open.has(rid)) settle(rid);
     return lists;
   },
   async listCommands({ cwd }) {
