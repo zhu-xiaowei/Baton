@@ -9,7 +9,7 @@ const LIST = [
     resume: id => 'codex resume ' + id, features: { agentToggle: false, slashPrompts: true } },
   { id: 'opencode', label: 'OpenCode', short: 'OpenCode', icon: icon('opencode'), mono: true,
     resume: id => 'opencode -s ' + id, features: plain },
-  { id: 'dsh', label: 'DeepSeek Harness', short: 'DSH', icon: icon('dsh'), mono: true,
+  { id: 'dsh', label: 'DeepSeek Harness', short: 'DSH', icon: icon('dsh'), mono: false,
     resume: (id, cwd) => cwd && 'cd ' + q(cwd) + ' && dsh headless --session-id ' + id, features: plain },
   { id: 'hermes', label: 'Hermes', short: 'Hermes', icon: icon('hermes'), mono: true,
     resume: id => 'hermes --resume ' + id, features: plain },
