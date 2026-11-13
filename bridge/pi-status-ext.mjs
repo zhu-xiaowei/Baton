@@ -19,6 +19,17 @@ function lastEntryId(file) {
 	} catch { return null; }
 }
 
+function busyElsewhere(id) {
+	try {
+		return fs.readdirSync(DIR).some((name) => {
+			if (!name.startsWith(`${id}.`) || !name.endsWith(".json")) return false;
+			const r = JSON.parse(fs.readFileSync(path.join(DIR, name), "utf8"));
+			try { process.kill(r.pid, 0); } catch { return false; }
+			return r.pid !== process.pid && (r.state === "running" || r.state === "waiting");
+		});
+	} catch { return false; }
+}
+
 export default function (pi) {
 	let file = null;
 	function write(ctx, state) {
@@ -40,11 +51,12 @@ export default function (pi) {
 	pi.on("ui_prompt_end", (_e, ctx) => write(ctx, ctx.isIdle?.() ? "idle" : "running"));
 	pi.on("session_shutdown", () => { if (file) fs.rmSync(file, { force: true }); file = null; });
 
+	// Refused while another pi process (Baton) runs the session, or once it appended to it.
 	pi.on("input", (event, ctx) => {
 		const sm = ctx.sessionManager;
-		const onDisk = event.source === "interactive" && sm?.getSessionFile?.() && lastEntryId(sm.getSessionFile());
-		if (!onDisk || onDisk === sm.getEntries().at(-1)?.id) return { action: "continue" };
-		ctx.ui.notify("This session was continued in Baton. Run /baton-reload, then send again.", "warning");
+		const file = event.source === "interactive" && sm?.getSessionFile?.();
+		if (!file || (!busyElsewhere(sm.getSessionId()) && [null, sm.getEntries().at(-1)?.id].includes(lastEntryId(file)))) return { action: "continue" };
+		ctx.ui.notify("This session is running or was continued in Baton. When it is done, run /baton-reload, then send again.", "warning");
 		return { action: "handled" };
 	});
 	pi.registerCommand("baton-reload", {

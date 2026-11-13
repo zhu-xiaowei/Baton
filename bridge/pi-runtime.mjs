@@ -72,7 +72,7 @@ const watcher = {
       try { fs.readSync(fd, buf, 0, buf.length, before); } finally { fs.closeSync(fd); }
       const rows = buf.toString('utf8').split('\n').flatMap((line) => { try { return line ? piRows(JSON.parse(line), edits) : []; } catch { return []; } })
         .filter((row) => !liveMessageRoute('pi', row.nativeId)?.pushed);
-      publishMessages(storageSessionId('pi', rec.id), await Promise.all(rows.map(withImages)));
+      publishMessages(storageSessionId('pi', rec.id), await withImages(rows));
     }
     async function statuses() {
       const byId = running();
@@ -80,7 +80,8 @@ const watcher = {
       const rows = [];
       for (const { rec, sessionId } of sessionIndex.catalog().roots) {
         const old = lastKnownStatus.get(sessionId);
-        const status = rec.runtime === 'pi' && piCatalog.status(rec, byId);
+        // Baton's own process reports its statuses (with the question) itself.
+        const status = rec.runtime === 'pi' && !interaction.owns(rec.id) && piCatalog.status(rec, byId);
         if (!status || status === (old || 'completed')) continue;
         const session = sessionRow(rec, status);
         // A terminal turn that ends while the user is at the computer does not alert.

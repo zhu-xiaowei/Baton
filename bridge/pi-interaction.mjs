@@ -106,7 +106,7 @@ function event(nativeId, s, r) {
     for (const row of piRows({ type: 'message', message: r.message }, s.edits)) {
       // An interrupt from Baton already showed its own row.
       if (s.aborting && row.content?.[0]?.text === INTERRUPT) continue;
-      later(s, async () => s.callbacks.onMessage(null, await withImages(row), { normalized: true, runtime: 'pi', liveKey: row.nativeId }));
+      later(s, async () => s.callbacks.onMessage(null, (await withImages([row]))[0], { normalized: true, runtime: 'pi', liveKey: row.nativeId }));
     }
   }
 }

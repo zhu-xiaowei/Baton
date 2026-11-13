@@ -105,10 +105,15 @@ export function piRows(entry, edits = new Map(), line = null) {
   return [];
 }
 
-export async function withImages(row) {
-  if (!Array.isArray(row.content) || !row.content.some((b) => b.type === 'image')) return row;
-  const { extractForApp } = await import('./extract.mjs');
-  return { ...row, content: (await extractForApp({ uuid: row.uuid, type: row.type, message: { content: row.content } })).content };
+// On the main thread, which reaches the transfer store: inline images become uploaded keys (extractForApp
+// remembers each upload for a day). Rows change in place.
+export async function withImages(rows) {
+  for (const row of rows) {
+    if (!Array.isArray(row.content) || !row.content.some((b) => b.type === 'image' && b.source)) continue;
+    const { extractForApp } = await import('./extract.mjs');
+    row.content = (await extractForApp({ uuid: row.uuid, type: row.type, message: { content: row.content } })).content;
+  }
+  return rows;
 }
 
 function scanLine(state, buf, s, e) {
@@ -259,7 +264,7 @@ class PiHistory {
       if (!this.on.has(line)) continue;
       let entry;
       try { entry = JSON.parse(buf.utf8Slice(this.index.starts[line] - base, this.index.ends[line] - base)); } catch { continue; }
-      for (const row of piRows(entry, this.edits, line)) out.push(await withImages(row));
+      out.push(...piRows(entry, this.edits, line));
     }
     return out;
   }
@@ -283,4 +288,4 @@ function messages(file) {
   });
 }
 
-export default { runtime: 'pi', module: import.meta.url, catalog: piCatalog, history: (t) => new PiHistory(t.file), messages };
+export default { runtime: 'pi', module: import.meta.url, catalog: piCatalog, withImages, history: (t) => new PiHistory(t.file), messages };
