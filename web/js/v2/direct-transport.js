@@ -398,8 +398,8 @@ function reconcile() {
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
     // Waiting for a socket or credentials does not count: DEADLINE_MS runs from the first send on the
-    // current connection (a request never sent gives up after ACKED_DEADLINE_MS).
-    const late = request.deadlineFrom == null ? now - request.createdAt > ACKED_DEADLINE_MS : now - request.deadlineFrom > DEADLINE_MS;
+    // current connection; no request waits longer than ACKED_DEADLINE_MS in all.
+    const late = now - request.createdAt > ACKED_DEADLINE_MS || now - request.deadlineFrom > DEADLINE_MS;
     if (request.acked ? now - request.aliveAt > ACKED_DEADLINE_MS : late) { finish(key, request, { reason: 'timeout' }); continue; }
     if (!request.slow && now - request.createdAt > SLOW_MS) {
       request.slow = true;
@@ -502,7 +502,7 @@ export function request(device, method, params = {}, { onSlow, ack, onAccepted, 
   const key = uuid();
   return new Promise((resolve, reject) => {
     pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, onAccepted, onProgress, acked: false, aliveAt: 0, createdAt: performance.now(),
-      attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null, connection: null, deadlineFrom: null });
+      attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });
 }

@@ -681,14 +681,16 @@ function replayCut(turnId) {
       if (e.action === 'messages' && e.messages?.length
         && e.messages.every(function (m) { return shown.has(m.nativeId) || shown.has(m.uuid); })) cut = e.seq;
     }
-    // Never cut into a block still open there.
     var open = -1;
-    for (var event of events) {
-      if (event.seq > cut) break;
-      if (event.action === 'stream_block_start') open = event.seq;
-      else if (event.action === 'stream_block_stop') open = -1;
+    var i = 0;
+    for (; i < events.length && events[i].seq <= cut; i++) {
+      if (events[i].action === 'stream_block_start') open = events[i].seq;
+      else if (events[i].action === 'stream_block_stop') open = -1;
     }
-    if (open >= 0) cut = open - 1;
+    // Claude sends a block's row before its stop: what follows up to that stop is the same block.
+    // Otherwise never cut into a block still open there.
+    while (open >= 0 && /^stream_(delta|tool_input)$/.test(events[i]?.action)) i++;
+    if (open >= 0) cut = events[i]?.action === 'stream_block_stop' ? events[i].seq : open - 1;
   }
   _replayCuts.set(turnId, cut);
   return cut;

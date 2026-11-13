@@ -78,14 +78,16 @@ test('a running turn survives a foreground refresh, a gap and a late join', asyn
   t = await start((user) => new Promise((resolve) => { release = () => resolve({ ...running(user), messages: [user, ...rows] }); }));
   const base = t.events[t.events.length - 1];
   const block = (chunk) => [{ action: 'stream_block_start', kind: 'text' }, { action: 'stream_delta', chunk }];
-  const more = [{ action: 'stream_block_stop' }, { action: 'messages', messages: [rows[0]] }, ...block('second '), { action: 'stream_block_stop' },
-    { action: 'messages', messages: [rows[1]] }, ...block('tail ')]
+  // Claude Code sends a block's row before its stop.
+  const more = [{ action: 'messages', messages: [rows[0]] }, { action: 'stream_block_stop' }, ...block('second '),
+    { action: 'messages', messages: [rows[1]] }, { action: 'stream_block_stop' }, ...block('tail ')]
     .map((event, i) => ({ ...base, chunk: undefined, ...event, seq: base.seq + 1 + i, executionSeq: base.seq + 1 + i }));
   const opening = h.window.loadLatestMessages(t.sessionId);
   await h.tick(20);
   h.bridge.push({ action: 'turn_replay', sessionId: t.sessionId, events: structuredClone([...t.events, ...more]) });
   release();
   await opening;
+  assert.equal(once('second '), 1, 'the newest history row is not taken back to be revealed again');
   await h.tick(250);
   assert.deepEqual([once('w0 '), once('second '), once('tail ')], [1, 1, 1], 'rows the history has are not replayed');
   h.window.close();
