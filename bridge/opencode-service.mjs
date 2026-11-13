@@ -257,6 +257,15 @@ const listed = new Map(); // cwd → { sig, at, list } or a pending promise
 const CONFIG_DIRS = (cwd) => [cwd, path.join(os.homedir(), '.config/opencode')].flatMap((dir) =>
   ['', 'opencode.json', 'opencode.jsonc', '.opencode', '.opencode/command', '.opencode/commands', 'command', 'commands', 'skill', 'skills'].map((f) => path.join(dir, f)));
 const signature = (cwd) => CONFIG_DIRS(cwd).map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join();
+// A directory loads lazily (built-ins, then project commands): the list once it is 400 ms unchanged (5 s at most).
+async function stableList(get) {
+  for (let i = 0, last = '', changed = 0; ; i++, await new Promise((r) => setTimeout(r, 100))) {
+    const list = await get();
+    if (JSON.stringify(list) !== last) [last, changed] = [JSON.stringify(list), Date.now()];
+    else if ((list.length && Date.now() - changed >= 400) || i >= 50) return list;
+  }
+}
+
 async function privateCommands(cwd, get) {
   const hit = listed.get(cwd); if (hit?.then) return hit;
   if (hit && hit.sig === signature(cwd) && Date.now() - hit.at < 5 * 60_000) return hit.list;
@@ -264,17 +273,9 @@ async function privateCommands(cwd, get) {
     const port = await new Promise((resolve) => { const srv = net.createServer().listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); }); });
     const [password, sig] = [randomBytes(12).toString('hex'), signature(cwd)];
     const svc = { url: `http://127.0.0.1:${port}`, auth: 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64') };
-    const child = await sessionProcess(`opencode-commands:${cwd}`, opencodeBin(), ['serve', '--hostname', '127.0.0.1', '--port', String(port)],
-      { cwd, stdio: 'ignore', env: { ...process.env, OPENCODE_PASSWORD: password } });
+    const child = await sessionProcess(`opencode-commands:${cwd}`, opencodeBin(), ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd, stdio: 'ignore', env: { ...process.env, OPENCODE_PASSWORD: password } });
     try {
-      // The directory loads lazily (built-ins, then project commands): take the list once it is 400 ms unchanged.
-      let list = [];
-      for (let i = 0, last = '', changed = 0; i < 50; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        list = await get(svc);
-        if (JSON.stringify(list) !== last) [last, changed] = [JSON.stringify(list), Date.now()];
-        else if (list.length && Date.now() - changed >= 400) break;
-      }
+      const list = await stableList(() => get(svc));
       if (list.length) listed.set(cwd, { sig, at: Date.now(), list });
       return list;
     } finally {
@@ -361,8 +362,7 @@ export const interaction = defineInteractionAdapter({
   async listCommands({ cwd }) {
     const get = (svc) => request('GET', `/api/command?${loc(cwd)}`, null, svc).then((r) => r?.data || [], () => []);
     // A directory the service has not opened yet lists nothing on the first request.
-    let list = serviceInfo() ? await get() : await privateCommands(cwd, get);
-    if (!list.length && serviceInfo()) list = await new Promise((r) => setTimeout(r, 700)).then(() => get());
+    const list = serviceInfo() ? await stableList(get) : await privateCommands(cwd, get);
     return { commands: list.map((c) => ({ name: c.name, description: c.description || '', source: 'runtime' })), skills: [] };
   },
   shutdown() { sse?.ctrl.abort(); sse = null; },
