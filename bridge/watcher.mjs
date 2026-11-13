@@ -13,7 +13,7 @@ import {
   clearLiveMessage,
   pendingClaudeInterruptTurn,
 } from './live-message-registry.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash, liveRecordStatus } from './session.mjs';
 import { recentSessions, lastKnownStatus, reportSessions } from './sync.mjs';
 import { exposeToResumePicker } from './jsonl.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
@@ -227,7 +227,15 @@ function queuePolledClaudeFile(
   enqueue(filename, sessionId);
 }
 
+// Children a notification ended are settled after the root's own write, whose lastActive a
+// Done summary reads, and also when that pass fails: its retry starts after the notification.
 async function readAndSend(config, filename, sessionId, enqueue) {
+  const ended = [];
+  try { return await readClaudeFile(config, filename, sessionId, enqueue, ended); }
+  finally { for (const args of ended) enqueue(...args); }
+}
+
+async function readClaudeFile(config, filename, sessionId, enqueue, ended) {
   const filePath = path.join(CLAUDE_PROJECTS, filename);
   sessionIndex.touch(filePath);
   if (!fs.existsSync(filePath)) return;
@@ -255,6 +263,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
   let lastStatus = null; // track status from parsed entries directly
+  let notice = false;
 
   for (let i = lastLine; i < lines.length; i++) {
     synced.set(sessionId, i);
@@ -262,11 +271,11 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     let raw;
     try { raw = JSON.parse(lines[i]); } catch { break; }
     lastParsedLine = i + 1;
-    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), enqueue);
+    enqueueEndedSubagent(raw, sessionId, path.join(path.dirname(filename), sessionId, 'subagents'), (...a) => ended.push(a));
 
     // Track status from every parsed entry (statusFromEntry returns null for non-status types).
     const s = statusFromEntry(raw);
-    if (s) lastStatus = s;
+    if (s) { lastStatus = s; notice = !!claudeTaskEvent(raw); }
 
     raw = normalizeClaudeQueuedInput(raw);
     if (!VALID_TYPES.has(raw.type)) continue;
@@ -297,6 +306,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
   }
 
   synced.set(sessionId, lastParsedLine);
+  let force = !!parentUpdate;
   // Report on lifecycle and title changes.
   if (!recentSessions.has(sessionId) || parentUpdate
     || (lastParsedLine > lastLine && (lastStatus || gotNewTitle))) {
@@ -309,6 +319,15 @@ async function readAndSend(config, filename, sessionId, enqueue) {
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
+    // CC also writes a notification it already reported, or one replayed at resume, and never
+    // answers it (its record may lag a turn start by a moment). lastActive then tells the
+    // Done summary (notify.mjs) that this notification is not a report-back turn.
+    const idle = () => liveRecordStatus(sessionId) === 'idle';
+    if (!poolOwned && !daemonActive && lastStatus === 'running' && notice && idle()
+      && await new Promise((resolve) => setTimeout(() => resolve(idle()), 1000))) {
+      lastStatus = 'completed';
+      force = true;
+    }
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
       : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
@@ -326,7 +345,7 @@ async function readAndSend(config, filename, sessionId, enqueue) {
       agentMeta,
       gotNewTitle,
       effective.detail,
-      !!parentUpdate,
+      force,
       metadata,
     );
   }
@@ -377,7 +396,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId, enqueu
   const stat = fs.statSync(filePath);
   let status = meta.finished === true ? 'completed'
     : lastStatus || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
-  if (status !== 'completed' && claudeSubagentEnded(filePath, meta)) status = 'completed';
+  if (status !== 'completed' && claudeSubagentEnded(filePath, meta, stat.mtimeMs)) status = 'completed';
   const sessionMeta = {
     id: sessionId,
     nativeSessionId: sessionId,

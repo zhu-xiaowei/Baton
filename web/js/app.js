@@ -331,9 +331,11 @@ function shortSessionId(sessionId, nativeId, runtime) {
 
 function runtimeIcon(sessionId, runtime) {
   var info = runtimeInfo(sessionRuntime(sessionId, runtime));
-  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-' + info.id : '')
+  // Absolute, since a url() in a custom property resolves against the stylesheet that uses it.
+  var src = esc(new URL(window.__runtimeIconSource?.(info.id) || info.icon, document.baseURI).href);
+  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '')
     + '" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">'
-    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(info.id) || info.icon) + '" alt="" aria-hidden="true"></span>';
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + src + '" alt="" aria-hidden="true"></span>';
 }
 
 function activeSessionThread() {
@@ -525,15 +527,16 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    var filesButton = state.appState.session !== '__new__'
+    var hasFolder = state.appState.session !== '__new__' && !virtualProjectRuntimes(state.appState.project.hash);
+    var filesButton = hasFolder
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    var terminalButton = state.appState.session !== '__new__'
+    var terminalButton = hasFolder
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
-    var gitButton = state.appState.session !== '__new__'
+    var gitButton = hasFolder
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
@@ -963,7 +966,7 @@ function applyThreadInputState() {
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = blocked ? 'This Session is read-only' : 'Send a message...';
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -1907,15 +1910,9 @@ async function startNewSession(projectHash) {
   });
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = creatableRuntimes();
+  var runtimes = virtualProjectRuntimes(projectHash) || knownNewSessionRuntimes() || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
-  var savedRuntime = '';
-  try {
-    savedRuntime = localStorage.getItem(
-      newSessionRuntimePreferenceKey(state.appState.device),
-    ) || '';
-  } catch (e) {}
-  var runtime = preferredNewSessionRuntime(runtimes, savedRuntime);
+  var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.sessionPreview = 'New Session';
@@ -1965,15 +1962,43 @@ async function startNewSession(projectHash) {
   refreshNewSessionRuntimes(myNav);
 }
 
+// A virtual project (`<runtime>:<name>`) has no folder; only its own runtime creates Sessions there.
+function virtualProjectRuntimes(projectHash) {
+  var prefix = String(projectHash || '').split(':');
+  return prefix.length > 1 && RUNTIMES[prefix[0]] ? [prefix[0]] : null;
+}
+
 // The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
 async function refreshNewSessionRuntimes(nav) {
   var reply;
   try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
   var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
+  if (!runtimes.length) return;
+  try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
+  var only = virtualProjectRuntimes(state.appState.project?.hash);
+  if (only) runtimes = runtimes.filter(function (runtime) { return only.includes(runtime); });
   if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
   state.newSessionRuntimes = runtimes;
-  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, state.appState.runtime), false);
+  // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
+  var saved = savedNewSessionRuntime();
+  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, runtimes.includes(saved) ? saved : state.appState.runtime), false);
+}
+
+// The last ping's list, so the view opens on the saved runtime instead of flashing the fallback.
+function newSessionRuntimesKey() {
+  return 'apeek_new_session_runtimes:' + String(state.appState.device || '');
+}
+
+function knownNewSessionRuntimes() {
+  try {
+    var runtimes = JSON.parse(localStorage.getItem(newSessionRuntimesKey()) || 'null');
+    return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; }) ? runtimes : null;
+  } catch (e) { return null; }
+}
+
+function savedNewSessionRuntime() {
+  try { return localStorage.getItem(newSessionRuntimePreferenceKey(state.appState.device)) || ''; } catch (e) { return ''; }
 }
 
 // ---- Messages ----
@@ -2402,7 +2427,7 @@ Object.assign(window, {
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, openRuntimePicker, closeRuntimePicker, pickNewSessionRuntime, loadMessages, toggleActiveSessions,
-  refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
+  refreshSessionThreads, applyThreadInputState, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
   openHomeFilesPage,

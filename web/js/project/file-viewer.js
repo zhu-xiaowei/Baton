@@ -756,7 +756,7 @@ async function showAttachment(key) {
     const url = escapeAttachment(file.previewUrl || '');
     if (file.previewType === 'application/pdf') {
       pdfFallbackUrl = url;
-      cachedPdf = !!file.data;
+      cachedPdf = !!file.data || !!file.sealed; // no URL yet for the browser's own viewer
       // Without PDF.js support, the fallback below opens the browser's own viewer.
       if (!window.ResizeObserver || !window.requestAnimationFrame) throw new Error('Could not preview this file. Download to open it.');
       const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
@@ -770,7 +770,8 @@ async function showAttachment(key) {
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
-      const pdfPreview = await mountPdfPreview(body, file.previewUrl, file.size, controller.signal, cacheKey, {
+      const source = file.sealed ? (begin, end) => transfer.range(key, begin, end, file.stored) : file.previewUrl;
+      const pdfPreview = await mountPdfPreview(body, source, file.size, controller.signal, cacheKey, {
         data: file.data, onFile: !file.data && (bytes => cacheAttachment(key, file.name, bytes)),
       });
       if (_pdfLoadController === controller) _pdfLoadController = null;
@@ -796,7 +797,8 @@ async function showAttachment(key) {
     if (cachedPdf) {
       // A cache hit has no URL; the browser's own viewer needs a fresh one.
       pdfFallbackUrl = await transfer.fileInfo(key, _view?.name)
-        .then(file => escapeAttachment(file.previewUrl || ''), () => '');
+        .then(file => (file.sealed ? transfer.url(key, { sealed: true }) : file.previewUrl || ''))
+        .then(escapeAttachment, () => '');
       if (token !== _fileRequestToken) return;
     }
     if (pdfFallbackUrl) {

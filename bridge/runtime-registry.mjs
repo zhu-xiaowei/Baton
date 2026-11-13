@@ -1,7 +1,8 @@
-import { claudeRuntime } from './claude-runtime.mjs';
-import { codexRuntime } from './codex-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { claudeRuntime } from './claude-runtime.mjs';
+import { codexRuntime } from './codex-runtime.mjs';
 import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
 
 export const runtimeAdapters = [
@@ -24,6 +25,8 @@ export function registerRuntime(adapter) {
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
+  ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
+  ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
   // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
   ['./kiro-runtime.mjs', () => [process.env.XDG_DATA_HOME || `${os.homedir()}/.local/share`, `${os.homedir()}/Library/Application Support`]
     .some((dir) => fs.existsSync(`${dir}/kiro-cli/kas`))],

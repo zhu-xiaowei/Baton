@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { resolveBridgeAttachments } from './attachments.mjs';
-import { setTransferAccess, transfer } from './transfer-store.mjs';
+import { setTransferAccess, setTransferKeys, transfer } from './transfer-store.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -19,7 +19,7 @@ import {
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
+import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -98,6 +98,7 @@ const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn or with prompts unanswered.
 const _pool = new ClaudePool({
+  trackLeftovers: true,
   allowedTools: (sessionId) => _grants.get(sessionId),
   onExit: (sessionId, hadPrompts) => {
     if (hadPrompts) clearPendingControls(sessionId);
@@ -746,6 +747,9 @@ function connect() {
     };
     _directRpc = new DirectRpcBridge({
       key: _config.apiKey,
+      accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
+      accountKeyAt: _config.accountKeyAt,
+      saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
       limited: limitedRequest,
@@ -931,6 +935,7 @@ function publishTitle(reply) {
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;
+sessionIndex.awaitsAgents = poolAwaitsAgents;
 
 // "Being viewed": a page showing the root answers `notify_check` with `notify_seen` while it is
 // visible and focused. A suspended iOS page keeps its subscription but cannot answer.
@@ -946,7 +951,9 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp });
+configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
+  notifyKey: () => _directRpc?.keys?.notifyKey });
+setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {
   if (!_directRpc) throw new Error('File storage is unavailable');
   return _directRpc.storageAccess();
@@ -2017,9 +2024,7 @@ async function downloadBridgeImage(key) {
     const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
-    const res = await fetch(await transfer.url(key));
-    if (!res.ok) return null;
-    fs.writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
+    fs.writeFileSync(localPath, await transfer.bytes(key));
     return localPath;
   } catch { return null; }
 }

@@ -461,13 +461,22 @@ export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
 }
 
 // Without ps: CC reads busy while background agents run (shell while only Bash does).
-export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
+// sessionId → CC's status in its newest live record.
+export function liveRecordStatuses(dir = CLAUDE_SESSIONS) {
   const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
-  let latest;  // a session resumed elsewhere keeps its older process's record
+  const latest = new Map();  // a session resumed elsewhere keeps its older process's record
   for (const record of liveRecords(dir, alive)) {
-    if (record.sessionId === sessionId && !(latest?.updatedAt > record.updatedAt)) latest = record;
+    if (!(latest.get(record.sessionId)?.updatedAt > record.updatedAt)) latest.set(record.sessionId, record);
   }
-  return latest?.status === 'busy';
+  return new Map([...latest].map(([sessionId, record]) => [sessionId, record.status]));
+}
+
+export function liveRecordStatus(sessionId, dir = CLAUDE_SESSIONS) {
+  return liveRecordStatuses(dir).get(sessionId);
+}
+
+export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
+  return liveRecordStatus(sessionId, dir) === 'busy';
 }
 
 // Not Baton's own CC behind a forking launcher, nor (macOS has no procStart) a pid
@@ -507,6 +516,13 @@ export function claudeSessionWriter(sessionId, {
     label: latest.entrypoint === 'cli' ? 'A Claude Code terminal' : 'Another Claude Code client',
     canTerminate: true,
   };
+}
+
+// Earliest start of a live CC process (Baton's own included) with sessionId open.
+export function claudeSessionStartedAt(sessionId, { dir = CLAUDE_SESSIONS, isClaude = isOtherClaude } = {}) {
+  const starts = process.platform === 'win32' ? [] : [...liveRecords(dir, () => true)]
+    .filter((r) => r.sessionId === sessionId && r.startedAt > 0 && isClaude(r, new Set())).map((r) => r.startedAt);
+  return starts.length ? Math.min(...starts) : null;
 }
 
 function* liveRecords(dir, isLive) {

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { transfer } from './transfer-store.mjs';
+import { plainSize, transfer } from './transfer-store.mjs';
 
 const MAX_BYTES = 512 * 1024 * 1024;
 
@@ -28,9 +28,16 @@ export async function downloadAttachment(key, options = {}) {
   await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
   const localPath = path.join(directory, key);
   const existing = await fs.promises.lstat(localPath).catch(() => null);
-  if (existing?.isFile() && existing.size === file.size) return localPath;
+  const { sealed } = file;
+  if (!sealed && await store.plainRefused?.(key, file.size)) throw new Error('Attachment is not sealed. Upload it again.');
+  if (existing?.isFile() && existing.size === (sealed ? plainSize(file.size) : file.size)) return localPath;
   const temporary = `${localPath}.${crypto.randomUUID()}.part`;
   try {
+    if (sealed) {
+      await fs.promises.writeFile(temporary, await store.bytes(key, true), { flag: 'wx', mode: 0o600 });
+      await fs.promises.rename(temporary, localPath);
+      return localPath;
+    }
     const response = await fetchFn(await store.url(key, { download: key }), { signal: AbortSignal.timeout(30 * 60_000) });
     if (!response.ok || !response.body) throw new Error('Failed to download attachment');
     let received = 0;

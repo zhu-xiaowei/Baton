@@ -1,7 +1,7 @@
 // v2 App ⇄ Bridge frames, shared by Bridge (Node) and the web App: requests, their replies and
 // receipts, pushed Session events, and terminal / preview streams. Payloads above COMPRESS_MIN are
-// deflated (raw) and base64-encoded; replies and pushes are split into chunks that fit a signed
-// direct frame and may arrive in any order.
+// deflated (raw), then sealed (e2ee.mjs) and base64-encoded; they are split into chunks that fit a
+// signed direct frame and may arrive in any order.
 
 export const RPC_VERSION = 2;
 const COMPRESS_MIN = 1024;
@@ -35,16 +35,14 @@ export function rpcRequest({ requestId, method, params = {}, replyTo, missing, a
 }
 
 // A request whose params do not fit one frame (a long message) is sent as chunks of its params,
-// encoded like a reply. `deflate` may return a Promise (browser streams).
-export async function rpcRequestFrames(request, deflate) {
+// sealed (e2ee.mjs session) and sent as chunks of its params, however short; only `account_key`
+// goes as it is. `deflate` may return a Promise (browser streams).
+export async function rpcRequestFrames(request, deflate, seal) {
   const { params, ...head } = request;
-  if (JSON.stringify(params).length <= JSON_CHUNK_CHARS) return [request];
-  const json = JSON.stringify(params);
-  const packed = deflate ? { enc: 'deflate-b64', data: toBase64(await deflate(encoder.encode(json))) } : { enc: 'json', data: json };
-  const size = packed.enc === 'json' ? JSON_CHUNK_CHARS : CHUNK_CHARS;
-  const count = Math.ceil(packed.data.length / size);
-  return Array.from({ length: count }, (_, index) => ({ ...head, chunk: { index, count }, enc: packed.enc,
-    data: packed.data.slice(index * size, (index + 1) * size) }));
+  const data = await sealJson(head, JSON.stringify(params), deflate, seal);
+  const count = Math.ceil(data.length / CHUNK_CHARS);
+  return Array.from({ length: count }, (_, index) => ({ ...head, chunk: { index, count }, enc: 'e',
+    data: data.slice(index * CHUNK_CHARS, (index + 1) * CHUNK_CHARS) }));
 }
 
 export function isRpcRequest(frame) {
@@ -52,14 +50,18 @@ export function isRpcRequest(frame) {
     && typeof frame.method === 'string' && typeof frame.replyTo === 'string';
 }
 
-function chunkFrames(head, value, deflate) {
+// Compressed when that pays, then sealed; flags bit 1 = deflated. Synchronous on Bridge.
+function sealJson(head, json, deflate, seal) {
+  const bytes = encoder.encode(json);
+  if (!deflate || json.length <= COMPRESS_MIN) return seal(head, bytes, 0);
+  const packed = deflate(bytes);
+  return packed.then ? packed.then((out) => seal(head, out, 1)) : seal(head, packed, 1);
+}
+
+function chunkFrames(head, value, deflate, seal) {
   const json = JSON.stringify(value);
-  let enc = 'json';
-  let data = json;
-  if (deflate && json.length > COMPRESS_MIN) {
-    enc = 'deflate-b64';
-    data = toBase64(deflate(encoder.encode(json)));
-  }
+  const enc = seal ? 'e' : 'json'; // clear only for `account_key`
+  const data = seal ? sealJson(head, json, deflate, seal) : json;
   // JSON chunks may be multi-byte UTF-8 and are escaped again inside the signed frame.
   const size = enc === 'json' ? JSON_CHUNK_CHARS : CHUNK_CHARS;
   const count = Math.max(1, Math.ceil(data.length / size));
@@ -68,12 +70,14 @@ function chunkFrames(head, value, deflate) {
   }));
 }
 
-export function rpcResultFrames(requestId, result, { deflate, method } = {}) {
-  return chunkFrames({ kind: 'rpc_result', requestId, method, ok: true }, result, deflate);
+export function rpcResultFrames(requestId, result, { deflate, method, seal } = {}) {
+  return chunkFrames({ kind: 'rpc_result', requestId, method, ok: true }, result, deflate, seal);
 }
 
-export function rpcErrorFrame(requestId, error, method) {
-  return { v: RPC_VERSION, kind: 'rpc_result', requestId, method, ok: false, error: String(error || 'error'), chunk: { index: 0, count: 1 } };
+export function rpcErrorFrame(requestId, error, method, seal) {
+  error = String(error || 'error').slice(0, 2000);
+  if (seal) return chunkFrames({ kind: 'rpc_result', requestId, method, ok: false }, { error }, null, seal)[0];
+  return { v: RPC_VERSION, kind: 'rpc_result', requestId, method, ok: false, error, chunk: { index: 0, count: 1 } };
 }
 
 export function rpcAckFrame(requestId) {
@@ -81,13 +85,15 @@ export function rpcAckFrame(requestId) {
 }
 
 // A long request is still running; `progress` is what the page may show.
-export function rpcProgressFrame(requestId, progress) {
-  return { v: RPC_VERSION, kind: 'rpc_progress', requestId, ...(progress === undefined ? {} : { progress }) };
+export function rpcProgressFrame(requestId, progress, seal) {
+  const frame = { v: RPC_VERSION, kind: 'rpc_progress', requestId };
+  if (progress === undefined) return frame;
+  return seal ? { ...frame, enc: 'e', data: sealJson(frame, JSON.stringify(progress), null, seal) } : { ...frame, progress };
 }
 
 // A pushed Session event; `event` and `sessionId` stay readable next to the encoded payload.
-export function pushFrames(id, event, { deflate } = {}) {
-  return chunkFrames({ kind: 'push', id, event: event.action, sessionId: event.sessionId }, event, deflate);
+export function pushFrames(id, event, { deflate, seal } = {}) {
+  return chunkFrames({ kind: 'push', id, event: event.action, sessionId: event.sessionId }, event, deflate, seal);
 }
 
 // Collects the chunks of a reply or push by id; returns { done, payload | error } once every
@@ -101,7 +107,7 @@ export class RpcAssembler {
   add(frame) {
     if (frame?.v !== RPC_VERSION || (frame.kind !== 'rpc_result' && frame.kind !== 'push')) return null;
     const requestId = frame.requestId || frame.id;
-    if (frame.ok === false) {
+    if (frame.ok === false && frame.data === undefined) {
       this.parts.delete(requestId);
       return { requestId, done: true, error: frame.error };
     }
@@ -110,12 +116,13 @@ export class RpcAssembler {
     let entry = this.parts.get(requestId);
     if (!entry) {
       if (this.parts.size >= this.limit) this.parts.delete(this.parts.keys().next().value);
-      this.parts.set(requestId, entry = { count, chunks: new Array(count), received: 0, enc: frame.enc });
+      this.parts.set(requestId, entry = { count, chunks: new Array(count), received: 0, enc: frame.enc, head: frame });
     }
     if (entry.chunks[index] === undefined) { entry.chunks[index] = frame.data; entry.received++; }
     if (entry.received < entry.count) return { requestId, done: false };
     this.parts.delete(requestId);
-    return { requestId, done: true, payload: { enc: entry.enc, data: entry.chunks.join('') } };
+    return { requestId, done: true, failed: entry.head.ok === false,
+      payload: { enc: entry.enc, data: entry.chunks.join(''), head: entry.head } };
   }
 
   // Chunk indexes not received yet, or null when nothing arrived.
@@ -133,9 +140,13 @@ export class RpcAssembler {
 }
 
 // `inflate` turns raw-deflate bytes into bytes; it may return a Promise (browser streams).
-export async function decodeRpcPayload({ enc, data }, inflate) {
-  const json = enc === 'deflate-b64' ? decoder.decode(await inflate(fromBase64(data))) : data;
-  return JSON.parse(json);
+// `open(head, data)` opens an `e` payload (e2ee.mjs session) or returns null; others are refused then.
+export async function decodeRpcPayload({ enc, data, head }, inflate, open) {
+  if (open && enc !== 'e') throw new Error('unsealed');
+  if (enc !== 'e') return JSON.parse(data);
+  const out = open && await open(head, data);
+  if (!out) throw new Error('unsealed');
+  return JSON.parse(decoder.decode(out.flags & 1 ? await inflate(out.body) : out.body));
 }
 
 // Terminal and preview streams: { v, kind: 'stream', ch, id, from, m }. `from` is the App's
@@ -166,6 +177,28 @@ export async function unpackStreamMessage(message, inflate) {
   if (!message.z) return message;
   const { z, ...rest } = message;
   return { ...rest, data: toBase64(await inflate(fromBase64(message.data))) };
+}
+
+// A sealed stream message is { e }: JSON of its fields, then "\n" and its data as raw bytes, so
+// terminal output is base64-encoded once. flags bit 2 = has data.
+export async function sealStreamMessage(frame, message, seal) {
+  const { data, ...rest } = message;
+  const head = encoder.encode(JSON.stringify(rest));
+  if (typeof data !== 'string') return { e: await seal(frame, head, 0) };
+  const raw = fromBase64(data);
+  const body = new Uint8Array(head.length + 1 + raw.length);
+  body.set(head);
+  body[head.length] = 10;
+  body.set(raw, head.length + 1);
+  return { e: await seal(frame, body, 2) };
+}
+
+export async function openStreamMessage(frame, message, open) {
+  const out = typeof message?.e === 'string' ? await open(frame, message.e) : null;
+  if (!out) return null;
+  if (!(out.flags & 2)) return JSON.parse(decoder.decode(out.body));
+  const split = out.body.indexOf(10);
+  return { ...JSON.parse(decoder.decode(out.body.subarray(0, split))), data: toBase64(out.body.subarray(split + 1)) };
 }
 
 function hex(bytes) {
