@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { findSessionFile, requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
+import { trackLeftover } from './turn-process.mjs';
 
 export const HEADLESS_IDLE_TTL_MS = 10 * 60_000; // reap a session idle this long
 export const HEADLESS_MAX_PROCS = 16;            // LRU-evict beyond this
@@ -79,6 +80,8 @@ class HeadlessProc {
       env: this.pool.env ? { ...process.env, ...this.pool.env } : undefined,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    // CC outlives a Bridge restart until its turn ends; the next Bridge would see it as another writer.
+    if (this.pool.trackLeftovers) trackLeftover(this.proc);
     this.stdin = this.proc.stdin;
     this.pool._live.add(this);
     this.stdin.on('error', (error) => this._onClose(-1, error.message));
@@ -355,6 +358,7 @@ export class ClaudePool {
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
     this.bin = opts.bin || '';
     this.env = opts.env || null;
+    this.trackLeftovers = !!opts.trackLeftovers;  // only the Bridge's own pool; tests must not touch the real ledger
     this._inspectPending = new Map();
     this._inspectProcs = new Set();
     this._live = new Set();  // spawned and not yet exited, including reaped ones still closing
