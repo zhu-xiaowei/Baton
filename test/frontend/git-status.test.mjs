@@ -274,11 +274,11 @@ test('Workspace Header actions match top-bar height without growing desktop head
   assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button svg,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button svg,[\s\S]*?html\.native-mobile \.project-terminal-header > \.back-button svg \{[\s\S]*?transform: translateX\(2px\);/);
   assert.match(css, /\.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:20px;height:20px/);
   assert.match(css, /html\.native-mobile #top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon,html\.native-mobile \.edge-back-top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:22px;height:22px;transform:translate\(calc\(-50% \+ 2px\),-50%\)/);
-  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?width: 16px; height: 16px;/);
-  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?background: #6e7681;/);
-  assert.match(style, /html\.native-mobile #top-right \.runtime-mark-codex::before,[\s\S]*?width: 24px; height: 24px;/);
+  assert.match(style, /\.runtime-mark-mono::before \{[\s\S]*?width: 16px; height: 16px;/);
+  assert.match(style, /\.runtime-mark-mono::before \{[\s\S]*?background: #6e7681;/);
+  assert.match(style, /html\.native-mobile #top-right \.runtime-mark-mono::before,[\s\S]*?width: 24px; height: 24px;/);
   assert.doesNotMatch(style, /html\.native-mobile #top-right \.runtime-icon\s*\{[^}]*translateX\(3px\)/);
-  assert.doesNotMatch(style, /\.runtime-mark-codex\s*\{[^}]*color:/);
+  assert.doesNotMatch(style, /\.runtime-mark-mono\s*\{[^}]*color:/);
   assert.match(css, /\.git-status-heading\{[^}]*padding-left:0/);
   assert.doesNotMatch(css, /git-status-header>\.back-button\{/);
   assert.doesNotMatch(css, /git-status-header \.back-button::/);
