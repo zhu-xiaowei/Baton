@@ -228,6 +228,7 @@ const interaction = defineInteractionAdapter({
   },
 
   async sendExisting({ nativeSessionId: id, streamId, text, callbacks }) {
+    if (sessionIndex.view(sessionIndex.records.get(`rows:hermes:${id}`) || {})?.readOnly) throw new Error('This Hermes Session is read-only.');
     await attach(id, true);
     await submit(id, streamId, text, callbacks);
   },
@@ -280,8 +281,9 @@ async function onRows(rows, added) {
     if (activeTurn(id) || pendingInteractionDetail(storageId(id)) !== null) continue; // reported by the turn
     const status = catalog.status({ id, state }, running);
     const previous = lastKnownStatus.get(storageId(id));
-    // Like Codex: a turn another client ran that just ended alerts only when nobody is at the computer.
-    const away = previous === 'running' && status !== 'running' && !state.parent && !batonSessions.has(id);
+    // Messaging and cron turns alert like any turn; only local roots ask whether the user is at the computer.
+    const away = previous === 'running' && status !== 'running' && !state.parent && !batonSessions.has(id)
+      && !catalog.view({ id, state }, sessionIndex)?.readOnly;
     if (previous !== status) report(id, status, state, away ? await localIdleSec() : undefined);
   }
   for (const [id, rowIds] of added) await publishRows(id, rowIds);

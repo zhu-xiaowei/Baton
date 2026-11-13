@@ -1892,7 +1892,7 @@ async function loadLatestMessages(sessionId, options = {}) {
       restError = error;
     }
     // A read-only Session (e.g. a Hermes messaging or cron Session) says so in its history.
-    if (data.canSend === false && state.wsSessionId === sessionId) { state.activeThreadCanSend = false; updateSendBtn(); }
+    if (data.canSend === false && state.wsSessionId === sessionId) { state.activeThreadCanSend = false; window.applyThreadInputState?.(); }
     if (state.threadsPendingRoot && state.threadsPendingRoot === state.rootSessionId) {
       state.threadsPendingRoot = '';
       if (restError || data.agentCount !== 0) window.refreshSessionThreads?.().catch(function () {});

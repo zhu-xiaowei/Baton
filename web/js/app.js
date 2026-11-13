@@ -964,7 +964,7 @@ function applyThreadInputState() {
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = blocked ? 'This Session is read-only' : 'Send a message...';
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -2410,7 +2410,7 @@ Object.assign(window, {
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, openRuntimePicker, closeRuntimePicker, pickNewSessionRuntime, loadMessages, toggleActiveSessions,
-  refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
+  refreshSessionThreads, applyThreadInputState, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
   openHomeFilesPage,
