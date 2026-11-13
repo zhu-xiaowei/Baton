@@ -2,6 +2,7 @@
 // `{type:'image', path}`; the history reader loads them.
 const JSON_PREFIX = '\u0000json:';
 const VISION_RE = /^\[The user sent an image~ Here's what I can see:\n([\s\S]*?)\]\n\[If you need a closer look, use vision_analyze with image_url: (.+?) ~\]\n*/;
+const ATTACHED_RE = /\n\n\[Image attached at: ([^\]\n]+)\]/g;
 const SKILL_RE = /^\[IMPORTANT: The user has invoked the "([^"]+)" skill[\s\S]*?(?:alongside the skill invocation: ([\s\S]*))?$/;
 const STEER_RE = /^\[OUT-OF-BAND USER MESSAGE[^\]\n]*\]\n([\s\S]*?)\n\[\/OUT-OF-BAND USER MESSAGE\]$/;
 const UNTRUSTED_RE = /^<untrusted_tool_result[^>]*>\n(?:The following content[^\n]*\n)?\n?([\s\S]*?)\n?<\/untrusted_tool_result>\s*$/;
@@ -35,6 +36,7 @@ function userBlocks(content) {
     text = text.slice(vision[0].length);
     blocks.push({ type: 'image', path: vision[2].trim(), alt: vision[1].trim() });
   }
+  text = text.replace(ATTACHED_RE, (_, file) => { blocks.push({ type: 'image', path: file.trim() }); return ''; });
   const skill = SKILL_RE.exec(text);
   if (skill) text = `/${skill[1]} ${skill[2] || ''}`;
   text = (STEER_RE.exec(text)?.[1] ?? text).trim();

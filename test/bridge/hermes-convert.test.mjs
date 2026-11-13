@@ -4,8 +4,8 @@ import { convertRow } from '../../bridge/hermes-convert.mjs';
 
 test('Hermes rows keep the sent turn identity and become Baton blocks', () => {
   const meta = JSON.stringify({ submission_id: 'turn-1' });
-  assert.deepEqual(convertRow({ id: 1, role: 'user', content: 'hi', display_metadata: meta, timestamp: 1 }),
-    [{ uuid: 'turn-1', type: 'user', content: [{ type: 'text', text: 'hi' }], timestamp: '1970-01-01T00:00:01.000Z', nativeId: 'live:user:turn-1' }]);
+  assert.deepEqual(convertRow({ id: 1, role: 'user', content: 'hi\n\n[Image attached at: /x.png]', display_metadata: meta, timestamp: 1 }),
+    [{ uuid: 'turn-1', type: 'user', content: [{ type: 'text', text: 'hi' }, { type: 'image', path: '/x.png' }], timestamp: '1970-01-01T00:00:01.000Z', nativeId: 'live:user:turn-1' }]);
   const steer = '[OUT-OF-BAND USER MESSAGE — a direct message]\nalso add tests\n[/OUT-OF-BAND USER MESSAGE]';
   assert.equal(convertRow({ id: 2, role: 'user', content: steer, display_kind: 'steer' })[0].content[0].text, 'also add tests');
   const calls = JSON.stringify([{ id: 'c1', function: { name: 'tool_call', arguments: JSON.stringify({ calls: [{ name: 'todo_list', arguments: { todos: [] } }] }) } }]);
