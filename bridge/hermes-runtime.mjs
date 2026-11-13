@@ -332,7 +332,7 @@ export default defineRuntimeAdapter({
     session.agentDetail = status === 'needs_input' ? detail || '' : '';
     context.report(bridgeConfig, [session], { agentCountUpdates: trackAgentSession(session) });
   },
-  renameSession: (id, name) => cli(['sessions', 'rename', '--', id, name]),
+  rename: async (id, name) => (await cli(['sessions', 'rename', '--', id, name]), name),
   async deleteSessionHistory(id) {
     await cli(['sessions', 'delete', '--yes', id]);
     grants.forget(storageId(id));

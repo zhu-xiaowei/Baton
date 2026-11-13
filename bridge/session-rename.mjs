@@ -13,16 +13,14 @@ const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export async function renameNativeSession(message, options = {}) {
   const identity = parseStorageSessionId(message.sessionId);
   const name = typeof message.name === 'string' ? message.name.trim() : '';
-  const registered = runtimeDescriptor(identity.runtime)?.renameSession;
-  if (!registered && !SESSION_UUID.test(identity.nativeSessionId)) throw new Error('Invalid session ID.');
+  const descriptor = runtimeDescriptor(identity.runtime);
+  if (!descriptor?.rename && !SESSION_UUID.test(identity.nativeSessionId)) throw new Error('Invalid session ID.');
   if (!name || name.length > 200 || /[\r\n\x00-\x1f\x7f]/.test(name)) {
     throw new Error('Enter a session name between 1 and 200 characters on one line.');
   }
   if (!message.projectHash) throw new Error('Project is required.');
 
-  if (registered) {
-    await registered(identity.nativeSessionId, name);
-  } else if (identity.runtime === 'claude') {
+  if (identity.runtime === 'claude') {
     const filePath = (options.findClaudeSessionFile || findSessionFile)(identity.nativeSessionId);
     if (!filePath || !fs.existsSync(filePath)) throw new Error('Session not found on this device.');
     if (normalizeProjectHash(path.basename(path.dirname(filePath))) !== message.projectHash) {
@@ -57,6 +55,8 @@ export async function renameNativeSession(message, options = {}) {
     } finally {
       await client.stop();
     }
+  } else if (descriptor?.rename) {
+    return { sessionId: identity.sessionId, runtime: identity.runtime, name: await descriptor.rename(identity.nativeSessionId, name, message.projectHash) };
   } else {
     throw new Error('This runtime does not support session renaming.');
   }

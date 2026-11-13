@@ -25,6 +25,7 @@ export function registerRuntime(adapter) {
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
+  ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
   ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
 ];
 
