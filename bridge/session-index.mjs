@@ -491,8 +491,11 @@ export class SessionIndex {
       if (rec.runtime === 'claude') {
         const candidate = liveIds.has(rec.id) || (now - rec.ms <= CLAUDE_FRESH_MS && claudeRunning.projects.has(path.basename(rec.dir)));
         own = known || (agent ? agent.status : candidate ? getSessionStatus(rec.id, rec.file, claudeRunning) : 'completed');
-        // A Claude child can be active only while its parent runs or right after it was written.
-        if (row.agentCount && (own === 'running' || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, own, now);
+        // A Claude child can be active only while its parent's process runs (its turn may be Done while
+        // background agents run: the pool's tasks, CC's busy record) or right after it was written.
+        const parent = own === 'running' || claudeRunning.liveStatuses?.get(rec.id) === 'running' || this.awaitsAgents?.(rec.id)
+          ? 'running' : own;
+        if (row.agentCount && (parent === 'running' || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, parent, now);
       } else if (runtimeDescriptor(rec.runtime)?.catalog) {
         const { catalog: source } = runtimeDescriptor(rec.runtime);
         const running = this.running[rec.runtime];
