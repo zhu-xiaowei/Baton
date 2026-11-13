@@ -766,7 +766,7 @@ function connect() {
           if (params.subscribe && _subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
           else if (params.subscribe) subscribeCaller(params, caller);
           const reply = await historyService.history(params);
-          if (reply.preview) _pageTitles.set(params.sessionId, reply.preview);
+          if (reply.preview && !_catalogTitles.has(params.sessionId)) _catalogTitles.set(params.sessionId, reply.preview);
           return params.subscribe ? { ...reply, bridgeEpoch: BRIDGE_EPOCH } : reply;
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
@@ -935,19 +935,19 @@ function publishTitle(reply) {
   _directRpc?.publish(event, _subscribers.targets(reply.sessionId, { root: true }));
 }
 
-// Catalog titles of the pages' Sessions (generated, or renamed outside Baton) reach those pages;
-// history gives Claude's none, its titles arrive as rows.
-const _pageTitles = new Map(); // root sessionId → title the page shows
+// A changed catalog title (generated, or renamed outside Baton) goes to every page showing the Session.
+// Sessions enter on their first history read (Claude's never do: its titles arrive as rows).
+const _catalogTitles = new Map(); // root sessionId → catalog title at the last check
 let _titleCheck = null;
-sessionIndex.onDirty = () => { if (_pageTitles.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
+sessionIndex.onDirty = () => { if (_subscribers.sessions.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
 function publishCatalogTitles() {
   _titleCheck = null;
   const { roots } = sessionIndex.catalog();
-  for (const [sessionId, name] of _pageTitles) {
-    if (!_subscribers.targets(sessionId, { root: true }).length) { _pageTitles.delete(sessionId); continue; }
+  for (const [sessionId, name] of _catalogTitles) {
+    if (!_subscribers.targets(sessionId, { root: true }).length) { _catalogTitles.delete(sessionId); continue; }
     const row = roots.find((r) => r.sessionId === sessionId);
     if (!row?.preview || row.preview === name || !_config) continue;
-    _pageTitles.set(sessionId, row.preview);
+    _catalogTitles.set(sessionId, row.preview);
     publishTitle({ sessionId, projectHash: row.project, device: _config.deviceName, name: row.preview });
   }
 }
