@@ -49,7 +49,7 @@
   #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
-  .runtime-mark-mono{position:relative}.runtime-mark-mono .runtime-icon{visibility:hidden}.runtime-mark-mono::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:var(--text-muted);transform:translate(-50%,-50%);-webkit-mask:var(--runtime-mask) center/contain no-repeat;mask:var(--runtime-mask) center/contain no-repeat;transition:background .15s}
+  .runtime-mark-mono{position:relative}.runtime-mark-mono .runtime-icon{visibility:hidden}.runtime-mark-mono::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:var(--text-primary);transform:translate(-50%,-50%);-webkit-mask:var(--runtime-mask) center/contain no-repeat;mask:var(--runtime-mask) center/contain no-repeat;transition:background .15s}
   @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-mono:hover::before,.runtime-switch:hover .runtime-mark-mono::before{background:var(--text-primary)}}
   html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px var(--border)}
   html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
@@ -191,7 +191,7 @@
   var runtimeIconCacheKey = 'baton-runtime-icons-v2';
   // Mirrors js/runtimes.js (id: [label, icon file, mono]); this script runs before modules load.
   var runtimeIconTable = { claude: ['Claude Code', 'claude-code.svg'], codex: ['Codex', 'codex.svg', 1], opencode: ['OpenCode', 'runtime-opencode.svg', 1],
-    dsh: ['DeepSeek Harness', 'runtime-dsh.svg'], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg', 1], kiro: ['Kiro', 'runtime-kiro.svg', 1] };
+    dsh: ['DeepSeek Harness', 'runtime-dsh.svg'], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg'], kiro: ['Kiro', 'runtime-kiro.svg'] };
   var runtimeIconCache = {};
   var runtimeIconPending = {};
   function validRuntimeSvg(svg) {

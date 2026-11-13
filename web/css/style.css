@@ -170,7 +170,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .runtime-mark-mono .runtime-icon { visibility: hidden; }
 .runtime-mark-mono::before {
   content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
-  background: var(--text-muted); transform: translate(-50%, -50%); transition: background 0.15s;
+  background: var(--text-primary); transform: translate(-50%, -50%); transition: background 0.15s;
   -webkit-mask: var(--runtime-mask) center / contain no-repeat;
   mask: var(--runtime-mask) center / contain no-repeat;
 }
