@@ -9,7 +9,7 @@ import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStr
   rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
 import { appKeys } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
-import { setTransferAccess } from '../../../bridge/transfer-store.mjs';
+import { setTransferAccess, setTransferKeys } from '../../../bridge/transfer-store.mjs';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
 // chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
@@ -527,6 +527,7 @@ export async function storageAccess() {
 }
 
 setTransferAccess(storageAccess);
+setTransferKeys(() => accountKeys().then(() => keys?.files() || null));
 
 // A terminal or preview stream to `device` on this socket: `send(message)` in order, `onMessage`
 // for what the Bridge sends to `id`. Messages are best effort; both channels resend and resync.

@@ -71,6 +71,7 @@ export async function appKeys(k) {
   const pubRaw = new Uint8Array(await subtle().exportKey('raw', pair.publicKey));
   const pub = b64(pubRaw);
   const sessions = new Map(); // bridge public key → Promise<session>
+  let files = null;
   const session = async (bridgePub) => {
     const peerRaw = unb64(bridgePub);
     const peer = await subtle().importKey('raw', peerRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
@@ -99,5 +100,7 @@ export async function appKeys(k) {
       return sessions.get(bridgePub);
     },
     notifyKey: async () => b64(await bits(k, 'notify')),
+    files: () => (files ||= Promise.all([derive(k, 'file', { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']),
+      derive(k, 'file-id', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign'])]).then(([key, id]) => ({ key, id }))),
   };
 }

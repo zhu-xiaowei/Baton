@@ -42,12 +42,13 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
     const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
     let uploaded = !!info.exists;
     let rejected = false;
+    const sealed = info.seal && !info.exists ? await info.seal(await fs.promises.readFile(absPath)) : null;
     for (const url of urls) {
-      const body = fs.createReadStream(absPath);
-      const closed = finished(body).catch(() => {});
+      const body = sealed ? Buffer.from(sealed) : fs.createReadStream(absPath);
+      const closed = sealed ? null : finished(body).catch(() => {});
       try {
         const response = await fetchFn(url, {
-          method: 'PUT', headers: { ...info.headers, 'Content-Length': String(stat.size) },
+          method: 'PUT', headers: { ...info.headers, 'Content-Length': String(sealed ? sealed.length : stat.size) },
           body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
         });
         // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
@@ -55,7 +56,7 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
         else await response.body?.cancel();
         if (response.ok) { uploaded = true; break; }
         if (rejected) break;
-      } catch {} finally { body.destroy(); await closed; }
+      } catch {} finally { body.destroy?.(); await closed; }
     }
     if (rejected) {
       await forgetContentHash(absPath, stat, home);

@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { resolveBridgeAttachments } from './attachments.mjs';
-import { setTransferAccess, transfer } from './transfer-store.mjs';
+import { setTransferAccess, setTransferKeys, transfer } from './transfer-store.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -950,6 +950,7 @@ function viewedOnApp(rootSessionId, eventId) {
 }
 configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
   notifyKey: () => _directRpc?.keys?.notifyKey });
+setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {
   if (!_directRpc) throw new Error('File storage is unavailable');
   return _directRpc.storageAccess();
@@ -2020,9 +2021,7 @@ async function downloadBridgeImage(key) {
     const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
-    const res = await fetch(await transfer.url(key));
-    if (!res.ok) return null;
-    fs.writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
+    fs.writeFileSync(localPath, await transfer.bytes(key));
     return localPath;
   } catch { return null; }
 }

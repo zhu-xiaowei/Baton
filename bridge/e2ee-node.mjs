@@ -30,6 +30,7 @@ export function bridgeKeys(k) {
   const ecdh = createECDH('prime256v1');
   const pubRaw = ecdh.generateKeys();
   const sessions = new Map(); // tag → session
+  let files = null;
   const session = (appPub) => {
     const tag = sessionTag(appPub);
     let found = sessions.get(tag);
@@ -60,5 +61,9 @@ export function bridgeKeys(k) {
     session,
     byTag: (tag) => sessions.get(tag) || null,
     notifyKey: hkdf(k, 'notify'),
+    // For transfer-store.mjs, which seals files with WebCrypto on both sides.
+    files: () => (files ||= Promise.all([
+      crypto.subtle.importKey('raw', hkdf(k, 'file'), 'AES-GCM', false, ['encrypt', 'decrypt']),
+      crypto.subtle.importKey('raw', hkdf(k, 'file-id'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])]).then(([key, id]) => ({ key, id }))),
   };
 }

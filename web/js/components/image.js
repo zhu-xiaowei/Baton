@@ -157,11 +157,11 @@ function stageImageFile(file) {
       var key = Math.abs(h).toString(16).padStart(8, '0') + raw.length.toString(16) + '.jpg';
 
       entry.dataUrl = dataUrl;
-      entry.key = key;
       renderStagedImages();
 
-      // Upload immediately
-      fetch(dataUrl).then(function (response) { return response.blob(); })
+      // Upload immediately, under the account's sealed key when files are sealed
+      transfer.keyFor(key.slice(0, -4), '.jpg').then(function (named) { key = entry.key = named; return fetch(dataUrl); })
+        .then(function (response) { return response.blob(); })
         .then(function (blob) { return transfer.put(key, blob, { contentType: 'image/jpeg' }); })
         .then(function () {
           entry.uploaded = true;

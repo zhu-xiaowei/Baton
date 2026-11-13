@@ -43,7 +43,7 @@ async function compressAndUpload(base64Data) {
 
   const hashInput = Buffer.concat([compressed.subarray(0, 8192), Buffer.from(String(compressed.length))]);
   const hash = crypto.createHash('md5').update(hashInput).digest('hex');
-  const key = `${hash}.jpg`;
+  const key = await transfer.keyFor(hash, '.jpg');
 
   try {
     if (!reusable(await transfer.head(key))) await transfer.put(key, compressed, { contentType: 'image/jpeg' });

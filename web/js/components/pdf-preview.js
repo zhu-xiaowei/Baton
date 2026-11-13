@@ -96,6 +96,7 @@ async function fetchPdfRange(url, begin, end, signal, cacheKey) {
 
 // `data` is the whole file from the attachment cache; `onFile` receives it when one request fetched it all.
 export async function mountPdfPreview(body, url, size, signal, cacheKey, { data, onFile } = {}) {
+  if (!data && url.startsWith('blob:')) data = await (await fetch(url, { signal })).arrayBuffer(); // a sealed file, opened
   const hasSize = Number.isSafeInteger(size) && size > 0;
   const firstEnd = size <= WHOLE_FILE_LIMIT ? size : Math.min(size, RANGE_CHUNK_SIZE);
   const initialRange = data ? Promise.resolve({ bytes: new Uint8Array(data), partial: false })

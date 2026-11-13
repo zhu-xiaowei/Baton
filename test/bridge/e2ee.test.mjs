@@ -5,6 +5,7 @@ import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { RpcAssembler, decodeRpcPayload, rpcResultFrames } from '../../bridge/direct-rpc-protocol.mjs';
 import { appKeys, importAccountKey } from '../../bridge/e2ee.mjs';
 import { bridgeKeys } from '../../bridge/e2ee-node.mjs';
+import { setTransferKeys, transfer } from '../../bridge/transfer-store.mjs';
 
 test('App (WebCrypto) and Bridge (node:crypto) seal for each other; tamper, wrong K and replay fail', async () => {
   const k = randomBytes(32);
@@ -22,4 +23,6 @@ test('App (WebCrypto) and Bridge (node:crypto) seal for each other; tamper, wron
   assert.deepEqual(await decodeRpcPayload(part.payload, inflateRawSync, toApp.open), { ok: 1 });
   const stranger = await (await appKeys(await importAccountKey(randomBytes(32)))).session(bridge.pub);
   assert.equal(await stranger.open(part.payload.head, part.payload.data), null);
+  const fileKey = async (keys) => { setTransferKeys(keys.files); return transfer.keyFor('a'.repeat(64), '.pdf'); };
+  assert.equal(await fileKey(app), await fileKey(bridge)); // same sealed file keys on both sides
 });
