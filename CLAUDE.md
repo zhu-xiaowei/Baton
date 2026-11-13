@@ -136,7 +136,8 @@ Done:
 - Files: `pi-catalog.mjs` (catalog, current-branch history, row mapping; worker-safe), `pi-runtime.mjs` (detect,
   adapter, watcher), `pi-interaction.mjs` (`pi --mode rpc`), `pi-approval-ext.mjs` (passed with `-e`),
   `pi-status-ext.mjs` (installed). Listed in `OPTIONAL_RUNTIMES` when the agent dir exists; `pi` ≥ 1.0 is found on
-  first use and runs as `<node ≥ 22.19> <realpath of pi>` (`pickNode`), not via PATH.
+  first use; a JS entry (`.js` or a node shebang) runs as `<node ≥ 22.19> <realpath>` (`pickNode`), a wrapper
+  script runs as it is. An exception in the RPC event handler ends the turn, not the Bridge.
 - Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
   `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
   continue the previous one bumps the epoch (`historyReset`). One `edit` call with N edits = N Edit cards (`<id>#i`).
@@ -154,9 +155,11 @@ Done:
 - Dialogs: `baton:permission` confirm → `kind:'tool'` (session grant `bash:<prog [sub]>` / tool name, kept in
   `~/.baton-bridge/pi-grants.json`, read by the extension on every call); `ask_user` (Baton's tool; `multiple:true`
   rides on `input('baton:multiselect')` and answers a JSON array) and user-extension select/confirm/input → `ask`.
-  A bash command with any shell syntax beyond plain words gets no grant and is asked every time.
+  A bash command with any shell syntax beyond plain words, or behind a wrapper (`timeout`, `env`, `sudo`, …), gets
+  no grant and is asked every time. One edit call with several edits is approved on one joined diff.
 - Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
-  be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the leaf.
+  be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry
+  (the catalog keeps its id, so nothing is re-read).
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.

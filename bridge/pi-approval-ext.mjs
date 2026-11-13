@@ -11,6 +11,8 @@ function grantOf(toolName, input) {
 	if (toolName !== "bash") return toolName;
 	const command = String(input?.command ?? "").trim();
 	const t = command.split(/\s+/);
+	// A wrapper runs whatever follows it: never granted.
+	if (/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|stdbuf|ionice|sh|bash|zsh)$/.test(t[0])) return null;
 	return /^[\w \t./:=@%+,-]+$/.test(command) ? `bash:${t[1] && /^[a-z][\w-]*$/i.test(t[1]) ? `${t[0]} ${t[1]}` : t[0]}` : null;
 }
 

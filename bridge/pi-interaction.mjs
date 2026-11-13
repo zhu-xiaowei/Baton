@@ -1,5 +1,4 @@
-// `pi --mode rpc`: one process per Session, started on send and ended on agent_settled (design §6.6).
-// A send during a turn is steered into it.
+// `pi --mode rpc`: one process per Session, from send to agent_settled; sends meanwhile are steered.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,7 +37,10 @@ async function rpcProcess(key, { bin, pre }, args, cwd, s, gone = () => {}) {
   const child = await sessionProcess(key, bin, [...pre, '--mode', 'rpc', ...args], {
     cwd: cwd && fs.existsSync(cwd) ? cwd : undefined, env: { ...process.env, ...s.env } });
   Object.assign(s, { child, n: 0, waiting: new Map() });
-  s.rpc = new RpcStdio(child, { onRaw: (r) => (r.type === 'response' ? (s.waiting.get(r.id)?.(r), s.waiting.delete(r.id)) : s.onEvent?.(r)) });
+  s.rpc = new RpcStdio(child, { onRaw: (r) => {
+    // An event this adapter cannot handle ends the turn, never the Bridge.
+    try { r.type === 'response' ? (s.waiting.get(r.id)?.(r), s.waiting.delete(r.id)) : s.onEvent?.(r); } catch (error) { s.onError?.(error.message); }
+  } });
   const exit = () => { for (const resolve of s.waiting.values()) resolve({ success: false, error: 'Pi exited' }); gone(); };
   child.once('exit', exit).once('error', exit);
   return s;
@@ -76,7 +78,10 @@ function dialog(s, r) {
   try { body = JSON.parse((multi ? r.placeholder : r.message) || '{}'); } catch {}
   let request;
   if (tool) {
-    const [use] = piTools(body.toolName, body.input);
+    // One card for the call: several edits are joined into one diff.
+    const uses = piTools(body.toolName, body.input);
+    const join = (k) => uses.map((u) => u.input[k]).join('\n…\n');
+    const use = uses.length === 1 ? uses[0] : { name: 'Edit', input: { ...uses[0]?.input, old_string: join('old_string'), new_string: join('new_string') } };
     const [, bash, content] = /^(?:(bash):)?(.*)$/.exec(body.grant || '');
     request = { tool_name: use.name, input: use.input, permission_suggestions: body.grant ? [{ type: 'addRules', behavior: 'allow',
       rules: [bash ? { toolName: 'Bash', ruleContent: content } : { toolName: use.name }] }] : [] };
@@ -129,6 +134,7 @@ async function start(launch, nativeId, callbacks, { file, cwd, turnId, text }) {
     else cb[f.t === 'delta' ? 'onDelta' : 'onInputDelta'](null, f.chunk, f.blockId);
   }));
   s.onEvent = (r) => event(nativeId, s, r);
+  s.onError = (error) => { console.error(`[pi] ${error}`); end(nativeId, s, error); };
   await rpcProcess(`pi:${nativeId}`, launch, ['-e', APPROVAL_EXT, ...(file ? ['--session', file] : ['--session-id', nativeId])], cwd, s,
     () => { ownPids.delete(s.child.pid); end(nativeId, s, `Pi exited${s.rpc.stderr ? `: ${s.rpc.stderr.trim().slice(-300)}` : ''}`); });
   live.set(nativeId, s);
@@ -199,8 +205,7 @@ export function createPiInteraction({ launch, findSession, statusRecords }) {
         label: rec.mode === 'tui' ? 'A Pi terminal' : 'Another Pi client', canTerminate: rec.mode === 'tui' } : null;
     },
 
-    // Prompt templates and skills: Pi's built-ins do not run in RPC mode, and extension commands are
-    // matched before the turn marker is stripped.
+    // Templates and skills (built-ins do not run in RPC; extension commands would not see past the marker).
     async listCommands({ cwd }) {
       const key = `pi-commands:${cwd}`;
       const s = await rpcProcess(key, launch(), ['--no-session'], cwd, {});

@@ -46,7 +46,7 @@ function coalesce(busy, key, run) {
 }
 
 const interaction = createPiInteraction({ launch, findSession: findRecord, statusRecords: running });
-// Pi refuses neither delete nor rename of a busy or open Session: it would fork or lose its file.
+// Pi itself does not refuse to delete or rename a busy or open Session.
 const inUse = (id) => interaction.isBusy(id) || interaction.heldElsewhere(id);
 const refuseInUse = (recs) => { if (recs.some((rec) => inUse(rec.id))) throw new Error('the Session is in use'); };
 function removeAll(recs) {
@@ -110,7 +110,7 @@ export const piRuntime = {
     displayName: 'Pi',
     features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
     interaction,
-    // Statuses come from the status extension and Baton's turns; history is read on demand.
+    // Statuses come from the status extension and Baton's turns.
     discover: () => ({ sessions: [] }),
     findSessionFile: (id) => findRecord(id)?.file || null,
     baselineToEnd() {},
@@ -133,21 +133,23 @@ export const piRuntime = {
     const rec = findRecord(id);
     if (!rec) throw new Error('Session not found on this device.');
     refuseInUse([rec]);
-    const text = fs.readFileSync(rec.file, 'utf8').trimEnd();
-    const parentId = /^\{"type":"[a-z_]+","id":"([^"]+)"/.exec(text.slice(text.lastIndexOf('\n') + 1))?.[1] || null;
-    fs.appendFileSync(rec.file, `${JSON.stringify({ type: 'session_info', id: crypto.randomBytes(4).toString('hex'), parentId,
+    sessionIndex.touch(rec.file);
+    fs.appendFileSync(rec.file, `${JSON.stringify({ type: 'session_info', id: crypto.randomBytes(4).toString('hex'), parentId: rec.state?.leaf || null,
       timestamp: new Date().toISOString(), name })}\n`);
   },
   watcher,
 };
 export default piRuntime;
 
-// Found on first use: pi is a node script, run with a new enough node (npm's .cmd shim on Windows).
 let found;
 function launch() {
   if (found) return found;
   const pi = findRuntimeBin('pi', [], '1.0.0');
-  const node = pi && pickNode('22.19.0');
-  if (!node) throw new Error('Pi ≥ 1.0 with Node.js ≥ 22.19 was not found on this computer.');
-  return (found = /\.cmd$/i.test(pi.bin) ? { bin: pi.bin, pre: [] } : { bin: node.bin, pre: [fs.realpathSync(pi.bin)] });
+  const cli = pi && fs.realpathSync(pi.bin);
+  const head = Buffer.alloc(128);
+  if (cli) { const fd = fs.openSync(cli, 'r'); fs.readSync(fd, head, 0, 128, 0); fs.closeSync(fd); }
+  // Found on first use. A JS entry runs on a new enough node; a wrapper (sh/.cmd shim) runs as is.
+  const node = (/\.[cm]?js$/.test(cli) || /^#!.*\bnode\b/.test(head.toString('latin1'))) && pickNode('22.19.0');
+  if (!pi || node === null) throw new Error('Pi ≥ 1.0 with Node.js ≥ 22.19 was not found on this computer.');
+  return (found = node ? { bin: node.bin, pre: [cli] } : { bin: pi.bin, pre: [] });
 }

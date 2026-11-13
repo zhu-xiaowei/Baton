@@ -46,8 +46,8 @@ export { tools as piTools };
 const useIds = (id, n) => (n === 1 ? [id] : Array.from({ length: n }, (_, i) => `${id}#${i}`));
 const image = (b) => ({ type: 'image', source: { type: 'base64', media_type: b.mimeType, data: b.data } });
 
-// Rows for one entry; live and stored copies share uuid = nativeId, and a prompt Baton sent carries its
-// batonTurnId (pi-approval-ext). `edits`: toolCallId → Edit uses; `line`: history order (live: none).
+// Rows for one entry; live and stored rows share uuid = nativeId; Baton's prompts carry batonTurnId.
+// `edits`: toolCallId → Edit uses; `line`: history order (live: none).
 export function piRows(entry, edits = new Map(), line = null) {
   const ts = entry.timestamp || '';
   const key = (f = 0) => (line === null ? undefined : nativeOrderKey(line, f));
@@ -103,10 +103,10 @@ export async function withImages(row) {
   return { ...row, content: (await extractForApp({ uuid: row.uuid, type: row.type, message: { content: row.content } })).content };
 }
 
-// ---------- catalog ----------
 function scanLine(state, buf, s, e) {
   const head = buf.latin1Slice(s, Math.min(e, s + 256));
-  const type = HEAD.exec(head)?.[1];
+  const [, type, id] = HEAD.exec(head) || [];
+  if (id) state.leaf = id; // the parent of an entry the Bridge appends
   const wanted = type === 'session' || type === 'session_info' || type === 'model_change'
     || (type === 'message' && !state.first && USER_HEAD.test(head));
   if (!wanted) return;
@@ -118,21 +118,25 @@ function scanLine(state, buf, s, e) {
   else state.first = piText(text(x.message?.content));
 }
 
+// Complete lines from state.offset, a MB at a time (a longer line grows the buffer).
 function advance(file, id, state) {
   const fd = fs.openSync(file, 'r');
   try {
     const size = fs.fstatSync(fd).size;
-    if (size <= state.offset) return state;
-    const buf = Buffer.allocUnsafe(size - state.offset);
-    const n = fs.readSync(fd, buf, 0, buf.length, state.offset);
-    let s = 0;
-    for (let e = buf.indexOf(10); e !== -1 && e < n; e = buf.indexOf(10, s)) { scanLine(state, buf, s, e); s = e + 1; }
-    state.offset += s;
+    let buf = Buffer.allocUnsafe(1 << 20);
+    while (state.offset < size) {
+      const n = fs.readSync(fd, buf, 0, Math.min(buf.length, size - state.offset), state.offset);
+      let s = 0;
+      for (let e = buf.indexOf(10); e !== -1 && e < n; e = buf.indexOf(10, s)) { scanLine(state, buf, s, e); s = e + 1; }
+      if (s) state.offset += s;
+      else if (n < buf.length) break;
+      else buf = Buffer.allocUnsafe(buf.length * 2);
+    }
   } finally { fs.closeSync(fd); }
   return state;
 }
 
-const newState = () => ({ offset: 0, cwd: '', name: '', first: '', model: '' });
+const newState = () => ({ offset: 0, cwd: '', name: '', first: '', model: '', leaf: null });
 
 // sessionId → status records of live pi processes (pi-status-ext).
 function statusRecords() {
@@ -188,7 +192,7 @@ export const piCatalog = {
   },
 };
 
-// ---------- history: the current branch ----------
+// History: the current branch.
 class PiHistory {
   constructor(file) {
     this.edits = new Map();
@@ -218,7 +222,7 @@ class PiHistory {
     return changed;
   }
 
-  // The branch ends at the last entry; an entry not continuing the previous one moved it (new epoch).
+  // An entry not continuing the previous one moved the branch: new epoch.
   branch() {
     this.dirty = false;
     const lineOf = new Map();
