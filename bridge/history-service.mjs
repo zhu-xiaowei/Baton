@@ -85,7 +85,9 @@ export class HistoryService {
     await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
     // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
     const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
-    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}),
+      // The list's title; Claude's come as title rows.
+      ...(root?.sessionId === params.sessionId && root.rec.runtime !== 'claude' ? { preview: root.preview } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.

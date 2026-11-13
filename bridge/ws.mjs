@@ -762,11 +762,12 @@ function connect() {
         // With `subscribe` this also does what opening with `subscribe` does, before the file is
         // read, so nothing falls between the page and the pushes.
         history: async (params, caller) => {
-          if (!params.subscribe) return historyService.history(params);
           // A refresh of an open page only renews its lease; the replay and prompt are for opening.
-          if (_subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
-          else subscribeCaller(params, caller);
-          return { ...await historyService.history(params), bridgeEpoch: BRIDGE_EPOCH };
+          if (params.subscribe && _subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
+          else if (params.subscribe) subscribeCaller(params, caller);
+          const reply = await historyService.history(params);
+          if (reply.preview) _pageTitles.set(params.sessionId, reply.preview);
+          return params.subscribe ? { ...reply, bridgeEpoch: BRIDGE_EPOCH } : reply;
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
         notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
@@ -932,6 +933,23 @@ function publishTitle(reply) {
   const event = { action: 'session_title_changed', sessionId: reply.sessionId, projectHash: reply.projectHash,
     device: reply.device, name: reply.name };
   _directRpc?.publish(event, _subscribers.targets(reply.sessionId, { root: true }));
+}
+
+// Catalog titles of the pages' Sessions (generated, or renamed outside Baton) reach those pages;
+// history gives Claude's none, its titles arrive as rows.
+const _pageTitles = new Map(); // root sessionId → title the page shows
+let _titleCheck = null;
+sessionIndex.onDirty = () => { if (_pageTitles.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
+function publishCatalogTitles() {
+  _titleCheck = null;
+  const { roots } = sessionIndex.catalog();
+  for (const [sessionId, name] of _pageTitles) {
+    if (!_subscribers.targets(sessionId, { root: true }).length) { _pageTitles.delete(sessionId); continue; }
+    const row = roots.find((r) => r.sessionId === sessionId);
+    if (!row?.preview || row.preview === name || !_config) continue;
+    _pageTitles.set(sessionId, row.preview);
+    publishTitle({ sessionId, projectHash: row.project, device: _config.deviceName, name: row.preview });
+  }
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;

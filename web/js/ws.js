@@ -1978,6 +1978,14 @@ async function loadLatestMessages(sessionId, options = {}) {
     } finally {
       _suppressTurnEndRecovery = false;
     }
+    // The list's title, also for a page opened without it (a direct link); a Baton rename (tier 4) stays.
+    if (data.preview && (state._titleTier || 0) <= 3 && state.activeThreadId === state.rootSessionId
+      && data.preview !== state.appState.sessionPreview) {
+      state.appState.sessionPreview = state.rootSessionPreview = data.preview;
+      state._titleTier = 3;
+      updateBreadcrumb();
+      saveNav();
+    }
     updateTitleFromMessages();
     updateSendBtn();
     if (typeof updateSpinner === 'function') updateSpinner();
