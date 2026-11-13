@@ -1,9 +1,7 @@
-// Hermes `messages` rows → Baton rows. One stored row gives zero, one or two Baton rows (a compaction
-// carrier gives a "summary" row before its own content). Images stay `{type:'image', path}` here; the
-// history reader loads and uploads them.
+// Hermes `messages` rows → Baton rows (a compaction carrier adds a "summary" row). Images stay
+// `{type:'image', path}`; the history reader loads them.
 const JSON_PREFIX = '\u0000json:';
 const VISION_RE = /^\[The user sent an image~ Here's what I can see:\n([\s\S]*?)\]\n\[If you need a closer look, use vision_analyze with image_url: (.+?) ~\]\n*/;
-const ATTACHED_RE = /\n\n\[Image attached at: ([^\]\n]+)\]/g;
 const SKILL_RE = /^\[IMPORTANT: The user has invoked the "([^"]+)" skill[\s\S]*?(?:alongside the skill invocation: ([\s\S]*))?$/;
 const STEER_RE = /^\[OUT-OF-BAND USER MESSAGE[^\]\n]*\]\n([\s\S]*?)\n\[\/OUT-OF-BAND USER MESSAGE\]$/;
 const UNTRUSTED_RE = /^<untrusted_tool_result[^>]*>\n(?:The following content[^\n]*\n)?\n?([\s\S]*?)\n?<\/untrusted_tool_result>\s*$/;
@@ -28,22 +26,15 @@ export function flatten(content) {
 
 const iso = (seconds) => (seconds ? new Date(Number(seconds) * 1000).toISOString() : '');
 
-// Hermes stores a vision description plus the cached file instead of the image itself.
+// An image is stored as a vision description plus Hermes' cached file.
 function userBlocks(content) {
-  const decoded = decodeContent(content);
   const blocks = [];
-  let text = flatten(decoded);
-  for (const part of Array.isArray(decoded) ? decoded : []) {
-    const url = part?.image_url?.url || part?.image_url;
-    const [, media, data] = /^data:([^;]+);base64,(.*)$/s.exec(typeof url === 'string' ? url : '') || [];
-    if (data) blocks.push({ type: 'image', source: { type: 'base64', media_type: media, data } });
-  }
+  let text = flatten(decodeContent(content));
   const vision = VISION_RE.exec(text);
   if (vision) {
     text = text.slice(vision[0].length);
     blocks.push({ type: 'image', path: vision[2].trim(), alt: vision[1].trim() });
   }
-  text = text.replace(ATTACHED_RE, (_, file) => { blocks.push({ type: 'image', path: file.trim() }); return ''; });
   const skill = SKILL_RE.exec(text);
   if (skill) text = `/${skill[1]} ${skill[2] || ''}`;
   text = (STEER_RE.exec(text)?.[1] ?? text).trim();
@@ -54,15 +45,14 @@ function userBlocks(content) {
 export function mapTool(name, args) {
   const a = args && typeof args === 'object' ? args : {};
   switch (name) {
-    case 'terminal': return { name: 'Bash', input: { command: a.command || '', ...(a.background ? { run_in_background: true } : {}) } };
+    case 'terminal': return { name: 'Bash', input: { command: a.command || '' } };
     case 'execute_code': return { name: 'Bash', input: { command: a.code || '', description: 'execute_code (Python)' } };
-    case 'read_file': return { name: 'Read', input: { file_path: a.path || '', ...(a.offset ? { offset: a.offset } : {}), ...(a.limit ? { limit: a.limit } : {}) } };
+    case 'read_file': return { name: 'Read', input: { file_path: a.path || '' } };
     case 'write_file': return { name: 'Write', input: { file_path: a.path || '', content: a.content || '' } };
-    case 'patch': return { name: 'Edit', input: { file_path: a.path || '', old_string: a.old_string || '', new_string: a.new_string || '',
-      ...(a.patch ? { patch: a.patch } : {}), ...(a.replace_all ? { replace_all: true } : {}) } };
+    case 'patch': return { name: 'Edit', input: { file_path: a.path || '', old_string: a.old_string || '', new_string: a.new_string || '' } };
     case 'search_files': return a.target === 'files'
       ? { name: 'Glob', input: { pattern: a.pattern || '', ...(a.path ? { path: a.path } : {}) } }
-      : { name: 'Grep', input: { pattern: a.pattern || '', ...(a.path ? { path: a.path } : {}), ...(a.file_glob ? { glob: a.file_glob } : {}) } };
+      : { name: 'Grep', input: { pattern: a.pattern || '', ...(a.path ? { path: a.path } : {}) } };
     case 'todo_list': case 'todo':
       return { name: 'TodoWrite', input: { todos: (a.todos || []).map((t) => ({ content: t.content || '', status: t.status || 'pending', activeForm: t.content || '' })) } };
     case 'delegate_task': {
@@ -80,7 +70,7 @@ export function mapTool(name, args) {
     }
     case 'vision_analyze': return { name: 'ViewImage', input: { path: a.image_url || '' } };
     case 'skill_view': return { name: 'Skill', input: { skill: a.name || '' } };
-    default: return { name: /^mcp_/.test(name) ? name.replace(/^mcp_([^_]+)_/, 'mcp__$1__') : `mcp__hermes__${name}`, input: a };
+    default: return { name: `mcp__hermes__${name}`, input: a };
   }
 }
 
@@ -149,8 +139,7 @@ export function convertRow(r, delegations = new Map()) {
       text = '';
     }
     const blocks = [];
-    const reasoning = r.reasoning || r.reasoning_content
-      || (parseJson(r.reasoning_details, []) || []).map((d) => d?.thinking || d?.text || '').filter(Boolean).join('\n');
+    const reasoning = r.reasoning || r.reasoning_content;
     if (reasoning) blocks.push({ type: 'thinking', thinking: reasoning });
     const failed = r.display_kind === 'failed_turn';
     if (failed) text = [text, meta.error ? `(${meta.error})` : ''].filter(Boolean).join('\n\n');

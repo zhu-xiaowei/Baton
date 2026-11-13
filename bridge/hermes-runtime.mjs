@@ -1,5 +1,4 @@
-// Hermes on the Bridge's main thread: interaction through the user's gateway, the state.db watcher
-// and the adapter methods. Baton starts no Hermes process except the gateway, once, when sending.
+// Hermes on the main thread: interaction through the user's gateway, the state.db watcher, the adapter.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +11,7 @@ import { SessionGrants } from './session-grants.mjs';
 import { BRIDGE_HOME } from './config.mjs';
 import { liveMessageRoute } from './live-message-registry.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
-import light, { catalog, HERMES_HOME, HermesHistoryReader, STATE_DB } from './hermes-catalog.mjs';
+import light, { catalog, HERMES_HOME, HermesHistoryReader, select, STATE_DB } from './hermes-catalog.mjs';
 import { mapTool } from './hermes-convert.mjs';
 import { HermesGateway, hermesCli } from './hermes-gateway.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -20,8 +19,11 @@ import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
 import { pendingInteractionDetail, publishMessages } from './ws.mjs';
 
+// A state.db older than 0.23 (no display projection) is not read: the runtime does not load.
+const REQUIRED = ['display_kind', 'display_order', 'active', 'compacted', 'message_uid'];
+if (select('messages', REQUIRED).split(', ').length < REQUIRED.length) throw new Error('Hermes state.db is older than 0.23');
+
 const IDLE_MS = 120_000;
-const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
 const storageId = (id) => storageSessionId('hermes', id);
 const grants = new SessionGrants(path.join(BRIDGE_HOME, 'hermes-grants.json'));
 const turns = new Map();     // admission id → Baton turn
@@ -35,6 +37,8 @@ let config = null;
 const gateway = new HermesGateway(onEvent);
 
 const activeTurn = (id) => [...turns.values()].some((turn) => turn.id === id);
+// Browsing connects only to a gateway that already runs.
+const gatewayUp = () => gateway.open || fs.existsSync(path.join(HERMES_HOME, 'gateway.sock'));
 
 function scheduleIdle() {
   clearTimeout(idleTimer);
@@ -78,7 +82,6 @@ function report(id, status, state) {
   if (session) reportSessions(config, [session], { agentCountUpdates: trackAgentSession(session) });
 }
 
-// --- gateway events → Baton -------------------------------------------------------------------
 function control(e, request) {
   const sink = turns.get(e.admission_id)?.callbacks || observers.get(e.session_id);
   sink?.onControlRequest({ request_id: e.payload.prompt_id, request });
@@ -173,12 +176,11 @@ async function endTurn(turn, p) {
   scheduleIdle();
 }
 
-// --- interaction --------------------------------------------------------------------------------
 async function submit(id, turnId, text, callbacks, fresh = false) {
   // Images arrive as local paths (resolveBridgeImages); Hermes takes them as staged attachments.
   const attachments = [];
   for (const [ref, file] of text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-    if (!MIME[path.extname(file).toLowerCase()] || !fs.existsSync(file)) continue;
+    if (!fs.existsSync(file)) continue;
     const staged = await gateway.rpc('image.attach_bytes', { session_id: id, content_base64: fs.readFileSync(file).toString('base64'), filename: path.basename(file) });
     attachments.push({ path: staged.path, mime: staged.mime });
     text = text.replace(ref, '').trim();
@@ -242,13 +244,13 @@ const interaction = defineInteractionAdapter({
   // An App page opened the Session: re-show what waits there, and see its prompts from other clients.
   async observePermissions({ nativeSessionId: id, callbacks }) {
     observers.set(id, callbacks);
-    if (!gateway.open && !fs.existsSync(path.join(HERMES_HOME, 'gateway.sock'))) return;
+    if (!gatewayUp()) return;
     const snapshot = await attach(id, false).catch(() => null);
     for (const p of snapshot?.prompts || []) onEvent({ type: `${p.kind}.request`, session_id: id, payload: p });
   },
 
   async listCommands() {
-    if (!gateway.open && !fs.existsSync(path.join(HERMES_HOME, 'gateway.sock'))) return { commands: [], skills: [] };
+    if (!gatewayUp()) return { commands: [], skills: [] };
     await gateway.connect();
     scheduleIdle();
     const catalog = await gateway.rpc('commands.catalog', {});
@@ -263,7 +265,6 @@ const interaction = defineInteractionAdapter({
   shutdown: () => gateway.close(),
 });
 
-// --- watcher ------------------------------------------------------------------------------------
 // state.db changed: report status changes and push rows that other clients wrote to open pages.
 async function onRows(rows, added) {
   const running = catalog.running();
@@ -298,7 +299,6 @@ const watcher = defineRuntimeWatcher({
   },
 });
 
-// --- adapter ------------------------------------------------------------------------------------
 async function cli(args) {
   const { error, stderr } = await hermesCli(args);
   if (error) throw new Error(String(stderr).trim().split('\n').at(-1) || error.message);
@@ -326,7 +326,7 @@ export default defineRuntimeAdapter({
     session.agentDetail = status === 'needs_input' ? detail || '' : '';
     context.report(bridgeConfig, [session], { agentCountUpdates: trackAgentSession(session) });
   },
-  renameSession: (id, name) => cli(['sessions', 'rename', id, name]),
+  renameSession: (id, name) => cli(['sessions', 'rename', '--', id, name]),
   async deleteSessionHistory(id) {
     await cli(['sessions', 'delete', '--yes', id]);
     grants.forget(storageId(id));

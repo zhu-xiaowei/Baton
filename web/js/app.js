@@ -525,8 +525,7 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    // A virtual project (`<runtime>:<name>`, e.g. Hermes' messaging Sessions) has no folder.
-    var hasFolder = state.appState.session !== '__new__' && String(state.appState.project.hash).indexOf(':') < 0;
+    var hasFolder = state.appState.session !== '__new__' && !virtualProjectRuntimes(state.appState.project.hash);
     var filesButton = hasFolder
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
@@ -1909,7 +1908,7 @@ async function startNewSession(projectHash) {
   });
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = creatableRuntimes();
+  var runtimes = virtualProjectRuntimes(projectHash) || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
   var savedRuntime = '';
   try {
@@ -1967,12 +1966,19 @@ async function startNewSession(projectHash) {
   refreshNewSessionRuntimes(myNav);
 }
 
+// A virtual project (`<runtime>:<name>`) has no folder; only its own runtime creates Sessions there.
+function virtualProjectRuntimes(projectHash) {
+  var prefix = String(projectHash || '').split(':');
+  return prefix.length > 1 && RUNTIMES[prefix[0]] ? [prefix[0]] : null;
+}
+
 // The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
 async function refreshNewSessionRuntimes(nav) {
   var reply;
   try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
-  var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
+  var only = virtualProjectRuntimes(state.appState.project?.hash);
+  var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime] && (!only || only.includes(runtime)); });
   if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
   state.newSessionRuntimes = runtimes;
   applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, state.appState.runtime), false);

@@ -1,5 +1,4 @@
-// Hermes (≥ 0.23) Sessions and history, read-only from the default profile's state.db. Loaded by the
-// workers too (history, tool details), so it imports nothing that starts the Bridge.
+// Hermes (≥ 0.23) Sessions and history, read-only from the default profile's state.db; workers load it too.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,28 +15,23 @@ export const db = await open(STATE_DB);
 // Hermes' own pickers hide these; subagents fold under their parent.
 const UNLISTED = new Set(['oneshot', 'tool', 'batch', 'kanban', 'a2a', 'curator', 'bot_room']);
 const LOCAL = new Set(['local', 'cli', 'tui', 'gui', 'acp', 'desktop']);
-const LABELS = { cron: '定时任务', webhook: 'Webhook', api_server: 'API', telegram: 'Telegram', discord: 'Discord', slack: 'Slack',
-  signal: 'Signal', whatsapp: 'WhatsApp', email: 'Email', sms: 'SMS', matrix: 'Matrix', feishu: '飞书', wecom: '企业微信', weixin: '微信' };
 const SESSION_COLUMNS = ['id', 'source', 'created_source', 'parent_session_id', 'model', 'started_at', 'ended_at', 'message_count',
   'cwd', 'git_repo_root', 'title', 'last_activity_at', 'hidden', 'archived', 'transcript_revision', 'rewind_count'];
-const SUMMARY_END = '--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---';
 
 // Columns are read by name; ones this Hermes version lacks are left out.
 const columns = new Map();
-function select(table, wanted) {
+export function select(table, wanted) {
   if (!columns.has(table)) columns.set(table, new Set(db.all(`SELECT name FROM pragma_table_info('${table}')`).map((c) => c.name)));
   return wanted.filter((c) => columns.get(table).has(c)).join(', ');
 }
 const marks = (list) => list.map(() => '?').join(',');
 const previewOf = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
 
-// Like Hermes' preview: the first user row that is not hidden; a compaction summary yields what follows it.
+// Like Hermes' preview: the first user row that is not hidden.
 function firstPrompt(id) {
   for (const { content } of db.all(`SELECT content FROM messages WHERE session_id = ? AND role = 'user' AND content IS NOT NULL
     AND coalesce(display_kind, '') <> 'hidden' ORDER BY timestamp, id LIMIT 5`, [id])) {
-    let text = flatten(decodeContent(content));
-    if (/^\s*\[CONTEXT (COMPACTION|SUMMARY)/.test(text)) text = text.includes(SUMMARY_END) ? text.slice(text.indexOf(SUMMARY_END) + SUMMARY_END.length) : '';
-    if (previewOf(text)) return previewOf(text);
+    if (previewOf(flatten(decodeContent(content)))) return previewOf(flatten(decodeContent(content)));
   }
   return '';
 }
@@ -53,6 +47,8 @@ export const catalog = {
     if (!fs.existsSync(STATE_DB)) return { cursor };
     const version = db.dataVersion();
     if (cursor?.version === version) return { cursor };
+    // Startup asks twice from no cursor (sync, then the index): one read serves both.
+    if (!cursor && this.first?.cursor.version === version) return this.first;
     let maxId = cursor?.maxId ?? 0;
     const added = new Map();
     for (const { session_id: id, id: rowId } of db.all('SELECT session_id, id FROM messages WHERE id > ?', [maxId])) {
@@ -79,7 +75,9 @@ export const catalog = {
     }));
     const deletes = cursor ? [...cursor.sigs.keys()].filter((id) => !sigs.has(id)) : [];
     if (cursor) this.onRows?.(upserts, added);
-    return { upserts, deletes, cursor: { version, maxId, sigs } };
+    const result = { upserts, deletes, cursor: { version, maxId, sigs } };
+    if (!cursor) this.first = result;
+    return result;
   },
 
   view(rec, index) {
@@ -92,7 +90,8 @@ export const catalog = {
     if (s.source === 'subagent') return { project, preview: title, parent: s.parent, visible: true, agentCount: 0 };
     if (local) return { project, preview: title || 'New session', agentCount: 0 };
     // Messaging and automation Sessions have no workspace: one virtual project, labelled by source.
-    return { project, preview: `${LABELS[s.source] || '本机'} · ${title}`, readOnly: !LOCAL.has(s.source), agentCount: 0 };
+    const label = { cron: '定时任务', api_server: 'API' }[s.source] || (LOCAL.has(s.source) ? '本机' : s.source[0].toUpperCase() + s.source.slice(1));
+    return { project, preview: `${label} · ${title}`, readOnly: !LOCAL.has(s.source), agentCount: 0 };
   },
 
   // Turns the gateway is running, from its own lease and admission tables (5 s TTL in SessionIndex).
@@ -109,9 +108,8 @@ export const catalog = {
   status: (rec, running) => (running?.has(rec.id) || (rec.state.source === 'subagent' && !rec.state.ended) ? 'running' : 'completed'),
 };
 
-// One Session's visible rows in Hermes' display order: active or compaction-archived rows, one per
-// display_order slot (the active copy wins), without tool results a compaction copied. A rewind,
-// compaction or rewrite (revision, inactive rows) rebuilds the index under a new epoch.
+// Hermes' display projection: active or compaction-archived rows, one per display_order (active copy
+// first, compaction-copied tool results dropped). A rewind/compaction/revision rebuilds the index.
 export class HermesHistoryReader {
   constructor(sessionId) {
     this.id = sessionId;
@@ -153,7 +151,7 @@ export class HermesHistoryReader {
     return out;
   }
 
-  // Baton rows of index positions [lo, hi), each with its position (images still as paths).
+  // Baton rows of index positions [lo, hi) (images still as paths).
   convert(lo, hi) {
     const ids = this.index.read(lo, hi);
     if (!ids.length) return [];
