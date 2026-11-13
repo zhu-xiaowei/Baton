@@ -1,6 +1,7 @@
 // Mobile alerts, decided here from the Session rows this Bridge reports (`reportSessions`). The
 // server only stores the event for Android and the iOS extension and pushes it through the relay.
 import { createHash, randomUUID } from 'crypto';
+import { seal } from './e2ee-node.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 
 const LOCAL_IDLE_ALERT_SEC = 120;
@@ -181,8 +182,18 @@ async function deliver(alert) {
   if (!await send(alert)) enqueue(alert);
 }
 
+// With K, the text and the project travel sealed (`e`, bound to eventId); the phone opens them.
+const SEALED = ['projectHash', 'projectName', 'sessionTitle', 'title', 'body'];
+function sealAlert(alert, key) {
+  const out = { ...alert, ...Object.fromEntries(SEALED.map((name) => [name, ''])) };
+  const plain = Buffer.from(JSON.stringify(Object.fromEntries(SEALED.map((name) => [name, alert[name]]))));
+  out.e = seal(key, plain, 0, 0, Buffer.from(alert.eventId)).toString('base64');
+  return out;
+}
+
 async function send(alert) {
-  const response = await deps.post('/api/notifications/events', alert);
+  const key = deps.notifyKey?.();
+  const response = await deps.post('/api/notifications/events', key ? sealAlert(alert, key) : alert);
   return !!response && response.status < 500; // a 4xx would only fail again
 }
 

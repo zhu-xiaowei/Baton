@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { resolveBridgeAttachments } from './attachments.mjs';
-import { setTransferAccess, transfer } from './transfer-store.mjs';
+import { setTransferAccess, setTransferKeys, transfer } from './transfer-store.mjs';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -19,7 +19,7 @@ import {
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT, uninstallBridge } from './config.mjs';
+import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -746,6 +746,9 @@ function connect() {
     };
     _directRpc = new DirectRpcBridge({
       key: _config.apiKey,
+      accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
+      accountKeyAt: _config.accountKeyAt,
+      saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
       limited: limitedRequest,
@@ -946,7 +949,9 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp });
+configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
+  notifyKey: () => _directRpc?.keys?.notifyKey });
+setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {
   if (!_directRpc) throw new Error('File storage is unavailable');
   return _directRpc.storageAccess();
@@ -2017,9 +2022,7 @@ async function downloadBridgeImage(key) {
     const tmpDir = path.join(os.homedir(), '.baton-bridge', 'tmp');
     fs.mkdirSync(tmpDir, { recursive: true });
     const localPath = path.join(tmpDir, key);
-    const res = await fetch(await transfer.url(key));
-    if (!res.ok) return null;
-    fs.writeFileSync(localPath, Buffer.from(await res.arrayBuffer()));
+    fs.writeFileSync(localPath, await transfer.bytes(key));
     return localPath;
   } catch { return null; }
 }
