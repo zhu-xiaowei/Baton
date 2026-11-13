@@ -33,6 +33,12 @@
       "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
       "Default": ""
     },
+    "OpenRegistration": {
+      "Type": "String",
+      "AllowedValues": ["false", "true"],
+      "Default": "false",
+      "Description": "Let anyone create an account by scanning a computer's QR code (hosted / multi-account stacks)"
+    },
     "ApiKeyName": {
       "Type": "String",
       "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
@@ -121,7 +127,8 @@
             "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
-            "ACCOUNT_ID": { "Ref": "AccountId" }
+            "ACCOUNT_ID": { "Ref": "AccountId" },
+            "OPEN_REGISTRATION": { "Ref": "OpenRegistration" }
           }
         },
         "MemorySize": 1024,

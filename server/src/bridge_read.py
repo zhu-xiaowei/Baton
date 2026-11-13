@@ -75,6 +75,8 @@ async def get_devices(request: Request):
         "os": item.get("os", ""),
         "online": item["deviceName"] in online_devices,
     } for item in items if item.get("deviceName")]}
+    from accounts import list_tokens
+    result["apps"] = list_tokens(account_id)
     if connections is not None:
         from direct_rpc_ws import rpc_info
         try:

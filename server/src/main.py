@@ -15,7 +15,8 @@ import auth
 
 app = FastAPI()
 
-PUBLIC = {"/api/version"}
+PUBLIC = {"/api/version", "/api/account/register", "/api/account/recover", "/api/pair/claim",
+          "/api/pair/start", "/api/pair/wait"}
 # Paths only some credential kinds may use: start-token hands out the deployment key, and an
 # install script embeds the caller's credential as the new Bridge's.
 KINDS = {"/api/auth/start-token": {"key"}, "/api/install": {"key", "bridge"}}
@@ -51,8 +52,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 from bridge_read import read_router, get_install, install_script
 from notifications import router as notifications_router
+from accounts import router as accounts_router
 app.include_router(read_router)
 app.include_router(notifications_router)
+app.include_router(accounts_router)
 
 # Short alias for install endpoint
 app.get("/api/install")(get_install)

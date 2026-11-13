@@ -52,32 +52,21 @@ class PushDevice(BaseModel):
     token: str = Field(pattern=r"^[a-fA-F0-9]{64,200}$")
     environment: str = Field(pattern=r"^(development|production)$")
 
-    def key(self):
-        # Keyed by token: a reinstall or another account reusing it replaces the old binding.
-        return {"pk": "PUSH_DEVICE", "sk": f"{self.environment}:{self.token.lower()}"}
+    def key(self, account):
+        return {"pk": f"PUSH_DEVICE#{account}", "sk": f"{self.environment}:{self.token.lower()}"}
 
 
 @router.post("/devices")
 def register_device(body: PushDevice, request: Request):
     if not _relay_configured():
         raise HTTPException(503, "iOS push is not configured on this server.")
-    _table().put_item(Item={
-        **body.key(), "accountId": _account(request), "ttl": int(time.time()) + 30 * 86400,
-    })
+    _table().put_item(Item={**body.key(_account(request)), "ttl": int(time.time()) + 30 * 86400})
     return {"ok": True}
 
 
 @router.post("/devices/remove")
 def remove_device(body: PushDevice, request: Request):
-    from botocore.exceptions import ClientError
-    try:
-        _table().delete_item(
-            Key=body.key(), ConditionExpression="accountId = :account",
-            ExpressionAttributeValues={":account": _account(request)},
-        )
-    except ClientError as error:
-        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
-            raise
+    _table().delete_item(Key=body.key(_account(request)))
     return {"ok": True}
 
 
@@ -140,11 +129,10 @@ def post_event(alert: Alert, request: Request):
     })
     if not _relay_configured():
         return {"ok": True}
-    # One partition for every account: a token re-registered by another account overwrites its row.
     deadline = now + RELAY_BUDGET_SEC
-    devices = table.query(KeyConditionExpression=Key("pk").eq("PUSH_DEVICE"), ConsistentRead=True)
+    devices = table.query(KeyConditionExpression=Key("pk").eq(f"PUSH_DEVICE#{account}"), ConsistentRead=True)
     for device in devices.get("Items", []):
-        if device.get("accountId") == account and int(device.get("ttl", 0)) > now:
+        if int(device.get("ttl", 0)) > now:
             try:
                 send_apns(table, event_id, device, deadline)
             except Exception:
@@ -160,7 +148,7 @@ def send_apns(table, event_id, device, deadline=None):
     if result.get("status") == 200:
         return
     if result.get("reason") in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "TopicDisallowed"):
-        table.delete_item(Key={"pk": "PUSH_DEVICE", "sk": device["sk"]})
+        table.delete_item(Key={"pk": device["pk"], "sk": device["sk"]})
         return
     logger.warning("APNs rejected an alert: %s", result.get("reason", "unknown"))
 
