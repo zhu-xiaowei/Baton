@@ -256,7 +256,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     child trusts its tail only while its parent's own status is running (CC stays `busy` while
     foreground or background subagents run) or it was written in the last 15s. A stopped agent never
     gets `finished:true`, so a child is also completed when its spawner's transcript last reports
-    it in a `<task-notification>` rather than a later `resumedAgentId`. Only CC's own rows count
+    it in a `<task-notification>` rather than a later `resumedAgentId`. A child last written before the earliest
+    live CC process of its root Session started (its `~/.claude/sessions/<pid>.json`, pool processes
+    included) died with an earlier process and is completed too. While a root's own status holds (unchanged or
+    pool/daemon-owned), `checkStopped` applies both end rules to its tracked active children with one stat each. Only CC's own rows count
     (`claudeTaskEvent()`: enqueued notifications, notification prompts, `SendMessage` results), not
     tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
     re-derives the counts on every `checkStopped` pass and reports them, because the notifier
