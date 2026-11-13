@@ -35,9 +35,10 @@ Call sites switched to `auth.resolve` (all five that use `api_key.account_id` / 
 REST enforcement: `ApiProxyMethod.ApiKeyRequired` becomes `false` (`server/template/Baton.template:174`);
 a FastAPI middleware on `/api/*` rejects with 401 when `auth.resolve` fails and stores the result on
 `request.state.auth`. `/api/version`, `/api/account/register`, `/api/account/recover`, `/api/pair/claim`,
-`/api/pair/start`, `/api/pair/wait` are public (they are their own authentication). Stage throttling on the
-REST stage and the WebSocket stage (rate 50 / burst 100 REST, 200/400 WS) replaces the usage plan's role as
-coarse abuse protection. The usage plan and API key resource stay (self-host key).
+`/api/pair/start`, `/api/pair/wait` are public (they are their own authentication). Coarse abuse protection:
+WebSocket stage throttling (rate 200 / burst 400) and the API Lambda's reserved concurrency (10). The REST
+stage has no throttle: per-path settings cannot target the `ANY` proxy method, and a stage-wide one would also
+throttle the static site, which goes through the same Lambda. The usage plan and API key resource stay (self-host key).
 
 WebSocket `$connect`: `apiKey` query parameter resolved the same way; a revoked token is refused with 401.
 

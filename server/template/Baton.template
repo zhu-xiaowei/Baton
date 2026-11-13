@@ -333,11 +333,7 @@
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
         "DeploymentId": { "Ref": "ApiDeploymentV4" },
-        "StageName": "v1",
-        "MethodSettings": [{
-          "ResourcePath": "/~1api~1{proxy+}", "HttpMethod": "*",
-          "ThrottlingRateLimit": 50, "ThrottlingBurstLimit": 100
-        }]
+        "StageName": "v1"
       }
     },
     "ApiGatewayRole": {
