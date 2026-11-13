@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { findRuntimeBin } from './runtime-bin.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { markLiveMessagePushed } from './live-message-registry.mjs';
 import { SERVICE_FILE, messageRows, toolName } from './opencode-extract.mjs';
 import { db } from './opencode-history.mjs';
 
@@ -102,13 +103,14 @@ function connect() {
   return current.ready;
 }
 
-// Sessions whose Baton turn was interrupted: the live marker stands for OpenCode's own interrupted row.
-export const interrupted = new Set();
-
 function end(id, exec, result) {
   exec.framer.finish();
   execs.delete(id);
-  if (result.subtype === 'interrupted') interrupted.add(id);
+  // The live interrupt marker stands for the interrupted row OpenCode wrote for this turn: never push that row too.
+  if (result.subtype === 'interrupted') {
+    const row = db.all("SELECT id FROM session_message WHERE session_id = ? AND type = 'idle' AND time_created >= ? ORDER BY seq DESC LIMIT 1", [id, exec.at])[0];
+    if (row) markLiveMessagePushed('opencode', row.id);
+  }
   exec.callbacks.onResult(`opencode:${id}`, { ...result, consumedInputIds: [...exec.turns] });
   interaction.settled?.();
   if (!execs.size) idleTimer = setTimeout(() => { sse?.ctrl.abort(); sse = null; }, IDLE_MS).unref();
@@ -122,7 +124,7 @@ function settle(requestId, notify = true) {
 }
 
 function newExec(callbacks) {
-  const exec = { callbacks, blocks: new Map(), steps: new Map(), inbox: new Map(), texts: new Map(), turns: new Set(), commands: [], open: null };
+  const exec = { callbacks, blocks: new Map(), steps: new Map(), inbox: new Map(), texts: new Map(), turns: new Set(), commands: [], open: null, at: Date.now() };
   exec.framer = new StreamFramer((f) => {
     if (f.t === 'start') callbacks.onBlockStart('', f.blockId, f.kind, f.name);
     else if (f.t === 'delta') callbacks.onDelta('', f.chunk, f.blockId);
@@ -237,7 +239,6 @@ async function prompt(id, text, turnId, exec) {
 async function start(id, callbacks, text, turnId) {
   let exec = execs.get(id);
   if (exec?.callbacks !== callbacks) execs.set(id, exec = newExec(callbacks));
-  interrupted.delete(id);
   exec.turns.add(turnId);
   try { await prompt(id, text, turnId, exec); } catch (error) {
     exec.turns.delete(turnId);
