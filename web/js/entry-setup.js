@@ -68,6 +68,7 @@ setNativeTabTitle('Settings');
   var listing = null;
   if (paired) devices().then(function (body) { listing = body; document.querySelector('.account-actions').hidden = !body.hosted; }, function () {});
 
+  // Text content only (the device's own name); never inside an attribute.
   function esc(text) { var el = document.createElement('span'); el.textContent = text; return el.innerHTML; }
 
   function renderApps() {
@@ -77,7 +78,7 @@ setNativeTabTitle('Settings');
       return '<div class="agent-thread-row"><span class="agent-thread-copy"><span class="agent-thread-title"><strong>' + esc(app.deviceName)
         + '</strong></span><span class="agent-thread-meta"><small>' + esc(seen) + '</small></span></span>'
         + (app.id === listing.self ? '<span class="app-self">This device</span>'
-          : '<button class="app-remove" type="button" data-id="' + app.id + '" data-name="' + esc(app.deviceName) + '">Remove</button>')
+          : '<button class="app-remove" type="button" data-id="' + app.id + '">Remove</button>')
         + '</div>';
     }).join('');
   }
@@ -100,7 +101,9 @@ setNativeTabTitle('Settings');
   // A lost phone or browser: its token stops and the account key is replaced, as for a computer.
   document.getElementById('appsList').addEventListener('click', async function (event) {
     var button = event.target.closest('.app-remove');
-    if (!button || !await confirmDialog('Remove ' + button.dataset.name + '?', [[false, 'Cancel'], [true, 'Remove', true]], false,
+    // The name comes from the listing, never from markup: a device picks its own name.
+    var app = button && listing.apps.find(function (candidate) { return candidate.id === button.dataset.id; });
+    if (!app || !await confirmDialog('Remove ' + app.deviceName + '?', [[false, 'Cancel'], [true, 'Remove', true]], false,
       'It is signed out at once and cannot reach your computers again; to use it again, add it with a new code.')) return;
     button.disabled = true;
     try {

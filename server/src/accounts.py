@@ -280,9 +280,13 @@ def _token_rows(account):
     return rows.get("Items", [])
 
 
+def _token_keys(account, digest):
+    return [{"pk": f"TOKEN#{digest}", "sk": "-"}, {"pk": f"ACCOUNT#{account}", "sk": f"TOKEN#{digest}"}]
+
+
 def _revoke(account, digest):
-    _table().delete_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"})
-    _table().delete_item(Key={"pk": f"ACCOUNT#{account}", "sk": f"TOKEN#{digest}"})
+    for key in _token_keys(account, digest):
+        _table().delete_item(Key=key)
     _close(account, token_hash=digest)
 
 
@@ -293,46 +297,61 @@ class Rotation(BaseModel):
     sealed: str = SEALED     # K' sealed under K
 
 
-def _rotate(account, rotation):
-    """K' for the devices that stay, sealed under the K the removed device also holds (design §8). Done in
-    the same request as the removal, so no window leaves the old joinSecret valid; `head` makes two
-    rotations from one K fail instead of forking."""
-    chain = [entry for entry in _meta(account).get("rotations", []) if entry["fp"] != rotation.fp][-(MAX_ROTATIONS - 1):]
-    old = _conditional(lambda: _table().update_item(
-        Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ReturnValues="UPDATED_OLD",
-        UpdateExpression="SET joinSecretHash = :hash, head = :next, rotations = :chain",
-        ConditionExpression="head = :fp",
-        ExpressionAttributeValues={":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
-                                   ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]}))
-    if old is False:
+def _rotate_and_revoke(account, rotation, digests):
+    """K' sealed under the K the leaving device also holds (design §8), and its tokens deleted, in ONE
+    transaction: no moment where it may read the chain, nor where the old joinSecret still recovers.
+    `head` makes two rotations from one K fail instead of forking the chain."""
+    from boto3.dynamodb.types import TypeSerializer
+    low = lambda item: {name: TypeSerializer().serialize(value) for name, value in item.items()}
+    meta = _meta(account)
+    chain = [entry for entry in meta.get("rotations", []) if entry["fp"] != rotation.fp][-(MAX_ROTATIONS - 1):]
+    table = _table()
+    update = {"TableName": table.name, "Key": low({"pk": f"ACCOUNT#{account}", "sk": "META"}),
+              "UpdateExpression": "SET joinSecretHash = :hash, head = :next, rotations = :chain",
+              "ConditionExpression": "head = :fp",
+              "ExpressionAttributeValues": low({":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
+                                                ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]})}
+    deletes = [{"Delete": {"TableName": table.name, "Key": low(key)}} for digest in digests for key in _token_keys(account, digest)]
+    try:
+        table.meta.client.transact_write_items(TransactItems=[{"Update": update}] + deletes)
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "TransactionCanceledException":
+            raise
         raise HTTPException(409, "The account key changed meanwhile; try again.")
     _join_index(account, _sha(rotation.joinSecret))
-    _table().delete_item(Key={"pk": f"JOIN#{old['Attributes']['joinSecretHash']}", "sk": "-"})
-    import bridge_ws
-    bridge_ws._init()
-    for item in bridge_ws._query_connections(account, "bridge"):
-        try:
-            bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
-        except Exception:
-            pass
+    table.delete_item(Key={"pk": f"JOIN#{meta['joinSecretHash']}", "sk": "-"})
 
 
-def removal(caller, rotation):
-    """Before a device leaves: a hosted account replaces K; a self-hosted one (API key) only revokes."""
+def remove(caller, rotation, digests, notice=None):
+    """A device leaves: a hosted account replaces K at the same moment, a self-hosted one (API key) only
+    revokes. Its sockets close (a Bridge is told `notice` first), and only then do the remaining Bridges
+    learn of the rotation."""
+    account = caller["accountId"]
     if caller["kind"] == "bridge":
         raise HTTPException(403, "Remove devices from an App.")
-    if not _meta(caller["accountId"]).get("joinSecretHash"):
-        return
-    if not rotation:
+    hosted = bool(_meta(account).get("joinSecretHash"))
+    if hosted and not rotation:
         raise HTTPException(400, "Removing a device needs a new account key.")
-    _rotate(caller["accountId"], rotation)
+    if hosted:
+        _rotate_and_revoke(account, rotation, digests)
+    else:
+        for digest in digests:
+            for key in _token_keys(account, digest):
+                _table().delete_item(Key=key)
+    for digest in digests:
+        _close(account, token_hash=digest, notice=notice)
+    if hosted:
+        import bridge_ws
+        bridge_ws._init()
+        for item in bridge_ws._query_connections(account, "bridge"):
+            try:
+                bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
+            except Exception:
+                pass
 
 
-def revoke_computer(account, name):
-    """Removing a computer (delete-device) also ends its token, so it cannot come back."""
-    for row in _token_rows(account):
-        if row["kind"] == "bridge" and row.get("deviceName") == name:
-            _revoke(account, row["sk"][6:])
+def computer_tokens(account, name):
+    return [row["sk"][6:] for row in _token_rows(account) if row["kind"] == "bridge" and row.get("deviceName") == name]
 
 
 class Revoke(BaseModel):
@@ -351,8 +370,7 @@ def revoke(body: Revoke, request: Request):
     row = next((row for row in _token_rows(caller["accountId"]) if row["sk"][6:18] == body.id and row["kind"] == "app"), None)
     if not row or row["sk"][6:] == caller.get("tokenHash"):
         raise HTTPException(404, "No such App in this account.")
-    removal(caller, body.rotation)
-    _revoke(caller["accountId"], row["sk"][6:])
+    remove(caller, body.rotation, [row["sk"][6:]])
     return {"ok": True}
 
 

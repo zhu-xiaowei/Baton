@@ -9,6 +9,7 @@ import os
 from typing import Optional
 import re
 import devices
+from accounts import Rotation, computer_tokens, remove
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -37,15 +38,15 @@ def _ws_url():
 
 class DeleteDeviceRequest(BaseModel):
     deviceName: str = Field(min_length=1)
-    rotation: Optional[dict] = None  # accounts.Rotation, required for a hosted account
+    rotation: Optional[Rotation] = None  # required for a hosted account
 
 
 @read_router.post("/delete-device")
 async def delete_device(req: DeleteDeviceRequest, raw: Request):
     """Remove a device: its Bridge is told to uninstall itself and disconnected, then its row goes."""
     account_id = _account_id(raw)
-    from accounts import Rotation, removal, revoke_computer
-    removal(raw.state.auth, Rotation(**req.rotation) if req.rotation else None)
+    # Its token goes with the rotation; the Bridge is told to uninstall before its sockets close.
+    remove(raw.state.auth, req.rotation, computer_tokens(account_id, req.deviceName), notice="device_removed")
     endpoint = os.environ.get("WS_API_ENDPOINT", "")
     if endpoint:
         try:
@@ -54,7 +55,6 @@ async def delete_device(req: DeleteDeviceRequest, raw: Request):
         except Exception as e:
             print(f"removed bridge disconnect failed: {e}")
     devices.delete_device(account_id, req.deviceName)
-    revoke_computer(account_id, req.deviceName)
     return {"ok": True}
 
 

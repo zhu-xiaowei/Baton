@@ -14,8 +14,28 @@ A, B, SEALED = 'a' * 16, 'b' * 16, 'S' * 60
 
 class Table:
     """In-memory SystemTable for the few expressions accounts.py and auth.py use."""
+    name = 'SystemTable'
+
     def __init__(self):
         self.rows = {}
+        self.meta = SimpleNamespace(client=self)
+
+    def transact_write_items(self, TransactItems):
+        from boto3.dynamodb.types import TypeDeserializer
+        plain = lambda item: {k: TypeDeserializer().deserialize(v) for k, v in item.items()}
+        try:
+            for op in TransactItems:  # conditions first: all or nothing
+                if 'Update' in op:
+                    u = op['Update']
+                    self._check(self.rows.get(tuple(plain(u['Key']).values()), {}), u['ConditionExpression'], {}, plain(u['ExpressionAttributeValues']))
+        except ClientError:
+            raise ClientError({'Error': {'Code': 'TransactionCanceledException'}}, 'transact')
+        for op in TransactItems:
+            if 'Update' in op:
+                u = op['Update']
+                self.update_item(Key=plain(u['Key']), UpdateExpression=u['UpdateExpression'], ExpressionAttributeValues=plain(u['ExpressionAttributeValues']))
+            else:
+                self.delete_item(Key=plain(op['Delete']['Key']))
 
     def _check(self, item, condition, names, values):
         if not condition:

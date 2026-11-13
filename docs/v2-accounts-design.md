@@ -152,8 +152,10 @@ key have no token, and PR A's migration would undo a rotation; the API-key holde
    `device_removed` to a removed Bridge. From now on the removed device cannot reach the account.
 2. Before the removal the App catches up with the chain (`/devices`), creates `K'`, and sends `rotation =
    {joinSecret', fp(K), fp(K'), K' sealed under K}` in the removal request itself; the server swaps
-   `joinSecretHash` / `JOIN#` / `head` first (conditional on `head = fp(K)`, so two removals from one `K` cannot
-   fork the chain), then revokes. The old joinSecret never outlives the removal.
+   `joinSecretHash` / `head` / the chain and deletes the leaving device's tokens in one transaction
+   (conditional on `head = fp(K)`, so two removals from one `K` cannot fork the chain), closes its sockets
+   (a Bridge gets `device_removed` first), and only then tells the remaining Bridges `account_rotated`. The
+   leaving device can neither read the chain nor recover with the old joinSecret at any moment.
 3. It sends `account_key_rotate {k: K'}` sealed over its session to every online Bridge. A Bridge saves
    `K'` (`accountKeyAt` now), keeps `previousKey = K` for 7 days, and joins again with new keys.
 4. Other Apps and Bridges offline at that moment: on their next connection they hold the old `K`. A Bridge

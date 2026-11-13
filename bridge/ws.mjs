@@ -795,8 +795,9 @@ function connect() {
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
-        pair_invite: () => createInvite(_config),
-        pair_approve: params => approveJoin(_config, params.link),
+        // Caught up first, so the key it seals is the account's current one (`head`).
+        pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
         recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
