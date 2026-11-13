@@ -329,7 +329,8 @@ export const interaction = defineInteractionAdapter({
     return lists;
   },
   async listCommands({ cwd }) {
-    if (!serviceInfo()) return { commands: [], skills: [] };
+    // A private `--standalone` server lists nothing on its single request; without the service the App asks again.
+    if (!serviceInfo()) throw new Error('OpenCode service is not running');
     const get = () => request('GET', `/api/command?${loc(cwd)}`).then((r) => r?.data || [], () => []);
     let list = await get();
     // A directory the service has not opened yet lists nothing on the first request.
