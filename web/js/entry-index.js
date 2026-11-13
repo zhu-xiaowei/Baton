@@ -44,15 +44,16 @@ if (Array.isArray(window.__navQueue)) {
 // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
 if (window.__preheatViewer) setTimeout(window.loadViewerLibs, 1500);
 
-// Settings → Add device returns here (history.go(-2)), possibly from the back-forward cache.
+// Settings → Add device returns here (history.go(-2), possibly from the back-forward cache): show home,
+// where the new computer appears once its Bridge (started only after approval) is online.
 addEventListener('pageshow', (event) => {
   const added = sessionStorage.getItem('baton-added');
   if (!added) return;
   if (event.persisted) { location.reload(); return; }
   sessionStorage.removeItem('baton-added');
+  const home = () => (window.loadDevices ? window.loadDevices() : setTimeout(home, 100));
+  home();
   showToast('Added ' + added);
-  // A computer starts its Bridge only after it was approved: list it once it is online.
-  onDeviceOnline((device) => {
-    if (device === added && !location.hash.replace(/^#\/?/, '')) window.loadDevices?.();
-  });
+  // Only while home is still shown: a user who moved on is not pulled back.
+  onDeviceOnline((device) => { if (device === added && !location.hash.replace(/^#\/?/, '')) window.loadDevices?.(); });
 });
