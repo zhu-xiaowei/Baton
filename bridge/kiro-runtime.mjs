@@ -5,12 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import kiro, { CLIENT, HOME, LEASES, ROOT, KiroReader, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
+import kiro, { CLIENT, HOME, LEASES, KiroReader, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
 import { finishProcess, sessionProcess } from './turn-process.mjs';
 import { StreamFramer } from './stream-framer.mjs';
-import { SessionGrants } from './session-grants.mjs';
-import { BRIDGE_HOME } from './config.mjs';
+import { findRuntimeBin } from './runtime-bin.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
@@ -18,27 +17,26 @@ import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
-import { publishMessages } from './ws.mjs';
+import { _grants as grants, publishMessages } from './ws.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
-import { scanCommands, scanSkills } from './commands.mjs';
 
-const grants = new SessionGrants(path.join(BRIDGE_HOME, 'kiro-grants.json'));
 const conns = new Map(); // native id → { key, cwd, id, rpc, ready, loaded, turn }
 const drains = new Map(); // jsonl → { reader, from, busy, again }
 const commands = new Map(); // cwd → ACP available commands
 let bin = null;
 let config = null;
-let rootWatch = null;
 let spawned = 0;
 
 const sid = (id) => storageSessionId('kiro', id);
 const recOf = (id) => sessionIndex.records.get(sessionFile(id));
+// Found at the first use: startup only checks that ~/.kiro exists.
+const kiroBin = () => (bin ||= findRuntimeBin('kiro-cli', [], '3.0.0')?.bin) || Promise.reject(new Error('kiro-cli 3.x was not found on this device.'));
 
 // A closed session holds no lease, so a new turn starts at once while the old process is still exiting.
 function connect(cwd) {
   const c = { key: `kiro:${++spawned}`, cwd };
   c.ready = (async () => {
-    const child = await sessionProcess(c.key, bin, ['acp', '--agent-engine=v3'], { cwd });
+    const child = await sessionProcess(c.key, await kiroBin(), ['acp', '--agent-engine=v3'], { cwd });
     c.rpc = new RpcStdio(child, { onNotify: (method, params) => notified(c, method, params), onRequest: (method, params) => requested(c, method, params) });
     child.once('exit', () => {
       if (conns.get(c.id) === c) conns.delete(c.id);
@@ -60,12 +58,8 @@ function newTurn(c, sessionId, streamId, callbacks) {
   const turn = { sessionId, streamId, callbacks, block: null, tools: new Map(), asks: new Map(), stored: new Set() };
   turn.started = new Promise((resolve) => { turn.start = resolve; });
   turn.ended = new Promise((resolve) => { turn.end = resolve; });
-  turn.framer = new StreamFramer((f) => {
-    if (f.t === 'start') callbacks.onBlockStart?.(sessionId, f.blockId, f.kind, f.name);
-    else if (f.t === 'delta') callbacks.onDelta?.(sessionId, f.chunk, f.blockId);
-    else if (f.t === 'input') callbacks.onInputDelta?.(sessionId, f.chunk, f.blockId);
-    else if (f.t === 'stop') callbacks.onBlockStop?.(sessionId, f.blockId);
-  });
+  const on = { start: callbacks.onBlockStart, delta: callbacks.onDelta, input: callbacks.onInputDelta, stop: callbacks.onBlockStop };
+  turn.framer = new StreamFramer((f) => on[f.t]?.(sessionId, ...(f.t === 'start' ? [f.blockId, f.kind, f.name] : f.chunk === undefined ? [f.blockId] : [f.chunk, f.blockId])));
   return (c.turn = turn);
 }
 
@@ -227,16 +221,8 @@ function changed(full) {
   void reportStatus(rec);
 }
 
-function watchRoot() {
-  if (rootWatch || !fs.existsSync(ROOT)) return;
-  rootWatch = fs.watch(ROOT, { recursive: true }, (_event, name) => name && changed(path.join(ROOT, name)));
-  rootWatch.on('error', () => { rootWatch = null; });
-}
-
 async function deleteSession(id) {
-  if (conns.has(id) || kiroInteraction.heldElsewhere(id)) throw new Error('the Session is in use');
-  await promisify(execFile)(bin, ['chat', '--delete-session', id], { timeout: 30_000 });
-  grants.forget(sid(id));
+  await promisify(execFile)(await kiroBin(), ['chat', '--delete-session', id], { timeout: 30_000 });
   return true;
 }
 
@@ -251,8 +237,10 @@ const kiroInteraction = defineInteractionAdapter({
     let c = conns.get(id);
     if (c?.turn?.ending) c = await c.turn.ended.then(() => conns.get(id));
     if (c?.turn) {
-      // A prompt during a turn would cancel it; steer adds the message to the running turn.
-      await c.loaded;
+      // A prompt during a turn would cancel it; steer adds the message once the turn's prompt is stored.
+      const turn = c.turn;
+      await turn.sent;
+      if (await Promise.race([turn.started.then(() => false), turn.ended.then(() => true)])) throw new Error('The Kiro turn ended; send again.');
       const result = await c.rpc.request('_session/steer', { sessionId: id, message: text, messageId: streamId });
       if (!result?.queued) throw new Error('Kiro did not take the message into the running turn.');
       return;
@@ -269,12 +257,11 @@ const kiroInteraction = defineInteractionAdapter({
       sessionIndex.touch(file);
       drain(file);
     }
-    await c.loaded.catch((error) => {
+    await (turn.sent = c.loaded.then(() => run(c, turn, text), (error) => {
       c.turn = null;
       close(c);
       throw error;
-    });
-    run(c, turn, text);
+    }));
   },
 
   async create({ cwd, text, streamId, onCreated }) {
@@ -291,8 +278,8 @@ const kiroInteraction = defineInteractionAdapter({
         await c.rpc.request('session/set_config_option', { sessionId: c.id, configId: 'model', value: model });
       }
       const callbacks = await onCreated({ nativeSessionId: c.id, sessionId: sid(c.id) });
-      run(c, newTurn(c, sid(c.id), streamId, callbacks), text);
-      watchRoot();
+      const turn = newTurn(c, sid(c.id), streamId, callbacks);
+      turn.sent = Promise.resolve(run(c, turn, text));
     } catch (error) {
       close(c);
       throw error;
@@ -331,56 +318,54 @@ const kiroInteraction = defineInteractionAdapter({
   },
 
   listCommands({ cwd }) {
-    const live = commands.get(cwd);
-    const list = (live || []).map((c) => ({ name: c.name, source: 'runtime', description: c.description || '',
-      argumentHint: c.input?.hint || '', behavior: c.input?.hint ? 'compose' : 'send' }));
-    // Before a turn has run here: the Skills and prompts on disk.
-    if (!live) for (const dir of [HOME, path.join(cwd, '.kiro')]) {
-      scanSkills(path.join(dir, 'skills'), list, 'runtime');
-      scanCommands(path.join(dir, 'prompts'), list, 'runtime');
-    }
-    return { commands: list, skills: [] };
+    // Kiro's own list (agents, Skills, prompts), as the last turn in this folder received it.
+    return { commands: (commands.get(cwd) || []).map((c) => ({ name: c.name, source: 'runtime', description: c.description || '',
+      argumentHint: c.input?.hint || '', behavior: c.input?.hint ? 'compose' : 'send' })), skills: [] };
   },
 
   shutdown: () => Promise.all([...conns.values()].map(close)),
 });
 
-export function createRuntime(found) {
-  bin = found.bin;
-  return defineRuntimeAdapter({
-    ...kiro,
-    displayName: 'Kiro',
-    features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
-    interaction: kiroInteraction,
-    watcher: defineRuntimeWatcher({
-      runtime: 'kiro',
-      start(next) {
-        config = next;
-        watchRoot();
-        try { fs.watch(LEASES, (_event, name) => name?.endsWith('.lease') && recOf(name.slice(0, -6)) && reportStatus(recOf(name.slice(0, -6)))); } catch {}
-      },
-    }),
-    // The catalog comes from the session index.
-    discover: () => ({ sessions: [] }),
-    findSessionFile: sessionFile,
-    baselineToEnd() {},
-    deleteSessionHistory: deleteSession,
-    async deleteProjectHistory(projectHash) {
-      for (const row of sessionIndex.catalog().byProject.get(projectHash) || []) if (row.rec.runtime === 'kiro') await deleteSession(row.rec.id);
-      return true;
-    },
-    createStatusContext: () => ({ leases: kiro.catalog.running() }),
-    inspectActiveSession(active, { leases }) {
-      const rec = recOf(active.nativeSessionId);
-      if (!rec || conns.get(rec.id)?.turn) return null;
-      const row = sessionRow(rec, kiro.catalog.status(rec, leases, Date.now()));
-      return row && row.status !== active.status ? { session: row } : null;
-    },
-    updateSessionStatus(next, id, filePath, _project, status, detail, context) {
+export default defineRuntimeAdapter({
+  ...kiro,
+  displayName: 'Kiro',
+  features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
+  interaction: kiroInteraction,
+  watcher: defineRuntimeWatcher({
+    runtime: 'kiro',
+    // The whole Kiro home, so sessions/ and session-leases/ created later are seen too.
+    start(next) {
       config = next;
-      sessionIndex.touch(filePath);
-      const row = recOf(id) && sessionRow(recOf(id), status);
-      if (row) context.report(next, [{ ...row, agentDetail: status === 'needs_input' ? detail || row.agentDetail : '' }]);
+      fs.watch(HOME, { recursive: true }, (_event, name) => {
+        const lease = /^session-leases[/\\](.+)\.lease$/.exec(name || '')?.[1];
+        if (lease) return recOf(lease) && reportStatus(recOf(lease));
+        if (name) changed(path.join(HOME, name));
+      }).on('error', (error) => console.error(`[kiro] watch: ${error.message}`));
     },
-  });
-}
+  }),
+  // The catalog comes from the session index.
+  discover: () => ({ sessions: [] }),
+  findSessionFile: sessionFile,
+  baselineToEnd() {},
+  deleteSessionHistory: deleteSession,
+  async deleteProjectHistory(projectHash) {
+    const ids = (sessionIndex.catalog().byProject.get(projectHash) || []).filter((row) => row.rec.runtime === 'kiro').map((row) => row.rec.id);
+    // Session deletes are guarded by ws.mjs; a project's are checked here.
+    if (ids.some((id) => conns.has(id) || kiroInteraction.heldElsewhere(id))) throw new Error('a Session is in use');
+    for (const id of ids) await deleteSession(id);
+    return true;
+  },
+  createStatusContext: () => ({ leases: kiro.catalog.running() }),
+  inspectActiveSession(active, { leases }) {
+    const rec = recOf(active.nativeSessionId);
+    if (!rec || conns.get(rec.id)?.turn) return null;
+    const row = sessionRow(rec, kiro.catalog.status(rec, leases, Date.now()));
+    return row && row.status !== active.status ? { session: row } : null;
+  },
+  updateSessionStatus(next, id, filePath, _project, status, detail, context) {
+    config = next;
+    sessionIndex.touch(filePath);
+    const row = recOf(id) && sessionRow(recOf(id), status);
+    if (row) context.report(next, [{ ...row, agentDetail: status === 'needs_input' ? detail || row.agentDetail : '' }]);
+  },
+});

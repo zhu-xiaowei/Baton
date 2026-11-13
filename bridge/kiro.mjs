@@ -1,12 +1,11 @@
-// Kiro CLI 3.x (v3 engine): sessions/<hash16>/<id>/{session.json, messages.jsonl, sub-executions/<sub>.jsonl};
-// v2 sessions/cli/<id>.{json,jsonl} are read only. Catalog, history and tool details; this module is also
+// Kiro CLI 3.x (v3 engine): sessions/<hash16>/<id>/{session.json, messages.jsonl, sub-executions/<sub>.jsonl}
+// (v2-engine sessions/cli is not read). Catalog, history and tool details; this module is also
 // what the index, history and tool-details workers load, so it stays free of sharp and ws.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { LineIndex } from './history-line-index.mjs';
 import { readPage } from './history-page.mjs';
-import { findRuntimeBin } from './runtime-bin.mjs';
 import { previewText } from './session.mjs';
 import { procStart } from './turn-process.mjs';
 
@@ -17,7 +16,6 @@ export const CLIENT = 'baton-bridge';
 const DASHBOARD = path.join(ROOT, 'dashboard-meta.json');
 const CHUNK = 1 << 20;
 const PREFIX = 4096;
-const SUB_FRESH_MS = 15_000;
 const HEAD = /^\{"id":"(?:[^"\\]|\\.)*","timestamp":"[^"]*","payload":\{"type":"(\w+)"/;
 const NOTED = new Set(['sub_agent_start', 'turn_start', 'session_metadata']);
 const UNSHOWN = new Set(['session_start', 'agent_note', 'usage_summary', 'session_event', 'pending_interaction', 'interaction_resolved']);
@@ -27,12 +25,10 @@ const SUBAGENT_TITLE = /^(?:subagent(?:\.\s| task\.\s+(?=[^.]{0,80}\bcompact[,\s
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 const ls = (dir) => { try { return fs.readdirSync(dir); } catch { return []; } };
-export const detect = () => findRuntimeBin('kiro-cli', [], '3.0.0');
 
 export function parse(file) {
   if (!file.startsWith(ROOT + path.sep) || !file.endsWith('.jsonl')) return null;
   const p = file.slice(ROOT.length + 1).split(path.sep);
-  if (p.length === 2 && p[0] === 'cli') return { id: p[1].slice(0, -6), v2: true };
   if (p.length === 3 && p[2] === 'messages.jsonl') return { id: p[1] };
   if (p.length === 4 && p[2] === 'sub-executions') return { id: p[3].slice(0, -6), parent: p[1] };
   return null;
@@ -40,18 +36,13 @@ export function parse(file) {
 
 function files() {
   const out = [];
-  const v3 = new Set();
   for (const hash of ls(ROOT)) {
     if (!/^[0-9a-f]{16}$/.test(hash)) continue;
     for (const id of ls(path.join(ROOT, hash))) {
       const dir = path.join(ROOT, hash, id);
-      v3.add(id);
       out.push(path.join(dir, 'messages.jsonl'));
       for (const sub of ls(path.join(dir, 'sub-executions'))) if (sub.endsWith('.jsonl')) out.push(path.join(dir, 'sub-executions', sub));
     }
-  }
-  for (const name of ls(path.join(ROOT, 'cli'))) {
-    if (name.endsWith('.jsonl') && !v3.has(name.slice(0, -6)) && !v3.has(`sess_${name.slice(0, -6)}`)) out.push(path.join(ROOT, 'cli', name));
   }
   return out;
 }
@@ -82,8 +73,7 @@ function promptHead(text) {
 // Kiro titles are one line of at most 80 characters; anything else gets the usual preview cut.
 const titleText = (value, text = String(value ?? '').trim()) => (/[\r\n]/.test(text) || text.length > 200 ? previewText(text) : text);
 
-const canonicalId = (id) => (/^(?:sess_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(id)
-  || /^cli_([0-9a-f-]{36})_[\w-]+$/i.exec(id))?.[1]?.toLowerCase() ?? id;
+const canonicalId = (id) => /^(?:sess_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(id)?.[1]?.toLowerCase() ?? id;
 
 // Dashboard renames (the first entry per session wins), re-read when the file changes.
 let dashboard = { key: null, names: new Map() };
@@ -127,7 +117,7 @@ const newState = () => ({ offset: 0, lines: 0, users: 0, first: '', title: '', c
   pending: 0, question: '', metaMs: 0, parentId: '', reason: '' });
 
 function readMeta(file, where, state) {
-  const metaFile = where.v2 ? file.slice(0, -1) : path.join(path.dirname(file), 'session.json');
+  const metaFile = path.join(path.dirname(file), 'session.json');
   let m;
   try {
     const st = fs.statSync(metaFile);
@@ -135,15 +125,8 @@ function readMeta(file, where, state) {
     m = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
     state.metaMs = st.mtimeMs;
   } catch { return; } // mid-rename: the next change reads it
-  if (where.v2) {
-    Object.assign(state, { cwd: m.cwd || '', title: titleText(m.title), parentId: m.parent_session_id || '',
-      model: m.session_state?.rts_model_state?.model_info?.model_id || '' });
-    // tui.js keeps a v2 created reason only next to a parent id.
-    state.reason = state.parentId && ['subagent', 'rewind'].includes(m.session_created_reason) ? m.session_created_reason : '';
-  } else {
     Object.assign(state, { cwd: m.workspacePaths?.[0] || m.rootPaths?.[0] || '', title: titleText(m.title), model: m.modelId || '',
       parentId: m.parentSessionId || m._meta?.kiro?.serverSession?.ownerSessionId || '', reason: typeof m.createdReason === 'string' ? m.createdReason : '' });
-  }
 }
 
 // Whole lines only; session.json is re-read whenever its mtime changed (it is rewritten at each turn end).
@@ -152,12 +135,6 @@ function advance(file, id, state) {
   if (!where.parent) readMeta(file, where, state);
   state.offset = scan(file, state.offset, (text) => {
     state.lines++;
-    if (where.v2) {
-      if (!/^\{"version":"[^"]*","kind":"Prompt"/.test(text)) return;
-      state.users++;
-      state.first ||= promptHead(stringField(text.slice(text.indexOf('"kind":"text"')), 'data'));
-      return;
-    }
     const type = HEAD.exec(text)?.[1];
     if (type === 'user') {
       state.users++;
@@ -215,7 +192,7 @@ const leases = () => new Map(ls(LEASES).filter((name) => name.endsWith('.lease')
 function status(rec, held, now) {
   const where = parse(rec.file);
   if (!rec.state || !held?.get(where.parent || rec.id)?.live) return 'completed';
-  if (where.parent) return now - rec.ms < SUB_FRESH_MS ? 'running' : 'completed';
+  if (where.parent) return now - rec.ms < 15_000 ? 'running' : 'completed';
   return rec.state.pending ? 'needs_input' : rec.state.open ? 'running' : 'completed';
 }
 
@@ -291,19 +268,8 @@ function kiroRow({ id, timestamp, payload: p }, ctx) {
   }
 }
 
-// v2 sessions/cli/<id>.jsonl: Prompt / AssistantMessage / ToolResults.
-function v2Row({ kind, data: d = {} }, line) {
-  const content = (d.content || []).map((c) => (c.kind === 'text' && c.data ? { type: 'text', text: c.data }
-    : c.kind === 'toolUse' && c.data ? toolUse(c.data.id || c.data.toolUseId, mapTool(c.data.name, c.data.args || c.data.input))[0]
-      : c.kind === 'toolResult' && c.data ? { type: 'tool_result', tool_use_id: c.data.toolUseId || c.data.id, content: JSON.stringify(c.data.content ?? ''), is_error: c.data.status === 'error' }
-        : null)).filter(Boolean);
-  return content.length ? { uuid: d.message_id || `kiro-v2-${line}`, timestamp: d.meta?.timestamp ? new Date(d.meta.timestamp * 1000).toISOString() : '',
-    type: kind === 'AssistantMessage' ? 'assistant' : 'user', content } : null;
-}
-
 export class KiroReader {
   constructor(file) {
-    this.v2 = !!parse(file)?.v2;
     this.ctx = newContext();
     this.index = new LineIndex(file, {
       onLine: (buf, s, e) => {
@@ -329,10 +295,10 @@ export class KiroReader {
     for (let line = lo; line < hi; line++) {
       const s = starts[line] - starts[lo];
       const e = ends[line] - starts[lo];
-      if (!this.v2 && UNSHOWN.has(HEAD.exec(buf.latin1Slice(s, Math.min(e, s + 200)))?.[1])) continue;
+      if (UNSHOWN.has(HEAD.exec(buf.latin1Slice(s, Math.min(e, s + 200)))?.[1])) continue;
       let row;
       try { row = JSON.parse(buf.utf8Slice(s, e)); } catch { continue; }
-      row = this.v2 ? v2Row(row, line) : kiroRow(row, this.ctx);
+      row = kiroRow(row, this.ctx);
       if (!row) continue;
       const msg = await extractForApp({ ...row, message: { content: row.content, stop_reason: row.stopReason } });
       out.push({ ...msg, orderKey: nativeOrderKey(line), ...(row.nativeId ? { nativeId: row.nativeId } : {}) });
@@ -344,12 +310,11 @@ export class KiroReader {
 // Tool-details index input: every row of the file, images left as they are.
 function messages(file) {
   const ctx = newContext();
-  const v2 = !!parse(file)?.v2;
-  return fs.readFileSync(file, 'utf8').split('\n').flatMap((line, i) => {
+  return fs.readFileSync(file, 'utf8').split('\n').flatMap((line) => {
     let entry;
     try { entry = JSON.parse(line); } catch { return []; }
-    if (!v2) note(entry, ctx);
-    return (v2 ? v2Row(entry, i) : kiroRow(entry, ctx)) || [];
+    note(entry, ctx);
+    return kiroRow(entry, ctx) || [];
   });
 }
 

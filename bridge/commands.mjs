@@ -61,7 +61,7 @@ function readPromptFile(filePath) {
 }
 
 // Scan a commands/ dir: each *.md is a command; subdirs form ':' namespaces.
-export function scanCommands(dir, out, source) {
+function scanCommands(dir, out, source) {
   if (!isDir(dir)) return;
   const walk = (cur, prefix) => {
     let entries;
@@ -86,12 +86,12 @@ export function scanCommands(dir, out, source) {
 }
 
 // Scan a skills/ dir: each subdir with SKILL.md is a skill.
-export function scanSkills(dir, out, source) {
+function scanSkills(dir, out, source) {
   if (!isDir(dir)) return;
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
-    if (!e.isDirectory() && !e.isSymbolicLink()) continue;
+    if (!e.isDirectory()) continue;
     const meta = readPromptFile(path.join(dir, e.name, 'SKILL.md'));
     if (!meta?.userInvocable) continue;
     out.push({

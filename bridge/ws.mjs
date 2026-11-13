@@ -105,7 +105,7 @@ const _pool = new ClaudePool({
   },
   onControlRequest: (sessionId, req) => queuePermissionRequest(sessionId, req),
 });
-const _grants = new SessionGrants();
+export const _grants = new SessionGrants();
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
