@@ -326,7 +326,8 @@ function nativeSessionId(sessionId, nativeId, runtime) {
 
 function shortSessionId(sessionId, nativeId, runtime) {
   var value = nativeSessionId(sessionId, nativeId, runtime);
-  return sessionRuntime(sessionId, runtime) === 'codex' ? value.slice(-8) : value.slice(0, 8);
+  // Codex and OpenCode ids start with a time-ordered prefix.
+  return /^(codex|opencode)$/.test(sessionRuntime(sessionId, runtime)) ? value.slice(-8) : value.slice(0, 8);
 }
 
 function runtimeIcon(sessionId, runtime) {

@@ -27,6 +27,7 @@ export function registerRuntime(adapter) {
 const OPTIONAL_RUNTIMES = [
   ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
   ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
+  ['./opencode-runtime.mjs', () => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db'))],
   ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
 ];
 
