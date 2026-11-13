@@ -51,7 +51,7 @@ setNativeTabTitle('Settings');
   // The scan icon shows where Add device can scan: the phone apps (as on the sign-in page).
   var nativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
   if ((nativeApp && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) || window.harmonyBridge) {
-    document.querySelector('.add-device .scan-icon').hidden = false;
+    document.querySelector('.add-device .scan-icon').removeAttribute('hidden'); // an SVG has no .hidden property
   }
 
   // After adding, the sign-in page returns to home past this page when home opened it.
