@@ -131,7 +131,8 @@
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
-            "OPEN_REGISTRATION": { "Ref": "OpenRegistration" }
+            "OPEN_REGISTRATION": { "Ref": "OpenRegistration" },
+            "WEB_URL": { "Fn::Sub": "https://${CDN.DomainName}" }
           }
         },
         "MemorySize": 1024,

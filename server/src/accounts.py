@@ -16,6 +16,7 @@ import auth
 
 router = APIRouter(prefix="/api")
 PAIR_SECONDS = 600
+# Pairing links open the App where it runs (CloudFront, which also serves its /data socket), not the API URL.
 MAX_BRIDGES = 10
 ACCOUNT = Field(pattern=r"^[0-9a-f]{16}$")
 SECRET = Field(pattern=r"^[\w-]{22,64}$")
@@ -146,7 +147,7 @@ def pair_create(body: Create, request: Request):
             **_pair_key(body.code), "kind": "app", "accountId": caller["accountId"], "sealed": body.sealed,
             "ttl": int(time.time()) + PAIR_SECONDS}, ConditionExpression="attribute_not_exists(pk)")) is False:
         raise HTTPException(409, "Code in use.")
-    return {"expiresIn": PAIR_SECONDS}
+    return {"expiresIn": PAIR_SECONDS, "web": os.environ.get("WEB_URL", "")}
 
 
 class Claim(BaseModel):
@@ -172,7 +173,7 @@ def pair_start(body: Start, request: Request):
     code, poll = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
     _table().put_item(Item={**_pair_key(code), "kind": "bridge", "pollHash": _sha(poll), "deviceName": body.deviceName,
                             "ttl": int(time.time()) + PAIR_SECONDS})
-    return {"code": code, "poll": poll, "expiresIn": PAIR_SECONDS}
+    return {"code": code, "poll": poll, "expiresIn": PAIR_SECONDS, "web": os.environ.get("WEB_URL", "")}
 
 
 class Approve(BaseModel):

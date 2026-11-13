@@ -20,7 +20,8 @@ async function call(config, path, body, fetchImpl) {
   return reply;
 }
 
-const pairLink = (config, kind, code, t) => `${config.server}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`;
+// `web`: where the App is served (the server's reply), else the API URL.
+const pairLink = (config, kind, code, t, web) => `${web || config.server}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`;
 
 function show(print, link) {
   qrcode.generate(link, { small: true }, (qr) => print(qr));
@@ -31,9 +32,9 @@ function show(print, link) {
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
   for (;;) {
     const t = randomBytes(16);
-    const { code, poll, expiresIn } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
+    const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
-    show(print, pairLink(config, 'j', code, t));
+    show(print, pairLink(config, 'j', code, t, web));
     for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(POLL_MS)) {
       let reply;
       try {
@@ -58,8 +59,8 @@ export async function createInvite(config, fetchImpl = fetch) {
   const t = randomBytes(16);
   const code = randomBytes(16).toString('base64url');
   const k = Buffer.from(config.accountKey, 'base64');
-  const { expiresIn } = await call(config, '/api/pair/create', { code, sealed: sealPair(t, k, code) }, fetchImpl);
-  return { link: pairLink(config, 'c', code, t), expiresIn };
+  const { expiresIn, web } = await call(config, '/api/pair/create', { code, sealed: sealPair(t, k, code) }, fetchImpl);
+  return { link: pairLink(config, 'c', code, t, web), expiresIn };
 }
 
 // Adds the computer that printed `link` to this computer's account (`pair <link>`, the App's `pair_approve`).
