@@ -13,12 +13,6 @@ async function roundTrip(frames) {
   return done.error ? done : decodeRpcPayload(done.payload, inflateRawSync);
 }
 
-test('compressed results split into chunks and reassemble in any order', async () => {
-  const frames = rpcResultFrames('r1', big, { deflate: deflateRawSync });
-  assert.ok(frames.length > 1 && frames.every((f) => f.enc === 'deflate-b64'));
-  assert.deepEqual(await roundTrip([...frames].reverse()), big);
-});
-
 test('small and uncompressed results stay JSON', async () => {
   const small = rpcResultFrames('r2', { ok: 1 }, { deflate: deflateRawSync });
   assert.equal(small[0].enc, 'json');

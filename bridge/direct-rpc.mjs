@@ -183,16 +183,16 @@ export class DirectRpcBridge {
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
     if (isStreamFrame(frame)) {
       const session = this.keys && (frame.pk ? this.keys.session(frame.pk) : this.keys.byTag(frame.s));
-      if (this.keys && !session) return;
-      if (session) this.peers.set(frame.from, session.tag);
-      const m = session ? openStreamMessage({ kind: 'stream', ch: frame.ch, id: frame.id }, frame.m, session.open) : frame.m;
-      Promise.resolve(m).then((opened) => opened && unpackStreamMessage(opened, inflateRawSync))
+      if (!session) return;
+      this.peers.set(frame.from, session.tag);
+      openStreamMessage({ kind: 'stream', ch: frame.ch, id: frame.id }, frame.m, session.open)
+        .then((opened) => opened && unpackStreamMessage(opened, inflateRawSync))
         .then((opened) => opened && this.streams[frame.ch]?.({ ...frame, m: opened }), () => {});
       return;
     }
     if (!isRpcRequest(frame)) return;
     if (frame.chunk) return void this.receiveChunk(frame);
-    if (this.keys && frame.method !== 'account_key') return;
+    if (frame.method !== 'account_key') return; // everything else is sealed, so it comes as chunks
     this.accept(frame);
   }
 
@@ -203,11 +203,11 @@ export class DirectRpcBridge {
     const part = this.requestParts.add({ ...frame, kind: 'rpc_result' });
     if (!part?.payload) return;
     const { chunk, enc, data, ...head } = frame;
-    const session = this.keys && this.keys.session(frame.pk || '');
-    if (this.keys && !session) return;
+    const session = this.keys?.session(frame.pk || '');
+    if (!session) return;
     let params;
-    try { params = await decodeRpcPayload(part.payload, inflateRawSync, session && ((_, text) => session.open(frame, text))); } catch { return; }
-    if (session) this.peers.set(frame.replyTo, session.tag);
+    try { params = await decodeRpcPayload(part.payload, inflateRawSync, (_, text) => session.open(frame, text)); } catch { return; }
+    this.peers.set(frame.replyTo, session.tag);
     this.accept({ ...head, params, session });
   }
 
@@ -292,14 +292,9 @@ export class DirectRpcBridge {
     if (!targets.length || this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > MAX_BUFFERED) return;
     const id = randomUUID();
     const label = { event: event.action };
-    let plain;
-    let deflated;
     for (const [connectionId, { deflate }] of targets) {
       const session = this.keys?.byTag(this.peers.get(connectionId));
-      if (this.keys && !session) continue;
-      const frames = session ? pushFrames(id, event, { deflate: deflate ? deflateRawSync : null, seal: session.seal })
-        : deflate ? (deflated ||= pushFrames(id, event, { deflate: deflateRawSync })) : (plain ||= pushFrames(id, event));
-      void this.deliver(frames, connectionId, label, 'push');
+      if (session) void this.deliver(pushFrames(id, event, { deflate: deflate ? deflateRawSync : null, seal: session.seal }), connectionId, label, 'push');
     }
   }
 
@@ -308,9 +303,8 @@ export class DirectRpcBridge {
   // `deflate`: the page said it inflates.
   async sendStream(ch, id, target, message, deflate) {
     const session = this.keys?.byTag(this.peers.get(target));
-    if (this.keys && !session) return;
-    let m = await packStreamMessage(message, deflate ? deflateRawSync : null);
-    if (session) m = await sealStreamMessage({ kind: 'stream', ch, id }, m, session.seal);
+    if (!session) return;
+    const m = await sealStreamMessage({ kind: 'stream', ch, id }, await packStreamMessage(message, deflate ? deflateRawSync : null), session.seal);
     await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
   }
 
