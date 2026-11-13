@@ -98,6 +98,7 @@ const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn or with prompts unanswered.
 const _pool = new ClaudePool({
+  trackLeftovers: true,
   allowedTools: (sessionId) => _grants.get(sessionId),
   onExit: (sessionId, hadPrompts) => {
     if (hadPrompts) clearPendingControls(sessionId);

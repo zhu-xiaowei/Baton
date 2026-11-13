@@ -68,8 +68,8 @@ export function createHistoryPages() {
   }
 
   // Child threads of a root: Claude subagents, or the given Codex child rollouts (both parse whole files).
-  function children({ runtime, dir, id, project, status, codex = [] }) {
-    if (runtime === 'claude') return discoverClaudeSubagents(dir, { nativeSessionId: id, project, status });
+  function children({ runtime, dir, id, project, status, backgroundAgents, codex = [] }) {
+    if (runtime === 'claude') return discoverClaudeSubagents(dir, { nativeSessionId: id, project, status, backgroundAgents });
     return codex.map((child) => scanCodexRollout(child.file, { nativeSessionId: child.id, threadName: child.threadName }).session)
       .filter(Boolean);
   }

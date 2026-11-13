@@ -331,9 +331,11 @@ function shortSessionId(sessionId, nativeId, runtime) {
 
 function runtimeIcon(sessionId, runtime) {
   var info = runtimeInfo(sessionRuntime(sessionId, runtime));
-  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-' + info.id : '')
+  // Absolute, since a url() in a custom property resolves against the stylesheet that uses it.
+  var src = esc(new URL(window.__runtimeIconSource?.(info.id) || info.icon, document.baseURI).href);
+  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '')
     + '" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">'
-    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(info.id) || info.icon) + '" alt="" aria-hidden="true"></span>';
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + src + '" alt="" aria-hidden="true"></span>';
 }
 
 function activeSessionThread() {
@@ -1907,7 +1909,7 @@ async function startNewSession(projectHash) {
   });
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = creatableRuntimes();
+  var runtimes = knownNewSessionRuntimes() || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
   var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
@@ -1965,11 +1967,25 @@ async function refreshNewSessionRuntimes(nav) {
   try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
   var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
-  if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
+  if (!runtimes.length) return;
+  try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
+  if (runtimes.join() === state.newSessionRuntimes.join()) return;
   state.newSessionRuntimes = runtimes;
   // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
   var saved = savedNewSessionRuntime();
   applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, runtimes.includes(saved) ? saved : state.appState.runtime), false);
+}
+
+// The last ping's list, so the view opens on the saved runtime instead of flashing the fallback.
+function newSessionRuntimesKey() {
+  return 'apeek_new_session_runtimes:' + String(state.appState.device || '');
+}
+
+function knownNewSessionRuntimes() {
+  try {
+    var runtimes = JSON.parse(localStorage.getItem(newSessionRuntimesKey()) || 'null');
+    return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; }) ? runtimes : null;
+  } catch (e) { return null; }
 }
 
 function savedNewSessionRuntime() {

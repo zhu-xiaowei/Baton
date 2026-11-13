@@ -56,6 +56,8 @@ test('the Done text waits for the final reply and skips interrupted or reported-
   assert.equal(await completionSummary('s'), null); // CC's report-back turn alerts when it ends
   pages([user('<task-notification>'), text('All done.')]);
   assert.equal(await completionSummary('s'), 'All done.');
+  pages([text('launched'), { ...user('<task-notification>'), timestamp: '2026-10-29T00:00:01Z' }]); // Bridge found CC idle after it.
+  assert.equal(await completionSummary('s', '2026-10-29T00:00:02Z'), 'launched');
   reads = pages([user('go'), text('Done.', null), { type: 'assistant', stopReason: 'end_turn', content: '[]' }]);
   assert.equal(await completionSummary('s'), 'Done.'); // Codex's empty end marker
   assert.equal(reads.count, 1);

@@ -166,20 +166,20 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .badge.agent { background: rgba(136, 87, 229, 0.2); color: var(--syntax-violet); border: 1px solid rgba(136, 87, 229, 0.4); }
 .runtime-mark { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; vertical-align: middle; }
 .runtime-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
-.runtime-mark-codex { position: relative; }
-.runtime-mark-codex .runtime-icon { visibility: hidden; }
-.runtime-mark-codex::before {
+.runtime-mark-mono { position: relative; }
+.runtime-mark-mono .runtime-icon { visibility: hidden; }
+.runtime-mark-mono::before {
   content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
-  background: var(--text-muted); transform: translate(-50%, -50%); transition: background 0.15s;
-  -webkit-mask: var(--runtime-codex-image, url("../assets/codex.svg")) center / contain no-repeat;
-  mask: var(--runtime-codex-image, url("../assets/codex.svg")) center / contain no-repeat;
+  background: var(--text-primary); transform: translate(-50%, -50%); transition: background 0.15s;
+  -webkit-mask: var(--runtime-mask) center / contain no-repeat;
+  mask: var(--runtime-mask) center / contain no-repeat;
 }
 #top-right .runtime-mark, #top-right .runtime-icon,
 .edge-back-top-right .runtime-mark, .edge-back-top-right .runtime-icon { width: 22px; height: 22px; }
 #top-right .runtime-mark, .edge-back-top-right .runtime-mark { flex-basis: 22px; }
 #top-right > .runtime-mark, .edge-back-top-right > .runtime-mark { width: 28px; height: 28px; flex-basis: 28px; }
-#top-right .runtime-mark-codex::before,
-.edge-back-top-right .runtime-mark-codex::before { width: 22px; height: 22px; }
+#top-right .runtime-mark-mono::before,
+.edge-back-top-right .runtime-mark-mono::before { width: 22px; height: 22px; }
 .runtime-switch {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
   flex: 0 0 28px; margin: 0; padding: 0; border: 1px solid transparent; border-radius: 50%;
@@ -188,12 +188,12 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .runtime-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (hover: hover) and (pointer: fine) {
   .runtime-switch:hover { background: var(--surface-raised); border-color: var(--border); }
-  #top-right > .runtime-mark-codex:hover::before,
-  .runtime-switch:hover .runtime-mark-codex::before { background: var(--text-primary); }
+  #top-right > .runtime-mark-mono:hover::before,
+  .runtime-switch:hover .runtime-mark-mono::before { background: var(--text-primary); }
 }
 .item .meta .runtime-mark { margin-right: 6px; }
 .session-runtime-label .runtime-mark, .session-runtime-label .runtime-icon,
-.session-runtime-label .runtime-mark-codex::before { width: 12px; height: 12px; flex-basis: 12px; }
+.session-runtime-label .runtime-mark-mono::before { width: 12px; height: 12px; flex-basis: 12px; }
 .session-runtime-label { gap: 4px; }
 .runtime-menu-layer { position: fixed; inset: 0; z-index: 1000; }
 .runtime-menu-layer[hidden] { display: none; }
@@ -1540,8 +1540,8 @@ html.native-mobile .edge-back-top-right .runtime-mark,
 html.native-mobile .edge-back-top-right .runtime-icon { width: 24px; height: 24px; }
 html.native-mobile #top-right .runtime-mark,
 html.native-mobile .edge-back-top-right .runtime-mark { flex-basis: 24px; }
-html.native-mobile #top-right .runtime-mark-codex::before,
-html.native-mobile .edge-back-top-right .runtime-mark-codex::before {
+html.native-mobile #top-right .runtime-mark-mono::before,
+html.native-mobile .edge-back-top-right .runtime-mark-mono::before {
   width: 24px; height: 24px; transform: translate(-50%, -50%);
 }
 html.native-mobile #top-right > .runtime-mark,
@@ -1551,7 +1551,7 @@ html.native-mobile .edge-back-top-right > .runtime-mark {
 html.native-mobile .runtime-mark,
 html.native-mobile .runtime-icon { width: 18px; height: 18px; }
 html.native-mobile .runtime-mark { flex-basis: 18px; }
-html.native-mobile .runtime-mark-codex::before { width: 18px; height: 18px; }
+html.native-mobile .runtime-mark-mono::before { width: 18px; height: 18px; }
 
 html.native-mobile .breadcrumb { padding: 7px 12px 7px 8px; font-size: 14px; }
 html.native-mobile .breadcrumb.session-detail .breadcrumb-nav:not(.expanded) {
