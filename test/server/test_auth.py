@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
+from asgi_client import Client as TestClient
 
 import auth
 import bridge_ws

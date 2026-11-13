@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import boto3
 import pytest
 from botocore.exceptions import ClientError
-from fastapi.testclient import TestClient
+from asgi_client import Client as TestClient
 
 import auth
 import main
