@@ -490,7 +490,7 @@ async function send(key, request, route, missing) {
     // One signer per route (a route is replaced when its Bridge or the credentials change).
     route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
       target: route.dataId, action: 'rpc' });
-    request.frames ||= await rpcRequestFrames(body, CAN_DEFLATE ? deflate : null);
+    request.frames ||= [body]; // account_key, the one clear request
     const frames = request.frames.map((frame) => ({ ...frame, replyTo: connectionId, ...(missing?.length ? { missing } : {}) }));
     for (const frame of frames) socket.send(await route.sign(JSON.stringify(frame), undefined, { method: request.method }));
   } catch (error) {

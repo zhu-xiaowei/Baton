@@ -39,7 +39,6 @@ export function rpcRequest({ requestId, method, params = {}, replyTo, missing, a
 // goes as it is. `deflate` may return a Promise (browser streams).
 export async function rpcRequestFrames(request, deflate, seal) {
   const { params, ...head } = request;
-  if (!seal) return [request];
   const data = await sealJson(head, JSON.stringify(params), deflate, seal);
   const count = Math.ceil(data.length / CHUNK_CHARS);
   return Array.from({ length: count }, (_, index) => ({ ...head, chunk: { index, count }, enc: 'e',

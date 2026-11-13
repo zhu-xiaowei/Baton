@@ -756,7 +756,7 @@ async function showAttachment(key) {
     const url = escapeAttachment(file.previewUrl || '');
     if (file.previewType === 'application/pdf') {
       pdfFallbackUrl = url;
-      cachedPdf = !!file.data;
+      cachedPdf = !!file.data || !!file.sealed; // no URL yet for the browser's own viewer
       // Without PDF.js support, the fallback below opens the browser's own viewer.
       if (!window.ResizeObserver || !window.requestAnimationFrame) throw new Error('Could not preview this file. Download to open it.');
       const { mountPdfPreview, clearPdfRangeCache } = await import('../components/pdf-preview.js');
@@ -797,7 +797,8 @@ async function showAttachment(key) {
     if (cachedPdf) {
       // A cache hit has no URL; the browser's own viewer needs a fresh one.
       pdfFallbackUrl = await transfer.fileInfo(key, _view?.name)
-        .then(file => escapeAttachment(file.previewUrl || ''), () => '');
+        .then(file => (file.sealed ? transfer.url(key, { sealed: true }) : file.previewUrl || ''))
+        .then(escapeAttachment, () => '');
       if (token !== _fileRequestToken) return;
     }
     if (pdfFallbackUrl) {

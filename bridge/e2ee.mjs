@@ -4,6 +4,8 @@
 // swaps a public key cannot compute the salt. Sealed = nonce(12) ‖ AES-256-GCM(seq(4) ‖ flags(1) ‖ body).
 // This file is the browser implementation (WebCrypto, async); e2ee-node.mjs is Bridge's synchronous twin.
 
+import { fromBase64, toBase64 } from './direct-rpc-protocol.mjs';
+
 const encoder = new TextEncoder();
 export const info = (name) => encoder.encode('baton-e2ee/' + name);
 export const WINDOW = 4096;
@@ -32,17 +34,13 @@ export class ReplayWindow {
 
 export const sessionTag = (pubB64) => pubB64.slice(4, 16);
 
-const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
-const unb64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 const subtle = () => globalThis.crypto.subtle;
 const derive = (k, name, alg, usage) => subtle().deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: info(name) },
   k, alg, false, usage);
 const bits = async (k, name, length = 256) => new Uint8Array(await subtle().deriveBits(
   { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: info(name) }, k, length));
-const hexOf = (bytes) => Array.from(bytes, (v) => v.toString(16).padStart(2, '0')).join('');
 
 export const importAccountKey = (raw) => subtle().importKey('raw', raw, 'HKDF', false, ['deriveKey', 'deriveBits']);
-export const fingerprint = async (k) => hexOf(await bits(k, 'fp', 64));
 
 async function sealWith(key, plain, seq, flags, aad) {
   const head = new Uint8Array(5 + plain.length);
@@ -70,11 +68,11 @@ export async function appKeys(k, since = 0) {
   const psk = await derive(k, 'psk', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign']);
   const pair = await subtle().generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
   const pubRaw = new Uint8Array(await subtle().exportKey('raw', pair.publicKey));
-  const pub = b64(pubRaw);
+  const pub = toBase64(pubRaw);
   const sessions = new Map(); // bridge public key → Promise<session>
   let files = null;
   const session = async (bridgePub) => {
-    const peerRaw = unb64(bridgePub);
+    const peerRaw = fromBase64(bridgePub);
     const peer = await subtle().importKey('raw', peerRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
     const secret = await subtle().deriveBits({ name: 'ECDH', public: peer }, pair.privateKey, 256);
     const both = new Uint8Array(pubRaw.length + peerRaw.length);
@@ -87,23 +85,23 @@ export async function appKeys(k, since = 0) {
     let seq = 0;
     const window = new ReplayWindow();
     return {
-      seal: async (frame, body, flags = 0) => b64(await sealWith(key, body, ++seq, flags, aadOf('a', frame))),
+      seal: async (frame, body, flags = 0) => toBase64(await sealWith(key, body, ++seq, flags, aadOf('a', frame))),
       open: async (frame, text) => {
-        const out = await openWith(key, unb64(text), aadOf('b', frame));
+        const out = await openWith(key, fromBase64(text), aadOf('b', frame));
         return out && window.accept(out.seq) ? out : null;
       },
     };
   };
   return {
-    pub, tag: sessionTag(pub), fp: await fingerprint(k),
+    pub, tag: sessionTag(pub), fp: Array.from(await bits(k, 'fp', 64), (v) => v.toString(16).padStart(2, '0')).join(''),
     session: (bridgePub) => {
       if (!sessions.has(bridgePub)) sessions.set(bridgePub, session(bridgePub));
       return sessions.get(bridgePub);
     },
-    notifyKey: async () => b64(await bits(k, 'notify')),
+    notifyKey: async () => toBase64(await bits(k, 'notify')),
     openAlert: async (event) => {
       try {
-        const sealed = unb64(event.e);
+        const sealed = fromBase64(event.e);
         const key = await derive(k, 'notify', { name: 'AES-GCM', length: 256 }, ['decrypt']);
         const plain = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: sealed.subarray(0, 12),
           additionalData: encoder.encode(event.eventId || '') }, key, sealed.subarray(12)));

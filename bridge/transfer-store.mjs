@@ -44,7 +44,7 @@ export function setTransferKeys(next) { fileKeys = next; }
 const sealedKeys = async (name, size) => (size <= SEALED_MAX && !STREAMED.test(extension(name)) ? fileKeys() : null);
 // An unmarked file of a kind and size that is sealed: only one written before K, within the grace.
 async function plainRefused(key, stored) {
-  if (STREAMED.test(extension(key)) || stored > sealedSize(SEALED_MAX)) return false;
+  if (STREAMED.test(extension(key)) || stored > SEALED_MAX) return false;
   const keys = await fileKeys();
   return !!keys && !(Date.now() - keys.since < PLAIN_GRACE_MS);
 }
