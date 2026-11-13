@@ -13,7 +13,7 @@ function grantOf(toolName, input) {
 	const command = String(input?.command ?? "").trim();
 	const [program, sub] = command.split(/\s+/);
 	return /^[\w \t./:=@%+,-]+$/.test(command) && /^[a-z]+$/.test(sub ?? "")
-		&& !/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|stdbuf|ionice|sh|bash|zsh)$/.test(program) ? `bash:${program} ${sub}` : null;
+		&& !/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|eval|stdbuf|ionice|sh|bash|zsh)$/.test(program) ? `bash:${program} ${sub}` : null;
 }
 
 function granted(grant) {

@@ -129,13 +129,14 @@ export const piRuntime = {
     },
   }),
   // Pi's own rename (appendSessionInfo): a session_info entry on the last entry.
-  rename(id, name) {
+  rename(id, name, project) {
     const rec = findRecord(id);
-    if (!rec) throw new Error('Session not found on this device.');
+    if (!rec || sessionIndex.view(rec)?.project !== project) throw new Error('Session not found on this device.');
     refuseInUse([rec]);
     sessionIndex.touch(rec.file);
     fs.appendFileSync(rec.file, `${JSON.stringify({ type: 'session_info', id: crypto.randomBytes(4).toString('hex'), parentId: rec.state?.leaf || null,
       timestamp: new Date().toISOString(), name })}\n`);
+    return name;
   },
   watcher,
 };

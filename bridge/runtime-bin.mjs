@@ -29,7 +29,7 @@ function nodeDirs() {
   ];
 }
 
-function commonDirs() {
+export function commonDirs() {
   return [
     path.join(process.env.VOLTA_HOME || path.join(HOME, '.volta'), 'bin'),
     path.join(HOME, '.local/bin'),

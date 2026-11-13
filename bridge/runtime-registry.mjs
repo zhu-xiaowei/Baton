@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { claudeRuntime } from './claude-runtime.mjs';
 import { codexRuntime } from './codex-runtime.mjs';
 import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
@@ -22,7 +25,9 @@ export function registerRuntime(adapter) {
 // Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
-  ['./pi-runtime.mjs', () => process.getBuiltinModule('fs').existsSync(process.env.PI_CODING_AGENT_DIR || `${process.getBuiltinModule('os').homedir()}/.pi/agent`)],
+  ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
+  ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
+  ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
 ];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {

@@ -4,8 +4,9 @@
 import { createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { deflateRawSync, inflateRawSync } from 'zlib';
-import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, packStreamMessage, pushFrames, rpcAckFrame,
-  rpcErrorFrame, rpcProgressFrame, rpcResultFrames, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, openStreamMessage, packStreamMessage, pushFrames,
+  rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames, sealStreamMessage, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
+import { bridgeKeys } from './e2ee-node.mjs';
 
 // Reads that use the machine (files, Git, transcripts) run at most this many at once; requests that
 // only wait (sends, pushes, uploads) are not counted.
@@ -68,8 +69,15 @@ export class SessionSubscribers {
 export class DirectRpcBridge {
   // `limited(frame)`: whether the request counts against MAX_CONCURRENT (default: all do).
   // `streams[ch](frame)`: terminal / preview frames from Apps, their message already unpacked.
-  constructor({ key, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
+  // `accountKey` (K, 32 bytes): every frame but `account_key` is sealed (e2ee.mjs); `saveAccountKey(K)`
+  // stores a K an App hands over (migration of existing users, docs/v2-accounts-e2ee-plan.md §9).
+  constructor({ key, accountKey, accountKeyAt, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
+    this.accountKey = accountKey || null;
+    this.keyAt = accountKeyAt;
+    this.keys = accountKey ? this.newKeys() : null;
+    this.saveAccountKey = saveAccountKey;
+    this.peers = new Map(); // App connection → its session tag
     this.sendControl = sendControl;
     this.handlers = handlers;
     this.streams = streams;
@@ -153,7 +161,8 @@ export class DirectRpcBridge {
     url.protocol = 'wss:';
     url.search = new URLSearchParams({ apiKey: this.key, role: 'bridge_data' }).toString();
     const socket = this.socket = this.socketFactory(url.href);
-    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token })));
+    const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
+    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token, ...keys })));
     socket.on('message', (data) => this.receive(socket, data.toString()));
     socket.on('close', () => this.closed(socket));
     socket.on('error', () => {});
@@ -174,11 +183,20 @@ export class DirectRpcBridge {
     }
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
     if (isStreamFrame(frame)) {
-      unpackStreamMessage(frame.m, inflateRawSync).then((m) => this.streams[frame.ch]?.({ ...frame, m }), () => {});
+      const session = this.keys && (frame.pk ? this.keys.session(frame.pk) : this.keys.byTag(frame.s));
+      if (!session) return;
+      openStreamMessage({ kind: 'stream', ch: frame.ch, id: frame.id }, frame.m, session.open)
+        .then((opened) => {
+          if (!opened) return null;
+          this.peers.set(frame.from, session.tag); // only an opened frame may point replies at a connection
+          return unpackStreamMessage(opened, inflateRawSync);
+        })
+        .then((opened) => opened && this.streams[frame.ch]?.({ ...frame, m: opened }), () => {});
       return;
     }
     if (!isRpcRequest(frame)) return;
     if (frame.chunk) return void this.receiveChunk(frame);
+    if (frame.method !== 'account_key') return; // everything else is sealed, so it comes as chunks
     this.accept(frame);
   }
 
@@ -189,9 +207,12 @@ export class DirectRpcBridge {
     const part = this.requestParts.add({ ...frame, kind: 'rpc_result' });
     if (!part?.payload) return;
     const { chunk, enc, data, ...head } = frame;
+    const session = this.keys?.session(frame.pk || '');
+    if (!session) return;
     let params;
-    try { params = await decodeRpcPayload(part.payload, inflateRawSync); } catch { return; }
-    this.accept({ ...head, params });
+    try { params = await decodeRpcPayload(part.payload, inflateRawSync, (_, text) => session.open(frame, text)); } catch { return; }
+    this.peers.set(frame.replyTo, session.tag);
+    this.accept({ ...head, params, session });
   }
 
   accept(frame) {
@@ -235,14 +256,15 @@ export class DirectRpcBridge {
     // `progress(value)` lets a handler report what a page shows; silence is covered by the timer.
     let timer;
     const wait = (ms) => { clearTimeout(timer); timer = setTimeout(() => progress(), ms); timer.unref?.(); };
+    const seal = frame.session?.seal;
     const progress = (value) => {
       wait(PROGRESS_MS);
-      void this.deliver([rpcProgressFrame(frame.requestId, value)], target(), label);
+      void this.deliver([rpcProgressFrame(frame.requestId, value, seal)], target(), label);
     };
     wait(PROGRESS_AFTER_MS);
     let frames;
     try {
-      const handler = this.handlers[frame.method];
+      const handler = frame.method === 'account_key' ? (params) => this.accountKeyRequest(params) : this.handlers[frame.method];
       if (!handler) throw new Error('unknown method');
       const deflate = !!frame.accept?.includes('deflate');
       const params = frame.params || {};
@@ -252,9 +274,9 @@ export class DirectRpcBridge {
         const fingerprint = createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0, 16);
         result = params.known === fingerprint ? { notModified: true, fingerprint } : { ...result, fingerprint };
       }
-      frames = rpcResultFrames(frame.requestId, result, { deflate: deflate ? deflateRawSync : null, method: frame.method });
+      frames = rpcResultFrames(frame.requestId, result, { deflate: deflate ? deflateRawSync : null, method: frame.method, seal });
     } catch (error) {
-      frames = [rpcErrorFrame(frame.requestId, error.message, frame.method)];
+      frames = [rpcErrorFrame(frame.requestId, error.message, frame.method, seal)];
     } finally {
       clearTimeout(timer);
     }
@@ -274,11 +296,9 @@ export class DirectRpcBridge {
     if (!targets.length || this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > MAX_BUFFERED) return;
     const id = randomUUID();
     const label = { event: event.action };
-    let plain;
-    let deflated;
     for (const [connectionId, { deflate }] of targets) {
-      const frames = deflate ? (deflated ||= pushFrames(id, event, { deflate: deflateRawSync })) : (plain ||= pushFrames(id, event));
-      void this.deliver(frames, connectionId, label, 'push');
+      const session = this.keys?.byTag(this.peers.get(connectionId));
+      if (session) void this.deliver(pushFrames(id, event, { deflate: deflate ? deflateRawSync : null, seal: session.seal }), connectionId, label, 'push');
     }
   }
 
@@ -286,8 +306,29 @@ export class DirectRpcBridge {
   // a sequence gap.
   // `deflate`: the page said it inflates.
   async sendStream(ch, id, target, message, deflate) {
-    const m = await packStreamMessage(message, deflate ? deflateRawSync : null);
+    const session = this.keys?.byTag(this.peers.get(target));
+    if (!session) return;
+    const m = await sealStreamMessage({ kind: 'stream', ch, id }, await packStreamMessage(message, deflate ? deflateRawSync : null), session.seal);
     await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
+  }
+
+  // Keys for this process; published by joining again (Apps then make new sessions).
+  newKeys() {
+    if (this.socket) setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
+    return bridgeKeys(this.accountKey, this.keyAt, () => { this.keys = this.newKeys(); });
+  }
+
+  // Clear on purpose: an App of this account hands K over or takes it (§9 migration). A new K is
+  // published by joining again with new keys.
+  accountKeyRequest({ k } = {}) {
+    const raw = typeof k === 'string' ? Buffer.from(k, 'base64') : null;
+    if (raw?.length === 32 && !raw.equals(this.accountKey || Buffer.alloc(0))) {
+      this.accountKey = raw;
+      this.keyAt = Date.now();
+      this.keys = this.newKeys();
+      this.saveAccountKey?.(raw);
+    }
+    return { fp: this.keys?.fp || '', ...(k ? {} : { k: this.accountKey?.toString('base64') || '' }) };
   }
 
   get bufferedAmount() {

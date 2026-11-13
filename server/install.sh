@@ -188,7 +188,7 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
-  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type","x-amz-checksum-sha256","x-amz-meta-filename","x-amz-meta-content-type"],"MaxAgeSeconds":3600}]}'
+  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type","x-amz-checksum-sha256","x-amz-meta-filename","x-amz-meta-content-type","x-amz-meta-sealed"],"MaxAgeSeconds":3600}]}'
 # t/<account>/ is a transfer channel, emptied after 7 days; the pre-v2 file prefixes empty out once.
 aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" --lifecycle-configuration \
   '{"Rules":[{"ID":"transfer","Status":"Enabled","Filter":{"Prefix":"t/"},"Expiration":{"Days":7}},
@@ -235,7 +235,7 @@ rm -f "$BUILD_CTX/test_api.py" 2>/dev/null || true
 cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
 cp "$ROOT_DIR/bridge/preview-protocol.mjs" \
-  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$BUILD_CTX/bridge/"
+  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$ROOT_DIR/bridge/e2ee.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 

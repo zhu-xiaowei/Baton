@@ -37,7 +37,14 @@ function killTree(pid) {
   try {
     if (IS_WINDOWS) execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' });
     else process.kill(-pid, 'SIGKILL');
-  } catch {}
+  } catch { try { process.kill(pid, 'SIGKILL'); } catch {} } // not a group leader
+}
+
+// Record a process spawned elsewhere so the next Bridge ends it if it outlives this one.
+export function trackLeftover(child) {
+  if (!child.pid) return;
+  record(child.pid, procStart(child.pid));
+  child.once('exit', () => record(child.pid, null));
 }
 
 // An npm `.cmd` shim runs `"%dp0%\<target>" %*`; run the target directly so the tree can be ended.
