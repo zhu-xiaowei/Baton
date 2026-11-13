@@ -1,6 +1,6 @@
 // App state, routing, page loading
 import { state } from './state.js';
-import { layoutPixels } from './page-zoom.js';
+import { layoutPixels, layoutRect } from './page-zoom.js';
 import {
   invalidateListCache,
   readListCache,
@@ -34,7 +34,7 @@ import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
-import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
+import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
@@ -415,26 +415,45 @@ function newSessionRuntimeControl() {
   var mark = runtimeIcon('__new__', current);
   if (runtimes.length === 1) return mark;
   return '<button class="runtime-switch" type="button" onclick="openRuntimePicker()"'
-    + ' aria-haspopup="dialog" aria-controls="runtimePickerModal"'
+    + ' aria-haspopup="menu" aria-controls="runtimePickerMenu"'
     + ' aria-label="Choose coding runtime. Current: ' + runtimeLabel(current) + '"'
     + ' title="' + runtimeLabel(current) + '">' + mark + '</button>';
 }
 
 function openRuntimePicker() {
-  var modal = document.getElementById('runtimePickerModal');
-  if (!modal || state.appState.session !== '__new__') return;
-  document.getElementById('runtimePickerList').innerHTML = state.newSessionRuntimes.map(function (runtime) {
+  var layer = document.getElementById('runtimePickerMenu');
+  var button = document.querySelector('.runtime-switch');
+  if (!layer || !button || state.appState.session !== '__new__') return;
+  var menu = document.getElementById('runtimePickerList');
+  menu.innerHTML = state.newSessionRuntimes.map(function (runtime) {
     var current = runtime === state.appState.runtime;
-    return '<button class="runtime-picker-row" type="button" aria-pressed="' + current + '"'
+    return '<button class="runtime-picker-row" type="button" role="menuitemradio" aria-checked="' + current + '"'
       + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
-      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">&#10003;</span>' : '')
+      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">' + CHECK_ICON_SVG + '</span>' : '')
       + '</button>';
   }).join('');
-  showCenteredModal(modal);
+  // Drop down from the button, right-aligned, with the arrow under its centre.
+  var rect = layoutRect(button);
+  var width = layoutPixels(innerWidth);
+  var right = Math.max(8, width - rect.right - 4);
+  menu.style.top = (rect.bottom + 10) + 'px';
+  menu.style.right = right + 'px';
+  menu.style.setProperty('--arrow-right', Math.max(10, width - right - rect.left - rect.width / 2 - 6) + 'px');
+  layer.hidden = false;
+  addEventListener('keydown', runtimePickerKey);
+  addEventListener('resize', closeRuntimePicker);
+  menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+}
+
+function runtimePickerKey(event) {
+  if (event.key === 'Escape') closeRuntimePicker();
 }
 
 function closeRuntimePicker() {
-  hideCenteredModal(document.getElementById('runtimePickerModal'));
+  var layer = document.getElementById('runtimePickerMenu');
+  if (layer) layer.hidden = true;
+  removeEventListener('keydown', runtimePickerKey);
+  removeEventListener('resize', closeRuntimePicker);
 }
 
 function pickNewSessionRuntime(runtime) {
@@ -1556,7 +1575,7 @@ function attachSessionIdCopy(container) {
       event.stopPropagation();
       if (target.classList.contains('copied') || !navigator.clipboard?.writeText) return;
       navigator.clipboard.writeText(target.dataset.copy).then(function () {
-        target.textContent = '✓';
+        target.innerHTML = CHECK_ICON_SVG;
         target.classList.add('copied');
         setTimeout(function () {
           target.textContent = label;
