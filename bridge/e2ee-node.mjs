@@ -79,7 +79,7 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
   };
   return {
     pub: pubRaw.toString('base64'),
-    fp: hkdf(k, 'fp', 8).toString('hex'),
+    fp: fingerprint(k),
     session,
     byTag: touch,
     notifyKey: hkdf(k, 'notify'),
@@ -103,6 +103,18 @@ export function openPair(t, sealed, code) {
   try {
     const bytes = Buffer.from(sealed, 'base64');
     const decipher = createDecipheriv('aes-256-gcm', hkdf(t, 'pair'), bytes.subarray(0, 12)).setAAD(Buffer.from(code));
+    decipher.setAuthTag(bytes.subarray(-16));
+    return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]);
+  } catch { return null; }
+}
+
+export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
+
+// Synchronous twin of e2ee.mjs openRotation; `fp` is the old K's fingerprint.
+export function openRotation(k, sealed, fp) {
+  try {
+    const bytes = Buffer.from(sealed, 'base64');
+    const decipher = createDecipheriv('aes-256-gcm', hkdf(k, 'rotate'), bytes.subarray(0, 12)).setAAD(Buffer.from(fp));
     decipher.setAuthTag(bytes.subarray(-16));
     return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]);
   } catch { return null; }

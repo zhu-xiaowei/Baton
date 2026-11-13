@@ -221,3 +221,118 @@ def pair_wait(body: Wait):
     row = _take(body.code, "pollHash = :poll AND attribute_exists(accountId)", {":poll": _sha(body.poll)})
     return {"token": _issue(row["accountId"], "bridge", row["deviceName"]), "accountId": row["accountId"],
             "sealed": row["sealed"], "approvedBy": row["approvedBy"]}
+
+
+# ---- Removal, rotation, deletion (design §8, §9) ----
+
+ROLE_ENDPOINTS = {"app": "WS_API_ENDPOINT", "bridge": "WS_API_ENDPOINT",
+                  "app_data": "TERMINAL_DIRECT_ENDPOINT", "bridge_data": "TERMINAL_DIRECT_ENDPOINT"}
+MAX_ROTATIONS = 8
+
+
+def _close(account, token_hash=None, notice=None):
+    """Closes the account's sockets (only one token's when given); Bridges get `notice` first."""
+    import bridge_ws
+    bridge_ws._init()
+    for role, variable in ROLE_ENDPOINTS.items():
+        endpoint = os.environ.get(variable, "")
+        if not endpoint:
+            continue
+        for item in bridge_ws._query_connections(account, role):
+            if token_hash and item.get("tokenHash") != token_hash:
+                continue
+            try:
+                if notice and role == "bridge":
+                    bridge_ws._post_to_connection(endpoint, item["connectionId"], {"action": notice})
+                bridge_ws._delete_connection(endpoint, item["connectionId"])
+            except Exception as error:
+                print(f"socket not closed: {error}")
+            bridge_ws._handle_disconnect(item["connectionId"])
+
+
+def _token_rows(account):
+    rows = _table().query(KeyConditionExpression=Key("pk").eq(f"ACCOUNT#{account}") & Key("sk").begins_with("TOKEN#"))
+    return rows.get("Items", [])
+
+
+def _revoke(account, digest):
+    _table().delete_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"})
+    _table().delete_item(Key={"pk": f"ACCOUNT#{account}", "sk": f"TOKEN#{digest}"})
+    auth.forget(digest)
+    _close(account, token_hash=digest)
+
+
+def revoke_computer(account, name):
+    """Removing a computer (delete-device) also ends its token, so it cannot come back."""
+    for row in _token_rows(account):
+        if row["kind"] == "bridge" and row.get("deviceName") == name:
+            _revoke(account, row["sk"][6:])
+
+
+@router.post("/tokens/revoke")
+def revoke_self(request: Request):
+    """Log out: this device's token stops working everywhere."""
+    caller = request.state.auth
+    if caller.get("tokenHash"):
+        _revoke(caller["accountId"], caller["tokenHash"])
+    return {"ok": True}
+
+
+def rotations(account):
+    meta = _table().get_item(Key={"pk": f"ACCOUNT#{account}", "sk": "META"}).get("Item") or {}
+    return meta.get("rotations", [])
+
+
+class Rotate(BaseModel):
+    joinSecret: str = SECRET
+    fp: str = Field(pattern=r"^[0-9a-f]{16}$")
+    sealed: str = SEALED
+
+
+@router.post("/account/rotate")
+def rotate(body: Rotate, request: Request):
+    """After a removal: K' sealed under the old K for the devices that still hold it; new joinSecret."""
+    caller = request.state.auth
+    if caller["kind"] != "app":
+        raise HTTPException(403, "Only an App rotates the account key.")
+    account = caller["accountId"]
+    chain = [entry for entry in rotations(account) if entry["fp"] != body.fp][-(MAX_ROTATIONS - 1):]
+    if _conditional(lambda: _table().update_item(
+            Key={"pk": f"ACCOUNT#{account}", "sk": "META"},
+            UpdateExpression="SET joinSecretHash = :hash, rotations = :chain",
+            ConditionExpression="attribute_exists(joinSecretHash)",
+            ExpressionAttributeValues={":hash": _sha(body.joinSecret),
+                                       ":chain": chain + [{"fp": body.fp, "sealed": body.sealed}]})) is False:
+        raise HTTPException(409, "This account has no recovery secret to rotate (self-hosted).")
+    import bridge_ws
+    bridge_ws._init()
+    for item in bridge_ws._query_connections(account, "bridge"):
+        try:
+            bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+@router.post("/account/delete")
+def delete_account(request: Request):
+    caller = request.state.auth
+    if caller["kind"] != "app":
+        raise HTTPException(403, "Delete the account from an App.")
+    account = caller["accountId"]
+    _close(account, notice="account_deleted")
+    import devices
+    for item in devices.list_devices(account):
+        devices.delete_device(account, item["deviceName"])
+    table = _table()
+    for pk in (f"ACCOUNT#{account}", f"PUSH_DEVICE#{account}", f"NOTIFICATIONS#{account}"):
+        while True:
+            rows = table.query(KeyConditionExpression=Key("pk").eq(pk)).get("Items", [])
+            if not rows:
+                break
+            for row in rows:
+                if pk.startswith("ACCOUNT#") and row["sk"].startswith("TOKEN#"):
+                    table.delete_item(Key={"pk": row["sk"], "sk": "-"})
+                    auth.forget(row["sk"][6:])
+                table.delete_item(Key={"pk": row["pk"], "sk": row["sk"]})
+    return {"ok": True}

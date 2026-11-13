@@ -44,7 +44,7 @@ import {
 } from './codex-commands.mjs';
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
 import { updateSessionStatus, recentSessions } from './sync.mjs';
-import { approveJoin, createInvite } from './accounts.mjs';
+import { approveJoin, createInvite, rotatedKey } from './accounts.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   PermissionQueue,
@@ -797,10 +797,13 @@ function connect() {
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
         pair_invite: () => createInvite(_config),
         pair_approve: params => approveJoin(_config, params.link),
+        // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
+        recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });
     _directRpc.start();
+    void catchUpAccountKey();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
     _pingTimer = setInterval(probeConnection, PING_INTERVAL);
@@ -898,9 +901,22 @@ function scheduleReconnect() {
   }, delay);
 }
 
+// Rotations (design §8) reach a hosted Bridge as K' sealed under its K, listed with /devices.
+async function catchUpAccountKey() {
+  if (!_config?.accounts || !_config.accountKey) return;
+  try {
+    const k = await rotatedKey(_config);
+    if (k) _directRpc?.setAccountKey(k);
+  } catch (error) { console.error(`[accounts] key rotation not applied: ${error.message}`); }
+}
+
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
+    case 'account_rotated':
+      void catchUpAccountKey();
+      break;
+    case 'account_deleted':
     case 'device_removed':
       uninstallBridge();
       console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');

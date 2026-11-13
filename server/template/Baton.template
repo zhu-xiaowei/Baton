@@ -87,7 +87,10 @@
                 {
                   "Effect": "Allow",
                   "Action": "execute-api:ManageConnections",
-                  "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+                  "Resource": [
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" },
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/*" }
+                  ]
                 },
                 {
                   "Effect": "Allow",

@@ -325,13 +325,17 @@ export class DirectRpcBridge {
     // A hosted account's K comes only by pairing: the relay must never see it in clear.
     if (this.accounts) return { fp: this.keys?.fp || '' };
     const raw = typeof k === 'string' ? Buffer.from(k, 'base64') : null;
-    if (raw?.length === 32 && !raw.equals(this.accountKey || Buffer.alloc(0))) {
-      this.accountKey = raw;
-      this.keyAt = Date.now();
-      this.keys = this.newKeys();
-      this.saveAccountKey?.(raw);
-    }
+    if (raw?.length === 32) this.setAccountKey(raw);
     return { fp: this.keys?.fp || '', ...(k ? {} : { k: this.accountKey?.toString('base64') || '' }) };
+  }
+
+  // A new K is published by joining again with new keys.
+  setAccountKey(raw) {
+    if (raw.equals(this.accountKey || Buffer.alloc(0))) return;
+    this.accountKey = raw;
+    this.keyAt = Date.now();
+    this.keys = this.newKeys();
+    this.saveAccountKey?.(raw);
   }
 
   get bufferedAmount() {

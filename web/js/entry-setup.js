@@ -13,6 +13,9 @@ import { initMobileNotifications, mountNotificationSettings } from './mobile-not
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { viaComputer } from './v2/pairing.js';
+import { toPhrase } from './v2/recovery.js';
+import { confirmDialog } from './components/confirm-dialog.js';
+import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
 
 initMacosTabs();
 initPageZoomShortcuts();
@@ -57,6 +60,32 @@ setNativeTabTitle('Settings');
     sessionStorage.setItem('baton-add-depth', fromIndex && history.length > 2 ? '2' : '0');
   });
 
+  // A paired account's own actions (design §7, §9).
+  var paired = state.KEY.indexOf('bt_') === 0;
+  document.querySelector('.account-actions').hidden = !paired;
+
+  window.showRecoveryPhrase = async function () {
+    if (!await confirmDialog('Show recovery phrase?', [[false, 'Cancel'], [true, 'Show', true]], false,
+      'Anyone with these 24 words can reach your computers. Keep them private; removing a computer changes them.')) return;
+    try {
+      var reply = await viaComputer('recovery_key');
+      await confirmDialog('Recovery phrase', [[true, 'Done', true]], true, await toPhrase(fromBase64(reply.k)));
+    } catch (e) {
+      await confirmDialog('Could not show the phrase', [[true, 'OK', true]], true, e.message);
+    }
+  };
+
+  window.deleteAccount = async function () {
+    if (!await confirmDialog('Delete account?', [[false, 'Cancel'], [true, 'Delete', true]], false,
+      'Every device leaves the account and its Bridge uninstalls itself; files on your computers are kept.')) return;
+    try {
+      await apiPost('/api/account/delete');
+      logout();
+    } catch (e) {
+      await confirmDialog('Could not delete the account', [[true, 'OK', true]], true, e.message);
+    }
+  };
+
   mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
   initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
@@ -64,7 +93,6 @@ setNativeTabTitle('Settings');
   // key it is a start token, so the key never appears in the install command, Start URL or QR code; a
   // paired App (device token) gets a one-use invite that an online computer seals K into.
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
-  var paired = state.KEY.indexOf('bt_') === 0;
   var tokenRequest = null;
 
   function startToken() {

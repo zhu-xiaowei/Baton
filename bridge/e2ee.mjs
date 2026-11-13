@@ -142,3 +142,26 @@ export async function openPair(t, sealed, code) {
       await pairKey(t, 'decrypt'), bytes.subarray(12)));
   } catch { return null; }
 }
+
+// Key rotation (design §8): the App that removes a device seals K' under the old K, keyed by the old
+// fingerprint; every device still holding the old K opens it from /devices. `k` is the CryptoKey.
+export const fingerprint = async (k) => hex(await bits(k, 'fp', 64));
+
+export async function sealRotation(k, rawNext, fp) {
+  const key = await derive(k, 'rotate', { name: 'AES-GCM', length: 256 }, ['encrypt']);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const body = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(fp) }, key, rawNext));
+  const out = new Uint8Array(12 + body.length);
+  out.set(nonce);
+  out.set(body, 12);
+  return toBase64(out);
+}
+
+export async function openRotation(k, sealed, fp) {
+  try {
+    const key = await derive(k, 'rotate', { name: 'AES-GCM', length: 256 }, ['decrypt']);
+    const bytes = fromBase64(sealed);
+    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(fp) },
+      key, bytes.subarray(12)));
+  } catch { return null; }
+}

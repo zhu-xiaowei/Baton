@@ -53,7 +53,9 @@ class Table:
         return {'Attributes': dict(row)}
 
     def query(self, KeyConditionExpression, **_):
-        pk, prefix = (c.get_expression()['values'][1] for c in KeyConditionExpression.get_expression()['values'])
+        expr = KeyConditionExpression.get_expression()
+        pk, prefix = ((c.get_expression()['values'][1] for c in expr['values']) if expr['operator'] == 'AND'
+                      else (expr['values'][1], ''))
         return {'Items': [dict(r) for (p, s), r in self.rows.items() if p == pk and s.startswith(prefix)]}
 
 
@@ -62,6 +64,9 @@ def api(monkeypatch):
     monkeypatch.setattr(auth, '_table', Table())
     monkeypatch.setattr(auth, '_cache', {})
     monkeypatch.setenv('OPEN_REGISTRATION', 'true')
+    import bridge_ws
+    monkeypatch.setattr(bridge_ws, '_init', lambda: None)
+    monkeypatch.setattr(bridge_ws, '_query_connections', lambda *a, **k: [])
     client = TestClient(main.app)
 
     def call(path, body, token=None, ip='1.1.1.1', status=200):
@@ -123,3 +128,25 @@ def test_limits(api, monkeypatch):
     monkeypatch.setenv('OPEN_REGISTRATION', 'false')
     assert client.get('/install').status_code == 404
     api('/api/account/register', {'accountId': 'd' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'}, status=404)
+
+
+def test_logout_removal_rotation_and_deletion_stay_in_their_account(api):
+    a = api('/api/account/register', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'iPhone'})['token']
+    b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'Pixel'})['token']
+    api('/api/pair/create', {'code': 'app-code-0000000000001', 'sealed': SEALED}, a)
+    ipad = api('/api/pair/claim', {'code': 'app-code-0000000000001', 'deviceName': 'iPad'})['token']
+    api('/api/tokens/revoke', {}, ipad)
+    api('/api/bridge/devices', None, ipad, status=401)
+    start = api('/api/pair/start', {'deviceName': 'Mac'})
+    api('/api/pair/approve', {'code': start['code'], 'sealed': SEALED}, a)
+    mac = api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']})['token']
+    api('/api/bridge/delete-device', {'deviceName': 'Mac'}, a)
+    api('/api/bridge/devices', None, mac, status=401)
+    rotation = {'joinSecret': 'secret-of-a-111111111111', 'fp': '0' * 16, 'sealed': SEALED}
+    api('/api/account/rotate', rotation, a)
+    assert api('/api/bridge/devices', None, a)['rotations'] == [{'fp': '0' * 16, 'sealed': SEALED}]
+    assert api('/api/bridge/devices', None, b)['rotations'] == []
+    api('/api/account/recover', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'x'}, status=403)
+    api('/api/account/delete', {}, a)
+    api('/api/bridge/devices', None, a, status=401)
+    assert api('/api/bridge/devices', None, b)['apps'][0]['deviceName'] == 'Pixel'

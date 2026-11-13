@@ -84,6 +84,10 @@
   .qr-loading { display: flex; align-items: center; justify-content: center; height: 224px; }
   .qr-wrap:has(.qr-frame.ready) .qr-loading { display: none; }
   .qr-wrap:not(:has(.qr-frame.ready)) .qr-frame { display: none; }
+  .account-actions .setting-row { color: inherit; text-decoration: none; }
+  .account-actions .setting-row + .setting-row { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+  .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
+  .delete-account strong { color: var(--danger); }
   .version-value { color: var(--text-secondary); font-size: 13px; }
   .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
@@ -174,6 +178,11 @@
 
 <div class="section">
   <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
+</div>
+
+<div class="section account-actions" hidden>
+  <a class="setting-row" href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
+  <a class="setting-row delete-account" href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong></a>
 </div>
 
 <!-- Logout -->

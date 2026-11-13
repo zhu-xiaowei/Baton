@@ -50,6 +50,8 @@ async def delete_device(req: DeleteDeviceRequest, raw: Request):
         except Exception as e:
             print(f"removed bridge disconnect failed: {e}")
     devices.delete_device(account_id, req.deviceName)
+    from accounts import revoke_computer
+    revoke_computer(account_id, req.deviceName)
     return {"ok": True}
 
 
@@ -75,8 +77,9 @@ async def get_devices(request: Request):
         "os": item.get("os", ""),
         "online": item["deviceName"] in online_devices,
     } for item in items if item.get("deviceName")]}
-    from accounts import list_tokens
+    from accounts import list_tokens, rotations
     result["apps"] = list_tokens(account_id)
+    result["rotations"] = rotations(account_id)
     if connections is not None:
         from direct_rpc_ws import rpc_info
         try:

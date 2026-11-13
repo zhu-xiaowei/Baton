@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { CONFIG_PATH, saveConfig } from './config.mjs';
-import { accountOf, openPair, sealPair } from './e2ee-node.mjs';
+import { accountOf, fingerprint, openPair, openRotation, sealPair } from './e2ee-node.mjs';
 
 const POLL_MS = 2000;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,6 +68,23 @@ export async function approveJoin(config, link, fetchImpl = fetch) {
   if (kind !== 'j') throw new Error('not a computer\'s join code');
   const k = Buffer.from(config.accountKey, 'base64');
   return call(config, '/api/pair/approve', { code, sealed: sealPair(t, k, code) }, fetchImpl);
+}
+
+// The newest K after rotations made while this computer was away or just now (`account_rotated`), or null.
+export async function rotatedKey(config, fetchImpl = fetch) {
+  const res = await fetchImpl(`${config.server}/api/bridge/devices`, { headers: { 'x-api-key': config.apiKey }, signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) return null;
+  const { rotations = [] } = await res.json();
+  let k = Buffer.from(config.accountKey, 'base64');
+  let changed = false;
+  for (let step = 0; step < rotations.length; step++) {
+    const entry = rotations.find((candidate) => candidate.fp === fingerprint(k));
+    const next = entry && openRotation(k, entry.sealed, entry.fp);
+    if (next?.length !== 32) break;
+    k = next;
+    changed = true;
+  }
+  return changed ? k : null;
 }
 
 export function parseLink(link) {

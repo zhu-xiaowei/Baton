@@ -2,8 +2,9 @@
 // computer waiting to join. A signed-in App never seals K itself (it is not extractable, plan D2): an
 // online computer of the account does it (`pair_invite`, `pair_approve`).
 import { fromBase64 } from '../../../bridge/direct-rpc-protocol.mjs';
-import { accountOf, openPair, sealPair } from '../../../bridge/e2ee.mjs';
-import { saveAccountKey } from './account-key.js';
+import { accountOf, fingerprint, openPair, sealPair, sealRotation } from '../../../bridge/e2ee.mjs';
+import { state } from '../state.js';
+import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
 
 export function parseLink(text) {
@@ -64,4 +65,23 @@ export async function viaComputer(method, params = {}) {
   }
   if (!online.length) throw new Error('Turn on one of your computers to add a device.');
   return request(online[0], method, params);
+}
+
+// After removing a computer: a new K', which every remaining device takes from /devices (design §8).
+export async function rotateAccountKey() {
+  const saved = await loadAccountKey(state.SERVER);
+  if (!saved?.key) return;
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const fp = await fingerprint(saved.key);
+  await post(state.SERVER, '/api/account/rotate', {
+    joinSecret: (await accountOf(raw)).joinSecret, fp, sealed: await sealRotation(saved.key, raw, fp),
+  }, state.KEY);
+  await devices();
+}
+
+export async function recoverAccount(server, raw) {
+  const { accountId, joinSecret } = await accountOf(raw);
+  const { token } = await post(server, '/api/account/recover', { accountId, joinSecret, deviceName: deviceName() });
+  await saveAccountKey(server, raw);
+  return token;
 }

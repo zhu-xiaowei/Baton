@@ -7,7 +7,8 @@ import { harmonyBridge, harmonyCall } from './harmony.js';
 import { state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
-import { parseLink, signInWithLink, viaComputer } from './v2/pairing.js';
+import { parseLink, recoverAccount, signInWithLink, viaComputer } from './v2/pairing.js';
+import { fromPhrase } from './v2/recovery.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { mountBackButton } from './components/back-button.js';
 import { attachPageEdgeBackGesture } from './edge-back.js';
@@ -131,6 +132,14 @@ setNativeTabTitle('Baton');
     var link = parseLink(raw);
     if (link) return applyLink(link, adding);
     if (adding) throw new Error('Log out first to join another account.');
+    if (raw.trim().split(/\s+/).length === 24) {
+      var k = await fromPhrase(raw);
+      if (!k) throw new Error('Check the recovery phrase: a word is wrong or missing.');
+      var recoveryServer = localStorage.getItem('_as') || localStorage.getItem('_ls') || state.SERVER;
+      setCredentials(await recoverAccount(recoveryServer, k), recoveryServer);
+      location.replace('index.html');
+      return;
+    }
     var server = '';
     var token = '';
     var key = '';

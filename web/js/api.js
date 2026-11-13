@@ -56,6 +56,7 @@ function setCredentials(key, server) {
   state.SERVER = nextServer;
   localStorage.setItem('_ak', btoa(key));
   if (server) localStorage.setItem('_as', state.SERVER);
+  localStorage.setItem('_ls', state.SERVER); // kept after logout: where a recovery phrase is sent
 }
 
 function clearCredentials() {
@@ -67,6 +68,10 @@ function clearCredentials() {
 
 async function logout() {
   try { await window.unregisterMobileNotifications?.(); } catch {}
+  // A paired device's token stops working everywhere (a self-hosted API key is shared, so it stays).
+  if (state.KEY.startsWith('bt_')) {
+    try { await fetch(state.SERVER + '/api/tokens/revoke', { method: 'POST', headers: { 'x-api-key': state.KEY } }); } catch {}
+  }
   await forgetAccountKey(state.SERVER);
   clearCredentials();
   location.replace('landing.html');
