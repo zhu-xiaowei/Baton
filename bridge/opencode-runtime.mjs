@@ -12,7 +12,7 @@ import { lastKnownStatus, reportSessions } from './sync.mjs';
 import { publishMessages } from './ws.mjs';
 import { DB_FILE, displayLabel } from './opencode-extract.mjs';
 import history, { db, OpenCodeReader } from './opencode-history.mjs';
-import { interaction, refreshActive, service, working, writerProcesses } from './opencode-service.mjs';
+import { interaction, interrupted, refreshActive, service, working, writerProcesses } from './opencode-service.mjs';
 
 // OpenCode 1.x has no v2 tables: such a store is listed as nothing and offers no sessions.
 const v2 = db.all("SELECT 1 FROM sqlite_master WHERE name = 'session_v2'").length > 0;
@@ -117,7 +117,8 @@ const watcher = defineRuntimeWatcher({
         if (!wanted.size) continue;
         const rows = await reader.rows(Math.min(...[...wanted].map((rid) => all.indexOf(rid))), all.length);
         publishMessages(storageSessionId('opencode', id), rows.filter((row) => wanted.has(row.uuid.split('#')[0])
-          && !liveMessagePushed('opencode', row.uuid)));
+          && !liveMessagePushed('opencode', row.uuid)
+          && !(interrupted.has(id) && row.content[0]?.text === '[Request interrupted by user]' && interrupted.delete(id))));
       }
     };
     const kick = () => {

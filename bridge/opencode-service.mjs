@@ -102,9 +102,13 @@ function connect() {
   return current.ready;
 }
 
+// Sessions whose Baton turn was interrupted: the live marker stands for OpenCode's own interrupted row.
+export const interrupted = new Set();
+
 function end(id, exec, result) {
   exec.framer.finish();
   execs.delete(id);
+  if (result.subtype === 'interrupted') interrupted.add(id);
   exec.callbacks.onResult(`opencode:${id}`, { ...result, consumedInputIds: [...exec.turns] });
   interaction.settled?.();
   if (!execs.size) idleTimer = setTimeout(() => { sse?.ctrl.abort(); sse = null; }, IDLE_MS).unref();
@@ -233,6 +237,7 @@ async function prompt(id, text, turnId, exec) {
 async function start(id, callbacks, text, turnId) {
   let exec = execs.get(id);
   if (exec?.callbacks !== callbacks) execs.set(id, exec = newExec(callbacks));
+  interrupted.delete(id);
   exec.turns.add(turnId);
   try { await prompt(id, text, turnId, exec); } catch (error) {
     exec.turns.delete(turnId);
