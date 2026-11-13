@@ -10,11 +10,11 @@ import { randomUUID } from 'crypto';
 import { Worker } from 'worker_threads';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import {
-  cachedDaemonSessions, getRunningInfo, getSessionStatus, normalizeProjectHash, previewText,
+  cachedDaemonSessions, getRunningInfo, getSessionStatus, liveRecordStatuses, normalizeProjectHash, previewText,
   projectHashToPath, readableProjectName, readClaudeFirstPrompts,
 } from './session.mjs';
 import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
-import { discoverClaudeSubagents } from './claude-subagent.mjs';
+import { claudeParentLive, discoverClaudeSubagents } from './claude-subagent.mjs';
 import { projectHashFromCwd, runtimeDescriptor, runtimeDescriptors, runtimeModules, storageSessionId } from './session-identity.mjs';
 import { repositoryIdentity } from './repository-identity.mjs';
 import { resolveCodexHomes } from './runtime-capabilities.mjs';
@@ -479,6 +479,7 @@ export class SessionIndex {
     const catalog = this.catalog();
     const { claude: claudeRunning, codex: codexRunning } = this.runningInfo(now);
     const daemon = cachedDaemonSessions();
+    let records; // CC's live records, read once when a root with subagents needs them
     const liveIds = new Set([...claudeRunning.sessions, ...(claudeRunning.liveStatuses?.keys() || []), ...daemon.keys()]);
     const codexRunningNow = (rec, project) => !!rec.state?.active && (codexRunning.sessions.has(rec.id)
       || (now - rec.ms <= CODEX_STATUS_STALE_MS && codexRunning.projects.has(project)));
@@ -492,10 +493,10 @@ export class SessionIndex {
         const candidate = liveIds.has(rec.id) || (now - rec.ms <= CLAUDE_FRESH_MS && claudeRunning.projects.has(path.basename(rec.dir)));
         own = known || (agent ? agent.status : candidate ? getSessionStatus(rec.id, rec.file, claudeRunning) : 'completed');
         // A Claude child can be active only while its parent's process runs (its turn may be Done while
-        // background agents run: the pool's tasks, CC's busy record) or right after it was written.
-        const parent = own === 'running' || claudeRunning.liveStatuses?.get(rec.id) === 'running' || this.awaitsAgents?.(rec.id)
-          ? 'running' : own;
-        if (row.agentCount && (parent === 'running' || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, parent, now);
+        // background agents run: the pool's tasks, CC's busy/waiting record) or right after it was written.
+        const live = !!row.agentCount && claudeParentLive({ status: own, backgroundAgents: this.awaitsAgents?.(rec.id) },
+          (records ??= liveRecordStatuses()).get(rec.id));
+        if (row.agentCount && (live || this.freshSubagent(rec, now))) children = this.claudeChildren(rec, row, live, now);
       } else if (runtimeDescriptor(rec.runtime)?.catalog) {
         const { catalog: source } = runtimeDescriptor(rec.runtime);
         const running = this.running[rec.runtime];
@@ -528,11 +529,11 @@ export class SessionIndex {
   }
 
   // Reads every subagent transcript, so the result is kept for 15 s; touch() drops it on a change.
-  claudeChildren(rec, row, status, now) {
+  claudeChildren(rec, row, live, now) {
     let cached = this.subagents.get(rec.file);
     if (!cached) this.subagents.set(rec.file, cached = { count: this.subagentCount(rec) });
-    if (cached.children?.status !== status || now - cached.children.at >= SUBAGENT_FRESH_MS) {
-      cached.children = { status, at: now, list: discoverClaudeSubagents(rec.dir, { nativeSessionId: rec.id, project: row.project, status }, { now }) };
+    if (cached.children?.live !== live || now - cached.children.at >= SUBAGENT_FRESH_MS) {
+      cached.children = { live, at: now, list: discoverClaudeSubagents(rec.dir, { nativeSessionId: rec.id, project: row.project }, { now, live }) };
     }
     return cached.children.list.map((child) => ({ status: this.statuses.get(storageSessionId('claude', child.nativeSessionId)) || child.status }));
   }

@@ -111,7 +111,7 @@ export class HistoryService {
       const codex = rec.runtime === 'codex' ? row.children.map((child) => ({ file: child.file, id: child.id,
         threadName: this.index.threadNames.get(child.home)?.names.get(child.id) || '' })) : [];
       const children = await this.pages.children({ runtime: rec.runtime, dir: rec.dir, id: rec.id, project: row.project,
-        status: row.own || row.status, codex });
+        status: row.own || row.status, backgroundAgents: this.index.awaitsAgents?.(rec.id), codex });
       for (const child of children) {
         const childId = storageSessionId(child.runtime, child.nativeSessionId);
         items.push({ ...child, sessionId: childId, status: this.index.statuses.get(childId) || child.status });

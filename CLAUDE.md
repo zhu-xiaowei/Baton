@@ -224,15 +224,19 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **subagent threads**: a root row shows the *effective* status (own status OR any child
     `runningAgentCount`/`needsInputAgentCount`). An interrupted subagent's tail stays
     non-terminal forever, so unless `.meta.json` says `finished:true` (CC never writes `false`) a
-    child trusts its tail only while its parent's own status is running (CC stays `busy` while
-    foreground or background subagents run) or it was written in the last 15s. A stopped agent never
+    child trusts its tail only while its parent's own status is running, CC's record for the root reads
+    `busy`/`waiting` (it stays so while foreground or background subagents run, also at a prompt), the pool
+    still lists a background agent, or it was written in the last 15s (`claudeParentLive()`, shared by discovery,
+    the session index and the thread list). A stopped agent never
     gets `finished:true`, so a child is also completed when its spawner's transcript last reports
     it in a `<task-notification>` rather than a later `resumedAgentId`. A child last written before the earliest
     live CC process of its root Session started (its `~/.claude/sessions/<pid>.json`, pool processes
     included) died with an earlier process and is completed too. While a root's own status holds (unchanged or
     pool/daemon-owned), `checkStopped` applies both end rules to its tracked active children with one stat each. Only CC's own rows count
     (`claudeTaskEvent()`: enqueued notifications, notification prompts, `SendMessage` results), not
-    tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
+    tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended, after the root's own
+    write. CC (2.1.322+) also writes a notification it already reported through a hand-back, or one replayed at
+    resume, and never answers it: while CC's record reads `idle` that row means `completed`, not `running`. `inspectActiveSession()`
     re-derives the counts on every `checkStopped` pass and reports them, because the notifier
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
